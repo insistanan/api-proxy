@@ -8,6 +8,7 @@
     </AgentConfigHeader>
 
     <v-alert v-if="error" type="error" variant="tonal" class="mb-5" closable @click:close="error = ''">{{ error }}</v-alert>
+    <ToolInstallBanner tool="codex" class="mb-5" />
     <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-5" />
 
     <template v-else>
@@ -109,6 +110,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import AgentConfigHeader from '@/components/AgentConfigHeader.vue'
 import AgentConfigLocation from '@/components/AgentConfigLocation.vue'
 import CodexModelCatalog from '@/components/CodexModelCatalog.vue'
+import ToolInstallBanner from '@/components/ToolInstallBanner.vue'
 import { fetchProxyBaseUrl } from '@/composables/useChannelQuickPick'
 import { api, type CodexSettings } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'

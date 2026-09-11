@@ -11,6 +11,8 @@
       {{ loadError }}
     </v-alert>
 
+    <ToolInstallBanner tool="opencode" class="mb-5" />
+
     <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-5" />
 
     <template v-else>
@@ -236,6 +238,7 @@
 import { computed, onMounted, ref } from 'vue'
 import AgentConfigHeader from '@/components/AgentConfigHeader.vue'
 import AgentConfigLocation from '@/components/AgentConfigLocation.vue'
+import ToolInstallBanner from '@/components/ToolInstallBanner.vue'
 import { api, type OpenCodeConfig, type OpenCodeProtocol, type OpenCodeProvider, type OpenCodeVariant, type SaveOpenCodeProvider, type ApiTab } from '@/services/api'
 import { useProxyProtocolPick, defaultQuickPickTypeOptions } from '@/composables/useChannelQuickPick'
 import { filterProxyModelsByKind, importProxyModels, buildOpenCodeModel } from '@/composables/useChannelModelImport'

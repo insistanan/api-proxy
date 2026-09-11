@@ -401,6 +401,8 @@ func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
 	apiGroup.PUT("/settings/codex/model-catalog", handlers.SaveCodexModelCatalog())
 	apiGroup.GET("/settings/dsh", handlers.GetDSHSettings())
 	apiGroup.PUT("/settings/dsh", handlers.SaveDSHSettings())
+	// CLI 工具版本检测（客户端配置页顶部横幅）
+	apiGroup.GET("/tools/:tool/version", handlers.GetToolVersion())
 	apiGroup.POST("/settings/ccs/pick-path", handlers.PickCcsPath(a.cfgManager))
 	apiGroup.POST("/settings/ccs/import", handlers.ImportToCcs(a.cfgManager))
 

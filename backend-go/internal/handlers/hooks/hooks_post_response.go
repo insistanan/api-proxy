@@ -63,10 +63,16 @@ func (h *contentSafetyPostResponseHook) Run(ctx context.Context, metadata HookCo
 				if len(matches) == 0 {
 					continue
 				}
+				first := matches[0]
 				return result, &ContentSafetyError{
 					BlockType: sensitive.BlockTypeCredential,
-					RuleName:  matches[0].Rule,
-					Snippet:   safetyEventSnippet("block", segment),
+					RuleName:  first.Rule,
+					Snippet: safetyHitSnippet("block", segment, segment.Text, safetyHit{
+						rule:   first.Rule,
+						start:  first.Start,
+						end:    first.End,
+						reveal: "[凭据已隐藏:" + first.Rule + "]",
+					}),
 				}
 			}
 		}
@@ -185,7 +191,7 @@ func dangerousCommandError(match sensitive.CommandMatch) *ContentSafetyError {
 	return &ContentSafetyError{
 		BlockType: sensitive.BlockTypeDangerousCmd,
 		RuleName:  match.Rule,
-		Snippet:   fmt.Sprintf("mode=block source=assistant context=%s", match.Context),
+		Snippet:   fmt.Sprintf("mode=block source=assistant context=%s\n%s", match.Context, match.Command),
 	}
 }
 

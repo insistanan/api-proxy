@@ -116,7 +116,7 @@
                   <div class="text-caption text-medium-emphasis">{{ group.latestLog?.channelName || '--' }}</div>
                 </td>
                 <td class="snippet-cell" :title="group.latestLog?.promptSnippet || ''">
-                  {{ group.latestLog?.promptSnippet || '--' }}
+                  {{ snippetPreview(group.latestLog?.promptSnippet) || '--' }}
                 </td>
                 <td class="action-cell text-medium-emphasis">
                   {{ isExpanded(group.key) ? '收起' : '展开' }}
@@ -167,7 +167,7 @@
                     <div class="font-weight-medium">{{ entry.model || '--' }}</div>
                     <div class="text-caption text-medium-emphasis">{{ entry.channelName || '--' }}</div>
                   </td>
-                  <td class="snippet-cell" :title="entry.promptSnippet || ''">{{ entry.promptSnippet || '--' }}</td>
+                  <td class="snippet-cell" :title="entry.promptSnippet || ''">{{ snippetPreview(entry.promptSnippet) || '--' }}</td>
                   <td class="action-cell">
                     <v-tooltip text="查看详情">
                       <template #activator="{ props }">
@@ -364,6 +364,14 @@ const pageCount = computed(() => Math.max(1, Math.ceil(totalGroups.value / pageS
 const hasFilters = computed(() => Boolean(apiType.value || blockType.value || fromTime.value || toTime.value))
 
 const asRFC3339 = (value: string) => (value ? new Date(value).toISOString() : '')
+
+// 片段格式为「元数据行\n命中内容窗口」两行；表格里只展示内容行，
+// 完整片段（含 mode/source/path）在详情弹窗查看。
+const snippetPreview = (snippet?: string) => {
+  if (!snippet) return ''
+  const lines = snippet.split('\n')
+  return lines[lines.length - 1].trim()
+}
 
 const loadLogs = async () => {
   loading.value = true

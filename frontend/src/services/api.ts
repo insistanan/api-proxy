@@ -55,6 +55,7 @@ import type {
   SkillBackup,
   SkillSearchResponse,
   SkillsResponse,
+  ToolVersionInfo,
   UpstreamModelsRequest
 } from '@/types'
 
@@ -576,6 +577,17 @@ class ApiService {
    */
   async getProxyModels(): Promise<ModelsResponse> {
     return this.request('/proxy-models')
+  }
+
+  // ============== CLI 工具版本检测（客户端配置页用） ==============
+
+  /**
+   * 查询指定 CLI 工具（claude / codex / opencode / pi）的当前版本、
+   * npm 最新版本与当前平台的安装命令。force=true 绕过后端 1 小时缓存。
+   */
+  async getToolVersion(tool: string, force = false): Promise<ToolVersionInfo> {
+    const query = force ? '?force=true' : ''
+    return this.request(`/tools/${encodeURIComponent(tool)}/version${query}`)
   }
 
   // ============== DSH 配置 API ==============

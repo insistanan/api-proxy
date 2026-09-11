@@ -113,10 +113,16 @@ func scanAttachedStreamCredentials(c requestContextGetter, attached *attachedHoo
 	}
 	mode := snapshot.settings.Credential.ToolArgumentMode
 	if mode == config.ContentSafetyModeBlock {
+		first := matches[0]
 		safetyErr := &ContentSafetyError{
 			BlockType: sensitive.BlockTypeCredential,
-			RuleName:  matches[0].Rule,
-			Snippet:   safetyEventSnippet("block", segment),
+			RuleName:  first.Rule,
+			Snippet: safetyHitSnippet("block", segment, toolArgs, safetyHit{
+				rule:   first.Rule,
+				start:  first.Start,
+				end:    first.End,
+				reveal: "[凭据已隐藏:" + first.Rule + "]",
+			}),
 		}
 		return attached.recordContentSafetyError(attachedRequestContext(c), attached.currentMetadata(), safetyErr)
 	}
@@ -124,15 +130,25 @@ func scanAttachedStreamCredentials(c requestContextGetter, attached *attachedHoo
 		attached.credentialHits = make(map[string]struct{})
 	}
 	newRules := make([]string, 0, len(matches))
-	for _, rule := range credentialRuleNames(matches) {
-		hitKey := key + "\x00" + rule
+	hits := make([]safetyHit, 0, len(matches))
+	for _, match := range matches {
+		hitKey := key + "\x00" + match.Rule
 		if _, exists := attached.credentialHits[hitKey]; exists {
 			continue
 		}
 		attached.credentialHits[hitKey] = struct{}{}
-		newRules = append(newRules, rule)
+		newRules = append(newRules, match.Rule)
+		hits = append(hits, safetyHit{
+			rule:   match.Rule,
+			start:  match.Start,
+			end:    match.End,
+			reveal: "[凭据已隐藏:" + match.Rule + "]",
+		})
 	}
-	return wrapContentSafetyHookError(recordSafetyMatches(attachedRequestContext(c), attached.currentMetadata(), hook.recorder, sensitive.BlockTypeCredential, mode, segment, newRules))
+	if len(newRules) == 0 {
+		return nil
+	}
+	return wrapContentSafetyHookError(recordSafetyMatches(attachedRequestContext(c), attached.currentMetadata(), hook.recorder, sensitive.BlockTypeCredential, mode, segment, toolArgs, hits))
 }
 
 // FlushAttachedStreamHooks 在流结束时确认未闭合代码围栏中的延迟匹配。

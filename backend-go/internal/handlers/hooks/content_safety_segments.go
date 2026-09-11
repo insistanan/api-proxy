@@ -561,19 +561,33 @@ func applyContentSafetySegments(
 				return changed, &ContentSafetyError{
 					BlockType: sensitive.BlockTypeSensitiveWord,
 					RuleName:  string(match.Category),
-					Snippet:   safetyEventSnippet("block", *segment),
+					Snippet: safetyHitSnippet("block", *segment, segment.Text, safetyHit{
+						rule:   string(match.Category),
+						start:  match.Start,
+						end:    match.End,
+						reveal: match.Word,
+					}),
 				}
 			}
 		}
 
 		credentialMode := snapshot.settings.SensitiveData.Mode
+		// credentialSource 是凭据检测时的原文；掩码会改写 segment.Text，
+		// 命中偏移只对原文有效，必须先留存。
+		credentialSource := segment.Text
 		credentialMatches := snapshot.credential.FindAll(segment.Text)
 		if len(credentialMatches) > 0 {
 			if credentialMode == config.ContentSafetyModeBlock || credentialMode == config.ContentSafetyModeMask && !segment.Mutable {
+				first := credentialMatches[0]
 				return changed, &ContentSafetyError{
 					BlockType: sensitive.BlockTypeCredential,
-					RuleName:  credentialMatches[0].Rule,
-					Snippet:   safetyEventSnippet("block", *segment),
+					RuleName:  first.Rule,
+					Snippet: safetyHitSnippet("block", *segment, credentialSource, safetyHit{
+						rule:   first.Rule,
+						start:  first.Start,
+						end:    first.End,
+						reveal: "[凭据已隐藏:" + first.Rule + "]",
+					}),
 				}
 			}
 			if credentialMode == config.ContentSafetyModeMask {
@@ -584,21 +598,30 @@ func applyContentSafetySegments(
 				segment.Text = masked
 				changed = true
 			}
-			if err := recordSafetyMatches(ctx, metadata, recorder, sensitive.BlockTypeCredential, credentialMode, *segment, credentialRuleNames(credentialMatches)); err != nil {
+			if err := recordSafetyMatches(ctx, metadata, recorder, sensitive.BlockTypeCredential, credentialMode, *segment, credentialSource, credentialHits(credentialMatches)); err != nil {
 				return changed, err
 			}
 		}
 
 		if segment.Source == safetySourceUser || segment.Source == safetySourceSystem || segment.Source == safetySourceAssistant ||
 			segment.Source == safetySourceToolResult || segment.Source == safetySourceToolArgument {
+			// 敏感信息检测在凭据掩码之后执行，命中偏移相对当前文本；
+			// 以此为窗口基准，改写前再留存一份。
+			infoSource := segment.Text
 			infoMatches := snapshot.info.FindAll(segment.Text)
 			if len(infoMatches) > 0 {
 				mode := snapshot.settings.SensitiveData.Mode
 				if mode == config.ContentSafetyModeBlock || mode == config.ContentSafetyModeMask && !segment.Mutable {
+					first := infoMatches[0]
 					return changed, &ContentSafetyError{
 						BlockType: sensitive.BlockTypeSensitiveInfo,
-						RuleName:  infoMatches[0].Rule,
-						Snippet:   safetyEventSnippet("block", *segment),
+						RuleName:  first.Rule,
+						Snippet: safetyHitSnippet("block", *segment, infoSource, safetyHit{
+							rule:   first.Rule,
+							start:  first.Start,
+							end:    first.End,
+							reveal: first.Original,
+						}),
 					}
 				}
 				if mode == config.ContentSafetyModeMask {
@@ -609,7 +632,7 @@ func applyContentSafetySegments(
 					segment.Text = masked
 					changed = true
 				}
-				if err := recordSafetyMatches(ctx, metadata, recorder, sensitive.BlockTypeSensitiveInfo, mode, *segment, infoRuleNames(infoMatches)); err != nil {
+				if err := recordSafetyMatches(ctx, metadata, recorder, sensitive.BlockTypeSensitiveInfo, mode, *segment, infoSource, infoHits(infoMatches)); err != nil {
 					return changed, err
 				}
 			}
@@ -676,8 +699,11 @@ func credentialPlaceholderType(rule string) string {
 	}
 }
 
-func recordSafetyMatches(ctx context.Context, metadata HookContext, recorder BlockedLogRecorder, blockType, mode string, segment SafetySegment, rules []string) error {
-	if len(rules) == 0 || mode == "" || mode == config.ContentSafetyModeBlock {
+// recordSafetyMatches 写入 mask/audit 模式的内容安全事件。sourceText 是命中
+// 时的原始片段文本（掩码改写之前），hits 携带每个命中规则的原始字节偏移；
+// 凭据命中只落规则名，绝不把明文写入拦截记录。
+func recordSafetyMatches(ctx context.Context, metadata HookContext, recorder BlockedLogRecorder, blockType, mode string, segment SafetySegment, sourceText string, hits []safetyHit) error {
+	if len(hits) == 0 || mode == "" || mode == config.ContentSafetyModeBlock {
 		return nil
 	}
 	if recorder == nil {
@@ -686,22 +712,22 @@ func recordSafetyMatches(ctx context.Context, metadata HookContext, recorder Blo
 		}
 		return nil
 	}
-	seen := make(map[string]struct{}, len(rules))
-	for _, rule := range rules {
-		if _, exists := seen[rule]; exists {
+	seen := make(map[string]struct{}, len(hits))
+	for _, hit := range hits {
+		if _, exists := seen[hit.rule]; exists {
 			continue
 		}
-		seen[rule] = struct{}{}
-		contentHash := sha256.Sum256([]byte(segment.Text))
-		eventKey := fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%x", blockType, mode, segment.Source, segment.Path, rule, contentHash)
+		seen[hit.rule] = struct{}{}
+		contentHash := sha256.Sum256([]byte(sourceText))
+		eventKey := fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%x", blockType, mode, segment.Source, segment.Path, hit.rule, contentHash)
 		if metadata.eventDeduper.contains(eventKey) {
 			continue
 		}
 		if _, err := recorder.Record(ctx, sensitive.BlockedLog{
 			APIType:        metadata.APIType,
 			BlockType:      blockType,
-			RuleName:       rule,
-			PromptSnippet:  safetyEventSnippet(mode, segment),
+			RuleName:       hit.rule,
+			PromptSnippet:  safetyHitSnippet(mode, segment, sourceText, hit),
 			ChannelName:    metadata.ChannelName,
 			Model:          metadata.Model,
 			RequestID:      metadata.RequestID,
@@ -714,20 +740,33 @@ func recordSafetyMatches(ctx context.Context, metadata HookContext, recorder Blo
 	return nil
 }
 
-func credentialRuleNames(matches []sensitive.CredentialMatch) []string {
-	rules := make([]string, 0, len(matches))
+// credentialHits 把凭据命中转换为 safetyHit；reveal 只落规则名，明文不落库。
+func credentialHits(matches []sensitive.CredentialMatch) []safetyHit {
+	hits := make([]safetyHit, 0, len(matches))
 	for _, match := range matches {
-		rules = append(rules, match.Rule)
+		hits = append(hits, safetyHit{
+			rule:   match.Rule,
+			start:  match.Start,
+			end:    match.End,
+			reveal: "[凭据已隐藏:" + match.Rule + "]",
+		})
 	}
-	return rules
+	return hits
 }
 
-func infoRuleNames(matches []sensitive.InfoMatch) []string {
-	rules := make([]string, 0, len(matches))
+// infoHits 把敏感信息命中转换为 safetyHit；reveal 显示命中原文（管理员
+// 已确认 PII 明文落库，用于拦截记录页审计定位）。
+func infoHits(matches []sensitive.InfoMatch) []safetyHit {
+	hits := make([]safetyHit, 0, len(matches))
 	for _, match := range matches {
-		rules = append(rules, match.Rule)
+		hits = append(hits, safetyHit{
+			rule:   match.Rule,
+			start:  match.Start,
+			end:    match.End,
+			reveal: match.Original,
+		})
 	}
-	return rules
+	return hits
 }
 
 // isWhitelistedSegment 判断片段是否命中白名单：仅 tool_result / tool_argument
@@ -757,7 +796,8 @@ func isWhitelistedSegment(snapshot *contentSafetySnapshot, segment *SafetySegmen
 }
 
 // recordWhitelistAllowed 写入一条 whitelist 审计事件，让拦截记录页能看见"已放行"
-// 的条目。同请求内同工具名 + 同路径去重，避免刷屏。
+// 的条目。同请求内同工具名 + 同路径去重，避免刷屏。片段展示工具输出的段首窗口，
+// 该内容是管理员通过白名单认可的工具输出，直接展示原文。
 func recordWhitelistAllowed(ctx context.Context, metadata HookContext, recorder BlockedLogRecorder, segment SafetySegment) error {
 	if recorder == nil || metadata.eventDeduper == nil {
 		return nil
@@ -774,7 +814,7 @@ func recordWhitelistAllowed(ctx context.Context, metadata HookContext, recorder 
 		APIType:        metadata.APIType,
 		BlockType:      sensitive.BlockTypeWhitelist,
 		RuleName:       toolName,
-		PromptSnippet:  safetyEventSnippet("allow", segment),
+		PromptSnippet:  whitelistSnippet(segment),
 		ChannelName:    metadata.ChannelName,
 		Model:          metadata.Model,
 		RequestID:      metadata.RequestID,
@@ -786,8 +826,70 @@ func recordWhitelistAllowed(ctx context.Context, metadata HookContext, recorder 
 	return nil
 }
 
-func safetyEventSnippet(mode string, segment SafetySegment) string {
-	return fmt.Sprintf("mode=%s source=%s path=%s", mode, segment.Source, segment.Path)
+// safetyHit 表示检测器返回的单个命中。Start/End 是原始片段文本
+// （sourceText，掩码改写之前）的字节偏移，End 不包含在命中范围内。
+// reveal 是写入拦截记录时该命中位置展示的内容：敏感词与个人信息按
+// 管理员决策显示明文，凭据只显示规则名，明文绝不落库。
+type safetyHit struct {
+	rule   string
+	start  int
+	end    int
+	reveal string
+}
+
+// safetySnippetWindowRunes 是命中上下文窗口在命中位置前后各取的字符数。
+const safetySnippetWindowRunes = 60
+
+// safetySnippetWindow 从 sourceText 截取以命中位置为中心的上下文窗口，
+// 窗口内命中区间替换为 hit.reveal。偏移按 rune 对齐，避免截断多字节字符。
+func safetySnippetWindow(sourceText string, hit safetyHit) string {
+	if hit.start < 0 || hit.end > len(sourceText) || hit.start >= hit.end {
+		return hit.reveal
+	}
+	runes := []rune(sourceText)
+	prefixLen := len([]rune(sourceText[:hit.start]))
+	hitLen := len([]rune(sourceText[hit.start:hit.end]))
+
+	windowStart := prefixLen - safetySnippetWindowRunes
+	if windowStart < 0 {
+		windowStart = 0
+	}
+	windowEnd := prefixLen + hitLen + safetySnippetWindowRunes
+	if windowEnd > len(runes) {
+		windowEnd = len(runes)
+	}
+	var builder strings.Builder
+	if windowStart > 0 {
+		builder.WriteString("...")
+	}
+	builder.WriteString(string(runes[windowStart:prefixLen]))
+	builder.WriteString(hit.reveal)
+	builder.WriteString(string(runes[prefixLen+hitLen : windowEnd]))
+	if windowEnd < len(runes) {
+		builder.WriteString("...")
+	}
+	return builder.String()
+}
+
+// safetyHitSnippet 生成拦截记录的命中片段：第一行保留既有元数据
+// （mode/source/path），第二行是命中上下文窗口，便于在拦截记录页
+// 直接看到具体命中的内容。
+func safetyHitSnippet(mode string, segment SafetySegment, sourceText string, hit safetyHit) string {
+	return fmt.Sprintf("mode=%s source=%s path=%s\n%s",
+		mode, segment.Source, segment.Path, safetySnippetWindow(sourceText, hit))
+}
+
+// whitelistSnippetWindowRunes 是白名单放行事件展示工具输出段首的字符数。
+const whitelistSnippetWindowRunes = 120
+
+// whitelistSnippet 生成白名单放行事件片段：元数据行 + 工具输出段首窗口。
+func whitelistSnippet(segment SafetySegment) string {
+	runes := []rune(segment.Text)
+	window := runes
+	if len(runes) > whitelistSnippetWindowRunes {
+		window = runes[:whitelistSnippetWindowRunes]
+	}
+	return fmt.Sprintf("mode=allow source=%s path=%s\n%s", segment.Source, segment.Path, string(window))
 }
 
 func stringValue(value interface{}) string {

@@ -1,5 +1,23 @@
 // 四客户端配置页（OpenCode / ClaudeCode / pi-agent / DSH）共用的配置类型。
 
+// ============== CLI 工具版本检测（客户端配置页顶部横幅） ==============
+
+/** GET /api/tools/:tool/version 的响应 */
+export interface ToolVersionInfo {
+  tool: string
+  displayName: string
+  /** 当前已安装版本，空 = 未安装 */
+  current: string
+  currentError: string
+  /** npm latest 版本，空 = 未知 */
+  latest: string
+  latestError: string
+  /** 当前平台的安装/升级命令 */
+  installCmd: string
+  /** 结果生成时间（Unix 毫秒） */
+  detectedAt: number
+}
+
 export type OpenCodeProtocol = 'chat' | 'responses' | 'messages' | 'gemini' | 'custom'
 
 export interface OpenCodeVariant {
