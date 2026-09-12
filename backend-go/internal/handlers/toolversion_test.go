@@ -205,6 +205,25 @@ func TestGetToolVersionHandler(t *testing.T) {
 }
 
 func TestFetchNpmLatestVersion(t *testing.T) {
+	t.Run("scoped 包名编码为单一路径段", func(t *testing.T) {
+		var gotURL string
+		original := toolVersionHTTPGet
+		toolVersionHTTPGet = func(_ context.Context, url string) ([]byte, int, error) {
+			gotURL = url
+			return []byte(`{"latest":"1.0.0"}`), http.StatusOK, nil
+		}
+		t.Cleanup(func() { toolVersionHTTPGet = original })
+
+		_, latestErr := fetchNpmLatestVersion(context.Background(), "@anthropic-ai/claude-code")
+		if latestErr != "" {
+			t.Fatalf("不应报错: %s", latestErr)
+		}
+		// 字面量斜杠会让 registry 把包名解析成多余路径段而 404，scoped 包必须转义为 %2F。
+		if !strings.Contains(gotURL, "/-/package/@anthropic-ai%2Fclaude-code/dist-tags") {
+			t.Fatalf("scoped 包名未正确编码: %s", gotURL)
+		}
+	})
+
 	t.Run("解析 dist-tags", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !strings.HasSuffix(r.URL.Path, "/dist-tags") {

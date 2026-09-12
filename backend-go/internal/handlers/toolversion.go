@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -252,9 +253,12 @@ func probeLocalToolVersion(ctx context.Context, tool string) (string, string) {
 }
 
 // fetchNpmLatestVersion 查询 npm registry dist-tags 端点的 latest。
-// scoped 包名直接以字面量放入 URL（registry 对 @scope/name 无需转义，已验证）。
+// `/-/package/{name}/dist-tags` 端点要求包名是单一路径段：scoped 包的 `/`
+// 必须转义为 %2F（npm CLI 同样用 encodeURIComponent 编码；字面量斜杠会被
+// registry 解析为多余路径段而 404）。url.PathEscape 恰好只转义 `/`，
+// `@` 保持原样，registry 两种形式都接受。
 func fetchNpmLatestVersion(ctx context.Context, pkg string) (string, string) {
-	url := fmt.Sprintf("https://registry.npmjs.org/-/package/%s/dist-tags", pkg)
+	url := fmt.Sprintf("https://registry.npmjs.org/-/package/%s/dist-tags", url.PathEscape(pkg))
 	body, status, err := toolVersionHTTPGet(ctx, url)
 	if err != nil {
 		return "", fmt.Sprintf("查询 npm registry 失败: %v", err)

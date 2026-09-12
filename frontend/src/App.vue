@@ -77,39 +77,68 @@
       <v-spacer/>
 
       <!-- 版本信息 -->
-      <div
-        v-if="systemStore.versionInfo.currentVersion"
-        class="version-badge"
-        :class="{
-          'version-clickable': systemStore.versionInfo.status === 'update-available' || systemStore.versionInfo.status === 'latest',
-          'version-checking': systemStore.versionInfo.status === 'checking',
-          'version-latest': systemStore.versionInfo.status === 'latest',
-          'version-update': systemStore.versionInfo.status === 'update-available'
-        }"
-        @click="handleVersionClick"
-      >
-        <v-icon
-          v-if="systemStore.versionInfo.status === 'checking'"
-          size="14"
-          class="mr-1"
-        >mdi-clock-outline</v-icon>
-        <v-icon
-          v-else-if="systemStore.versionInfo.status === 'latest'"
-          size="14"
-          class="mr-1"
-          color="success"
-        >mdi-check-circle</v-icon>
-        <v-icon
-          v-else-if="systemStore.versionInfo.status === 'update-available'"
-          size="14"
-          class="mr-1"
-          color="warning"
-        >mdi-alert</v-icon>
-        <span class="version-text">{{ systemStore.versionInfo.currentVersion }}</span>
-        <template v-if="systemStore.versionInfo.status === 'update-available' && systemStore.versionInfo.latestVersion">
-          <span class="version-arrow mx-1">→</span>
-          <span class="version-latest-text">{{ systemStore.versionInfo.latestVersion }}</span>
-        </template>
+      <div class="version-anchor">
+        <div
+          v-if="systemStore.versionInfo.currentVersion"
+          class="version-badge"
+          :class="{
+            'version-clickable': systemStore.versionInfo.status === 'update-available' || systemStore.versionInfo.status === 'latest',
+            'version-checking': systemStore.versionInfo.status === 'checking',
+            'version-latest': systemStore.versionInfo.status === 'latest',
+            'version-update': systemStore.versionInfo.status === 'update-available'
+          }"
+          @click="handleVersionClick"
+        >
+          <v-icon
+            v-if="systemStore.versionInfo.status === 'checking'"
+            size="14"
+            class="mr-1"
+          >mdi-clock-outline</v-icon>
+          <v-icon
+            v-else-if="systemStore.versionInfo.status === 'latest'"
+            size="14"
+            class="mr-1"
+            color="success"
+          >mdi-check-circle</v-icon>
+          <v-icon
+            v-else-if="systemStore.versionInfo.status === 'update-available'"
+            size="14"
+            class="mr-1"
+            color="warning"
+          >mdi-alert</v-icon>
+          <span class="version-text">{{ systemStore.versionInfo.currentVersion }}</span>
+          <template v-if="systemStore.versionInfo.status === 'update-available' && systemStore.versionInfo.latestVersion">
+            <span class="version-arrow mx-1">→</span>
+            <span class="version-latest-text">{{ systemStore.versionInfo.latestVersion }}</span>
+          </template>
+        </div>
+
+        <!-- 新版本提醒气泡：显示 5 秒自动收起，每小时重复提醒（见 watchUpdateBubble） -->
+        <transition name="update-bubble">
+          <div v-if="updateBubbleVisible && systemStore.versionInfo.latestVersion" class="update-bubble" role="status">
+            <button class="update-bubble__close" aria-label="关闭提醒" @click="hideUpdateBubble">
+              <v-icon size="14">mdi-close</v-icon>
+            </button>
+            <div class="update-bubble__title">
+              <v-icon size="15" color="warning">mdi-arrow-up-bold-circle-outline</v-icon>
+              发现新版本
+            </div>
+            <div class="update-bubble__versions">
+              <span>{{ systemStore.versionInfo.currentVersion }}</span>
+              <v-icon size="13" class="update-bubble__arrow">mdi-arrow-right</v-icon>
+              <span class="update-bubble__latest">{{ systemStore.versionInfo.latestVersion }}</span>
+            </div>
+            <v-btn
+              size="x-small"
+              variant="flat"
+              color="primary"
+              class="update-bubble__btn"
+              @click="handleVersionClick"
+            >
+              查看更新
+            </v-btn>
+          </div>
+        </transition>
       </div>
 
       <!-- 设置 -->
@@ -377,7 +406,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, onBeforeUnmount, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useTheme } from 'vuetify'
 import { api, fetchHealth, ApiError, channelApiByType, type Channel } from './services/api'
@@ -875,6 +904,52 @@ const handleVersionClick = () => {
   }
 }
 
+// ----- 新版本提醒气泡 -----
+// 交互约定（用户确认）：检测到有更新时气泡显示 5 秒自动收起；若用户始终未升级，
+// 每隔 1 小时（版本检查缓存的周期）再次弹出。手动点 × 或"查看更新"只结束当次，
+// 不影响下一小时的重复提醒——提醒的止点始终是用户完成升级（或上游版本变化）。
+const UPDATE_BUBBLE_VISIBLE_MS = 5000
+const UPDATE_BUBBLE_REMIND_INTERVAL_MS = 60 * 60 * 1000
+
+const updateBubbleVisible = ref(false)
+let updateBubbleHideTimer: ReturnType<typeof setTimeout> | null = null
+// 上次自动弹出的时间戳，用于把重复提醒限制为每小时一次
+let updateBubbleLastShownAt = 0
+
+const hideUpdateBubble = () => {
+  updateBubbleVisible.value = false
+  if (updateBubbleHideTimer !== null) {
+    clearTimeout(updateBubbleHideTimer)
+    updateBubbleHideTimer = null
+  }
+}
+
+// 状态变化或周期检查后触发：满足"有更新 + 距上次弹出 ≥1 小时"才弹。
+const maybeShowUpdateBubble = () => {
+  if (systemStore.versionInfo.status !== 'update-available') return
+  if (Date.now() - updateBubbleLastShownAt < UPDATE_BUBBLE_REMIND_INTERVAL_MS) return
+  updateBubbleLastShownAt = Date.now()
+  updateBubbleVisible.value = true
+  if (updateBubbleHideTimer !== null) clearTimeout(updateBubbleHideTimer)
+  updateBubbleHideTimer = setTimeout(hideUpdateBubble, UPDATE_BUBBLE_VISIBLE_MS)
+}
+
+// 版本检查结果落地（包括缓存命中）即尝试弹一次；另起 1 小时定时器覆盖
+// "页面长开、缓存 30 分钟后重新检查仍提示更新"的重复提醒。
+watch(() => systemStore.versionInfo.status, (status) => {
+  if (status === 'update-available') maybeShowUpdateBubble()
+})
+
+let updateBubbleRemindTimer: ReturnType<typeof setInterval> | null = null
+onMounted(() => {
+  maybeShowUpdateBubble()
+  updateBubbleRemindTimer = setInterval(maybeShowUpdateBubble, UPDATE_BUBBLE_REMIND_INTERVAL_MS)
+})
+onBeforeUnmount(() => {
+  if (updateBubbleRemindTimer !== null) clearInterval(updateBubbleRemindTimer)
+  if (updateBubbleHideTimer !== null) clearTimeout(updateBubbleHideTimer)
+})
+
 // 初始化
 onMounted(async () => {
   // 初始化玻璃拟态主题
@@ -1138,6 +1213,70 @@ a.api-type-text { display: inline-block; }
 .version-text { color: rgb(var(--v-theme-on-surface)); }
 .version-arrow { color: rgb(var(--v-theme-warning)); font-weight: 700; }
 .version-latest-text { color: rgb(var(--v-theme-warning)); font-weight: 700; }
+
+/* ----- 新版本提醒气泡 ----- */
+.version-anchor { position: relative; margin-right: 6px; }
+.version-anchor .version-badge { margin-right: 0; }
+
+.update-bubble {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 1200;
+  width: 220px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: rgb(var(--v-theme-surface));
+  border: 1px solid rgba(var(--v-theme-warning), 0.55);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+/* 指向版本徽章的小箭头（边框色与气泡边框衔接） */
+.update-bubble::before {
+  content: '';
+  position: absolute;
+  top: -5px;
+  right: 16px;
+  width: 9px;
+  height: 9px;
+  background: rgb(var(--v-theme-surface));
+  border-left: 1px solid rgba(var(--v-theme-warning), 0.55);
+  border-top: 1px solid rgba(var(--v-theme-warning), 0.55);
+  transform: rotate(45deg);
+}
+.update-bubble__close {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  padding: 4px;
+  border-radius: 4px;
+  color: rgb(var(--v-theme-on-surface), 0.6);
+}
+.update-bubble__close:hover { background: rgba(var(--v-theme-on-surface), 0.08); }
+.update-bubble__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.update-bubble__versions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: 'Fira Code', 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: rgb(var(--v-theme-on-surface));
+  margin-bottom: 10px;
+}
+.update-bubble__latest { color: rgb(var(--v-theme-warning)); font-weight: 700; }
+.update-bubble__btn { text-transform: none; }
+
+/* 气泡浮现/收起过渡 */
+.update-bubble-enter-active { transition: opacity 0.25s ease, transform 0.25s ease; }
+.update-bubble-leave-active { transition: opacity 0.2s ease, transform 0.2s ease; }
+.update-bubble-enter-from,
+.update-bubble-leave-to { opacity: 0; transform: translateY(-6px); }
 
 /* 暗色模式版本徽章 */
 .v-theme--dark .version-badge {
