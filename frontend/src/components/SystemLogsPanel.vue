@@ -85,6 +85,14 @@
               </div>
             </div>
             <div class="detail-chips">
+              <v-btn
+                v-if="parentRequestId"
+                size="small"
+                variant="tonal"
+                @click="emit('select', parentRequestId)"
+              >
+                查看原请求
+              </v-btn>
               <v-chip size="small" :color="entryColor(detail.summary.apiType)" variant="tonal">
                 {{ entryLabel(detail.summary.apiType) }}
               </v-chip>
@@ -241,9 +249,9 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import JsonBodyPane from '@/components/JsonBodyPane.vue'
 import SessionInspector from '@/components/SessionInspector.vue'
-import { api, type ConversationKind, type SystemLogDetail, type SystemLogSummary, type TrafficLog } from '@/services/api'
+import { api, type LogAPIType, type SystemLogDetail, type SystemLogSummary, type TrafficLog } from '@/services/api'
 
-type TypeFilter = ConversationKind | ''
+type TypeFilter = LogAPIType | ''
 
 interface UpstreamAttempt {
   key: string
@@ -272,23 +280,29 @@ const typeItems: Array<{ title: string; value: TypeFilter }> = [
   { title: 'Responses', value: 'responses' },
   { title: 'Gemini', value: 'gemini' },
   { title: 'Chat', value: 'chat' },
-  { title: 'Images', value: 'images' }
+  { title: 'Images', value: 'images' },
+  { title: '命令 AI 复核', value: 'cmd_gate' },
+  { title: '内部 AI 调用', value: 'llmgate' }
 ]
 
-const typeLabelMap: Record<ConversationKind, string> = {
+const typeLabelMap: Record<LogAPIType, string> = {
   messages: 'Messages',
   responses: 'Responses',
   gemini: 'Gemini',
   chat: 'Chat',
-  images: 'Images'
+  images: 'Images',
+  cmd_gate: '命令 AI 复核',
+  llmgate: '内部 AI 调用'
 }
 
-const typeColorMap: Record<ConversationKind, string> = {
+const typeColorMap: Record<LogAPIType, string> = {
   messages: 'primary',
   responses: 'secondary',
   gemini: 'success',
   chat: 'info',
-  images: 'warning'
+  images: 'warning',
+  cmd_gate: 'warning',
+  llmgate: 'secondary'
 }
 
 const typeFilter = ref<TypeFilter>('')
@@ -308,6 +322,7 @@ const wrapEnabled = reactive<Record<string, boolean>>({})
 const selectedRequestId = computed(() => props.requestId || '')
 
 const trafficLogs = computed(() => detail.value?.trafficLogs || [])
+const parentRequestId = computed(() => detail.value?.requestLogs?.find(entry => entry.parentRequestId)?.parentRequestId || '')
 
 const attempts = computed((): UpstreamAttempt[] => {
   const requests = trafficLogs.value.filter(entry => entry.phase === 'upstream_request')
@@ -350,7 +365,7 @@ const clientLog = computed(() => trafficLogs.value.find(entry => entry.phase ===
 const visibleSections = computed((): PhaseSection[] => [
   {
     key: 'client',
-    title: '打进代理的原请求',
+    title: detail.value?.summary.apiType === 'cmd_gate' ? '提交给 AI 的复核内容' : '打进代理的原请求',
     log: trafficLogs.value.find(entry => entry.phase === 'client_request')
   },
   {
@@ -365,14 +380,8 @@ const visibleSections = computed((): PhaseSection[] => [
   }
 ])
 
-const normalizedType = (value?: string): ConversationKind => {
-  const lower = (value || '').toLowerCase()
-  if (lower === 'responses' || lower === 'gemini' || lower === 'chat' || lower === 'images') return lower
-  return 'messages'
-}
-
-const entryLabel = (value?: string) => typeLabelMap[normalizedType(value)]
-const entryColor = (value?: string) => typeColorMap[normalizedType(value)]
+const entryLabel = (value?: string) => typeLabelMap[(value || '').toLowerCase() as LogAPIType] || value || '未知'
+const entryColor = (value?: string) => typeColorMap[(value || '').toLowerCase() as LogAPIType] || 'secondary'
 
 const formatTime = (value?: string) => {
   if (!value) return '--'

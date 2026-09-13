@@ -8,6 +8,7 @@ package streams
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -155,6 +156,10 @@ func HandleStreamResponse(
 	requestModel string,
 ) (*types.Usage, error) {
 	defer resp.Body.Close()
+	stopVeto := hooks.BindAttachedStreamVeto(c, resp.Body)
+	defer stopVeto()
+	streamCtx, cancelStream := context.WithCancel(c.Request.Context())
+	defer cancelStream()
 
 	// 校验上游 Content-Type：如果不是 event-stream，说明上游返回了非流式错误内容。
 	// 此时还未写响应头，返回 error 可触发 failover。
@@ -183,7 +188,7 @@ func HandleStreamResponse(
 	// 使用带 ctx 的流式方法：客户端断连时 ctx 取消，
 	// provider goroutine 在向 eventChan 发送事件时 select ctx.Done() 立即退出，
 	// 杜绝"缓冲写满后永久阻塞"的 goroutine/上游连接泄漏。
-	eventChan, errChan, err := provider.HandleStreamResponseCtx(c.Request.Context(), resp.Body)
+	eventChan, errChan, err := provider.HandleStreamResponseCtx(streamCtx, resp.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -198,8 +203,13 @@ func HandleStreamResponse(
 		select {
 		case <-c.Request.Context().Done():
 			return nil, c.Request.Context().Err()
+		case <-hooks.AttachedStreamVetoDone(c):
+			return nil, hooks.HandleAttachedStreamVeto(c)
 
 		case err, ok := <-errChan:
+			if vetoErr := hooks.AttachedStreamVetoError(c); vetoErr != nil {
+				return nil, vetoErr
+			}
 			if !ok {
 				errChan = nil
 				continue
@@ -210,6 +220,9 @@ func HandleStreamResponse(
 			}
 
 		case event, ok := <-eventChan:
+			if err := hooks.AttachedStreamVetoError(c); err != nil {
+				return nil, err
+			}
 			if !ok {
 				return nil, fmt.Errorf("upstream stream closed without sending any events")
 			}
@@ -244,7 +257,7 @@ func HandleStreamResponse(
 	if err := ProcessStreamEvent(c, w, flusher, firstEvent, ctx, envCfg, requestBody); err != nil {
 		// 内容安全错误由上层统一按入口协议编码，避免先写通用
 		// stream_error、随后再写 content_safety_error 的重复事件。
-		if !ctx.ClientGone && hooks.ContentSafetyErrorFrom(err) == nil {
+		if !ctx.ClientGone && hooks.ContentSafetyErrorFrom(err) == nil && hooks.ContentSafetyHookErrorFrom(err) == nil {
 			w.Write([]byte(BuildStreamErrorEvent(err)))
 			flusher.Flush()
 		}
@@ -283,11 +296,15 @@ func ProcessStreamEvents(
 
 		case <-hooks.AttachedStreamVetoDone(c):
 			// 危险命令 AI 闸门的事后否决：用户在否决窗口内加黑名单，
-			// 终止当前流（错误 SSE + 终止序列由 HandleAttachedStreamVeto 写出）。
+			// 终止当前流，错误 SSE 和终止序列由协议上层统一写出。
 			logPartialResponse(c, ctx, envCfg)
 			return nil, hooks.HandleAttachedStreamVeto(c)
 
 		case event, ok := <-eventChan:
+			if err := hooks.AttachedStreamVetoError(c); err != nil {
+				logPartialResponse(c, ctx, envCfg)
+				return nil, err
+			}
 			if !ok {
 				remaining, err := hooks.DrainAttachedStreamRestoration(c)
 				if err != nil {
@@ -308,7 +325,7 @@ func ProcessStreamEvents(
 			if err := ProcessStreamEvent(c, w, flusher, event, ctx, envCfg, requestBody); err != nil {
 				// 内容安全错误由上层统一按入口协议编码，避免先写通用
 				// stream_error、随后再写 content_safety_error 的重复事件。
-				if !ctx.ClientGone && hooks.ContentSafetyErrorFrom(err) == nil {
+				if !ctx.ClientGone && hooks.ContentSafetyErrorFrom(err) == nil && hooks.ContentSafetyHookErrorFrom(err) == nil {
 					w.Write([]byte(BuildStreamErrorEvent(err)))
 					flusher.Flush()
 				}
@@ -316,6 +333,10 @@ func ProcessStreamEvents(
 			}
 
 		case err, ok := <-errChan:
+			if vetoErr := hooks.AttachedStreamVetoError(c); vetoErr != nil {
+				logPartialResponse(c, ctx, envCfg)
+				return nil, vetoErr
+			}
 			if !ok {
 				errChan = nil
 				continue
@@ -323,7 +344,7 @@ func ProcessStreamEvents(
 			if err != nil {
 				log.Printf("[Messages-Stream] 错误: 流式传输错误: %v", err)
 				logPartialResponse(c, ctx, envCfg)
-				if !ctx.ClientGone && hooks.ContentSafetyErrorFrom(err) == nil {
+				if !ctx.ClientGone && hooks.ContentSafetyErrorFrom(err) == nil && hooks.ContentSafetyHookErrorFrom(err) == nil {
 					w.Write([]byte(BuildStreamErrorEvent(err)))
 					flusher.Flush()
 				}
@@ -344,6 +365,9 @@ func ProcessStreamEvent(
 	envCfg *config.EnvConfig,
 	requestBody []byte,
 ) error {
+	if err := hooks.AttachedStreamVetoError(c); err != nil {
+		return err
+	}
 	// SSE 事件调试日志
 	ctx.EventCount++
 	if envCfg.SSEDebugLevel == "full" || envCfg.SSEDebugLevel == "summary" {
@@ -372,7 +396,13 @@ func ProcessStreamEvent(
 			return err
 		}
 		for _, toolArgument := range toolArguments {
-			if err := hooks.FeedAttachedStreamToolArgumentsForKey(c, toolArgument.key, toolArgument.fragment); err != nil {
+			var err error
+			if toolArgument.snapshot {
+				err = hooks.FeedAttachedStreamToolArgumentsSnapshot(c, toolArgument.key, toolArgument.fragment, toolArgument.name)
+			} else {
+				err = hooks.FeedAttachedStreamToolArgumentsForKey(c, toolArgument.key, toolArgument.fragment, toolArgument.name)
+			}
+			if err != nil {
 				return err
 			}
 		}
@@ -537,26 +567,38 @@ func ProcessStreamEvent(
 type streamToolArgumentFragment struct {
 	key      string
 	fragment string
+	name     string
+	snapshot bool
 }
 
 func streamSafetyFragments(data map[string]interface{}) (string, []streamToolArgumentFragment) {
 	if data == nil {
 		return "", nil
 	}
+	key := "messages.content_block.default"
+	if index, exists := data["index"]; exists {
+		key = "messages.content_block." + strings.TrimSpace(fmt.Sprint(index))
+	}
 	var text string
+	var toolArguments []streamToolArgumentFragment
 	if block, ok := data["content_block"].(map[string]interface{}); ok {
 		text, _ = block["text"].(string)
+		if block["type"] == "tool_use" {
+			name, _ := block["name"].(string)
+			fragment := streamToolArgumentFragment{key: key, name: name}
+			if input, ok := block["input"].(map[string]interface{}); ok && len(input) > 0 {
+				body, _ := json.Marshal(input) // 来自 JSON 解码器，仅包含 JSON 值。
+				fragment.fragment = string(body)
+				fragment.snapshot = true
+			}
+			toolArguments = append(toolArguments, fragment)
+		}
 	}
-	var toolArguments []streamToolArgumentFragment
 	if delta, ok := data["delta"].(map[string]interface{}); ok {
 		if deltaText, _ := delta["text"].(string); deltaText != "" {
 			text += deltaText
 		}
 		if fragment, _ := delta["partial_json"].(string); fragment != "" {
-			key := "messages.content_block.default"
-			if index, exists := data["index"]; exists {
-				key = "messages.content_block." + strings.TrimSpace(fmt.Sprint(index))
-			}
 			toolArguments = append(toolArguments, streamToolArgumentFragment{key: key, fragment: fragment})
 		}
 	}

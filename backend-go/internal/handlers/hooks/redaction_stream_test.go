@@ -14,7 +14,7 @@ import (
 func TestRestoreAttachedSSEEventAcrossChunksAndFlushesIncompletePrefix(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	attached := &attachedHookPipeline{pipeline: NewPipeline(), vault: sensitive.NewVault()}
+	attached := &attachedHookPipeline{pipeline: NewPipeline(), vault: sensitive.NewVault(), stream: sensitive.NewStreamCmdScanner(nil)}
 	c.Set(contentSafetyPipelineKey, attached)
 	original := "18012345523"
 	placeholder, err := attached.vault.Mask(original, []sensitive.RedactionMatch{{
@@ -80,7 +80,7 @@ func TestRestoreAttachedSSEEventAcrossChunksAndFlushesIncompletePrefix(t *testin
 func TestRestoreAttachedSSEEventIsolatesParallelToolCallStreams(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	attached := &attachedHookPipeline{pipeline: NewPipeline(), vault: sensitive.NewVault()}
+	attached := &attachedHookPipeline{pipeline: NewPipeline(), vault: sensitive.NewVault(), stream: sensitive.NewStreamCmdScanner(nil)}
 	c.Set(contentSafetyPipelineKey, attached)
 
 	firstOriginal := "first-secret-value"
@@ -118,7 +118,7 @@ func TestRestoreAttachedSSEEventIsolatesParallelToolCallStreams(t *testing.T) {
 func TestResetAttachedStreamRestorationKeepsVaultAndDropsAttemptFragments(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	attached := &attachedHookPipeline{pipeline: NewPipeline(), vault: sensitive.NewVault()}
+	attached := &attachedHookPipeline{pipeline: NewPipeline(), vault: sensitive.NewVault(), stream: sensitive.NewStreamCmdScanner(nil)}
 	c.Set(contentSafetyPipelineKey, attached)
 	original := "retry-secret-value"
 	placeholder := maskTestValue(t, attached.vault, "SECRET", original)
@@ -147,7 +147,7 @@ func TestResetAttachedStreamRestorationKeepsVaultAndDropsAttemptFragments(t *tes
 func TestRestoreAttachedResponseBodyRestoresJSONAndPlainErrorBodies(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	attached := &attachedHookPipeline{pipeline: NewPipeline(), vault: sensitive.NewVault()}
+	attached := &attachedHookPipeline{pipeline: NewPipeline(), vault: sensitive.NewVault(), stream: sensitive.NewStreamCmdScanner(nil)}
 	c.Set(contentSafetyPipelineKey, attached)
 	original := "upstream-secret-value"
 	placeholder := maskTestValue(t, attached.vault, "SECRET", original)
@@ -253,4 +253,62 @@ func sseDeltaText(t *testing.T, event string) string {
 		return text
 	}
 	return ""
+}
+
+func TestStreamTerminalEventUsesProtocolFields(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		event    string
+		terminal bool
+	}{
+		{name: "正文中的结束字样", event: `data: {"type":"content_block_delta","delta":{"text":"示例 [DONE]"}}`},
+		{name: "结构中的普通字符串", event: `data: {"text":"message_stop","finish_reason":null}`},
+		{name: "Messages 结束", event: "data: {\"type\":\t\"message_stop\"}\n\n", terminal: true},
+		{name: "Responses 结束", event: "data:{\"type\":\t\"response.completed\"}\n\n", terminal: true},
+		{name: "Chat 单候选结束不是整流结束", event: `data: {"choices":[{"finish_reason":"tool_calls"}]}`},
+		{name: "Gemini 单候选结束不是整流结束", event: `data: {"candidates":[{"finishReason":"STOP"}]}`},
+		{name: "精确结束标记", event: "data:[DONE]\n\n", terminal: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := streamSafetyBoundaryForEvent(testCase.event).terminal; got != testCase.terminal {
+				t.Fatalf("终止判断=%v，期望=%v", got, testCase.terminal)
+			}
+		})
+	}
+}
+
+func TestRestorationKeepsLogicalChoiceWhenArrayPositionChanges(t *testing.T) {
+	vault := sensitive.NewVault()
+	placeholder := maskTestValue(t, vault, "TEST", "original-value")
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	attached := &attachedHookPipeline{vault: vault, stream: sensitive.NewStreamCmdScanner(nil)}
+	c.Set(contentSafetyPipelineKey, attached)
+	defer ClearAttachedSensitiveData(c)
+	split := len(placeholder) / 2
+	first, err := json.Marshal(map[string]any{
+		"choices": []any{
+			map[string]any{"index": 0, "delta": map[string]any{"content": "other"}},
+			map[string]any{"index": 1, "delta": map[string]any{"content": placeholder[:split]}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RestoreAttachedSSEEvent(c, "data: "+string(first)+"\n\n"); err != nil {
+		t.Fatal(err)
+	}
+	// index=1 在此块位于数组位置 0，必须继续前一块的还原状态。
+	second, err := json.Marshal(map[string]any{
+		"choices": []any{map[string]any{"index": 1, "delta": map[string]any{"content": placeholder[split:] + " "}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := RestoreAttachedSSEEvent(c, "data: "+string(second)+"\n\n")
+	if err != nil || !strings.Contains(output, "original-value") {
+		t.Fatalf("候选位置变化后应完整还原: %s, %v", output, err)
+	}
+	if len(attached.restorePending) != 0 {
+		t.Fatal("完整还原后不应遗留旧数组位置的暂存状态")
+	}
 }

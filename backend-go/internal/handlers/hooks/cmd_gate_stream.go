@@ -3,7 +3,7 @@ package hooks
 import (
 	"context"
 	"fmt"
-	"sync"
+	"io"
 
 	"github.com/BenedictKing/api-proxy/internal/sensitive"
 	"github.com/gin-gonic/gin"
@@ -13,12 +13,13 @@ import (
 // Trigger 一次，各协议的流式转发循环通过 Done() 感知并终止当前流。
 // 幂等：重复 Trigger 无副作用；未 arm 的 guard 永不触发（nil channel 语义）。
 type StreamVetoGuard struct {
-	ch   chan struct{}
-	once sync.Once
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 func newStreamVetoGuard() *StreamVetoGuard {
-	return &StreamVetoGuard{ch: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &StreamVetoGuard{ctx: ctx, cancel: cancel}
 }
 
 // Trigger 触发否决信号（幂等）。
@@ -26,7 +27,7 @@ func (g *StreamVetoGuard) Trigger() {
 	if g == nil {
 		return
 	}
-	g.once.Do(func() { close(g.ch) })
+	g.cancel()
 }
 
 // Done 返回否决信号通道；未 arm 时返回 nil（select 分支永不命中，安全）。
@@ -34,7 +35,26 @@ func (g *StreamVetoGuard) Done() <-chan struct{} {
 	if g == nil {
 		return nil
 	}
-	return g.ch
+	return g.ctx.Done()
+}
+
+// BindAttachedStreamVeto 关闭原上游响应体，打断正在阻塞的 Read；回调不持有 Gin 上下文。
+func BindAttachedStreamVeto(c requestContextGetter, reader io.Closer) func() {
+	attached, err := attachedPipelineFromContext(c)
+	if err != nil || attached == nil || attached.vetoGuard == nil || reader == nil {
+		return func() {}
+	}
+	stop := context.AfterFunc(attached.vetoGuard.ctx, func() { _ = reader.Close() })
+	return func() { stop() }
+}
+
+func AttachedStreamVetoError(c requestContextGetter) error {
+	select {
+	case <-AttachedStreamVetoDone(c):
+		return NewStreamVetoError()
+	default:
+		return nil
+	}
 }
 
 // TriggerAttachedStreamVeto 触发当前请求的事后否决（CmdGate 的 onVeto 回调使用）。
@@ -57,7 +77,7 @@ func AttachedStreamVetoDone(c requestContextGetter) <-chan struct{} {
 }
 
 // NewStreamVetoError 构造"事后否决"的内容安全错误。
-// 各协议流式循环收到否决信号后用 HandleAttachedStreamVeto 写出并返回它。
+// 各协议流式循环返回它，由协议上层统一写出错误响应。
 func NewStreamVetoError() *ContentSafetyError {
 	return &ContentSafetyError{
 		BlockType: sensitive.BlockTypeDangerousCmdAI,
@@ -66,14 +86,9 @@ func NewStreamVetoError() *ContentSafetyError {
 	}
 }
 
-// HandleAttachedStreamVeto 处理流式转发中的事后否决：写出当前协议的
-// 内容安全错误 SSE 事件与流终止序列，返回内容安全错误供调用方结束流循环。
-func HandleAttachedStreamVeto(c *gin.Context) error {
-	vetoErr := NewStreamVetoError()
-	if writeErr := WriteAttachedStreamError(c, vetoErr); writeErr != nil {
-		return fmt.Errorf("写出否决流错误失败: %w", writeErr)
-	}
-	return vetoErr
+// HandleAttachedStreamVeto 返回内容安全错误，由协议上层唯一一次写出错误和终止序列。
+func HandleAttachedStreamVeto(_ *gin.Context) error {
+	return NewStreamVetoError()
 }
 
 // gateReviewDangerousCommand 是危险命令命中的统一审查入口。
@@ -82,22 +97,47 @@ func HandleAttachedStreamVeto(c *gin.Context) error {
 // 返回 nil 表示放行；返回 ContentSafetyError 表示拦截。
 // 该函数会阻塞（AI 调用 + 用户决定窗口），调用点位于流式转发循环内时
 // 即达成"暂停 SSE 转发、对客户端表现为响应变慢"的挂起效果。
-// 调用方持有 attached.streamMu：同一命令在同一请求内放行一次后不再送审
-// （StreamCmdScanner 命中后每个后续 chunk 都重复返回同一命中）。
+// 调用方持有 attached.streamMu：完整脚本命中多条规则时只审核一次，
+// 同一请求内复用完全相同的命令身份，事后否决仍优先终止整个请求。
 func gateReviewDangerousCommand(ctx context.Context, c requestContextGetter, attached *attachedHookPipeline, metadata HookContext, match sensitive.CommandMatch) *ContentSafetyError {
 	if attached == nil || attached.pipeline == nil || attached.pipeline.cmdGate == nil || !attached.pipeline.cmdGate.Enabled() {
 		return dangerousCommandError(match)
 	}
-	if _, allowed := attached.allowedCommands[match.Command]; allowed {
+	if err := AttachedStreamVetoError(c); err != nil {
+		return NewStreamVetoError()
+	}
+	commandHash := sensitive.CommandIdentity(match)
+	if _, allowed := attached.allowedCommands[commandHash]; allowed {
 		return nil
 	}
-	onVeto := func() { TriggerAttachedStreamVeto(c) }
+	if len(attached.allowedCommands) >= 256 {
+		return &ContentSafetyError{
+			BlockType: sensitive.BlockTypeDangerousCmdAI,
+			RuleName:  "command_count_limit",
+			Snippet:   "单次响应的危险命令超过 256 条检查上限",
+		}
+	}
+	// 只捕获本请求独立 guard；请求结束后 Gin Context 会被池复用。
+	guard := attached.vetoGuard
+	if attached.lifecycleCtx != nil {
+		ctx = attached.lifecycleCtx
+	}
+	cancel := attached.lifecycleCancel
+	onVeto := func() {
+		guard.Trigger()
+		if cancel != nil {
+			cancel()
+		}
+	}
 	verdict := attached.pipeline.cmdGate.Review(ctx, metadata, match, onVeto)
+	if err := AttachedStreamVetoError(c); err != nil {
+		return NewStreamVetoError()
+	}
 	if verdict.Allow {
 		if attached.allowedCommands == nil {
 			attached.allowedCommands = make(map[string]struct{})
 		}
-		attached.allowedCommands[match.Command] = struct{}{}
+		attached.allowedCommands[commandHash] = struct{}{}
 		return nil
 	}
 	blockType := verdict.BlockType
@@ -105,8 +145,12 @@ func gateReviewDangerousCommand(ctx context.Context, c requestContextGetter, att
 		blockType = sensitive.BlockTypeDangerousCmdAI
 	}
 	return &ContentSafetyError{
-		BlockType: blockType,
-		RuleName:  match.Rule,
-		Snippet:   fmt.Sprintf("mode=ai_gate source=assistant context=%s\n%s\n裁决: %s", match.Context, match.Command, verdict.Reason),
+		BlockType:   blockType,
+		RuleName:    match.Rule,
+		Snippet:     fmt.Sprintf("mode=ai_gate source=assistant context=%s\n%s\n裁决: %s", match.Context, match.Command, verdict.Reason),
+		Command:     match.Command,
+		CommandHash: commandHash,
+		AIReview:    verdict.AIReview,
+		audited:     verdict.audited,
 	}
 }

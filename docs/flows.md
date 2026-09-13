@@ -85,7 +85,11 @@ images 的两点差异：① 请求体有 JSON 与 multipart/form-data 两种形
 ```
 命中（流式 Feed / Flush / 非流式 post-response，统一入口 gateReviewDangerousCommand）
 → 1. 会话级白/黑名单（gate_decisions 表，conversationID 维度最新决定，后决定覆盖先决定）→ 直接放行/拦截
-→ 2. AI 二次判断（llmgate 调用，见下）：
+→ 2. 会话级 AI 审查去重（CmdGate.aiReviews，进程内 conversationID → 命令骨架 normalizeGateCommandKey → 最近一次 AI 结论；骨架忽略参数/路径/文件差异，保留命令名、已知子命令与管道结构）：
+     该骨架之前判 allow → 直接放行（不再调大模型）
+     该骨架之前判 block → 跳过模型调用，直接进等待窗口
+     骨架不同的命令仍各自送审
+→ 3. AI 二次判断（llmgate 调用，见下；结论写入 aiReviews 去重缓存）：
      失败（无渠道/超时/解析失败）→ 一律拦截（保守默认）
      verdict=block → 注册 pending 挂起请求，等待窗口（waitSeconds，默认 10s）内用户可放行，超时/客户端断连即拦截
      verdict=allow → 立即放行 + 注册同长度的事后否决窗口（用户加黑名单 → 终止当前流 + 写黑名单；超时只影响后续）
@@ -93,14 +97,15 @@ images 的两点差异：① 请求体有 JSON 与 multipart/form-data 两种形
 
 - **挂起语义**：非流式响应在写回前整段就绪，Review 同步阻塞即挂起；流式响应命中点在 `FeedAttachedStreamText` / `FeedAttachedStreamToolArgumentsForKey` 内（SSE 转发循环中），阻塞即暂停转发（客户端 idle 超时默认 300s，远大于等待窗口）。同一命令在同一请求内放行一次后不再送审（attached.allowedCommands，防止流式扫描器重复命中）。
 - **事后否决**：放行后 `StreamVetoGuard`（attached 上，每请求一个）经 `AttachedStreamVetoDone` 暴露给四协议流式转发循环（messages 走 select 分支，responses/chat/gemini 同步循环顶部非阻塞检查），触发即走 `HandleAttachedStreamVeto` 写错误 SSE + 终止序列。非流式响应放行后不可撤回，黑名单只对后续生效。
-- **管理 API**：`GET /api/security/gate/pending`（前端全局轮询）、`POST /api/security/gate/pending/:id/decision`、`GET/DELETE /api/security/gate/decisions`。前端通知组件 `GatePendingNotification`（声音 Web Audio 合成 + 气泡 + 可选浏览器系统通知，设置页开关，localStorage 偏好）。
-- **审计**：`dangerous_cmd_ai`（AI/名单/否决路径的拦截）、`dangerous_cmd_allow`（放行留痕），与既有 `dangerous_cmd`（闸门关闭时的纯规则拦截）区分。
+- **管理 API**：`GET /api/security/gate/pending`（前端全局轮询）、`POST /api/security/gate/pending/:id/decision`、`GET/POST/DELETE /api/security/gate/decisions`（POST 为拦截记录页「移入白/黑名单」入口；DELETE 解除名单同时失效该会话的 AI 审查去重缓存）。前端通知组件 `GatePendingNotification`（声音 Web Audio 合成 + 气泡 + 可选浏览器系统通知，设置页开关，localStorage 偏好）。
+- **审计**：`dangerous_cmd_ai`（AI/名单/否决路径的拦截）、`dangerous_cmd_allow`（放行留痕），与既有 `dangerous_cmd`（闸门关闭时的纯规则拦截）区分。危险命令类审计事件带结构化 `command` 字段；拦截记录页支持「危险命令相关」类别筛选（category=dangerous_cmd 命中三种危险命令事件）与「仅活跃会话」筛选（activeOnly=true，会话正在发送或近 30 分钟有请求）。
+- **流式性能**：工具参数检测按增量触发（累计新增 ≥1KB 或片段含 `}`/`]` 才全量扫描，流结束 Flush 补扫兜底），凭据检测器与处置模式在扫描器初始化时固化，消除逐 chunk 的配置深拷贝与 O(n²) 全窗口重扫；pre_request 钩子按请求体指纹缓存结果，同一请求的多次执行（vision 层前后 / 故障转移重试）只扫一次。
 
 ## F4b 内部 LLM 调用与 AI 配置助手
 
-`internal/llmgate` 提供"选一个大模型渠道并发一段提示词"的通用能力：`PickChannel`（显式 channelId 只认该渠道、不回退；为空时按 messages → responses → chat → gemini 顺序复用主链路编排选渠——`scheduler.SelectChannel` 的分组匹配 → 优先级 → 熔断/健康过滤 → 兜底分组与组内降级全部生效，prompt.Model 作为分组匹配词参与路由，空模型走各协议兜底分组；选渠产生的 in-flight 预留由 `Caller.Call` 在调用结束后释放、`Caller.PreviewChannel` 仅供探测并立即释放）+ `Caller.Call`（非流式单轮，provider 转换链复用 visionlayer 同款约定——providers 统一以 Claude Messages 请求体为输入；URL×Key 循环、两层重试判定、metrics 记账与 vision 同形）。消费方：危险命令 AI 闸门（F4，闸门 prompt 不带模型 → 走兜底分组）、AI 配置助手。
+`internal/llmgate` 提供"选一个大模型渠道并发一段提示词"的通用能力：`PickChannel`（显式 channelId 只认该渠道、不回退，解析不出模型的渠道显式报错；model 非空时按 messages → responses → chat → gemini 顺序复用主链路编排选渠——`scheduler.SelectChannel` 的分组匹配 → 优先级 → 熔断/健康过滤 → 兜底分组与组内降级全部生效，prompt.Model 作为分组匹配词参与路由，失败渠道可经 `failedChannels` 参数排除以支持跨渠道重试；**model 为空（自动模式）时不走分组路由**——主链路空模型语义只进兜底分组，挂在命名分组的渠道会被整体跳过，与内部调用"按四协议优先级找一个能用渠道"的意图不符，故改为按 messages → responses → chat → gemini × 配置顺序全池扫描，取第一个"可用 + 能解析出模型"的渠道（解析不出模型的渠道——无 DefaultModel 且映射不命中——跳过））+ `Caller.Call`（非流式单轮，provider 转换链复用 visionlayer 同款约定——providers 统一以 Claude Messages 请求体为输入；URL×Key 循环、两层重试判定、metrics 记账与 vision 同形。自动模式下渠道级失败——模型解析失败、渠道整体尝试失败——会带着 failedChannels 换渠道重选，上限 `maxChannelAttempts=4`；显式 channelId 不换渠道）+ `Caller.PreviewChannel`（仅供探测）。资源释放铁律：选渠占用的 in-flight 预留与熔断半开探测名额（`SelectedChannel.Probe`，编排选渠与全池扫描的 CircuitAllow 均可能占用）必须在调用结束/探测结束时释放——`Call` 按结果记 Circuit Success/Failure（取消记 Neutral），`PreviewChannel` 恒记 Neutral；漏记会把渠道卡死在 HalfOpen（表现：状态栏显示该渠道、实际请求却选不中它）。消费方：危险命令 AI 闸门（F4，闸门 prompt 不带模型 → 全池扫描）、AI 配置助手。
 
-AI 配置助手（`internal/assistant` + `handlers/assistant.go`，管理端 `/api/assistant/*`）：右下角浮窗（`AssistantWidget.vue` + `stores/assistant.ts`），会话持久化 `.config/assistant.db`。系统提示词 = 配置手册（包内常量，覆盖协议/分组/兜底/映射概念）+ 当前配置动态摘要（**API Key 一律掩码，绝不进提示词**）+ 行动协议。模型在回复中嵌入 ` ```assistant-action ` 代码块，后端白名单执行（create_channel / create_pool / set_model_mapping / update_channel），全部走 ConfigManager 既有校验；行动参数不含任何 Key 字段，更新渠道永不触碰 APIKeys。首版非流式同步回复。模型路由：`settings.assistant.model` 取渠道分组的匹配词作为模型 ID 走主链路编排（空 = 自动，走兜底分组），不单独维护默认模型；`GET /api/assistant/status` 返回当前配置的分组与实际会命中的渠道（设置页与浮窗展示）。
+AI 配置助手（`internal/assistant` + `handlers/assistant.go`，管理端 `/api/assistant/*`）：右下角浮窗（`AssistantWidget.vue` + `stores/assistant.ts`），会话持久化 `.config/assistant.db`。系统提示词 = 配置手册（包内常量，覆盖协议/分组/兜底/映射概念）+ 当前配置动态摘要（**API Key 一律掩码，绝不进提示词**）+ 行动协议。模型在回复中嵌入 ` ```assistant-action ` 代码块，后端白名单执行（create_channel / create_pool / set_model_mapping / update_channel），全部走 ConfigManager 既有校验；行动参数不含任何 Key 字段，更新渠道永不触碰 APIKeys。首版非流式同步回复。模型路由：`settings.assistant.model` 取渠道分组的匹配词作为模型 ID 走主链路编排（空 = 自动，走兜底分组），不单独维护默认模型；`settings.assistant.channelId` 显式指定渠道（空 = 自动，按四协议优先级；指定后不回退不换渠道，解析不出模型的渠道在探测期即报错）；`GET /api/assistant/status` 返回当前配置的分组、生效渠道与渠道选择器候选列表（设置页与浮窗展示，浮窗与设置页均可切换渠道，model 与 channelId 必须整组提交）。
 
 ## F5 responses 链路
 

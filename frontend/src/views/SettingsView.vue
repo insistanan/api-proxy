@@ -166,6 +166,19 @@
               persistent-hint
             />
 
+            <v-select
+              v-model="assistantChannel"
+              :items="assistantChannelItems"
+              item-title="title"
+              item-value="value"
+              label="指定渠道"
+              variant="outlined"
+              density="comfortable"
+              class="mt-5"
+              hint="留空时自动：按 Messages → Responses → Chat → Gemini 优先级编排；指定后固定使用该渠道，不回退不换渠道"
+              persistent-hint
+            />
+
             <v-alert
               v-if="assistantStatus"
               :type="assistantStatus.available ? 'info' : 'warning'"
@@ -174,7 +187,7 @@
               class="mt-5"
             >
               <template v-if="assistantStatus.available">
-                当前生效：{{ assistantStatus.model ? `分组「${assistantStatus.model}」` : '自动（兜底分组）' }}
+                当前生效：{{ assistantStatus.channelId ? '指定渠道' : assistantStatus.model ? `分组「${assistantStatus.model}」` : '自动（兜底分组）' }}
                 <template v-if="assistantStatus.channel">
                   → {{ assistantStatus.channel.name }}（{{ assistantKindLabel(assistantStatus.channel.kind) }}）
                 </template>
@@ -866,13 +879,30 @@ const savedCcSwitchPath = ref('')
 const pickingCcsPath = ref(false)
 const integrationNotice = ref<Notice>(null)
 
-// AI 配置助手设置（模型分组路由）
+// AI 配置助手设置（模型分组路由 + 显式渠道）
 const assistantModel = ref('')
 const savedAssistantModel = ref('')
+const assistantChannel = ref('')
+const savedAssistantChannel = ref('')
 const assistantNotice = ref<Notice>(null)
 const assistantStatus = ref<AssistantStatusResponse | null>(null)
 
-const assistantDirty = computed(() => assistantModel.value.trim() !== savedAssistantModel.value)
+const assistantDirty = computed(
+  () =>
+    assistantModel.value.trim() !== savedAssistantModel.value ||
+    assistantChannel.value !== savedAssistantChannel.value
+)
+
+// 渠道选择器候选：自动 + status 返回的四协议渠道（m → r → c → g 顺序）。
+type AssistantChannelOption = { title: string; value: string }
+
+const assistantChannelItems = computed<Array<AssistantChannelOption>>(() => [
+  { title: '自动（Messages → Responses → Chat → Gemini）', value: '' },
+  ...(assistantStatus.value?.channels || []).map(channel => ({
+    title: `${assistantKindLabel(channel.kind)} · ${channel.name}`,
+    value: channel.id
+  }))
+])
 
 // 危险命令检测总开关关闭时联动关闭 AI 闸门：闸门依赖检测，检测关闭后
 // 闸门面板隐藏但开关状态会残留为开启，导致保存被依赖校验拦下且无处可关。
@@ -930,12 +960,16 @@ const saveAssistantSettings = async () => {
   assistantNotice.value = null
   saving.value = true
   try {
+    // model 与 channelId 必须同时提交，未提交字段会被设置接口按零值覆盖。
     const settings = await api.updateSettings({
-      assistant: { model: assistantModel.value.trim() }
+      assistant: { model: assistantModel.value.trim(), channelId: assistantChannel.value }
     })
     const saved = settings.assistant?.model ?? ''
     savedAssistantModel.value = saved
     assistantModel.value = saved
+    const savedChannel = settings.assistant?.channelId ?? ''
+    savedAssistantChannel.value = savedChannel
+    assistantChannel.value = savedChannel
     assistantNotice.value = { type: 'success', message: '助手设置已保存' }
     await loadAssistantStatus()
   } catch (error) {
@@ -997,6 +1031,9 @@ const loadSettings = async () => {
     const savedModel = settings.assistant?.model ?? ''
     savedAssistantModel.value = savedModel
     assistantModel.value = savedModel
+    const savedChannel = settings.assistant?.channelId ?? ''
+    savedAssistantChannel.value = savedChannel
+    assistantChannel.value = savedChannel
   } catch (error) {
     loadError.value = error instanceof Error ? error.message : '加载设置失败'
   } finally {

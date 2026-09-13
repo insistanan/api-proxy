@@ -37,10 +37,12 @@ func RequestIDFromContext(ctx context.Context) string {
 }
 
 func RecordTraffic(entry TrafficLog) {
-	if defaultStore == nil {
+	store := Default()
+	if store == nil {
 		return
 	}
-	defaultStore.RecordTraffic(entry)
+	// RecordTraffic 会直接报告存储错误，不能再经标准 log 回写失败的队列。
+	_ = store.RecordTraffic(entry)
 }
 
 func RecordStreamSynth(ctx context.Context, apiType string, body string) {
@@ -88,21 +90,30 @@ func CaptureResponseBody(inner io.ReadCloser, entry TrafficLog) io.ReadCloser {
 type responseCapture struct {
 	inner     io.ReadCloser
 	entry     TrafficLog
+	mu        sync.Mutex
 	buf       []byte
 	remaining int
+	closed    bool
 	once      sync.Once
+	closeErr  error
 }
 
 func (c *responseCapture) Read(p []byte) (int, error) {
 	n, err := c.inner.Read(p)
-	if n > 0 && c.remaining > 0 {
+	if n > 0 {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if c.closed {
+			return n, err
+		}
+		c.entry.OriginalBytes += n
 		take := n
 		if take > c.remaining {
 			take = c.remaining
 		}
 		c.buf = append(c.buf, p[:take]...)
 		c.remaining -= take
-		if c.remaining == 0 {
+		if take < n {
 			c.entry.Truncated = true
 		}
 	}
@@ -111,15 +122,20 @@ func (c *responseCapture) Read(p []byte) (int, error) {
 
 func (c *responseCapture) Close() error {
 	c.once.Do(func() {
-		c.entry.Phase = PhaseUpstreamResponse
-		if len(c.buf) > 0 {
-			c.entry.Body = string(c.buf)
+		// 先打断网络读取；日志背压不能阻止人工否决关闭上游连接。
+		if c.inner != nil {
+			c.closeErr = c.inner.Close()
 		}
-		RecordTraffic(c.entry)
+		c.mu.Lock()
+		c.closed = true
+		entry := c.entry
+		entry.Phase = PhaseUpstreamResponse
+		if len(c.buf) > 0 {
+			entry.Body = string(c.buf)
+		}
 		c.buf = nil
+		c.mu.Unlock()
+		RecordTraffic(entry)
 	})
-	if c.inner != nil {
-		return c.inner.Close()
-	}
-	return nil
+	return c.closeErr
 }

@@ -122,6 +122,27 @@ func (b *Breaker) Allow() AllowResult {
 	}
 }
 
+// Peek 预判是否放行，但不占用 HalfOpen 探测名额（选渠候选过滤用）。
+// 选中渠道后仍必须以 Allow 正式占位；两次判定之间状态可能变化。
+func (b *Breaker) Peek() AllowResult {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.lazyTransitionLocked(time.Now())
+
+	switch b.state {
+	case StateOpen:
+		return AllowResult{Allowed: false, State: b.state}
+	case StateHalfOpen:
+		if b.halfOpenInFlight >= 1 {
+			return AllowResult{Allowed: false, State: b.state}
+		}
+		return AllowResult{Allowed: true, State: b.state}
+	default:
+		return AllowResult{Allowed: true, State: b.state}
+	}
+}
+
 // RecordSuccess 记录一次成功请求。HalfOpen 下释放探测名额并累计连续成功。
 func (b *Breaker) RecordSuccess() {
 	b.mu.Lock()
@@ -327,6 +348,18 @@ func (m *Manager) Allow(kind string, channelIndex int) AllowResult {
 	breaker := m.getOrCreateLocked(kind, channelIndex)
 	m.mu.Unlock()
 	return breaker.Allow()
+}
+
+// Peek 预判某渠道是否放行，但不占用 HalfOpen 探测名额（选渠候选过滤用）。
+// 选中渠道后仍必须以 Allow 正式占位。
+func (m *Manager) Peek(kind string, channelIndex int) AllowResult {
+	if !m.enabled {
+		return AllowResult{Allowed: true, State: StateClosed}
+	}
+	m.mu.Lock()
+	breaker := m.getOrCreateLocked(kind, channelIndex)
+	m.mu.Unlock()
+	return breaker.Peek()
 }
 
 // RecordSuccess 记录渠道成功。

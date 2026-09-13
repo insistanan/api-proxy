@@ -63,6 +63,58 @@ type CredentialDetector struct {
 	rules   []credentialRule
 }
 
+var auditCredentialDetector = &CredentialDetector{enabled: true, rules: allCredentialRules()}
+
+// 审计始终隐藏凭据，不受检测开关和业务白名单影响。
+var auditCommandSecretPattern = regexp.MustCompile(`(?i)--(?:password|passwd|token|api[_-]?key|secret|access[_-]?token)(?:=|[ \t]+)["']?([^\s"';]+)`)
+
+// RedactAuditText 用于日志、待确认展示和审计落库，不能用于计算命令授权身份。
+func RedactAuditText(text string) string {
+	return redactAuditText(text, false)
+}
+
+// RedactAuditContext 保留字节偏移，供命中窗口在隐藏邻近凭据后继续按原区间截取。
+func RedactAuditContext(text string) string {
+	return redactAuditText(text, true)
+}
+
+func redactAuditText(text string, preserveOffsets bool) string {
+	if text == "" {
+		return text
+	}
+	ranges := make([]credentialCandidate, 0)
+	for _, match := range auditCredentialDetector.FindAll(text) {
+		ranges = append(ranges, credentialCandidate{start: match.Start, end: match.End})
+	}
+	for _, index := range auditCommandSecretPattern.FindAllStringSubmatchIndex(text, -1) {
+		ranges = append(ranges, credentialCandidate{start: index[2], end: index[3]})
+	}
+	if len(ranges) == 0 {
+		return text
+	}
+	sort.Slice(ranges, func(i, j int) bool { return ranges[i].start < ranges[j].start })
+	var builder strings.Builder
+	last := 0
+	for index := 0; index < len(ranges); index++ {
+		start, end := ranges[index].start, ranges[index].end
+		for index+1 < len(ranges) && ranges[index+1].start <= end {
+			index++
+			if ranges[index].end > end {
+				end = ranges[index].end
+			}
+		}
+		builder.WriteString(text[last:start])
+		if preserveOffsets {
+			builder.WriteString(strings.Repeat("*", end-start))
+		} else {
+			builder.WriteString("[凭据已隐藏]")
+		}
+		last = end
+	}
+	builder.WriteString(text[last:])
+	return builder.String()
+}
+
 func NewCredentialDetector(settings config.CredentialConfig) (*CredentialDetector, error) {
 	if err := validateCredentialRules(settings.EnabledRules); err != nil {
 		return nil, err

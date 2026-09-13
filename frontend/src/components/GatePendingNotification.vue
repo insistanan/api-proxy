@@ -1,6 +1,9 @@
 <template>
   <teleport to="body">
     <transition-group name="gate-notif" tag="div" class="gate-notif-stack" aria-live="assertive">
+      <div v-if="pollError || decisionError" key="gate-error" class="gate-notif" role="status">
+        {{ decisionError || pollError }}
+      </div>
       <div
         v-for="item in pendingItems"
         :key="item.id"
@@ -18,6 +21,11 @@
           <span class="gate-notif__meta">{{ item.apiType }} · {{ item.rule }}</span>
         </div>
         <pre class="gate-notif__command">{{ item.command }}</pre>
+        <details v-if="item.executionContext">
+          <summary>执行参数{{ item.toolName ? ` · ${item.toolName}` : '' }}</summary>
+          <pre class="gate-notif__command">{{ item.executionContext }}</pre>
+        </details>
+        <div class="gate-notif__reason">决定仅适用于本会话中相同命令、工具及执行参数。已交付的内容无法撤回。</div>
         <div v-if="item.aiReason" class="gate-notif__reason">AI：{{ item.aiReason }}</div>
         <div class="gate-notif__actions">
           <template v-if="item.aiVerdict === 'block'">
@@ -26,15 +34,17 @@
               variant="flat"
               color="success"
               :loading="decidingId === item.id"
+              :disabled="decidingId !== null"
               @click="decide(item, 'allow')"
             >
-              放行（本会话后续同命令）
+              放行本命令
             </v-btn>
             <v-btn
               size="small"
               variant="tonal"
               color="error"
               :loading="decidingId === item.id"
+              :disabled="decidingId !== null"
               @click="decide(item, 'block')"
             >
               拦截
@@ -46,6 +56,7 @@
               variant="flat"
               color="error"
               :loading="decidingId === item.id"
+              :disabled="decidingId !== null"
               @click="decide(item, 'block')"
             >
               否决并拦截
@@ -70,10 +81,10 @@ import { api, type GatePending } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 
 // 危险命令 AI 闸门的全局通知：轮询待确认列表，新命中时声音 + 气泡 + 浏览器系统通知。
-// 轮询间隔自适应：有待确认 1.5s（保证 10 秒窗口内用户来得及操作），空闲 5s。
+// 缩短空闲轮询间隔，让短确认窗口尽早展示；每次只保留一个在途轮询。
 
-const POLL_ACTIVE_MS = 1500
-const POLL_IDLE_MS = 5000
+const POLL_ACTIVE_MS = 500
+const POLL_IDLE_MS = 1000
 // 已知 pending 的 ID 集合，用于识别"新出现"的条目（触发声音/系统通知）。
 const knownIds = new Set<number>()
 
@@ -81,6 +92,13 @@ const authStore = useAuthStore()
 const pendingItems = ref<GatePending[]>([])
 const decidingId = ref<number | null>(null)
 const now = ref(Date.now())
+const pollError = ref('')
+const decisionError = ref('')
+let stopped = false
+let pollInFlight = false
+let pendingRevision = 0
+let pollController: AbortController | null = null
+let decisionController: AbortController | null = null
 
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 let progressTimer: ReturnType<typeof setInterval> | null = null
@@ -88,45 +106,82 @@ let progressTimer: ReturnType<typeof setInterval> | null = null
 const isAuthenticated = computed(() => authStore.isAuthenticated)
 
 const poll = async () => {
+  if (stopped || pollInFlight) return
   if (!isAuthenticated.value) {
+    pendingItems.value = []
+    knownIds.clear()
+    pollError.value = ''
     schedule(POLL_IDLE_MS)
     return
   }
+  pollInFlight = true
+  const revision = pendingRevision
+  const controller = new AbortController()
+  pollController = controller
+  const timeout = setTimeout(() => controller.abort(), 4000)
   try {
-    const response = await api.getGatePending()
-    const fresh = response.pending || []
-    for (const item of fresh) {
-      if (!knownIds.has(item.id)) {
-        knownIds.add(item.id)
-        notifyArrival(item)
-      }
-    }
-    for (const id of [...knownIds]) {
-      if (!fresh.some(item => item.id === id)) knownIds.delete(id)
+    const response = await api.getGatePending(controller.signal)
+    if (stopped || revision !== pendingRevision) return
+    if (!Array.isArray(response.pending)) throw new Error('命令审核通知返回格式无效')
+    const fresh = response.pending
+    const arrivals = fresh.filter(item => !knownIds.has(item.id))
+    knownIds.clear()
+    for (const item of fresh) knownIds.add(item.id)
+    if (arrivals.length > 0) {
+      playAlertSound()
+      for (const item of arrivals.slice(0, 3)) desktopNotify(item)
     }
     pendingItems.value = fresh
-  } catch {
-    // 轮询失败静默重试（网络抖动 / 登录态过期不应刷屏）。
+    pollError.value = ''
+  } catch (err) {
+    if (!stopped && revision === pendingRevision) {
+      pollError.value = controller.signal.aborted
+        ? '命令审核通知读取超时，正在重试'
+        : err instanceof Error
+          ? err.message
+          : '命令审核通知读取失败'
+    }
+  } finally {
+    clearTimeout(timeout)
+    pollInFlight = false
+    if (pollController === controller) pollController = null
+    schedule(pendingItems.value.length > 0 ? POLL_ACTIVE_MS : POLL_IDLE_MS)
   }
-  schedule(pendingItems.value.length > 0 ? POLL_ACTIVE_MS : POLL_IDLE_MS)
 }
 
 const schedule = (delay: number) => {
+  if (stopped) return
   if (pollTimer !== null) clearTimeout(pollTimer)
   pollTimer = setTimeout(poll, delay)
 }
 
 const decide = async (item: GatePending, decision: 'allow' | 'block') => {
+  if (decidingId.value !== null) return
   decidingId.value = item.id
+  decisionError.value = ''
+  pendingRevision++
+  const controller = new AbortController()
+  decisionController = controller
+  const timeout = setTimeout(() => controller.abort(), 4000)
   try {
-    await api.decideGatePending(item.id, decision)
+    await api.decideGatePending(item.id, decision, controller.signal)
+    if (stopped) return
     pendingItems.value = pendingItems.value.filter(pending => pending.id !== item.id)
     knownIds.delete(item.id)
-  } catch {
-    // 决定失败（已超时被后端解决等）：立即刷新对齐真实状态。
-    await poll()
+  } catch (err) {
+    if (!stopped) {
+      decisionError.value = controller.signal.aborted
+        ? '命令决定提交超时，正在刷新确认状态'
+        : err instanceof Error
+          ? err.message
+          : '提交命令决定失败，请重试'
+    }
   } finally {
+    clearTimeout(timeout)
+    if (decisionController === controller) decisionController = null
+    pendingRevision++
     decidingId.value = null
+    schedule(0)
   }
 }
 
@@ -161,6 +216,10 @@ const playAlertSound = () => {
       gain.gain.exponentialRampToValueAtTime(0.12, toneStart + 0.02)
       gain.gain.exponentialRampToValueAtTime(0.0001, toneStart + 0.16)
       oscillator.connect(gain).connect(audioCtx!.destination)
+      oscillator.onended = () => {
+        oscillator.disconnect()
+        gain.disconnect()
+      }
       oscillator.start(toneStart)
       oscillator.stop(toneStart + 0.18)
     })
@@ -187,21 +246,20 @@ const desktopNotify = (item: GatePending) => {
   }
 }
 
-const notifyArrival = (item: GatePending) => {
-  playAlertSound()
-  desktopNotify(item)
-}
-
 const refreshClock = () => {
   now.value = Date.now()
 }
 
 onMounted(() => {
-  schedule(POLL_IDLE_MS)
+  schedule(0)
   progressTimer = setInterval(refreshClock, 200)
 })
 
 onBeforeUnmount(() => {
+  stopped = true
+  pollController?.abort()
+  decisionController?.abort()
+  knownIds.clear()
   if (pollTimer !== null) clearTimeout(pollTimer)
   if (progressTimer !== null) clearInterval(progressTimer)
   if (audioCtx) {
@@ -222,6 +280,8 @@ onBeforeUnmount(() => {
   gap: 12px;
   width: min(420px, calc(100vw - 40px));
   pointer-events: none;
+  max-height: calc(100vh - 88px);
+  overflow-y: auto;
 }
 
 .gate-notif {

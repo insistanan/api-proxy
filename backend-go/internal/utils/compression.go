@@ -150,7 +150,16 @@ func DecompressSingle(coding string, bodyBytes []byte, maximumBytes int64) ([]by
 		return ReadWithOutputLimit(brotliReader, maximumBytes)
 
 	case "zstd", "zst":
-		zstdDecoder, err := zstd.NewReader(bytes.NewReader(bodyBytes))
+		if maximumBytes <= 0 {
+			return nil, ErrDecompressedBodyTooLarge
+		}
+		// 输出限额本身不能限制解码器的窗口分配；单独约束窗口并关闭并行解码。
+		// 保留至少 8 MiB，兼容输出很小但声明常规窗口的流式压缩帧。
+		decoderMemory := uint64(maximumBytes)
+		if decoderMemory < 8<<20 {
+			decoderMemory = 8 << 20
+		}
+		zstdDecoder, err := zstd.NewReader(bytes.NewReader(bodyBytes), zstd.WithDecoderMaxMemory(decoderMemory), zstd.WithDecoderConcurrency(1))
 		if err != nil {
 			return nil, fmt.Errorf("创建 zstd 解码器失败: %w", err)
 		}

@@ -21,9 +21,15 @@ type SelectionResult struct {
 	// Reserved 表示本次选择是否已占用 in-flight 预留。
 	// 调用方在失败重试前应 ReleaseChannelReservation；真正发出上游请求期间应保持预留，请求结束后再释放。
 	Reserved bool
+	// Probe 表示本次选择占用了渠道熔断器的 HalfOpen 探测名额（限额 1）。
+	// 调用方必须在请求结束后以 RecordCircuitSuccess/Failure/Neutral 释放，
+	// 否则该渠道会卡在 HalfOpen 无法被再次选中。
+	Probe bool
 }
 
 // reserveAndReturn 原子预留选中渠道的在途计数，避免并发选渠时都看到相同负载。
+// 选中渠道若处于熔断半开状态，同时以 CircuitAllow 正式占用探测名额并记录
+// Probe 标记（候选过滤阶段只做了 Peek 预判，未占位）。
 func (s *ChannelScheduler) reserveAndReturn(result *SelectionResult, kind ChannelKind) *SelectionResult {
 	if result == nil {
 		return nil
@@ -34,6 +40,20 @@ func (s *ChannelScheduler) reserveAndReturn(result *SelectionResult, kind Channe
 	}
 	s.ReserveChannel(kind, result.ChannelIndex)
 	result.Reserved = true
+	if result.Probe {
+		// 候选过滤（allowByCircuitPeek）时已确认会放行；这里正式占位。
+		// 并发窗口内名额被抢的极端情况下 Allow 可能返回 false，此时
+		// 清掉 Probe 标记、交由调用方按"渠道不可用"处理。
+		channelName := ""
+		if result.Upstream != nil {
+			channelName = result.Upstream.Name
+		}
+		if allow := s.CircuitAllow(kind, result.ChannelIndex, channelName); allow.Allowed {
+			result.Probe = allow.Probe
+		} else {
+			result.Probe = false
+		}
+	}
 	return result
 }
 
@@ -457,10 +477,9 @@ func (s *ChannelScheduler) selectPriorityChannel(
 			log.Printf("[%s-Channel] 警告: 跳过不健康渠道: [%d] %s (失败率: %.1f%%)", prefix, ch.Index, ch.Name, failureRate*100)
 			continue
 		}
-		// 渠道级熔断检查（internal/circuit）：Open 未到期直接跳过；到期转 HalfOpen
-		// 并占用探测名额放行。探测名额随渠道级记账（RecordSuccess/RecordFailure/
-		// RecordNeutral）释放。
-		if !s.allowByCircuit(kind, ch.Index, ch.Name) {
+		// 渠道级熔断预检（Peek，不占 HalfOpen 探测名额）：Open 未到期直接跳过；
+		// HalfOpen 名额空闲的渠道可作为候选，选中后由 reserveAndReturn 正式占位。
+		if !s.allowByCircuitPeek(kind, ch.Index) {
 			continue
 		}
 
@@ -490,6 +509,9 @@ func (s *ChannelScheduler) selectPriorityChannel(
 		Upstream:     best.upstream,
 		ChannelIndex: best.channel.Index,
 		Reason:       "priority_order",
+		// Peek 预检通过不代表已占位；标记待 reserveAndReturn 以 CircuitAllow
+		// 正式占用（可能取得 HalfOpen 探测名额）。
+		Probe: true,
 	}
 }
 
@@ -523,6 +545,37 @@ func (s *ChannelScheduler) hasAttemptableChannel(
 // 探测名额由渠道级记账（scheduler 层 RecordCircuit* 系列）释放。
 func (s *ChannelScheduler) allowByCircuit(kind ChannelKind, channelIndex int, channelName string) bool {
 	return s.AllowChannelByCircuit(kind, channelIndex, channelName)
+}
+
+// allowByCircuitPeek 渠道级熔断预判（选渠候选过滤用）：只读不占探测名额。
+// 候选通过后由 reserveAndReturn 以 CircuitAllow 正式占位。
+func (s *ChannelScheduler) allowByCircuitPeek(kind ChannelKind, channelIndex int) bool {
+	manager := s.CircuitManager()
+	if manager == nil {
+		return true
+	}
+	return manager.Peek(string(kind), channelIndex).Allowed
+}
+
+// CircuitAllow 正式占用熔断放行判定（可能占用 HalfOpen 探测名额）。
+// 选中渠道后调用；结果的 Probe 标记必须由调用方以 RecordCircuit* 记账释放。
+// 日志口径与 AllowChannelByCircuit 一致。
+func (s *ChannelScheduler) CircuitAllow(kind ChannelKind, channelIndex int, channelName string) circuit.AllowResult {
+	manager := s.CircuitManager()
+	if manager == nil {
+		return circuit.AllowResult{Allowed: true}
+	}
+	result := manager.Allow(string(kind), channelIndex)
+	if result.Allowed {
+		if result.Probe {
+			log.Printf("[Circuit-Probe] 渠道 [%d] %s 处于半开状态，放行探测请求", channelIndex, channelName)
+		}
+		return result
+	}
+	prefix := kindSchedulerLogPrefix(kind)
+	snap := manager.SnapshotEntry(string(kind), channelIndex)
+	log.Printf("[%s-Circuit] 跳过熔断中的渠道: [%d] %s (冷却剩余: %ds)", prefix, channelIndex, channelName, snap.CooldownRemainingSec)
+	return result
 }
 
 // AllowChannelByCircuit 供外部（如单渠道代理 handleSingleChannelProxy）调用渠道级熔断放行判定。
@@ -675,6 +728,7 @@ func (s *ChannelScheduler) findPromotedChannels(activeChannels []ChannelInfo, ki
 
 // selectFallbackChannel 在正常候选都被健康检查过滤后，按配置顺序选择首个
 // 可探测渠道。这里不能再按失败率或负载择优，否则会绕过用户指定的故障转移顺序。
+// 熔断预检用 Peek（不占探测名额），选中后由 reserveAndReturn 正式占位。
 func (s *ChannelScheduler) selectFallbackChannel(
 	activeChannels []ChannelInfo,
 	failedChannels map[int]bool,
@@ -694,6 +748,9 @@ func (s *ChannelScheduler) selectFallbackChannel(
 		if upstream == nil || len(upstream.APIKeys) == 0 {
 			continue
 		}
+		if !s.allowByCircuitPeek(kind, ch.Index) {
+			continue
+		}
 
 		prefix := kindSchedulerLogPrefix(kind)
 		log.Printf("[%s-Fallback] 警告: 按配置顺序选择探测渠道: [%d] %s", prefix, ch.Index, ch.Name)
@@ -701,6 +758,7 @@ func (s *ChannelScheduler) selectFallbackChannel(
 			Upstream:     upstream,
 			ChannelIndex: ch.Index,
 			Reason:       "fallback",
+			Probe:        true,
 		}, nil
 	}
 

@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -30,8 +31,10 @@ import (
 //   - 当前版本与最新版本独立探测、独立过期，一端失败不影响另一端的有效缓存。
 
 const (
-	// toolVersionCacheTTL 版本检测结果的有效期（含网络探测结果）。
+	// toolVersionCacheTTL 成功的版本检测结果有效期。
 	toolVersionCacheTTL = time.Hour
+	// 探测失败仅短暂缓存，网络恢复后不必等一小时或手动强制刷新。
+	toolVersionFailureCacheTTL = time.Minute
 	// toolVersionProbeTimeout 单次 `--version` 子进程超时。
 	toolVersionProbeTimeout = 10 * time.Second
 	// toolVersionHTTPTimeout npm registry 请求超时。
@@ -39,7 +42,7 @@ const (
 )
 
 // toolVersionRe 从 `--version` 输出提取首个 x.y.z 版本号（允许 -beta.1 之类预发布后缀）。
-var toolVersionRe = regexp.MustCompile(`\d+\.\d+\.\d+(-[\w.]+)?`)
+var toolVersionRe = regexp.MustCompile(`\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?`)
 
 // toolSpec 受支持工具的静态描述。
 type toolSpec struct {
@@ -148,7 +151,8 @@ func httpGetDefault(ctx context.Context, url string) ([]byte, int, error) {
 		return nil, 0, err
 	}
 	request.Header.Set("User-Agent", "api-proxy-tool-version")
-	request.Header.Set("Accept", "application/vnd.npm.install-v1+json")
+	// dist-tags 返回普通 JSON；install-v1 只用于包元数据，此处会被 registry 拒绝为 406。
+	request.Header.Set("Accept", "application/json")
 	client := &http.Client{Timeout: toolVersionHTTPTimeout}
 	response, err := client.Do(request)
 	if err != nil {
@@ -189,8 +193,15 @@ func getToolVersionResult(_ context.Context, tool string, spec toolSpec, force b
 	defer state.mu.Unlock()
 
 	now := time.Now()
-	curValid := !force && state.hasCur && now.Sub(state.currentAt) < toolVersionCacheTTL
-	latValid := !force && state.hasLat && now.Sub(state.latestAt) < toolVersionCacheTTL
+	currentTTL, latestTTL := toolVersionCacheTTL, toolVersionCacheTTL
+	if state.current.CurrentError != "" {
+		currentTTL = toolVersionFailureCacheTTL
+	}
+	if state.latest.LatestError != "" {
+		latestTTL = toolVersionFailureCacheTTL
+	}
+	curValid := !force && state.hasCur && now.Sub(state.currentAt) < currentTTL
+	latValid := !force && state.hasLat && now.Sub(state.latestAt) < latestTTL
 	if curValid && latValid {
 		return state.current
 	}
@@ -230,7 +241,10 @@ func probeLocalToolVersion(ctx context.Context, tool string) (string, string) {
 
 	executable, err := exec.LookPath(tool)
 	if err != nil {
-		return "", "" // 未安装，不算错误
+		if errors.Is(err, exec.ErrNotFound) {
+			return "", "" // 未安装，不算错误
+		}
+		return "", fmt.Sprintf("查找 %s 可执行文件失败: %v", tool, err)
 	}
 	args := []string{"--version"}
 	var cmd *exec.Cmd
@@ -274,7 +288,7 @@ func fetchNpmLatestVersion(ctx context.Context, pkg string) (string, string) {
 	if !ok || strings.TrimSpace(latest) == "" {
 		return "", "npm dist-tags 中缺少 latest"
 	}
-	return latest, ""
+	return strings.TrimSpace(latest), ""
 }
 
 // installCommandFor 返回当前平台的安装命令。

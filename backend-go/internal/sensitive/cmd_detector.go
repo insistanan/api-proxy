@@ -1,22 +1,36 @@
 package sensitive
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 
 	"github.com/BenedictKing/api-proxy/internal/config"
 )
 
-const maxCommandWindow = 4096
+const maxCommandWindow = 256 << 10
+
+// MaxCommandBytes 限制规则检测的完整上下文；AI 闸门另设更小的输入上限。
+const MaxCommandBytes = maxCommandWindow
 
 // CommandMatch 描述一次可执行上下文中的危险命令命中。
 type CommandMatch struct {
-	Rule    string `json:"rule"`
-	Command string `json:"command"`
-	Context string `json:"context"`
-	Start   int    `json:"start"`
-	End     int    `json:"end"`
+	Rule             string `json:"rule"`
+	Command          string `json:"command"`
+	Context          string `json:"context"`
+	ToolName         string `json:"toolName,omitempty"`
+	ExecutionContext string `json:"-"`
+	Start            int    `json:"start"`
+	End              int    `json:"end"`
+}
+
+// CommandIdentity 保留完整命令、工具与参数语义；参数、路径、引号或管道变化均不能复用授权。
+func CommandIdentity(match CommandMatch) string {
+	encoded, _ := json.Marshal([]string{match.Context, match.ToolName, match.Command, match.ExecutionContext})
+	return fmt.Sprintf("%x", sha256.Sum256(encoded))
 }
 
 // CmdDetector 只对代码块或工具参数执行危险命令检测。
@@ -58,20 +72,61 @@ func (d *CmdDetector) Find(text string) []CommandMatch {
 	return matches
 }
 
-// FindInToolArguments 递归检测工具参数中的字符串值。
+// FindInToolArguments 保留无工具名调用入口，仅把命令字段作为执行输入。
 func (d *CmdDetector) FindInToolArguments(value any) []CommandMatch {
+	return d.FindInNamedToolArguments("", value)
+}
+
+// FindInNamedToolArguments 保留完整参数作为执行上下文，编辑/读取工具的文件内容不视为命令。
+func (d *CmdDetector) FindInNamedToolArguments(toolName string, value any) []CommandMatch {
 	if d == nil || !d.enabled || len(d.rules) == 0 {
 		return nil
 	}
+	if nonExecutingTool(toolName) {
+		return nil
+	}
+	if encoded, ok := value.(string); ok {
+		if len(encoded) > MaxCommandBytes {
+			return []CommandMatch{{Rule: "command_size_limit", Context: "tool", ToolName: toolName, Command: "工具执行上下文超过检查容量上限"}}
+		}
+		if strings.TrimSpace(encoded) == "" {
+			encoded = "{}"
+		}
+		decoder := json.NewDecoder(strings.NewReader(encoded))
+		decoder.UseNumber()
+		var decoded any
+		if err := decoder.Decode(&decoded); err != nil {
+			return []CommandMatch{{Rule: "invalid_tool_arguments", Context: "tool", ToolName: toolName}}
+		}
+		var trailing any
+		if err := decoder.Decode(&trailing); err != io.EOF {
+			return []CommandMatch{{Rule: "invalid_tool_arguments", Context: "tool", ToolName: toolName}}
+		}
+		value = decoded
+	}
+	encodedContext, err := json.Marshal(value)
+	if err != nil {
+		return []CommandMatch{{Rule: "invalid_tool_arguments", Context: "tool", ToolName: toolName}}
+	}
+	if len(encodedContext) > MaxCommandBytes {
+		return []CommandMatch{{Rule: "command_size_limit", Context: "tool", ToolName: toolName, Command: "工具执行上下文超过检查容量上限"}}
+	}
 	matches := make([]CommandMatch, 0)
-	var walk func(any)
-	walk = func(current any) {
+	limited := false
+	var walk func(any, bool)
+	walk = func(current any, commandField bool) {
+		if limited {
+			return
+		}
 		switch typed := current.(type) {
 		case string:
-			matches = append(matches, d.findInSegment(typed, "tool", 0)...)
+			if commandField {
+				matches = append(matches, d.findInSegment(typed, "tool", 0)...)
+				limited = len(matches) > 256
+			}
 		case []any:
 			for _, item := range typed {
-				walk(item)
+				walk(item, commandField)
 			}
 		case map[string]any:
 			keys := make([]string, 0, len(typed))
@@ -80,12 +135,59 @@ func (d *CmdDetector) FindInToolArguments(value any) []CommandMatch {
 			}
 			sort.Strings(keys)
 			for _, key := range keys {
-				walk(typed[key])
+				isCommand := false
+				switch strings.ToLower(key) {
+				case "command", "commands", "cmd", "script", "shell_command", "shellcommand":
+					isCommand = true
+				}
+				walk(typed[key], isCommand)
 			}
 		}
 	}
-	walk(value)
+	walk(value, true)
+	if limited {
+		return []CommandMatch{{Rule: "command_count_limit", Context: "tool", ToolName: toolName, Command: "工具参数中的危险命令超过 256 条检查上限"}}
+	}
+	executionContext := string(encodedContext)
+	for index := range matches {
+		matches[index].ToolName = toolName
+		matches[index].ExecutionContext = executionContext
+	}
 	return matches
+}
+
+// FindInRawToolInput 检查自定义工具的原始脚本，不把 shell 的花括号或引号当成 JSON。
+func (d *CmdDetector) FindInRawToolInput(toolName, input string) []CommandMatch {
+	if d == nil || !d.enabled || len(d.rules) == 0 || nonExecutingTool(toolName) {
+		return nil
+	}
+	if len(input) > MaxCommandBytes {
+		return []CommandMatch{{Rule: "command_size_limit", Context: "tool", ToolName: toolName, Command: "工具执行上下文超过检查容量上限"}}
+	}
+	matches := d.findInSegment(input, "tool", 0)
+	executionContext := "raw_input:\n" + input
+	for index := range matches {
+		matches[index].ToolName = toolName
+		// 前缀区分原始输入和函数参数，即使文本碰巧是合法 JSON 也不能共用授权。
+		matches[index].ExecutionContext = executionContext
+	}
+	return matches
+}
+
+func nonExecutingTool(name string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if index := strings.LastIndex(name, "__"); index >= 0 {
+		name = name[index+2:]
+	}
+	if index := strings.LastIndex(name, "."); index >= 0 {
+		name = name[index+1:]
+	}
+	switch name {
+	case "apply_patch", "write", "write_file", "edit", "edit_file", "multiedit", "read", "read_file", "glob", "grep", "search", "web_search", "web_fetch", "view_image":
+		return true
+	default:
+		return false
+	}
 }
 
 // Contains 返回文本代码块或工具参数中是否命中危险命令。
@@ -94,12 +196,16 @@ func (d *CmdDetector) Contains(text string) bool {
 }
 
 func (d *CmdDetector) findInSegment(segment, context string, base int) []CommandMatch {
+	if len(segment) > MaxCommandBytes {
+		return []CommandMatch{{Rule: "command_size_limit", Context: context, Command: "命令上下文超过检查容量上限"}}
+	}
 	matches := make([]CommandMatch, 0)
 	for _, rule := range d.rules {
-		for _, index := range rule.regex.FindAllStringIndex(segment, -1) {
+		// 完整上下文只需按规则审一次，避免重复命中让同一大脚本反复散列和排队。
+		if index := rule.regex.FindStringIndex(segment); index != nil {
 			matches = append(matches, CommandMatch{
 				Rule:    rule.name,
-				Command: segment[index[0]:index[1]],
+				Command: segment,
 				Context: context,
 				Start:   base + index[0],
 				End:     base + index[1],
@@ -163,13 +269,17 @@ func validateCommandRules(rules []string) error {
 	return nil
 }
 
-// StreamCmdScanner 在流式响应中保留最近 4KB 的代码内容并检测跨 chunk 命令。
+// StreamCmdScanner 保留完整代码块，闭合围栏或流结束后检查；不截断命令或批准未完成的前缀。
 type StreamCmdScanner struct {
 	detector *CmdDetector
 	window   string
 	pending  string
 	inCode   bool
 	blocked  *CommandMatch
+	queued   []CommandMatch
+	seen     map[string]struct{}
+	buffer   strings.Builder
+	err      error
 }
 
 // NewStreamCmdScanner 创建流式危险命令扫描器。
@@ -179,7 +289,7 @@ func NewStreamCmdScanner(detector *CmdDetector) *StreamCmdScanner {
 
 // Feed 输入一个响应片段；命中后后续调用仍返回同一命中。
 func (s *StreamCmdScanner) Feed(chunk string) (*CommandMatch, bool) {
-	if s == nil || s.detector == nil || !s.detector.enabled {
+	if s == nil || s.detector == nil || !s.detector.enabled || len(s.detector.rules) == 0 {
 		return nil, false
 	}
 	if s.blocked != nil {
@@ -188,32 +298,51 @@ func (s *StreamCmdScanner) Feed(chunk string) (*CommandMatch, bool) {
 	input := s.pending + chunk
 	s.pending = ""
 	body, suffix := splitFenceSuffix(input)
-	s.pending = suffix
+	s.pending = strings.Clone(suffix)
 	for position := 0; position < len(body); {
 		fence := strings.Index(body[position:], "```")
 		if fence < 0 {
 			if s.inCode {
-				if match := s.appendCode(body[position:], false); match != nil {
-					s.blocked = match
-					return match, true
-				}
+				s.appendCode(body[position:], false)
 			}
 			break
 		}
 		fence += position
 		if s.inCode {
-			if match := s.appendCode(body[position:fence], true); match != nil {
-				s.blocked = match
-				return match, true
-			}
+			s.appendCode(body[position:fence], true)
 		}
 		s.inCode = !s.inCode
 		if !s.inCode {
 			s.window = ""
+			s.buffer.Reset()
 		}
 		position = fence + len("```")
 	}
-	return nil, false
+	return s.nextMatch()
+}
+
+// Allow 在调用方放行当前命中后继续取同一片段中的下一条命令。
+// 只有经过闸门放行才能推进，避免第一条放行后整个流都停止检测。
+func (s *StreamCmdScanner) Allow() (*CommandMatch, bool) {
+	if s == nil {
+		return nil, false
+	}
+	s.blocked = nil
+	return s.nextMatch()
+}
+
+func (s *StreamCmdScanner) nextMatch() (*CommandMatch, bool) {
+	if len(s.queued) == 0 {
+		return nil, false
+	}
+	match := s.queued[0]
+	s.queued[0] = CommandMatch{}
+	s.queued = s.queued[1:]
+	if len(s.queued) == 0 {
+		s.queued = nil
+	}
+	s.blocked = &match
+	return s.blocked, true
 }
 
 // Flush 处理流末尾未闭合的围栏前缀。
@@ -225,27 +354,58 @@ func (s *StreamCmdScanner) Flush() (*CommandMatch, bool) {
 		return s.blocked, s.blocked != nil
 	}
 	if s.inCode {
-		if match := s.appendCode(s.pending, true); match != nil {
-			s.blocked = match
-			return match, true
-		}
+		s.appendCode(s.pending, true)
 	}
+	s.inCode = false
+	s.window = ""
+	s.buffer.Reset()
 	s.pending = ""
-	return nil, false
+	return s.nextMatch()
 }
 
-func (s *StreamCmdScanner) appendCode(fragment string, final bool) *CommandMatch {
-	s.window += fragment
-	if len(s.window) > maxCommandWindow {
-		s.window = s.window[len(s.window)-maxCommandWindow:]
+// BufferedBytes 返回尚未完成代码块的暂存大小，供请求级总量限制使用。
+func (s *StreamCmdScanner) BufferedBytes() int {
+	if s == nil {
+		return 0
+	}
+	return s.buffer.Len() + len(s.pending)
+}
+
+func (s *StreamCmdScanner) appendCode(fragment string, final bool) {
+	if s.err != nil {
+		return
+	}
+	if len(fragment) > maxCommandWindow-s.buffer.Len() {
+		s.err = fmt.Errorf("流式代码块超过 %d 字节检查上限", maxCommandWindow)
+		return
+	}
+	s.buffer.WriteString(fragment)
+	s.window = s.buffer.String()
+	if !final {
+		return
 	}
 	for _, match := range s.detector.findInSegment(s.window, "code_block", 0) {
-		if final || match.End < len(s.window) || endsWithCommandBoundary(s.window[:match.End]) {
-			selected := match
-			return &selected
+		key := match.Rule + "\x00" + CommandIdentity(match)
+		if _, ok := s.seen[key]; ok {
+			continue
 		}
+		if s.seen == nil {
+			s.seen = make(map[string]struct{})
+		}
+		if len(s.seen) >= 256 {
+			s.err = fmt.Errorf("单次响应的危险命令超过 256 条检查上限")
+			return
+		}
+		s.seen[key] = struct{}{}
+		s.queued = append(s.queued, match)
 	}
-	return nil
+}
+
+func (s *StreamCmdScanner) Err() error {
+	if s == nil {
+		return nil
+	}
+	return s.err
 }
 
 func splitFenceSuffix(input string) (string, string) {
@@ -260,16 +420,4 @@ func splitFenceSuffix(input string) (string, string) {
 		return input, ""
 	}
 	return input[:len(input)-backticks], input[len(input)-backticks:]
-}
-
-func endsWithCommandBoundary(value string) bool {
-	if value == "" {
-		return false
-	}
-	switch value[len(value)-1] {
-	case '\n', '\r', ';', '&', '|':
-		return true
-	default:
-		return false
-	}
 }

@@ -159,6 +159,8 @@ func handleStreamSuccess(
 		streamStarted = true
 	}
 
+	stopVeto := hooks.BindAttachedStreamVeto(c, resp.Body)
+	defer stopVeto()
 	// 检查流式响应是否含有 Content-Encoding。由于已强制设置 Accept-Encoding: identity，
 	// 正常情况下上游不应压缩 SSE；若上游违规压缩，尝试包装流式解码 Reader 以防分块解析失败。
 	if encoding := utils.GetContentEncoding(resp.Header); encoding != "" {
@@ -228,6 +230,9 @@ func handleStreamSuccess(
 		default:
 		}
 		rawLine, readErr := reader.ReadBytes('\n')
+		if err := hooks.AttachedStreamVetoError(c); err != nil {
+			return nil, err
+		}
 		if len(rawLine) == 0 && readErr != nil {
 			if !errors.Is(readErr, io.EOF) {
 				streamReadErr = readErr
@@ -330,7 +335,15 @@ func handleStreamSuccess(
 				return nil, err
 			}
 			for _, toolArgument := range toolArguments {
-				if err := hooks.FeedAttachedStreamToolArgumentsForKey(c, toolArgument.key, toolArgument.fragment); err != nil {
+				var err error
+				if toolArgument.rawInput {
+					err = hooks.FeedAttachedStreamToolInput(c, toolArgument.key, toolArgument.fragment, toolArgument.snapshot, toolArgument.name)
+				} else if toolArgument.snapshot {
+					err = hooks.FeedAttachedStreamToolArgumentsSnapshot(c, toolArgument.key, toolArgument.fragment, toolArgument.name)
+				} else {
+					err = hooks.FeedAttachedStreamToolArgumentsForKey(c, toolArgument.key, toolArgument.fragment, toolArgument.name)
+				}
+				if err != nil {
 					return nil, err
 				}
 			}
@@ -603,6 +616,9 @@ func extractResponsesTextFromEvent(event string, buf *bytes.Buffer) {
 type responsesStreamToolArgumentFragment struct {
 	key      string
 	fragment string
+	name     string
+	snapshot bool
+	rawInput bool
 }
 
 func extractResponsesStreamSafetyFragments(event string) (string, []responsesStreamToolArgumentFragment) {
@@ -631,6 +647,51 @@ func extractResponsesStreamSafetyFragments(event string) (string, []responsesStr
 				toolArguments = append(toolArguments, responsesStreamToolArgumentFragment{
 					key:      responsesStreamToolArgumentKey(data, lineIndex),
 					fragment: delta,
+					rawInput: eventType == "response.custom_tool_call_input.delta",
+				})
+			}
+		case "response.function_call_arguments.done", "response.custom_tool_call_input.done":
+			arguments, _ := data["arguments"].(string)
+			if eventType == "response.custom_tool_call_input.done" {
+				arguments, _ = data["input"].(string)
+			}
+			toolArguments = append(toolArguments, responsesStreamToolArgumentFragment{
+				key: responsesStreamToolArgumentKey(data, lineIndex), fragment: arguments, snapshot: true,
+				rawInput: eventType == "response.custom_tool_call_input.done",
+			})
+		case "response.output_item.added", "response.output_item.done":
+			item, _ := data["item"].(map[string]interface{})
+			itemType, _ := item["type"].(string)
+			if itemType != "function_call" && itemType != "custom_tool_call" {
+				continue
+			}
+			name, _ := item["name"].(string)
+			arguments, _ := item["arguments"].(string)
+			if itemType == "custom_tool_call" {
+				arguments, _ = item["input"].(string)
+			}
+			toolArguments = append(toolArguments, responsesStreamToolArgumentFragment{
+				key: responsesStreamToolArgumentKey(data, lineIndex), name: name, fragment: arguments,
+				snapshot: eventType == "response.output_item.done" || arguments != "",
+				rawInput: itemType == "custom_tool_call",
+			})
+		case "response.completed":
+			response, _ := data["response"].(map[string]interface{})
+			outputs, _ := response["output"].([]interface{})
+			for index, rawItem := range outputs {
+				item, _ := rawItem.(map[string]interface{})
+				itemType, _ := item["type"].(string)
+				if itemType != "function_call" && itemType != "custom_tool_call" {
+					continue
+				}
+				name, _ := item["name"].(string)
+				arguments, _ := item["arguments"].(string)
+				if itemType == "custom_tool_call" {
+					arguments, _ = item["input"].(string)
+				}
+				toolArguments = append(toolArguments, responsesStreamToolArgumentFragment{
+					key: fmt.Sprintf("responses.tool.%d", index), name: name, fragment: arguments, snapshot: true,
+					rawInput: itemType == "custom_tool_call",
 				})
 			}
 		}
@@ -639,7 +700,7 @@ func extractResponsesStreamSafetyFragments(event string) (string, []responsesStr
 }
 
 func responsesStreamToolArgumentKey(data map[string]interface{}, fallback int) string {
-	for _, field := range []string{"item_id", "call_id", "output_index"} {
+	for _, field := range []string{"output_index", "item_id", "call_id"} {
 		if value, exists := data[field]; exists {
 			if key := strings.TrimSpace(fmt.Sprint(value)); key != "" {
 				return "responses.tool." + key

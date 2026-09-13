@@ -51,20 +51,45 @@ func (h *contentSafetyPostResponseHook) Run(ctx context.Context, metadata HookCo
 	if snapshot.detector == nil || len(result.ResponseBody) == 0 {
 		return result, nil
 	}
+	reviewed := make(map[string]struct{})
+	reviewMatches := func(matches []sensitive.CommandMatch) *ContentSafetyError {
+		for _, match := range matches {
+			key := sensitive.CommandIdentity(match)
+			if _, ok := reviewed[key]; ok {
+				continue
+			}
+			if safetyErr := h.reviewDangerousMatch(ctx, metadata, match); safetyErr != nil {
+				return safetyErr
+			}
+			reviewed[key] = struct{}{}
+		}
+		return nil
+	}
 	if value, ok := decodeJSONValue(result.ResponseBody); ok {
-		if matches := findDangerousCodeBlocks(snapshot.detector, value); len(matches) > 0 {
-			if safetyErr := h.reviewDangerousMatch(ctx, metadata, matches[0]); safetyErr != nil {
+		if snapshot.settings.DangerousCmd.Enabled {
+			if safetyErr := reviewMatches(findDangerousCodeBlocks(snapshot.detector, value)); safetyErr != nil {
 				return result, safetyErr
 			}
-		}
-		if matches := findDangerousToolArguments(snapshot.detector, value); len(matches) > 0 {
-			if safetyErr := h.reviewDangerousMatch(ctx, metadata, matches[0]); safetyErr != nil {
+			if safetyErr := reviewMatches(findDangerousToolArguments(snapshot.detector, value)); safetyErr != nil {
 				return result, safetyErr
 			}
 		}
 		if root, ok := value.(map[string]interface{}); ok {
 			for _, segment := range extractResponseToolArgumentSegments(metadata.APIType, root) {
+				if isWhitelistedSegment(&contentSafetySnapshot{settings: snapshot.settings}, &segment) {
+					if err := recordWhitelistAllowed(ctx, metadata, h.recorder, segment); err != nil {
+						return result, err
+					}
+					continue
+				}
+				if allowlistSkipsWholeSegment(snapshot.settings.Allowlist, segment.Text) {
+					if err := recordAllowlistAllowed(ctx, metadata, h.recorder, segment); err != nil {
+						return result, err
+					}
+					continue
+				}
 				matches := snapshot.credential.FindAll(segment.Text)
+				matches = filterAllowlistedCredentialMatches(matches, segment.Text, snapshot.settings.Allowlist)
 				if len(matches) == 0 {
 					continue
 				}
@@ -91,10 +116,8 @@ func (h *contentSafetyPostResponseHook) Run(ctx context.Context, metadata HookCo
 				}
 			}
 		}
-	} else if matches := snapshot.detector.Find(string(result.ResponseBody)); len(matches) > 0 {
-		if safetyErr := h.reviewDangerousMatch(ctx, metadata, matches[0]); safetyErr != nil {
-			return result, safetyErr
-		}
+	} else if safetyErr := reviewMatches(snapshot.detector.Find(string(result.ResponseBody))); safetyErr != nil {
+		return result, safetyErr
 	}
 	return result, nil
 }
@@ -116,9 +139,13 @@ func (h *contentSafetyPostResponseHook) reviewDangerousMatch(ctx context.Context
 		blockType = sensitive.BlockTypeDangerousCmdAI
 	}
 	return &ContentSafetyError{
-		BlockType: blockType,
-		RuleName:  match.Rule,
-		Snippet:   fmt.Sprintf("mode=ai_gate source=assistant context=%s\n%s\n裁决: %s", match.Context, match.Command, verdict.Reason),
+		BlockType:   blockType,
+		RuleName:    match.Rule,
+		Snippet:     fmt.Sprintf("mode=ai_gate source=assistant context=%s\n%s\n裁决: %s", match.Context, match.Command, verdict.Reason),
+		Command:     match.Command,
+		CommandHash: sensitive.CommandIdentity(match),
+		AIReview:    verdict.AIReview,
+		audited:     verdict.audited,
 	}
 }
 
@@ -174,19 +201,27 @@ func findDangerousToolArguments(detector *sensitive.CmdDetector, value interface
 				walk(item, toolContext)
 			}
 		case map[string]interface{}:
-			keys := sortedMapKeys(typed)
-			for _, key := range keys {
-				walk(typed[key], toolContext || isToolArgumentKey(key))
+			if equalString(typed["type"], "custom_tool_call") {
+				if input, ok := typed["input"].(string); ok {
+					matches = append(matches, detector.FindInRawToolInput(stringValue(typed["name"]), input)...)
+				} else {
+					matches = append(matches, sensitive.CommandMatch{Rule: "invalid_tool_arguments", Context: "tool", ToolName: stringValue(typed["name"])})
+				}
+				return
 			}
-		case string:
-			if toolContext {
-				if decoded, ok := decodeJSONValue([]byte(typed)); ok {
-					switch decoded.(type) {
-					case map[string]interface{}, []interface{}:
-						walk(decoded, true)
+			isCall := toolContext || equalString(typed["type"], "tool_use") || equalString(typed["type"], "function_call")
+			if isCall {
+				for _, field := range []string{"input", "arguments", "args"} {
+					if arguments, exists := typed[field]; exists {
+						matches = append(matches, detector.FindInNamedToolArguments(stringValue(typed["name"]), arguments)...)
+						return
 					}
 				}
-				matches = append(matches, detector.FindInToolArguments(typed)...)
+			}
+			keys := sortedMapKeys(typed)
+			for _, key := range keys {
+				// 只向实际工具容器传递标记，id/name/type 等结构字符串不是执行输入。
+				walk(typed[key], isToolArgumentKey(key) || key == "function")
 			}
 		}
 	}
@@ -208,6 +243,9 @@ func findDangerousCodeBlocks(detector *sensitive.CmdDetector, value interface{})
 			}
 		case map[string]interface{}:
 			for _, key := range sortedMapKeys(typed) {
+				if isToolArgumentKey(key) || key == "args" || key == "function" {
+					continue
+				}
 				walk(typed[key])
 			}
 		case string:
@@ -229,9 +267,11 @@ func sortedMapKeys(value map[string]interface{}) []string {
 
 func dangerousCommandError(match sensitive.CommandMatch) *ContentSafetyError {
 	return &ContentSafetyError{
-		BlockType: sensitive.BlockTypeDangerousCmd,
-		RuleName:  match.Rule,
-		Snippet:   fmt.Sprintf("mode=block source=assistant context=%s\n%s", match.Context, match.Command),
+		BlockType:   sensitive.BlockTypeDangerousCmd,
+		RuleName:    match.Rule,
+		Snippet:     fmt.Sprintf("mode=block source=assistant context=%s\n%s", match.Context, match.Command),
+		Command:     match.Command,
+		CommandHash: sensitive.CommandIdentity(match),
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/BenedictKing/api-proxy/internal/config"
 	"github.com/BenedictKing/api-proxy/internal/sensitive"
@@ -137,6 +138,21 @@ func extractMessagesSafetySegments(root map[string]interface{}) []SafetySegment 
 func extractChatSafetySegments(root map[string]interface{}) []SafetySegment {
 	segments := make([]SafetySegment, 0, 8)
 	messages, _ := root["messages"].([]interface{})
+	toolNameByID := make(map[string]string)
+	for _, rawMessage := range messages {
+		message, _ := rawMessage.(map[string]interface{})
+		if !equalString(message["role"], "assistant") {
+			continue
+		}
+		calls, _ := message["tool_calls"].([]interface{})
+		for _, rawCall := range calls {
+			call, _ := rawCall.(map[string]interface{})
+			function, _ := call["function"].(map[string]interface{})
+			if id := stringValue(call["id"]); id != "" {
+				toolNameByID[id] = stringValue(function["name"])
+			}
+		}
+	}
 	for messageIndex, rawMessage := range messages {
 		message, ok := rawMessage.(map[string]interface{})
 		if !ok {
@@ -164,6 +180,9 @@ func extractChatSafetySegments(root map[string]interface{}) []SafetySegment {
 		path := fmt.Sprintf("messages[%d].content", messageIndex)
 		if source == safetySourceToolResult {
 			toolName := stringValue(message["name"])
+			if toolName == "" {
+				toolName = toolNameByID[stringValue(message["tool_call_id"])]
+			}
 			appendMutableJSONValue(&segments, "chat", source, path, content, toolName, func(masked interface{}) { message["content"] = masked })
 			continue
 		}
@@ -198,7 +217,7 @@ func extractResponsesSafetySegments(root map[string]interface{}) []SafetySegment
 		if itemType != "function_call" && itemType != "custom_tool_call" && itemType != "tool_search_call" {
 			continue
 		}
-		callID := stringValue(item["id"])
+		callID := stringValue(item["call_id"])
 		toolName := stringValue(item["name"])
 		if callID != "" && toolName != "" {
 			toolNameByCallID[callID] = toolName
@@ -321,7 +340,7 @@ func extractResponseToolArgumentSegments(apiType string, root map[string]interfa
 		for index, rawBlock := range blocks {
 			block, ok := rawBlock.(map[string]interface{})
 			if ok && equalString(block["type"], "tool_use") {
-				appendImmutableJSONSegment(&segments, apiType, safetySourceToolArgument, fmt.Sprintf("content[%d].input", index), block["input"])
+				appendImmutableJSONSegmentWithTool(&segments, apiType, safetySourceToolArgument, fmt.Sprintf("content[%d].input", index), block["input"], stringValue(block["name"]))
 			}
 		}
 	case "chat":
@@ -334,12 +353,12 @@ func extractResponseToolArgumentSegments(apiType string, root map[string]interfa
 				call, _ := rawCall.(map[string]interface{})
 				function, _ := call["function"].(map[string]interface{})
 				if arguments, exists := function["arguments"]; exists {
-					appendImmutableJSONSegment(&segments, apiType, safetySourceToolArgument, fmt.Sprintf("choices[%d].message.tool_calls[%d].function.arguments", choiceIndex, callIndex), arguments)
+					appendImmutableJSONSegmentWithTool(&segments, apiType, safetySourceToolArgument, fmt.Sprintf("choices[%d].message.tool_calls[%d].function.arguments", choiceIndex, callIndex), arguments, stringValue(function["name"]))
 				}
 			}
 			if functionCall, ok := message["function_call"].(map[string]interface{}); ok {
 				if arguments, exists := functionCall["arguments"]; exists {
-					appendImmutableJSONSegment(&segments, apiType, safetySourceToolArgument, fmt.Sprintf("choices[%d].message.function_call.arguments", choiceIndex), arguments)
+					appendImmutableJSONSegmentWithTool(&segments, apiType, safetySourceToolArgument, fmt.Sprintf("choices[%d].message.function_call.arguments", choiceIndex), arguments, stringValue(functionCall["name"]))
 				}
 			}
 		}
@@ -353,9 +372,9 @@ func extractResponseToolArgumentSegments(apiType string, root map[string]interfa
 			switch strings.ToLower(stringValue(output["type"])) {
 			case "function_call", "custom_tool_call", "tool_search_call":
 				if arguments, exists := output["arguments"]; exists {
-					appendImmutableJSONSegment(&segments, apiType, safetySourceToolArgument, fmt.Sprintf("output[%d].arguments", index), arguments)
+					appendImmutableJSONSegmentWithTool(&segments, apiType, safetySourceToolArgument, fmt.Sprintf("output[%d].arguments", index), arguments, stringValue(output["name"]))
 				} else if input, exists := output["input"]; exists {
-					appendImmutableJSONSegment(&segments, apiType, safetySourceToolArgument, fmt.Sprintf("output[%d].input", index), input)
+					appendImmutableJSONSegmentWithTool(&segments, apiType, safetySourceToolArgument, fmt.Sprintf("output[%d].input", index), input, stringValue(output["name"]))
 				}
 			}
 		}
@@ -368,7 +387,7 @@ func extractResponseToolArgumentSegments(apiType string, root map[string]interfa
 			for partIndex, rawPart := range parts {
 				part, _ := rawPart.(map[string]interface{})
 				if call, ok := part["functionCall"].(map[string]interface{}); ok {
-					appendImmutableJSONSegment(&segments, apiType, safetySourceToolArgument, fmt.Sprintf("candidates[%d].content.parts[%d].functionCall.args", candidateIndex, partIndex), call["args"])
+					appendImmutableJSONSegmentWithTool(&segments, apiType, safetySourceToolArgument, fmt.Sprintf("candidates[%d].content.parts[%d].functionCall.args", candidateIndex, partIndex), call["args"], stringValue(call["name"]))
 				}
 			}
 		}
@@ -498,6 +517,13 @@ func appendMutableJSONValue(
 	switch typed := value.(type) {
 	case string:
 		if replace == nil {
+			if decoded, ok := decodeJSONValue([]byte(typed)); ok {
+				switch decoded.(type) {
+				case map[string]interface{}, []interface{}:
+					appendMutableJSONValue(segments, protocol, source, path, decoded, toolName, nil)
+					return
+				}
+			}
 			appendSafetySegmentWithTool(segments, protocol, source, path, typed, toolName, nil)
 			return
 		}
@@ -507,6 +533,10 @@ func appendMutableJSONValue(
 	case map[string]interface{}:
 		for _, key := range sortedMapKeys(typed) {
 			field := key
+			if replace == nil {
+				appendMutableJSONValue(segments, protocol, source, path+"."+field, typed[field], toolName, nil)
+				continue
+			}
 			appendMutableJSONValue(segments, protocol, source, path+"."+field, typed[field], toolName, func(masked interface{}) {
 				typed[field] = masked
 			})
@@ -514,6 +544,10 @@ func appendMutableJSONValue(
 	case []interface{}:
 		for index := range typed {
 			itemIndex := index
+			if replace == nil {
+				appendMutableJSONValue(segments, protocol, source, fmt.Sprintf("%s[%d]", path, index), typed[index], toolName, nil)
+				continue
+			}
 			appendMutableJSONValue(segments, protocol, source, fmt.Sprintf("%s[%d]", path, index), typed[index], toolName, func(masked interface{}) {
 				typed[itemIndex] = masked
 			})
@@ -537,10 +571,13 @@ func applyContentSafetySegments(
 ) (bool, error) {
 	vault := metadata.redactionVault
 	if vault == nil {
-		vault = sensitive.NewVault()
+		vault = sensitive.NewVaultWithContext(ctx)
 	}
 	for index := range segments {
 		vault.ReserveText(segments[index].Text)
+	}
+	if err := vault.Err(); err != nil {
+		return false, err
 	}
 	changed := false
 	for index := range segments {
@@ -750,6 +787,8 @@ func recordSafetyMatches(ctx context.Context, metadata HookContext, recorder Blo
 	if len(hits) == 0 || mode == "" || mode == config.ContentSafetyModeBlock {
 		return nil
 	}
+	ctx, cancel := context.WithTimeout(ctx, gateStoreTimeout)
+	defer cancel()
 	if recorder == nil {
 		if mode == config.ContentSafetyModeAudit {
 			return fmt.Errorf("内容安全审计模式未配置记录器")
@@ -757,12 +796,13 @@ func recordSafetyMatches(ctx context.Context, metadata HookContext, recorder Blo
 		return nil
 	}
 	seen := make(map[string]struct{}, len(hits))
+	contentHash := sha256.Sum256([]byte(sourceText))
+	safeContext := sensitive.RedactAuditContext(sourceText)
 	for _, hit := range hits {
 		if _, exists := seen[hit.rule]; exists {
 			continue
 		}
 		seen[hit.rule] = struct{}{}
-		contentHash := sha256.Sum256([]byte(sourceText))
 		eventKey := fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%x", blockType, mode, segment.Source, segment.Path, hit.rule, contentHash)
 		if metadata.eventDeduper.contains(eventKey) {
 			continue
@@ -771,7 +811,7 @@ func recordSafetyMatches(ctx context.Context, metadata HookContext, recorder Blo
 			APIType:        metadata.APIType,
 			BlockType:      blockType,
 			RuleName:       hit.rule,
-			PromptSnippet:  safetyHitSnippet(mode, segment, sourceText, hit),
+			PromptSnippet:  fmt.Sprintf("mode=%s source=%s path=%s\n%s", mode, segment.Source, segment.Path, safetySnippetWindowRedacted(safeContext, hit)),
 			ChannelName:    metadata.ChannelName,
 			Model:          metadata.Model,
 			RequestID:      metadata.RequestID,
@@ -779,7 +819,9 @@ func recordSafetyMatches(ctx context.Context, metadata HookContext, recorder Blo
 		}); err != nil {
 			return fmt.Errorf("写入内容安全%s记录失败: %w", mode, err)
 		}
-		metadata.eventDeduper.mark(eventKey)
+		if err := metadata.eventDeduper.mark(eventKey, metadata.ConversationID == ""); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -854,6 +896,8 @@ func recordWhitelistAllowed(ctx context.Context, metadata HookContext, recorder 
 	if metadata.eventDeduper.contains(eventKey) {
 		return nil
 	}
+	ctx, cancel := context.WithTimeout(ctx, gateStoreTimeout)
+	defer cancel()
 	if _, err := recorder.Record(ctx, sensitive.BlockedLog{
 		APIType:        metadata.APIType,
 		BlockType:      sensitive.BlockTypeWhitelist,
@@ -866,8 +910,7 @@ func recordWhitelistAllowed(ctx context.Context, metadata HookContext, recorder 
 	}); err != nil {
 		return fmt.Errorf("写入白名单放行记录失败: %w", err)
 	}
-	metadata.eventDeduper.mark(eventKey)
-	return nil
+	return metadata.eventDeduper.mark(eventKey, metadata.ConversationID == "")
 }
 
 // safetyHit 表示检测器返回的单个命中。Start/End 是原始片段文本
@@ -887,29 +930,31 @@ const safetySnippetWindowRunes = 60
 // safetySnippetWindow 从 sourceText 截取以命中位置为中心的上下文窗口，
 // 窗口内命中区间替换为 hit.reveal。偏移按 rune 对齐，避免截断多字节字符。
 func safetySnippetWindow(sourceText string, hit safetyHit) string {
-	if hit.start < 0 || hit.end > len(sourceText) || hit.start >= hit.end {
-		return hit.reveal
-	}
-	runes := []rune(sourceText)
-	prefixLen := len([]rune(sourceText[:hit.start]))
-	hitLen := len([]rune(sourceText[hit.start:hit.end]))
+	return safetySnippetWindowRedacted(sensitive.RedactAuditContext(sourceText), hit)
+}
 
-	windowStart := prefixLen - safetySnippetWindowRunes
-	if windowStart < 0 {
-		windowStart = 0
+func safetySnippetWindowRedacted(sourceText string, hit safetyHit) string {
+	reveal := sensitive.RedactAuditText(hit.reveal)
+	if hit.start < 0 || hit.end > len(sourceText) || hit.start >= hit.end {
+		return reveal
 	}
-	windowEnd := prefixLen + hitLen + safetySnippetWindowRunes
-	if windowEnd > len(runes) {
-		windowEnd = len(runes)
+	windowStart, windowEnd := hit.start, hit.end
+	for count := 0; count < safetySnippetWindowRunes && windowStart > 0; count++ {
+		_, size := utf8.DecodeLastRuneInString(sourceText[:windowStart])
+		windowStart -= size
+	}
+	for count := 0; count < safetySnippetWindowRunes && windowEnd < len(sourceText); count++ {
+		_, size := utf8.DecodeRuneInString(sourceText[windowEnd:])
+		windowEnd += size
 	}
 	var builder strings.Builder
 	if windowStart > 0 {
 		builder.WriteString("...")
 	}
-	builder.WriteString(string(runes[windowStart:prefixLen]))
-	builder.WriteString(hit.reveal)
-	builder.WriteString(string(runes[prefixLen+hitLen : windowEnd]))
-	if windowEnd < len(runes) {
+	builder.WriteString(sourceText[windowStart:hit.start])
+	builder.WriteString(reveal)
+	builder.WriteString(sourceText[hit.end:windowEnd])
+	if windowEnd < len(sourceText) {
 		builder.WriteString("...")
 	}
 	return builder.String()
@@ -928,12 +973,17 @@ const whitelistSnippetWindowRunes = 120
 
 // whitelistSnippet 生成白名单放行事件片段：元数据行 + 工具输出段首窗口。
 func whitelistSnippet(segment SafetySegment) string {
-	runes := []rune(segment.Text)
-	window := runes
-	if len(runes) > whitelistSnippetWindowRunes {
-		window = runes[:whitelistSnippetWindowRunes]
+	text := sensitive.RedactAuditText(segment.Text)
+	window := text
+	count := 0
+	for index := range text {
+		if count == whitelistSnippetWindowRunes {
+			window = text[:index]
+			break
+		}
+		count++
 	}
-	return fmt.Sprintf("mode=allow source=%s path=%s\n%s", segment.Source, segment.Path, string(window))
+	return fmt.Sprintf("mode=allow source=%s path=%s\n%s", segment.Source, segment.Path, window)
 }
 
 func stringValue(value interface{}) string {

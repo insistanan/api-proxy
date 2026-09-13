@@ -223,8 +223,12 @@ type SettingsConfig struct {
 // AssistantSettings AI 配置助手设置。
 // Model 是内部调用的模型 ID（取渠道分组的匹配词），由主链路编排按分组匹配
 // 选渠；为空表示自动——与主链路对未匹配模型的行为一致，走各协议兜底分组。
+// ChannelID 显式指定渠道（稳定渠道 ID）；为空表示自动——按
+// messages → responses → chat → gemini 优先级编排选渠。显式指定时
+// 不回退不换渠道（显式指定代表用户意图）。
 type AssistantSettings struct {
-	Model string `json:"model"`
+	Model     string `json:"model"`
+	ChannelID string `json:"channelId"`
 }
 
 // IntegrationSettings 外部工具集成设置。

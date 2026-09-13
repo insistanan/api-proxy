@@ -2,6 +2,7 @@ package sensitive
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -17,11 +18,19 @@ import (
 
 var reservedPlaceholderPattern = regexp.MustCompile(`\bMASKED_[A-Z0-9_]+_[A-Z2-7]{13}_PRESERVE_EXACTLY\b`)
 
-var (
-	placeholderKeyOnce sync.Once
-	placeholderKey     []byte
-	placeholderKeyErr  error
+const (
+	maxVaultMappings    = 8192
+	maxVaultBytes       = 8 << 20
+	maxPlaceholderBytes = 256
 )
+
+// 每次配置切换创建独立状态，已开始的请求继续持有原状态；不重置正在使用的 Once。
+type placeholderKeyState struct {
+	store *MappingStore
+	once  sync.Once
+	key   []byte
+	err   error
+}
 
 // SetPersistentMappingStore 注入进程级持久映射库（mask 模式启用时由 main.go 调用）。
 // 注入后新 Vault 的占位符密钥改由主密钥经 HKDF 派生——同一原文跨重启生成同一
@@ -29,16 +38,15 @@ var (
 // 传 nil 撤销持久化（设置热切换 mask→block 时）；已生成的占位符不受影响。
 func SetPersistentMappingStore(store *MappingStore) {
 	globalPersistentStoreMu.Lock()
-	globalPersistentStore = store
-	placeholderKeyOnce = sync.Once{}
-	placeholderKey = nil
-	placeholderKeyErr = nil
+	if globalPlaceholderState.store != store {
+		globalPlaceholderState = &placeholderKeyState{store: store}
+	}
 	globalPersistentStoreMu.Unlock()
 }
 
 var (
 	globalPersistentStoreMu sync.RWMutex
-	globalPersistentStore   *MappingStore
+	globalPlaceholderState = &placeholderKeyState{}
 	// persistentMissCallback 在还原遇到持久库 miss 时被调用（hooks 层注入审计）。
 	persistentMissCallback func(placeholder string)
 )
@@ -54,7 +62,7 @@ func SetPersistentMissCallback(callback func(placeholder string)) {
 func PersistentMappingStore() *MappingStore {
 	globalPersistentStoreMu.RLock()
 	defer globalPersistentStoreMu.RUnlock()
-	return globalPersistentStore
+	return globalPlaceholderState.store
 }
 
 // RedactionMatch 是可逆脱敏使用的统一命中区间。Original 必须与 Text 的对应
@@ -69,14 +77,21 @@ type RedactionMatch struct {
 
 // RestoreJSON 递归还原 JSON 中的全部字符串值。非 JSON 响应按普通文本还原。
 func (v *Vault) RestoreJSON(body []byte) ([]byte, error) {
-	if v == nil || v.Empty() || len(body) == 0 {
+	if v == nil || len(body) == 0 {
+		return body, nil
+	}
+	if err := v.Err(); err != nil {
+		return nil, err
+	}
+	if !v.CanRestore() {
 		return body, nil
 	}
 	var value interface{}
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.UseNumber()
 	if err := decoder.Decode(&value); err != nil {
-		return []byte(v.Restore(string(body))), nil
+		restored := v.Restore(string(body))
+		return []byte(restored), v.Err()
 	}
 	var trailing interface{}
 	if err := decoder.Decode(&trailing); err != nil {
@@ -87,6 +102,9 @@ func (v *Vault) RestoreJSON(body []byte) ([]byte, error) {
 		return nil, fmt.Errorf("解析待还原响应体失败: JSON 包含多个顶层值")
 	}
 	value = restoreJSONStrings(value, v)
+	if err := v.Err(); err != nil {
+		return nil, err
+	}
 	var output bytes.Buffer
 	encoder := json.NewEncoder(&output)
 	encoder.SetEscapeHTML(false)
@@ -119,6 +137,12 @@ type Vault struct {
 	byOriginal    map[string]string
 	byPlaceholder map[string]string
 	reserved      map[string]struct{}
+	missing       map[string]struct{}
+	state         *placeholderKeyState
+	ctx           context.Context
+	bytes         int
+	err           error
+	maskReplacer  *strings.Replacer
 }
 
 // ReserveText 登记同一请求中尚未处理的原始文本，用于避免占位符与请求
@@ -127,23 +151,54 @@ func (v *Vault) ReserveText(text string) {
 	if v == nil || text == "" {
 		return
 	}
-	placeholders := reservedPlaceholderPattern.FindAllString(text, -1)
+	placeholders := reservedPlaceholderPattern.FindAllString(text, maxVaultMappings+1)
 	if len(placeholders) == 0 {
 		return
 	}
 	v.mu.Lock()
+	defer v.mu.Unlock()
 	for _, placeholder := range placeholders {
-		v.reserved[placeholder] = struct{}{}
+		if len(placeholder) > maxPlaceholderBytes {
+			v.err = fmt.Errorf("请求中的占位符超过 %d 字节上限", maxPlaceholderBytes)
+			return
+		}
+		if _, exists := v.reserved[placeholder]; exists {
+			continue
+		}
+		if len(v.reserved) >= maxVaultMappings {
+			v.err = fmt.Errorf("请求中的保留占位符超过 %d 个上限", maxVaultMappings)
+			return
+		}
+		v.reserved[strings.Clone(placeholder)] = struct{}{}
 	}
-	v.mu.Unlock()
 }
 
 func NewVault() *Vault {
+	return NewVaultWithContext(context.Background())
+}
+
+func NewVaultWithContext(ctx context.Context) *Vault {
+	globalPersistentStoreMu.RLock()
+	state := globalPlaceholderState
+	globalPersistentStoreMu.RUnlock()
 	return &Vault{
 		byOriginal:    make(map[string]string),
 		byPlaceholder: make(map[string]string),
 		reserved:      make(map[string]struct{}),
+		missing:       make(map[string]struct{}),
+		state:         state,
+		ctx:           ctx,
 	}
+}
+
+// Err 返回请求级映射的错误，响应出口必须在写出前检查。
+func (v *Vault) Err() error {
+	if v == nil {
+		return nil
+	}
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return v.err
 }
 
 func (v *Vault) Empty() bool {
@@ -155,6 +210,10 @@ func (v *Vault) Empty() bool {
 	return len(v.byPlaceholder) == 0
 }
 
+func (v *Vault) CanRestore() bool {
+	return v != nil && (!v.Empty() || v.state.store != nil)
+}
+
 // Clear 释放当前请求持有的全部明文、占位符和冲突检查文本。
 func (v *Vault) Clear() {
 	if v == nil {
@@ -164,6 +223,10 @@ func (v *Vault) Clear() {
 	clear(v.byOriginal)
 	clear(v.byPlaceholder)
 	clear(v.reserved)
+	clear(v.missing)
+	v.maskReplacer = nil
+	v.bytes = 0
+	v.err = nil
 	v.mu.Unlock()
 }
 
@@ -173,6 +236,9 @@ func (v *Vault) Clear() {
 func (v *Vault) Mask(text string, matches []RedactionMatch) (string, error) {
 	if v == nil {
 		return "", fmt.Errorf("敏感信息映射仓未初始化")
+	}
+	if err := v.Err(); err != nil {
+		return "", err
 	}
 	if len(matches) == 0 {
 		return text, nil
@@ -189,6 +255,9 @@ func (v *Vault) Mask(text string, matches []RedactionMatch) (string, error) {
 	builder.Grow(len(text))
 	last := 0
 	for _, match := range matches {
+		if err := v.ctx.Err(); err != nil {
+			return "", err
+		}
 		if match.Start < last || match.Start < 0 || match.End > len(text) || match.Start >= match.End {
 			return "", fmt.Errorf("敏感信息规则 %q 返回了无效或重叠区间", match.Rule)
 		}
@@ -208,24 +277,30 @@ func (v *Vault) Mask(text string, matches []RedactionMatch) (string, error) {
 }
 
 func (v *Vault) placeholder(kind, original, source string) (string, error) {
-	// 持久库优先（读失败降级内存/新生成，不中断——见失败路径决策表）：
-	// 命中则同原文跨进程复用同一占位符。
-	if store := PersistentMappingStore(); store != nil {
-		if lookup, err := store.LookupOriginal(original); err == nil && lookup.Found {
-			v.mu.Lock()
-			v.byOriginal[original] = lookup.Placeholder
-			v.byPlaceholder[lookup.Placeholder] = original
-			v.mu.Unlock()
-			return lookup.Placeholder, nil
-		}
-	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	if v.err != nil {
+		return "", v.err
+	}
 	if placeholder, ok := v.byOriginal[original]; ok {
 		return placeholder, nil
 	}
+	// 同请求先查内存；持久库读取失败必须显式报错，避免生成不一致的新映射。
+	store := v.state.store
+	if store != nil {
+		lookup, err := store.lookupOriginal(v.ctx, original)
+		if err != nil {
+			return "", fmt.Errorf("读取持久脱敏映射失败: %w", err)
+		}
+		if lookup.Found {
+			if err := v.addMappingLocked(original, lookup.Placeholder); err != nil {
+				return "", err
+			}
+			return lookup.Placeholder, nil
+		}
+	}
 	kind = normalizePlaceholderType(kind)
-	key, err := stablePlaceholderKey()
+	key, err := v.state.getKey()
 	if err != nil {
 		return "", err
 	}
@@ -245,43 +320,65 @@ func (v *Vault) placeholder(kind, original, source string) (string, error) {
 		if _, exists := v.byPlaceholder[placeholder]; exists {
 			continue
 		}
-		v.byOriginal[original] = placeholder
-		v.byPlaceholder[placeholder] = original
+		if err := v.checkMappingCapacityLocked(original, placeholder); err != nil {
+			return "", err
+		}
 		// 持久库写入（写失败返回错误——fail-closed，映射写不进不转发）。
-		if store := PersistentMappingStore(); store != nil {
-			if err := store.PutMapping(original, kind, placeholder); err != nil {
+		if store != nil {
+			stored, err := store.putMapping(v.ctx, original, kind, placeholder)
+			if err != nil {
 				return "", err
 			}
+			placeholder = stored
+		}
+		if err := v.addMappingLocked(original, placeholder); err != nil {
+			return "", err
 		}
 		return placeholder, nil
 	}
 	return "", fmt.Errorf("生成无冲突的敏感信息占位符失败")
 }
 
-// stablePlaceholderKey 返回占位符派生密钥。持久映射库注入时从主密钥
-// HKDF 派生（跨进程稳定）；否则进程内随机（重启即变，零落盘模式）。
-// SetPersistentMappingStore 会重置 once，注入/撤销后重新解析。
-func stablePlaceholderKey() ([]byte, error) {
-	placeholderKeyOnce.Do(func() {
-		if store := PersistentMappingStore(); store != nil {
-			key, err := store.PlaceholderKey()
-			if err != nil {
-				placeholderKeyErr = err
-				return
-			}
-			placeholderKey = key
+func (s *placeholderKeyState) getKey() ([]byte, error) {
+	s.once.Do(func() {
+		if s.store != nil {
+			s.key, s.err = s.store.PlaceholderKey()
 			return
 		}
-		placeholderKey = make([]byte, 32)
-		if _, err := rand.Read(placeholderKey); err != nil {
-			placeholderKeyErr = fmt.Errorf("生成敏感信息占位符密钥失败: %w", err)
-			placeholderKey = nil
+		s.key = make([]byte, 32)
+		if _, err := rand.Read(s.key); err != nil {
+			s.err = fmt.Errorf("生成敏感信息占位符密钥失败: %w", err)
+			s.key = nil
 		}
 	})
-	if placeholderKeyErr != nil {
-		return nil, placeholderKeyErr
+	return s.key, s.err
+}
+
+func (v *Vault) checkMappingCapacityLocked(original, placeholder string) error {
+	if len(v.byPlaceholder) >= maxVaultMappings || v.bytes+len(original)+len(placeholder) > maxVaultBytes {
+		v.err = fmt.Errorf("请求脱敏映射超过容量上限（%d 条或 %d 字节）", maxVaultMappings, maxVaultBytes)
+		return v.err
 	}
-	return placeholderKey, nil
+	return nil
+}
+
+func (v *Vault) addMappingLocked(original, placeholder string) error {
+	if existing, ok := v.byPlaceholder[placeholder]; ok {
+		if existing != original {
+			v.err = fmt.Errorf("敏感信息占位符映射冲突")
+			return v.err
+		}
+		return nil
+	}
+	if err := v.checkMappingCapacityLocked(original, placeholder); err != nil {
+		return err
+	}
+	original, placeholder = strings.Clone(original), strings.Clone(placeholder)
+	v.byOriginal[original] = placeholder
+	v.byPlaceholder[placeholder] = original
+	v.bytes += len(original) + len(placeholder)
+	v.maskReplacer = nil
+	return nil
 }
 
 func normalizePlaceholderType(kind string) string {
@@ -293,6 +390,9 @@ func normalizePlaceholderType(kind string) string {
 		}
 	}
 	kind = strings.Trim(builder.String(), "_")
+	if len(kind) > 64 {
+		kind = kind[:64]
+	}
 	if kind == "" {
 		return "SENSITIVE"
 	}
@@ -300,56 +400,70 @@ func normalizePlaceholderType(kind string) string {
 }
 
 // Restore 还原当前请求中的完整语义占位符。占位符必须位于独立的标识符边界，
-// 未知值和部分匹配均保持原样。持久映射库注入时，先按文本中出现的占位符形态
-// 预载持久映射（历史会话的旧占位符跨重启还原）；预载命中的 miss 记审计回调。
+// 未知值和部分匹配均保持原样。持久映射库按完整候选值查询历史映射，miss 记审计回调。
 func (v *Vault) Restore(text string) string {
 	if v == nil || text == "" {
 		return text
 	}
-	v.PreloadPersistent(text)
 	restorer := NewStreamRestorer(v)
 	return restorer.Feed(text) + restorer.Flush()
 }
 
-// PreloadPersistent 把文本中出现的合法占位符形态批量登记进当前 Vault
-// （仅持久库命中的条目；miss 调用审计回调后跳过——原样下发契约不变）。
-// 读失败静默降级（失败路径决策表：持久库读失败不中断）。
-func (v *Vault) PreloadPersistent(text string) {
-	store := PersistentMappingStore()
-	if store == nil {
-		return
+// PreloadPersistent 预载完整占位符；跨片段占位符由 StreamRestorer 在拼全时读取。
+func (v *Vault) PreloadPersistent(text string) error {
+	if v == nil {
+		return nil
 	}
-	seen := make(map[string]struct{})
-	for _, placeholder := range reservedPlaceholderPattern.FindAllString(text, -1) {
-		if _, exists := seen[placeholder]; exists {
-			continue
+	for _, placeholder := range reservedPlaceholderPattern.FindAllString(text, maxVaultMappings+1) {
+		if len(placeholder) > maxPlaceholderBytes {
+			v.mu.Lock()
+			v.err = fmt.Errorf("请求中的占位符超过 %d 字节上限", maxPlaceholderBytes)
+			v.mu.Unlock()
+			return v.Err()
 		}
-		seen[placeholder] = struct{}{}
-		v.mu.RLock()
-		_, known := v.byPlaceholder[placeholder]
-		v.mu.RUnlock()
-		if known {
-			continue
+		v.lookupPlaceholder(placeholder)
+		if err := v.Err(); err != nil {
+			return err
 		}
-		lookup, err := store.LookupPlaceholder(placeholder)
-		if err != nil {
-			continue // 读失败降级：该占位符按未知处理，原样下发
-		}
-		if !lookup.Found {
-			// 合法占位符形态但持久库没有（如密钥已轮换）：原样下发 + 审计留痕。
-			globalPersistentStoreMu.RLock()
-			callback := persistentMissCallback
-			globalPersistentStoreMu.RUnlock()
-			if callback != nil {
-				callback(placeholder)
-			}
-			continue
-		}
-		v.mu.Lock()
-		v.byPlaceholder[placeholder] = lookup.Original
-		v.byOriginal[lookup.Original] = placeholder
+	}
+	return v.Err()
+}
+
+func (v *Vault) lookupPlaceholder(placeholder string) (string, bool) {
+	v.mu.Lock()
+	if original, known := v.byPlaceholder[placeholder]; known {
 		v.mu.Unlock()
+		return original, true
 	}
+	if _, missed := v.missing[placeholder]; missed || v.state.store == nil || v.err != nil {
+		v.mu.Unlock()
+		return "", false
+	}
+	lookup, err := v.state.store.lookupPlaceholder(v.ctx, placeholder)
+	if err != nil {
+		v.err = fmt.Errorf("读取持久脱敏占位符失败: %w", err)
+		v.mu.Unlock()
+		return "", false
+	}
+	if lookup.Found {
+		err := v.addMappingLocked(lookup.Original, placeholder)
+		v.mu.Unlock()
+		return lookup.Original, err == nil
+	}
+	if len(v.missing) >= maxVaultMappings {
+		v.err = fmt.Errorf("请求中的未知占位符超过 %d 个上限", maxVaultMappings)
+		v.mu.Unlock()
+		return "", false
+	}
+	v.missing[strings.Clone(placeholder)] = struct{}{}
+	v.mu.Unlock()
+	globalPersistentStoreMu.RLock()
+	callback := persistentMissCallback
+	globalPersistentStoreMu.RUnlock()
+	if callback != nil {
+		callback(placeholder)
+	}
+	return "", false
 }
 
 // MaskKnown 将文本中已经登记到当前请求 Vault 的敏感原文替换为对应占位符。
@@ -358,43 +472,27 @@ func (v *Vault) MaskKnown(text string) string {
 	if v == nil || text == "" {
 		return text
 	}
-	v.mu.RLock()
-	pairs := make([][2]string, 0, len(v.byOriginal))
-	for original, placeholder := range v.byOriginal {
-		pairs = append(pairs, [2]string{original, placeholder})
-	}
-	v.mu.RUnlock()
-	sort.Slice(pairs, func(i, j int) bool {
-		return len(pairs[i][0]) > len(pairs[j][0])
-	})
-	for _, pair := range pairs {
-		text = strings.ReplaceAll(text, pair[0], pair[1])
-	}
-	return text
-}
-
-type restoreMapping struct {
-	token    string
-	original string
-}
-
-func (v *Vault) restoreMappings() []restoreMapping {
-	if v == nil {
-		return nil
-	}
-	v.mu.RLock()
-	defer v.mu.RUnlock()
-	result := make([]restoreMapping, 0, len(v.byPlaceholder))
-	for placeholder, original := range v.byPlaceholder {
-		result = append(result, restoreMapping{token: placeholder, original: original})
-	}
-	sort.Slice(result, func(i, j int) bool {
-		if len(result[i].token) != len(result[j].token) {
-			return len(result[i].token) > len(result[j].token)
+	v.mu.Lock()
+	if v.maskReplacer == nil {
+		originals := make([]string, 0, len(v.byOriginal))
+		for original := range v.byOriginal {
+			originals = append(originals, original)
 		}
-		return result[i].token < result[j].token
-	})
-	return result
+		sort.Slice(originals, func(i, j int) bool {
+			if len(originals[i]) != len(originals[j]) {
+				return len(originals[i]) > len(originals[j])
+			}
+			return originals[i] < originals[j]
+		})
+		pairs := make([]string, 0, len(originals)*2)
+		for _, original := range originals {
+			pairs = append(pairs, original, v.byOriginal[original])
+		}
+		v.maskReplacer = strings.NewReplacer(pairs...)
+	}
+	replacer := v.maskReplacer
+	v.mu.Unlock()
+	return replacer.Replace(text)
 }
 
 // StreamRestorer 对一个逻辑文本通道执行增量精确还原。它只暂存可能成为
@@ -411,45 +509,40 @@ func NewStreamRestorer(vault *Vault) *StreamRestorer {
 }
 
 func (r *StreamRestorer) Feed(fragment string) string {
-	if r == nil || r.vault == nil || r.vault.Empty() {
+	if r == nil || r.vault == nil {
 		return fragment
 	}
 	input := r.pending + fragment
 	r.pending = ""
-	mappings := r.vault.restoreMappings()
 	var output strings.Builder
 	for len(input) > 0 {
-		matched := false
-		for _, mapping := range mappings {
-			if !strings.HasPrefix(input, mapping.token) || !r.validLeftBoundary(mapping) {
-				continue
-			}
-			if len(input) == len(mapping.token) {
-				r.pending = input
-				return output.String()
-			}
-			if isPlaceholderIdentifierByte(input[len(mapping.token)]) {
-				continue
-			}
-			output.WriteString(mapping.original)
-			r.consumeSource(mapping.token)
-			input = input[len(mapping.token):]
-			matched = true
-			break
-		}
-		if matched {
-			continue
-		}
-		possiblePrefix := false
-		for _, mapping := range mappings {
-			if r.validLeftBoundary(mapping) && strings.HasPrefix(mapping.token, input) {
-				possiblePrefix = true
+		if input[0] == 'M' && r.validLeftBoundary() {
+			const prefix = "MASKED_"
+			if len(input) < len(prefix) && strings.HasPrefix(prefix, input) {
+				r.pending = strings.Clone(input)
 				break
 			}
-		}
-		if possiblePrefix {
-			r.pending = input
-			break
+			if strings.HasPrefix(input, prefix) {
+				end := len(prefix)
+				for end < len(input) && end <= maxPlaceholderBytes && isPlaceholderIdentifierByte(input[end]) {
+					end++
+				}
+				if end == len(input) && end <= maxPlaceholderBytes {
+					r.pending = strings.Clone(input)
+					break
+				}
+				if end <= maxPlaceholderBytes {
+					token := input[:end]
+					if reservedPlaceholderPattern.FindString(token) == token {
+						if original, ok := r.vault.lookupPlaceholder(token); ok {
+							output.WriteString(original)
+							r.consumeSource(token)
+							input = input[end:]
+							continue
+						}
+					}
+				}
+			}
 		}
 		output.WriteByte(input[0])
 		r.previousSourceByte = input[0]
@@ -459,7 +552,7 @@ func (r *StreamRestorer) Feed(fragment string) string {
 	return output.String()
 }
 
-func (r *StreamRestorer) validLeftBoundary(mapping restoreMapping) bool {
+func (r *StreamRestorer) validLeftBoundary() bool {
 	return !r.hasPreviousSource || !isPlaceholderIdentifierByte(r.previousSourceByte)
 }
 
@@ -488,10 +581,10 @@ func (r *StreamRestorer) Flush() string {
 	}
 	pending := r.pending
 	r.pending = ""
-	for _, mapping := range r.vault.restoreMappings() {
-		if pending == mapping.token && r.validLeftBoundary(mapping) {
-			r.consumeSource(mapping.token)
-			return mapping.original
+	if pending != "" && r.vault != nil && r.validLeftBoundary() && reservedPlaceholderPattern.FindString(pending) == pending {
+		if original, ok := r.vault.lookupPlaceholder(pending); ok {
+			r.consumeSource(pending)
+			return original
 		}
 	}
 	r.consumeSource(pending)

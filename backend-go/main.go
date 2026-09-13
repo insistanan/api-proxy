@@ -50,6 +50,8 @@ type app struct {
 	blockedStore          *sensitive.BlockedStore
 	gateStore             *sensitive.GateStore
 	mappingStore          *sensitive.MappingStore
+	mappingWatchStop      chan struct{}
+	mappingWatchDone      chan struct{}
 	cmdGate               *hooks.CmdGate
 	contentSafetyPipeline *hooks.Pipeline
 	sessionManager        *session.SessionManager
@@ -213,7 +215,9 @@ func newApp() (*app, error) {
 	if err != nil {
 		return nil, fmt.Errorf("初始化危险命令 AI 闸门存储失败: %w", err)
 	}
-	if expired, expireErr := a.gateStore.ExpireStalePending(context.Background()); expireErr == nil && expired > 0 {
+	if expired, expireErr := a.gateStore.ExpireStalePending(context.Background()); expireErr != nil {
+		return nil, fmt.Errorf("清理重启前命令确认记录失败: %w", expireErr)
+	} else if expired > 0 {
 		log.Printf("[Gate-Init] 已将 %d 条重启前遗留的待确认记录标记为过期（按拦截处理）", expired)
 	}
 	gateCaller := &llmgate.Caller{EnvConfig: a.envCfg, CfgManager: a.cfgManager, ChannelScheduler: a.channelScheduler}
@@ -237,7 +241,9 @@ func newApp() (*app, error) {
 	}
 	// 还原 miss 的审计回调：合法占位符形态但持久库查不到（如密钥已轮换）→ 原样下发 + 留痕。
 	sensitive.SetPersistentMissCallback(func(placeholder string) {
-		if _, recordErr := a.blockedStore.Record(context.Background(), sensitive.BlockedLog{
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if _, recordErr := a.blockedStore.Record(ctx, sensitive.BlockedLog{
 			APIType:       "messages",
 			BlockType:     sensitive.BlockTypeRestoreMiss,
 			RuleName:      "restore_miss",
@@ -246,7 +252,6 @@ func newApp() (*app, error) {
 			log.Printf("[SensitiveData-Restore] 写入还原未命中审计失败: %v", recordErr)
 		}
 	})
-	go a.watchMappingStoreMode()
 
 	// pi-agent 与 skills 管理 API（实例持有各自的互斥锁与存储）
 	a.piAgentAPI, err = handlers.NewPiAgentAPI()
@@ -352,6 +357,9 @@ func newApp() (*app, error) {
 	}
 
 	a.engine = r
+	a.mappingWatchStop = make(chan struct{})
+	a.mappingWatchDone = make(chan struct{})
+	go a.watchMappingStoreMode()
 	return a, nil
 }
 
@@ -360,7 +368,7 @@ func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
 	apiGroup.GET("/request-logs", handlers.GetRequestLogs(a.requestLogStore, a.pricingStore))
 	apiGroup.GET("/system-logs", handlers.GetSystemLogs(a.logStore))
 	apiGroup.GET("/system-logs/:requestId", handlers.GetSystemLog(a.logStore))
-	apiGroup.GET("/blocked-logs", handlers.GetBlockedLogs(a.blockedStore))
+	apiGroup.GET("/blocked-logs", handlers.GetBlockedLogs(a.blockedStore, a.channelScheduler.GetConversationRegistry()))
 	apiGroup.GET("/blocked-logs/:id", handlers.GetBlockedLog(a.blockedStore))
 	apiGroup.DELETE("/blocked-logs/:id", handlers.DeleteBlockedLog(a.blockedStore))
 	apiGroup.DELETE("/blocked-logs", handlers.ClearBlockedLogs(a.blockedStore))
@@ -369,6 +377,7 @@ func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
 	apiGroup.GET("/security/gate/pending", handlers.GetGatePending(a.cmdGate))
 	apiGroup.POST("/security/gate/pending/:id/decision", handlers.DecideGatePending(a.cmdGate))
 	apiGroup.GET("/security/gate/decisions", handlers.ListGateDecisions(a.cmdGate))
+	apiGroup.POST("/security/gate/decisions", handlers.AddGateDecision(a.cmdGate))
 	apiGroup.DELETE("/security/gate/decisions/:conversationId", handlers.RemoveGateDecisions(a.cmdGate))
 
 	// 模型单价表（内置价 + 用户改写），花费统计的单价来源
@@ -555,12 +564,32 @@ func (a *app) logStartupInfo() {
 }
 
 // watchMappingStoreMode 跟随 sensitiveData.mode 的热切换：
-// mask → 注入持久库（新占位符从主密钥派生）；mask 之外 → 撤销注入（停止新写入，
-// 还原路径仍可通过已注入的内存映射工作，进程重启后彻底回到零落盘）。
+// mask → 为新请求注入持久库；mask 之外 → 新请求停止使用持久映射。
+// 已开始的请求保留自己的存储与密钥快照，直到请求结束。
 func (a *app) watchMappingStoreMode() {
+	defer close(a.mappingWatchDone)
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
-	for range ticker.C {
+	retentionTicker := time.NewTicker(time.Minute)
+	defer retentionTicker.Stop()
+	for {
+		select {
+		case <-a.mappingWatchStop:
+			return
+		case <-retentionTicker.C:
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := a.blockedStore.Purge(ctx); err != nil {
+				log.Printf("[ContentSafety-Purge] 清理内容安全历史失败: %v", err)
+			}
+			cancel()
+			ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+			if err := a.gateStore.Purge(ctx); err != nil {
+				log.Printf("[Gate-Purge] 清理命令确认历史失败: %v", err)
+			}
+			cancel()
+			continue
+		case <-ticker.C:
+		}
 		mode := a.cfgManager.GetSettings().ContentSafety.SensitiveData.Mode
 		enabled := sensitive.PersistentMappingStore() != nil
 		want := mode == config.ContentSafetyModeMask
@@ -572,7 +601,7 @@ func (a *app) watchMappingStoreMode() {
 			log.Printf("[SensitiveData-Watch] 已切换到可逆脱敏，持久映射库启用")
 		} else {
 			sensitive.SetPersistentMappingStore(nil)
-			log.Printf("[SensitiveData-Watch] 已离开可逆脱敏，持久映射库停用（停止新写入）")
+			log.Printf("[SensitiveData-Watch] 已离开可逆脱敏，新请求停用持久映射，已有请求沿用原快照")
 		}
 	}
 }
@@ -581,6 +610,12 @@ func (a *app) watchMappingStoreMode() {
 // 顺序约束：必须先停调度器（数据生产者）再关指标存储，
 // 避免关闭期间后台循环与存储 Close 产生写并发。
 func (a *app) shutdown() {
+	if a.mappingWatchStop != nil {
+		close(a.mappingWatchStop)
+		<-a.mappingWatchDone
+	}
+	sensitive.SetPersistentMissCallback(nil)
+	sensitive.SetPersistentMappingStore(nil)
 	a.channelScheduler.Stop()
 
 	if a.evalService != nil {

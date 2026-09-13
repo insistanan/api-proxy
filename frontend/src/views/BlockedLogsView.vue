@@ -23,6 +23,22 @@
     <section class="filters" aria-label="拦截记录筛选">
       <v-select v-model="apiType" :items="apiTypeItems" label="API 类型" density="compact" hide-details />
       <v-select v-model="blockType" :items="blockTypeItems" label="拦截类型" density="compact" hide-details />
+      <v-select
+        v-model="category"
+        :items="categoryItems"
+        label="类别"
+        density="compact"
+        hide-details
+        :disabled="Boolean(blockType)"
+      />
+      <v-switch
+        v-model="activeOnly"
+        label="仅活跃会话"
+        density="compact"
+        hide-details
+        color="primary"
+        class="filter-switch"
+      />
       <v-text-field v-model="fromTime" type="datetime-local" label="开始时间" density="compact" hide-details />
       <v-text-field v-model="toTime" type="datetime-local" label="结束时间" density="compact" hide-details />
       <v-btn color="primary" prepend-icon="mdi-magnify" class="filter-action" @click="applyFilters">应用</v-btn>
@@ -167,8 +183,69 @@
                     <div class="font-weight-medium">{{ entry.model || '--' }}</div>
                     <div class="text-caption text-medium-emphasis">{{ entry.channelName || '--' }}</div>
                   </td>
-                  <td class="snippet-cell" :title="entry.promptSnippet || ''">{{ snippetPreview(entry.promptSnippet) || '--' }}</td>
+                  <td class="snippet-cell" :title="entry.command || entry.promptSnippet || ''">
+                    <span v-if="isDangerousCmdType(entry.blockType) && entry.command" class="command-text">
+                      {{ entry.command }}
+                    </span>
+                    <template v-else>{{ snippetPreview(entry.promptSnippet) || '--' }}</template>
+                  </td>
                   <td class="action-cell">
+                    <v-chip
+                      v-if="isDangerousCmdType(entry.blockType) && entry.conversationId && conversationDecision(entry)"
+                      size="x-small"
+                      :color="conversationDecision(entry) === 'allow' ? 'success' : 'error'"
+                      variant="tonal"
+                      class="decision-chip"
+                    >
+                      {{ conversationDecision(entry) === 'allow' ? '已加白' : '已加黑' }}
+                    </v-chip>
+                    <v-tooltip v-if="isDangerousCmdType(entry.blockType) && entry.conversationId && entry.commandHash" text="放行本会话的同命令及执行上下文">
+                      <template #activator="{ props }">
+                        <v-btn
+                          v-bind="props"
+                          icon="mdi-check-circle-outline"
+                          color="success"
+                          variant="text"
+                          size="small"
+                          class="table-action"
+                          :aria-label="`移入白名单 ${entry.id}`"
+                          :disabled="updatingDecision"
+                          @click.stop="applyGateDecision(entry, 'allow')"
+                        />
+                      </template>
+                    </v-tooltip>
+                    <v-tooltip v-if="isDangerousCmdType(entry.blockType) && entry.conversationId && entry.commandHash" text="拦截本会话的同命令及执行上下文">
+                      <template #activator="{ props }">
+                        <v-btn
+                          v-bind="props"
+                          icon="mdi-block-helper"
+                          color="error"
+                          variant="text"
+                          size="small"
+                          class="table-action"
+                          :aria-label="`移入黑名单 ${entry.id}`"
+                          :disabled="updatingDecision"
+                          @click.stop="applyGateDecision(entry, 'block')"
+                        />
+                      </template>
+                    </v-tooltip>
+                    <v-tooltip
+                      v-if="entry.conversationId && conversationDecision(entry)"
+                      text="解除名单（恢复 AI 审查）"
+                    >
+                      <template #activator="{ props }">
+                        <v-btn
+                          v-bind="props"
+                          icon="mdi-playlist-remove"
+                          variant="text"
+                          size="small"
+                          class="table-action"
+                          :aria-label="`解除名单 ${entry.id}`"
+                          :disabled="updatingDecision"
+                          @click.stop="removeGateDecision(entry)"
+                        />
+                      </template>
+                    </v-tooltip>
                     <v-tooltip text="查看详情">
                       <template #activator="{ props }">
                         <v-btn
@@ -263,6 +340,31 @@
             <dd class="break-text">{{ selectedLog.conversationId || '--' }}</dd>
             <dt>请求 ID</dt>
             <dd class="break-text">{{ selectedLog.requestId || '--' }}</dd>
+            <template v-if="selectedLog.aiReview">
+              <dt>AI 复核模型</dt>
+              <dd>{{ selectedLog.aiReview.model || '--' }}</dd>
+              <dt>AI 复核渠道</dt>
+              <dd>{{ selectedLog.aiReview.channelName || '--' }}</dd>
+              <dt>AI 复核原因</dt>
+              <dd class="break-text">{{ selectedLog.aiReview.reason }}</dd>
+              <dt>AI 复核来源</dt>
+              <dd>{{ selectedLog.aiReview.reused ? '复用同会话结论' : '本次复核' }}</dd>
+              <dt>AI 复核日志</dt>
+              <dd>
+                <v-btn
+                  v-if="selectedLog.aiReview.requestId"
+                  size="small"
+                  variant="tonal"
+                  :to="{ path: '/logs', query: { tab: 'system', id: selectedLog.aiReview.requestId } }"
+                >查看复核请求与响应</v-btn>
+              </dd>
+            </template>
+            <template v-if="isDangerousCmdType(selectedLog.blockType)">
+              <dt>命中的命令</dt>
+              <dd>
+                <pre class="snippet-detail">{{ selectedLog.command || snippetPreview(selectedLog.promptSnippet) || '--' }}</pre>
+              </dd>
+            </template>
             <dt>命中片段</dt>
             <dd>
               <pre class="snippet-detail">{{ selectedLog.promptSnippet || '--' }}</pre>
@@ -338,8 +440,15 @@ const pageSizeItems = [20, 50, 100]
 const entryPageSize = 50
 const apiType = ref<ContentSafetyAPIType | ''>('')
 const blockType = ref<BlockedLogType | ''>('')
+const category = ref<'dangerous_cmd' | ''>('')
+const activeOnly = ref(false)
 const fromTime = ref('')
 const toTime = ref('')
+
+const categoryItems: Array<{ title: string; value: 'dangerous_cmd' | '' }> = [
+  { title: '全部类别', value: '' },
+  { title: '危险命令相关', value: 'dangerous_cmd' }
+]
 const page = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
@@ -366,7 +475,9 @@ const deletingLog = ref<BlockedLogEntry | null>(null)
 const clearDialog = ref(false)
 
 const pageCount = computed(() => Math.max(1, Math.ceil(totalGroups.value / pageSize.value)))
-const hasFilters = computed(() => Boolean(apiType.value || blockType.value || fromTime.value || toTime.value))
+const hasFilters = computed(() =>
+  Boolean(apiType.value || blockType.value || category.value || activeOnly.value || fromTime.value || toTime.value)
+)
 
 const asRFC3339 = (value: string) => (value ? new Date(value).toISOString() : '')
 
@@ -385,6 +496,8 @@ const loadLogs = async () => {
     const response = await api.getBlockedLogs({
       apiType: apiType.value,
       blockType: blockType.value,
+      category: category.value,
+      activeOnly: activeOnly.value,
       from: asRFC3339(fromTime.value),
       to: asRFC3339(toTime.value),
       page: page.value,
@@ -431,6 +544,8 @@ const applyFilters = () => {
 const resetFilters = () => {
   apiType.value = ''
   blockType.value = ''
+  category.value = ''
+  activeOnly.value = false
   fromTime.value = ''
   toTime.value = ''
   applyFilters()
@@ -584,6 +699,8 @@ const loadEntriesPage = async (key: string, reset: boolean) => {
     const response = await api.getBlockedLogGroupEntries({
       apiType: apiType.value,
       blockType: blockType.value,
+      category: category.value,
+      activeOnly: activeOnly.value,
       from: asRFC3339(fromTime.value),
       to: asRFC3339(toTime.value),
       page: nextPage,
@@ -621,6 +738,70 @@ const loadMoreEntries = (key: string) => {
 const groupAriaLabel = (group: BlockedLogGroup) =>
   `${groupIdentityLabel(group)}，${group.count} 条记录，${isExpanded(group.key) ? '已展开' : '已折叠'}`
 
+// 命令名单按会话与完整命令身份匹配，旧记录没有身份时不能据展示片段授权。
+
+const conversationDecisions = ref<Map<string, 'allow' | 'block'>>(new Map())
+const updatingDecision = ref(false)
+
+const isDangerousCmdType = (value: BlockedLogType) =>
+  value === 'dangerous_cmd' || value === 'dangerous_cmd_ai' || value === 'dangerous_cmd_allow'
+
+const commandDecisionKey = (conversationId: string, commandHash: string) => `${conversationId}\0${commandHash}`
+
+const conversationDecision = (entry: BlockedLogEntry): 'allow' | 'block' | undefined =>
+  entry.conversationId && entry.commandHash
+    ? conversationDecisions.value.get(commandDecisionKey(entry.conversationId, entry.commandHash))
+    : undefined
+
+const loadDecisions = async () => {
+  try {
+    const response = await api.listGateDecisions()
+    const map = new Map<string, 'allow' | 'block'>()
+    for (const decision of response.decisions || []) {
+      if (decision.commandHash) {
+        map.set(commandDecisionKey(decision.conversationId, decision.commandHash), decision.decision)
+      }
+    }
+    conversationDecisions.value = map
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : '加载会话名单失败'
+  }
+}
+
+const applyGateDecision = async (entry: BlockedLogEntry, decision: 'allow' | 'block') => {
+  if (!entry.conversationId || !entry.commandHash) return
+  updatingDecision.value = true
+  error.value = ''
+  try {
+    await api.addGateDecision({
+      conversationId: entry.conversationId,
+      decision,
+      rule: entry.ruleName,
+      command: entry.command,
+      commandHash: entry.commandHash
+    })
+    await loadDecisions()
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : '写入会话名单失败'
+  } finally {
+    updatingDecision.value = false
+  }
+}
+
+const removeGateDecision = async (entry: BlockedLogEntry) => {
+  if (!entry.conversationId || !entry.commandHash) return
+  updatingDecision.value = true
+  error.value = ''
+  try {
+    await api.removeGateDecisions(entry.conversationId, entry.commandHash)
+    await loadDecisions()
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : '解除会话名单失败'
+  } finally {
+    updatingDecision.value = false
+  }
+}
+
 const formatTime = (value?: string) => {
   if (!value) return '--'
   const date = new Date(value)
@@ -633,7 +814,10 @@ watch(pageSize, () => {
   else page.value = 1
 })
 
-onMounted(loadLogs)
+onMounted(() => {
+  void loadLogs()
+  void loadDecisions()
+})
 </script>
 
 <style scoped>
@@ -670,13 +854,19 @@ onMounted(loadLogs)
 
 .filters {
   display: grid;
-  grid-template-columns: minmax(140px, 0.8fr) minmax(150px, 0.9fr) minmax(190px, 1fr) minmax(190px, 1fr) auto auto;
+  grid-template-columns:
+    minmax(130px, 0.8fr) minmax(140px, 0.9fr) minmax(130px, 0.8fr) auto
+    minmax(180px, 1fr) minmax(180px, 1fr) auto auto;
   gap: 10px;
   align-items: center;
   padding: 14px;
   border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   border-radius: 6px;
   background: rgb(var(--v-theme-surface));
+}
+
+.filter-switch {
+  white-space: nowrap;
 }
 
 .filter-action,
@@ -804,9 +994,22 @@ onMounted(loadLogs)
   white-space: nowrap;
 }
 
+.command-text {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
 .action-column,
 .action-cell {
-  width: 108px;
+  width: 208px;
+}
+
+.action-cell {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.decision-chip {
+  margin-right: 4px;
 }
 
 .empty-cell {

@@ -325,6 +325,10 @@ func TestContentSafetyPipelineReplacesRequestBodyAndHonorsSettings(t *testing.T)
 	if err := configManager.UpdateSettings(settings); err != nil {
 		t.Fatalf("关闭敏感信息设置失败: %v", err)
 	}
+	// 热更新从下一个请求生效；同一请求的多次检查使用已固定的设置快照。
+	ClearAttachedSensitiveData(c)
+	c, _ = gin.CreateTestContext(httptest.NewRecorder())
+	AttachHookPipeline(c, pipeline, HookContext{APIType: "messages", Model: "test"})
 	req = httptest.NewRequest("POST", "/v1/messages", bytes.NewBufferString(`{"messages":[{"role":"user","content":"请联系 18012345523"}]}`))
 	req.Header.Set("Content-Type", "application/json")
 	if err := runAttachedPreRequestHooks(context.Background(), c, req, "channel"); err != nil {
@@ -403,6 +407,26 @@ func TestContentSafetyPostResponseBlocksExecutableContexts(t *testing.T) {
 		{
 			name:      "工具返回内容",
 			body:      `{"tool_result":{"content":"rm -rf / 是历史输出，没有执行"}}`,
+			wantBlock: false,
+		},
+		{
+			name:      "自定义工具原始安全脚本",
+			body:      `{"output":[{"type":"custom_tool_call","name":"shell","input":"{ echo safe; }"}]}`,
+			wantBlock: false,
+		},
+		{
+			name:      "自定义工具原始危险脚本",
+			body:      `{"output":[{"type":"custom_tool_call","name":"shell","input":"{ rm -rf /; }"}]}`,
+			wantBlock: true,
+		},
+		{
+			name:      "畸形函数参数",
+			body:      `{"choices":[{"message":{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"shell","arguments":"{\"command\":\"rm -rf /\""}}]}}]}`,
+			wantBlock: true,
+		},
+		{
+			name:      "工具结构标识不是命令",
+			body:      `{"choices":[{"message":{"tool_calls":[{"id":"rm -rf /","type":"function","function":{"name":"shell","arguments":"{\"command\":\"echo safe\"}"}}]}}]}`,
 			wantBlock: false,
 		},
 	}
@@ -488,6 +512,33 @@ func TestContentSafetyStreamToolArgumentsAndProtocolError(t *testing.T) {
 	body := recorder.Body.String()
 	if !strings.Contains(body, `"type":"content_safety_error"`) || !strings.Contains(body, "DANGEROUS_COMMAND_BLOCKED") {
 		t.Fatalf("Chat 流错误格式不正确: %s", body)
+	}
+
+	for _, testCase := range []struct {
+		name     string
+		input    string
+		rawInput bool
+		wantErr  bool
+	}{
+		{name: "原始安全脚本", input: "{ echo safe; }", rawInput: true},
+		{name: "原始危险脚本", input: "{ rm -rf /; }", rawInput: true, wantErr: true},
+		{name: "未完成 JSON", input: `{"command":"echo safe"`, wantErr: true},
+		{name: "空函数参数"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			context, _ := gin.CreateTestContext(httptest.NewRecorder())
+			AttachHookPipeline(context, pipeline, HookContext{APIType: "responses", Stream: true})
+			t.Cleanup(func() { ClearAttachedSensitiveData(context) })
+			var err error
+			if testCase.rawInput {
+				err = FeedAttachedStreamToolInput(context, "tool", testCase.input, true, "shell")
+			} else {
+				err = FeedAttachedStreamToolArgumentsSnapshot(context, "tool", testCase.input, "shell")
+			}
+			if (err != nil) != testCase.wantErr {
+				t.Fatalf("工具输入审核结果不符: %v", err)
+			}
+		})
 	}
 }
 
@@ -697,5 +748,81 @@ func allDangerousCmdRulesForTest() []string {
 		config.DangerousCmdRuleReverseShell,
 		config.DangerousCmdRulePrivilegeEscalation,
 		config.DangerousCmdRuleEnvironmentTampering,
+	}
+}
+
+func TestStreamCandidateFinishKeepsOtherArgumentsPending(t *testing.T) {
+	for _, protocol := range []struct {
+		api    string
+		prefix string
+		field  string
+		finish string
+	}{
+		{api: "chat", prefix: "chat.choice.", field: "choices", finish: "finish_reason"},
+		{api: "gemini", prefix: "gemini.candidate.", field: "candidates", finish: "finishReason"},
+	} {
+		t.Run(protocol.api, func(t *testing.T) {
+			manager, err := config.NewConfigManager(filepath.Join(t.TempDir(), "config.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer manager.Close()
+			enableDangerousCmdForTest(t, manager)
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			AttachHookPipeline(c, NewContentSafetyPipeline(manager), HookContext{APIType: protocol.api, Stream: true})
+			defer ClearAttachedSensitiveData(c)
+			if err := FeedAttachedStreamToolArgumentsForKey(c, protocol.prefix+"1.tool.0", `{"command":"echo`, "Bash"); err != nil {
+				t.Fatal(err)
+			}
+			finish := func(index int) error {
+				body, err := json.Marshal(map[string]any{
+					protocol.field: []any{map[string]any{"index": index, protocol.finish: "stop"}},
+				})
+				if err != nil {
+					return err
+				}
+				_, err = RestoreAttachedSSEEvent(c, "data: "+string(body)+"\n\n")
+				return err
+			}
+			if err := finish(0); err != nil {
+				t.Fatalf("候选 0 结束不应检查候选 1 的半段 JSON: %v", err)
+			}
+			if err := FeedAttachedStreamToolArgumentsForKey(c, protocol.prefix+"1.tool.0", ` ok"}`, "Bash"); err != nil {
+				t.Fatal(err)
+			}
+			if err := finish(1); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestStreamCandidatesKeepIndependentCodeBlocks(t *testing.T) {
+	manager, err := config.NewConfigManager(filepath.Join(t.TempDir(), "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	enableDangerousCmdForTest(t, manager)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	AttachHookPipeline(c, NewContentSafetyPipeline(manager), HookContext{APIType: "chat", Stream: true})
+	defer ClearAttachedSensitiveData(c)
+	for _, fragment := range []struct{ key, text string }{
+		{"chat.choice.0.", "```sh\n"},
+		{"chat.choice.1.", "rm -rf /\n"},
+		{"chat.choice.0.", "echo ok\n```"},
+		{"chat.choice.1.", "```sh\nrm -rf /\n"},
+	} {
+		if err := FeedAttachedStreamTextForKey(c, fragment.key, fragment.text); err != nil {
+			t.Fatalf("不同候选的代码块不能互相拼接或提前结束: %v", err)
+		}
+	}
+	if err := FinishAttachedStreamSafetyEvent(c, `data: {"choices":[{"index":0,"finish_reason":"stop"}]}`); err != nil {
+		t.Fatalf("候选 0 结束不应触发候选 1 的未闭合代码块: %v", err)
+	}
+	err = FinishAttachedStreamSafetyEvent(c, `data: {"choices":[{"index":1,"finish_reason":"stop"}]}`)
+	var safetyErr *ContentSafetyError
+	if !errors.As(err, &safetyErr) || safetyErr.BlockType != sensitive.BlockTypeDangerousCmd {
+		t.Fatalf("候选 1 结束前必须拦截其危险命令: %v", err)
 	}
 }

@@ -35,30 +35,44 @@ type SelectedChannel struct {
 	// 调用方在整个内部调用（含全部重试）结束后必须 ReleaseChannelReservation；
 	// 仅探测可用性时应立即释放（见 Caller.PreviewChannel）。
 	Reserved bool
+	// Probe 表示本次选择占用了渠道熔断器的 HalfOpen 探测名额（编排选渠
+	// 经 AllowChannelByCircuit 产生；直查路径不经过熔断器，恒为 false）。
+	// 与 Reserved 同生命周期：真实调用结束必须以 RecordCircuit* 记账释放，
+	// 仅探测时必须 RecordCircuitNeutral 立即释放，否则名额泄漏会把渠道
+	// 卡死在 HalfOpen——表现为"状态栏显示该渠道、实际请求却选不中它"。
+	Probe bool
 }
 
 // PickChannel 挑选一个可用的内部调用渠道。
 // channelID 非空时只认该稳定 ID（不存在或当前不可用即返回错误，不回退——
 // 显式指定代表用户意图）。
-// channelID 为空且调度器可用时，按 messages → responses → chat → gemini 顺序
+// channelID 为空且 model 非空时，按 messages → responses → chat → gemini 顺序
 // 复用主链路编排选渠（scheduler.SelectChannel：分组匹配 → 优先级 → 熔断/健康
-// 过滤 → 兜底分组与组内降级）；model 即请求的模型 ID（分组匹配词），为空时
-// 与主链路对未匹配模型的行为一致——走各协议兜底分组。
-// channelID 为空且调度器不可用（单测环境）时，退化为按切片顺序扫描第一个
-// "启用 + 有 Key"的渠道（不经过编排）。
-func PickChannel(ctx context.Context, cfgManager *config.ConfigManager, channelScheduler *scheduler.ChannelScheduler, channelID string, model string) (*SelectedChannel, error) {
+// 过滤 → 兜底分组与组内降级）——model 即请求的模型 ID（分组匹配词）。
+// channelID 与 model 均空（内部调用自动模式）时**不走分组路由**：主链路的
+// 空模型语义只进兜底分组，挂在命名分组的渠道会被整体跳过——与内部调用
+// "按四协议优先级找一个能用渠道"的意图不符（用户场景：messages 池渠道全部
+// 挂在命名分组，自动模式却降级到 chat）。改为按 messages → responses →
+// chat → gemini × 配置顺序全池扫描，取第一个"可用 + 能解析出模型"的渠道。
+// failedChannels 按 kind 排除已失败的渠道（自动模式换渠道重试用）；nil 不排除。
+func PickChannel(ctx context.Context, cfgManager *config.ConfigManager, channelScheduler *scheduler.ChannelScheduler, channelID string, model string, failedChannels map[scheduler.ChannelKind]map[int]bool) (*SelectedChannel, error) {
 	if cfgManager == nil {
 		return nil, fmt.Errorf("内部调用未绑定配置管理器")
 	}
 	channelID = strings.TrimSpace(channelID)
+	model = strings.TrimSpace(model)
 	if channelID != "" {
-		return pickByID(cfgManager, channelScheduler, channelID)
+		return pickByID(cfgManager, channelScheduler, channelID, model)
 	}
-	if channelScheduler != nil {
-		return pickByOrchestration(ctx, channelScheduler, model)
+	if channelScheduler != nil && model != "" {
+		return pickByOrchestration(ctx, channelScheduler, model, failedChannels)
 	}
 	for _, kind := range preferredKinds {
-		selected, err := firstAvailableChannel(cfgManager, channelScheduler, kind, "")
+		var kindFailed map[int]bool
+		if failedChannels != nil {
+			kindFailed = failedChannels[kind]
+		}
+		selected, err := firstAvailableChannel(cfgManager, channelScheduler, kind, "", model, kindFailed)
 		if err != nil || selected != nil {
 			return selected, err
 		}
@@ -69,24 +83,53 @@ func PickChannel(ctx context.Context, cfgManager *config.ConfigManager, channelS
 // pickByOrchestration 按四协议优先级复用主链路编排选渠。
 // SelectChannel 自带分组匹配、优先级顺序、熔断与健康过滤、兜底分组与组内
 // 降级（ExcludeFromConversation 的公用图片理解渠道天然被排除），这里只负责
-// 跨协议的优先级与失败聚合。
-func pickByOrchestration(ctx context.Context, channelScheduler *scheduler.ChannelScheduler, model string) (*SelectedChannel, error) {
+// 跨协议的优先级与失败聚合，以及内部调用特有的"模型可解析"过滤：
+// 主链路允许空模型选中无 DefaultModel 的渠道（由请求阶段处理），
+// 但内部调用必须发出一个具体模型，解析不出模型的渠道直接排除重选。
+// 注意：SelectChannel 在渠道处于熔断半开（HalfOpen）时可能占用唯一的探测
+// 名额（AllowChannelByCircuit → circuit.Allow），该名额必须由调用方在本次
+// 内部调用结束时以 Circuit 记账（Success/Failure/Neutral）释放——真实调用
+// 见 Caller.callOnChannel，探测见 Caller.PreviewChannel；漏记会把渠道卡死在
+// HalfOpen，表现为"状态栏显示该渠道、实际请求却选不中它"。
+func pickByOrchestration(ctx context.Context, channelScheduler *scheduler.ChannelScheduler, model string, failedChannels map[scheduler.ChannelKind]map[int]bool) (*SelectedChannel, error) {
 	var lastErr error
 	for _, kind := range preferredKinds {
-		result, err := channelScheduler.SelectChannel(ctx, "", nil, kind, model)
-		if err != nil {
-			lastErr = err
-			continue
+		// 组内排除集：入参 failedChannels（跨渠道重试）+ 本轮模型过滤排除，
+		// SelectChannel 按 failedChannels 语义自然推进到下一渠道。
+		excluded := make(map[int]bool)
+		if failedChannels != nil {
+			for index := range failedChannels[kind] {
+				excluded[index] = true
+			}
 		}
-		if result == nil || result.Upstream == nil {
-			continue
+		for {
+			result, err := channelScheduler.SelectChannel(ctx, "", excluded, kind, model)
+			if err != nil {
+				lastErr = err
+				break
+			}
+			if result == nil || result.Upstream == nil {
+				break
+			}
+			if canResolveInternalModel(model, result.Upstream) {
+				return &SelectedChannel{
+					Kind:         kind,
+					Upstream:     result.Upstream.Clone(),
+					ChannelIndex: result.ChannelIndex,
+					Reserved:     result.Reserved,
+					Probe:        result.Probe,
+				}, nil
+			}
+			// 该渠道解析不出模型（无 DefaultModel 且映射不命中），调用必然
+			// 失败：释放本次选渠占用的预留与探测名额，排除后重选。
+			if result.Reserved {
+				channelScheduler.ReleaseChannelReservation(kind, result.ChannelIndex)
+			}
+			if result.Probe {
+				channelScheduler.RecordCircuitNeutral(kind, result.ChannelIndex)
+			}
+			excluded[result.ChannelIndex] = true
 		}
-		return &SelectedChannel{
-			Kind:         kind,
-			Upstream:     result.Upstream.Clone(),
-			ChannelIndex: result.ChannelIndex,
-			Reserved:     result.Reserved,
-		}, nil
 	}
 	if lastErr != nil {
 		return nil, fmt.Errorf("按 messages → responses → chat → gemini 编排选渠均失败: %w", lastErr)
@@ -94,9 +137,21 @@ func pickByOrchestration(ctx context.Context, channelScheduler *scheduler.Channe
 	return nil, fmt.Errorf("没有可用的内部调用渠道（按 messages → responses → chat → gemini 顺序查找均失败）")
 }
 
-func pickByID(cfgManager *config.ConfigManager, channelScheduler *scheduler.ChannelScheduler, channelID string) (*SelectedChannel, error) {
+// canResolveInternalModel 判断渠道能否为内部调用解析出非空模型：
+// prompt.Model 能命中映射，或渠道配置了 DefaultModel。两者皆无的渠道
+// （空模型 + 无配置）在调用期必然报"未能解析可用模型"，选渠阶段即排除。
+func canResolveInternalModel(model string, upstream *config.UpstreamConfig) bool {
+	if upstream == nil {
+		return false
+	}
+	return strings.TrimSpace(config.ResolveUpstreamModel(model, upstream)) != ""
+}
+
+// pickByID 按稳定渠道 ID 选渠。同 canResolveInternalModel 口径：解析不出
+// 模型的渠道（无 DefaultModel 且映射不命中）显式报错，不静默换渠道。
+func pickByID(cfgManager *config.ConfigManager, channelScheduler *scheduler.ChannelScheduler, channelID string, model string) (*SelectedChannel, error) {
 	for _, kind := range preferredKinds {
-		selected, err := firstAvailableChannel(cfgManager, channelScheduler, kind, channelID)
+		selected, err := firstAvailableChannel(cfgManager, channelScheduler, kind, channelID, model, nil)
 		if err != nil || selected != nil {
 			return selected, err
 		}
@@ -104,11 +159,12 @@ func pickByID(cfgManager *config.ConfigManager, channelScheduler *scheduler.Chan
 	return nil, fmt.Errorf("内部调用渠道 %q 不存在或不在 messages/responses/chat/gemini 四类之中", channelID)
 }
 
-// firstAvailableChannel 在单个 kind 的渠道切片中找可用渠道。
+// firstAvailableChannel 在单个 kind 的渠道切片中按配置顺序找可用渠道。
 // channelID 非空时只匹配该 ID；匹配到但不可用时返回错误（显式指定不静默跳过）。
-// channelID 为空时返回第一个可用渠道；该 kind 无可用渠道时返回 (nil, nil)，
-// 由调用方继续尝试下一个 kind。
-func firstAvailableChannel(cfgManager *config.ConfigManager, channelScheduler *scheduler.ChannelScheduler, kind scheduler.ChannelKind, channelID string) (*SelectedChannel, error) {
+// channelID 为空时（自动模式全池扫描）：跳过 failedChannels 排除的渠道与
+// 解析不出模型的渠道，按配置顺序取第一个可用渠道；本 kind 无可用渠道时
+// 返回 (nil, nil)，由调用方继续尝试下一个 kind。
+func firstAvailableChannel(cfgManager *config.ConfigManager, channelScheduler *scheduler.ChannelScheduler, kind scheduler.ChannelKind, channelID, model string, failedChannels map[int]bool) (*SelectedChannel, error) {
 	cfg := cfgManager.GetConfig()
 	var upstreams []config.UpstreamConfig
 	switch kind {
@@ -128,6 +184,16 @@ func firstAvailableChannel(cfgManager *config.ConfigManager, channelScheduler *s
 		if channelID != "" && upstream.ID != channelID {
 			continue
 		}
+		if channelID == "" && failedChannels != nil && failedChannels[index] {
+			continue
+		}
+		// 纯配置过滤必须先于消耗半开探测名额的可用性检查。
+		if !canResolveInternalModel(model, upstream) {
+			if channelID != "" {
+				return nil, fmt.Errorf("内部调用渠道 %q 解析不出模型（请配置默认模型或模型映射）", upstream.Name)
+			}
+			continue
+		}
 		selected, unavailable := checkChannelAvailable(channelScheduler, kind, upstream, index)
 		if selected != nil {
 			return selected, nil
@@ -136,13 +202,15 @@ func firstAvailableChannel(cfgManager *config.ConfigManager, channelScheduler *s
 		if channelID != "" {
 			return nil, unavailable
 		}
-		return nil, nil
 	}
 	return nil, nil
 }
 
 // checkChannelAvailable 校验渠道可用性（启用 + 有 Key + 健康 + 未熔断）。
 // 可用返回选中结果；不可用返回原因。
+// 注意：熔断放行走 CircuitAllow（消耗式），渠道处于半开（HalfOpen）时占用
+// 唯一探测名额并标记在返回结果的 Probe 上——调用方必须在调用结束/探测结束
+// 时以 Circuit 记账释放（真实调用按结果 RecordCircuit*，探测恒 RecordNeutral）。
 func checkChannelAvailable(channelScheduler *scheduler.ChannelScheduler, kind scheduler.ChannelKind, upstream *config.UpstreamConfig, index int) (*SelectedChannel, error) {
 	if config.GetChannelStatus(upstream) != config.ChannelStatusActive {
 		return nil, fmt.Errorf("渠道 %q 未启用", upstream.Name)
@@ -151,13 +219,18 @@ func checkChannelAvailable(channelScheduler *scheduler.ChannelScheduler, kind sc
 		return nil, fmt.Errorf("渠道 %q 没有可用的 API Key", upstream.Name)
 	}
 	if channelScheduler != nil {
-		if !channelScheduler.AllowChannelByCircuit(kind, index, upstream.Name) {
+		circuitResult := channelScheduler.CircuitAllow(kind, index, upstream.Name)
+		if !circuitResult.Allowed {
 			return nil, fmt.Errorf("渠道 %q 当前处于熔断状态", upstream.Name)
 		}
 		metricsManager := channelScheduler.MetricsManager(kind)
 		if metricsManager != nil && !metricsManager.IsChannelHealthyWithKeys(upstream.BaseURL, upstream.APIKeys, index) {
+			if circuitResult.Probe {
+				channelScheduler.RecordCircuitNeutral(kind, index)
+			}
 			return nil, fmt.Errorf("渠道 %q 当前不健康", upstream.Name)
 		}
+		return &SelectedChannel{Kind: kind, Upstream: upstream.Clone(), ChannelIndex: index, Probe: circuitResult.Probe}, nil
 	}
 	return &SelectedChannel{Kind: kind, Upstream: upstream.Clone(), ChannelIndex: index}, nil
 }

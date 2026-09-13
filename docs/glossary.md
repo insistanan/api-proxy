@@ -37,8 +37,8 @@
 | **评测结论聚合（latest-map）** | 按渠道取最近一次评测的聚合芯片：fail > suspect > pass；仅 error/insufficient/inapplicable 为中性；超过 7 天标过期。 | `internal/eval`、渠道行芯片 |
 | **inapplicable** | 评测结论：渠道/协议不适用（Images、备用池、弃用、熔断、serviceType 不匹配），不是 fail。 | `internal/eval` |
 | **指纹相近（fingerprintTwins）** | 同一批次里两个渠道的随机数直方图余弦相似度 ≥ 0.95，回填进结果 detail 供人看。只是提示，不改 verdict——同源官方中转也会相近。 | `internal/eval/runner.go` |
-| **AI 闸门（AIGate）** | 危险命令命中后的二次审查：会话级白/黑名单 → llmgate 大模型判断 → pending 等待窗口（AI 判危险，超时拦截）或放行 + 事后否决窗口。判断失败一律拦截。 | `internal/handlers/hooks/cmd_gate.go`、`internal/sensitive/gate_store.go` |
-| **内部 LLM 调用（llmgate）** | 代理自身发起的大模型单轮调用：渠道优先级 messages → responses → chat → gemini，显式指定不回退。闸门与 AI 助手共用。 | `internal/llmgate` |
+| **AI 闸门（AIGate）** | 危险命令命中后的二次审查：会话级白/黑名单 → 会话级 AI 审查去重（同对话内同一命令骨架——忽略参数/路径差异——只送审一次）→ llmgate 大模型判断 → pending 等待窗口（AI 判危险，超时拦截）或放行 + 事后否决窗口。判断失败一律拦截。 | `internal/handlers/hooks/cmd_gate.go`、`internal/sensitive/gate_store.go` |
+| **内部 LLM 调用（llmgate）** | 代理自身发起的大模型单轮调用：渠道优先级 messages → responses → chat → gemini，显式指定不回退；自动模式（空模型）按配置顺序全池扫描（不受分组路由限制），解析不出模型的渠道跳过。闸门与 AI 助手共用。 | `internal/llmgate` |
 | **行动协议（Action Protocol）** | AI 配置助手的配置变更协议：模型在回复中嵌入 ` ```assistant-action ` JSON 块，后端白名单执行（create_channel / create_pool / set_model_mapping / update_channel），绝不携带 API Key。 | `internal/assistant/actions.go` |
 | **放行字面量（Allowlist）** | 字符串级白名单：条目与命中片段完全相等时跳过全部检测维度（整段相等跳过 segment，子串相等丢弃命中，复检同样过滤）。与按工具名放行的 Whitelist 语义不同。 | `internal/config/config.go AllowlistConfig`、`handlers/hooks/allowlist.go` |
 | **自定义检测规则（CustomRules）** | 用户自定义正则，命中走可逆脱敏（用户指定占位符类型前缀）；仅 mask 模式参与，执行顺序在内置规则之后。 | `internal/sensitive/custom_detector.go` |

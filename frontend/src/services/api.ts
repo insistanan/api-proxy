@@ -35,10 +35,12 @@ import type {
   EvalSuite,
   EvalValidateReport,
   EvalWatchConfig,
+  GateDecision,
   GateDecisionResponse,
   GatePending,
   GatePendingResponse,
   GlobalStatsHistoryResponse,
+  LogAPIType,
   MetricsHistoryResponse,
   ModelsResponse,
   OpenCodeConfig,
@@ -348,7 +350,7 @@ class ApiService {
     return this.request(`/${type}/channels/${channelId}/logs`)
   }
 
-  async getRequestLogs(params: { type?: ConversationKind | ''; limit?: number } = {}): Promise<RequestLogsResponse> {
+  async getRequestLogs(params: { type?: LogAPIType | ''; limit?: number } = {}): Promise<RequestLogsResponse> {
     const search = new URLSearchParams()
     if (params.type) search.set('type', params.type)
     if (params.limit) search.set('limit', String(params.limit))
@@ -356,7 +358,7 @@ class ApiService {
     return this.request(`/request-logs${query ? `?${query}` : ''}`)
   }
 
-  async getSystemLogs(params: { type?: ConversationKind | ''; limit?: number } = {}): Promise<SystemLogsResponse> {
+  async getSystemLogs(params: { type?: LogAPIType | ''; limit?: number } = {}): Promise<SystemLogsResponse> {
     const search = new URLSearchParams()
     if (params.type) search.set('type', params.type)
     if (params.limit) search.set('limit', String(params.limit))
@@ -372,6 +374,8 @@ class ApiService {
     const search = new URLSearchParams()
     if (params.apiType) search.set('apiType', params.apiType)
     if (params.blockType) search.set('blockType', params.blockType)
+    if (params.category) search.set('category', params.category)
+    if (params.activeOnly) search.set('activeOnly', 'true')
     if (params.from) search.set('from', params.from)
     if (params.to) search.set('to', params.to)
     if (params.page) search.set('page', String(params.page))
@@ -386,6 +390,8 @@ class ApiService {
     const search = new URLSearchParams()
     if (params.apiType) search.set('apiType', params.apiType)
     if (params.blockType) search.set('blockType', params.blockType)
+    if (params.category) search.set('category', params.category)
+    if (params.activeOnly) search.set('activeOnly', 'true')
     if (params.from) search.set('from', params.from)
     if (params.to) search.set('to', params.to)
     if (params.page) search.set('page', String(params.page))
@@ -408,15 +414,20 @@ class ApiService {
   }
 
   // 危险命令 AI 闸门：待确认列表 / 用户决定 / 会话级白黑名单
-  async getGatePending(): Promise<GatePendingResponse> {
-    return this.request('/security/gate/pending')
+  async getGatePending(signal?: AbortSignal): Promise<GatePendingResponse> {
+    return this.request('/security/gate/pending', { signal })
   }
 
-  async decideGatePending(id: number, decision: 'allow' | 'block'): Promise<{ pending: GatePending }> {
+  async decideGatePending(
+    id: number,
+    decision: 'allow' | 'block',
+    signal?: AbortSignal
+  ): Promise<{ pending: GatePending }> {
     return this.request(`/security/gate/pending/${id}/decision`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ decision })
+      body: JSON.stringify({ decision }),
+      signal
     })
   }
 
@@ -424,8 +435,28 @@ class ApiService {
     return this.request('/security/gate/decisions')
   }
 
-  async removeGateDecisions(conversationId: string): Promise<{ removed: number }> {
-    return this.request(`/security/gate/decisions/${encodeURIComponent(conversationId)}`, { method: 'DELETE' })
+  async addGateDecision(body: {
+    conversationId: string
+    decision: 'allow' | 'block'
+    commandHash: string
+    rule?: string
+    command?: string
+  }): Promise<{ decision: GateDecision }> {
+    return this.request('/security/gate/decisions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+  }
+
+  async removeGateDecisions(
+    conversationId: string,
+    commandHash: string
+  ): Promise<{ removed: number }> {
+    return this.request(
+      `/security/gate/decisions/${encodeURIComponent(conversationId)}?commandHash=${encodeURIComponent(commandHash)}`,
+      { method: 'DELETE' }
+    )
   }
 
   // AI 配置助手

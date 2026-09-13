@@ -392,6 +392,11 @@
             </div>
           </v-alert>
 
+          <CommandSafetyHistory
+            v-if="detailDialog && selectedConversation"
+            :conversation-id="selectedConversation.id"
+          />
+
           <!-- 提示词详情 -->
           <div class="mt-4">
             <div class="text-subtitle-2 font-weight-bold mb-3 d-flex align-center ga-2">
@@ -464,6 +469,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import CommandSafetyHistory from '@/components/CommandSafetyHistory.vue'
 import { api, type ConversationEntry, type ConversationKind, type ConversationRouteOptionChannel } from '@/services/api'
 
 const headers = [

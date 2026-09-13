@@ -56,6 +56,7 @@ func UpdateSettings(cfgManager *config.ConfigManager) gin.HandlerFunc {
 		}
 		if req.Assistant != nil {
 			req.Assistant.Model = strings.TrimSpace(req.Assistant.Model)
+			req.Assistant.ChannelID = strings.TrimSpace(req.Assistant.ChannelID)
 			settings.Assistant = *req.Assistant
 		}
 

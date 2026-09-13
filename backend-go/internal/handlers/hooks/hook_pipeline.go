@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"net/http"
 	"sort"
@@ -22,24 +23,26 @@ const (
 
 // HookContext 是一次管道执行期间保持不变的请求元数据。
 type HookContext struct {
-	APIType         string
-	PayloadProtocol string
-	Model           string
-	Stream          bool
-	RequestID       string
-	ConversationID  string
-	ChannelName     string
-	eventDeduper    *safetyEventDeduper
-	redactionVault  *sensitive.Vault
+	APIType            string
+	PayloadProtocol    string
+	Model              string
+	Stream             bool
+	RequestID          string
+	ConversationID     string
+	ChannelName        string
+	eventDeduper       *safetyEventDeduper
+	redactionVault     *sensitive.Vault
+	preRequestSnapshot *contentSafetySnapshot
 }
 
 type safetyEventDeduper struct {
-	mu   sync.Mutex
-	seen map[string]struct{}
+	mu         sync.Mutex
+	seen       map[[sha256.Size]byte]struct{}
+	unassigned bool
 }
 
 func newSafetyEventDeduper() *safetyEventDeduper {
-	return &safetyEventDeduper{seen: make(map[string]struct{})}
+	return &safetyEventDeduper{seen: make(map[[sha256.Size]byte]struct{})}
 }
 
 func (d *safetyEventDeduper) contains(key string) bool {
@@ -48,16 +51,51 @@ func (d *safetyEventDeduper) contains(key string) bool {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	_, exists := d.seen[key]
+	_, exists := d.seen[sha256.Sum256([]byte(key))]
 	return exists
 }
 
-func (d *safetyEventDeduper) mark(key string) {
+func (d *safetyEventDeduper) mark(key string, unassigned ...bool) error {
+	if d == nil {
+		return nil
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	hash := sha256.Sum256([]byte(key))
+	if _, exists := d.seen[hash]; !exists && len(d.seen) >= 8192 {
+		return fmt.Errorf("单次请求的内容安全审计事件超过 8192 条上限")
+	}
+	d.seen[hash] = struct{}{}
+	if len(unassigned) > 0 && unassigned[0] {
+		d.unassigned = true
+	}
+	return nil
+}
+
+func (d *safetyEventDeduper) hasUnassigned() bool {
+	if d == nil {
+		return false
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.unassigned
+}
+
+func (d *safetyEventDeduper) markAssigned() {
 	if d == nil {
 		return
 	}
 	d.mu.Lock()
-	d.seen[key] = struct{}{}
+	d.unassigned = false
+	d.mu.Unlock()
+}
+
+func (d *safetyEventDeduper) markUnassigned() {
+	if d == nil {
+		return
+	}
+	d.mu.Lock()
+	d.unassigned = true
 	d.mu.Unlock()
 }
 

@@ -94,11 +94,46 @@ func RemoveGateDecisions(gate *hooks.CmdGate) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "会话 ID 不能为空"})
 			return
 		}
-		removed, err := gate.RemoveDecisions(conversationID)
+		var commandHashes []string
+		if hash := c.Query("commandHash"); hash != "" {
+			commandHashes = append(commandHashes, hash)
+		}
+		removed, err := gate.RemoveDecisions(conversationID, commandHashes...)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"removed": removed})
+	}
+}
+
+// AddGateDecision 手动写入会话级白/黑名单决定（拦截记录页的「移入名单」操作）。
+func AddGateDecision(gate *hooks.CmdGate) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if gate == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "AI 闸门未装配"})
+			return
+		}
+		var req struct {
+			ConversationID string `json:"conversationId" binding:"required"`
+			Decision       string `json:"decision" binding:"required"`
+			Rule           string `json:"rule"`
+			Command        string `json:"command"`
+			CommandHash    string `json:"commandHash" binding:"required"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数"})
+			return
+		}
+		if req.Decision != sensitive.GateDecisionAllow && req.Decision != sensitive.GateDecisionBlock {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的名单决定 " + req.Decision})
+			return
+		}
+		decision, err := gate.AddDecision(req.ConversationID, req.Decision, req.Rule, req.Command, req.CommandHash)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"decision": decision})
 	}
 }

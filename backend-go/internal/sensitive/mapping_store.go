@@ -1,6 +1,7 @@
 package sensitive
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
@@ -9,6 +10,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,8 +24,8 @@ import (
 // 无法对手机号等有限字符集做彩虹表反查。
 // 主密钥 32 字节存独立文件（0600），HKDF-SHA256 派生 enc/mac 两把子钥。
 //
-// 语义：mask 模式启用时 Vault 优先查持久库（同原文跨重启同占位符），
-// 读失败降级进程内映射（不中断）；写失败按"掩码失败"处理（不转发）。
+// 语义：mask 模式下 Vault 在请求内存未命中时查询持久库，复用跨重启占位符。
+// 持久库读写失败均显式返回错误，不能生成无法一致还原的替代映射。
 
 const (
 	mappingTTL           = 90 * 24 * time.Hour
@@ -31,6 +33,7 @@ const (
 	mappingTimeLayout    = "2006-01-02T15:04:05.000000000Z07:00"
 	mappingPurgeEvery    = 24 * time.Hour
 	masterKeyFilePerm    = 0600
+	mappingIOTimeout     = 2 * time.Second
 	hkdfSaltMappingStore = "api-proxy-redaction-mappings-v1"
 )
 
@@ -49,6 +52,7 @@ type MappingStore struct {
 	encKey        [32]byte
 	macKey        [32]byte
 	purgeStop     chan struct{}
+	purgeDone     chan struct{}
 	purgeOnce     sync.Once
 }
 
@@ -85,13 +89,17 @@ func NewMappingStore(dbPath, masterKeyPath string) (*MappingStore, error) {
 		encKey:        encKey,
 		macKey:        macKey,
 		purgeStop:     make(chan struct{}),
+		purgeDone:     make(chan struct{}),
 	}
 	if err := store.initSchema(); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	// 启动即清理一次过期/超额行，之后每日一次。
-	_ = store.Purge()
+	if err := store.Purge(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	go store.purgeLoop()
 	return store, nil
 }
@@ -157,16 +165,35 @@ func (s *MappingStore) initSchema() error {
 			return fmt.Errorf("初始化映射索引失败: %w", err)
 		}
 	}
+	// 用触发器维护行数，写入时按 LRU 释放一条；避免每次新映射都 COUNT 全表。
+	capacityStatements := []string{
+		`CREATE TABLE IF NOT EXISTS redaction_mapping_count (id INTEGER PRIMARY KEY CHECK(id = 1), row_count INTEGER NOT NULL)`,
+		`INSERT OR REPLACE INTO redaction_mapping_count (id, row_count) SELECT 1, COUNT(*) FROM redaction_mappings`,
+		`CREATE TRIGGER IF NOT EXISTS redaction_mapping_count_delete AFTER DELETE ON redaction_mappings BEGIN UPDATE redaction_mapping_count SET row_count = row_count - 1 WHERE id = 1; END`,
+		fmt.Sprintf(`CREATE TRIGGER IF NOT EXISTS redaction_mapping_capacity_insert AFTER INSERT ON redaction_mappings BEGIN
+			UPDATE redaction_mapping_count SET row_count = row_count + 1 WHERE id = 1;
+			DELETE FROM redaction_mappings WHERE placeholder IN (SELECT placeholder FROM redaction_mappings WHERE placeholder <> NEW.placeholder ORDER BY last_access ASC, rowid ASC LIMIT 1)
+				AND (SELECT row_count FROM redaction_mapping_count WHERE id = 1) > %d;
+		END`, mappingMaxRows),
+	}
+	for _, statement := range capacityStatements {
+		if _, err := s.db.Exec(statement); err != nil {
+			return fmt.Errorf("初始化持久映射容量保护失败: %w", err)
+		}
+	}
 	return nil
 }
 
 func (s *MappingStore) purgeLoop() {
+	defer close(s.purgeDone)
 	ticker := time.NewTicker(mappingPurgeEvery)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
-			_ = s.Purge()
+			if err := s.Purge(); err != nil {
+				log.Printf("[SensitiveData-Purge] 清理持久映射失败: %v", err)
+			}
 		case <-s.purgeStop:
 			return
 		}
@@ -183,13 +210,19 @@ type MappingLookup struct {
 
 // LookupOriginal 按原文查占位符（掩码方向）。store 为 nil（仅进程内）时恒 miss。
 func (s *MappingStore) LookupOriginal(original string) (MappingLookup, error) {
+	return s.lookupOriginal(context.Background(), original)
+}
+
+func (s *MappingStore) lookupOriginal(ctx context.Context, original string) (MappingLookup, error) {
 	if s == nil {
 		return MappingLookup{}, nil
 	}
 	if err := s.ensureOpen(); err != nil {
 		return MappingLookup{}, err
 	}
-	row := s.db.QueryRow(`SELECT placeholder FROM redaction_mappings WHERE original_hmac = ?`, s.hmacOriginal(original))
+	ctx, cancel := context.WithTimeout(ctx, mappingIOTimeout)
+	defer cancel()
+	row := s.db.QueryRowContext(ctx, `UPDATE redaction_mappings SET last_access = ? WHERE original_hmac = ? RETURNING placeholder`, time.Now().UTC().Format(mappingTimeLayout), s.hmacOriginal(original))
 	var placeholder string
 	if err := row.Scan(&placeholder); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -202,13 +235,19 @@ func (s *MappingStore) LookupOriginal(original string) (MappingLookup, error) {
 
 // LookupPlaceholder 按占位符查原文（还原方向），并刷新 last_access。
 func (s *MappingStore) LookupPlaceholder(placeholder string) (MappingLookup, error) {
+	return s.lookupPlaceholder(context.Background(), placeholder)
+}
+
+func (s *MappingStore) lookupPlaceholder(ctx context.Context, placeholder string) (MappingLookup, error) {
 	if s == nil {
 		return MappingLookup{}, nil
 	}
 	if err := s.ensureOpen(); err != nil {
 		return MappingLookup{}, err
 	}
-	row := s.db.QueryRow(`SELECT original_ct FROM redaction_mappings WHERE placeholder = ?`, placeholder)
+	ctx, cancel := context.WithTimeout(ctx, mappingIOTimeout)
+	defer cancel()
+	row := s.db.QueryRowContext(ctx, `SELECT original_ct FROM redaction_mappings WHERE placeholder = ?`, placeholder)
 	var ciphertext []byte
 	if err := row.Scan(&ciphertext); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -220,37 +259,44 @@ func (s *MappingStore) LookupPlaceholder(placeholder string) (MappingLookup, err
 	if err != nil {
 		return MappingLookup{}, fmt.Errorf("解密持久映射失败: %w", err)
 	}
-	if _, err := s.db.Exec(`UPDATE redaction_mappings SET last_access = ? WHERE placeholder = ?`,
+	if _, err := s.db.ExecContext(ctx, `UPDATE redaction_mappings SET last_access = ? WHERE placeholder = ?`,
 		time.Now().UTC().Format(mappingTimeLayout), placeholder); err != nil {
-		// 刷新访问时间失败不影响本次还原结果。
-		_ = err
+		return MappingLookup{}, fmt.Errorf("刷新持久映射访问时间失败: %w", err)
 	}
 	return MappingLookup{Found: true, Placeholder: placeholder, Original: string(original)}, nil
 }
 
 // PutMapping 写入一条映射（原文已存在时复用既有占位符）。
 func (s *MappingStore) PutMapping(original, typeTag, placeholder string) error {
+	_, err := s.putMapping(context.Background(), original, typeTag, placeholder)
+	return err
+}
+
+func (s *MappingStore) putMapping(ctx context.Context, original, typeTag, placeholder string) (string, error) {
 	if s == nil {
-		return nil
+		return placeholder, nil
 	}
 	if err := s.ensureOpen(); err != nil {
-		return err
+		return "", err
 	}
 	if strings.TrimSpace(original) == "" || strings.TrimSpace(placeholder) == "" {
-		return fmt.Errorf("持久映射的原文与占位符不能为空")
+		return "", fmt.Errorf("持久映射的原文与占位符不能为空")
 	}
 	ciphertext, err := s.encrypt([]byte(original))
 	if err != nil {
-		return fmt.Errorf("加密持久映射失败: %w", err)
+		return "", fmt.Errorf("加密持久映射失败: %w", err)
 	}
 	now := time.Now().UTC().Format(mappingTimeLayout)
-	if _, err := s.db.Exec(`INSERT INTO redaction_mappings (placeholder, type, original_hmac, original_ct, created_at, last_access)
+	ctx, cancel := context.WithTimeout(ctx, mappingIOTimeout)
+	defer cancel()
+	var storedPlaceholder string
+	if err := s.db.QueryRowContext(ctx, `INSERT INTO redaction_mappings (placeholder, type, original_hmac, original_ct, created_at, last_access)
 		VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT(placeholder) DO UPDATE SET last_access = excluded.last_access`,
-		placeholder, typeTag, s.hmacOriginal(original), ciphertext, now, now); err != nil {
-		return fmt.Errorf("写入持久映射失败: %w", err)
+		ON CONFLICT(original_hmac) DO UPDATE SET last_access = excluded.last_access RETURNING placeholder`,
+		placeholder, typeTag, s.hmacOriginal(original), ciphertext, now, now).Scan(&storedPlaceholder); err != nil {
+		return "", fmt.Errorf("写入持久映射失败: %w", err)
 	}
-	return nil
+	return storedPlaceholder, nil
 }
 
 // Purge 清理过期（TTL）与超额（LRU）行。
@@ -262,16 +308,18 @@ func (s *MappingStore) Purge() error {
 		return err
 	}
 	cutoff := time.Now().UTC().Add(-mappingTTL).Format(mappingTimeLayout)
-	if _, err := s.db.Exec(`DELETE FROM redaction_mappings WHERE last_access <= ?`, cutoff); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM redaction_mappings WHERE last_access <= ?`, cutoff); err != nil {
 		return fmt.Errorf("清理过期映射失败: %w", err)
 	}
 	var count int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM redaction_mappings`).Scan(&count); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM redaction_mappings`).Scan(&count); err != nil {
 		return fmt.Errorf("统计映射行数失败: %w", err)
 	}
 	if count > mappingMaxRows {
 		excess := count - mappingMaxRows
-		if _, err := s.db.Exec(`DELETE FROM redaction_mappings WHERE placeholder IN (
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM redaction_mappings WHERE placeholder IN (
 			SELECT placeholder FROM redaction_mappings ORDER BY last_access ASC, rowid ASC LIMIT ?)`, excess); err != nil {
 			return fmt.Errorf("清理超额映射失败: %w", err)
 		}
@@ -305,6 +353,7 @@ func (s *MappingStore) Close() error {
 		s.closed = true
 		s.mu.Unlock()
 		s.purgeOnce.Do(func() { close(s.purgeStop) })
+		<-s.purgeDone
 		closeErr = s.db.Close()
 	})
 	return closeErr

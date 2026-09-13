@@ -6,11 +6,12 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync/atomic"
 
 	"github.com/gin-gonic/gin"
 )
 
-var defaultStore *Store
+var defaultStore atomic.Pointer[Store]
 
 // Config 日志系统配置。正文与运行日志一律进 sqlite，不再写 logs/ 文件。
 type Config struct {
@@ -26,7 +27,7 @@ func DefaultConfig() *Config {
 }
 
 func Default() *Store {
-	return defaultStore
+	return defaultStore.Load()
 }
 
 // Setup 初始化 sqlite 日志库，并把标准库 log / Gin 输出接到该库。
@@ -51,18 +52,18 @@ func Setup(cfg *Config) (*Store, error) {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
 	gin.DefaultWriter = writer
 	gin.DefaultErrorWriter = writer
-	defaultStore = store
+	defaultStore.Store(store)
 
 	log.Printf("[Logger-Init] 日志系统已初始化: %s（保留今天与昨天）", dbPath)
 	return store, nil
 }
 
 func CloseDefault() error {
-	if defaultStore == nil {
+	store := defaultStore.Swap(nil)
+	if store == nil {
 		return nil
 	}
-	err := defaultStore.Close()
-	defaultStore = nil
+	err := store.Close()
 	if err != nil {
 		return fmt.Errorf("关闭日志存储失败: %w", err)
 	}

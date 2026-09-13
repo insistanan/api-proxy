@@ -13,6 +13,8 @@ export interface AppSettings {
   assistant: {
     /** 助手模型 ID（渠道分组的匹配词）；空串表示自动（走各协议兜底分组） */
     model: string
+    /** 显式指定的渠道稳定 ID；空串表示自动（按四协议优先级编排，不换渠道） */
+    channelId: string
   }
 }
 

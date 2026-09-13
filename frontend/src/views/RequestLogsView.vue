@@ -131,9 +131,9 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import SystemLogsPanel from '@/components/SystemLogsPanel.vue'
-import { api, type ConversationKind, type RequestLogEntry } from '@/services/api'
+import { api, type LogAPIType, type RequestLogEntry } from '@/services/api'
 
-type TypeFilter = ConversationKind | ''
+type TypeFilter = LogAPIType | ''
 type LogsTab = 'request' | 'system'
 
 const typeItems: Array<{ title: string; value: TypeFilter }> = [
@@ -142,7 +142,9 @@ const typeItems: Array<{ title: string; value: TypeFilter }> = [
   { title: 'Responses', value: 'responses' },
   { title: 'Gemini', value: 'gemini' },
   { title: 'Chat', value: 'chat' },
-  { title: 'Images', value: 'images' }
+  { title: 'Images', value: 'images' },
+  { title: '命令 AI 复核', value: 'cmd_gate' },
+  { title: '内部 AI 调用', value: 'llmgate' }
 ]
 
 const typeFilter = ref<TypeFilter>('')
@@ -196,29 +198,28 @@ const loadLogs = async () => {
   }
 }
 
-const typeLabelMap: Record<ConversationKind, string> = {
+const typeLabelMap: Record<LogAPIType, string> = {
   messages: 'Messages',
   responses: 'Responses',
   gemini: 'Gemini',
   chat: 'Chat',
-  images: 'Images'
+  images: 'Images',
+  cmd_gate: '命令 AI 复核',
+  llmgate: '内部 AI 调用'
 }
 
-const typeColorMap: Record<ConversationKind, string> = {
+const typeColorMap: Record<LogAPIType, string> = {
   messages: 'primary',
   responses: 'secondary',
   gemini: 'success',
   chat: 'info',
-  images: 'warning'
+  images: 'warning',
+  cmd_gate: 'warning',
+  llmgate: 'secondary'
 }
 
-const normalizedType = (value?: string): ConversationKind => {
-  if (value === 'responses' || value === 'gemini' || value === 'chat' || value === 'images') return value
-  return 'messages'
-}
-
-const entryLabel = (value?: string) => typeLabelMap[normalizedType(value)]
-const entryColor = (value?: string) => typeColorMap[normalizedType(value)]
+const entryLabel = (value?: string) => typeLabelMap[(value || '').toLowerCase() as LogAPIType] || value || '未知'
+const entryColor = (value?: string) => typeColorMap[(value || '').toLowerCase() as LogAPIType] || 'secondary'
 
 const statusColor = (status: string) => {
   if (status === 'completed') return 'success'

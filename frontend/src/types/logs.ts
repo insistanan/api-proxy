@@ -2,6 +2,8 @@
 
 import type { ConversationKind } from './conversation'
 
+export type LogAPIType = ConversationKind | 'cmd_gate' | 'llmgate'
+
 export interface ChannelLogEntry {
   requestId: string
   attemptId: string
@@ -35,14 +37,15 @@ export interface ChannelLogsResponse {
 }
 
 export interface RequestLogEntry extends ChannelLogEntry {
-  apiType: ConversationKind
-  entry?: 'claude' | 'codex' | 'gemini' | 'chat'
+  apiType: LogAPIType
+  entry?: 'claude' | 'codex' | 'gemini' | 'chat' | 'images' | 'cmd_gate' | 'llmgate'
   firstTokenMs?: number
   resolvedModel?: string
   transform?: string
   cacheTTL?: string
   tpm?: number
   conversationId?: string
+  parentRequestId?: string
 }
 
 export interface RequestLogsResponse {
@@ -94,7 +97,7 @@ export interface SystemLogDetail {
   requestId: string
   summary: SystemLogSummary
   trafficLogs: TrafficLog[]
-  requestLogs?: unknown[]
+  requestLogs?: RequestLogEntry[]
 }
 
 export type ContentSafetyAPIType = 'messages' | 'responses' | 'chat' | 'gemini'
@@ -117,11 +120,26 @@ export interface BlockedLogEntry {
   blockType: BlockedLogType
   ruleName?: string
   promptSnippet?: string
+  /** 危险命令的脱敏展示文本 */
+  command?: string
+  /** 原始完整命令及执行上下文的身份，名单操作使用此字段 */
+  commandHash?: string
   channelName?: string
   model?: string
   requestId?: string
   conversationId?: string
   createdAt: string
+  aiReview?: CommandAIReview
+}
+
+export interface CommandAIReview {
+  requestId: string
+  model?: string
+  channelName?: string
+  verdict: 'allow' | 'block' | 'error'
+  reason: string
+  durationMs: number
+  reused?: boolean
 }
 
 export interface BlockedLogGroup {
@@ -146,6 +164,10 @@ export interface BlockedLogsResponse {
 export interface BlockedLogFilters {
   apiType?: ContentSafetyAPIType | ''
   blockType?: BlockedLogType | ''
+  /** 类别筛选（dangerous_cmd 命中三种危险命令事件），与 blockType 互斥 */
+  category?: 'dangerous_cmd' | ''
+  /** 仅显示当前活跃会话（发送中或近 30 分钟有请求）的记录 */
+  activeOnly?: boolean
   from?: string
   to?: string
   page?: number

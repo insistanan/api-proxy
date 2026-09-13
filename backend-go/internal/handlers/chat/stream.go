@@ -20,6 +20,8 @@ import (
 )
 
 func handleStreamSuccess(c *gin.Context, resp *http.Response, envCfg *config.EnvConfig, startTime time.Time) (*types.Usage, error) {
+	stopVeto := hooks.BindAttachedStreamVeto(c, resp.Body)
+	defer stopVeto()
 	if envCfg.EnableResponseLogs {
 		responseTime := time.Since(startTime).Milliseconds()
 		log.Printf("[Chat-Stream] Chat 流式响应开始: %dms, 状态: %d", responseTime, resp.StatusCode)
@@ -57,6 +59,9 @@ func handleStreamSuccess(c *gin.Context, resp *http.Response, envCfg *config.Env
 		default:
 		}
 		rawLine, readErr := reader.ReadBytes('\n')
+		if err := hooks.AttachedStreamVetoError(c); err != nil {
+			return nil, err
+		}
 		if len(rawLine) == 0 && readErr != nil {
 			if errors.Is(readErr, io.EOF) {
 				break
@@ -68,12 +73,14 @@ func handleStreamSuccess(c *gin.Context, resp *http.Response, envCfg *config.Env
 		if usage := extractChatUsageFromSSELine(line); usage != nil {
 			streamUsage = mergeChatUsage(streamUsage, usage)
 		}
-		text, toolArguments := extractChatStreamSafetyFragments(line)
-		if err := hooks.FeedAttachedStreamText(c, text); err != nil {
-			return nil, err
+		texts, toolArguments := extractChatStreamSafetyFragments(line)
+		for _, text := range texts {
+			if err := hooks.FeedAttachedStreamTextForKey(c, text.key, text.fragment); err != nil {
+				return nil, err
+			}
 		}
 		for _, toolArgument := range toolArguments {
-			if err := hooks.FeedAttachedStreamToolArgumentsForKey(c, toolArgument.key, toolArgument.fragment); err != nil {
+			if err := hooks.FeedAttachedStreamToolArgumentsForKey(c, toolArgument.key, toolArgument.fragment, toolArgument.name); err != nil {
 				return nil, err
 			}
 		}
@@ -114,50 +121,56 @@ func handleStreamSuccess(c *gin.Context, resp *http.Response, envCfg *config.Env
 type chatStreamToolArgumentFragment struct {
 	key      string
 	fragment string
+	name     string
 }
 
-func extractChatStreamSafetyFragments(line string) (string, []chatStreamToolArgumentFragment) {
+func extractChatStreamSafetyFragments(line string) ([]chatStreamToolArgumentFragment, []chatStreamToolArgumentFragment) {
 	payload, ok := utils.SSEDataJSON(strings.TrimSpace(line))
 	if !ok {
-		return "", nil
+		return nil, nil
 	}
 	var event map[string]interface{}
 	if err := json.Unmarshal([]byte(payload), &event); err != nil {
-		return "", nil
+		return nil, nil
 	}
 	choices, _ := event["choices"].([]interface{})
-	var text strings.Builder
+	texts := make([]chatStreamToolArgumentFragment, 0)
 	toolArguments := make([]chatStreamToolArgumentFragment, 0)
 	for choiceOffset, choice := range choices {
 		choiceMap, _ := choice.(map[string]interface{})
+		choiceKey := streamFragmentKeyPart(choiceMap["index"], choiceOffset)
 		delta, _ := choiceMap["delta"].(map[string]interface{})
 		if content, _ := delta["content"].(string); content != "" {
-			text.WriteString(content)
+			texts = append(texts, chatStreamToolArgumentFragment{key: "chat.choice." + choiceKey + ".", fragment: content})
 		}
 		toolCalls, _ := delta["tool_calls"].([]interface{})
 		for toolOffset, toolCall := range toolCalls {
 			callMap, _ := toolCall.(map[string]interface{})
 			function, _ := callMap["function"].(map[string]interface{})
-			if arguments, _ := function["arguments"].(string); arguments != "" {
-				choiceKey := streamFragmentKeyPart(choiceMap["index"], choiceOffset)
+			arguments, _ := function["arguments"].(string)
+			name, _ := function["name"].(string)
+			if arguments != "" || name != "" {
 				toolKey := streamFragmentKeyPart(callMap["index"], toolOffset)
 				toolArguments = append(toolArguments, chatStreamToolArgumentFragment{
 					key:      fmt.Sprintf("chat.choice.%s.tool.%s", choiceKey, toolKey),
 					fragment: arguments,
+					name:     name,
 				})
 			}
 		}
 		if functionCall, ok := delta["function_call"].(map[string]interface{}); ok {
-			if arguments, _ := functionCall["arguments"].(string); arguments != "" {
-				choiceKey := streamFragmentKeyPart(choiceMap["index"], choiceOffset)
+			arguments, _ := functionCall["arguments"].(string)
+			name, _ := functionCall["name"].(string)
+			if arguments != "" || name != "" {
 				toolArguments = append(toolArguments, chatStreamToolArgumentFragment{
 					key:      fmt.Sprintf("chat.choice.%s.function_call", choiceKey),
 					fragment: arguments,
+					name:     name,
 				})
 			}
 		}
 	}
-	return text.String(), toolArguments
+	return texts, toolArguments
 }
 
 func streamFragmentKeyPart(value interface{}, fallback int) string {

@@ -10,6 +10,9 @@ export interface GatePending {
   model?: string
   rule: string
   command: string
+  commandHash?: string
+  toolName?: string
+  executionContext?: string
   /** code_block / tool */
   source: string
   /** AI 裁决：allow（已放行待否决）/ block（等待放行） */
@@ -19,7 +22,7 @@ export interface GatePending {
   status: string
 }
 
-/** 会话级白/黑名单决定（每会话取最新一条生效） */
+/** 同一会话内，完整命令和执行上下文相同时生效的人工决定 */
 export interface GateDecision {
   id: number
   conversationId: string

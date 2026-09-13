@@ -1,8 +1,7 @@
 <template>
   <teleport to="body">
-    <div ref="widgetRoot" class="assistant-widget">
     <!-- 悬浮按钮（可拖拽，位置持久化） -->
-    <v-tooltip location="left" text="AI 配置助手">
+    <v-tooltip location="left" text="AI 配置助手" :disabled="dragging">
       <template #activator="{ props }">
         <v-btn
           v-bind="props"
@@ -13,139 +12,170 @@
           icon
           size="large"
           aria-label="AI 配置助手"
-          @pointerdown.prevent="onFabPointerDown"
+          :aria-expanded="assistantStore.panelOpen"
+          aria-controls="assistant-panel"
+          @pointerdown="startDrag('fab', $event)"
+          @click="onFabClick"
         >
           <v-icon size="26">mdi-robot</v-icon>
         </v-btn>
       </template>
     </v-tooltip>
+  </teleport>
 
-    <!-- 对话面板 -->
-    <transition name="assistant-panel">
-      <div ref="panelRoot" v-if="assistantStore.panelOpen" class="assistant-panel" role="dialog" aria-label="AI 配置助手">
-        <div class="assistant-panel__head">
-          <v-icon size="20" class="mr-2">mdi-robot</v-icon>
-          <span class="text-subtitle-2 font-weight-bold">AI 配置助手</span>
-          <v-spacer />
-          <v-tooltip location="bottom" text="新会话">
-            <template #activator="{ props }">
-              <v-btn v-bind="props" icon size="small" variant="text" aria-label="新会话" @click="assistantStore.newSession()">
-                <v-icon size="18">mdi-plus</v-icon>
-              </v-btn>
-            </template>
-          </v-tooltip>
-          <v-tooltip location="bottom" text="删除当前会话">
-            <template #activator="{ props }">
-              <v-btn
-                v-bind="props"
-                icon
-                size="small"
-                variant="text"
-                aria-label="删除当前会话"
-                :disabled="assistantStore.activeSessionId === null"
-                @click="deleteActive"
-              >
-                <v-icon size="18">mdi-delete</v-icon>
-              </v-btn>
-            </template>
-          </v-tooltip>
-          <v-btn icon size="small" variant="text" aria-label="关闭助手" @click="assistantStore.panelOpen = false">
-            <v-icon size="18">mdi-close</v-icon>
+  <!-- 面板与菜单共用 Vuetify 浮层栈，嵌套菜单始终高于面板。 -->
+  <v-overlay
+    ref="panelOverlay"
+    v-model="assistantStore.panelOpen"
+    :activator="fabRef?.$el"
+    :open-on-click="false"
+    :scrim="false"
+    scroll-strategy="none"
+    class="assistant-overlay"
+    content-class="assistant-panel"
+    :content-props="{ id: 'assistant-panel', style: panelStyle, role: 'dialog', 'aria-label': 'AI 配置助手' }"
+    :transition="{ name: 'assistant-panel' }"
+  >
+    <div class="assistant-panel__head" @pointerdown="startDrag('panel', $event)">
+      <v-icon size="20" class="mr-2">mdi-robot</v-icon>
+      <span class="text-subtitle-2 font-weight-bold">AI 配置助手</span>
+      <v-spacer />
+      <v-tooltip location="bottom" text="新会话" :disabled="dragging">
+        <template #activator="{ props }">
+          <v-btn v-bind="props" icon size="small" variant="text" aria-label="新会话" @click="assistantStore.newSession()">
+            <v-icon size="18">mdi-plus</v-icon>
           </v-btn>
-        </div>
-
-        <!-- 会话切换 -->
-        <v-select
-          v-if="assistantStore.sessions.length > 0"
-          :model-value="assistantStore.activeSessionId"
-          :items="sessionItems"
-          item-title="title"
-          item-value="id"
-          density="compact"
-          variant="outlined"
-          hide-details
-          class="assistant-panel__sessions"
-          aria-label="切换会话"
-          @update:model-value="assistantStore.selectSession($event as number)"
-        />
-
-        <!-- 当前生效的模型路由：分组（匹配词）→ 命中渠道 -->
-        <div v-if="assistantStore.available" class="assistant-panel__route" title="在 设置 → AI 助手 中修改">
-          {{ routeLabel }}
-        </div>
-
-        <!-- 消息区 -->
-        <div ref="messagesRef" class="assistant-panel__messages">
-          <div v-if="!assistantStore.available" class="assistant-panel__hint">
-            <v-icon size="22" class="mb-2">mdi-robot-off</v-icon>
-            <div>{{ assistantStore.unavailableReason || 'AI 助手不可用' }}</div>
-          </div>
-          <div v-else-if="assistantStore.messages.length === 0" class="assistant-panel__hint">
-            <v-icon size="22" class="mb-2">mdi-chat-outline</v-icon>
-            <div>问我任何配置问题，或直接说"帮我建一个 chat 渠道"。</div>
-            <div class="text-caption text-medium-emphasis mt-1">协议转换、分组、兜底、模型映射都可以问</div>
-          </div>
-          <template v-else>
-            <div
-              v-for="message in assistantStore.messages"
-              :key="message.id"
-              class="assistant-msg"
-              :class="message.role === 'user' ? 'assistant-msg--user' : 'assistant-msg--bot'"
-            >
-              <pre class="assistant-msg__content">{{ message.content }}</pre>
-              <div v-if="message.actions?.length" class="assistant-msg__actions">
-                <div
-                  v-for="(action, index) in message.actions"
-                  :key="index"
-                  class="assistant-action"
-                  :class="action.success ? 'assistant-action--ok' : 'assistant-action--fail'"
-                >
-                  <v-icon size="14" class="mr-1">
-                    {{ action.success ? 'mdi-check-circle' : 'mdi-close-circle' }}
-                  </v-icon>
-                  <span class="assistant-action__name">{{ actionLabel(action.action) }}</span>
-                  <span class="assistant-action__detail">{{ action.detail }}</span>
-                </div>
-              </div>
-            </div>
-            <div v-if="assistantStore.sending" class="assistant-msg assistant-msg--bot">
-              <pre class="assistant-msg__content assistant-msg__content--pending">思考中…</pre>
-            </div>
-          </template>
-        </div>
-
-        <!-- 输入区 -->
-        <div class="assistant-panel__input">
-          <v-textarea
-            v-model="draft"
-            :rows="draft.includes('\n') ? 3 : 1"
-            auto-grow
-            max-rows="5"
-            variant="outlined"
-            density="compact"
-            hide-details
-            placeholder="输入你的问题…（Enter 发送）"
-            :disabled="!assistantStore.available || assistantStore.sending"
-            @keydown.enter.exact.prevent="send"
-          />
+        </template>
+      </v-tooltip>
+      <v-tooltip location="bottom" text="删除当前会话" :disabled="dragging">
+        <template #activator="{ props }">
           <v-btn
-            class="ml-2"
-            color="primary"
-            variant="flat"
+            v-bind="props"
             icon
             size="small"
-            aria-label="发送"
-            :loading="assistantStore.sending"
-            :disabled="!assistantStore.available || !draft.trim()"
-            @click="send"
+            variant="text"
+            aria-label="删除当前会话"
+            :disabled="assistantStore.activeSessionId === null"
+            @click="deleteActive"
           >
-            <v-icon size="18">mdi-send</v-icon>
+            <v-icon size="18">mdi-delete</v-icon>
           </v-btn>
-        </div>
-      </div>
-    </transition>
+        </template>
+      </v-tooltip>
+      <v-btn icon size="small" variant="text" aria-label="关闭助手" @click="assistantStore.panelOpen = false">
+        <v-icon size="18">mdi-close</v-icon>
+      </v-btn>
     </div>
-  </teleport>
+
+    <div v-if="positionError" class="assistant-panel__position-error" role="status">{{ positionError }}</div>
+
+    <!-- 会话切换 -->
+    <v-select
+      v-if="assistantStore.sessions.length > 0"
+      v-model:menu="sessionMenuOpen"
+      :model-value="assistantStore.activeSessionId"
+      :items="sessionItems"
+      item-title="title"
+      item-value="id"
+      density="compact"
+      variant="outlined"
+      hide-details
+      class="assistant-panel__sessions"
+      :menu-props="assistantMenuProps"
+      aria-label="切换会话"
+      @update:model-value="assistantStore.selectSession($event as number)"
+    />
+
+    <!-- 渠道选择：自动（四协议优先级编排）或显式指定渠道 -->
+    <v-select
+      v-model:menu="channelMenuOpen"
+      :model-value="assistantStore.channelId"
+      :items="channelItems"
+      item-title="title"
+      item-value="value"
+      density="compact"
+      variant="outlined"
+      hide-details
+      class="assistant-panel__channels"
+      :menu-props="assistantMenuProps"
+      aria-label="选择助手渠道"
+      @update:model-value="assistantStore.selectChannel($event as string)"
+    />
+
+    <!-- 当前生效的模型路由：分组（匹配词）→ 命中渠道 -->
+    <div v-if="assistantStore.available" class="assistant-panel__route" title="在 设置 → AI 助手 中修改">
+      {{ routeLabel }}
+    </div>
+
+    <!-- 消息区 -->
+    <div ref="messagesRef" class="assistant-panel__messages">
+      <div v-if="!assistantStore.available" class="assistant-panel__hint">
+        <v-icon size="22" class="mb-2">mdi-robot-off</v-icon>
+        <div>{{ assistantStore.unavailableReason || 'AI 助手不可用' }}</div>
+      </div>
+      <div v-else-if="assistantStore.messages.length === 0" class="assistant-panel__hint">
+        <v-icon size="22" class="mb-2">mdi-chat-outline</v-icon>
+        <div>问我任何配置问题，或直接说"帮我建一个 chat 渠道"。</div>
+        <div class="text-caption text-medium-emphasis mt-1">协议转换、分组、兜底、模型映射都可以问</div>
+      </div>
+      <template v-else>
+        <div
+          v-for="message in assistantStore.messages"
+          :key="message.id"
+          class="assistant-msg"
+          :class="message.role === 'user' ? 'assistant-msg--user' : 'assistant-msg--bot'"
+        >
+          <pre class="assistant-msg__content">{{ message.content }}</pre>
+          <div v-if="message.actions?.length" class="assistant-msg__actions">
+            <div
+              v-for="(action, index) in message.actions"
+              :key="index"
+              class="assistant-action"
+              :class="action.success ? 'assistant-action--ok' : 'assistant-action--fail'"
+            >
+              <v-icon size="14" class="mr-1">
+                {{ action.success ? 'mdi-check-circle' : 'mdi-close-circle' }}
+              </v-icon>
+              <span class="assistant-action__name">{{ actionLabel(action.action) }}</span>
+              <span class="assistant-action__detail">{{ action.detail }}</span>
+            </div>
+          </div>
+        </div>
+        <div v-if="assistantStore.sending" class="assistant-msg assistant-msg--bot">
+          <pre class="assistant-msg__content assistant-msg__content--pending">思考中…</pre>
+        </div>
+      </template>
+    </div>
+
+    <!-- 输入区 -->
+    <div class="assistant-panel__input">
+      <v-textarea
+        v-model="draft"
+        :rows="draft.includes('\n') ? 3 : 1"
+        auto-grow
+        max-rows="5"
+        variant="outlined"
+        density="compact"
+        hide-details
+        placeholder="输入你的问题…（Enter 发送）"
+        :disabled="!assistantStore.available || assistantStore.sending"
+        @keydown.enter.exact.prevent="send"
+      />
+      <v-btn
+        class="ml-2"
+        color="primary"
+        variant="flat"
+        icon
+        size="small"
+        aria-label="发送"
+        :loading="assistantStore.sending"
+        :disabled="!assistantStore.available || !draft.trim()"
+        @click="send"
+      >
+        <v-icon size="18">mdi-send</v-icon>
+      </v-btn>
+    </div>
+  </v-overlay>
 </template>
 
 <script setup lang="ts">
@@ -171,8 +201,23 @@ const kindLabels: Record<string, string> = {
   gemini: 'Gemini',
 }
 
+// 渠道选择器候选：自动 + 四协议全部渠道（status 已按 m → r → c → g 排序）。
+const channelItems = computed<Array<{ title: string; value: string }>>(() => [
+  { title: '自动（Messages → Responses → Chat → Gemini）', value: '' },
+  ...assistantStore.channels.map(channel => ({
+    title: `${kindLabels[channel.kind] ?? channel.kind} · ${channel.name}`,
+    value: channel.id,
+  })),
+])
+
 // 路由信息一行：分组「匹配词」→ 渠道名（协议）；自动模式下走兜底分组。
 const routeLabel = computed(() => {
+  if (assistantStore.channelId) {
+    const channel = assistantStore.channel
+    const model = assistantStore.model ? `分组「${assistantStore.model}」` : '自动（兜底分组）'
+    const target = channel ? `${channel.name}（${kindLabels[channel.kind] ?? channel.kind}）` : '（渠道不可用）'
+    return `指定渠道 → ${target} · ${model}`
+  }
   const model = assistantStore.model ? `分组「${assistantStore.model}」` : '自动（兜底分组）'
   const channel = assistantStore.channel
   if (!channel) return model
@@ -217,152 +262,344 @@ watch(
   }
 )
 
-// ----- 悬浮按钮拖拽（位置持久化到 localStorage）-----
-const FAB_POS_KEY = 'assistant-fab-position'
+// ----- 浮窗位置与拖拽 -----
+// 只在手势结束时提交响应式坐标；移动帧直接更新 transform，避免重渲染消息列表。
+type FloatingTarget = 'fab' | 'panel'
+type FloatingPosition = { right: number; bottom: number }
+
+const POSITION_KEYS: Record<FloatingTarget, string> = {
+  fab: 'assistant-fab-position',
+  panel: 'assistant-panel-position',
+}
+const EDGE_GAP = 8
+const DRAG_THRESHOLD = 4
 
 const fabRef = ref<{ $el?: HTMLElement } | null>(null)
-const fabPosition = ref<{ right: number; bottom: number } | null>(null)
-const fabStyle = computed(() => {
-  if (!fabPosition.value) return undefined
-  return { right: `${fabPosition.value.right}px`, bottom: `${fabPosition.value.bottom}px` }
-})
+const panelOverlay = ref<{ contentEl?: HTMLElement } | null>(null)
+const positions = {
+  fab: ref<FloatingPosition | null>(null),
+  panel: ref<FloatingPosition | null>(null),
+}
+const positionError = ref('')
+const dragging = ref(false)
+const sessionMenuOpen = ref(false)
+const channelMenuOpen = ref(false)
+const viewportSize = ref<{ width: number; height: number } | null>(null)
 
-const loadFabPosition = () => {
+// 菜单挂在 body 下，由父 VOverlay 的栈关系保证层级；高度交给定位器按视口裁定。
+const assistantMenuProps = {
+  attach: 'body',
+  contentClass: 'assistant-widget-menu',
+  maxHeight: 320,
+  location: 'bottom start',
+  offset: 4,
+  viewportMargin: EDGE_GAP,
+} as const
+
+const positionStyle = (position: FloatingPosition | null) =>
+  position ? { right: `${position.right}px`, bottom: `${position.bottom}px` } : {}
+
+const fabStyle = computed(() => positionStyle(positions.fab.value))
+const panelStyle = computed(() => ({
+  ...positionStyle(positions.panel.value),
+  ...(viewportSize.value
+    ? {
+        maxWidth: `${Math.max(0, viewportSize.value.width - EDGE_GAP * 2)}px`,
+        maxHeight: `${Math.max(0, viewportSize.value.height - EDGE_GAP * 2)}px`,
+      }
+    : {}),
+}))
+
+const loadPosition = (target: FloatingTarget): FloatingPosition | null => {
   try {
-    const raw = localStorage.getItem(FAB_POS_KEY)
-    if (!raw) return
-    const parsed = JSON.parse(raw)
-    if (typeof parsed.right === 'number' && typeof parsed.bottom === 'number') return parsed
-  } catch {
-    // 位置数据损坏时回落默认位置。
+    const raw = localStorage.getItem(POSITION_KEYS[target])
+    if (raw === null) return null
+    const value: unknown = JSON.parse(raw)
+    if (
+      !value ||
+      typeof value !== 'object' ||
+      !('right' in value) ||
+      !('bottom' in value) ||
+      typeof value.right !== 'number' ||
+      typeof value.bottom !== 'number' ||
+      !Number.isFinite(value.right) ||
+      !Number.isFinite(value.bottom)
+    ) {
+      throw new Error('位置坐标必须是有限数字')
+    }
+    return { right: value.right, bottom: value.bottom }
+  } catch (error) {
+    positionError.value = `读取${target === 'fab' ? '助手按钮' : '助手面板'}位置失败，已使用默认位置：${error instanceof Error ? error.message : String(error)}`
+    return null
   }
-  return null
 }
 
-const clampFabPosition = (right: number, bottom: number) => ({
-  right: Math.max(4, Math.min(right, window.innerWidth - 56)),
-  bottom: Math.max(4, Math.min(bottom, window.innerHeight - 56)),
-})
-
-const saveFabPosition = (position: { right: number; bottom: number }) => {
+const savePosition = (target: FloatingTarget, position: FloatingPosition) => {
   try {
-    localStorage.setItem(FAB_POS_KEY, JSON.stringify(position))
-  } catch {
-    // 存储不可用（隐私模式等）时静默跳过，仅本次会话生效。
+    localStorage.setItem(POSITION_KEYS[target], JSON.stringify(position))
+  } catch (error) {
+    positionError.value = `保存助手位置失败，当前位置仅本次有效：${error instanceof Error ? error.message : String(error)}`
   }
 }
 
-// 拖拽状态机：pointerdown 记录起点，move 跟随，up 判断"位移 < 6px = 点击"。
-// 点击才切换面板；拖动只更新位置。
-let dragState: {
+const getFloatingElement = (target: FloatingTarget) =>
+  target === 'fab' ? fabRef.value?.$el : panelOverlay.value?.contentEl
+
+const getViewport = () => {
+  const viewport = window.visualViewport
+  return {
+    left: viewport?.offsetLeft ?? 0,
+    top: viewport?.offsetTop ?? 0,
+    width: viewport?.width ?? document.documentElement.clientWidth,
+    height: viewport?.height ?? document.documentElement.clientHeight,
+  }
+}
+
+const applyPosition = (target: FloatingTarget, element: HTMLElement, position: FloatingPosition) => {
+  positions[target].value = position
+  // 同步落位后再清除拖拽 transform，避免 Vue 下次更新前闪回原点。
+  element.style.right = `${position.right}px`
+  element.style.bottom = `${position.bottom}px`
+}
+
+const fitInViewport = (target: FloatingTarget) => {
+  if (target === 'panel' && !assistantStore.panelOpen) return
+  const element = getFloatingElement(target)
+  if (!element) return
+  const rect = element.getBoundingClientRect()
+  const viewport = getViewport()
+  const minLeft = viewport.left + EDGE_GAP
+  const minTop = viewport.top + EDGE_GAP
+  const left = Math.max(minLeft, Math.min(rect.left, viewport.left + viewport.width - rect.width - EDGE_GAP))
+  const top = Math.max(minTop, Math.min(rect.top, viewport.top + viewport.height - rect.height - EDGE_GAP))
+  if (left === rect.left && top === rect.top) return
+  applyPosition(target, element, {
+    right: document.documentElement.clientWidth - left - rect.width,
+    bottom: document.documentElement.clientHeight - top - rect.height,
+  })
+}
+
+type DragState = {
+  target: FloatingTarget
+  element: HTMLElement
+  handle: HTMLElement
   pointerId: number
   startX: number
   startY: number
-  startRight: number
-  startBottom: number
+  startPosition: FloatingPosition
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+  dx: number
+  dy: number
   moved: boolean
-} | null = null
-
-const currentFabRect = (): { right: number; bottom: number } => {
-  if (fabPosition.value) return { ...fabPosition.value }
-  return { right: 20, bottom: 20 }
 }
 
-const onFabPointerDown = (event: PointerEvent) => {
-  const base = currentFabRect()
+let dragState: DragState | null = null
+let dragFrame: number | null = null
+let viewportFrame: number | null = null
+let suppressFabClick = false
+let disposed = false
+
+const renderDrag = () => {
+  dragFrame = null
+  if (!dragState?.moved) return
+  dragState.element.style.transform = `translate3d(${dragState.dx}px, ${dragState.dy}px, 0)`
+}
+
+const updateDrag = (event: PointerEvent) => {
+  if (!dragState || event.pointerId !== dragState.pointerId) return
+  const dx = event.clientX - dragState.startX
+  const dy = event.clientY - dragState.startY
+  if (!dragState.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) return
+  dragState.moved = true
+  dragState.dx = Math.max(dragState.minX, Math.min(dx, dragState.maxX))
+  dragState.dy = Math.max(dragState.minY, Math.min(dy, dragState.maxY))
+  if (dragFrame === null) dragFrame = requestAnimationFrame(renderDrag)
+}
+
+const finishDrag = (cancelled = false, persist = true) => {
+  const state = dragState
+  if (!state) return
+  dragState = null
+  if (dragFrame !== null) {
+    cancelAnimationFrame(dragFrame)
+    dragFrame = null
+  }
+  state.handle.removeEventListener('pointermove', updateDrag)
+  state.handle.removeEventListener('pointerup', onPointerUp)
+  state.handle.removeEventListener('pointercancel', onPointerCancel)
+  state.handle.removeEventListener('lostpointercapture', onPointerCancel)
+  window.removeEventListener('blur', onDragBlur)
+  if (state.handle.hasPointerCapture(state.pointerId)) {
+    state.handle.releasePointerCapture(state.pointerId)
+  }
+  if (state.target === 'fab') suppressFabClick = cancelled || state.moved
+  if (state.moved) {
+    const position = {
+      right: state.startPosition.right - state.dx,
+      bottom: state.startPosition.bottom - state.dy,
+    }
+    applyPosition(state.target, state.element, position)
+    if (persist) savePosition(state.target, position)
+  }
+  state.element.style.removeProperty('transform')
+  state.element.classList.remove('assistant-floating--dragging')
+  dragging.value = false
+  if (persist) scheduleViewportFit()
+}
+
+const onPointerUp = (event: PointerEvent) => {
+  if (!dragState || event.pointerId !== dragState.pointerId) return
+  // pointerup 可能先于最后一个动画帧，仍须采用最后的指针位置。
+  updateDrag(event)
+  finishDrag()
+}
+
+const onPointerCancel = (event: PointerEvent) => {
+  if (event.pointerId === dragState?.pointerId) finishDrag(true)
+}
+
+const onDragBlur = () => finishDrag(true)
+
+const startDrag = (target: FloatingTarget, event: PointerEvent) => {
+  if (dragState || !event.isPrimary || event.button !== 0) return
+  if (
+    target === 'panel' &&
+    event.target instanceof Element &&
+    event.target.closest('button, a, input, textarea, select, [role="button"]')
+  ) {
+    return
+  }
+  const element = getFloatingElement(target)
+  const handle = event.currentTarget
+  if (!element || !(handle instanceof HTMLElement)) return
+
+  // 从实际布局取起点，兼容移动端默认边距、已保存位置与实际按钮大小。
+  const rect = element.getBoundingClientRect()
+  const viewport = getViewport()
+  const minX = viewport.left + EDGE_GAP - rect.left
+  const minY = viewport.top + EDGE_GAP - rect.top
+  event.preventDefault()
+  handle.setPointerCapture(event.pointerId)
   dragState = {
+    target,
+    element,
+    handle,
     pointerId: event.pointerId,
     startX: event.clientX,
     startY: event.clientY,
-    startRight: base.right,
-    startBottom: base.bottom,
+    startPosition: {
+      right: document.documentElement.clientWidth - rect.right,
+      bottom: document.documentElement.clientHeight - rect.bottom,
+    },
+    minX,
+    maxX: Math.max(minX, viewport.left + viewport.width - EDGE_GAP - rect.right),
+    minY,
+    maxY: Math.max(minY, viewport.top + viewport.height - EDGE_GAP - rect.bottom),
+    dx: 0,
+    dy: 0,
     moved: false,
   }
-  window.addEventListener('pointermove', onFabPointerMove)
-  window.addEventListener('pointerup', onFabPointerUp, { once: true })
+  if (target === 'fab') suppressFabClick = false
+  sessionMenuOpen.value = false
+  channelMenuOpen.value = false
+  dragging.value = true
+  element.classList.add('assistant-floating--dragging')
+  handle.addEventListener('pointermove', updateDrag, { passive: true })
+  handle.addEventListener('pointerup', onPointerUp)
+  handle.addEventListener('pointercancel', onPointerCancel)
+  handle.addEventListener('lostpointercapture', onPointerCancel)
+  window.addEventListener('blur', onDragBlur)
 }
 
-const onFabPointerMove = (event: PointerEvent) => {
-  if (!dragState || event.pointerId !== dragState.pointerId) return
-  const dx = dragState.startX - event.clientX
-  const dy = dragState.startY - event.clientY
-  if (!dragState.moved && Math.hypot(dx, dy) < 6) return
-  dragState.moved = true
-  fabPosition.value = clampFabPosition(dragState.startRight + dx, dragState.startBottom + dy)
-}
-
-const onFabPointerUp = () => {
-  window.removeEventListener('pointermove', onFabPointerMove)
-  if (!dragState) return
-  const wasMoved = dragState.moved
-  dragState = null
-  if (!wasMoved) {
-    assistantStore.togglePanel()
+const onFabClick = (event: MouseEvent) => {
+  // 键盘 Enter/空格产生的 click 仍有效；拖拽后的指针 click 不开关面板。
+  if (suppressFabClick && event.detail > 0) {
+    suppressFabClick = false
     return
   }
-  if (fabPosition.value) saveFabPosition(fabPosition.value)
+  assistantStore.togglePanel()
 }
 
-onBeforeUnmount(() => {
-  window.removeEventListener('pointermove', onFabPointerMove)
-})
-
-// ----- 点击面板外部自动收起 -----
-// 面板与按钮都在 teleport 到 body 的容器里；点击其它区域时收起面板。
-// 输入中的拖拽选区等不会触发（它们发生在面板内部）。
-const panelRoot = ref<HTMLElement | null>(null)
-const widgetRoot = ref<HTMLElement | null>(null)
-
-const onDocumentPointerDown = (event: PointerEvent) => {
-  if (!assistantStore.panelOpen) return
-  const target = event.target as Node
-  // Vuetify 的 overlay/菜单等内容 teleport 到 body 但逻辑上属于面板交互，
-  // 只放行助手自己的 DOM 子树（按钮 + 面板 + 它们的 v-select 下拉挂载点按组件树排除）。
-  if (widgetRoot.value?.contains(target)) return
-  if (panelRoot.value?.contains(target)) return
-  assistantStore.panelOpen = false
+const scheduleViewportFit = () => {
+  if (disposed) return
+  if (dragState) finishDrag(true)
+  if (viewportFrame !== null) return
+  viewportFrame = requestAnimationFrame(async () => {
+    viewportFrame = null
+    // 等待帧期间若开始了新手势，等释放后再校正，避免中途改动拖拽基准。
+    if (disposed || dragState) return
+    const viewport = getViewport()
+    viewportSize.value = { width: viewport.width, height: viewport.height }
+    await nextTick()
+    if (disposed || dragState) return
+    fitInViewport('fab')
+    fitInViewport('panel')
+  })
 }
+
+watch(
+  () => assistantStore.panelOpen,
+  open => {
+    if (open) {
+      scheduleViewportFit()
+    } else {
+      sessionMenuOpen.value = false
+      channelMenuOpen.value = false
+      if (dragState?.target === 'panel') finishDrag(true)
+    }
+  },
+  { flush: 'post' }
+)
 
 onMounted(() => {
-  fabPosition.value = loadFabPosition()
-  document.addEventListener('pointerdown', onDocumentPointerDown, true)
+  positions.fab.value = loadPosition('fab')
+  positions.panel.value = loadPosition('panel')
+  scheduleViewportFit()
+  window.addEventListener('resize', scheduleViewportFit, { passive: true })
+  window.visualViewport?.addEventListener('resize', scheduleViewportFit, { passive: true })
+  window.visualViewport?.addEventListener('scroll', scheduleViewportFit, { passive: true })
 })
 
 onBeforeUnmount(() => {
-  document.removeEventListener('pointerdown', onDocumentPointerDown, true)
+  disposed = true
+  finishDrag(true, false)
+  if (viewportFrame !== null) cancelAnimationFrame(viewportFrame)
+  window.removeEventListener('resize', scheduleViewportFit)
+  window.visualViewport?.removeEventListener('resize', scheduleViewportFit)
+  window.visualViewport?.removeEventListener('scroll', scheduleViewportFit)
 })
 </script>
 
 <style scoped>
-.assistant-widget {
-  /* 仅作为点击外部判定的 DOM 子树容器，不产生布局 */
-  display: contents;
-}
-
 .assistant-fab {
   position: fixed;
   right: 20px;
   bottom: 20px;
-  z-index: 2300;
+  /* 与 Vuetify 的默认浮层起点（2000）衔接，不盖住菜单或对话框。 */
+  z-index: 1999;
   background: rgb(var(--v-theme-surface));
   border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.22);
   cursor: grab;
   touch-action: none; /* 拖拽期间禁用浏览器默认触摸行为 */
   user-select: none;
+  transition-property: box-shadow, opacity, background;
 }
 
 .assistant-fab:active {
   cursor: grabbing;
 }
 
-.assistant-panel {
+.assistant-overlay :deep(.assistant-panel) {
   position: fixed;
   right: 20px;
   bottom: 92px;
-  z-index: 2301;
   width: min(440px, calc(100vw - 40px));
   height: min(560px, calc(100vh - 140px));
+  height: min(560px, calc(100dvh - 140px));
   display: flex;
   flex-direction: column;
   border-radius: 12px;
@@ -372,18 +609,56 @@ onBeforeUnmount(() => {
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
-  overflow: hidden;
+  /* 极矮视口仍可滚动到输入区，避免固定头部和选择器把输入框裁掉。 */
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.assistant-fab.assistant-floating--dragging,
+.assistant-overlay :deep(.assistant-panel.assistant-floating--dragging) {
+  transition: none;
+  will-change: transform;
+}
+
+/* 拖动时暂停背景模糊，避免每帧重新采样底层页面；释放后恢复玻璃效果。 */
+.assistant-overlay :deep(.assistant-panel.assistant-floating--dragging) {
+  background: rgb(var(--v-theme-surface));
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 .assistant-panel__head {
   display: flex;
+  flex: 0 0 auto;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
   align-items: center;
   padding: 10px 12px;
   border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
 }
 
+.assistant-panel__head:active {
+  cursor: grabbing;
+}
+
+.assistant-panel__position-error {
+  flex: 0 0 auto;
+  margin: 6px 12px 0;
+  max-height: 64px;
+  overflow-y: auto;
+  color: rgb(var(--v-theme-error));
+  font-size: 0.75rem;
+}
+
 .assistant-panel__sessions {
   margin: 8px 12px 0;
+  flex: 0 0 auto;
+}
+
+.assistant-panel__channels {
+  margin: 6px 12px 0;
   flex: 0 0 auto;
 }
 
@@ -402,7 +677,9 @@ onBeforeUnmount(() => {
 
 .assistant-panel__messages {
   flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 12px;
   display: flex;
   flex-direction: column;
@@ -419,6 +696,7 @@ onBeforeUnmount(() => {
 
 .assistant-panel__input {
   display: flex;
+  flex: 0 0 auto;
   align-items: flex-end;
   padding: 10px 12px 12px;
   border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
@@ -495,16 +773,22 @@ onBeforeUnmount(() => {
   word-break: break-all;
 }
 
-/* 进出动画 */
-.assistant-panel-enter-active,
-.assistant-panel-leave-active {
-  transition: all 200ms ease;
+/* 进出只改变透明度，避免动画与拖拽争用 transform。 */
+.assistant-overlay :deep(.assistant-panel-enter-active),
+.assistant-overlay :deep(.assistant-panel-leave-active) {
+  transition: opacity 150ms ease;
 }
 
-.assistant-panel-enter-from,
-.assistant-panel-leave-to {
+.assistant-overlay :deep(.assistant-panel-enter-from),
+.assistant-overlay :deep(.assistant-panel-leave-to) {
   opacity: 0;
-  transform: translateY(16px) scale(0.98);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assistant-overlay :deep(.assistant-panel-enter-active),
+  .assistant-overlay :deep(.assistant-panel-leave-active) {
+    transition: none;
+  }
 }
 
 @media (max-width: 600px) {
@@ -513,12 +797,21 @@ onBeforeUnmount(() => {
     bottom: 12px;
   }
 
-  .assistant-panel {
+  .assistant-overlay :deep(.assistant-panel) {
     right: 8px;
-    left: 8px;
     bottom: 84px;
-    width: auto;
+    width: calc(100vw - 16px);
     height: min(520px, calc(100vh - 120px));
+    height: min(520px, calc(100dvh - 120px));
   }
+}
+</style>
+
+<style>
+/* 高度上限经 menu-props 交给 Vuetify 计算，列表在可用高度内滚动。 */
+.assistant-widget-menu > .v-list {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 </style>

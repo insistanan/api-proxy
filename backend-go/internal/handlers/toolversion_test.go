@@ -226,6 +226,10 @@ func TestFetchNpmLatestVersion(t *testing.T) {
 
 	t.Run("解析 dist-tags", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Accept") != "application/json" {
+				w.WriteHeader(http.StatusNotAcceptable)
+				return
+			}
 			if !strings.HasSuffix(r.URL.Path, "/dist-tags") {
 				http.NotFound(w, r)
 				return
@@ -262,6 +266,32 @@ func TestFetchNpmLatestVersion(t *testing.T) {
 			t.Fatalf("网络错误未透出: %q %q", latest, latestErr)
 		}
 	})
+}
+
+func TestToolVersionRetriesOnlyFailedProbeAfterShortTTL(t *testing.T) {
+	localCalls := 0
+	stubToolVersionProbes(t, func(context.Context, string) (string, string) {
+		localCalls++
+		return "1.0.0", ""
+	}, "", http.StatusNotAcceptable)
+	first := getToolVersionResult(context.Background(), "opencode", toolSpecs["opencode"], false)
+	if first.LatestError == "" {
+		t.Fatal("registry 失败必须显式记录")
+	}
+	toolVersionHTTPGet = func(context.Context, string) ([]byte, int, error) {
+		return []byte(`{"latest":"1.1.0"}`), http.StatusOK, nil
+	}
+	state := getToolVersionState("opencode")
+	state.mu.Lock()
+	state.latestAt = time.Now().Add(-2 * toolVersionFailureCacheTTL)
+	state.mu.Unlock()
+	result := getToolVersionResult(context.Background(), "opencode", toolSpecs["opencode"], false)
+	if result.Latest != "1.1.0" || result.LatestError != "" {
+		t.Fatalf("网络恢复后普通查询应重新探测: %+v", result)
+	}
+	if localCalls != 1 || result.Current != "1.0.0" {
+		t.Fatalf("成功的本地探测应继续复用缓存: calls=%d result=%+v", localCalls, result)
+	}
 }
 
 func TestProbeLocalToolVersionExtract(t *testing.T) {

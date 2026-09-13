@@ -3,6 +3,7 @@ package hooks
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +25,12 @@ type ContentSafetyError struct {
 	BlockType string
 	RuleName  string
 	Snippet   string
+	// Command 是危险命令命中时的完整命令（拦截记录展示与名单操作用；
+	// 非命令类拦截为空）。与 Snippet 中的嵌入展示互补，结构化字段。
+	Command     string
+	CommandHash string
+	AIReview    *sensitive.CommandAIReview
+	audited     bool
 }
 
 // ContentSafetyHookError 表示内容安全基础设施自身失败，而不是策略命中。
@@ -70,6 +77,14 @@ func ContentSafetyErrorFrom(err error) *ContentSafetyError {
 	return nil
 }
 
+func ContentSafetyHookErrorFrom(err error) *ContentSafetyHookError {
+	var target *ContentSafetyHookError
+	if errors.As(err, &target) {
+		return target
+	}
+	return nil
+}
+
 func (e *ContentSafetyError) Error() string {
 	if e == nil {
 		return "内容安全检查失败"
@@ -88,7 +103,7 @@ func (e *ContentSafetyError) Code() string {
 			return "SENSITIVE_WORD_BLOCKED"
 		case sensitive.BlockTypeSensitiveInfo:
 			return "SENSITIVE_INFORMATION_BLOCKED"
-		case sensitive.BlockTypeDangerousCmd:
+		case sensitive.BlockTypeDangerousCmd, sensitive.BlockTypeDangerousCmdAI:
 			return "DANGEROUS_COMMAND_BLOCKED"
 		case sensitive.BlockTypeCredential:
 			return "CREDENTIAL_BLOCKED"
@@ -100,21 +115,92 @@ func (e *ContentSafetyError) Code() string {
 const contentSafetyPipelineKey = "__content_safety_hook_pipeline"
 
 type attachedHookPipeline struct {
-	pipeline       *Pipeline
-	vault          *sensitive.Vault
-	metadataMu     sync.RWMutex
-	metadata       HookContext
-	streamMu       sync.Mutex
-	stream         *sensitive.StreamCmdScanner
-	toolArgs       map[string]string
-	credentialHits map[string]struct{}
-	restorers      map[string]*sensitive.StreamRestorer
-	restorePending map[string]streamRestoreTemplate
-	vetoGuard      *StreamVetoGuard
-	// allowedCommands 是本请求内已经闸门放行过的危险命令（streamMu 保护）。
-	// StreamCmdScanner 命中后每个后续 chunk 都会重复返回同一命中，
-	// 不记录会导致同一命令被反复送审 / 反复注册 pending。
+	pipeline            *Pipeline
+	vault               *sensitive.Vault
+	metadataMu          sync.RWMutex
+	metadata            HookContext
+	streamMu            sync.Mutex
+	stream              *sensitive.StreamCmdScanner
+	textStreams         map[string]*streamTextState
+	textStreamBytes     int
+	toolArgs            map[string]*streamToolArgumentState
+	toolArgBytes        int
+	restorers           map[string]*sensitive.StreamRestorer
+	restorePending      map[string]streamRestoreTemplate
+	restorePendingBytes int
+	restoreEventBytes   int
+	restoreErr          error
+	vetoGuard           *StreamVetoGuard
+	lifecycleCtx        context.Context
+	lifecycleCancel     context.CancelFunc
+	// allowedCommands 记录本请求中已放行的完整命令身份（streamMu 保护），
+	// 避免同一完整脚本的多条规则重复送审和注册否决窗口。
 	allowedCommands map[string]struct{}
+	// streamCredential / streamMaskMode 在流式扫描器初始化时从配置快照固化
+	//（streamMu 保护）。流式生命周期内配置热重载不再生效——与 stream 扫描器
+	// 同一约定；换来的是凭据扫描不再逐 chunk 取配置快照（深拷贝 + DeepEqual）。
+	streamCredential *sensitive.CredentialDetector
+	streamMaskMode   string
+	streamSettings   config.ContentSafetyConfig
+	streamDetector   *sensitive.CmdDetector
+	// preRequestMu 保护 preRequestCache：同一请求的请求前钩子在一次代理里
+	// 会执行多次（入口 + vision 层前后 + 故障转移重试），按输入体指纹缓存
+	// 处理结果，重复执行直接复用，避免多次 JSON 解析与全量正则扫描。
+	// 配置热重载在请求中途不生效——同一请求内保持一致的处置是更可预期的
+	// 语义，变更自下一请求起生效。
+	preRequestMu       sync.Mutex
+	preRequestCache    *attachedPreRequestCache
+	preRequestSnapshot *contentSafetySnapshot
+	preRequestPrepared bool
+	preRequestEnabled  bool
+}
+
+// attachedPreRequestCache 是请求级请求前钩子的结果缓存。
+type attachedPreRequestCache struct {
+	inputSHA          [sha256.Size]byte
+	protocol          string // payloadProtocols[0]，空表示默认
+	output            []byte // 处理后的请求体
+	changed           bool   // 处理是否改动了请求体
+	contentType       string
+	outputContentType string
+}
+
+type checkedPreRequestBody struct {
+	*bytes.Reader
+	owner    *attachedHookPipeline
+	protocol string
+	contentType string
+	size int
+}
+
+func (b *checkedPreRequestBody) Close() error { return nil }
+
+func (a *attachedHookPipeline) preparePreRequest() (bool, error) {
+	a.preRequestMu.Lock()
+	defer a.preRequestMu.Unlock()
+	if a.preRequestPrepared {
+		return a.preRequestEnabled, nil
+	}
+	enabled := false
+	for _, entry := range a.pipeline.snapshot(HookStagePreRequest) {
+		if hook, ok := entry.hook.(*contentSafetyPreRequestHook); ok {
+			snapshot, err := hook.currentSnapshot()
+			if err != nil {
+				return false, err
+			}
+			a.preRequestSnapshot = snapshot
+			enabled = enabled || snapshot.requestEnabled()
+		} else {
+			enabled = true
+		}
+	}
+	a.preRequestPrepared, a.preRequestEnabled = true, enabled
+	return enabled, nil
+}
+
+func (s *contentSafetySnapshot) requestEnabled() bool {
+	return s.settings.SensitiveWord.Enabled || s.settings.SensitiveInfo.Enabled || s.settings.Credential.Enabled ||
+		s.settings.SensitiveData.Mode == config.ContentSafetyModeMask && s.custom != nil && s.custom.Enabled()
 }
 
 // AttachHookPipeline 将内容安全 Hook 管道绑定到当前请求。入口解析请求后调用，
@@ -126,13 +212,20 @@ func AttachHookPipeline(c requestContextSetter, pipeline *Pipeline, metadata Hoo
 	if metadata.eventDeduper == nil {
 		metadata.eventDeduper = newSafetyEventDeduper()
 	}
-	vault := sensitive.NewVault()
+	requestCtx := context.Background()
+	if getter, ok := c.(requestContextGetter); ok {
+		requestCtx = attachedRequestContext(getter)
+	}
+	lifecycleCtx, lifecycleCancel := context.WithCancel(requestCtx)
+	vault := sensitive.NewVaultWithContext(lifecycleCtx)
 	metadata.redactionVault = vault
 	c.Set(contentSafetyPipelineKey, &attachedHookPipeline{
-		pipeline:  pipeline,
-		metadata:  metadata,
-		vault:     vault,
-		vetoGuard: newStreamVetoGuard(),
+		pipeline:        pipeline,
+		metadata:        metadata,
+		vault:           vault,
+		vetoGuard:       newStreamVetoGuard(),
+		lifecycleCtx:    lifecycleCtx,
+		lifecycleCancel: lifecycleCancel,
 	})
 }
 
@@ -156,9 +249,37 @@ func runAttachedPreRequestHooks(ctx context.Context, c requestContextGetter, req
 	if !ok || attached == nil || attached.pipeline == nil {
 		return fmt.Errorf("内容安全管道绑定数据无效")
 	}
+	if len(payloadProtocols) > 1 {
+		return fmt.Errorf("内容安全只允许一个上游载荷协议")
+	}
+	enabled, err := attached.preparePreRequest()
+	if err != nil {
+		return err
+	}
+	metadata := attached.currentMetadata()
+	metadata.redactionVault = attached.vault
+	metadata.preRequestSnapshot = attached.preRequestSnapshot
+	metadata.ChannelName = channelName
+	if metadata.RequestID == "" {
+		metadata.RequestID = requestIDFromHeaders(req.Header)
+	}
+	protocolKey := ""
+	if len(payloadProtocols) == 1 {
+		protocolKey = payloadProtocols[0]
+	}
+	metadata.PayloadProtocol = protocolKey
+	attached.metadataMu.Lock()
+	attached.metadata = metadata
+	attached.metadataMu.Unlock()
+	if !enabled {
+		return nil
+	}
+	contentType := req.Header.Get("Content-Type")
+	if inspected, ok := req.Body.(*checkedPreRequestBody); ok && inspected.owner == attached && inspected.protocol == protocolKey && inspected.contentType == contentType && inspected.Len() == inspected.size {
+		return nil
+	}
 	var (
 		body                  []byte
-		err                   error
 		originalContentLength = req.ContentLength
 		originalGetBody       = req.GetBody
 		originalBodyWasNil    = req.Body == nil
@@ -175,21 +296,21 @@ func runAttachedPreRequestHooks(ctx context.Context, c requestContextGetter, req
 			return fmt.Errorf("读取上游请求体失败: %w", err)
 		}
 	}
-	metadata := attached.currentMetadata()
-	metadata.redactionVault = attached.vault
-	metadata.ChannelName = channelName
-	if metadata.RequestID == "" {
-		metadata.RequestID = requestIDFromHeaders(req.Header)
+	// 请求级结果缓存：同一请求体的钩子重复执行（vision 层前后 / 故障转移
+	// 重试）直接复用上次的处理结果。命中时只重放请求体改写，跳过整套检测。
+	inputSHA := sha256.Sum256(body)
+	attached.preRequestMu.Lock()
+	cached := attached.preRequestCache
+	attached.preRequestMu.Unlock()
+	if cached != nil && cached.protocol == protocolKey && cached.contentType == contentType && cached.inputSHA == inputSHA {
+		if req.Header != nil && cached.outputContentType != contentType {
+			req.Header.Set("Content-Type", cached.outputContentType)
+		}
+		applyPreRequestBody(req, cached.output, cached.changed, body, originalContentLength, originalGetBody, originalBodyWasNil, originalHeaderLength, hadHeaderLength)
+		markCheckedPreRequestBody(req, attached, protocolKey, cached.output)
+		return nil
 	}
-	if len(payloadProtocols) > 1 {
-		return fmt.Errorf("内容安全只允许一个上游载荷协议")
-	}
-	if len(payloadProtocols) == 1 {
-		metadata.PayloadProtocol = payloadProtocols[0]
-	}
-	attached.metadataMu.Lock()
-	attached.metadata = metadata
-	attached.metadataMu.Unlock()
+
 	result, err := attached.pipeline.RunPreRequest(ctx, metadata, HookResult{
 		RequestBody:     body,
 		UpstreamRequest: req,
@@ -204,14 +325,39 @@ func runAttachedPreRequestHooks(ctx context.Context, c requestContextGetter, req
 		return fmt.Errorf("请求前 Hook 不允许替换上游请求对象")
 	}
 
-	requestBody := append([]byte(nil), result.RequestBody...)
-	if req.Body != nil {
-		_ = req.Body.Close()
+	changed := !bytes.Equal(result.RequestBody, body)
+	attached.preRequestMu.Lock()
+	attached.preRequestCache = &attachedPreRequestCache{
+		inputSHA:          inputSHA,
+		protocol:          protocolKey,
+		output:            result.RequestBody,
+		changed:           changed,
+		contentType:       contentType,
+		outputContentType: req.Header.Get("Content-Type"),
 	}
-	req.Body = io.NopCloser(bytes.NewReader(requestBody))
-	if bytes.Equal(requestBody, body) {
+	attached.preRequestMu.Unlock()
+	applyPreRequestBody(req, result.RequestBody, changed, body, originalContentLength, originalGetBody, originalBodyWasNil, originalHeaderLength, hadHeaderLength)
+	markCheckedPreRequestBody(req, attached, protocolKey, result.RequestBody)
+	return nil
+}
+
+func markCheckedPreRequestBody(req *http.Request, owner *attachedHookPipeline, protocol string, body []byte) {
+	if req.Body != nil {
+		req.Body = &checkedPreRequestBody{Reader: bytes.NewReader(body), owner: owner, protocol: protocol, contentType: req.Header.Get("Content-Type"), size: len(body)}
+	}
+}
+
+// applyPreRequestBody 把钩子处理结果写回上游请求。changed=false 时恢复请求
+// 的原始长度属性（仅在真正改动时才复制请求体，避免无谓的全量拷贝）。
+func applyPreRequestBody(req *http.Request, output []byte, changed bool, original []byte, originalContentLength int64, originalGetBody func() (io.ReadCloser, error), originalBodyWasNil bool, originalHeaderLength []string, hadHeaderLength bool) {
+	if !changed {
+		if req.Body != nil {
+			_ = req.Body.Close()
+		}
 		if originalBodyWasNil {
 			req.Body = nil
+		} else {
+			req.Body = io.NopCloser(bytes.NewReader(original))
 		}
 		req.ContentLength = originalContentLength
 		req.GetBody = originalGetBody
@@ -222,8 +368,13 @@ func runAttachedPreRequestHooks(ctx context.Context, c requestContextGetter, req
 				req.Header.Del("Content-Length")
 			}
 		}
-		return nil
+		return
 	}
+	requestBody := output
+	if req.Body != nil {
+		_ = req.Body.Close()
+	}
+	req.Body = io.NopCloser(bytes.NewReader(requestBody))
 	req.ContentLength = int64(len(requestBody))
 	req.TransferEncoding = nil
 	req.GetBody = func() (io.ReadCloser, error) {
@@ -232,7 +383,6 @@ func runAttachedPreRequestHooks(ctx context.Context, c requestContextGetter, req
 	if req.Header != nil {
 		req.Header.Set("Content-Length", fmt.Sprintf("%d", len(requestBody)))
 	}
-	return nil
 }
 
 // RunAttachedPreRequestHooks 对已经构造完成的上游请求执行绑定的请求前 Hook。
@@ -324,7 +474,8 @@ func MaskAttachedText(c requestContextGetter, text string) (string, error) {
 	if err != nil || attached == nil || attached.vault == nil {
 		return text, err
 	}
-	return attached.vault.MaskKnown(text), nil
+	masked := attached.vault.MaskKnown(text)
+	return masked, attached.vault.Err()
 }
 
 // AssignAttachedConversation 将当前请求的内容安全事件关联到内部会话，并更新
@@ -341,15 +492,22 @@ func AssignAttachedConversation(ctx context.Context, c requestContextGetter, con
 	attached.metadataMu.Lock()
 	attached.metadata.ConversationID = conversationID
 	requestID := attached.metadata.RequestID
+	deduper := attached.metadata.eventDeduper
 	attached.metadataMu.Unlock()
 	assigner, ok := attached.pipeline.blockedLogRecorder.(blockedLogConversationAssigner)
-	if !ok || requestID == "" {
+	if !ok || requestID == "" || !deduper.hasUnassigned() {
 		return nil
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return assigner.AssignConversation(ctx, requestID, conversationID)
+	ctx, cancel := context.WithTimeout(ctx, gateStoreTimeout)
+	defer cancel()
+	if err := assigner.AssignConversation(ctx, requestID, conversationID); err != nil {
+		return err
+	}
+	deduper.markAssigned()
+	return nil
 }
 
 // ClearAttachedSensitiveData 在请求统一退出路径释放明文映射和流式还原状态。
@@ -358,13 +516,29 @@ func ClearAttachedSensitiveData(c requestContextGetter) {
 	if err != nil || attached == nil {
 		return
 	}
+	if attached.lifecycleCancel != nil {
+		attached.lifecycleCancel()
+	}
 	attached.streamMu.Lock()
 	attached.restorers = nil
 	attached.restorePending = nil
+	attached.restorePendingBytes = 0
+	attached.restoreEventBytes = 0
+	attached.restoreErr = nil
 	attached.toolArgs = nil
-	attached.credentialHits = nil
+	attached.toolArgBytes = 0
 	attached.stream = nil
+	attached.textStreams = nil
+	attached.textStreamBytes = 0
+	attached.streamCredential = nil
+	attached.streamMaskMode = ""
+	attached.streamSettings = config.ContentSafetyConfig{}
+	attached.streamDetector = nil
+	attached.allowedCommands = nil
 	attached.streamMu.Unlock()
+	attached.preRequestMu.Lock()
+	attached.preRequestCache = nil
+	attached.preRequestMu.Unlock()
 	if attached.vault != nil {
 		attached.vault.Clear()
 	}
@@ -380,6 +554,17 @@ func ResetAttachedStreamRestoration(c requestContextGetter) error {
 	attached.streamMu.Lock()
 	attached.restorers = nil
 	attached.restorePending = nil
+	attached.restorePendingBytes = 0
+	attached.restoreEventBytes = 0
+	attached.restoreErr = nil
+	attached.toolArgs = nil
+	attached.toolArgBytes = 0
+	attached.stream = nil
+	attached.textStreams = nil
+	attached.textStreamBytes = 0
+	attached.streamDetector = nil
+	attached.streamCredential = nil
+	attached.allowedCommands = nil
 	attached.streamMu.Unlock()
 	return nil
 }
@@ -398,23 +583,32 @@ func (a *attachedHookPipeline) recordContentSafetyError(ctx context.Context, met
 		return err
 	}
 	safetyErr := ContentSafetyErrorFrom(err)
-	if safetyErr == nil {
+	if safetyErr == nil || safetyErr.audited {
 		return err
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	ctx, cancel := context.WithTimeout(ctx, gateStoreTimeout)
+	defer cancel()
 	_, recordErr := a.pipeline.blockedLogRecorder.Record(ctx, sensitive.BlockedLog{
 		APIType:        metadata.APIType,
 		BlockType:      safetyErr.BlockType,
 		RuleName:       safetyErr.RuleName,
 		PromptSnippet:  safetyErr.Snippet,
+		Command:        safetyErr.Command,
+		CommandHash:    safetyErr.CommandHash,
 		ChannelName:    metadata.ChannelName,
 		Model:          metadata.Model,
 		RequestID:      metadata.RequestID,
 		ConversationID: metadata.ConversationID,
+		AIReview:       safetyErr.AIReview,
 	})
 	if recordErr == nil {
+		safetyErr.audited = true
+		if metadata.ConversationID == "" {
+			metadata.eventDeduper.markUnassigned()
+		}
 		return err
 	}
 	recordErr = fmt.Errorf("写入内容安全拦截记录失败: %w", recordErr)
@@ -460,13 +654,15 @@ func (h *contentSafetyPreRequestHook) Run(ctx context.Context, metadata HookCont
 	if h == nil || h.cfgManager == nil {
 		return result, fmt.Errorf("内容安全 Hook 未绑定配置管理器")
 	}
-	snapshot, err := h.currentSnapshot()
-	if err != nil {
-		return result, err
+	snapshot := metadata.preRequestSnapshot
+	if snapshot == nil {
+		var err error
+		snapshot, err = h.currentSnapshot()
+		if err != nil {
+			return result, err
+		}
 	}
-	if !snapshot.settings.SensitiveWord.Enabled &&
-		!snapshot.settings.SensitiveInfo.Enabled &&
-		!snapshot.settings.Credential.Enabled {
+	if !snapshot.requestEnabled() {
 		return result, nil
 	}
 	if len(result.RequestBody) == 0 || result.UpstreamRequest == nil {
@@ -474,6 +670,9 @@ func (h *contentSafetyPreRequestHook) Run(ctx context.Context, metadata HookCont
 	}
 	if metadata.redactionVault != nil {
 		metadata.redactionVault.ReserveText(string(result.RequestBody))
+		if err := metadata.redactionVault.Err(); err != nil {
+			return result, err
+		}
 	}
 	protocol := metadata.PayloadProtocol
 	if protocol == "" {

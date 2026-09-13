@@ -61,7 +61,7 @@ func (s *Store) ListSystemLogSummaries(ctx context.Context, opts SystemLogListOp
 	query += ` GROUP BY request_id ORDER BY last_unix DESC, last_id DESC LIMIT ?`
 	args = append(args, limit)
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.readDB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("查询系统日志列表失败: %w", err)
 	}
@@ -112,7 +112,7 @@ func (s *Store) QueryTrafficByRequestID(ctx context.Context, requestID string) (
 		status_code, stream, headers_json, body, truncated, original_bytes
 		FROM traffic_logs WHERE request_id = ?
 		ORDER BY unix_milli ASC, id ASC`
-	rows, err := s.db.QueryContext(ctx, query, requestID)
+	rows, err := s.readDB.QueryContext(ctx, query, requestID)
 	if err != nil {
 		return nil, fmt.Errorf("查询系统日志详情失败: %w", err)
 	}
@@ -186,7 +186,7 @@ func (s *Store) loadTrafficRowMeta(ctx context.Context, requestIDs []string) (ma
 	query := `SELECT request_id, unix_milli, timestamp, phase, api_type, status_code, stream, truncated
 		FROM traffic_logs WHERE request_id IN (` + placeholders + `)
 		ORDER BY unix_milli ASC, id ASC`
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.readDB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("查询系统日志摘要失败: %w", err)
 	}
@@ -214,7 +214,7 @@ func (s *Store) loadRequestLogMeta(ctx context.Context, requestIDs []string) (ma
 	query := `SELECT request_id, payload_json FROM request_logs
 		WHERE request_id IN (` + placeholders + `)
 		ORDER BY unix_milli DESC, id DESC`
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.readDB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("查询系统日志元数据失败: %w", err)
 	}

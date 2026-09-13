@@ -7,51 +7,47 @@ import (
 	"strings"
 	"time"
 
+	"github.com/BenedictKing/api-proxy/internal/conversation"
 	"github.com/BenedictKing/api-proxy/internal/sensitive"
 	"github.com/gin-gonic/gin"
 )
 
+// activeConversationWindow 「活跃会话」筛选的判定窗口：
+// 正在发送中，或最近 30 分钟内有过请求的会话。
+const activeConversationWindow = 30 * time.Minute
+
+// activeConversationIDs 返回当前活跃的会话 ID 集（发送中或窗口内有请求）。
+// registry 为 nil 时返回 nil（调用方按"不筛选"处理）。
+func activeConversationIDs(registry *conversation.Registry) []string {
+	if registry == nil {
+		return nil
+	}
+	now := time.Now()
+	ids := make([]string, 0)
+	for _, record := range registry.List() {
+		if record == nil {
+			continue
+		}
+		if record.IsSending || now.Sub(record.LastRequestAt) < activeConversationWindow {
+			ids = append(ids, record.ID)
+		}
+	}
+	return ids
+}
+
 // GetBlockedLogs 分页查询拦截记录。
-func GetBlockedLogs(store *sensitive.BlockedStore) gin.HandlerFunc {
+// registry 用于「活跃会话」筛选（activeOnly=true），可为 nil（不筛选）。
+func GetBlockedLogs(store *sensitive.BlockedStore, registry *conversation.Registry) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if store == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "拦截记录存储未初始化"})
 			return
 		}
-		page, ok := parseBlockedLogPositiveInt(c, "page", 1, 0)
+		options, ok := parseBlockedLogListOptions(c, registry)
 		if !ok {
-			return
-		}
-		pageSize, ok := parseBlockedLogPositiveInt(c, "pageSize", 20, 100)
-		if !ok {
-			return
-		}
-		apiType := strings.ToLower(strings.TrimSpace(c.Query("apiType")))
-		if apiType != "" && !validBlockedLogAPIType(apiType) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的 API 类型"})
-			return
-		}
-		blockType := strings.ToLower(strings.TrimSpace(c.Query("blockType")))
-		if blockType != "" && !validBlockedLogType(blockType) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的拦截类型"})
-			return
-		}
-		from, ok := parseBlockedLogTime(c, "from")
-		if !ok {
-			return
-		}
-		to, ok := parseBlockedLogTime(c, "to")
-		if !ok {
-			return
-		}
-		if !from.IsZero() && !to.IsZero() && from.After(to) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "开始时间不能晚于结束时间"})
 			return
 		}
 
-		options := sensitive.BlockedLogListOptions{
-			APIType: apiType, BlockType: blockType, From: from, To: to, Page: page, PageSize: pageSize,
-		}
 		groupKey := strings.TrimSpace(c.Query("groupKey"))
 		groupBy := strings.TrimSpace(c.Query("groupBy"))
 		if groupKey != "" && groupBy != "" {
@@ -91,6 +87,66 @@ func GetBlockedLogs(store *sensitive.BlockedStore) gin.HandlerFunc {
 		}
 		c.JSON(http.StatusOK, result)
 	}
+}
+
+// parseBlockedLogListOptions 解析并校验拦截记录列表的公共筛选参数。
+// 校验失败时已写回响应，调用方直接 return。
+func parseBlockedLogListOptions(c *gin.Context, registry *conversation.Registry) (sensitive.BlockedLogListOptions, bool) {
+	page, ok := parseBlockedLogPositiveInt(c, "page", 1, 0)
+	if !ok {
+		return sensitive.BlockedLogListOptions{}, false
+	}
+	pageSize, ok := parseBlockedLogPositiveInt(c, "pageSize", 20, 100)
+	if !ok {
+		return sensitive.BlockedLogListOptions{}, false
+	}
+	apiType := strings.ToLower(strings.TrimSpace(c.Query("apiType")))
+	if apiType != "" && !validBlockedLogAPIType(apiType) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的 API 类型"})
+		return sensitive.BlockedLogListOptions{}, false
+	}
+	blockType := strings.ToLower(strings.TrimSpace(c.Query("blockType")))
+	if blockType != "" && !validBlockedLogType(blockType) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的拦截类型"})
+		return sensitive.BlockedLogListOptions{}, false
+	}
+	category := strings.ToLower(strings.TrimSpace(c.Query("category")))
+	if category != "" && category != sensitive.BlockCategoryDangerousCmd {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的拦截类别"})
+		return sensitive.BlockedLogListOptions{}, false
+	}
+	if category != "" && blockType != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "拦截类型与类别不能同时筛选"})
+		return sensitive.BlockedLogListOptions{}, false
+	}
+	from, ok := parseBlockedLogTime(c, "from")
+	if !ok {
+		return sensitive.BlockedLogListOptions{}, false
+	}
+	to, ok := parseBlockedLogTime(c, "to")
+	if !ok {
+		return sensitive.BlockedLogListOptions{}, false
+	}
+	if !from.IsZero() && !to.IsZero() && from.After(to) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "开始时间不能晚于结束时间"})
+		return sensitive.BlockedLogListOptions{}, false
+	}
+	options := sensitive.BlockedLogListOptions{
+		APIType: apiType, BlockType: blockType, Category: category, From: from, To: to, Page: page, PageSize: pageSize,
+	}
+	if activeOnly := strings.TrimSpace(c.Query("activeOnly")); activeOnly != "" && activeOnly != "false" {
+		if activeOnly != "true" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的 activeOnly 参数"})
+			return sensitive.BlockedLogListOptions{}, false
+		}
+		// 活跃会话为空时传入空切片，store 侧按"匹配不到任何记录"处理。
+		ids := activeConversationIDs(registry)
+		if ids == nil {
+			ids = []string{}
+		}
+		options.Conversations = ids
+	}
+	return options, true
 }
 
 // GetBlockedLog 获取单条拦截记录。
@@ -201,12 +257,8 @@ func validBlockedLogAPIType(value string) bool {
 	}
 }
 
+// validBlockedLogType 校验筛选用的拦截类型。必须与 sensitive 包
+// validBlockType（写入侧枚举）保持一致的全集，否则前端筛选器会 400。
 func validBlockedLogType(value string) bool {
-	switch value {
-	case sensitive.BlockTypeSensitiveWord, sensitive.BlockTypeSensitiveInfo, sensitive.BlockTypeCredential,
-		sensitive.BlockTypeDangerousCmd, sensitive.BlockTypeWhitelist:
-		return true
-	default:
-		return false
-	}
+	return sensitive.ValidBlockType(value)
 }

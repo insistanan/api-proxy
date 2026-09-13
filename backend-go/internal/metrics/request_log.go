@@ -44,6 +44,7 @@ type RequestLogEntry struct {
 	Retried               bool    `json:"retried"`
 	Stream                bool    `json:"stream"`
 	ConversationID        string  `json:"conversationId,omitempty"`
+	ParentRequestID       string  `json:"parentRequestId,omitempty"`
 	// CostUSD 是读取时按**当前**单价表折算的花费，不落盘（写入的 payload 里没有这个字段）。
 	// 与 TPM 的处理方式不同：TPM 只依赖本条记录自身，写死没有后果；花费依赖单价表，
 	// 写死会让改价后新旧记录出现两个口径，同一条请求在日志页与统计页显示不同金额。

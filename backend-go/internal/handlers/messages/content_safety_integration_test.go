@@ -261,7 +261,7 @@ func newContentSafetyTestRouter(t *testing.T) (*gin.Engine, *config.ConfigManage
 
 	router := gin.New()
 	router.POST("/v1/messages", Handler(envCfg, cfgManager, channelScheduler, pipeline))
-	router.GET("/api/blocked-logs", rootHandlers.GetBlockedLogs(store))
+	router.GET("/api/blocked-logs", rootHandlers.GetBlockedLogs(store, nil))
 	return router, cfgManager, capture
 }
 

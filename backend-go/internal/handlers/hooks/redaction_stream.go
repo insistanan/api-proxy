@@ -20,28 +20,33 @@ type streamRestoreTemplate struct {
 	value     interface{}
 	path      []streamPathStep
 	eventName string
+	bytes     int
 }
 
 // RestoreAttachedSSEEvent 对已完成协议转换、即将写给客户端的 SSE 事件执行
 // 请求级精确还原。不同 JSON 字段路径使用独立增量状态，避免正文与并行工具参数串接。
 func RestoreAttachedSSEEvent(c requestContextGetter, event string) (string, error) {
+	boundary := streamSafetyBoundaryForEvent(event)
+	if err := finishAttachedStreamSafetyEvent(c, boundary); err != nil {
+		return "", err
+	}
 	attached, err := attachedPipelineFromContext(c)
-	if err != nil || attached == nil || attached.vault == nil || attached.vault.Empty() && sensitive.PersistentMappingStore() == nil || event == "" {
+	if err != nil || attached == nil || attached.vault == nil || !attached.vault.CanRestore() || event == "" {
 		return event, wrapContentSafetyHookError(err)
 	}
 	attached.streamMu.Lock()
 	defer attached.streamMu.Unlock()
 
-	// 持久映射库预载：事件文本中完整出现的占位符形态批量登记进当前 Vault，
-	// 让历史会话的旧占位符（跨重启）在本事件还原。读失败/miss 均不影响
-	// 既有还原契约（miss 原样下发 + 审计由 Vault 内部处理）。
-	if sensitive.PersistentMappingStore() != nil {
-		attached.vault.PreloadPersistent(event)
-	}
+	attached.restoreEventBytes = len(event)
 
 	prefix := ""
-	if isStreamTerminalEvent(event) {
-		drained, drainErr := drainStreamRestorationLocked(attached)
+	terminal := boundary.terminal
+	branches := boundary.branches
+	if terminal || len(branches) > 0 {
+		if terminal {
+			branches = nil
+		}
+		drained, drainErr := drainStreamRestorationLocked(attached, branches)
 		if drainErr != nil {
 			return event, wrapContentSafetyHookError(drainErr)
 		}
@@ -74,6 +79,12 @@ func RestoreAttachedSSEEvent(c requestContextGetter, event string) (string, erro
 	if !changed {
 		rewritten = event
 	}
+	if attached.restoreErr != nil {
+		return "", wrapContentSafetyHookError(attached.restoreErr)
+	}
+	if err := attached.vault.Err(); err != nil {
+		return "", wrapContentSafetyHookError(err)
+	}
 	return prefix + rewritten, nil
 }
 
@@ -83,6 +94,9 @@ func restoreStreamValue(attached *attachedHookPipeline, root, value interface{},
 	case map[string]interface{}:
 		identities = appendStreamIdentities(identities, path, typed)
 		for _, field := range sortedMapKeys(typed) {
+			if isStreamStructuralField(field) {
+				continue
+			}
 			childPath := appendPath(path, streamPathStep{key: field})
 			if text, ok := typed[field].(string); ok {
 				stateKey := streamStateKey(key, eventName, childPath, identities)
@@ -93,9 +107,9 @@ func restoreStreamValue(attached *attachedHookPipeline, root, value interface{},
 					changed = true
 				}
 				if restorer.Pending() {
-					attached.restorePending[stateKey] = streamRestoreTemplate{value: root, path: childPath, eventName: eventName}
+					attached.setRestorePending(stateKey, streamRestoreTemplate{value: root, path: childPath, eventName: eventName, bytes: attached.restoreEventBytes})
 				} else {
-					delete(attached.restorePending, stateKey)
+					attached.deleteRestorePending(stateKey)
 				}
 				continue
 			}
@@ -115,9 +129,9 @@ func restoreStreamValue(attached *attachedHookPipeline, root, value interface{},
 					changed = true
 				}
 				if restorer.Pending() {
-					attached.restorePending[stateKey] = streamRestoreTemplate{value: root, path: childPath, eventName: eventName}
+					attached.setRestorePending(stateKey, streamRestoreTemplate{value: root, path: childPath, eventName: eventName, bytes: attached.restoreEventBytes})
 				} else {
-					delete(attached.restorePending, stateKey)
+					attached.deleteRestorePending(stateKey)
 				}
 				continue
 			}
@@ -139,23 +153,45 @@ func (a *attachedHookPipeline) restorer(key string) *sensitive.StreamRestorer {
 	if current := a.restorers[key]; current != nil {
 		return current
 	}
+	if len(a.restorers) >= 2048 {
+		a.restoreErr = fmt.Errorf("流式还原字段超过 2048 个上限")
+		return nil
+	}
 	current := sensitive.NewStreamRestorer(a.vault)
 	a.restorers[key] = current
 	return current
 }
 
+func (a *attachedHookPipeline) setRestorePending(key string, template streamRestoreTemplate) {
+	previous := a.restorePending[key]
+	if a.restorePendingBytes-previous.bytes+template.bytes > 4<<20 {
+		a.restoreErr = fmt.Errorf("流式还原暂存模板超过 4 MiB 上限")
+		return
+	}
+	a.restorePendingBytes += template.bytes - previous.bytes
+	a.restorePending[key] = template
+}
+
+func (a *attachedHookPipeline) deleteRestorePending(key string) {
+	a.restorePendingBytes -= a.restorePending[key].bytes
+	delete(a.restorePending, key)
+}
+
 // DrainAttachedStreamRestoration 将流结束时尚未组成完整占位符的前缀原样释放。
 func DrainAttachedStreamRestoration(c requestContextGetter) ([]string, error) {
+	if err := FlushAttachedStreamHooks(c); err != nil {
+		return nil, err
+	}
 	attached, err := attachedPipelineFromContext(c)
 	if err != nil || attached == nil {
 		return nil, wrapContentSafetyHookError(err)
 	}
 	attached.streamMu.Lock()
 	defer attached.streamMu.Unlock()
-	return drainStreamRestorationLocked(attached)
+	return drainStreamRestorationLocked(attached, nil)
 }
 
-func drainStreamRestorationLocked(attached *attachedHookPipeline) ([]string, error) {
+func drainStreamRestorationLocked(attached *attachedHookPipeline, branches []string) ([]string, error) {
 	if attached == nil || len(attached.restorePending) == 0 {
 		return nil, nil
 	}
@@ -167,12 +203,19 @@ func drainStreamRestorationLocked(attached *attachedHookPipeline) ([]string, err
 	result := make([]string, 0, len(keys))
 	for _, key := range keys {
 		template := attached.restorePending[key]
+		if len(branches) > 0 && !restoreTemplateMatchesBranch(template, branches) {
+			continue
+		}
 		restorer := attached.restorers[key]
 		if restorer == nil {
 			return nil, fmt.Errorf("流式还原状态 %q 缺少还原器", key)
 		}
 		pending := restorer.Flush()
+		if err := attached.vault.Err(); err != nil {
+			return nil, wrapContentSafetyHookError(err)
+		}
 		if pending == "" {
+			attached.deleteRestorePending(key)
 			continue
 		}
 		cloneBody, err := utils.MarshalJSONNoEscape(template.value)
@@ -197,9 +240,36 @@ func drainStreamRestorationLocked(attached *attachedHookPipeline) ([]string, err
 			result = append(result, "event: "+template.eventName+"\n")
 		}
 		result = append(result, "data: "+string(payload)+"\n\n")
-		delete(attached.restorePending, key)
+		attached.deleteRestorePending(key)
 	}
 	return result, nil
+}
+
+func restoreTemplateMatchesBranch(template streamRestoreTemplate, branches []string) bool {
+	if len(template.path) < 2 || !template.path[1].array {
+		return false
+	}
+	root, ok := template.value.(map[string]interface{})
+	if !ok {
+		return false
+	}
+	field := template.path[0].key
+	items, ok := root[field].([]interface{})
+	index := template.path[1].index
+	if !ok || index < 0 || index >= len(items) {
+		return false
+	}
+	item, ok := items[index].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	key := streamBranchKey(field, item["index"], index)
+	for _, branch := range branches {
+		if branch == key {
+			return true
+		}
+	}
+	return false
 }
 
 func appendPath(path []streamPathStep, step streamPathStep) []streamPathStep {
@@ -223,7 +293,30 @@ func streamPathKey(path []streamPathStep) string {
 }
 
 func streamStateKey(lineKey, eventName string, path []streamPathStep, identities []string) string {
-	return lineKey + "|" + eventName + "|" + streamPathKey(path) + "|" + strings.Join(identities, "|")
+	logicalPath := streamPathKey(path)
+	logicalIdentities := append([]string(nil), identities...)
+	// 数组位置可能在下一块从 1 变为 0，带逻辑 index 的对象必须沿用同一状态。
+	// 先替换内层，再替换外层，保持嵌套工具调用的身份一致。
+	for i := len(path) - 1; i >= 0; i-- {
+		if !path[i].array {
+			continue
+		}
+		prefix := streamPathKey(path[:i+1])
+		for _, identity := range identities {
+			fieldPath, value, ok := strings.Cut(identity, "=")
+			field := strings.TrimPrefix(fieldPath, prefix+".")
+			if !ok || field == fieldPath || !isStreamIdentityField(field) {
+				continue
+			}
+			replacement := streamPathKey(path[:i]) + "[" + field + "=" + value + "]"
+			logicalPath = strings.ReplaceAll(logicalPath, prefix, replacement)
+			for j := range logicalIdentities {
+				logicalIdentities[j] = strings.ReplaceAll(logicalIdentities[j], prefix, replacement)
+			}
+			break
+		}
+	}
+	return lineKey + "|" + eventName + "|" + logicalPath + "|" + strings.Join(logicalIdentities, "|")
 }
 
 // appendStreamIdentities 将协议事件里的稳定逻辑索引加入状态键。流式协议常把
@@ -339,16 +432,64 @@ func sseEventName(event string) string {
 	return ""
 }
 
-func isStreamTerminalEvent(event string) bool {
-	if strings.Contains(event, utils.SSEDoneMarker) {
-		return true
+type streamSafetyBoundary struct {
+	terminal     bool
+	branches     []string
+	stoppedTools []string
+}
+
+// 每个 SSE 事件只解析一次结束边界，避免扫描与还原重复解析整段 JSON。
+func streamSafetyBoundaryForEvent(event string) streamSafetyBoundary {
+	var boundary streamSafetyBoundary
+	for _, line := range strings.Split(event, "\n") {
+		payload, isData := utils.ParseSSEDataLine(line)
+		if !isData {
+			continue
+		}
+		if payload == utils.SSEDoneMarker {
+			boundary.terminal = true
+			continue
+		}
+		var data map[string]any
+		if err := json.Unmarshal([]byte(payload), &data); err != nil {
+			continue
+		}
+		switch data["type"] {
+		case "message_stop", "response.completed", "response.incomplete":
+			boundary.terminal = true
+		case "content_block_stop":
+			boundary.stoppedTools = append(boundary.stoppedTools, "messages.content_block."+strings.TrimSpace(fmt.Sprint(data["index"])))
+		}
+		// 只结束声明 finish 的候选，其他候选可能仍在接收半段参数。
+		for _, field := range []string{"choices", "candidates"} {
+			items, _ := data[field].([]any)
+			finishField := "finish_reason"
+			if field == "candidates" {
+				finishField = "finishReason"
+			}
+			for index, value := range items {
+				item, _ := value.(map[string]any)
+				if reason, ok := item[finishField].(string); ok && reason != "" {
+					boundary.branches = append(boundary.branches, streamBranchKey(field, item["index"], index))
+				}
+			}
+		}
 	}
-	return strings.Contains(event, `"type":"message_stop"`) ||
-		strings.Contains(event, `"type": "message_stop"`) ||
-		strings.Contains(event, `"type":"response.completed"`) ||
-		strings.Contains(event, `"type": "response.completed"`) ||
-		strings.Contains(event, `"finish_reason":"`) ||
-		strings.Contains(event, `"finish_reason": "`) ||
-		strings.Contains(event, `"finishReason":"`) ||
-		strings.Contains(event, `"finishReason": "`)
+	return boundary
+}
+
+func streamBranchKey(field string, index any, fallback int) string {
+	part := fmt.Sprint(fallback)
+	if index != nil {
+		if explicit := strings.TrimSpace(fmt.Sprint(index)); explicit != "" {
+			part = explicit
+		}
+	}
+	if field == "choices" {
+		return "chat.choice." + part + "."
+	}
+	if field == "candidates" {
+		return "gemini.candidate." + part + "."
+	}
+	return ""
 }

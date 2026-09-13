@@ -1,5 +1,11 @@
 import { defineStore } from 'pinia'
-import { api, type AssistantMessage, type AssistantSession, type AssistantStatusChannel } from '@/services/api'
+import {
+  api,
+  type AssistantChannelOption,
+  type AssistantMessage,
+  type AssistantSession,
+  type AssistantStatusChannel,
+} from '@/services/api'
 
 // AI 配置助手的会话状态：全局浮窗跨页面共享，切页不丢上下文。
 export const useAssistantStore = defineStore('assistant', {
@@ -8,8 +14,12 @@ export const useAssistantStore = defineStore('assistant', {
     unavailableReason: '',
     /** 配置的模型 ID（分组匹配词）；空串表示自动（兜底分组） */
     model: '',
+    /** 配置的显式渠道 ID；空串表示自动（按四协议优先级编排） */
+    channelId: '',
     /** 当前配置下实际会命中的渠道（status 探测结果） */
     channel: null as AssistantStatusChannel | null,
+    /** 渠道选择器全部候选（按 messages → responses → chat → gemini 顺序） */
+    channels: [] as AssistantChannelOption[],
     statusChecked: false,
     sessions: [] as AssistantSession[],
     activeSessionId: null as number | null,
@@ -29,14 +39,28 @@ export const useAssistantStore = defineStore('assistant', {
         this.available = status.available
         this.unavailableReason = status.reason ?? ''
         this.model = status.model ?? ''
+        this.channelId = status.channelId ?? ''
         this.channel = status.channel ?? null
+        this.channels = status.channels ?? []
       } catch {
         this.available = false
         this.unavailableReason = '助手状态查询失败'
         this.model = ''
+        this.channelId = ''
         this.channel = null
+        this.channels = []
       } finally {
         this.statusChecked = true
+      }
+    },
+    // 切换助手渠道：即时保存并刷新状态。model 与 channelId 必须同时提交，
+    // 否则未提交的字段会被设置接口按零值覆盖。
+    async selectChannel(channelId: string) {
+      try {
+        await api.updateSettings({ assistant: { model: this.model, channelId } })
+        await this.checkStatus()
+      } catch (error) {
+        this.unavailableReason = error instanceof Error ? error.message : '切换助手渠道失败'
       }
     },
     async loadSessions() {

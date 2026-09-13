@@ -37,6 +37,8 @@ func handleStreamSuccess(
 		log.Printf("[Gemini-Stream] 警告: ResponseWriter 不支持 Flusher")
 	}
 
+	stopVeto := hooks.BindAttachedStreamVeto(c, resp.Body)
+	defer stopVeto()
 	// 检查流式响应是否含有 Content-Encoding。由于已强制设置 Accept-Encoding: identity，
 	// 正常情况下上游不应压缩 SSE；若上游违规压缩，尝试包装流式解码 Reader 以防分块解析失败。
 	if encoding := utils.GetContentEncoding(resp.Header); encoding != "" {
@@ -146,6 +148,12 @@ func streamGeminiToGemini(
 			flusher.Flush()
 		}
 	}
+	if err := hooks.AttachedStreamVetoError(c); err != nil {
+		return nil, err
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("读取 Gemini 上游响应流失败: %w", err)
+	}
 	if err := flushGeminiRestoration(c, flusher); err != nil {
 		return nil, err
 	}
@@ -203,7 +211,7 @@ func streamClaudeToGemini(
 			deltaType, _ := delta["type"].(string)
 			if deltaType == "text_delta" {
 				text, _ := delta["text"].(string)
-				if err := hooks.FeedAttachedStreamText(c, text); err != nil {
+				if err := hooks.FeedAttachedStreamTextForKey(c, "gemini.candidate.0.", text); err != nil {
 					return nil, err
 				}
 				currentText.WriteString(text)
@@ -290,6 +298,12 @@ func streamClaudeToGemini(
 				}
 			}
 		}
+	}
+	if err := hooks.AttachedStreamVetoError(c); err != nil {
+		return nil, err
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("读取 Gemini 上游响应流失败: %w", err)
 	}
 	if err := flushGeminiRestoration(c, flusher); err != nil {
 		return nil, err
@@ -403,7 +417,7 @@ func streamOpenAIToGemini(
 		// 提取文本内容
 		content, _ := delta["content"].(string)
 		if content != "" {
-			if err := hooks.FeedAttachedStreamText(c, content); err != nil {
+			if err := hooks.FeedAttachedStreamTextForKey(c, "gemini.candidate.0.", content); err != nil {
 				return nil, err
 			}
 			currentText.WriteString(content)
@@ -444,6 +458,12 @@ func streamOpenAIToGemini(
 				return nil, err
 			}
 		}
+	}
+	if err := hooks.AttachedStreamVetoError(c); err != nil {
+		return nil, err
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("读取 Gemini 上游响应流失败: %w", err)
 	}
 	if err := flushGeminiRestoration(c, flusher); err != nil {
 		return nil, err
@@ -490,11 +510,15 @@ func feedGeminiStreamChunk(c *gin.Context, chunk *types.GeminiStreamChunk) error
 		return nil
 	}
 	for candidateIndex, candidate := range chunk.Candidates {
+		if candidate.Index != 0 {
+			candidateIndex = candidate.Index
+		}
+		branch := fmt.Sprintf("gemini.candidate.%d.", candidateIndex)
 		if candidate.Content == nil {
 			continue
 		}
 		for partIndex, part := range candidate.Content.Parts {
-			if err := hooks.FeedAttachedStreamText(c, part.Text); err != nil {
+			if err := hooks.FeedAttachedStreamTextForKey(c, branch, part.Text); err != nil {
 				return err
 			}
 			if part.FunctionCall != nil && len(part.FunctionCall.Args) > 0 {
@@ -503,7 +527,7 @@ func feedGeminiStreamChunk(c *gin.Context, chunk *types.GeminiStreamChunk) error
 					return fmt.Errorf("序列化 Gemini 工具参数失败: %w", err)
 				}
 				key := fmt.Sprintf("gemini.candidate.%d.part.%d.%s", candidateIndex, partIndex, part.FunctionCall.Name)
-				if err := hooks.FeedAttachedStreamToolArgumentsForKey(c, key, string(arguments)); err != nil {
+				if err := hooks.FeedAttachedStreamToolArgumentsSnapshot(c, key, string(arguments), part.FunctionCall.Name); err != nil {
 					return err
 				}
 			}
