@@ -60,6 +60,9 @@ log.Printf("[Component] 警告: 消息内容")
 | 评测 | `[Eval-Init]` / `[Eval-Seed]` / `[Eval-Run]` / `[Eval-Watch]` / `[Eval-Fingerprint]` / `[Eval-Shutdown]` | 评测工作台 |
 | 熔断 | `[Circuit-Open]` / `[Circuit-Close]` / `[Circuit-Probe]` / `[Circuit-Init]` | 渠道级三态熔断器（internal/circuit） |
 | 调度熔断 | `[X-Circuit]`（X 为协议前缀，如 Messages-Circuit） | 选渠时跳过熔断渠道 |
+| AI 闸门 | `[Gate-Init]` / `[Gate-Review]` / `[Gate-Decision]` / `[Gate-Veto]` / `[Gate-Shutdown]` | 危险命令 AI 闸门（cmd_gate.go / gate_store.go） |
+| 内部 LLM 调用 | `[LlmGate-Key]`（Key 失败标记，经 ConfigManager） | llmgate 渠道调用（internal/llmgate） |
+| AI 助手 | `[Assistant-Init]` / `[Assistant-Shutdown]` | AI 配置助手（internal/assistant） |
 
 ## 工具使用注意事项
 

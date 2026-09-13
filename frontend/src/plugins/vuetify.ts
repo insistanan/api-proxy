@@ -68,6 +68,7 @@ import {
   mdiKeyChain,
   mdiRobot,
   mdiRobotOutline,
+  mdiRobotOff,
   mdiMessageProcessing,
   mdiMessageReplyText,
   mdiDiamondStone,
@@ -135,7 +136,13 @@ import {
   mdiReplay,
   mdiCodeJson,
   mdiApplicationExport,
-  mdiFolderOpen
+  mdiFolderOpen,
+  mdiShieldLock,
+  mdiEyeOff,
+  mdiEyeCheck,
+  mdiShieldCheck,
+  mdiBellRing,
+  mdiRegex
 } from '@mdi/js'
 
 // 图标名称到 SVG path 的映射 (使用 kebab-case)
@@ -226,6 +233,12 @@ const iconMap: Record<string, string> = {
 
   'shield-refresh': mdiShieldRefresh,
   'shield-off-outline': mdiShieldOffOutline,
+  'shield-lock': mdiShieldLock,
+  'shield-check': mdiShieldCheck,
+  'eye-off': mdiEyeOff,
+  'eye-check': mdiEyeCheck,
+  'bell-ring': mdiBellRing,
+  regex: mdiRegex,
 
   key: mdiKey,
   'key-chain': mdiKeyChain,
@@ -263,6 +276,7 @@ const iconMap: Record<string, string> = {
   // 服务类型图标
   robot: mdiRobot,
   'robot-outline': mdiRobotOutline,
+  'robot-off': mdiRobotOff,
   'message-processing': mdiMessageProcessing,
   'message-reply-text': mdiMessageReplyText,
   'chat-outline': mdiChatOutline,

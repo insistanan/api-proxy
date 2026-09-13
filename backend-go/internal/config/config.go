@@ -216,6 +216,15 @@ type SettingsConfig struct {
 	Network       NetworkSettings     `json:"network"`
 	ContentSafety ContentSafetyConfig `json:"contentSafety"`
 	Integration   IntegrationSettings `json:"integration"`
+	// Assistant AI 配置助手的模型路由设置。
+	Assistant AssistantSettings `json:"assistant"`
+}
+
+// AssistantSettings AI 配置助手设置。
+// Model 是内部调用的模型 ID（取渠道分组的匹配词），由主链路编排按分组匹配
+// 选渠；为空表示自动——与主链路对未匹配模型的行为一致，走各协议兜底分组。
+type AssistantSettings struct {
+	Model string `json:"model"`
 }
 
 // IntegrationSettings 外部工具集成设置。
@@ -239,6 +248,31 @@ type ContentSafetyConfig struct {
 	Credential    CredentialConfig    `json:"credential"`
 	DangerousCmd  DangerousCmdConfig  `json:"dangerousCmd"`
 	Whitelist     WhitelistConfig     `json:"whitelist"`
+	// Allowlist 字符串级放行字面量：条目与命中片段完全相等时跳过全部检测维度
+	// （整段相等则跳过该 segment；子串相等则丢弃该命中）。与 Whitelist（按工具名
+	// 放行 tool_result/tool_argument）语义不同，勿混用。
+	Allowlist   AllowlistConfig   `json:"allowlist"`
+	CustomRules CustomRulesConfig `json:"customRules"`
+}
+
+// AllowlistConfig 字符串级放行字面量设置。
+type AllowlistConfig struct {
+	Enabled bool     `json:"enabled"`
+	Entries []string `json:"entries"`
+}
+
+// CustomRulesConfig 自定义检测规则。命中走可逆脱敏（占位符 + 回答还原），
+// 仅在 sensitiveData.mode=mask 时参与；block 模式下无意义（没有拦截语义）。
+type CustomRulesConfig struct {
+	Enabled bool             `json:"enabled"`
+	Rules   []CustomRuleItem `json:"rules"`
+}
+
+// CustomRuleItem 是一条用户自定义的正则检测规则。
+type CustomRuleItem struct {
+	Name    string `json:"name"`
+	Type    string `json:"type"`    // 占位符类型前缀，[A-Z0-9_]{1,16}，如 CUSTOM / CODENAME
+	Pattern string `json:"pattern"` // Go RE2 正则（结构免疫灾难性回溯）
 }
 
 // SensitiveDataConfig 统一控制敏感信息与凭据命中后的处置方式。
@@ -272,8 +306,10 @@ type SensitiveInfoConfig struct {
 	IPMaskScope string `json:"ipMaskScope,omitempty"`
 }
 
-// CredentialConfig 凭据检测设置。用户输入允许审计、阻断或掩码；工具结果
-// 和模型生成的工具参数不允许掩码，避免基于伪造配置继续工作或外发秘密。
+// CredentialConfig 凭据检测设置。
+// 注意：UserInputMode / ToolResultMode / ToolArgumentMode 是历史遗留的按来源细分
+// 处置模式，运行时已不再读取——凭据处置统一由 SensitiveData.Mode 决定（与个人信息
+// 同一个切换器）。字段保留仅为兼容旧配置文件的加载与校验，勿在新代码中消费。
 type CredentialConfig struct {
 	Enabled          bool     `json:"enabled"`
 	UserInputMode    string   `json:"userInputMode"`
@@ -284,9 +320,26 @@ type CredentialConfig struct {
 
 // DangerousCmdConfig 响应方向的危险命令检测设置。
 type DangerousCmdConfig struct {
-	Enabled      bool     `json:"enabled"`
-	EnabledRules []string `json:"enabledRules"`
+	Enabled      bool                     `json:"enabled"`
+	EnabledRules []string                 `json:"enabledRules"`
+	AIGate       DangerousCmdAIGateConfig `json:"aiGate"`
 }
+
+// DangerousCmdAIGateConfig 危险命令 AI 闸门设置。启用后命中危险命令不再直接拦截，
+// 而是先查会话级白/黑名单，再由代理调用一个大模型渠道二次判断；
+// AI 判定危险时挂起请求等待用户白名单（WaitSeconds 秒，超时拦截），
+// AI 判定安全时立即放行并保留同长度的否决窗口。AI 判断失败一律拦截。
+type DangerousCmdAIGateConfig struct {
+	Enabled bool `json:"enabled"`
+	// ChannelID 指定判断渠道的稳定 ID；为空时按 messages → responses → chat → gemini
+	// 自动挑选第一个可用渠道。
+	ChannelID string `json:"channelId"`
+	// WaitSeconds 用户决定窗口秒数，范围 3-120，默认 10。
+	WaitSeconds int `json:"waitSeconds"`
+}
+
+// DefaultAIGateWaitSeconds 是用户决定窗口的默认值。
+const DefaultAIGateWaitSeconds = 10
 
 // WhitelistConfig 内容安全白名单设置。命中白名单的片段跳过拦截但记录审计事件，
 // 让拦截记录页能看见"已放行"的条目。当前只支持按工具名放行：tool_result 与
@@ -361,6 +414,19 @@ func DefaultContentSafetyConfig() ContentSafetyConfig {
 		DangerousCmd: DangerousCmdConfig{
 			Enabled:      false,
 			EnabledRules: []string{},
+			AIGate: DangerousCmdAIGateConfig{
+				Enabled:     false,
+				ChannelID:   "",
+				WaitSeconds: DefaultAIGateWaitSeconds,
+			},
+		},
+		Allowlist: AllowlistConfig{
+			Enabled: true,
+			Entries: []string{"127.0.0.1", "localhost", "0.0.0.0", "::1"},
+		},
+		CustomRules: CustomRulesConfig{
+			Enabled: false,
+			Rules:   []CustomRuleItem{},
 		},
 	}
 }

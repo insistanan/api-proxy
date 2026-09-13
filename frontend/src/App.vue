@@ -402,6 +402,12 @@
         {{ toast.message }}
       </div>
     </v-snackbar>
+
+    <!-- 危险命令 AI 闸门：全局待确认通知（轮询 + 声音 + 浏览器系统通知） -->
+    <GatePendingNotification v-if="isAuthenticated" />
+
+    <!-- AI 配置助手：全局浮窗 -->
+    <AssistantWidget v-if="isAuthenticated && !isStandalonePage" />
   </v-app>
 </template>
 
@@ -411,6 +417,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { useTheme } from 'vuetify'
 import { api, fetchHealth, ApiError, channelApiByType, type Channel } from './services/api'
 import { versionService } from './services/version'
+import GatePendingNotification from './components/GatePendingNotification.vue'
+import AssistantWidget from './components/AssistantWidget.vue'
 import { useAuthStore } from './stores/auth'
 import { useChannelStore } from './stores/channel'
 import { usePreferencesStore } from './stores/preferences'

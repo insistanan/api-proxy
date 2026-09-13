@@ -62,7 +62,13 @@
 
 ## F4 内容安全（HookPipeline）
 
-阶段：pre-request / request-time / post-response / stream。管线在 main.go 组建（`NewContentSafetyPipelineWithRecorder`），注入 **messages / responses / chat / gemini / images 五协议** handler。检测实现在 `sensitive` 包（敏感词/个人信息/凭据/危险命令），拦截写 blocked_store（前端 Blocked Logs 视图）。协议解析后先在会话观测与请求日志之前执行一次；最终上游载荷在 vision 前后再查（vision 改写后复检）。个人信息与凭据由全局 `sensitiveData.mode` 统一选择 `block` 或 `mask`；`mask` 使用 `[[MASKED:TYPE:STABLE_TOKEN]]` 进程内稳定语义占位符且不注入提示词，避免上游提示词缓存因随机标识失效；上游响应在最终客户端出口按当前请求映射精确还原。
+阶段：pre-request / request-time / post-response / stream。管线在 main.go 组建（`NewContentSafetyPipelineWithRecorder`），注入 **messages / responses / chat / gemini / images 五协议** handler。检测实现在 `sensitive` 包（敏感词/个人信息/凭据/危险命令），拦截写 blocked_store（前端 Blocked Logs 视图）。协议解析后先在会话观测与请求日志之前执行一次；最终上游载荷在 vision 前后再查（vision 改写后复检）。个人信息与凭据由全局 `sensitiveData.mode` 统一选择 `block` 或 `mask`——请求方向（applyContentSafetySegments）、流式响应工具参数（scanAttachedStreamCredentials）与非流式响应工具参数（post-response hook）三处同口径：block 拦截，mask/audit 放行（响应方向段不可改写，mask 在响应方向等价"放行 + 留痕"）；请求方向可变段 mask 真正替换为占位符。`credential.userInputMode / toolResultMode / toolArgumentMode` 是退役的兼容字段，运行时不读取。
+
+### 吸收自 Veil 的三个增强（F4c）
+
+- **放行字面量**（字符串级白名单，`ContentSafetyConfig.Allowlist`）：条目与命中片段**完全相等**时跳过检测——整段相等跳过整个 segment（写 `allowlist` 审计），子串相等丢弃该命中（info/credential/custom 三类命中均过滤，**复检同样过滤**，否则放行值会被复检误报"脱敏不干净"）。出厂含 `127.0.0.1` / `localhost` / `0.0.0.0` / `::1`。与工具名白名单（`Whitelist.ToolNames`）语义不同，勿混用。
+- **自定义检测规则**（`ContentSafetyConfig.CustomRules`，正则）：命中走可逆脱敏（占位符类型前缀用户指定，如 `CODENAME`），**仅 mask 模式参与**（block 模式下启用被校验拒绝）。执行顺序在凭据/个人信息**之后**、复检之前——内置规则先占区间，且后续无其他掩码步骤，宽正则不会把占位符再包一层。
+- **持久映射库**（`sensitive.MappingStore`，mask 模式启用时 main.go 注入）：映射 AES-256-GCM 加密落盘 `.config/redaction-mappings.db`，主密钥 `.config/master-key`（0600，自动生成），HKDF-SHA256 派生 enc/mac/placeholder 三把子钥；等值索引用 HMAC（非裸哈希，防只偷 DB 的彩虹表攻击）。占位符密钥改由主密钥派生 → **同原文跨重启同占位符**，历史会话旧占位符经 `Vault.PreloadPersistent`（非流式在 Restore、流式在每事件 data 载荷）批量预载还原；还原 miss（如密钥轮换）原样下发 + `restore_miss` 审计。TTL 90 天 + 10 万行 LRU。mode 热切换由 15s 轮询跟随（mask→block 撤销注入，停写不停读）。全部失败路径见 `docs/invariants.md` 决策表。`mask` 使用 `[[MASKED:TYPE:STABLE_TOKEN]]` 进程内稳定语义占位符且不注入提示词，避免上游提示词缓存因随机标识失效；上游响应在最终客户端出口按当前请求映射精确还原。
 
 images 的两点差异：① 请求体有 JSON 与 multipart/form-data 两种形态，后者走 `contentSafetyPreRequestHook.runMultipartFormSafety`（检查全部非文件文本部件；掩码改写后重编码表单，**新 boundary 同步回 Content-Type**），文件部件不扫描——图片内容由 vision 层负责；② 不接 post-response / stream 钩子：响应是 base64 图片或 URL，扫描多 MB base64 无检出收益。
 
@@ -71,6 +77,30 @@ images 的两点差异：① 请求体有 JSON 与 multipart/form-data 两种形
 流式拦截终止：`WriteAttachedStreamError` / `WriteAttachedStreamHookError` 在写完 error SSE 事件后补发该协议的流终止序列（messages 发 `message_stop`，responses 发 `response.completed` + ``，chat 发 `data: [DONE]`，gemini/images 无统一终止标记靠连接关闭）。不补终止序列客户端 agent 会一直等 `message_stop`，表现为"卡死、无法中断对话"。
 
 流式还原：协议转换后的 SSE JSON 按字段路径和协议逻辑索引维护独立 `StreamRestorer`，正文、推理与并行工具参数不会串流；只暂存可能组成当前请求已知占位符或其去方括号内部标识的尾部前缀。终止事件前先释放未闭合前缀；完整占位符和模型仅去掉外围方括号后的已知内部标识替换为原文，未知值、部分匹配或其他改写原样下发。
+
+### 危险命令 AI 闸门（AIGate）
+
+危险命令命中后不再一律拦截（`hooks/cmd_gate.go` 的 `CmdGate`，main.go 组装注入内容安全管道；存储 `sensitive.GateStore` 与拦截记录同库）。启用条件：危险命令检测 + `dangerousCmd.aiGate.enabled` 同时开启。决策顺序：
+
+```
+命中（流式 Feed / Flush / 非流式 post-response，统一入口 gateReviewDangerousCommand）
+→ 1. 会话级白/黑名单（gate_decisions 表，conversationID 维度最新决定，后决定覆盖先决定）→ 直接放行/拦截
+→ 2. AI 二次判断（llmgate 调用，见下）：
+     失败（无渠道/超时/解析失败）→ 一律拦截（保守默认）
+     verdict=block → 注册 pending 挂起请求，等待窗口（waitSeconds，默认 10s）内用户可放行，超时/客户端断连即拦截
+     verdict=allow → 立即放行 + 注册同长度的事后否决窗口（用户加黑名单 → 终止当前流 + 写黑名单；超时只影响后续）
+```
+
+- **挂起语义**：非流式响应在写回前整段就绪，Review 同步阻塞即挂起；流式响应命中点在 `FeedAttachedStreamText` / `FeedAttachedStreamToolArgumentsForKey` 内（SSE 转发循环中），阻塞即暂停转发（客户端 idle 超时默认 300s，远大于等待窗口）。同一命令在同一请求内放行一次后不再送审（attached.allowedCommands，防止流式扫描器重复命中）。
+- **事后否决**：放行后 `StreamVetoGuard`（attached 上，每请求一个）经 `AttachedStreamVetoDone` 暴露给四协议流式转发循环（messages 走 select 分支，responses/chat/gemini 同步循环顶部非阻塞检查），触发即走 `HandleAttachedStreamVeto` 写错误 SSE + 终止序列。非流式响应放行后不可撤回，黑名单只对后续生效。
+- **管理 API**：`GET /api/security/gate/pending`（前端全局轮询）、`POST /api/security/gate/pending/:id/decision`、`GET/DELETE /api/security/gate/decisions`。前端通知组件 `GatePendingNotification`（声音 Web Audio 合成 + 气泡 + 可选浏览器系统通知，设置页开关，localStorage 偏好）。
+- **审计**：`dangerous_cmd_ai`（AI/名单/否决路径的拦截）、`dangerous_cmd_allow`（放行留痕），与既有 `dangerous_cmd`（闸门关闭时的纯规则拦截）区分。
+
+## F4b 内部 LLM 调用与 AI 配置助手
+
+`internal/llmgate` 提供"选一个大模型渠道并发一段提示词"的通用能力：`PickChannel`（显式 channelId 只认该渠道、不回退；为空时按 messages → responses → chat → gemini 顺序复用主链路编排选渠——`scheduler.SelectChannel` 的分组匹配 → 优先级 → 熔断/健康过滤 → 兜底分组与组内降级全部生效，prompt.Model 作为分组匹配词参与路由，空模型走各协议兜底分组；选渠产生的 in-flight 预留由 `Caller.Call` 在调用结束后释放、`Caller.PreviewChannel` 仅供探测并立即释放）+ `Caller.Call`（非流式单轮，provider 转换链复用 visionlayer 同款约定——providers 统一以 Claude Messages 请求体为输入；URL×Key 循环、两层重试判定、metrics 记账与 vision 同形）。消费方：危险命令 AI 闸门（F4，闸门 prompt 不带模型 → 走兜底分组）、AI 配置助手。
+
+AI 配置助手（`internal/assistant` + `handlers/assistant.go`，管理端 `/api/assistant/*`）：右下角浮窗（`AssistantWidget.vue` + `stores/assistant.ts`），会话持久化 `.config/assistant.db`。系统提示词 = 配置手册（包内常量，覆盖协议/分组/兜底/映射概念）+ 当前配置动态摘要（**API Key 一律掩码，绝不进提示词**）+ 行动协议。模型在回复中嵌入 ` ```assistant-action ` 代码块，后端白名单执行（create_channel / create_pool / set_model_mapping / update_channel），全部走 ConfigManager 既有校验；行动参数不含任何 Key 字段，更新渠道永不触碰 APIKeys。首版非流式同步回复。模型路由：`settings.assistant.model` 取渠道分组的匹配词作为模型 ID 走主链路编排（空 = 自动，走兜底分组），不单独维护默认模型；`GET /api/assistant/status` 返回当前配置的分组与实际会命中的渠道（设置页与浮窗展示）。
 
 ## F5 responses 链路
 

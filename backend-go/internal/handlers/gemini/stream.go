@@ -88,6 +88,12 @@ func streamGeminiToGemini(
 	var totalUsage *types.Usage
 
 	for scanner.Scan() {
+		// 危险命令 AI 闸门的事后否决：非阻塞检查，用户在否决窗口内加黑名单即终止当前流。
+		select {
+		case <-hooks.AttachedStreamVetoDone(c):
+			return nil, hooks.HandleAttachedStreamVeto(c)
+		default:
+		}
 		line := scanner.Text()
 
 		// 直接转发 SSE 数据
@@ -164,6 +170,12 @@ func streamClaudeToGemini(
 	var currentText strings.Builder
 
 	for scanner.Scan() {
+		// 危险命令 AI 闸门的事后否决：非阻塞检查，用户在否决窗口内加黑名单即终止当前流。
+		select {
+		case <-hooks.AttachedStreamVetoDone(c):
+			return nil, hooks.HandleAttachedStreamVeto(c)
+		default:
+		}
 		line := scanner.Text()
 
 		jsonData, isData := utils.ParseSSEDataLine(line)
@@ -303,6 +315,12 @@ func streamOpenAIToGemini(
 	var currentText strings.Builder
 
 	for scanner.Scan() {
+		// 危险命令 AI 闸门的事后否决：非阻塞检查，用户在否决窗口内加黑名单即终止当前流。
+		select {
+		case <-hooks.AttachedStreamVetoDone(c):
+			return nil, hooks.HandleAttachedStreamVeto(c)
+		default:
+		}
 		line := scanner.Text()
 
 		jsonData, isData := utils.ParseSSEDataLine(line)

@@ -4,6 +4,10 @@ import { readSSEStream } from '@/utils/sse'
 // 本文件主体（ApiService）自身使用的类型，从 @/types 具名导入。
 import type {
   AppSettings,
+  AssistantChatOutcome,
+  AssistantMessage,
+  AssistantSession,
+  AssistantStatusResponse,
   BlockedLogEntry,
   BlockedLogFilters,
   BlockedLogGroupEntriesResponse,
@@ -31,6 +35,9 @@ import type {
   EvalSuite,
   EvalValidateReport,
   EvalWatchConfig,
+  GateDecisionResponse,
+  GatePending,
+  GatePendingResponse,
   GlobalStatsHistoryResponse,
   MetricsHistoryResponse,
   ModelsResponse,
@@ -398,6 +405,63 @@ class ApiService {
 
   async clearBlockedLogs(): Promise<{ deleted: number }> {
     return this.request('/blocked-logs', { method: 'DELETE' })
+  }
+
+  // 危险命令 AI 闸门：待确认列表 / 用户决定 / 会话级白黑名单
+  async getGatePending(): Promise<GatePendingResponse> {
+    return this.request('/security/gate/pending')
+  }
+
+  async decideGatePending(id: number, decision: 'allow' | 'block'): Promise<{ pending: GatePending }> {
+    return this.request(`/security/gate/pending/${id}/decision`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision })
+    })
+  }
+
+  async listGateDecisions(): Promise<GateDecisionResponse> {
+    return this.request('/security/gate/decisions')
+  }
+
+  async removeGateDecisions(conversationId: string): Promise<{ removed: number }> {
+    return this.request(`/security/gate/decisions/${encodeURIComponent(conversationId)}`, { method: 'DELETE' })
+  }
+
+  // AI 配置助手
+  async getAssistantStatus(): Promise<AssistantStatusResponse> {
+    return this.request('/assistant/status')
+  }
+
+  async createAssistantSession(title?: string): Promise<AssistantSession> {
+    const response: { session: AssistantSession } = await this.request('/assistant/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: title ?? '' })
+    })
+    return response.session
+  }
+
+  async listAssistantSessions(): Promise<AssistantSession[]> {
+    const response: { sessions: AssistantSession[] } = await this.request('/assistant/sessions')
+    return response.sessions || []
+  }
+
+  async deleteAssistantSession(id: number): Promise<void> {
+    await this.request(`/assistant/sessions/${id}`, { method: 'DELETE' })
+  }
+
+  async getAssistantMessages(sessionId: number): Promise<AssistantMessage[]> {
+    const response: { messages: AssistantMessage[] } = await this.request(`/assistant/sessions/${sessionId}/messages`)
+    return response.messages || []
+  }
+
+  async sendAssistantMessage(sessionId: number, content: string): Promise<AssistantChatOutcome> {
+    return this.request(`/assistant/sessions/${sessionId}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content })
+    })
   }
 
   async getConversations(params?: { q?: string; kind?: ConversationKind }): Promise<ConversationsResponse> {

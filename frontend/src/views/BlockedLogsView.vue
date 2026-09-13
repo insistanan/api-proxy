@@ -326,7 +326,12 @@ const blockTypeItems: Array<{ title: string; value: BlockedLogType | '' }> = [
   { title: '个人信息', value: 'sensitive_info' },
   { title: '凭据', value: 'credential' },
   { title: '危险命令', value: 'dangerous_cmd' },
-  { title: '白名单放行', value: 'whitelist' }
+  { title: '危险命令（AI 闸门拦截）', value: 'dangerous_cmd_ai' },
+  { title: '危险命令（AI 闸门放行）', value: 'dangerous_cmd_allow' },
+  { title: '白名单放行', value: 'whitelist' },
+  { title: '放行字面量', value: 'allowlist' },
+  { title: '自定义规则脱敏', value: 'custom_rule' },
+  { title: '还原未命中', value: 'restore_miss' }
 ]
 
 const pageSizeItems = [20, 50, 100]
@@ -503,7 +508,12 @@ const blockTypeLabel = (value: BlockedLogType) =>
     sensitive_info: '个人信息',
     credential: '凭据',
     dangerous_cmd: '危险命令',
-    whitelist: '白名单放行'
+    whitelist: '白名单放行',
+    dangerous_cmd_ai: '危险命令·AI 拦截',
+    dangerous_cmd_allow: '危险命令·AI 放行',
+    allowlist: '放行字面量',
+    custom_rule: '自定义规则脱敏',
+    restore_miss: '还原未命中'
   })[value]
 
 const blockTypeColor = (value: BlockedLogType) =>
@@ -512,7 +522,12 @@ const blockTypeColor = (value: BlockedLogType) =>
     sensitive_info: 'warning',
     credential: 'error',
     dangerous_cmd: 'error',
-    whitelist: 'success'
+    whitelist: 'success',
+    dangerous_cmd_ai: 'error',
+    dangerous_cmd_allow: 'success',
+    allowlist: 'success',
+    custom_rule: 'warning',
+    restore_miss: 'warning'
   })[value]
 
 const ruleLabels: Record<string, string> = {

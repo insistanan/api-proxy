@@ -25,6 +25,7 @@ type dangerousCmdSnapshot struct {
 type contentSafetyPostResponseHook struct {
 	cfgManager *config.ConfigManager
 	recorder   BlockedLogRecorder
+	gate       *CmdGate
 	mu         sync.Mutex
 	snapshot   atomic.Pointer[dangerousCmdSnapshot]
 }
@@ -52,15 +53,29 @@ func (h *contentSafetyPostResponseHook) Run(ctx context.Context, metadata HookCo
 	}
 	if value, ok := decodeJSONValue(result.ResponseBody); ok {
 		if matches := findDangerousCodeBlocks(snapshot.detector, value); len(matches) > 0 {
-			return result, dangerousCommandError(matches[0])
+			if safetyErr := h.reviewDangerousMatch(ctx, metadata, matches[0]); safetyErr != nil {
+				return result, safetyErr
+			}
 		}
 		if matches := findDangerousToolArguments(snapshot.detector, value); len(matches) > 0 {
-			return result, dangerousCommandError(matches[0])
+			if safetyErr := h.reviewDangerousMatch(ctx, metadata, matches[0]); safetyErr != nil {
+				return result, safetyErr
+			}
 		}
 		if root, ok := value.(map[string]interface{}); ok {
 			for _, segment := range extractResponseToolArgumentSegments(metadata.APIType, root) {
 				matches := snapshot.credential.FindAll(segment.Text)
 				if len(matches) == 0 {
+					continue
+				}
+				// 处置模式统一读全局 sensitiveData.mode（与请求方向 / 流式同口径）。
+				// block 才拦截；mask / audit 放行并写审计事件（响应方向段不可改写，
+				// mask 在此等价于"放行 + 留痕"，与流式 scanAttachedStreamCredentials 一致）。
+				if snapshot.settings.SensitiveData.Mode != config.ContentSafetyModeBlock {
+					if err := recordSafetyMatches(ctx, metadata, h.recorder, sensitive.BlockTypeCredential,
+						snapshot.settings.SensitiveData.Mode, segment, segment.Text, credentialHits(matches)); err != nil {
+						return result, err
+					}
 					continue
 				}
 				first := matches[0]
@@ -77,9 +92,34 @@ func (h *contentSafetyPostResponseHook) Run(ctx context.Context, metadata HookCo
 			}
 		}
 	} else if matches := snapshot.detector.Find(string(result.ResponseBody)); len(matches) > 0 {
-		return result, dangerousCommandError(matches[0])
+		if safetyErr := h.reviewDangerousMatch(ctx, metadata, matches[0]); safetyErr != nil {
+			return result, safetyErr
+		}
 	}
 	return result, nil
+}
+
+// reviewDangerousMatch 对非流式响应中的危险命令命中做闸门审查。
+// 非流式响应在写回客户端前整段就绪，Review 的阻塞等待即对客户端"挂起"。
+// AI 放行后响应立即返回，事后否决无法收回当前响应（onVeto 传 nil），
+// 但否决写入的会话黑名单对同对话后续命令生效。
+func (h *contentSafetyPostResponseHook) reviewDangerousMatch(ctx context.Context, metadata HookContext, match sensitive.CommandMatch) *ContentSafetyError {
+	if h.gate == nil || !h.gate.Enabled() {
+		return dangerousCommandError(match)
+	}
+	verdict := h.gate.Review(ctx, metadata, match, nil)
+	if verdict.Allow {
+		return nil
+	}
+	blockType := verdict.BlockType
+	if blockType == "" {
+		blockType = sensitive.BlockTypeDangerousCmdAI
+	}
+	return &ContentSafetyError{
+		BlockType: blockType,
+		RuleName:  match.Rule,
+		Snippet:   fmt.Sprintf("mode=ai_gate source=assistant context=%s\n%s\n裁决: %s", match.Context, match.Command, verdict.Reason),
+	}
 }
 
 func (h *contentSafetyPostResponseHook) currentSnapshot() (*dangerousCmdSnapshot, error) {

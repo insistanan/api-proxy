@@ -27,8 +27,10 @@ func FeedAttachedStreamText(c requestContextGetter, text string) error {
 		return wrapContentSafetyHookError(err)
 	}
 	if match, blocked := attached.stream.Feed(text); blocked {
-		safetyErr := dangerousCommandError(*match)
-		return attached.recordContentSafetyError(attachedRequestContext(c), attached.currentMetadata(), safetyErr)
+		if safetyErr := gateReviewDangerousCommand(attachedRequestContext(c), c, attached, attached.currentMetadata(), *match); safetyErr != nil {
+			return attached.recordContentSafetyError(attachedRequestContext(c), attached.currentMetadata(), safetyErr)
+		}
+		// 闸门放行：继续转发，不产生错误。
 	}
 	return nil
 }
@@ -64,14 +66,16 @@ func FeedAttachedStreamToolArgumentsForKey(c requestContextGetter, key, fragment
 		case map[string]interface{}, []interface{}:
 			completeJSON = true
 			if matches := detector.FindInToolArguments(decoded); len(matches) > 0 {
-				safetyErr := dangerousCommandError(matches[0])
-				return attached.recordContentSafetyError(attachedRequestContext(c), attached.currentMetadata(), safetyErr)
+				if safetyErr := gateReviewDangerousCommand(attachedRequestContext(c), c, attached, attached.currentMetadata(), matches[0]); safetyErr != nil {
+					return attached.recordContentSafetyError(attachedRequestContext(c), attached.currentMetadata(), safetyErr)
+				}
 			}
 		}
 	}
 	if matches := detector.FindInToolArguments(toolArgs); len(matches) > 0 {
-		safetyErr := dangerousCommandError(matches[0])
-		return attached.recordContentSafetyError(attachedRequestContext(c), attached.currentMetadata(), safetyErr)
+		if safetyErr := gateReviewDangerousCommand(attachedRequestContext(c), c, attached, attached.currentMetadata(), matches[0]); safetyErr != nil {
+			return attached.recordContentSafetyError(attachedRequestContext(c), attached.currentMetadata(), safetyErr)
+		}
 	}
 	if err := scanAttachedStreamCredentials(c, attached, key, toolArgs); err != nil {
 		return wrapContentSafetyHookError(err)
@@ -111,7 +115,10 @@ func scanAttachedStreamCredentials(c requestContextGetter, attached *attachedHoo
 		Text:     toolArgs,
 		Mutable:  false,
 	}
-	mode := snapshot.settings.Credential.ToolArgumentMode
+	// 处置模式统一读全局 sensitiveData.mode（与请求方向 applyContentSafetySegments 同口径）。
+	// 此前读的是 credential.toolArgumentMode（设置页未暴露的独立字段，默认 block），
+	// 导致用户切到"可逆脱敏"后流式工具参数的凭据命中仍被阻断——口径分裂已修复。
+	mode := snapshot.settings.SensitiveData.Mode
 	if mode == config.ContentSafetyModeBlock {
 		first := matches[0]
 		safetyErr := &ContentSafetyError{
@@ -163,8 +170,9 @@ func FlushAttachedStreamHooks(c requestContextGetter) error {
 		return wrapContentSafetyHookError(err)
 	}
 	if match, blocked := attached.stream.Flush(); blocked {
-		safetyErr := dangerousCommandError(*match)
-		return attached.recordContentSafetyError(attachedRequestContext(c), attached.currentMetadata(), safetyErr)
+		if safetyErr := gateReviewDangerousCommand(attachedRequestContext(c), c, attached, attached.currentMetadata(), *match); safetyErr != nil {
+			return attached.recordContentSafetyError(attachedRequestContext(c), attached.currentMetadata(), safetyErr)
+		}
 	}
 	return nil
 }

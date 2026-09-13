@@ -556,6 +556,17 @@ func applyContentSafetySegments(
 			}
 			continue
 		}
+		// 放行字面量（整段相等）：segment 文本与某条目完全相等时跳过全部检测维度，
+		// 写一条 allowlist 审计事件。覆盖"整个字段就是 localhost 这类值"的最常见场景。
+		if allowlistSkipsWholeSegment(snapshot.settings.Allowlist, segment.Text) {
+			if err := recordAllowlistAllowed(ctx, metadata, recorder, *segment); err != nil {
+				return changed, err
+			}
+			if segment.Mutable && segment.Text != "" {
+				segment.replace(segment.Text)
+			}
+			continue
+		}
 		if segment.Source == safetySourceUser || segment.Source == safetySourceSystem {
 			if match, ok := snapshot.words.FindFirst(segment.Text); ok {
 				return changed, &ContentSafetyError{
@@ -572,10 +583,12 @@ func applyContentSafetySegments(
 		}
 
 		credentialMode := snapshot.settings.SensitiveData.Mode
+
 		// credentialSource 是凭据检测时的原文；掩码会改写 segment.Text，
 		// 命中偏移只对原文有效，必须先留存。
 		credentialSource := segment.Text
 		credentialMatches := snapshot.credential.FindAll(segment.Text)
+		credentialMatches = filterAllowlistedCredentialMatches(credentialMatches, credentialSource, snapshot.settings.Allowlist)
 		if len(credentialMatches) > 0 {
 			if credentialMode == config.ContentSafetyModeBlock || credentialMode == config.ContentSafetyModeMask && !segment.Mutable {
 				first := credentialMatches[0]
@@ -609,6 +622,7 @@ func applyContentSafetySegments(
 			// 以此为窗口基准，改写前再留存一份。
 			infoSource := segment.Text
 			infoMatches := snapshot.info.FindAll(segment.Text)
+			infoMatches = filterAllowlistedInfoMatches(infoMatches, infoSource, snapshot.settings.Allowlist)
 			if len(infoMatches) > 0 {
 				mode := snapshot.settings.SensitiveData.Mode
 				if mode == config.ContentSafetyModeBlock || mode == config.ContentSafetyModeMask && !segment.Mutable {
@@ -638,15 +652,45 @@ func applyContentSafetySegments(
 			}
 		}
 
+		// 自定义规则（可逆脱敏，最低优先级）：仅 mask 模式参与，且在凭据/个人信息
+		// 之后执行——内置规则先占住各自区间，自定义规则只处理剩余文本；且后续没有
+		// 其他掩码步骤，宽正则不会把已生成的占位符再包一层（复检只查 credential/info）。
+		// 放行字面量过滤同样生效（命中原文与条目相等则丢弃）。
+		if snapshot.settings.SensitiveData.Mode == config.ContentSafetyModeMask && snapshot.custom != nil && snapshot.custom.Enabled() {
+			customSource := segment.Text
+			customMatches := snapshot.custom.FindAll(segment.Text)
+			customMatches = filterAllowlistedCustomMatches(customMatches, snapshot.settings.Allowlist)
+			if len(customMatches) > 0 {
+				masked, maskErr := vault.Mask(segment.Text, customRedactionMatches(customMatches))
+				if maskErr != nil {
+					return changed, maskErr
+				}
+				segment.Text = masked
+				changed = true
+				if err := recordSafetyMatches(ctx, metadata, recorder, sensitive.BlockTypeCustomRule,
+					config.ContentSafetyModeMask, *segment, customSource, customHits(customMatches)); err != nil {
+					return changed, err
+				}
+			}
+		}
+
 		if segment.Mutable && segment.Text != "" {
 			segment.replace(segment.Text)
 		}
 		if snapshot.settings.SensitiveData.Mode == config.ContentSafetyModeMask {
+			// 复检同样过放行字面量过滤：被放行的值（如 localhost）本来就应留在
+			// 文本里，不能被复检误报为"脱敏不干净"。
 			if matches := snapshot.credential.FindAll(segment.Text); len(matches) > 0 {
-				return changed, fmt.Errorf("凭据脱敏后仍命中规则 %q", matches[0].Rule)
+				matches = filterAllowlistedCredentialMatches(matches, segment.Text, snapshot.settings.Allowlist)
+				if len(matches) > 0 {
+					return changed, fmt.Errorf("凭据脱敏后仍命中规则 %q", matches[0].Rule)
+				}
 			}
 			if matches := snapshot.info.FindAll(segment.Text); len(matches) > 0 {
-				return changed, fmt.Errorf("敏感信息脱敏后仍命中规则 %q", matches[0].Rule)
+				matches = filterAllowlistedInfoMatches(matches, segment.Text, snapshot.settings.Allowlist)
+				if len(matches) > 0 {
+					return changed, fmt.Errorf("敏感信息脱敏后仍命中规则 %q", matches[0].Rule)
+				}
 			}
 		}
 		if (segment.Source == safetySourceUser || segment.Source == safetySourceSystem) && strings.TrimSpace(segment.Text) != "" {

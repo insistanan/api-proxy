@@ -110,6 +110,11 @@ type attachedHookPipeline struct {
 	credentialHits map[string]struct{}
 	restorers      map[string]*sensitive.StreamRestorer
 	restorePending map[string]streamRestoreTemplate
+	vetoGuard      *StreamVetoGuard
+	// allowedCommands 是本请求内已经闸门放行过的危险命令（streamMu 保护）。
+	// StreamCmdScanner 命中后每个后续 chunk 都会重复返回同一命中，
+	// 不记录会导致同一命令被反复送审 / 反复注册 pending。
+	allowedCommands map[string]struct{}
 }
 
 // AttachHookPipeline 将内容安全 Hook 管道绑定到当前请求。入口解析请求后调用，
@@ -124,9 +129,10 @@ func AttachHookPipeline(c requestContextSetter, pipeline *Pipeline, metadata Hoo
 	vault := sensitive.NewVault()
 	metadata.redactionVault = vault
 	c.Set(contentSafetyPipelineKey, &attachedHookPipeline{
-		pipeline: pipeline,
-		metadata: metadata,
-		vault:    vault,
+		pipeline:  pipeline,
+		metadata:  metadata,
+		vault:     vault,
+		vetoGuard: newStreamVetoGuard(),
 	})
 }
 
@@ -258,13 +264,17 @@ func ResolveContentSafetyPipeline(cfgManager *config.ConfigManager, pipelines ..
 }
 
 // NewContentSafetyPipelineWithRecorder 创建内容安全管道并注入统一拦截记录器。
-func NewContentSafetyPipelineWithRecorder(cfgManager *config.ConfigManager, recorder BlockedLogRecorder) *Pipeline {
+// 可选注入危险命令 AI 闸门（CmdGate）：nil 或未启用时保持"命中即拦截"的既有行为。
+func NewContentSafetyPipelineWithRecorder(cfgManager *config.ConfigManager, recorder BlockedLogRecorder, cmdGate ...*CmdGate) *Pipeline {
 	pipeline := NewPipeline()
 	pipeline.blockedLogRecorder = recorder
+	if len(cmdGate) > 0 {
+		pipeline.cmdGate = cmdGate[0]
+	}
 	if err := pipeline.Register(&contentSafetyPreRequestHook{cfgManager: cfgManager, recorder: recorder}); err != nil {
 		panic(fmt.Sprintf("注册内置内容安全 Hook 失败: %v", err))
 	}
-	if err := pipeline.Register(&contentSafetyPostResponseHook{cfgManager: cfgManager, recorder: recorder}); err != nil {
+	if err := pipeline.Register(&contentSafetyPostResponseHook{cfgManager: cfgManager, recorder: recorder, gate: pipeline.cmdGate}); err != nil {
 		panic(fmt.Sprintf("注册内置响应安全 Hook 失败: %v", err))
 	}
 	return pipeline
@@ -429,6 +439,7 @@ type contentSafetySnapshot struct {
 	words      *sensitive.WordFilter
 	info       *sensitive.InfoDetector
 	credential *sensitive.CredentialDetector
+	custom     *sensitive.CustomDetector
 }
 
 type contentSafetyPreRequestHook struct {
@@ -540,7 +551,11 @@ func (h *contentSafetyPreRequestHook) currentSnapshot() (*contentSafetySnapshot,
 	if err != nil {
 		return nil, fmt.Errorf("初始化凭据检测器失败: %w", err)
 	}
-	next := &contentSafetySnapshot{settings: settings, words: words, info: info, credential: credential}
+	custom, err := sensitive.NewCustomDetector(settings.CustomRules)
+	if err != nil {
+		return nil, fmt.Errorf("初始化自定义规则检测器失败: %w", err)
+	}
+	next := &contentSafetySnapshot{settings: settings, words: words, info: info, credential: credential, custom: custom}
 	h.snapshot.Store(next)
 	return next, nil
 }

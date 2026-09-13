@@ -50,6 +50,12 @@ func handleStreamSuccess(c *gin.Context, resp *http.Response, envCfg *config.Env
 	var streamUsage *types.Usage
 
 	for {
+		// 危险命令 AI 闸门的事后否决：非阻塞检查，用户在否决窗口内加黑名单即终止当前流。
+		select {
+		case <-hooks.AttachedStreamVetoDone(c):
+			return nil, hooks.HandleAttachedStreamVeto(c)
+		default:
+		}
 		rawLine, readErr := reader.ReadBytes('\n')
 		if len(rawLine) == 0 && readErr != nil {
 			if errors.Is(readErr, io.EOF) {

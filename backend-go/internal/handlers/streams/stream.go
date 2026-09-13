@@ -281,6 +281,12 @@ func ProcessStreamEvents(
 			logPartialResponse(c, ctx, envCfg)
 			return nil, c.Request.Context().Err()
 
+		case <-hooks.AttachedStreamVetoDone(c):
+			// 危险命令 AI 闸门的事后否决：用户在否决窗口内加黑名单，
+			// 终止当前流（错误 SSE + 终止序列由 HandleAttachedStreamVeto 写出）。
+			logPartialResponse(c, ctx, envCfg)
+			return nil, hooks.HandleAttachedStreamVeto(c)
+
 		case event, ok := <-eventChan:
 			if !ok {
 				remaining, err := hooks.DrainAttachedStreamRestoration(c)

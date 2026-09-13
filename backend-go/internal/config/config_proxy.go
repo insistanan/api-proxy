@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 )
 
@@ -244,6 +245,15 @@ func ValidateContentSafetyConfig(settings ContentSafetyConfig) error {
 	); err != nil {
 		return err
 	}
+	if err := validateDangerousCmdAIGate(settings.DangerousCmd); err != nil {
+		return err
+	}
+	if err := validateAllowlistConfig(settings.Allowlist); err != nil {
+		return err
+	}
+	if err := validateCustomRulesConfig(settings.CustomRules, settings.SensitiveData.Mode); err != nil {
+		return err
+	}
 
 	seenWords := make(map[string]struct{}, len(settings.SensitiveWord.CustomWords))
 	for _, word := range settings.SensitiveWord.CustomWords {
@@ -268,6 +278,110 @@ func validateSensitiveDataMode(mode string) error {
 	default:
 		return proxyConfigErrorf("敏感数据处置模式必须是 block 或 mask，当前为 %q", mode)
 	}
+}
+
+// validateDangerousCmdAIGate 校验危险命令 AI 闸门设置。
+// 闸门依赖危险命令检测本体：本体关闭时闸门一并拒绝，避免"闸门开了却永远不触发"的假配置。
+func validateDangerousCmdAIGate(cmd DangerousCmdConfig) error {
+	if !cmd.AIGate.Enabled {
+		return nil
+	}
+	if !cmd.Enabled {
+		return proxyConfigErrorf("危险命令 AI 闸门依赖危险命令检测：请先启用危险命令检测")
+	}
+	if cmd.AIGate.WaitSeconds == 0 {
+		return nil // 0 表示使用默认值
+	}
+	if cmd.AIGate.WaitSeconds < 3 || cmd.AIGate.WaitSeconds > 120 {
+		return proxyConfigErrorf("危险命令 AI 闸门等待秒数必须在 3 到 120 之间，当前为 %d", cmd.AIGate.WaitSeconds)
+	}
+	return nil
+}
+
+// validateAllowlistConfig 校验字符串级放行字面量。
+func validateAllowlistConfig(allowlist AllowlistConfig) error {
+	if !allowlist.Enabled {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(allowlist.Entries))
+	for _, entry := range allowlist.Entries {
+		if strings.TrimSpace(entry) == "" {
+			return proxyConfigErrorf("放行字面量不能为空或纯空白")
+		}
+		if len([]rune(entry)) > 256 {
+			return proxyConfigErrorf("单条放行字面量不能超过 256 个字符")
+		}
+		if _, exists := seen[entry]; exists {
+			return proxyConfigErrorf("放行字面量 %q 重复", entry)
+		}
+		seen[entry] = struct{}{}
+	}
+	if len(allowlist.Entries) > 1000 {
+		return proxyConfigErrorf("放行字面量最多 1000 条，当前 %d 条", len(allowlist.Entries))
+	}
+	return nil
+}
+
+// validateCustomRulesConfig 校验自定义检测规则。
+// 自定义规则只有可逆脱敏一种处置，sensitiveData.mode=block 下启用属于假配置，直接拒绝。
+func validateCustomRulesConfig(rules CustomRulesConfig, sensitiveDataMode string) error {
+	if !rules.Enabled {
+		return nil
+	}
+	if sensitiveDataMode != ContentSafetyModeMask {
+		return proxyConfigErrorf("自定义检测规则依赖可逆脱敏：请将敏感数据处置切换为可逆脱敏（当前 %q）", sensitiveDataMode)
+	}
+	if len(rules.Rules) == 0 {
+		return proxyConfigErrorf("自定义检测规则已启用，但没有配置任何规则")
+	}
+	if len(rules.Rules) > 50 {
+		return proxyConfigErrorf("自定义检测规则最多 50 条，当前 %d 条", len(rules.Rules))
+	}
+	seenNames := make(map[string]struct{}, len(rules.Rules))
+	seenTypes := make(map[string]struct{}, len(rules.Rules))
+	for _, rule := range rules.Rules {
+		if strings.TrimSpace(rule.Name) == "" {
+			return proxyConfigErrorf("自定义规则名不能为空")
+		}
+		if len([]rune(rule.Name)) > 64 {
+			return proxyConfigErrorf("自定义规则名不能超过 64 个字符")
+		}
+		if _, exists := seenNames[rule.Name]; exists {
+			return proxyConfigErrorf("自定义规则名 %q 重复", rule.Name)
+		}
+		seenNames[rule.Name] = struct{}{}
+		typeName := strings.TrimSpace(rule.Type)
+		if typeName == "" {
+			return proxyConfigErrorf("自定义规则 %q 缺少占位符类型前缀", rule.Name)
+		}
+		if !validCustomRuleType(typeName) {
+			return proxyConfigErrorf("自定义规则 %q 的类型前缀 %q 只能包含大写字母、数字和下划线（1-16 位）", rule.Name, typeName)
+		}
+		if _, exists := seenTypes[typeName]; exists {
+			return proxyConfigErrorf("自定义规则类型前缀 %q 重复", typeName)
+		}
+		seenTypes[typeName] = struct{}{}
+		if strings.TrimSpace(rule.Pattern) == "" {
+			return proxyConfigErrorf("自定义规则 %q 缺少正则表达式", rule.Name)
+		}
+		if _, err := regexp.Compile(rule.Pattern); err != nil {
+			return proxyConfigErrorf("自定义规则 %q 的正则无法编译: %v", rule.Name, err)
+		}
+	}
+	return nil
+}
+
+func validCustomRuleType(value string) bool {
+	if len(value) < 1 || len(value) > 16 {
+		return false
+	}
+	for _, current := range value {
+		if current >= 'A' && current <= 'Z' || current >= '0' && current <= '9' || current == '_' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func validateWhitelistConfig(settings WhitelistConfig) error {

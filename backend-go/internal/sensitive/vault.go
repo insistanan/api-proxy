@@ -23,6 +23,40 @@ var (
 	placeholderKeyErr  error
 )
 
+// SetPersistentMappingStore 注入进程级持久映射库（mask 模式启用时由 main.go 调用）。
+// 注入后新 Vault 的占位符密钥改由主密钥经 HKDF 派生——同一原文跨重启生成同一
+// 占位符，历史会话里的旧占位符可还原；还原 miss 记审计（回调由 hooks 层设置）。
+// 传 nil 撤销持久化（设置热切换 mask→block 时）；已生成的占位符不受影响。
+func SetPersistentMappingStore(store *MappingStore) {
+	globalPersistentStoreMu.Lock()
+	globalPersistentStore = store
+	placeholderKeyOnce = sync.Once{}
+	placeholderKey = nil
+	placeholderKeyErr = nil
+	globalPersistentStoreMu.Unlock()
+}
+
+var (
+	globalPersistentStoreMu sync.RWMutex
+	globalPersistentStore   *MappingStore
+	// persistentMissCallback 在还原遇到持久库 miss 时被调用（hooks 层注入审计）。
+	persistentMissCallback func(placeholder string)
+)
+
+// SetPersistentMissCallback 设置还原 miss 的审计回调（hooks 层注入）。
+func SetPersistentMissCallback(callback func(placeholder string)) {
+	globalPersistentStoreMu.Lock()
+	persistentMissCallback = callback
+	globalPersistentStoreMu.Unlock()
+}
+
+// PersistentMappingStore 返回当前进程级持久映射库（可能为 nil）。
+func PersistentMappingStore() *MappingStore {
+	globalPersistentStoreMu.RLock()
+	defer globalPersistentStoreMu.RUnlock()
+	return globalPersistentStore
+}
+
 // RedactionMatch 是可逆脱敏使用的统一命中区间。Original 必须与 Text 的对应
 // 字节区间完全一致；调用方不得记录该字段。
 type RedactionMatch struct {
@@ -174,6 +208,17 @@ func (v *Vault) Mask(text string, matches []RedactionMatch) (string, error) {
 }
 
 func (v *Vault) placeholder(kind, original, source string) (string, error) {
+	// 持久库优先（读失败降级内存/新生成，不中断——见失败路径决策表）：
+	// 命中则同原文跨进程复用同一占位符。
+	if store := PersistentMappingStore(); store != nil {
+		if lookup, err := store.LookupOriginal(original); err == nil && lookup.Found {
+			v.mu.Lock()
+			v.byOriginal[original] = lookup.Placeholder
+			v.byPlaceholder[lookup.Placeholder] = original
+			v.mu.Unlock()
+			return lookup.Placeholder, nil
+		}
+	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if placeholder, ok := v.byOriginal[original]; ok {
@@ -202,13 +247,31 @@ func (v *Vault) placeholder(kind, original, source string) (string, error) {
 		}
 		v.byOriginal[original] = placeholder
 		v.byPlaceholder[placeholder] = original
+		// 持久库写入（写失败返回错误——fail-closed，映射写不进不转发）。
+		if store := PersistentMappingStore(); store != nil {
+			if err := store.PutMapping(original, kind, placeholder); err != nil {
+				return "", err
+			}
+		}
 		return placeholder, nil
 	}
 	return "", fmt.Errorf("生成无冲突的敏感信息占位符失败")
 }
 
+// stablePlaceholderKey 返回占位符派生密钥。持久映射库注入时从主密钥
+// HKDF 派生（跨进程稳定）；否则进程内随机（重启即变，零落盘模式）。
+// SetPersistentMappingStore 会重置 once，注入/撤销后重新解析。
 func stablePlaceholderKey() ([]byte, error) {
 	placeholderKeyOnce.Do(func() {
+		if store := PersistentMappingStore(); store != nil {
+			key, err := store.PlaceholderKey()
+			if err != nil {
+				placeholderKeyErr = err
+				return
+			}
+			placeholderKey = key
+			return
+		}
 		placeholderKey = make([]byte, 32)
 		if _, err := rand.Read(placeholderKey); err != nil {
 			placeholderKeyErr = fmt.Errorf("生成敏感信息占位符密钥失败: %w", err)
@@ -237,13 +300,56 @@ func normalizePlaceholderType(kind string) string {
 }
 
 // Restore 还原当前请求中的完整语义占位符。占位符必须位于独立的标识符边界，
-// 未知值和部分匹配均保持原样。
+// 未知值和部分匹配均保持原样。持久映射库注入时，先按文本中出现的占位符形态
+// 预载持久映射（历史会话的旧占位符跨重启还原）；预载命中的 miss 记审计回调。
 func (v *Vault) Restore(text string) string {
 	if v == nil || text == "" {
 		return text
 	}
+	v.PreloadPersistent(text)
 	restorer := NewStreamRestorer(v)
 	return restorer.Feed(text) + restorer.Flush()
+}
+
+// PreloadPersistent 把文本中出现的合法占位符形态批量登记进当前 Vault
+// （仅持久库命中的条目；miss 调用审计回调后跳过——原样下发契约不变）。
+// 读失败静默降级（失败路径决策表：持久库读失败不中断）。
+func (v *Vault) PreloadPersistent(text string) {
+	store := PersistentMappingStore()
+	if store == nil {
+		return
+	}
+	seen := make(map[string]struct{})
+	for _, placeholder := range reservedPlaceholderPattern.FindAllString(text, -1) {
+		if _, exists := seen[placeholder]; exists {
+			continue
+		}
+		seen[placeholder] = struct{}{}
+		v.mu.RLock()
+		_, known := v.byPlaceholder[placeholder]
+		v.mu.RUnlock()
+		if known {
+			continue
+		}
+		lookup, err := store.LookupPlaceholder(placeholder)
+		if err != nil {
+			continue // 读失败降级：该占位符按未知处理，原样下发
+		}
+		if !lookup.Found {
+			// 合法占位符形态但持久库没有（如密钥已轮换）：原样下发 + 审计留痕。
+			globalPersistentStoreMu.RLock()
+			callback := persistentMissCallback
+			globalPersistentStoreMu.RUnlock()
+			if callback != nil {
+				callback(placeholder)
+			}
+			continue
+		}
+		v.mu.Lock()
+		v.byPlaceholder[placeholder] = lookup.Original
+		v.byOriginal[lookup.Original] = placeholder
+		v.mu.Unlock()
+	}
 }
 
 // MaskKnown 将文本中已经登记到当前请求 Vault 的敏感原文替换为对应占位符。

@@ -118,6 +118,7 @@ type Pipeline struct {
 	mu                 sync.RWMutex
 	hooks              map[HookStage][]registeredHook
 	blockedLogRecorder BlockedLogRecorder
+	cmdGate            *CmdGate
 }
 
 func NewPipeline() *Pipeline {

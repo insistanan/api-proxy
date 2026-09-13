@@ -20,6 +20,19 @@ const (
 	BlockTypeCredential    = "credential"
 	BlockTypeDangerousCmd  = "dangerous_cmd"
 	BlockTypeWhitelist     = "whitelist"
+	// BlockTypeDangerousCmdAI 危险命令经 AI 闸门判定后的拦截
+	//（AI 判危险且用户未放行 / AI 失败保守拦截 / 事后否决）。
+	BlockTypeDangerousCmdAI = "dangerous_cmd_ai"
+	// BlockTypeDangerousCmdAllow 危险命令经 AI 闸门放行的审计事件
+	//（语义对齐 BlockTypeWhitelist 的"已放行"条目）。
+	BlockTypeDangerousCmdAllow = "dangerous_cmd_allow"
+	// BlockTypeAllowlist 字符串级放行字面量命中的审计事件（整段相等跳过检测）。
+	BlockTypeAllowlist = "allowlist"
+	// BlockTypeCustomRule 自定义规则可逆脱敏的审计事件（占位符已替换）。
+	BlockTypeCustomRule = "custom_rule"
+	// BlockTypeRestoreMiss 还原时遇到持久库中不存在的占位符（如重启后密钥
+	// 已轮换），原样下发的留痕事件。
+	BlockTypeRestoreMiss = "restore_miss"
 
 	defaultBlockedLogPageSize = 20
 	maxBlockedLogPageSize     = 100
@@ -699,7 +712,8 @@ func validBlockedLogAPIType(value string) bool {
 
 func validBlockType(value string) bool {
 	switch value {
-	case BlockTypeSensitiveWord, BlockTypeSensitiveInfo, BlockTypeCredential, BlockTypeDangerousCmd, BlockTypeWhitelist:
+	case BlockTypeSensitiveWord, BlockTypeSensitiveInfo, BlockTypeCredential, BlockTypeDangerousCmd, BlockTypeWhitelist,
+		BlockTypeDangerousCmdAI, BlockTypeDangerousCmdAllow, BlockTypeAllowlist, BlockTypeCustomRule, BlockTypeRestoreMiss:
 		return true
 	default:
 		return false

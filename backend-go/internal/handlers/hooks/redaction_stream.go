@@ -26,11 +26,18 @@ type streamRestoreTemplate struct {
 // 请求级精确还原。不同 JSON 字段路径使用独立增量状态，避免正文与并行工具参数串接。
 func RestoreAttachedSSEEvent(c requestContextGetter, event string) (string, error) {
 	attached, err := attachedPipelineFromContext(c)
-	if err != nil || attached == nil || attached.vault == nil || attached.vault.Empty() || event == "" {
+	if err != nil || attached == nil || attached.vault == nil || attached.vault.Empty() && sensitive.PersistentMappingStore() == nil || event == "" {
 		return event, wrapContentSafetyHookError(err)
 	}
 	attached.streamMu.Lock()
 	defer attached.streamMu.Unlock()
+
+	// 持久映射库预载：事件文本中完整出现的占位符形态批量登记进当前 Vault，
+	// 让历史会话的旧占位符（跨重启）在本事件还原。读失败/miss 均不影响
+	// 既有还原契约（miss 原样下发 + 审计由 Vault 内部处理）。
+	if sensitive.PersistentMappingStore() != nil {
+		attached.vault.PreloadPersistent(event)
+	}
 
 	prefix := ""
 	if isStreamTerminalEvent(event) {

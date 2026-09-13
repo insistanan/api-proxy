@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/BenedictKing/api-proxy/internal/assistant"
 	"github.com/BenedictKing/api-proxy/internal/circuit"
 	"github.com/BenedictKing/api-proxy/internal/cli"
 	"github.com/BenedictKing/api-proxy/internal/config"
@@ -24,6 +25,7 @@ import (
 	"github.com/BenedictKing/api-proxy/internal/handlers/images"
 	"github.com/BenedictKing/api-proxy/internal/handlers/messages"
 	"github.com/BenedictKing/api-proxy/internal/handlers/responses"
+	"github.com/BenedictKing/api-proxy/internal/llmgate"
 	"github.com/BenedictKing/api-proxy/internal/logger"
 	"github.com/BenedictKing/api-proxy/internal/metrics"
 	"github.com/BenedictKing/api-proxy/internal/middleware"
@@ -46,6 +48,9 @@ type app struct {
 	logStore              *logger.Store
 	requestLogStore       *metrics.RequestLogStore
 	blockedStore          *sensitive.BlockedStore
+	gateStore             *sensitive.GateStore
+	mappingStore          *sensitive.MappingStore
+	cmdGate               *hooks.CmdGate
 	contentSafetyPipeline *hooks.Pipeline
 	sessionManager        *session.SessionManager
 	conversationRegistry  *conversation.Registry
@@ -56,6 +61,8 @@ type app struct {
 	adaptiveScheduler     *scheduler.AdaptiveScheduler
 	piAgentAPI            *handlers.PiAgentAPI
 	skillsAPI             *handlers.SkillsAPI
+	assistantService      *assistant.Service
+	assistantAPI          *handlers.AssistantAPI
 	evalService           *eval.Service
 	engine                *gin.Engine
 }
@@ -96,7 +103,6 @@ func newApp() (*app, error) {
 	if err != nil {
 		return nil, fmt.Errorf("初始化内容安全拦截记录存储失败: %w", err)
 	}
-	a.contentSafetyPipeline = hooks.NewContentSafetyPipelineWithRecorder(a.cfgManager, a.blockedStore)
 	log.Printf("[ContentSafety-Init] 拦截记录存储已初始化")
 
 	// 初始化会话管理器（Responses API 专用），与对话记录共用持久化数据库。
@@ -201,12 +207,66 @@ func newApp() (*app, error) {
 	a.channelScheduler.SetAdaptiveScheduler(a.adaptiveScheduler)
 	log.Println("[Main] 自适应负载均衡已启用")
 
+	// 危险命令 AI 闸门：存储与拦截记录同库；遗留的 waiting 记录一律按拦截处理
+	// （重启后内存等待者已不存在）。llmgate.Caller 供闸门与 AI 助手共用。
+	a.gateStore, err = sensitive.NewGateStore(".config/blocked-logs.db")
+	if err != nil {
+		return nil, fmt.Errorf("初始化危险命令 AI 闸门存储失败: %w", err)
+	}
+	if expired, expireErr := a.gateStore.ExpireStalePending(context.Background()); expireErr == nil && expired > 0 {
+		log.Printf("[Gate-Init] 已将 %d 条重启前遗留的待确认记录标记为过期（按拦截处理）", expired)
+	}
+	gateCaller := &llmgate.Caller{EnvConfig: a.envCfg, CfgManager: a.cfgManager, ChannelScheduler: a.channelScheduler}
+	a.cmdGate = hooks.NewCmdGate(a.cfgManager, gateCaller, a.gateStore, a.blockedStore)
+	// 内容安全管道注入闸门；未启用时保持"命中即拦截"的既有行为。
+	a.contentSafetyPipeline = hooks.NewContentSafetyPipelineWithRecorder(a.cfgManager, a.blockedStore, a.cmdGate)
+	log.Printf("[Gate-Init] 危险命令 AI 闸门已装配")
+
+	// 可逆脱敏持久映射库（Veil ADR 0004 方案）：仅 sensitiveData.mode=mask 时注入。
+	// 注入后占位符密钥从主密钥派生（同原文跨重启同占位符），映射 AES-256-GCM 加密落盘；
+	// block 模式零落盘（既有行为）。mode 热切换由 watchMappingStoreMode 轮询跟随。
+	a.mappingStore, err = sensitive.NewMappingStore(".config/redaction-mappings.db", ".config/master-key")
+	if err != nil {
+		return nil, fmt.Errorf("初始化可逆脱敏持久映射库失败: %w", err)
+	}
+	if a.cfgManager.GetSettings().ContentSafety.SensitiveData.Mode == config.ContentSafetyModeMask {
+		sensitive.SetPersistentMappingStore(a.mappingStore)
+		log.Printf("[SensitiveData-Init] 可逆脱敏持久映射库已启用（跨重启还原，AES-256-GCM 加密落盘）")
+	} else {
+		log.Printf("[SensitiveData-Init] 敏感数据处置为阻断模式，持久映射库未启用（零落盘）")
+	}
+	// 还原 miss 的审计回调：合法占位符形态但持久库查不到（如密钥已轮换）→ 原样下发 + 留痕。
+	sensitive.SetPersistentMissCallback(func(placeholder string) {
+		if _, recordErr := a.blockedStore.Record(context.Background(), sensitive.BlockedLog{
+			APIType:       "messages",
+			BlockType:     sensitive.BlockTypeRestoreMiss,
+			RuleName:      "restore_miss",
+			PromptSnippet: "mode=restore_miss source=persistent_store\n合法占位符形态但持久库未命中，已原样下发: " + placeholder,
+		}); recordErr != nil {
+			log.Printf("[SensitiveData-Restore] 写入还原未命中审计失败: %v", recordErr)
+		}
+	})
+	go a.watchMappingStoreMode()
+
 	// pi-agent 与 skills 管理 API（实例持有各自的互斥锁与存储）
 	a.piAgentAPI, err = handlers.NewPiAgentAPI()
 	if err != nil {
 		return nil, fmt.Errorf("初始化 pi-agent 管理 API 失败: %w", err)
 	}
 	a.skillsAPI = handlers.NewSkillsAPI()
+
+	// AI 配置助手（复用闸门的 llmgate.Caller：渠道优先级 messages → responses → chat → gemini）
+	assistantStore, err := assistant.NewStore(".config/assistant.db")
+	if err != nil {
+		return nil, fmt.Errorf("初始化 AI 配置助手存储失败: %w", err)
+	}
+	a.assistantService, err = assistant.NewService(a.cfgManager, gateCaller, assistantStore)
+	if err != nil {
+		_ = assistantStore.Close()
+		return nil, fmt.Errorf("初始化 AI 配置助手失败: %w", err)
+	}
+	a.assistantAPI = handlers.NewAssistantAPI(a.assistantService)
+	log.Printf("[Assistant-Init] AI 配置助手已装配")
 
 	a.evalService, err = eval.NewService(eval.DefaultDBPath, a.cfgManager, a.envCfg, a.channelScheduler)
 	if err != nil {
@@ -304,6 +364,12 @@ func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
 	apiGroup.GET("/blocked-logs/:id", handlers.GetBlockedLog(a.blockedStore))
 	apiGroup.DELETE("/blocked-logs/:id", handlers.DeleteBlockedLog(a.blockedStore))
 	apiGroup.DELETE("/blocked-logs", handlers.ClearBlockedLogs(a.blockedStore))
+
+	// 危险命令 AI 闸门（待确认列表 / 用户决定 / 会话级白黑名单）
+	apiGroup.GET("/security/gate/pending", handlers.GetGatePending(a.cmdGate))
+	apiGroup.POST("/security/gate/pending/:id/decision", handlers.DecideGatePending(a.cmdGate))
+	apiGroup.GET("/security/gate/decisions", handlers.ListGateDecisions(a.cmdGate))
+	apiGroup.DELETE("/security/gate/decisions/:conversationId", handlers.RemoveGateDecisions(a.cmdGate))
 
 	// 模型单价表（内置价 + 用户改写），花费统计的单价来源
 	apiGroup.GET("/pricing/models", handlers.GetModelPricing(a.pricingStore))
@@ -430,6 +496,7 @@ func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
 	apiGroup.POST("/skills/copy", a.skillsAPI.Copy())
 	apiGroup.DELETE("/skills", a.skillsAPI.Delete())
 	apiGroup.POST("/skills/backup", a.skillsAPI.Backup())
+	a.assistantAPI.Register(apiGroup)
 	handlers.RegisterEvalRoutes(apiGroup, a.evalService)
 }
 
@@ -487,6 +554,29 @@ func (a *app) logStartupInfo() {
 	fmt.Printf("\n")
 }
 
+// watchMappingStoreMode 跟随 sensitiveData.mode 的热切换：
+// mask → 注入持久库（新占位符从主密钥派生）；mask 之外 → 撤销注入（停止新写入，
+// 还原路径仍可通过已注入的内存映射工作，进程重启后彻底回到零落盘）。
+func (a *app) watchMappingStoreMode() {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		mode := a.cfgManager.GetSettings().ContentSafety.SensitiveData.Mode
+		enabled := sensitive.PersistentMappingStore() != nil
+		want := mode == config.ContentSafetyModeMask
+		if want == enabled {
+			continue
+		}
+		if want {
+			sensitive.SetPersistentMappingStore(a.mappingStore)
+			log.Printf("[SensitiveData-Watch] 已切换到可逆脱敏，持久映射库启用")
+		} else {
+			sensitive.SetPersistentMappingStore(nil)
+			log.Printf("[SensitiveData-Watch] 已离开可逆脱敏，持久映射库停用（停止新写入）")
+		}
+	}
+}
+
 // shutdown 按依赖逆序停止后台组件并关闭持久化存储。
 // 顺序约束：必须先停调度器（数据生产者）再关指标存储，
 // 避免关闭期间后台循环与存储 Close 产生写并发。
@@ -507,8 +597,23 @@ func (a *app) shutdown() {
 
 	a.conversationRegistry.Stop()
 	a.sessionManager.Stop()
+	if a.assistantService != nil {
+		if err := a.assistantService.Close(); err != nil {
+			log.Printf("[Assistant-Shutdown] 关闭 AI 配置助手存储失败: %v", err)
+		}
+	}
 	if err := a.blockedStore.Close(); err != nil {
 		log.Printf("[ContentSafety-Shutdown] 关闭拦截记录存储失败: %v", err)
+	}
+	if a.gateStore != nil {
+		if err := a.gateStore.Close(); err != nil {
+			log.Printf("[Gate-Shutdown] 关闭闸门存储失败: %v", err)
+		}
+	}
+	if a.mappingStore != nil {
+		if err := a.mappingStore.Close(); err != nil {
+			log.Printf("[SensitiveData-Shutdown] 关闭持久映射库失败: %v", err)
+		}
 	}
 	a.cfgManager.Close()
 	a.requestLogStore.Close()

@@ -369,6 +369,12 @@ func migrateContentSafetyConfig(settings *ContentSafetyConfig, rawJSON []byte) b
 		settings.DangerousCmd = defaults.DangerousCmd
 		changed = true
 	}
+	// 旧配置的 dangerousCmd 没有 aiGate 子对象（Go 零值 WaitSeconds=0）：
+	// 补默认等待秒数，保持"未启用但参数就绪"的形态。
+	if settings.DangerousCmd.AIGate.WaitSeconds == 0 {
+		settings.DangerousCmd.AIGate.WaitSeconds = defaults.DangerousCmd.AIGate.WaitSeconds
+		changed = true
+	}
 	if settings.SensitiveWord.CustomWords == nil {
 		settings.SensitiveWord.CustomWords = []string{}
 		changed = true

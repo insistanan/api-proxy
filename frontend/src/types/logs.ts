@@ -98,7 +98,17 @@ export interface SystemLogDetail {
 }
 
 export type ContentSafetyAPIType = 'messages' | 'responses' | 'chat' | 'gemini'
-export type BlockedLogType = 'sensitive_word' | 'sensitive_info' | 'credential' | 'dangerous_cmd' | 'whitelist'
+export type BlockedLogType =
+  | 'sensitive_word'
+  | 'sensitive_info'
+  | 'credential'
+  | 'dangerous_cmd'
+  | 'whitelist'
+  | 'dangerous_cmd_ai'
+  | 'dangerous_cmd_allow'
+  | 'allowlist'
+  | 'custom_rule'
+  | 'restore_miss'
 
 export interface BlockedLogEntry {
   id: number
