@@ -533,7 +533,7 @@
                       label="判断渠道"
                       variant="outlined"
                       density="compact"
-                      hint="留空时按 Messages → Responses → Chat → Gemini 自动挑选第一个可用渠道"
+                      hint="留空时按 Messages → Responses → Chat → Gemini 自动挑选第一个可用渠道（识图专用渠道不参与）"
                       persistent-hint
                       class="ai-gate-select"
                     />
@@ -751,7 +751,6 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import {
   api,
-  channelApiByType,
   type AssistantStatusResponse,
   type ContentSafetySettings,
   type CredentialRule,
@@ -804,38 +803,33 @@ const dangerousCommandRules: Array<{ value: DangerousCommandRule; label: string 
   { value: 'environment_tampering', label: '环境变量篡改' }
 ]
 
-// AI 闸门判断渠道候选：四协议渠道（messages → responses → chat → gemini）。
-// 拉取失败时静默降级——下拉只剩"自动"一项，主设置加载不受影响。
+// AI 闸门判断渠道候选：复用助手 status 探测出的四协议可用渠道（messages →
+// responses → chat → gemini 顺序）。该来源已经过后端 PreviewChannel 的可用性、
+// 熔断、模型可解析过滤，且排除识图专用渠道（ExcludeFromConversation），与助手
+// 渠道选择器、闸门实际选渠口径完全一致；不再前端逐个拉取原始渠道列表。
+// assistantStatus 与 assistantKindLabel 被本 computed 引用，声明上移至此以避免 TDZ。
+const assistantStatus = ref<AssistantStatusResponse | null>(null)
+
+const assistantKindLabels: Record<string, string> = {
+  messages: 'Messages',
+  responses: 'Responses',
+  chat: 'Chat',
+  gemini: 'Gemini'
+}
+
+const assistantKindLabel = (kind: string) => assistantKindLabels[kind] ?? kind
+
 type GateChannelOption = { title: string; value: string }
 
-const AUTO_GATE_CHANNEL: GateChannelOption = { title: '自动（四协议优先级）', value: '' }
-const gateChannelItems = ref<GateChannelOption[]>([AUTO_GATE_CHANNEL])
+const AUTO_GATE_CHANNEL: GateChannelOption = { title: '自动（Messages → Responses → Chat → Gemini）', value: '' }
 
-const loadGateChannels = async () => {
-  const tabs = ['messages', 'responses', 'chat', 'gemini'] as const
-  const items: GateChannelOption[] = [AUTO_GATE_CHANNEL]
-  const results = await Promise.allSettled(
-    tabs.map(async tab => {
-      const response = await channelApiByType(tab).getChannels()
-      return response.channels || []
-    })
-  )
-  const tabLabels: Record<(typeof tabs)[number], string> = {
-    messages: 'Messages',
-    responses: 'Responses',
-    chat: 'Chat',
-    gemini: 'Gemini'
-  }
-  tabs.forEach((tab, index) => {
-    const result = results[index]
-    if (result.status !== 'fulfilled') return
-    for (const channel of result.value) {
-      if (!channel.id) continue
-      items.push({ title: `${tabLabels[tab]} · ${channel.name}`, value: channel.id })
-    }
-  })
-  gateChannelItems.value = items
-}
+const gateChannelItems = computed<GateChannelOption[]>(() => [
+  AUTO_GATE_CHANNEL,
+  ...(assistantStatus.value?.channels || []).map(channel => ({
+    title: `${assistantKindLabel(channel.kind)} · ${channel.name}`,
+    value: channel.id
+  }))
+])
 
 const defaultContentSafety = (): ContentSafetySettings => ({
   sensitiveData: {
@@ -1009,7 +1003,6 @@ const savedAssistantModel = ref('')
 const assistantChannel = ref('')
 const savedAssistantChannel = ref('')
 const assistantNotice = ref<Notice>(null)
-const assistantStatus = ref<AssistantStatusResponse | null>(null)
 
 const assistantDirty = computed(
   () =>
@@ -1044,15 +1037,6 @@ type AssistantModelOption = { title: string; value: string }
 
 const AUTO_ASSISTANT_MODEL: AssistantModelOption = { title: '自动（兜底分组）', value: '' }
 const assistantModelItems = ref<AssistantModelOption[]>([AUTO_ASSISTANT_MODEL])
-
-const assistantKindLabels: Record<string, string> = {
-  messages: 'Messages',
-  responses: 'Responses',
-  chat: 'Chat',
-  gemini: 'Gemini'
-}
-
-const assistantKindLabel = (kind: string) => assistantKindLabels[kind] ?? kind
 
 const loadAssistantModelOptions = async () => {
   const tabs = ['messages', 'responses', 'chat', 'gemini'] as const
@@ -1430,7 +1414,6 @@ const toggleDesktopNotify = async (value: boolean | null) => {
 
 onMounted(() => {
   loadSettings()
-  loadGateChannels()
   loadAssistantModelOptions()
   loadAssistantStatus()
   initDesktopNotify()
