@@ -8,7 +8,7 @@
     </AgentConfigHeader>
 
     <v-alert v-if="error" type="error" variant="tonal" class="mb-5" closable @click:close="error = ''">{{ error }}</v-alert>
-
+    <ToolInstallBanner tool="dsh" class="mb-5" />
     <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-5" />
 
     <template v-else>
@@ -287,6 +287,8 @@
       </v-row>
     </template>
 
+    <AgentPromptCard agent="dsh" class="mt-5" />
+
     <v-snackbar v-model="notice.visible" :color="notice.type" location="top right" :timeout="3500">{{ notice.message }}</v-snackbar>
   </div>
 </template>
@@ -295,6 +297,8 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import AgentConfigHeader from '@/components/AgentConfigHeader.vue'
 import AgentConfigLocation from '@/components/AgentConfigLocation.vue'
+import AgentPromptCard from '@/components/AgentPromptCard.vue'
+import ToolInstallBanner from '@/components/ToolInstallBanner.vue'
 import { api, type DSHSettings, type DSHProvider, type DSHModel, type ApiTab } from '@/services/api'
 import { useProxyProtocolPick, defaultQuickPickTypeOptions } from '@/composables/useChannelQuickPick'
 import { filterProxyModelsByKind, importProxyModels, buildDSHModel } from '@/composables/useChannelModelImport'

@@ -251,8 +251,7 @@ func (v *Vault) Mask(text string, matches []RedactionMatch) (string, error) {
 		return matches[i].End > matches[j].End
 	})
 
-	var builder strings.Builder
-	builder.Grow(len(text))
+	// 先校验完整区间，再批量加载本段需要的历史映射；非法输入不能触发持久写入。
 	last := 0
 	for _, match := range matches {
 		if err := v.ctx.Err(); err != nil {
@@ -263,6 +262,18 @@ func (v *Vault) Mask(text string, matches []RedactionMatch) (string, error) {
 		}
 		if text[match.Start:match.End] != match.Original {
 			return "", fmt.Errorf("敏感信息规则 %q 返回的原文与命中区间不一致", match.Rule)
+		}
+		last = match.End
+	}
+	if err := v.preloadOriginals(matches); err != nil {
+		return "", err
+	}
+	var builder strings.Builder
+	builder.Grow(len(text))
+	last = 0
+	for _, match := range matches {
+		if err := v.ctx.Err(); err != nil {
+			return "", err
 		}
 		placeholder, err := v.placeholder(match.Type, match.Original, text)
 		if err != nil {
@@ -276,6 +287,48 @@ func (v *Vault) Mask(text string, matches []RedactionMatch) (string, error) {
 	return builder.String(), nil
 }
 
+func (v *Vault) preloadOriginals(matches []RedactionMatch) error {
+	if v.state.store == nil {
+		return nil
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.err != nil {
+		return v.err
+	}
+	originals := make([]string, 0, min(len(matches), maxVaultMappings))
+	seen := make(map[string]struct{}, cap(originals))
+	for _, match := range matches {
+		if _, known := v.byOriginal[match.Original]; known {
+			continue
+		}
+		if _, duplicate := seen[match.Original]; duplicate {
+			continue
+		}
+		if len(v.byPlaceholder)+len(originals) >= maxVaultMappings {
+			v.err = fmt.Errorf("请求脱敏映射超过容量上限（%d 条或 %d 字节）", maxVaultMappings, maxVaultBytes)
+			return v.err
+		}
+		seen[match.Original] = struct{}{}
+		originals = append(originals, match.Original)
+	}
+	if len(originals) == 0 {
+		return nil
+	}
+	stored, err := v.state.store.lookupOriginals(v.ctx, originals)
+	if err != nil {
+		return fmt.Errorf("读取持久脱敏映射失败: %w", err)
+	}
+	for _, original := range originals {
+		if placeholder, found := stored[original]; found {
+			if err := v.addMappingLocked(original, placeholder); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (v *Vault) placeholder(kind, original, source string) (string, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -285,20 +338,8 @@ func (v *Vault) placeholder(kind, original, source string) (string, error) {
 	if placeholder, ok := v.byOriginal[original]; ok {
 		return placeholder, nil
 	}
-	// 同请求先查内存；持久库读取失败必须显式报错，避免生成不一致的新映射。
+	// Mask 已批量预载本段的历史映射；走到这里表示需要生成并同步持久化新映射。
 	store := v.state.store
-	if store != nil {
-		lookup, err := store.lookupOriginal(v.ctx, original)
-		if err != nil {
-			return "", fmt.Errorf("读取持久脱敏映射失败: %w", err)
-		}
-		if lookup.Found {
-			if err := v.addMappingLocked(original, lookup.Placeholder); err != nil {
-				return "", err
-			}
-			return lookup.Placeholder, nil
-		}
-	}
 	kind = normalizePlaceholderType(kind)
 	key, err := v.state.getKey()
 	if err != nil {
@@ -512,10 +553,25 @@ func (r *StreamRestorer) Feed(fragment string) string {
 	if r == nil || r.vault == nil {
 		return fragment
 	}
+	// 普通片段直接返回，仍更新源文本边界，避免把下一片段的标识符后缀误还原。
+	if r.pending == "" && !strings.Contains(fragment, "M") {
+		r.consumeSource(fragment)
+		return fragment
+	}
 	input := r.pending + fragment
 	r.pending = ""
 	var output strings.Builder
 	for len(input) > 0 {
+		if input[0] != 'M' {
+			end := strings.IndexByte(input, 'M')
+			if end < 0 {
+				end = len(input)
+			}
+			output.WriteString(input[:end])
+			r.consumeSource(input[:end])
+			input = input[end:]
+			continue
+		}
 		if input[0] == 'M' && r.validLeftBoundary() {
 			const prefix = "MASKED_"
 			if len(input) < len(prefix) && strings.HasPrefix(prefix, input) {

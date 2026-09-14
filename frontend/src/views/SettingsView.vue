@@ -16,6 +16,7 @@
           <v-list-item value="content-safety" color="primary" prepend-icon="mdi-shield-alert" title="内容安全" />
           <v-list-item value="integration" color="primary" prepend-icon="mdi-swap-horizontal" title="集成" />
           <v-list-item value="assistant" color="primary" prepend-icon="mdi-robot" title="AI 助手" />
+          <v-list-item value="prompts" color="primary" prepend-icon="mdi-text" title="通用提示词" />
         </v-list>
       </nav>
 
@@ -221,6 +222,118 @@
               </v-btn>
             </div>
           </v-form>
+        </section>
+
+        <section v-else-if="activeSection === 'prompts'" aria-labelledby="prompts-settings-title">
+          <div class="section-heading">
+            <div>
+              <h2 id="prompts-settings-title" class="text-h6 font-weight-bold">通用提示词</h2>
+              <p class="text-body-2 text-medium-emphasis mt-1 mb-0">
+                集中维护带版本号的全局提示词，可一键写入各智能体客户端的提示词文件
+              </p>
+            </div>
+            <v-chip v-if="promptActiveVersion" size="small" color="success" label>
+              <v-icon start size="12">mdi-check-circle</v-icon>
+              生效版本：{{ promptActiveVersion }}
+            </v-chip>
+          </div>
+
+          <v-alert v-if="promptNotice" :type="promptNotice.type" variant="tonal" density="compact" class="mb-5">
+            {{ promptNotice.message }}
+          </v-alert>
+
+          <div class="prompt-version-bar d-flex flex-wrap align-center ga-3 mb-5">
+            <v-select
+              v-model="selectedPromptEntry"
+              :items="promptEntries"
+              :item-title="promptEntryTitle"
+              return-object
+              label="版本"
+              variant="outlined"
+              density="comfortable"
+              hide-details
+              max-width="280px"
+              class="prompt-version-select"
+            />
+            <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-plus" @click="addPromptVersion">
+              新建版本
+            </v-btn>
+            <v-btn
+              size="small"
+              variant="tonal"
+              color="success"
+              prepend-icon="mdi-check-circle"
+              :disabled="!selectedPromptEntry || promptActiveVersion === selectedPromptEntry.version"
+              @click="setActivePromptVersion"
+            >
+              设为生效版本
+            </v-btn>
+            <v-btn
+              size="small"
+              variant="text"
+              color="error"
+              prepend-icon="mdi-delete"
+              :disabled="!selectedPromptEntry"
+              @click="removePromptVersion"
+            >
+              删除版本
+            </v-btn>
+          </div>
+
+          <template v-if="selectedPromptEntry">
+            <v-row>
+              <v-col cols="12" sm="4">
+                <v-text-field
+                  v-model.trim="selectedPromptEntry.version"
+                  label="版本号"
+                  variant="outlined"
+                  density="comfortable"
+                  placeholder="例如 v1、2026-09"
+                  hide-details
+                />
+              </v-col>
+              <v-col cols="12" sm="8">
+                <v-text-field
+                  v-model.trim="selectedPromptEntry.note"
+                  label="备注（可选）"
+                  variant="outlined"
+                  density="comfortable"
+                  placeholder="该版本的说明"
+                  hide-details
+                />
+              </v-col>
+            </v-row>
+            <v-textarea
+              v-model="selectedPromptEntry.content"
+              label="提示词内容"
+              variant="outlined"
+              density="comfortable"
+              rows="14"
+              auto-grow
+              max-rows="28"
+              class="mt-4 prompt-content-editor"
+              spellcheck="false"
+            />
+            <div class="text-caption text-medium-emphasis mt-1">
+              更新时间：{{ formatPromptTime(selectedPromptEntry.updatedAt) }}（保存后刷新）
+            </div>
+          </template>
+
+          <div v-else class="text-body-2 text-medium-emphasis py-8 text-center">
+            尚未创建任何版本，点击"新建版本"开始维护通用提示词。
+          </div>
+
+          <div class="settings-actions">
+            <v-btn
+              color="primary"
+              prepend-icon="mdi-content-save"
+              :loading="saving"
+              :disabled="!promptsDirty"
+              @click="savePromptSettings"
+            >
+              保存通用提示词
+            </v-btn>
+          </div>
         </section>
 
         <section v-else aria-labelledby="content-safety-settings-title">
@@ -644,10 +757,11 @@ import {
   type CredentialRule,
   type CustomRuleItem,
   type DangerousCommandRule,
+  type PromptEntry,
   type SensitiveInfoRule
 } from '@/services/api'
 
-type SettingsSection = 'network' | 'content-safety' | 'integration' | 'assistant'
+type SettingsSection = 'network' | 'content-safety' | 'integration' | 'assistant' | 'prompts'
 type Notice = { type: 'success' | 'error'; message: string } | null
 type SensitiveWordToggle =
   | 'pornographyEnabled'
@@ -991,6 +1105,83 @@ const saveAssistantSettings = async () => {
 
 const integrationDirty = computed(() => ccSwitchPath.value.trim() !== savedCcSwitchPath.value)
 
+// ===== 通用提示词（版本库：各智能体配置页"一键配置提示词"的数据源） =====
+
+const promptEntries = ref<PromptEntry[]>([])
+const promptActiveVersion = ref('')
+// 选中条目按对象引用而非版本号定位：重命名版本号时编辑器不会失焦丢失
+const selectedPromptEntry = ref<PromptEntry | null>(null)
+const savedPromptsSnapshot = ref('')
+const promptNotice = ref<Notice>(null)
+
+const promptEntryTitle = (entry: PromptEntry): string => entry.version + (entry.note ? ` · ${entry.note}` : '')
+
+const promptsDirty = computed(() => JSON.stringify(promptEntries.value) !== savedPromptsSnapshot.value)
+
+const formatPromptTime = (millis: number): string => {
+  if (!millis) return '从未保存'
+  return new Date(millis).toLocaleString('zh-CN', { hour12: false })
+}
+
+const addPromptVersion = () => {
+  const entry: PromptEntry = { version: '', note: '', content: '', updatedAt: 0 }
+  promptEntries.value.push(entry)
+  selectedPromptEntry.value = entry
+}
+
+const removePromptVersion = () => {
+  const entry = selectedPromptEntry.value
+  if (!entry) return
+  if (!window.confirm(`删除版本「${entry.version || '（未命名）'}」？删除后不可恢复。`)) return
+  promptEntries.value = promptEntries.value.filter(item => item !== entry)
+  if (promptActiveVersion.value === entry.version) promptActiveVersion.value = ''
+  selectedPromptEntry.value = promptEntries.value[0] ?? null
+}
+
+const setActivePromptVersion = () => {
+  const entry = selectedPromptEntry.value
+  if (entry) promptActiveVersion.value = entry.version
+}
+
+const validatePromptsForSave = (): string | null => {
+  const seen = new Set<string>()
+  for (const entry of promptEntries.value) {
+    if (!entry.version) return '存在版本号为空的条目，请补全版本号'
+    if (seen.has(entry.version)) return `版本号「${entry.version}」重复`
+    seen.add(entry.version)
+  }
+  if (promptActiveVersion.value && !seen.has(promptActiveVersion.value)) {
+    return `生效版本「${promptActiveVersion.value}」不存在，请重新选择`
+  }
+  return null
+}
+
+const savePromptSettings = async () => {
+  promptNotice.value = null
+  const validationError = validatePromptsForSave()
+  if (validationError) {
+    promptNotice.value = { type: 'error', message: validationError }
+    return
+  }
+  saving.value = true
+  try {
+    const settings = await api.updateSettings({
+      prompts: { entries: promptEntries.value, activeVersion: promptActiveVersion.value }
+    })
+    // 后端保存时会归一化（trim + 刷新 UpdatedAt），以响应为准回填快照
+    promptEntries.value = settings.prompts?.entries ?? []
+    promptActiveVersion.value = settings.prompts?.activeVersion ?? ''
+    selectedPromptEntry.value =
+      promptEntries.value.find(entry => entry.version === promptActiveVersion.value) ?? promptEntries.value[0] ?? null
+    savedPromptsSnapshot.value = JSON.stringify(promptEntries.value)
+    promptNotice.value = { type: 'success', message: '通用提示词已保存' }
+  } catch (error) {
+    promptNotice.value = { type: 'error', message: error instanceof Error ? error.message : '保存通用提示词失败' }
+  } finally {
+    saving.value = false
+  }
+}
+
 const ccSwitchPathRule = (value: string) => {
   const raw = value?.trim()
   if (!raw) return true // 允许为空：未配置时渠道菜单退化为复制链接
@@ -1044,6 +1235,12 @@ const loadSettings = async () => {
     const savedChannel = settings.assistant?.channelId ?? ''
     savedAssistantChannel.value = savedChannel
     assistantChannel.value = savedChannel
+    // 通用提示词版本库（兼容旧配置：prompts 缺失时按空版本库处理）
+    promptEntries.value = settings.prompts?.entries ?? []
+    promptActiveVersion.value = settings.prompts?.activeVersion ?? ''
+    selectedPromptEntry.value =
+      promptEntries.value.find(entry => entry.version === promptActiveVersion.value) ?? promptEntries.value[0] ?? null
+    savedPromptsSnapshot.value = JSON.stringify(promptEntries.value)
   } catch (error) {
     loadError.value = error instanceof Error ? error.message : '加载设置失败'
   } finally {
@@ -1424,6 +1621,16 @@ onMounted(() => {
   display: flex;
   justify-content: flex-end;
   padding-top: 28px;
+}
+
+/* 通用提示词分区：版本条与内容编辑器 */
+.prompt-version-select {
+  min-width: 220px;
+}
+
+.prompt-content-editor :deep(textarea) {
+  font-family: inherit;
+  line-height: 1.6;
 }
 
 @media (prefers-reduced-motion: reduce) {

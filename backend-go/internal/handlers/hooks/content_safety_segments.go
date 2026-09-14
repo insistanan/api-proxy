@@ -582,6 +582,7 @@ func applyContentSafetySegments(
 	changed := false
 	for index := range segments {
 		segment := &segments[index]
+		segmentChanged := false
 		// 白名单放行：命中工具名的 tool_result / tool_argument 跳过全部检测维度，
 		// 并记录一条 whitelist 审计事件，让拦截记录页可见"已放行"的条目。
 		if isWhitelistedSegment(snapshot, segment) {
@@ -647,14 +648,16 @@ func applyContentSafetySegments(
 				}
 				segment.Text = masked
 				changed = true
+				segmentChanged = true
 			}
 			if err := recordSafetyMatches(ctx, metadata, recorder, sensitive.BlockTypeCredential, credentialMode, *segment, credentialSource, credentialHits(credentialMatches)); err != nil {
 				return changed, err
 			}
 		}
 
-		if segment.Source == safetySourceUser || segment.Source == safetySourceSystem || segment.Source == safetySourceAssistant ||
-			segment.Source == safetySourceToolResult || segment.Source == safetySourceToolArgument {
+		infoChecked := segment.Source == safetySourceUser || segment.Source == safetySourceSystem || segment.Source == safetySourceAssistant ||
+			segment.Source == safetySourceToolResult || segment.Source == safetySourceToolArgument
+		if infoChecked {
 			// 敏感信息检测在凭据掩码之后执行，命中偏移相对当前文本；
 			// 以此为窗口基准，改写前再留存一份。
 			infoSource := segment.Text
@@ -682,6 +685,7 @@ func applyContentSafetySegments(
 					}
 					segment.Text = masked
 					changed = true
+					segmentChanged = true
 				}
 				if err := recordSafetyMatches(ctx, metadata, recorder, sensitive.BlockTypeSensitiveInfo, mode, *segment, infoSource, infoHits(infoMatches)); err != nil {
 					return changed, err
@@ -704,6 +708,7 @@ func applyContentSafetySegments(
 				}
 				segment.Text = masked
 				changed = true
+				segmentChanged = true
 				if err := recordSafetyMatches(ctx, metadata, recorder, sensitive.BlockTypeCustomRule,
 					config.ContentSafetyModeMask, *segment, customSource, customHits(customMatches)); err != nil {
 					return changed, err
@@ -714,7 +719,10 @@ func applyContentSafetySegments(
 		if segment.Mutable && segment.Text != "" {
 			segment.replace(segment.Text)
 		}
-		if snapshot.settings.SensitiveData.Mode == config.ContentSafetyModeMask {
+		if snapshot.settings.SensitiveData.Mode == config.ContentSafetyModeMask && (segmentChanged || !infoChecked) {
+			// 未改写片段已经完成相同规则与白名单检查，不必再次扫描整段历史。
+			// 只要任何检测维度改写了文本，仍复检全部凭据与个人信息规则。
+			// 未分类来源没有经过前面的个人信息检测，保留原有末尾校验。
 			// 复检同样过放行字面量过滤：被放行的值（如 localhost）本来就应留在
 			// 文本里，不能被复检误报为"脱敏不干净"。
 			if matches := snapshot.credential.FindAll(segment.Text); len(matches) > 0 {
@@ -797,7 +805,8 @@ func recordSafetyMatches(ctx context.Context, metadata HookContext, recorder Blo
 	}
 	seen := make(map[string]struct{}, len(hits))
 	contentHash := sha256.Sum256([]byte(sourceText))
-	safeContext := sensitive.RedactAuditContext(sourceText)
+	var safeContext string
+	contextPrepared := false
 	for _, hit := range hits {
 		if _, exists := seen[hit.rule]; exists {
 			continue
@@ -806,6 +815,11 @@ func recordSafetyMatches(ctx context.Context, metadata HookContext, recorder Blo
 		eventKey := fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%x", blockType, mode, segment.Source, segment.Path, hit.rule, contentHash)
 		if metadata.eventDeduper.contains(eventKey) {
 			continue
+		}
+		// 先去重，再为确实需要落库的事件扫描并隐藏上下文中的凭据。
+		if !contextPrepared {
+			safeContext = sensitive.RedactAuditContext(sourceText)
+			contextPrepared = true
 		}
 		if _, err := recorder.Record(ctx, sensitive.BlockedLog{
 			APIType:        metadata.APIType,

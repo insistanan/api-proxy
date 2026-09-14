@@ -265,6 +265,8 @@
         </v-col>
       </v-row>
     </template>
+
+    <AgentPromptCard agent="pi" class="mt-5" />
   </div>
 </template>
 
@@ -272,6 +274,7 @@
 import { computed, onMounted, ref } from 'vue'
 import AgentConfigHeader from '@/components/AgentConfigHeader.vue'
 import AgentConfigLocation from '@/components/AgentConfigLocation.vue'
+import AgentPromptCard from '@/components/AgentPromptCard.vue'
 import ToolInstallBanner from '@/components/ToolInstallBanner.vue'
 import { api, type ApiError, type PiAgentProvider, type PiAgentStatus, type ApiTab } from '@/services/api'
 import { useProxyProtocolPick, defaultQuickPickTypeOptions } from '@/composables/useChannelQuickPick'

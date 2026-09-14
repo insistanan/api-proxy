@@ -158,15 +158,29 @@
               </tr>
               <template v-if="isExpanded(group.key) && groupDetail(group.key)">
                 <tr
-                  v-for="entry in groupDetail(group.key)?.logs || []"
+                  v-for="{ entry, repeatKey, repeatCount, repeated } in displayedEntries.get(group.key) || []"
                   :key="`${group.key}:${entry.id}`"
                   class="detail-row"
+                  :class="{ 'repeat-row': repeated }"
                 >
-                  <td class="detail-marker"><span aria-hidden="true"></span></td>
+                  <td class="detail-marker">
+                    <v-btn
+                      v-if="repeatCount > 1"
+                      :icon="expandedRepeats.has(repeatKey) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
+                      variant="text"
+                      size="small"
+                      :aria-expanded="expandedRepeats.has(repeatKey)"
+                      :aria-label="`展开或收起已加载的 ${repeatCount} 条相同脱敏片段`"
+                      @click.stop="toggleRepeat(repeatKey)"
+                    />
+                    <span v-else aria-hidden="true"></span>
+                  </td>
                   <td class="time-cell">{{ formatTime(entry.timestamp) }}</td>
                   <td class="request-id-cell" :title="entry.requestId || ''">
                     <div>{{ entry.requestId || '--' }}</div>
-                    <div class="text-caption text-medium-emphasis">请求 ID</div>
+                    <div class="text-caption text-medium-emphasis">
+                      {{ repeatCount > 1 ? `相同片段 · 已加载 ${repeatCount} 条` : '请求 ID' }}
+                    </div>
                   </td>
                   <td>
                     <v-chip size="x-small" :color="apiTypeColor(entry.apiType)" variant="tonal">
@@ -177,6 +191,13 @@
                     <v-chip size="x-small" :color="blockTypeColor(entry.blockType)" variant="tonal">
                       {{ blockTypeLabel(entry.blockType) }}
                     </v-chip>
+                    <v-chip
+                      v-if="parseBlockedLogSnippet(entry.promptSnippet).mode === 'mask'"
+                      size="x-small"
+                      color="info"
+                      variant="tonal"
+                      class="ml-1"
+                    >已脱敏</v-chip>
                     <div class="text-caption text-medium-emphasis mt-1">{{ ruleLabel(entry.ruleName) }}</div>
                   </td>
                   <td class="metadata-cell">
@@ -407,6 +428,11 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import {
+  blockedLogSnippetPreview as snippetPreview,
+  groupRepeatedBlockedLogs,
+  parseBlockedLogSnippet
+} from '@/utils/blockedLogPresentation'
+import {
   api,
   type BlockedLogEntry,
   type BlockedLogGroup,
@@ -455,6 +481,7 @@ const total = ref(0)
 const totalGroups = ref(0)
 const groups = ref<BlockedLogGroup[]>([])
 const expandedGroups = ref<Set<string>>(new Set())
+const expandedRepeats = ref<Set<string>>(new Set())
 
 interface GroupDetailState {
   logs: BlockedLogEntry[]
@@ -464,6 +491,39 @@ interface GroupDetailState {
 }
 
 const groupDetails = reactive(new Map<string, GroupDetailState>())
+
+interface DisplayedLogEntry {
+  entry: BlockedLogEntry
+  repeatKey: string
+  repeatCount: number
+  repeated: boolean
+}
+
+// 仅折叠已加载的相同审计片段；原始分页游标与逐条操作仍使用完整记录。
+const displayedEntries = computed(() => {
+  const result = new Map<string, DisplayedLogEntry[]>()
+  for (const [key, detail] of groupDetails) {
+    const rows: DisplayedLogEntry[] = []
+    for (const group of groupRepeatedBlockedLogs(detail.logs)) {
+      const entry = group.entry
+      rows.push({ entry, repeatKey: group.key, repeatCount: group.entries.length, repeated: false })
+      if (expandedRepeats.value.has(group.key)) {
+        for (const duplicate of group.entries.slice(1)) {
+          rows.push({ entry: duplicate, repeatKey: group.key, repeatCount: 0, repeated: true })
+        }
+      }
+    }
+    result.set(key, rows)
+  }
+  return result
+})
+
+const toggleRepeat = (key: string) => {
+  const next = new Set(expandedRepeats.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  expandedRepeats.value = next
+}
 const loading = ref(false)
 const deleting = ref(false)
 const error = ref('')
@@ -481,14 +541,6 @@ const hasFilters = computed(() =>
 
 const asRFC3339 = (value: string) => (value ? new Date(value).toISOString() : '')
 
-// 片段格式为「元数据行\n命中内容窗口」两行；表格里只展示内容行，
-// 完整片段（含 mode/source/path）在详情弹窗查看。
-const snippetPreview = (snippet?: string) => {
-  if (!snippet) return ''
-  const lines = snippet.split('\n')
-  return lines[lines.length - 1].trim()
-}
-
 const loadLogs = async () => {
   loading.value = true
   error.value = ''
@@ -505,6 +557,7 @@ const loadLogs = async () => {
       groupBy: 'conversation'
     })
     groups.value = response.groups || []
+    expandedRepeats.value = new Set()
     total.value = response.total || 0
     totalGroups.value = response.totalGroups || 0
     const visibleKeys = new Set(groups.value.map(group => group.key))
@@ -719,16 +772,18 @@ const loadEntriesPage = async (key: string, reset: boolean) => {
 
 const toggleGroup = (key: string) => {
   const next = new Set(expandedGroups.value)
+  let shouldLoad = false
   if (next.has(key)) {
     next.delete(key)
   } else {
     next.add(key)
     if (!groupDetails.has(key)) {
       groupDetails.set(key, { logs: [], loading: false, error: '', loadedAll: false })
-      void loadEntriesPage(key, true)
+      shouldLoad = true
     }
   }
   expandedGroups.value = next
+  if (shouldLoad) void loadEntriesPage(key, true)
 }
 
 const loadMoreEntries = (key: string) => {
@@ -919,6 +974,10 @@ onMounted(() => {
 
 .detail-row {
   background: rgba(var(--v-theme-surface-variant), 0.18);
+}
+
+.repeat-row .request-id-cell {
+  padding-left: 24px;
 }
 
 .detail-state-row .detail-state-cell {

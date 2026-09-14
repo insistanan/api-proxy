@@ -99,6 +99,8 @@
       </v-card>
     </template>
 
+    <AgentPromptCard agent="claude-code" class="mt-5" />
+
     <v-snackbar v-model="notice.visible" :color="notice.type" location="top right" :timeout="3500">{{ notice.message }}</v-snackbar>
   </div>
 </template>
@@ -107,6 +109,7 @@
 import { onMounted, ref } from 'vue'
 import AgentConfigHeader from '@/components/AgentConfigHeader.vue'
 import AgentConfigLocation from '@/components/AgentConfigLocation.vue'
+import AgentPromptCard from '@/components/AgentPromptCard.vue'
 import ToolInstallBanner from '@/components/ToolInstallBanner.vue'
 import { api, type ClaudeCodeModelDefault, type ClaudeCodeSettings } from '@/services/api'
 import { buildClaudeCodeModelDefaults } from '@/composables/useChannelModelImport'

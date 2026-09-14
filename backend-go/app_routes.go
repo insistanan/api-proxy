@@ -127,6 +127,9 @@ func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
 	apiGroup.PUT("/settings/codex/model-catalog", handlers.SaveCodexModelCatalog())
 	apiGroup.GET("/settings/dsh", handlers.GetDSHSettings())
 	apiGroup.PUT("/settings/dsh", handlers.SaveDSHSettings())
+	// 智能体客户端全局提示词文件读写（客户端配置页"全局提示词"卡片）
+	apiGroup.GET("/settings/agent-prompt/:agent", handlers.GetAgentPrompt())
+	apiGroup.PUT("/settings/agent-prompt/:agent", handlers.SaveAgentPrompt())
 	// CLI 工具版本检测（客户端配置页顶部横幅）
 	apiGroup.GET("/tools/:tool/version", handlers.GetToolVersion())
 	apiGroup.POST("/settings/ccs/pick-path", handlers.PickCcsPath(a.cfgManager))

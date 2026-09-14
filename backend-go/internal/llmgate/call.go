@@ -245,12 +245,9 @@ func (c *Caller) callOnChannel(ctx context.Context, selection *SelectedChannel, 
 	if provider == nil {
 		return nil, fmt.Errorf("内部调用渠道 %q 的服务类型 %q 不受支持", upstream.Name, upstream.ServiceType)
 	}
-	model := config.ResolveUpstreamModel(prompt.Model, upstream)
-	if model == "" {
-		model = strings.TrimSpace(upstream.DefaultModel)
-	}
-	if model == "" {
-		return nil, fmt.Errorf("内部调用渠道 %q 未能解析可用模型", upstream.Name)
+	model, resolvable := internalCallModel(prompt.Model, upstream)
+	if !resolvable {
+		return nil, fmt.Errorf("内部调用渠道 %q 未能解析可用模型（请配置默认模型或模型映射）", upstream.Name)
 	}
 	// 模型已解析：清空映射，防止 Provider 再次重定向（与 visionlayer 同约定）。
 	gateUpstream := upstream.Clone()

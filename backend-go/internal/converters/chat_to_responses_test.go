@@ -864,3 +864,107 @@ func TestConvertOpenAIChatToResponsesNonStream_AnthropicStyleNotSubtracted(t *te
 		t.Errorf("input_tokens 应保持 100（不得双减），实际 %d", input)
 	}
 }
+
+func TestConvertOpenAIChatToResponses_CustomToolCallEventConsistency(t *testing.T) {
+	// 回归：自定义工具经 chat 上游流式转换时，同一调用曾出现 added/delta 为
+	// function_call 事件、done/completed 为 custom_tool_call 事件的混发，内容安全
+	// 流式检查按"同一工具调用的参数类型发生变化"中断整个响应。
+	// 修复后全链路必须对同一调用只发一种类型的事件。
+	ctx := context.Background()
+
+	sseLines := []string{
+		`data: {"id":"chatcmpl-custom2","object":"chat.completion.chunk","created":1234567890,"model":"gpt-4o","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_exec2","type":"function","function":{"name":"code_exec","arguments":""}}]},"finish_reason":null}]}`,
+		`data: {"id":"chatcmpl-custom2","object":"chat.completion.chunk","created":1234567890,"model":"gpt-4o","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"input\":\"ls -la\"}"}}]},"finish_reason":null}]}`,
+		`data: {"id":"chatcmpl-custom2","object":"chat.completion.chunk","created":1234567890,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+		`data: [DONE]`,
+	}
+
+	originalReq := []byte(`{"model":"gpt-4o","input":"List files","tools":[{"type":"custom","name":"code_exec","description":"Execute code"}]}`)
+
+	var state any
+	var allEvents []string
+	for _, line := range sseLines {
+		events := ConvertOpenAIChatToResponses(ctx, "gpt-4o", originalReq, nil, []byte(line), &state)
+		allEvents = append(allEvents, events...)
+	}
+
+	hasCustomAdded := false
+	hasCustomInputDone := false
+	hasFunctionArgumentsEvent := false
+	hasCompletedCustomItem := false
+
+	for _, ev := range allEvents {
+		if strings.Contains(ev, "response.output_item.added") && strings.Contains(ev, "\"custom_tool_call\"") {
+			hasCustomAdded = true
+		}
+		if strings.Contains(ev, "response.output_item.added") && strings.Contains(ev, "\"function_call\"") {
+			t.Errorf("自定义工具的 output_item.added 不应为 function_call，事件: %s", ev)
+		}
+		if strings.Contains(ev, "response.function_call_arguments.delta") || strings.Contains(ev, "response.function_call_arguments.done") {
+			hasFunctionArgumentsEvent = true
+		}
+		if strings.Contains(ev, "response.custom_tool_call_input.done") {
+			hasCustomInputDone = true
+			if !strings.Contains(ev, "\"input\":\"ls -la\"") {
+				t.Errorf("custom_tool_call_input.done 应携带还原后的自由文本 input，事件: %s", ev)
+			}
+		}
+		if strings.Contains(ev, "response.completed") && strings.Contains(ev, "\"custom_tool_call\"") {
+			hasCompletedCustomItem = true
+		}
+	}
+
+	if !hasCustomAdded {
+		t.Error("自定义工具的 output_item.added 应为 custom_tool_call 事件")
+	}
+	if hasFunctionArgumentsEvent {
+		t.Error("自定义工具不应发出 function_call_arguments.delta/done 事件（与 custom_tool_call 事件类型冲突）")
+	}
+	if !hasCustomInputDone {
+		t.Error("自定义工具应发出 response.custom_tool_call_input.done 事件")
+	}
+	if !hasCompletedCustomItem {
+		t.Error("response.completed 的 output 应包含 custom_tool_call 条目")
+	}
+}
+
+func TestConvertOpenAIChatToResponses_LateToolNameLocksFunctionType(t *testing.T) {
+	// 退化场景：首个 tool_calls 增量未携带工具名（锁定为 function_call），
+	// 名称在后续增量才到且实为自定义工具——全链路必须保持 function_call，
+	// 不能在收尾阶段混发 custom_tool_call 事件。
+	ctx := context.Background()
+
+	sseLines := []string{
+		`data: {"id":"chatcmpl-late","object":"chat.completion.chunk","created":1234567890,"model":"gpt-4o","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_late","type":"function","function":{"name":"","arguments":""}}]},"finish_reason":null}]}`,
+		`data: {"id":"chatcmpl-late","object":"chat.completion.chunk","created":1234567890,"model":"gpt-4o","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"code_exec","arguments":"{\"input\":\"hi\"}"}}]},"finish_reason":null}]}`,
+		`data: {"id":"chatcmpl-late","object":"chat.completion.chunk","created":1234567890,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+		`data: [DONE]`,
+	}
+
+	originalReq := []byte(`{"model":"gpt-4o","input":"Run","tools":[{"type":"custom","name":"code_exec","description":"Execute code"}]}`)
+
+	var state any
+	var allEvents []string
+	for _, line := range sseLines {
+		events := ConvertOpenAIChatToResponses(ctx, "gpt-4o", originalReq, nil, []byte(line), &state)
+		allEvents = append(allEvents, events...)
+	}
+
+	for _, ev := range allEvents {
+		if strings.Contains(ev, "custom_tool_call") {
+			t.Errorf("锁定 function_call 后不应再出现 custom_tool_call 事件，事件: %s", ev)
+		}
+	}
+	if !hasEvent(allEvents, "response.function_call_arguments.done") {
+		t.Error("锁定 function_call 后应以 function_call_arguments.done 收尾")
+	}
+}
+
+func hasEvent(events []string, needle string) bool {
+	for _, ev := range events {
+		if strings.Contains(ev, needle) {
+			return true
+		}
+	}
+	return false
+}

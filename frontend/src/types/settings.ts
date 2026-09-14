@@ -16,6 +16,28 @@ export interface AppSettings {
     /** 显式指定的渠道稳定 ID；空串表示自动（按四协议优先级编排，不换渠道） */
     channelId: string
   }
+  /** 通用提示词版本库：可一键写入各智能体客户端的全局提示词文件 */
+  prompts: PromptSettings
+}
+
+/** 通用提示词版本库 */
+export interface PromptSettings {
+  /** 全部版本条目 */
+  entries: PromptEntry[]
+  /** 当前生效版本号；空串表示尚未指定（一键写入时前端提示用户去设置） */
+  activeVersion: string
+}
+
+/** 一个通用提示词版本 */
+export interface PromptEntry {
+  /** 版本号（用户填写，库内唯一，如 v1、2026-09） */
+  version: string
+  /** 备注说明（可选） */
+  note: string
+  /** 提示词正文 */
+  content: string
+  /** 后端保存时刷新的毫秒时间戳 */
+  updatedAt: number
 }
 
 export interface ContentSafetySettings {

@@ -597,3 +597,65 @@ func TestPickChannelAutoScansNamedPools(t *testing.T) {
 		selected.Permit = nil
 	}
 }
+
+// TestInternalCallModel 锁定内部调用模型解析优先级，以及"不静默编造模型名"的边界。
+func TestInternalCallModel(t *testing.T) {
+	cases := []struct {
+		name     string
+		model    string
+		upstream *config.UpstreamConfig
+		want     string
+		wantOK   bool
+	}{
+		{"default model wins", "req", &config.UpstreamConfig{DefaultModel: "dm"}, "dm", true},
+		{"explicit model maps", "sonnet", &config.UpstreamConfig{ModelMapping: map[string][]string{"sonnet": {"real"}}}, "real", true},
+		{"explicit model passthrough", "gpt-x", &config.UpstreamConfig{}, "gpt-x", true},
+		{"auto mode wildcard", "", &config.UpstreamConfig{ModelMapping: map[string][]string{"*": {"wild"}}}, "wild", true},
+		{"auto mode specific key deterministic", "", &config.UpstreamConfig{ModelMapping: map[string][]string{
+			"zeta":  {"z-target"},
+			"alpha": {"a-target"},
+		}}, "a-target", true},
+		{"auto mode pure passthrough unusable", "", &config.UpstreamConfig{}, "", false},
+		{"nil upstream", "", nil, "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, ok := internalCallModel(c.model, c.upstream)
+			if got != c.want || ok != c.wantOK {
+				t.Fatalf("internalCallModel(%q) = (%q,%v), want (%q,%v)", c.model, got, ok, c.want, c.wantOK)
+			}
+		})
+	}
+}
+
+// TestPickChannelAutoResolvesMappingOnlyChannel 锁定自动模式（空模型）下，只配了
+// 具体模型映射、没有 DefaultModel 的 messages 渠道也能解析出可发送模型，并按四协议
+// 优先级优先于 chat 渠道被选中（历史 bug：这类透传渠道被误判"解析不出模型"整体跳过，
+// 自动模式降级到 chat）。
+func TestPickChannelAutoResolvesMappingOnlyChannel(t *testing.T) {
+	cfgManager, sch := newGateTestEnv(t)
+	if err := cfgManager.AddUpstream(config.UpstreamConfig{
+		ID: "messages-map", Name: "mapping-only", BaseURL: "https://map.example.com",
+		APIKeys: []string{"sk"}, ServiceType: "claude", Priority: 1,
+		ModelMapping: map[string][]string{"claude-sonnet-4-5": {"upstream-sonnet"}},
+	}); err != nil {
+		t.Fatalf("添加 messages 渠道失败: %v", err)
+	}
+	if err := cfgManager.AddChatUpstream(config.UpstreamConfig{
+		ID: "chat-1", Name: "chat-primary", BaseURL: "https://chat.example.com",
+		APIKeys: []string{"sk-chat"}, ServiceType: "openai", DefaultModel: "chat-model",
+	}); err != nil {
+		t.Fatalf("添加 chat 渠道失败: %v", err)
+	}
+	selected, err := PickChannel(context.Background(), cfgManager, sch, "", "", nil)
+	if err != nil {
+		t.Fatalf("PickChannel 失败: %v", err)
+	}
+	if selected.Permit != nil {
+		selected.Permit.Release()
+		selected.Permit = nil
+	}
+	if selected.Kind != scheduler.ChannelKindMessages || selected.Upstream.Name != "mapping-only" {
+		t.Fatalf("自动模式应优先命中仅配具体映射的 messages 渠道，实际: kind=%s name=%s", selected.Kind, selected.Upstream.Name)
+	}
+}

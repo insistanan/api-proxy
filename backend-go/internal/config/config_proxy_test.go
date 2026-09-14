@@ -147,3 +147,111 @@ func TestUpdateNetworkSettings(t *testing.T) {
 		t.Fatalf("关闭开关未生效")
 	}
 }
+
+func TestValidatePromptSettings(t *testing.T) {
+	t.Run("空版本库合法", func(t *testing.T) {
+		if err := ValidatePromptSettings(PromptSettings{}); err != nil {
+			t.Fatalf("空版本库应合法: %v", err)
+		}
+	})
+
+	t.Run("正常版本库合法", func(t *testing.T) {
+		settings := PromptSettings{
+			Entries: []PromptEntry{
+				{Version: "v1", Content: "第一版"},
+				{Version: "v2", Content: "第二版"},
+			},
+			ActiveVersion: "v2",
+		}
+		if err := ValidatePromptSettings(settings); err != nil {
+			t.Fatalf("正常版本库应合法: %v", err)
+		}
+	})
+
+	t.Run("版本号重复或为空被拒绝", func(t *testing.T) {
+		duplicated := PromptSettings{Entries: []PromptEntry{{Version: "v1"}, {Version: "v1"}}}
+		if err := ValidatePromptSettings(duplicated); err == nil {
+			t.Fatal("重复版本号应被拒绝")
+		}
+		blank := PromptSettings{Entries: []PromptEntry{{Version: "  "}}}
+		if err := ValidatePromptSettings(blank); err == nil {
+			t.Fatal("空白版本号应被拒绝")
+		}
+	})
+
+	t.Run("生效版本不存在被拒绝", func(t *testing.T) {
+		settings := PromptSettings{
+			Entries:       []PromptEntry{{Version: "v1"}},
+			ActiveVersion: "v9",
+		}
+		err := ValidatePromptSettings(settings)
+		if err == nil {
+			t.Fatal("生效版本不存在应被拒绝")
+		}
+		if !strings.Contains(err.Error(), "v9") {
+			t.Fatalf("错误信息应包含不存在的版本号: %v", err)
+		}
+	})
+
+	t.Run("条目数超限被拒绝", func(t *testing.T) {
+		entries := make([]PromptEntry, maxPromptEntries+1)
+		for i := range entries {
+			entries[i] = PromptEntry{Version: "v" + strings.Repeat("1", i+1)}
+		}
+		if err := ValidatePromptSettings(PromptSettings{Entries: entries}); err == nil {
+			t.Fatal("条目数超限应被拒绝")
+		}
+	})
+}
+
+func TestNormalizePromptSettings(t *testing.T) {
+	t.Run("trim 版本与备注并刷新时间戳", func(t *testing.T) {
+		source := PromptSettings{
+			Entries:       []PromptEntry{{Version: " v1 ", Note: " 备注 ", Content: " 内容 ", UpdatedAt: 1}},
+			ActiveVersion: " v1 ",
+		}
+		normalized := NormalizePromptSettings(source, PromptSettings{})
+		if len(normalized.Entries) != 1 {
+			t.Fatalf("归一化后条目数错误: %d", len(normalized.Entries))
+		}
+		entry := normalized.Entries[0]
+		if entry.Version != "v1" || entry.Note != "备注" {
+			t.Fatalf("版本/备注未 trim: %+v", entry)
+		}
+		if entry.Content != " 内容 " {
+			t.Fatalf("内容不应被修改: %q", entry.Content)
+		}
+		if entry.UpdatedAt == 1 {
+			t.Fatal("时间戳应被刷新")
+		}
+		if normalized.ActiveVersion != "v1" {
+			t.Fatalf("生效版本未 trim: %q", normalized.ActiveVersion)
+		}
+		// 入参不被修改（返回新切片）
+		if source.Entries[0].Version != " v1 " {
+			t.Fatal("归一化不应修改入参")
+		}
+	})
+
+	t.Run("未变化的条目保留旧时间戳", func(t *testing.T) {
+		next := PromptSettings{
+			Entries: []PromptEntry{
+				{Version: "v1", Note: "备注", Content: "不变内容"},
+				{Version: "v2", Note: "备注", Content: "新内容"},
+			},
+		}
+		previous := PromptSettings{
+			Entries: []PromptEntry{
+				{Version: "v1", Note: "备注", Content: "不变内容", UpdatedAt: 111},
+				{Version: "v2", Note: "旧备注", Content: "旧内容", UpdatedAt: 222},
+			},
+		}
+		normalized := NormalizePromptSettings(next, previous)
+		if normalized.Entries[0].UpdatedAt != 111 {
+			t.Fatalf("未变化条目应保留旧时间戳: %d", normalized.Entries[0].UpdatedAt)
+		}
+		if normalized.Entries[1].UpdatedAt == 222 {
+			t.Fatal("已变化条目应刷新时间戳")
+		}
+	})
+}

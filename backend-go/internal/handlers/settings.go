@@ -24,12 +24,13 @@ func UpdateSettings(cfgManager *config.ConfigManager) gin.HandlerFunc {
 			ContentSafety *config.ContentSafetyConfig `json:"contentSafety"`
 			Integration   *config.IntegrationSettings `json:"integration"`
 			Assistant     *config.AssistantSettings   `json:"assistant"`
+			Prompts       *config.PromptSettings      `json:"prompts"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的设置参数"})
 			return
 		}
-		if req.Network == nil && req.ContentSafety == nil && req.Integration == nil && req.Assistant == nil {
+		if req.Network == nil && req.ContentSafety == nil && req.Integration == nil && req.Assistant == nil && req.Prompts == nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "至少需要提交一个设置分类"})
 			return
 		}
@@ -58,6 +59,12 @@ func UpdateSettings(cfgManager *config.ConfigManager) gin.HandlerFunc {
 			req.Assistant.Model = strings.TrimSpace(req.Assistant.Model)
 			req.Assistant.ChannelID = strings.TrimSpace(req.Assistant.ChannelID)
 			settings.Assistant = *req.Assistant
+		}
+		if req.Prompts != nil {
+			// 提交 prompts 分类时才归一化（trim + 刷新 UpdatedAt）；
+			// 其他分类单独保存时保持 prompts 原快照，不误刷新时间戳。
+			// previous 传当前快照：未变化的条目保留原 UpdatedAt。
+			settings.Prompts = config.NormalizePromptSettings(*req.Prompts, settings.Prompts)
 		}
 
 		if err := cfgManager.UpdateSettings(settings); err != nil {

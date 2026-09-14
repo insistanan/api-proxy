@@ -1,5 +1,29 @@
 // 四客户端配置页（OpenCode / ClaudeCode / pi-agent / DSH）共用的配置类型。
 
+// ============== 全局提示词（客户端配置页"全局提示词"卡片） ==============
+
+/** 支持全局提示词管理的智能体标识（与后端 agentPromptSpecs 白名单对应） */
+export type AgentPromptAgent = 'claude-code' | 'codex' | 'opencode' | 'pi' | 'dsh'
+
+/** GET /api/settings/agent-prompt/:agent 的响应 */
+export interface AgentPromptFile {
+  agent: AgentPromptAgent
+  displayName: string
+  /** 提示词文件绝对路径 */
+  path: string
+  /** 文件是否已存在（不存在不算错误，首次保存时创建） */
+  exists: boolean
+  /** 目标可写性探测结果（只读 / 权限不足时为 false） */
+  writable: boolean
+  /** 提示词正文（不存在为空串） */
+  content: string
+  sizeBytes: number
+  /** 文件修改时间（Unix 毫秒，不存在为 0） */
+  updatedAt: number
+  /** 读取失败原因（如权限不足；空串表示读取成功或文件不存在） */
+  readError?: string
+}
+
 // ============== CLI 工具版本检测（客户端配置页顶部横幅） ==============
 
 /** GET /api/tools/:tool/version 的响应 */

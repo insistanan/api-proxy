@@ -34,6 +34,7 @@ const (
 	mappingPurgeEvery    = 24 * time.Hour
 	masterKeyFilePerm    = 0600
 	mappingIOTimeout     = 2 * time.Second
+	mappingLookupBatch   = 128
 	hkdfSaltMappingStore = "api-proxy-redaction-mappings-v1"
 )
 
@@ -214,23 +215,72 @@ func (s *MappingStore) LookupOriginal(original string) (MappingLookup, error) {
 }
 
 func (s *MappingStore) lookupOriginal(ctx context.Context, original string) (MappingLookup, error) {
-	if s == nil {
+	stored, err := s.lookupOriginals(ctx, []string{original})
+	if err != nil {
+		return MappingLookup{}, err
+	}
+	placeholder, found := stored[original]
+	if !found {
 		return MappingLookup{}, nil
 	}
+	return MappingLookup{Found: true, Placeholder: placeholder, Original: original}, nil
+}
+
+// lookupOriginals 批量复用原文映射，同一批在一条 SQL 中刷新访问时间。
+// 保留同步落库、TTL/LRU 与错误传播语义，避免长历史逐条提交 UPDATE。
+func (s *MappingStore) lookupOriginals(ctx context.Context, originals []string) (map[string]string, error) {
+	if s == nil || len(originals) == 0 {
+		return nil, nil
+	}
 	if err := s.ensureOpen(); err != nil {
-		return MappingLookup{}, err
+		return nil, err
+	}
+	stored := make(map[string]string, len(originals))
+	for start := 0; start < len(originals); start += mappingLookupBatch {
+		end := min(start+mappingLookupBatch, len(originals))
+		if err := s.lookupOriginalBatch(ctx, originals[start:end], stored); err != nil {
+			return nil, err
+		}
+	}
+	return stored, nil
+}
+
+func (s *MappingStore) lookupOriginalBatch(ctx context.Context, originals []string, stored map[string]string) error {
+	byHMAC := make(map[string]string, len(originals))
+	args := make([]any, 1, len(originals)+1)
+	args[0] = time.Now().UTC().Format(mappingTimeLayout)
+	for _, original := range originals {
+		digest := s.hmacOriginal(original)
+		byHMAC[string(digest)] = original
+		args = append(args, digest)
 	}
 	ctx, cancel := context.WithTimeout(ctx, mappingIOTimeout)
 	defer cancel()
-	row := s.db.QueryRowContext(ctx, `UPDATE redaction_mappings SET last_access = ? WHERE original_hmac = ? RETURNING placeholder`, time.Now().UTC().Format(mappingTimeLayout), s.hmacOriginal(original))
-	var placeholder string
-	if err := row.Scan(&placeholder); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return MappingLookup{}, nil
-		}
-		return MappingLookup{}, fmt.Errorf("查询持久映射失败: %w", err)
+	rows, err := s.db.QueryContext(ctx, `UPDATE redaction_mappings SET last_access = ? WHERE original_hmac IN (`+
+		strings.Repeat("?,", len(originals)-1)+`?) RETURNING original_hmac, placeholder`, args...)
+	if err != nil {
+		return fmt.Errorf("批量查询持久映射失败: %w", err)
 	}
-	return MappingLookup{Found: true, Placeholder: placeholder, Original: original}, nil
+	defer rows.Close()
+	for rows.Next() {
+		var digest []byte
+		var placeholder string
+		if err := rows.Scan(&digest, &placeholder); err != nil {
+			return fmt.Errorf("读取持久映射批次失败: %w", err)
+		}
+		original, ok := byHMAC[string(digest)]
+		if !ok {
+			return fmt.Errorf("持久映射批次返回未知原文索引")
+		}
+		stored[original] = placeholder
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("读取持久映射批次失败: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("关闭持久映射批次失败: %w", err)
+	}
+	return nil
 }
 
 // LookupPlaceholder 按占位符查原文（还原方向），并刷新 last_access。

@@ -3,6 +3,8 @@ import { useAuthStore } from '@/stores/auth'
 import { readSSEStream } from '@/utils/sse'
 // 本文件主体（ApiService）自身使用的类型，从 @/types 具名导入。
 import type {
+  AgentPromptAgent,
+  AgentPromptFile,
   AppSettings,
   AssistantChatOutcome,
   AssistantMessage,
@@ -735,6 +737,21 @@ class ApiService {
     return this.request('/settings/dsh', {
       method: 'PUT',
       body: JSON.stringify(settings)
+    })
+  }
+
+  // ============== 智能体全局提示词 API（客户端配置页"全局提示词"卡片） ==============
+
+  /** 读取指定智能体的全局提示词文件（文件不存在返回 exists=false，不算错误） */
+  async getAgentPrompt(agent: AgentPromptAgent): Promise<AgentPromptFile> {
+    return this.request(`/settings/agent-prompt/${encodeURIComponent(agent)}`)
+  }
+
+  /** 整体替换指定智能体的全局提示词文件；后端会先备份原文件再原子写入 */
+  async saveAgentPrompt(agent: AgentPromptAgent, content: string): Promise<{ success: boolean; path: string; sizeBytes: number }> {
+    return this.request(`/settings/agent-prompt/${encodeURIComponent(agent)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ content })
     })
   }
 

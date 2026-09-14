@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 )
 
 func proxyConfigErrorf(format string, args ...interface{}) error {
@@ -132,6 +133,9 @@ func (cm *ConfigManager) UpdateSettings(settings SettingsConfig) error {
 		return err
 	}
 	if err := ValidateContentSafetyConfig(settings.ContentSafety); err != nil {
+		return err
+	}
+	if err := ValidatePromptSettings(settings.Prompts); err != nil {
 		return err
 	}
 	settings = cloneSettingsConfig(settings)
@@ -452,12 +456,75 @@ func validateRuleSelection(label string, rules []string, allowed map[string]stru
 	return nil
 }
 
+// ValidatePromptSettings 校验通用提示词版本库：版本号非空且不重复、
+// 条目数与单条内容不超上限、生效版本必须指向已存在的版本。
+// 调用前应先经 NormalizePromptSettings 归一化（trim + 刷新 UpdatedAt），
+// 本函数只做拒绝性校验，不修改入参。
+func ValidatePromptSettings(prompts PromptSettings) error {
+	if len(prompts.Entries) > maxPromptEntries {
+		return proxyConfigErrorf("通用提示词最多 %d 个版本，当前 %d 个", maxPromptEntries, len(prompts.Entries))
+	}
+	seen := make(map[string]struct{}, len(prompts.Entries))
+	for _, entry := range prompts.Entries {
+		version := strings.TrimSpace(entry.Version)
+		if version == "" {
+			return proxyConfigErrorf("通用提示词版本号不能为空")
+		}
+		if len([]rune(version)) > maxPromptVersionLen {
+			return proxyConfigErrorf("通用提示词版本号 %q 不能超过 %d 个字符", version, maxPromptVersionLen)
+		}
+		if len([]rune(entry.Note)) > maxPromptNoteLen {
+			return proxyConfigErrorf("通用提示词 %q 的备注不能超过 %d 个字符", version, maxPromptNoteLen)
+		}
+		if len(entry.Content) > maxPromptContentByte {
+			return proxyConfigErrorf("通用提示词 %q 的内容不能超过 1 MiB", version)
+		}
+		if _, exists := seen[version]; exists {
+			return proxyConfigErrorf("通用提示词版本号 %q 重复", version)
+		}
+		seen[version] = struct{}{}
+	}
+	if active := strings.TrimSpace(prompts.ActiveVersion); active != "" {
+		if _, exists := seen[active]; !exists {
+			return proxyConfigErrorf("生效版本 %q 不存在，请先创建该版本或清空生效版本", active)
+		}
+	}
+	return nil
+}
+
+// NormalizePromptSettings 归一化通用提示词版本库：trim 版本号与备注、
+// 刷新 UpdatedAt。内容（Content）原样保留（包括空内容——空版本允许保存，
+// 作为占位草稿）。previous 为保存前的旧版本库：版本号、备注与内容均未变化的
+// 条目保留旧 UpdatedAt，避免无关保存把全部条目时间戳刷成"刚改过"。
+// 返回新切片，不修改入参。
+func NormalizePromptSettings(prompts, previous PromptSettings) PromptSettings {
+	normalized := PromptSettings{
+		Entries:       make([]PromptEntry, 0, len(prompts.Entries)),
+		ActiveVersion: strings.TrimSpace(prompts.ActiveVersion),
+	}
+	for _, entry := range prompts.Entries {
+		entry.Version = strings.TrimSpace(entry.Version)
+		entry.Note = strings.TrimSpace(entry.Note)
+		entry.UpdatedAt = time.Now().UnixMilli()
+		for _, old := range previous.Entries {
+			if old.Version == entry.Version && old.Note == entry.Note && old.Content == entry.Content {
+				entry.UpdatedAt = old.UpdatedAt
+				break
+			}
+		}
+		normalized.Entries = append(normalized.Entries, entry)
+	}
+	return normalized
+}
+
 func cloneSettingsConfig(settings SettingsConfig) SettingsConfig {
 	settings.ContentSafety.SensitiveWord.CustomWords = append([]string{}, settings.ContentSafety.SensitiveWord.CustomWords...)
 	settings.ContentSafety.SensitiveInfo.EnabledRules = append([]string{}, settings.ContentSafety.SensitiveInfo.EnabledRules...)
 	settings.ContentSafety.Credential.EnabledRules = append([]string{}, settings.ContentSafety.Credential.EnabledRules...)
 	settings.ContentSafety.DangerousCmd.EnabledRules = append([]string{}, settings.ContentSafety.DangerousCmd.EnabledRules...)
 	settings.ContentSafety.Whitelist.ToolNames = append([]string{}, settings.ContentSafety.Whitelist.ToolNames...)
+	// 提示词条目含大段文本，按值拷贝 slice 会被共享修改污染，必须逐条复制。
+	settings.Prompts.Entries = append([]PromptEntry{}, settings.Prompts.Entries...)
 	return settings
 }
 

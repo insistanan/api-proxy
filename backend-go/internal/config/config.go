@@ -218,6 +218,10 @@ type SettingsConfig struct {
 	Integration   IntegrationSettings `json:"integration"`
 	// Assistant AI 配置助手的模型路由设置。
 	Assistant AssistantSettings `json:"assistant"`
+	// Prompts 通用提示词版本库：集中维护一份可下发到各智能体客户端
+	// （Claude Code / Codex / OpenCode / pi / DSH）全局提示词文件的提示词，
+	// 带版本号与生效版本标记，由客户端配置页"一键配置提示词"消费。
+	Prompts PromptSettings `json:"prompts"`
 }
 
 // AssistantSettings AI 配置助手设置。
@@ -229,6 +233,32 @@ type SettingsConfig struct {
 type AssistantSettings struct {
 	Model     string `json:"model"`
 	ChannelID string `json:"channelId"`
+}
+
+// promptEntryLimits / promptContentMaxBytes 通用提示词的规模上限。
+// 版本数与单条内容都做上限，防止配置文件被误提交超大内容拖垮热重载。
+const (
+	maxPromptEntries     = 50
+	maxPromptVersionLen  = 64
+	maxPromptNoteLen     = 200
+	maxPromptContentByte = 1 << 20 // 1 MiB
+)
+
+// PromptSettings 通用提示词版本库。
+// ActiveVersion 指向 Entries 中当前生效的版本；为空表示尚未指定生效版本
+// （此时客户端配置页的一键写入默认选项退化为"第一个版本"并提示用户去设置）。
+type PromptSettings struct {
+	Entries       []PromptEntry `json:"entries"`
+	ActiveVersion string        `json:"activeVersion"`
+}
+
+// PromptEntry 一个通用提示词版本。Version 由用户填写（如 v1、2026-09），
+// 在版本库内唯一；UpdatedAt 为毫秒时间戳，由后端保存时刷新。
+type PromptEntry struct {
+	Version   string `json:"version"`
+	Note      string `json:"note"`
+	Content   string `json:"content"`
+	UpdatedAt int64  `json:"updatedAt"`
 }
 
 // IntegrationSettings 外部工具集成设置。

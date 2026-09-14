@@ -195,6 +195,25 @@ func TestResolveUpstreamModelWithBracketedName(t *testing.T) {
 	}
 }
 
+// TestResolveUpstreamModelWildcardWithEmptyModel 锁定 "*" 兜底映射在空模型下
+// 依然生效：内部调用自动模式（空模型）依赖该语义解析出可发送模型，"*" 检查必须
+// 排在空模型早退之前（历史 bug：先 return nil 导致只配 "*" 的透传渠道被误判
+// "解析不出模型"）。
+func TestResolveUpstreamModelWildcardWithEmptyModel(t *testing.T) {
+	upstream := &UpstreamConfig{
+		ModelMapping: map[string][]string{
+			"*": {"gpt-5.4"},
+		},
+	}
+	if got := ResolveUpstreamModel("", upstream); got != "gpt-5.4" {
+		t.Errorf("空模型 + \"*\" 映射应解析为兜底目标，got %q want %q", got, "gpt-5.4")
+	}
+	// 纯透传渠道（无 DefaultModel、无映射）在空模型下仍解析不出具体模型。
+	if got := ResolveUpstreamModel("", &UpstreamConfig{}); got != "" {
+		t.Errorf("空模型 + 无映射应返回空，got %q", got)
+	}
+}
+
 func TestUpstreamConfigUnmarshalLegacyModelMapping(t *testing.T) {
 	input := []byte(`{
 		"baseUrl": "https://api.example.com",

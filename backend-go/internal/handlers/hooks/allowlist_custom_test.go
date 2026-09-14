@@ -11,7 +11,7 @@ import (
 )
 
 // newAllowlistTestSnapshot 组装带 allowlist / customRules 的检测器快照。
-func newAllowlistTestSnapshot(t *testing.T, settings config.ContentSafetyConfig) *contentSafetySnapshot {
+func newAllowlistTestSnapshot(t testing.TB, settings config.ContentSafetyConfig) *contentSafetySnapshot {
 	t.Helper()
 	words, err := sensitive.NewWordFilter(settings.SensitiveWord)
 	if err != nil {

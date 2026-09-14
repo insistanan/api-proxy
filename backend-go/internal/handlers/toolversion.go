@@ -18,7 +18,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// CLI 工具版本检测：为客户端配置页（GPT / Claude Code / OpenCode / pi）提供
+// CLI 工具版本检测：为客户端配置页（GPT / Claude Code / OpenCode / pi / DSH）提供
 // "当前版本 + npm 最新版本 + 安装命令"展示数据。
 //
 // 设计要点（参考 cc-switch 的实现并按本项目情况裁剪）：
@@ -95,6 +95,14 @@ var toolSpecs = map[string]toolSpec{
 		displayName:    "Pi",
 		installWindows: unixNpmInstall("@earendil-works/pi-coding-agent"),
 		installUnix:    unixNpmInstall("@earendil-works/pi-coding-agent"),
+	},
+	// DSH（DeepSeek Harness）：官方 npm 包 @deepseek-ai/dsh，CLI 命令名 dsh，
+	// 亦可免安装经 `npx @deepseek-ai/dsh web` 启动（开发者预览阶段演进较快）。
+	"dsh": {
+		npmPackage:     "@deepseek-ai/dsh",
+		displayName:    "DSH",
+		installWindows: unixNpmInstall("@deepseek-ai/dsh"),
+		installUnix:    unixNpmInstall("@deepseek-ai/dsh"),
 	},
 }
 

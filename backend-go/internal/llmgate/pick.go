@@ -11,6 +11,7 @@ package llmgate
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/BenedictKing/api-proxy/internal/config"
@@ -130,14 +131,64 @@ func pickByOrchestration(ctx context.Context, channelScheduler *scheduler.Channe
 	return nil, fmt.Errorf("没有可用的内部调用渠道（按 messages → responses → chat → gemini 顺序查找均失败）")
 }
 
-// canResolveInternalModel 判断渠道能否为内部调用解析出非空模型：
-// prompt.Model 能命中映射，或渠道配置了 DefaultModel。两者皆无的渠道
-// （空模型 + 无配置）在调用期必然报"未能解析可用模型"，选渠阶段即排除。
+// canResolveInternalModel 判断渠道能否为内部调用解析出非空模型，口径与
+// callOnChannel 完全一致（共用 internalCallModel），避免"选择器列出了渠道、
+// 实际调用却解析不出模型"的不一致。
 func canResolveInternalModel(model string, upstream *config.UpstreamConfig) bool {
+	_, ok := internalCallModel(model, upstream)
+	return ok
+}
+
+// internalCallModel 解析内部调用（AI 闸门 / AI 助手）实际发给上游的具体模型，
+// 返回 (具体模型, 是否可解析)。解析优先级：
+//  1. 渠道 DefaultModel：显式默认，最权威，任何模式都用它；
+//  2. 调用方传入 model 非空：按渠道映射 / 透传解析（ResolveUpstreamModel）；
+//  3. model 为空（自动模式）且渠道配了 "*" 兜底映射：取 "*" 目标；
+//  4. model 为空且渠道只有具体映射键：取"按源模型名排序后第一个键"的目标模型，
+//     让只配了具体映射、没有默认模型的透传渠道在自动模式下也可用；
+//  5. 纯透传（无 DefaultModel、无任何映射）渠道没有可发送的具体模型，返回
+//     false——不静默编造模型名，交由上层显式跳过 / 报错。
+func internalCallModel(model string, upstream *config.UpstreamConfig) (string, bool) {
 	if upstream == nil {
-		return false
+		return "", false
 	}
-	return strings.TrimSpace(config.ResolveUpstreamModel(model, upstream)) != ""
+	if dm := strings.TrimSpace(upstream.DefaultModel); dm != "" {
+		return dm, true
+	}
+	model = strings.TrimSpace(model)
+	if model != "" {
+		if resolved := strings.TrimSpace(config.ResolveUpstreamModel(model, upstream)); resolved != "" {
+			return resolved, true
+		}
+		return "", false
+	}
+	// 自动模式（空模型）：先看 "*" 兜底映射。
+	if targets, ok := upstream.ModelMapping["*"]; ok && len(targets) > 0 {
+		if t := strings.TrimSpace(targets[0]); t != "" {
+			return t, true
+		}
+	}
+	// 再看具体映射键（按源模型名排序保证跨进程 / 跨次调用确定性）。
+	if len(upstream.ModelMapping) > 0 {
+		keys := make([]string, 0, len(upstream.ModelMapping))
+		for key := range upstream.ModelMapping {
+			if key == "*" {
+				continue
+			}
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			targets := upstream.ModelMapping[key]
+			if len(targets) == 0 {
+				continue
+			}
+			if t := strings.TrimSpace(targets[0]); t != "" {
+				return t, true
+			}
+		}
+	}
+	return "", false
 }
 
 // pickByID 按稳定渠道 ID 选渠。同 canResolveInternalModel 口径：解析不出

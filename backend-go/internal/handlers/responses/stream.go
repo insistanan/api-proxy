@@ -48,6 +48,7 @@ func hasResponsesContent(event string) bool {
 		switch eventType {
 		case "response.output_text.delta",
 			"response.function_call_arguments.delta",
+			"response.custom_tool_call_input.delta",
 			"response.reasoning_summary_text.delta",
 			"response.output_json.delta",
 			"response.content_part.delta",
@@ -57,6 +58,7 @@ func hasResponsesContent(event string) bool {
 			"response.output_text.done",
 			"response.reasoning_summary_text.done",
 			"response.function_call_arguments.done",
+			"response.custom_tool_call_input.done",
 			"response.output_item.done":
 			return true
 		}

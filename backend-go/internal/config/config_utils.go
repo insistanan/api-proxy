@@ -99,15 +99,17 @@ func IsCommittedError(err error) bool {
 // 需要区分同一别名的不同变体时，把完整名字（含变体标记）直接配成 ModelMapping 的键。
 func redirectModelList(model string, upstream *UpstreamConfig) []string {
 	model = strings.TrimSpace(model)
+	// "*" 是任意源模型规则：配置后所有模型请求都使用它的目标模型列表。
+	// 必须排在空模型早退之前——内部调用自动模式（空模型）下，只配 "*" 兜底
+	// 映射的透传渠道也要能解析出模型，否则会被误判"解析不出模型"而整体跳过。
+	if mapped, ok := upstream.ModelMapping["*"]; ok && len(mapped) > 0 {
+		return mapped
+	}
 	if model == "" {
 		return nil
 	}
 	if upstream.ModelMapping == nil || len(upstream.ModelMapping) == 0 {
 		return []string{model}
-	}
-	// "*" 是任意源模型规则。配置后，所有模型请求都使用它的目标模型列表。
-	if mapped, ok := upstream.ModelMapping["*"]; ok && len(mapped) > 0 {
-		return mapped
 	}
 
 	// 1. 精确匹配模型名

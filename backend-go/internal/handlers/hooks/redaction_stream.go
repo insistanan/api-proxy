@@ -10,6 +10,9 @@ import (
 	"github.com/BenedictKing/api-proxy/internal/utils"
 )
 
+// Replacer 可并发复用，避免每个 SSE 字段都重建替换表。
+var streamIdentityFieldNormalizer = strings.NewReplacer("_", "", "-", "")
+
 type streamPathStep struct {
 	key   string
 	index int
@@ -92,8 +95,9 @@ func restoreStreamValue(attached *attachedHookPipeline, root, value interface{},
 	changed := false
 	switch typed := value.(type) {
 	case map[string]interface{}:
-		identities = appendStreamIdentities(identities, path, typed)
-		for _, field := range sortedMapKeys(typed) {
+		fields := sortedMapKeys(typed)
+		identities = appendStreamIdentities(identities, path, typed, fields)
+		for _, field := range fields {
 			if isStreamStructuralField(field) {
 				continue
 			}
@@ -321,9 +325,9 @@ func streamStateKey(lineKey, eventName string, path []streamPathStep, identities
 
 // appendStreamIdentities 将协议事件里的稳定逻辑索引加入状态键。流式协议常把
 // 并行工具调用放在数组位置 0，但通过 index/output_index 等字段区分逻辑流。
-func appendStreamIdentities(identities []string, path []streamPathStep, value map[string]interface{}) []string {
+func appendStreamIdentities(identities []string, path []streamPathStep, value map[string]interface{}, fields []string) []string {
 	result := append([]string(nil), identities...)
-	for _, key := range sortedMapKeys(value) {
+	for _, key := range fields {
 		if !isStreamIdentityField(key) {
 			continue
 		}
@@ -338,7 +342,7 @@ func appendStreamIdentities(identities []string, path []streamPathStep, value ma
 }
 
 func isStreamIdentityField(key string) bool {
-	normalized := strings.NewReplacer("_", "", "-", "").Replace(strings.ToLower(key))
+	normalized := streamIdentityFieldNormalizer.Replace(strings.ToLower(key))
 	switch normalized {
 	case "index", "outputindex", "contentindex", "candidateindex", "toolcallindex", "partindex":
 		return true
