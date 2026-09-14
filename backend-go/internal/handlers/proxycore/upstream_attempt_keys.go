@@ -17,6 +17,7 @@ import (
 	"github.com/BenedictKing/api-proxy/internal/config"
 	"github.com/BenedictKing/api-proxy/internal/handlers/hooks"
 	"github.com/BenedictKing/api-proxy/internal/mediasanitizer"
+	"github.com/BenedictKing/api-proxy/internal/proxy"
 	"github.com/BenedictKing/api-proxy/internal/ratelimit"
 	"github.com/BenedictKing/api-proxy/internal/rectifier"
 	"github.com/BenedictKing/api-proxy/internal/scheduler"
@@ -105,9 +106,11 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 
 	preflight, valid, err := a.prepareAllKeys()
 	if err != nil {
-		return newUpstreamAttemptResult(false, "", 0, nil, nil, err)
+		// 本地配置错误（如代理解析失败）：中性结束，显式返回内部错误。
+		return newUpstreamAttemptResult(false, "", 0, nil, nil, err).withHealth(channelHealthNeutral)
 	}
 	if !valid {
+		// 没有可尝试的候选（无 Key / 缺回调等）：不产生渠道健康结论。
 		return newUpstreamAttemptResult(false, "", 0, nil, nil, nil)
 	}
 	proxyURL := preflight.proxyURL
@@ -129,12 +132,12 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 		originalIdx := urlResult.OriginalIdx // 原始索引用于指标记录
 		retryState := newCandidateRetryState(len(upstream.APIKeys))
 
-		for attempt := 0; attempt < retryState.maxRetries; attempt++ {
+		for attempt := 0; attempt < retryState.MaxRetries(); attempt++ {
 			RestoreRequestBody(c, requestBody)
 			ResetRequestLogFirstToken(c)
 			attemptStart := time.Now()
 
-			apiKey, err := a.NextAPIKey(upstream, retryState.failedKeys)
+			apiKey, err := a.NextAPIKey(upstream, retryState.FailedKeys())
 			if err != nil {
 				failoverState.lastError = err
 				break // 当前 BaseURL 没有可用 Key，尝试下一个 BaseURL
@@ -142,14 +145,14 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 
 			// 检查熔断状态
 			if !forceProbeMode && metricsManager.ShouldSuspendKey(currentBaseURL, apiKey, logCtx.ChannelIndex) {
-				retryState.markKeyFailed(apiKey)
+				retryState.MarkKeyFailed(apiKey)
 				log.Printf("[%s-Circuit] 跳过熔断中的 Key: %s", apiType, utils.MaskAPIKey(apiKey))
 				continue
 			}
 
 			if envCfg.ShouldLog("info") {
 				log.Printf("[%s-Key] 使用API密钥: %s (BaseURL %d/%d, 尝试 %d/%d)",
-					apiType, utils.MaskAPIKey(apiKey), urlIdx+1, len(urlResults), attempt+1, retryState.maxRetries)
+					apiType, utils.MaskAPIKey(apiKey), urlIdx+1, len(urlResults), attempt+1, retryState.MaxRetries())
 			}
 
 			// 使用深拷贝避免并发修改问题
@@ -158,7 +161,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 			req, prepareStage, err := a.buildPreparedAttemptRequest(upstreamCopy, apiKey)
 			if err != nil && prepareStage == "build_request" {
 				failoverState.lastError = err
-				retryState.markKeyFailed(apiKey)
+				retryState.MarkKeyFailed(apiKey)
 				channelScheduler.RecordFailure(currentBaseURL, apiKey, logCtx.ChannelIndex, kind)
 				recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", 0, false, attemptStart, "build_request", err.Error(), true, isStream, nil)
 				continue
@@ -172,7 +175,8 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 						attemptStatus = "blocked"
 					}
 					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, attemptStatus, status, false, attemptStart, prepareStage, err.Error(), false, isStream, nil)
-					return newUpstreamAttemptResult(true, "", 0, nil, nil, err)
+					// 内容安全准备失败：本地检查系统问题，中性结束。
+					return newUpstreamAttemptResult(true, "", 0, nil, nil, err).withHealth(channelHealthNeutral)
 				}
 				status, code := visionlayer.ErrorResponse(err)
 				payload := gin.H{
@@ -182,10 +186,11 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 				recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", status, false, attemptStart, "vision_layer", err.Error(), true, isStream, nil)
 				if channelScheduler.GetActiveChannelCountForModel(kind, logCtx.Model) > 1 {
 					body, _ := json.Marshal(payload)
-					return newUpstreamAttemptResult(false, "", 0, &FailoverError{Status: status, Body: body}, nil, err)
+					// 视觉层本地失败：中性结束，交给外层换渠道。
+					return newUpstreamAttemptResult(false, "", 0, &FailoverError{Status: status, Body: body}, nil, err).withHealth(channelHealthNeutral)
 				}
 				c.JSON(status, payload)
-				return newUpstreamAttemptResult(true, "", 0, nil, nil, err)
+				return newUpstreamAttemptResult(true, "", 0, nil, nil, err).withHealth(channelHealthNeutral)
 			}
 			// 请求准备成功后再启动请求画像和活跃度观测。
 			lifecycle := a.startAttemptLifecycle(currentBaseURL, apiKey)
@@ -203,7 +208,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 			ratelimit.GetDefaultLimiter().WaitOrAcquire(c.Request.Context(), currentBaseURL, 0, 0, 0, 2*time.Second)
 
 			req = AttachRequestLogID(c, req)
-			resp, err := SendRequest(req, upstream, envCfg, isStream, apiType, proxyURL)
+			resp, err := SendRequest(req, upstream, envCfg, isStream, apiType, proxyURL, a.Permit)
 			if err != nil {
 				failoverState.lastError = err
 				// 区分客户端取消和真实渠道故障（统一口径）
@@ -212,10 +217,11 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 					lifecycle.finalizeClientCancelled()
 					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "cancelled", 0, false, attemptStart, "client_cancelled", err.Error(), false, isStream, nil)
 					log.Printf("[%s-Cancel] 请求已取消（SendRequest 阶段）", apiType)
-					return newUpstreamAttemptResult(true, "", 0, nil, nil, err)
+					// 客户端明确取消：中性结束，立即停止。
+					return newUpstreamAttemptResult(true, "", 0, nil, nil, err).withHealth(channelHealthNeutral)
 				}
 				// 真实渠道故障：计入失败，继续 failover
-				retryState.markKeyFailed(apiKey)
+				retryState.MarkKeyFailed(apiKey)
 				cfgManager.MarkKeyAsFailed(apiKey, apiType)
 				lifecycle.finalizeFailed()
 				if a.MarkURLFailure != nil {
@@ -238,7 +244,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 					// 响应体读取中断：连接已不可靠，按渠道网络故障处理，
 					// 不把截断 body 用于错误分类或回给客户端。
 					failoverState.lastError = fmt.Errorf("读取上游错误响应体失败: %w", readErr)
-					retryState.markKeyFailed(apiKey)
+					retryState.MarkKeyFailed(apiKey)
 					cfgManager.MarkKeyAsFailed(apiKey, apiType)
 					lifecycle.finalizeFailed()
 					if a.MarkURLFailure != nil {
@@ -256,15 +262,17 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 
 					failoverState.lastError = fmt.Errorf("上游模型暂时满载")
 					failoverState.lastFailoverError = &FailoverError{Status: resp.StatusCode, Body: respBodyBytes}
+					// 模型容量状态：即使后续重试耗尽，渠道结束原因也是中性。
+					failoverState.markNeutralTermination()
 					candidate := currentBaseURL + "\x00" + apiKey
-					canRetry := retryState.canRetryCandidate(candidate, c.Request.Context())
+					canRetry := retryState.CanRetryCandidate(candidate, c.Request.Context())
 					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", resp.StatusCode, false, attemptStart, "model_capacity", string(respBodyBytes), canRetry, isStream, nil)
 					if canRetry {
-						retryCount := retryState.recordCandidateRetry(candidate)
-						log.Printf("[%s-Capacity] 模型暂时满载，使用同一 BaseURL 和 Key 重试 (%d/%d)", apiType, retryCount, retryState.maxSameCandidateRetries)
+						retryCount := retryState.RecordCandidateRetry(candidate)
+						log.Printf("[%s-Capacity] 模型暂时满载，使用同一 BaseURL 和 Key 重试 (%d/%d)", apiType, retryCount, proxy.DefaultMaxSameCandidateRetries)
 						continue
 					}
-					retryState.markKeyFailed(apiKey)
+					retryState.MarkKeyFailed(apiKey)
 					continue
 				}
 
@@ -273,14 +281,15 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 				if resp.StatusCode == http.StatusTooManyRequests && !utils.IsNonRetryableUpstreamErrorBody(respBodyBytes) {
 					ratelimit.GetDefaultLimiter().Record429(currentBaseURL, 600*time.Millisecond)
 					candidate := currentBaseURL + "\x00" + apiKey
-					if retryState.canRetryCandidate(candidate, c.Request.Context()) {
-						retryCount := retryState.recordCandidateRetry(candidate)
+					if retryState.CanRetryCandidate(candidate, c.Request.Context()) {
+						retryCount := retryState.RecordCandidateRetry(candidate)
 						log.Printf("[%s-RateLimit] 渠道 %s 遭遇速率限制 (429)，排队退避 500ms 后原位重试 (%d/1)", apiType, upstream.Name, retryCount)
 						select {
 						case <-c.Request.Context().Done():
 							lifecycle.finalizeClientCancelled()
 							recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "cancelled", 0, false, attemptStart, "client_cancelled", c.Request.Context().Err().Error(), false, isStream, nil)
-							return newUpstreamAttemptResult(true, "", 0, nil, nil, c.Request.Context().Err())
+							// 退避排队中客户端取消：中性结束，立即停止。
+							return newUpstreamAttemptResult(true, "", 0, nil, nil, c.Request.Context().Err()).withHealth(channelHealthNeutral)
 						case <-time.After(500 * time.Millisecond):
 						}
 						RestoreRequestBody(c, requestBody)
@@ -448,11 +457,12 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 						failoverState.lastFailoverError = &FailoverError{Status: resp.StatusCode, Body: respBodyBytes}
 						recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", resp.StatusCode, false, attemptStart, decision.errorType, string(respBodyBytes), true, isStream, nil)
 						log.Printf("[%s-ContentPolicy] 渠道 %s 拒绝请求，跳过当前渠道", apiType, upstream.Name)
-						return newUpstreamAttemptResult(false, "", 0, failoverState.lastFailoverError, nil, failoverState.lastError)
+						// 内容审核拒绝：中性结束；重试决定由外层按协议的审核转移规则处理。
+						return newUpstreamAttemptResult(false, "", 0, failoverState.lastFailoverError, nil, failoverState.lastError).withHealth(channelHealthNeutral)
 
 					case upstreamFailureTryNextKey:
 						failoverState.lastError = fmt.Errorf("上游错误: %d", resp.StatusCode)
-						retryState.markKeyFailed(apiKey)
+						retryState.MarkKeyFailed(apiKey)
 						cfgManager.MarkKeyAsFailed(apiKey, apiType)
 						lifecycle.finalizeFailed()
 						if a.MarkURLFailure != nil {
@@ -472,16 +482,18 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 						continue
 
 					case upstreamFailureRespond:
-						// 非 failover 错误，记录失败指标后返回（请求已处理）
+						// 非 failover 错误，记录失败指标后返回（请求已处理）。
+						// 注意：lifecycle 记的是 Key 级指标；渠道级健康结果为中性
+						// （请求参数/尺寸等错误与渠道健康无关）。
 						lifecycle.finalizeFailed()
 						recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", resp.StatusCode, false, attemptStart, decision.errorType, string(respBodyBytes), false, isStream, nil)
 						restoredBody, restoreErr := hooks.RestoreAttachedResponseBody(c, respBodyBytes)
 						if restoreErr != nil {
 							c.JSON(http.StatusInternalServerError, gin.H{"error": "敏感信息还原失败", "code": "CONTENT_SAFETY_HOOK_ERROR"})
-							return newUpstreamAttemptResult(true, "", 0, nil, nil, restoreErr)
+							return newUpstreamAttemptResult(true, "", 0, nil, nil, restoreErr).withHealth(channelHealthNeutral)
 						}
 						c.Data(resp.StatusCode, "application/json", restoredBody)
-						return newUpstreamAttemptResult(true, "", 0, nil, nil, nil)
+						return newUpstreamAttemptResult(true, "", 0, nil, nil, nil).withHealth(channelHealthNeutral)
 					}
 				}
 			}
@@ -504,7 +516,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 				if readErr != nil {
 					// 响应体读取中断/超上限：连接已不可靠或响应异常巨大，按网络故障处理。
 					failoverState.lastError = readErr
-					retryState.markKeyFailed(apiKey)
+					retryState.MarkKeyFailed(apiKey)
 					cfgManager.MarkKeyAsFailed(apiKey, apiType)
 					lifecycle.finalizeFailed()
 					if a.MarkURLFailure != nil {
@@ -517,7 +529,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 				if utils.IsUpstreamErrorEnvelope(sniff) {
 					failoverState.lastError = fmt.Errorf("上游 2xx 响应携带错误信封")
 					failoverState.lastFailoverError = &FailoverError{Status: resp.StatusCode, Body: sniff}
-					retryState.markKeyFailed(apiKey)
+					retryState.MarkKeyFailed(apiKey)
 					cfgManager.MarkKeyAsFailed(apiKey, apiType)
 					lifecycle.finalizeFailed()
 					if a.MarkURLFailure != nil {
@@ -535,6 +547,9 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 			if err != nil {
 				failoverState.lastError = err
 				decision := classifyResponseProcessingError(err, c.Writer.Written())
+				// 本渠道最终健康结果：除"响应已提交后的真实上游中断"按失败
+				// 记账外，取消/内容安全/本地检查错误均为中性（R2-a 表）。
+				health := channelHealthNeutral
 				switch decision.action {
 				case responseProcessingClientCancelled:
 					// 客户端取消/断开：计入总请求数但不计入失败
@@ -573,18 +588,20 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 
 				case responseProcessingRetryCandidate:
 					lifecycle.finalizeNeutral()
+					// 容量类错误（上游未产出内容）：中性结束候选。
+					failoverState.markNeutralTermination()
 
 					candidate := currentBaseURL + "\x00" + apiKey
-					canRetry := retryState.canRetryCandidate(candidate, c.Request.Context())
+					canRetry := retryState.CanRetryCandidate(candidate, c.Request.Context())
 					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", resp.StatusCode, false, attemptStart, "model_capacity", err.Error(), canRetry, isStream, usage)
 					if canRetry {
-						retryCount := retryState.recordCandidateRetry(candidate)
-						log.Printf("[%s-Capacity] 上游未产出内容，使用同一 BaseURL 和 Key 重试 (%d/%d)", apiType, retryCount, retryState.maxSameCandidateRetries)
+						retryCount := retryState.RecordCandidateRetry(candidate)
+						log.Printf("[%s-Capacity] 上游未产出内容，使用同一 BaseURL 和 Key 重试 (%d/%d)", apiType, retryCount, proxy.DefaultMaxSameCandidateRetries)
 						continue
 					}
 
 					// 仅在本次请求内排除该 Key，继续其他候选；不写入 Key 熔断和失败率。
-					retryState.markKeyFailed(apiKey)
+					retryState.MarkKeyFailed(apiKey)
 					failoverState.lastFailoverError = &FailoverError{Status: http.StatusServiceUnavailable, Body: []byte(err.Error())}
 					continue
 
@@ -596,7 +613,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", resp.StatusCode, false, attemptStart, "response_processing", err.Error(), shouldRetryResponseProcessing, isStream, usage)
 					log.Printf("[%s-Key] 警告: 响应处理失败: %s", apiType, utils.RedactSensitivePlaceholdersForLog(err.Error()))
 					if shouldRetryResponseProcessing {
-						retryState.markKeyFailed(apiKey)
+						retryState.MarkKeyFailed(apiKey)
 						if a.MarkURLFailure != nil {
 							a.MarkURLFailure(currentBaseURL)
 						}
@@ -606,8 +623,10 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 						}
 						continue
 					}
+					// 响应已提交后的真实上游中断：渠道按失败记账，但不再故障转移。
+					health = channelHealthFailure
 				}
-				return newUpstreamAttemptResult(true, "", 0, nil, usage, err)
+				return newUpstreamAttemptResult(true, "", 0, nil, usage, err).withHealth(health)
 			}
 
 			if a.MarkURLSuccess != nil {
@@ -620,7 +639,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 			if channelScheduler != nil && logCtx.ConversationID != "" {
 				channelScheduler.SetPreferredBaseURL(logCtx.ConversationID, currentBaseURL)
 			}
-			return newUpstreamAttemptResult(true, apiKey, originalIdx, nil, usage, nil)
+			return newUpstreamAttemptResult(true, apiKey, originalIdx, nil, usage, nil).withHealth(channelHealthSuccess)
 		}
 
 		// 当前 BaseURL 的所有 Key 都失败，记录并尝试下一个 BaseURL
@@ -629,7 +648,12 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 		}
 	}
 
-	return newUpstreamAttemptResult(false, "", 0, failoverState.lastFailoverError, nil, failoverState.lastError)
+	// 候选耗尽的最终健康结果（R2-a）：发生过明确中性结束原因（容量、审核
+	// 兼容重试失败）时按中性记账；否则为可重试真实故障耗尽候选。
+	if failoverState.neutralTermination {
+		return newUpstreamAttemptResult(false, "", 0, failoverState.lastFailoverError, nil, failoverState.lastError).withHealth(channelHealthNeutral)
+	}
+	return newUpstreamAttemptResult(false, "", 0, failoverState.lastFailoverError, nil, failoverState.lastError).withHealth(channelHealthFailure)
 }
 
 func (a UpstreamAttempt) buildPreparedAttemptRequest(
@@ -687,7 +711,7 @@ func (a UpstreamAttempt) retrySameCandidateRequest(
 	}
 
 	req = AttachRequestLogID(a.Context, req)
-	resp, err := SendRequest(req, upstreamCopy, a.EnvConfig, a.IsStream, a.APIType, proxyURL)
+	resp, err := SendRequest(req, upstreamCopy, a.EnvConfig, a.IsStream, a.APIType, proxyURL, a.Permit)
 	if err != nil {
 		return compatibilityRetryResult{PreparationStage: "send_request", Err: err}
 	}

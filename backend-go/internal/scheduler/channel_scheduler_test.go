@@ -537,7 +537,7 @@ func TestSelectChannel_DuplicatePrioritiesNormalizeToFailoverOrder(t *testing.T)
 	if err != nil {
 		t.Fatalf("第一次选渠失败: %v", err)
 	}
-	if !first.Reserved {
+	if !first.Reserved() {
 		t.Fatal("期望第一次选渠占用 in-flight 预留")
 	}
 

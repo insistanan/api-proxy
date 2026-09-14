@@ -66,14 +66,21 @@ func (s *ChannelScheduler) SelectVisionChannel(ctx context.Context, kind Channel
 		if !metricsManager.IsChannelHealthyWithKeys(upstream.BaseURL, upstream.APIKeys, index) {
 			return nil, fmt.Errorf("图片理解渠道 %q 当前不健康", upstream.Name)
 		}
-		return s.reserveAndReturn(&SelectionResult{
+		return s.reserveAndReturnVision(&SelectionResult{
 			Upstream:     upstream.Clone(),
 			ChannelIndex: index,
 			Reason:       "vision_layer",
-		}, kind), nil
+		}, kind)
 	}
 
 	return nil, fmt.Errorf("图片理解渠道 %q 不存在", channelID)
+}
+
+// reserveAndReturnVision 预留图片理解渠道并适配旧的单返回值签名。
+// 图片理解渠道不标记 probeIntent（不经熔断探测路径），正式准入不会拒绝；
+// 防御性处理错误时返回 (nil, err)。
+func (s *ChannelScheduler) reserveAndReturnVision(result *SelectionResult, kind ChannelKind) (*SelectionResult, error) {
+	return s.reserveAndReturn(result, kind)
 }
 
 // ListPublicVisionChannels 按配置序号返回公共图片理解池中可用的渠道。

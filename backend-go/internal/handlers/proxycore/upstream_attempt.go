@@ -49,7 +49,31 @@ type UpstreamAttempt struct {
 	MarkURLSuccess     func(url string)
 	HandleSuccess      HandleSuccessFunc
 	LogContext         AttemptLogContext
+	// Permit 是本次渠道选择的许可句柄（R2-b）。多渠道分派时由外壳传入，
+	// 供发送层的"未发出即失败"路径中性归还探测名额；渠道健康结果记账
+	// 仍由外壳在渠道结束时统一执行。单渠道路径为 nil。
+	Permit *scheduler.ChannelPermit
 }
+
+// channelHealthResult 渠道级健康结果（R2-a）。它回答"本次渠道尝试对渠道
+// 健康度意味着什么"，与"客户端响应是否已写回"（Handled）和"接下来如何
+// 重试"（FailoverError 是否存在）正交，不能由 SuccessKey 是否为空或
+// LastError 是否为 nil 推断。
+type channelHealthResult uint8
+
+const (
+	// channelHealthUnset 表示本次没有产生有效尝试或结果未确定（如预检失败、
+	// 未选中渠道），调用方不应据此记账；记账属于契约错误。
+	channelHealthUnset channelHealthResult = iota
+	// channelHealthSuccess 最终成功（含前面有候选失败）。
+	channelHealthSuccess
+	// channelHealthFailure 可重试的真实故障耗尽渠道内候选，或已提交响应后的
+	// 真实上游中断。
+	channelHealthFailure
+	// channelHealthNeutral 中性结束：内容审核拒绝、客户端取消、容量耗尽、
+	// 本地构建/检查错误、不可重试的请求参数错误。不改变渠道健康度。
+	channelHealthNeutral
+)
 
 // UpstreamAttemptResult 是一次上游尝试的命名结果，避免调用方依赖位置返回值。
 type UpstreamAttemptResult struct {
@@ -65,6 +89,9 @@ type UpstreamAttemptResult struct {
 	Usage *types.Usage
 	// LastError 是最后一次底层错误，用于日志与上层判断。
 	LastError error
+	// Health 是本渠道的最终健康结果（R2-a）。渠道级熔断记账只消费该字段，
+	// 不得从 SuccessKey / LastError 推断。
+	Health channelHealthResult
 }
 
 func newUpstreamAttemptResult(
@@ -83,6 +110,14 @@ func newUpstreamAttemptResult(
 		Usage:             usage,
 		LastError:         lastError,
 	}
+}
+
+// withHealth 返回带渠道健康结果的副本（R2-a 构造辅助）。
+// 各出口在明确本渠道结束原因时调用；调用方按需保留原有 newUpstreamAttemptResult
+// 构造（Health 留 Unset），语义为"该结果不携带渠道健康结论"。
+func (r UpstreamAttemptResult) withHealth(h channelHealthResult) UpstreamAttemptResult {
+	r.Health = h
+	return r
 }
 
 type AttemptLogContext struct {

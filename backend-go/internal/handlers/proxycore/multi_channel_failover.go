@@ -19,6 +19,10 @@ type MultiChannelAttemptResult struct {
 	FailoverError     *FailoverError
 	Usage             *types.Usage
 	LastError         error
+	// Health 是本渠道的最终健康结果（R2-a）。渠道级熔断记账只消费该字段，
+	// 不得从 SuccessKey / LastError 推断。Unset 时外壳跳过记账并记录警告
+	// （重复或缺失记账都是契约错误）。
+	Health channelHealthResult
 }
 
 // TrySelectedChannelFunc 尝试一次选中的渠道，返回该渠道的尝试结果。
@@ -88,10 +92,11 @@ func HandleMultiChannelFailover(
 
 		upstream := selection.Upstream
 		channelIndex := selection.ChannelIndex
+		// releaseReservation 仅释放 in-flight 预留（探测名额由
+		// recordChannelHealth 记账释放，R2-b 分离语义）。
 		releaseReservation := func() {
-			if selection != nil && selection.Reserved {
-				channelScheduler.ReleaseChannelReservation(selection.Kind, selection.ChannelIndex)
-				selection.Reserved = false
+			if selection != nil && selection.Permit != nil {
+				selection.Permit.ReleaseReservation()
 			}
 		}
 
@@ -106,13 +111,12 @@ func HandleMultiChannelFailover(
 			// 请求已完成（成功或已写回非 failover 错误），释放选渠预留。
 			// 注意：上游实际 ActiveRequests 仍由 ProfileManager 独立维护。
 			releaseReservation()
-			// 渠道级熔断记账（internal/circuit）：真正成功记成功；
-			// 已写回但非成功（内容安全拦截等 Handled-with-error 场景）按 Neutral 处理，
-			// 由 SuccessKey 区分。客户端取消（LastError 是 context.Canceled）不计健康度。
-			if result.SuccessKey != "" {
-				channelScheduler.RecordCircuitSuccess(kind, channelIndex)
-			} else if isClientSideError(result.LastError) {
-				channelScheduler.RecordCircuitNeutral(kind, channelIndex)
+			// 渠道级熔断记账（R2-a）：只消费显式 Health 结果，不再从
+			// SuccessKey / LastError 推断；Unset 视为契约缺陷，跳过记账并可见。
+			recordChannelHealth(channelScheduler, kind, channelIndex, result.Health, result.Attempted, apiType, selection.Permit)
+			if selection.Permit != nil {
+				selection.Permit.Release()
+				selection.Permit = nil
 			}
 			if onHandled != nil {
 				onHandled(selection, result)
@@ -158,14 +162,11 @@ func HandleMultiChannelFailover(
 		// 当前渠道失败，释放预留后再尝试下一渠道，避免”失败渠道”继续占负载。
 		releaseReservation()
 		failedChannels[channelIndex] = true
-		// 渠道级熔断记账：渠道整体尝试失败（可重试错误）记失败；
-		// 客户端取消不计入健康度。
-		if result.Attempted {
-			if isClientSideError(result.LastError) {
-				channelScheduler.RecordCircuitNeutral(kind, channelIndex)
-			} else {
-				channelScheduler.RecordCircuitFailure(kind, channelIndex)
-			}
+		// 渠道级熔断记账（R2-a）：只消费显式 Health 结果。
+		recordChannelHealth(channelScheduler, kind, channelIndex, result.Health, result.Attempted, apiType, selection.Permit)
+		if selection.Permit != nil {
+			selection.Permit.Release()
+			selection.Permit = nil
 		}
 
 		if result.FailoverError != nil {
@@ -184,4 +185,38 @@ func HandleMultiChannelFailover(
 
 	log.Printf("[%s-Error] 所有渠道都失败了", apiType)
 	handleAllFailed(c, lastFailoverError, lastError)
+}
+
+// recordChannelHealth 按显式健康结果做渠道级熔断记账（R2-a 唯一出口，
+// R2-b 经许可句柄带代次记账）。Unset 且确有尝试（Attempted）说明调用方
+// 没有给出渠道结束结论——跳过记账并记录警告，让契约缺陷可见而不是补成
+// 默认成功/失败。
+func recordChannelHealth(channelScheduler *scheduler.ChannelScheduler, kind scheduler.ChannelKind, channelIndex int, health channelHealthResult, attempted bool, apiType string, permit *scheduler.ChannelPermit) {
+	var outcome func()
+	if permit != nil {
+		switch health {
+		case channelHealthSuccess:
+			outcome = permit.RecordHealthSuccess
+		case channelHealthFailure:
+			outcome = permit.RecordHealthFailure
+		case channelHealthNeutral:
+			outcome = permit.RecordHealthNeutral
+		}
+	}
+	if outcome != nil {
+		outcome()
+		return
+	}
+	switch health {
+	case channelHealthSuccess:
+		channelScheduler.RecordCircuitSuccess(kind, channelIndex)
+	case channelHealthFailure:
+		channelScheduler.RecordCircuitFailure(kind, channelIndex)
+	case channelHealthNeutral:
+		channelScheduler.RecordCircuitNeutral(kind, channelIndex)
+	default:
+		if attempted {
+			log.Printf("[%s-Circuit] 警告: 渠道 [%d] 尝试结束但未携带健康结果，跳过熔断记账", apiType, channelIndex)
+		}
+	}
 }

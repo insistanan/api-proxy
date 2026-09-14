@@ -49,7 +49,8 @@ func (a UpstreamAttempt) tryWithModelMappingFailover() UpstreamAttemptResult {
 		select {
 		case <-a.Context.Request.Context().Done():
 			log.Printf("[%s-Cancel] 客户端已取消，停止模型 failover", a.APIType)
-			return newUpstreamAttemptResult(true, "", 0, nil, nil, context.Canceled)
+			// 客户端明确取消：中性结束，立即停止。
+			return newUpstreamAttemptResult(true, "", 0, nil, nil, context.Canceled).withHealth(channelHealthNeutral)
 		default:
 		}
 
@@ -91,7 +92,8 @@ func (a UpstreamAttempt) tryWithModelMappingFailover() UpstreamAttemptResult {
 
 	// 所有模型都失败
 	log.Printf("[%s-ModelMapping] 所有 %d 个备选模型都失败", a.APIType, len(targetModels))
-	return newUpstreamAttemptResult(false, "", 0, lastFailoverError, nil, lastErr)
+	// 可重试故障耗尽全部候选模型：渠道按失败记账。
+	return newUpstreamAttemptResult(false, "", 0, lastFailoverError, nil, lastErr).withHealth(channelHealthFailure)
 }
 
 func preferConversationBaseURL(

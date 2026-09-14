@@ -7,58 +7,34 @@ package proxycore
 import (
 	"github.com/BenedictKing/api-proxy/internal/handlers/hooks"
 	"github.com/BenedictKing/api-proxy/internal/providers"
+	"github.com/BenedictKing/api-proxy/internal/proxy"
 
-	"context"
 	"errors"
 	"net/http"
-	"strings"
 )
 
-// isClientSideError 判断错误是否由客户端明确取消（不应计入渠道失败）
-// 仅识别 context.Canceled，broken pipe/connection reset 视为连接故障需要 failover
+// isClientSideError 判断错误是否由客户端明确取消（不应计入渠道失败）。
+// 实现委托 internal/proxy（R4-b：与 HTTP 框架无关的分类谓词唯一出处）。
 func isClientSideError(err error) bool {
-	if err == nil {
-		return false
-	}
-	// 只有 context.Canceled 才是明确的客户端取消意图
-	return errors.Is(err, context.Canceled)
+	return proxy.IsClientSideCancel(err)
 }
 
-// RetrySameCandidateError 表示响应已成功到达代理，但模型暂时无法产出内容。
-// 这类错误属于模型容量状态，不应污染 API Key、BaseURL 或渠道的失败指标。
-type RetrySameCandidateError struct {
-	err error
-}
-
-func (e *RetrySameCandidateError) Error() string {
-	if e == nil || e.err == nil {
-		return "upstream model is temporarily unavailable"
-	}
-	return e.err.Error()
-}
-
-func (e *RetrySameCandidateError) Unwrap() error {
-	if e == nil {
-		return nil
-	}
-	return e.err
-}
+// RetrySameCandidateError 表示响应已成功到达代理，但模型暂时无法产出内容
+// （模型容量状态，不应污染失败指标）。实现委托 internal/proxy（R4-b）。
+type RetrySameCandidateError = proxy.RetrySameCandidateError
 
 func NewRetrySameCandidateError(err error) error {
-	return &RetrySameCandidateError{err: err}
+	return proxy.NewRetrySameCandidateError(err)
 }
 
 func isRetrySameCandidateError(err error) bool {
-	var target *RetrySameCandidateError
-	return errors.As(err, &target)
+	return proxy.IsRetrySameCandidateError(err)
 }
 
-// IsUpstreamModelCapacityError 仅匹配已知的明确容量错误，避免用裸 capacity
-// 误判业务正文或其他含义不同的错误。
+// IsUpstreamModelCapacityError 判断上游响应体是否为已知模型容量错误。
+// 判据唯一出处 utils（R4-a 收敛），委托 internal/proxy 转发（R4-b）。
 func IsUpstreamModelCapacityError(body []byte) bool {
-	message := strings.ToLower(string(body))
-	return strings.Contains(message, "selected model is at capacity") ||
-		strings.Contains(message, "model is at capacity")
+	return proxy.IsUpstreamModelCapacityErrorBody(body)
 }
 
 type upstreamFailureAction uint8

@@ -79,6 +79,11 @@ type Breaker struct {
 	failedRequests       int
 	lastOpenedAt         time.Time
 	halfOpenInFlight     int // HalfOpen 状态下在途探测请求数
+
+	// generation 状态代次：Reset / 重新 Open→HalfOpen 时递增。
+	// Allow 占用探测名额时返回当时的代次；记账携带代次且不匹配时忽略，
+	// 防止迟到结果释放新许可的探测名额（R2-b）。
+	generation uint64
 }
 
 // NewBreaker 创建熔断器。config 零值字段回落默认值。
@@ -99,6 +104,9 @@ type AllowResult struct {
 	Probe bool
 	// State 判定时的熔断器状态。
 	State State
+	// Generation 判定时的状态代次。占用探测名额（Probe）时，记账必须携带
+	// 同一代次；不匹配的记账被忽略，避免迟到结果释放新许可的名额。
+	Generation uint64
 }
 
 // Allow 判定是否放行一次请求。Open 且冷却到期时惰性转 HalfOpen。
@@ -110,15 +118,15 @@ func (b *Breaker) Allow() AllowResult {
 
 	switch b.state {
 	case StateOpen:
-		return AllowResult{Allowed: false, State: b.state}
+		return AllowResult{Allowed: false, State: b.state, Generation: b.generation}
 	case StateHalfOpen:
 		if b.halfOpenInFlight >= 1 {
-			return AllowResult{Allowed: false, State: b.state}
+			return AllowResult{Allowed: false, State: b.state, Generation: b.generation}
 		}
 		b.halfOpenInFlight++
-		return AllowResult{Allowed: true, Probe: true, State: b.state}
+		return AllowResult{Allowed: true, Probe: true, State: b.state, Generation: b.generation}
 	default:
-		return AllowResult{Allowed: true, State: b.state}
+		return AllowResult{Allowed: true, State: b.state, Generation: b.generation}
 	}
 }
 
@@ -151,11 +159,34 @@ func (b *Breaker) RecordSuccess() {
 	b.recordSuccessLocked(time.Now())
 }
 
+// RecordSuccessGeneration 带状态代次的成功记账：代次不匹配时忽略
+// （迟到结果不得释放新许可的探测名额，R2-b）。
+func (b *Breaker) RecordSuccessGeneration(generation uint64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if !b.generationMatchesLocked(generation) {
+		return
+	}
+	b.recordSuccessLocked(time.Now())
+}
+
 // RecordFailure 记录一次失败请求。Closed 下累计连续失败与错误率；HalfOpen 下立即回 Open。
 func (b *Breaker) RecordFailure() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	b.recordFailureLocked(time.Now())
+}
+
+// RecordFailureGeneration 带状态代次的失败记账：代次不匹配时忽略。
+func (b *Breaker) RecordFailureGeneration(generation uint64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if !b.generationMatchesLocked(generation) {
+		return
+	}
 	b.recordFailureLocked(time.Now())
 }
 
@@ -166,6 +197,23 @@ func (b *Breaker) RecordNeutral() {
 	defer b.mu.Unlock()
 
 	b.recordNeutralLocked()
+}
+
+// RecordNeutralGeneration 带状态代次的中性记账：代次不匹配时忽略。
+func (b *Breaker) RecordNeutralGeneration(generation uint64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if !b.generationMatchesLocked(generation) {
+		return
+	}
+	b.recordNeutralLocked()
+}
+
+// generationMatchesLocked 判断记账代次与当前代次一致。
+// 代次一致的迟到记账才作用于当前状态；Reset 后的旧请求结果被忽略。
+func (b *Breaker) generationMatchesLocked(generation uint64) bool {
+	return generation == b.generation
 }
 
 // Reset 手动重置到 Closed 并清零全部计数。
@@ -224,6 +272,7 @@ func (b *Breaker) lazyTransitionLocked(now time.Time) {
 	}
 	b.state = StateHalfOpen
 	b.consecutiveSuccesses = 0
+	b.generation++ // 新一轮探测开始：上一轮迟到结果不再作用于本轮
 	log.Printf("[Circuit-Probe] 熔断冷却到期，进入半开状态（探测限额: 1）")
 }
 
@@ -294,6 +343,7 @@ func (b *Breaker) tripOpenLocked(now time.Time) {
 	b.lastOpenedAt = now
 	b.halfOpenInFlight = 0
 	b.consecutiveSuccesses = 0
+	b.generation++ // 重新熔断：在途探测的迟到结果不再作用于新一轮状态
 }
 
 func (b *Breaker) resetLocked() {
@@ -304,6 +354,7 @@ func (b *Breaker) resetLocked() {
 	b.failedRequests = 0
 	b.lastOpenedAt = time.Time{}
 	b.halfOpenInFlight = 0
+	b.generation++ // 手动重置：旧请求的迟到结果不得归还新探测的名额
 }
 
 // Manager 管理全部 (kind, channelIndex) 组合的熔断器。
@@ -373,6 +424,17 @@ func (m *Manager) RecordSuccess(kind string, channelIndex int) {
 	breaker.RecordSuccess()
 }
 
+// RecordSuccessGeneration 带状态代次的成功记账。
+func (m *Manager) RecordSuccessGeneration(kind string, channelIndex int, generation uint64) {
+	if !m.enabled {
+		return
+	}
+	m.mu.Lock()
+	breaker := m.getOrCreateLocked(kind, channelIndex)
+	m.mu.Unlock()
+	breaker.RecordSuccessGeneration(generation)
+}
+
 // RecordFailure 记录渠道失败。
 func (m *Manager) RecordFailure(kind string, channelIndex int) {
 	if !m.enabled {
@@ -384,6 +446,17 @@ func (m *Manager) RecordFailure(kind string, channelIndex int) {
 	breaker.RecordFailure()
 }
 
+// RecordFailureGeneration 带状态代次的失败记账。
+func (m *Manager) RecordFailureGeneration(kind string, channelIndex int, generation uint64) {
+	if !m.enabled {
+		return
+	}
+	m.mu.Lock()
+	breaker := m.getOrCreateLocked(kind, channelIndex)
+	m.mu.Unlock()
+	breaker.RecordFailureGeneration(generation)
+}
+
 // RecordNeutral 记录不影响健康度的结果。
 func (m *Manager) RecordNeutral(kind string, channelIndex int) {
 	if !m.enabled {
@@ -393,6 +466,17 @@ func (m *Manager) RecordNeutral(kind string, channelIndex int) {
 	breaker := m.getOrCreateLocked(kind, channelIndex)
 	m.mu.Unlock()
 	breaker.RecordNeutral()
+}
+
+// RecordNeutralGeneration 带状态代次的中性记账。
+func (m *Manager) RecordNeutralGeneration(kind string, channelIndex int, generation uint64) {
+	if !m.enabled {
+		return
+	}
+	m.mu.Lock()
+	breaker := m.getOrCreateLocked(kind, channelIndex)
+	m.mu.Unlock()
+	breaker.RecordNeutralGeneration(generation)
 }
 
 // Reset 手动重置指定渠道。

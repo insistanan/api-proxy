@@ -239,7 +239,7 @@ func buildProtocolAttempt(
 	markURLSuccess func(url string),
 	allowContentPolicyChannelFailover bool,
 ) UpstreamAttempt {
-	return NewAttemptBuilder(
+	attempt := NewAttemptBuilder(
 		c, envCfg, cfgManager, channelScheduler,
 		spec.Kind, spec.LogName, upstream, model, bodyBytes, stream,
 		channelIndex, conversationID,
@@ -262,6 +262,7 @@ func buildProtocolAttempt(
 			return spec.HandleSuccess(c, resp, upstreamCopy, apiKey, bodyBytes, startTime)
 		}).
 		Build()
+	return attempt
 }
 
 // handleSingleChannelProxy 处理单渠道代理请求。
@@ -302,22 +303,40 @@ func handleSingleChannelProxy(
 	}
 
 	// 渠道级熔断检查（internal/circuit）：非快捷测试且已熔断（Open）时直接拦截并返回 503 CIRCUIT_OPEN。
-	// 快捷测试跳过熔断拦截，允许管理端手动探测或快速测试已熔断的渠道。
-	if !isQuickTest && !channelScheduler.AllowChannelByCircuit(spec.Kind, channelIndex, upstream.Name) {
-		snapMap := channelScheduler.GetCircuitSnapshotForKind(spec.Kind)
-		cooldown := 0
-		if snap, ok := snapMap[channelIndex]; ok {
-			cooldown = snap.CooldownRemainingSec
+	// 快捷测试跳过熔断拦截，允许管理端手动探测或快速测试已熔断的渠道——
+	// 也不占用半开探测名额（R2-b：不挤占其他请求的探测许可）。
+	// 非快捷测试经 CircuitAllow 正式占用：可能取得探测名额（封装为许可句柄，
+	// 绑定取得时状态代次），渠道结束时统一记账释放。
+	var singlePermit *scheduler.ChannelPermit
+	if !isQuickTest {
+		circuitResult := channelScheduler.CircuitAllow(spec.Kind, channelIndex, upstream.Name)
+		if !circuitResult.Allowed {
+			snapMap := channelScheduler.GetCircuitSnapshotForKind(spec.Kind)
+			cooldown := 0
+			if snap, ok := snapMap[channelIndex]; ok {
+				cooldown = snap.CooldownRemainingSec
+			}
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"error": fmt.Sprintf("当前渠道 [%d] %s 处于熔断保护状态 (冷却剩余 %d 秒)，请稍后重试或切换渠道", channelIndex, upstream.Name, cooldown),
+				"code":  "CIRCUIT_OPEN",
+			})
+			return
 		}
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error": fmt.Sprintf("当前渠道 [%d] %s 处于熔断保护状态 (冷却剩余 %d 秒)，请稍后重试或切换渠道", channelIndex, upstream.Name, cooldown),
-			"code":  "CIRCUIT_OPEN",
-		})
-		return
+		if circuitResult.Probe {
+			singlePermit = channelScheduler.NewCircuitProbePermit(spec.Kind, channelIndex, circuitResult.Generation)
+			// 渠道结束必经许可收尾（含提前返回路径）。
+			defer func() {
+				singlePermit.Release()
+			}()
+		}
 	}
 
 	// 无 API Key 检查
 	if len(upstream.APIKeys) == 0 {
+		// 本地配置问题：中性归还探测名额（不按渠道失败记账）。
+		if singlePermit != nil {
+			singlePermit.RecordHealthNeutral()
+		}
 		c.JSON(503, gin.H{
 			"error": "当前渠道未配置API密钥",
 			"code":  "NO_API_KEYS",
@@ -327,6 +346,10 @@ func handleSingleChannelProxy(
 
 	// 对话路由冲突检查
 	if err := channelScheduler.ValidateFixedChannel(conversationID, spec.Kind, channelIndex); err != nil {
+		// 路由冲突是本地拒绝：中性归还探测名额。
+		if singlePermit != nil {
+			singlePermit.RecordHealthNeutral()
+		}
 		MarkConversationFailure(channelScheduler, conversationID, spec.Kind, err)
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "CONVERSATION_ROUTE_OVERRIDE"})
 		return
@@ -337,24 +360,23 @@ func handleSingleChannelProxy(
 
 	// 单渠道：URL 用配置序，不参与 URL 健康统计（markURL 传 nil），
 	// 密钥降级按本协议渠道池写；内容审核跨渠道转移不生效（保持按 Key 分类语义）。
-	result := buildProtocolAttempt(c, envCfg, cfgManager, channelScheduler, spec, bodyBytes, model, stream, conversationID, upstream, channelIndex, startTime, urlResults, spec.Kind, nil, nil, false).TryWithModelMappingFailover()
+	attempt := buildProtocolAttempt(c, envCfg, cfgManager, channelScheduler, spec, bodyBytes, model, stream, conversationID, upstream, channelIndex, startTime, urlResults, spec.Kind, nil, nil, false)
+	attempt.Permit = singlePermit
+	result := attempt.TryWithModelMappingFailover()
 	if result.Handled {
 		if result.SuccessKey != "" {
 			MarkConversationSuccess(channelScheduler, conversationID, spec.Kind, channelIndex, upstream.Name)
 			channelScheduler.ConsumePromotionCount(channelIndex, spec.Kind)
-			// 渠道级熔断记账（与多渠道路径同口径）。
-			channelScheduler.RecordCircuitSuccess(spec.Kind, channelIndex)
 		} else if result.LastError != nil && !errors.Is(result.LastError, context.Canceled) {
 			MarkConversationFailure(channelScheduler, conversationID, spec.Kind, result.LastError)
-		} else if errors.Is(result.LastError, context.Canceled) {
-			// 客户端取消不计入渠道健康度。
-			channelScheduler.RecordCircuitNeutral(spec.Kind, channelIndex)
 		}
+		// 渠道级熔断记账（R2-a/R2-b）：经许可句柄带代次记账。
+		recordChannelHealth(channelScheduler, spec.Kind, channelIndex, result.Health, true, spec.LogName, singlePermit)
 		return
 	}
 
-	// 渠道整体失败（可重试错误）：记入渠道级熔断。
-	channelScheduler.RecordCircuitFailure(spec.Kind, channelIndex)
+	// 渠道整体失败（可重试错误耗尽候选）：显式按失败记账。
+	recordChannelHealth(channelScheduler, spec.Kind, channelIndex, channelHealthFailure, true, spec.LogName, singlePermit)
 	log.Printf("[%s-Error] 所有API密钥都失败了", spec.LogName)
 	MarkConversationFailure(channelScheduler, conversationID, spec.Kind, result.LastError)
 	if spec.HandleAllKeysFailed != nil {
@@ -399,12 +421,15 @@ func handleMultiChannelProxy(
 
 			// 多渠道：URL 用延迟排序序，回写 URL 健康状态；密钥降级按实际
 			// kind 写池（修复历史 bug：曾硬编码 messages 池，跨池降级写错渠道）。
-			// 内容审核跨渠道转移按 spec 开关生效。
-			result := buildProtocolAttempt(c, envCfg, cfgManager, channelScheduler, spec, bodyBytes, model, stream, conversationID, upstream, channelIndex, startTime, sortedURLResults, spec.Kind,
+			// 内容审核跨渠道转移按 spec 开关生效；选渠许可传入 attempt，
+			// 供发送层"未发出即失败"路径中性归还探测名额。
+			attempt := buildProtocolAttempt(c, envCfg, cfgManager, channelScheduler, spec, bodyBytes, model, stream, conversationID, upstream, channelIndex, startTime, sortedURLResults, spec.Kind,
 				func(url string) { channelScheduler.MarkURLFailure(spec.Kind, channelIndex, url) },
 				func(url string) { channelScheduler.MarkURLSuccess(spec.Kind, channelIndex, url) },
 				spec.AllowContentPolicyChannelFailover,
-			).TryWithModelMappingFailover()
+			)
+			attempt.Permit = selection.Permit
+			result := attempt.TryWithModelMappingFailover()
 
 			return MultiChannelAttemptResult{
 				Handled:           result.Handled,
@@ -414,6 +439,7 @@ func handleMultiChannelProxy(
 				FailoverError:     result.FailoverError,
 				Usage:             result.Usage,
 				LastError:         result.LastError,
+				Health:            result.Health,
 			}
 		},
 		func(selection *scheduler.SelectionResult, result MultiChannelAttemptResult) {

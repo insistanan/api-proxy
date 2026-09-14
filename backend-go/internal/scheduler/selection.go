@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 
 	"github.com/BenedictKing/api-proxy/internal/circuit"
 	"github.com/BenedictKing/api-proxy/internal/config"
@@ -18,43 +19,248 @@ type SelectionResult struct {
 	Reason       string // 选择原因（用于日志）
 	// Kind 记录选择时的协议类型，便于调用方正确释放/转移在途预留。
 	Kind ChannelKind
-	// Reserved 表示本次选择是否已占用 in-flight 预留。
-	// 调用方在失败重试前应 ReleaseChannelReservation；真正发出上游请求期间应保持预留，请求结束后再释放。
-	Reserved bool
-	// Probe 表示本次选择占用了渠道熔断器的 HalfOpen 探测名额（限额 1）。
-	// 调用方必须在请求结束后以 RecordCircuitSuccess/Failure/Neutral 释放，
-	// 否则该渠道会卡在 HalfOpen 无法被再次选中。
-	Probe bool
+	// Permit 是本次选择取得的许可句柄（R2-b）：持有 in-flight 预留和
+	// 可能取得的半开探测名额。调用方必须在请求结束时 RecordHealth
+	// 记账一次 + Release 释放；两者均可安全重复调用（幂等）。
+	Permit *ChannelPermit
+
+	// probeIntent 内部标记：该候选来自需要正式探测占位的路径
+	// （selectPriorityChannel / selectFallbackChannel）。
+	probeIntent bool
+}
+
+// Reserved 表示本次选择是否已占用 in-flight 预留（许可视图）。
+func (r *SelectionResult) Reserved() bool {
+	return r != nil && r.permitReserved()
+}
+
+// Probe 表示本次选择占用了渠道熔断器的 HalfOpen 探测名额（许可视图）。
+func (r *SelectionResult) Probe() bool {
+	return r != nil && r.permitProbe()
+}
+
+// permitReserved / permitProbe 供 SelectionResult 兼容视图读取。
+func (r *SelectionResult) permitReserved() bool {
+	return r != nil && r.Permit != nil && r.Permit.isReserved()
+}
+
+func (r *SelectionResult) permitProbe() bool {
+	return r != nil && r.Permit != nil && r.Permit.isProbe()
+}
+
+// permitNeedsProbe 表示该选择是否需要正式占用探测名额
+// （候选来自 priority / fallback 探测路径，Peek 预检已通过）。
+func (r *SelectionResult) permitNeedsProbe() bool {
+	return r != nil && r.probeIntent
+}
+
+// ChannelPermit 渠道许可句柄（R2-b）：聚合一次选渠取得的资源——
+// in-flight 预留与半开探测名额（后者绑定取得时的熔断器状态代次）。
+// 生命周期：取得后立即安排 defer 释放；正常结束先 RecordHealth（恰好
+// 一次），再 Release；异常退出仅 Release 自有资源。重复记账视为契约
+// 错误，会记录警告（测试可发现）。
+type ChannelPermit struct {
+	scheduler  *ChannelScheduler
+	kind       ChannelKind
+	index      int
+	generation uint64 // 取得探测名额时的熔断器状态代次
+
+	mu          sync.Mutex
+	reserved    bool // 持有 in-flight 预留
+	probe       bool // 持有半开探测名额
+	recorded    bool // 健康结果已记账
+	releasedRes bool // in-flight 已释放
+}
+
+// RecordHealth 按渠道健康结果记账（恰好一次；重复记录警告并跳过）。
+func (p *ChannelPermit) RecordHealth(success bool) {
+	if success {
+		p.RecordHealthSuccess()
+	} else {
+		p.RecordHealthFailure()
+	}
+}
+
+// RecordHealthSuccess 成功记账（恰好一次）。
+func (p *ChannelPermit) RecordHealthSuccess() {
+	p.recordHealth(circuitOutcomeSuccess)
+}
+
+// RecordHealthFailure 真实渠道故障记账（恰好一次）。
+func (p *ChannelPermit) RecordHealthFailure() {
+	p.recordHealth(circuitOutcomeFailure)
+}
+
+// RecordHealthNeutral 中性结束记账（恰好一次）：取消、审核拒绝、本地错误。
+func (p *ChannelPermit) RecordHealthNeutral() {
+	p.recordHealth(circuitOutcomeNeutral)
+}
+
+func (p *ChannelPermit) recordHealth(outcome circuitOutcome) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	if p.recorded {
+		p.mu.Unlock()
+		log.Printf("[Circuit-Permit] 警告: 渠道 [%d] 重复提交健康结果，忽略后续记账", p.index)
+		return
+	}
+	p.recorded = true
+	probe := p.probe
+	p.probe = false
+	generation := p.generation
+	p.mu.Unlock()
+
+	if p.scheduler == nil {
+		return
+	}
+	p.scheduler.recordCircuitResult(p.kind, p.index, generation, probe, outcome)
+}
+
+// Release 释放许可剩余资源（幂等）：in-flight 预留与未记账的探测名额。
+// 未记账即释放时探测名额按中性释放，不改变健康度。
+func (p *ChannelPermit) Release() {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	reserved := p.reserved
+	p.reserved = false
+	probe := p.probe
+	p.probe = false
+	p.mu.Unlock()
+
+	if p.scheduler == nil {
+		return
+	}
+	if reserved {
+		p.scheduler.ReleaseChannelReservation(p.kind, p.index)
+	}
+	if probe {
+		p.scheduler.RecordCircuitNeutralGeneration(p.kind, p.index, p.generation)
+	}
+}
+
+// ReleaseReservation 仅释放 in-flight 预留（幂等），不影响探测名额——
+// 渠道失败继续 failover 时调用：预留立即归还，探测名额留给本次请求的
+// 健康记账。
+func (p *ChannelPermit) ReleaseReservation() {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	reserved := p.reserved
+	p.reserved = false
+	p.mu.Unlock()
+
+	if reserved && p.scheduler != nil {
+		p.scheduler.ReleaseChannelReservation(p.kind, p.index)
+	}
+}
+
+func (p *ChannelPermit) isReserved() bool {
+	if p == nil {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.reserved
+}
+
+func (p *ChannelPermit) isProbe() bool {
+	if p == nil {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.probe
+}
+
+// setProbe 记录取得的探测名额及其状态代次。
+func (p *ChannelPermit) setProbe(generation uint64) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.probe = true
+	p.generation = generation
+}
+
+type circuitOutcome uint8
+
+const (
+	circuitOutcomeSuccess circuitOutcome = iota
+	circuitOutcomeFailure
+	circuitOutcomeNeutral
+)
+
+// recordCircuitResult 按代次记账的统一出口（scheduler 侧）。
+func (s *ChannelScheduler) recordCircuitResult(kind ChannelKind, channelIndex int, generation uint64, probe bool, outcome circuitOutcome) {
+	manager := s.CircuitManager()
+	if manager == nil {
+		return
+	}
+	switch outcome {
+	case circuitOutcomeSuccess:
+		manager.RecordSuccessGeneration(string(kind), channelIndex, generation)
+	case circuitOutcomeFailure:
+		manager.RecordFailureGeneration(string(kind), channelIndex, generation)
+	default:
+		manager.RecordNeutralGeneration(string(kind), channelIndex, generation)
+	}
+}
+
+// errCandidateUnavailable 表示选中的候选在正式准入（CircuitAllow）阶段
+// 被拒绝：调用方应归还本次在途预留后有界地继续选择，不得发送上游请求。
+var errCandidateUnavailable = fmt.Errorf("选中的渠道在正式准入阶段被拒绝")
+
+// IsCandidateUnavailable 判断错误是否为"候选在正式准入阶段被拒绝"。
+func IsCandidateUnavailable(err error) bool {
+	return err == errCandidateUnavailable
 }
 
 // reserveAndReturn 原子预留选中渠道的在途计数，避免并发选渠时都看到相同负载。
 // 选中渠道若处于熔断半开状态，同时以 CircuitAllow 正式占用探测名额并记录
-// Probe 标记（候选过滤阶段只做了 Peek 预判，未占位）。
-func (s *ChannelScheduler) reserveAndReturn(result *SelectionResult, kind ChannelKind) *SelectionResult {
+// 在许可句柄上（候选过滤阶段只做了 Peek 预判，未占位）。
+// 正式准入被拒绝时：立即归还本次在途预留，返回 errCandidateUnavailable，
+// 由 SelectChannel 有界重选——不发送未获准的请求（R2-b）。
+func (s *ChannelScheduler) reserveAndReturn(result *SelectionResult, kind ChannelKind) (*SelectionResult, error) {
 	if result == nil {
-		return nil
+		return nil, nil
 	}
 	result.Kind = kind
 	if s == nil {
-		return result
+		return result, nil
 	}
 	s.ReserveChannel(kind, result.ChannelIndex)
-	result.Reserved = true
-	if result.Probe {
+	permit := &ChannelPermit{
+		scheduler: s,
+		kind:      kind,
+		index:     result.ChannelIndex,
+		reserved:  true,
+	}
+	result.Permit = permit
+
+	if result.permitNeedsProbe() {
 		// 候选过滤（allowByCircuitPeek）时已确认会放行；这里正式占位。
-		// 并发窗口内名额被抢的极端情况下 Allow 可能返回 false，此时
-		// 清掉 Probe 标记、交由调用方按"渠道不可用"处理。
+		// 并发窗口内名额被抢时 Allow 返回 false：立即归还本次在途预留，
+		// 返回明确的候选不可用错误，由选渠逻辑有界地继续选择；
+		// 不能清掉 Probe 标记后继续发送。
 		channelName := ""
 		if result.Upstream != nil {
 			channelName = result.Upstream.Name
 		}
 		if allow := s.CircuitAllow(kind, result.ChannelIndex, channelName); allow.Allowed {
-			result.Probe = allow.Probe
+			permit.setProbe(allow.Generation)
 		} else {
-			result.Probe = false
+			permit.Release()
+			result.Permit = nil
+			return nil, errCandidateUnavailable
 		}
 	}
-	return result
+	return result, nil
 }
 
 // ReserveChannel 增加渠道在途预留（选渠后、请求结束前）
@@ -176,7 +382,11 @@ func (s *ChannelScheduler) SelectChannel(
 	if selected, hasOverride, err := s.selectConversationRouteOverride(conversationID, kind, routedChannels, failedChannels, registry); err != nil {
 		return nil, err
 	} else if hasOverride {
-		return s.reserveAndReturn(selected, kind), nil
+		result, err := s.reserveAndReturn(selected, kind)
+		if err != nil {
+			return nil, err
+		}
+		return result, nil
 	}
 
 	if len(activeChannels) == 0 {
@@ -186,7 +396,15 @@ func (s *ChannelScheduler) SelectChannel(
 	// 严格按配置优先级选择第一个可用渠道。failedChannels 只记录本次请求已经
 	// 失败的渠道，因此外层 failover 会自然推进到下一个渠道。
 	if selected := s.selectPriorityChannel(activeChannels, failedChannels, kind, requestedModel, s.getMetricsManager(kind)); selected != nil {
-		return s.reserveAndReturn(selected, kind), nil
+		result, err := s.reserveAndReturn(selected, kind)
+		if err != nil {
+			if IsCandidateUnavailable(err) {
+				failedChannels[selected.ChannelIndex] = true
+				return s.SelectChannel(ctx, conversationID, failedChannels, kind, requestedModel)
+			}
+			return nil, err
+		}
+		return result, nil
 	}
 
 	// 当前分组没有健康渠道时，保留最后的探测候选，让熔断恢复探测和历史配置
@@ -195,7 +413,15 @@ func (s *ChannelScheduler) SelectChannel(
 	if err != nil {
 		return nil, err
 	}
-	return s.reserveAndReturn(fallback, kind), nil
+	result, err := s.reserveAndReturn(fallback, kind)
+	if err != nil {
+		if IsCandidateUnavailable(err) {
+			failedChannels[fallback.ChannelIndex] = true
+			return s.SelectChannel(ctx, conversationID, failedChannels, kind, requestedModel)
+		}
+		return nil, err
+	}
+	return result, nil
 }
 
 func (s *ChannelScheduler) selectConversationRouteOverride(
@@ -255,187 +481,6 @@ func noActiveChannelError(kind ChannelKind) error {
 	default:
 		return fmt.Errorf("不支持的渠道类型: %s", kind)
 	}
-}
-
-// selectConversationAffinity 对话级敏感：若对话已有"最近成功/尝试"命中的渠道，
-// 且该渠道在本次分组中仍可用、健康且在途负载未过载，则沿用（保证同一对话不来回乱切）。
-// 一旦渠道过载 / 不健康 / 已失败 / 不可用，便放行给后续负载均衡处理。
-func (s *ChannelScheduler) selectConversationAffinity(
-	activeChannels []ChannelInfo,
-	failedChannels map[int]bool,
-	kind ChannelKind,
-	conversationID string,
-	metricsManager *metrics.MetricsManager,
-) *SelectionResult {
-	if conversationID == "" {
-		return nil
-	}
-	last, ok := s.GetConversationLastResolved(conversationID)
-	if !ok || last == nil || last.Kind != string(kind) {
-		return nil
-	}
-	preferredIdx := last.ChannelIndex
-
-	for _, ch := range activeChannels {
-		if ch.Index != preferredIdx || failedChannels[preferredIdx] {
-			continue
-		}
-		if ch.Status != "active" {
-			prefix := kindSchedulerLogPrefix(kind)
-			log.Printf("[%s-ConvAffinity] 跳过对话亲和渠道 [%d] %s: 状态为 %s (conversation: %s)", prefix, preferredIdx, ch.Name, ch.Status, maskConversationID(conversationID))
-			return nil
-		}
-		upstream := s.getUpstreamByIndex(preferredIdx, kind)
-		if upstream == nil || len(upstream.APIKeys) == 0 {
-			prefix := kindSchedulerLogPrefix(kind)
-			log.Printf("[%s-ConvAffinity] 跳过对话亲和渠道 [%d]: 无可用密钥 (conversation: %s)", prefix, preferredIdx, maskConversationID(conversationID))
-			return nil
-		}
-		if !metricsManager.IsChannelHealthyWithKeys(upstream.BaseURL, upstream.APIKeys, preferredIdx) {
-			prefix := kindSchedulerLogPrefix(kind)
-			log.Printf("[%s-ConvAffinity] 跳过对话亲和渠道 [%d] %s: 不健康 (conversation: %s)", prefix, preferredIdx, ch.Name, maskConversationID(conversationID))
-			return nil
-		}
-		// 负载未过载才粘滞；过载时放行给负载均衡，避免单渠道被多对话打满。
-		if !s.channelWithinAffinityLoad(kind, preferredIdx, upstream) {
-			prefix := kindSchedulerLogPrefix(kind)
-			log.Printf("[%s-ConvAffinity] 对话亲和渠道 [%d] %s 负载过载，放行给负载均衡 (inFlight: %d, conversation: %s)",
-				prefix, preferredIdx, ch.Name, s.GetChannelInFlight(kind, preferredIdx), maskConversationID(conversationID))
-			return nil
-		}
-		prefix := kindSchedulerLogPrefix(kind)
-		log.Printf("[%s-ConvAffinity] 使用对话亲和渠道: [%d] %s (conversation: %s)", prefix, preferredIdx, ch.Name, maskConversationID(conversationID))
-		return &SelectionResult{
-			Upstream:     upstream,
-			ChannelIndex: preferredIdx,
-			Reason:       "conversation_affinity",
-		}
-	}
-	return nil
-}
-
-// channelWithinAffinityLoad 判定某渠道是否仍在上限内，允许对话亲和沿用。
-// 结合真实 ActiveRequests（性能画像）与选渠预留 in-flight，避免"空转排队"也不换渠道。
-func (s *ChannelScheduler) channelWithinAffinityLoad(
-	kind ChannelKind,
-	channelIndex int,
-	upstream *config.UpstreamConfig,
-) bool {
-	baseURLs := upstream.GetAllBaseURLs()
-	inflight := s.GetChannelInFlight(kind, channelIndex)
-
-	// profileManager 提供真实并发余量感知；其 ActiveRequests 按 baseURL+model 聚合，
-	// 这里用聚合快照(全 model)近似。没有画像时退化为仅看选渠预留。
-	if s.profileManager != nil {
-		agg := s.profileManager.GetAggregateProfileSnapshot(baseURLs, upstream.APIKeys, "", channelIndex)
-		if agg.ActiveRequests+inflight >= int64(affinityLoadThreshold) {
-			return false
-		}
-	} else if inflight >= int64(affinityLoadThreshold) {
-		return false
-	}
-	return true
-}
-
-// affinityLoadThreshold 对话亲和过载阈值：在途(预留+真实)达到该值即放行给负载均衡。
-const affinityLoadThreshold = 3
-
-func (s *ChannelScheduler) selectTraceAffinity(
-	activeChannels []ChannelInfo,
-	failedChannels map[int]bool,
-	kind ChannelKind,
-	conversationID string,
-	metricsManager *metrics.MetricsManager,
-) *SelectionResult {
-	if conversationID == "" || s.traceAffinity == nil {
-		return nil
-	}
-	preferredIdx, ok := s.traceAffinity.GetPreferredChannelForKind(string(kind), conversationID)
-	if !ok {
-		return nil
-	}
-
-	foundPreferredChannel := false
-	affinityInvalidated := false
-	for _, ch := range activeChannels {
-		if ch.Index != preferredIdx || failedChannels[preferredIdx] {
-			continue
-		}
-		foundPreferredChannel = true
-		if ch.Status != "active" {
-			prefix := kindSchedulerLogPrefix(kind)
-			log.Printf("[%s-Affinity] 跳过亲和渠道 [%d] %s: 状态为 %s (conversation: %s)", prefix, preferredIdx, ch.Name, ch.Status, maskConversationID(conversationID))
-			affinityInvalidated = true
-			continue
-		}
-		upstream := s.getUpstreamByIndex(preferredIdx, kind)
-		if upstream == nil || len(upstream.APIKeys) == 0 {
-			prefix := kindSchedulerLogPrefix(kind)
-			log.Printf("[%s-Affinity] 跳过亲和渠道 [%d]: 无可用密钥 (conversation: %s)", prefix, preferredIdx, maskConversationID(conversationID))
-			affinityInvalidated = true
-			continue
-		}
-		if !metricsManager.IsChannelHealthyWithKeys(upstream.BaseURL, upstream.APIKeys, preferredIdx) {
-			failureRate := metricsManager.CalculateChannelFailureRate(upstream.BaseURL, upstream.APIKeys, preferredIdx)
-			prefix := kindSchedulerLogPrefix(kind)
-			log.Printf("[%s-Affinity] 跳过亲和渠道 [%d] %s: 不健康 (失败率: %.1f%%, conversation: %s)", prefix, preferredIdx, ch.Name, failureRate*100, maskConversationID(conversationID))
-			affinityInvalidated = true
-			continue
-		}
-		prefix := kindSchedulerLogPrefix(kind)
-		log.Printf("[%s-Affinity] 使用 Trace 亲和渠道: [%d] %s (conversation: %s)", prefix, preferredIdx, ch.Name, maskConversationID(conversationID))
-		return &SelectionResult{
-			Upstream:     upstream,
-			ChannelIndex: preferredIdx,
-			Reason:       "trace_affinity",
-		}
-	}
-
-	if !foundPreferredChannel || affinityInvalidated {
-		s.traceAffinity.RemoveForKind(string(kind), conversationID)
-		prefix := kindSchedulerLogPrefix(kind)
-		if affinityInvalidated {
-			log.Printf("[%s-Affinity] 清除失效的 Trace 亲和性: conversation=%s, channel=%d (渠道不健康或状态异常)", prefix, maskConversationID(conversationID), preferredIdx)
-		} else {
-			log.Printf("[%s-Affinity] 清除失效的 Trace 亲和性: conversation=%s, channel=%d (渠道不存在)", prefix, maskConversationID(conversationID), preferredIdx)
-		}
-	}
-	return nil
-}
-
-func (s *ChannelScheduler) selectAdaptiveChannel(
-	activeChannels []ChannelInfo,
-	failedChannels map[int]bool,
-	kind ChannelKind,
-	requestedModel string,
-	conversationID string,
-	metricsManager *metrics.MetricsManager,
-) *SelectionResult {
-	s.mu.RLock()
-	adaptiveScheduler := s.adaptiveScheduler
-	s.mu.RUnlock()
-	if adaptiveScheduler == nil {
-		return nil
-	}
-
-	result := adaptiveScheduler.SelectBestChannel(
-		activeChannels,
-		failedChannels,
-		kind,
-		requestedModel,
-		conversationID,
-		metricsManager.IsChannelHealthyMultiURL,
-		s.getUpstreamByIndex,
-		func(channelIndex int) int64 {
-			return s.GetChannelInFlight(kind, channelIndex)
-		},
-	)
-	if result != nil {
-		return result
-	}
-	prefix := kindSchedulerLogPrefix(kind)
-	log.Printf("[%s-Adaptive] 自适应调度未找到可用渠道，降级到优先级调度", prefix)
-	return nil
 }
 
 func (s *ChannelScheduler) selectPriorityChannel(
@@ -511,7 +556,7 @@ func (s *ChannelScheduler) selectPriorityChannel(
 		Reason:       "priority_order",
 		// Peek 预检通过不代表已占位；标记待 reserveAndReturn 以 CircuitAllow
 		// 正式占用（可能取得 HalfOpen 探测名额）。
-		Probe: true,
+		probeIntent: true,
 	}
 }
 
@@ -598,7 +643,39 @@ func (s *ChannelScheduler) AllowChannelByCircuit(kind ChannelKind, channelIndex 
 	return false
 }
 
+// NewCircuitProbePermit 为不经选渠编排的直查路径（如 llmgate 按 ID 选渠）
+// 构造只持有半开探测名额的许可句柄。调用方负责在调用结束/探测结束时
+// RecordHealth + Release。
+func (s *ChannelScheduler) NewCircuitProbePermit(kind ChannelKind, channelIndex int, generation uint64) *ChannelPermit {
+	return &ChannelPermit{
+		scheduler:  s,
+		kind:       kind,
+		index:      channelIndex,
+		generation: generation,
+		probe:      true,
+	}
+}
+
+// NewReservationPermit 为已手动 ReserveChannel 的路径（如 visionlayer
+// 列表候选）构造只持有 in-flight 预留的许可句柄，统一释放出口。
+func (s *ChannelScheduler) NewReservationPermit(kind ChannelKind, channelIndex int) *ChannelPermit {
+	return &ChannelPermit{
+		scheduler: s,
+		kind:      kind,
+		index:     channelIndex,
+		reserved:  true,
+	}
+}
+
+// RecordCircuitNeutralGeneration 带状态代次的中性记账（许可句柄释放用）。
+func (s *ChannelScheduler) RecordCircuitNeutralGeneration(kind ChannelKind, channelIndex int, generation uint64) {
+	if manager := s.CircuitManager(); manager != nil {
+		manager.RecordNeutralGeneration(string(kind), channelIndex, generation)
+	}
+}
+
 // RecordCircuitSuccess / RecordCircuitFailure / RecordCircuitNeutral 渠道级熔断记账。
+
 // 与 Key 级 Record* 正交：这里的粒度是 (kind, channelIndex) 整个渠道。
 // Neutral 用于客户端取消、内容审核拦截等"结果不应计入渠道健康度"的场景。
 func (s *ChannelScheduler) RecordCircuitSuccess(kind ChannelKind, channelIndex int) {
@@ -654,78 +731,6 @@ func (s *ChannelScheduler) ResetCircuitBreaker(kind string, channelIndex int) bo
 	return manager.Reset(kind, channelIndex)
 }
 
-func (s *ChannelScheduler) selectPromotedChannel(
-	activeChannels []ChannelInfo,
-	failedChannels map[int]bool,
-	kind ChannelKind,
-	reason string,
-) *SelectionResult {
-	promotedChannels := s.findPromotedChannels(activeChannels, kind)
-	var promotedCandidates []ChannelInfo
-	for _, promotedCh := range promotedChannels {
-		if failedChannels[promotedCh.Index] {
-			prefix := kindSchedulerLogPrefix(kind)
-			log.Printf("[%s-Promotion] 警告: 促销渠道 [%d] %s 已在本次请求中失败，跳过", prefix, promotedCh.Index, promotedCh.Name)
-			continue
-		}
-		upstream := s.getUpstreamByIndex(promotedCh.Index, kind)
-		if upstream == nil || len(upstream.APIKeys) == 0 {
-			prefix := kindSchedulerLogPrefix(kind)
-			log.Printf("[%s-Promotion] 警告: 促销渠道 [%d] %s 无可用密钥，跳过", prefix, promotedCh.Index, promotedCh.Name)
-			continue
-		}
-		promotedCandidates = append(promotedCandidates, promotedCh)
-	}
-	if len(promotedCandidates) > 0 {
-		selected := s.pickLeastLoadedChannel(promotedCandidates, kind)
-		upstream := s.getUpstreamByIndex(selected.Index, kind)
-		metricsManager := s.getMetricsManager(kind)
-		failureRate := metricsManager.CalculateChannelFailureRate(upstream.BaseURL, upstream.APIKeys, selected.Index)
-		prefix := kindSchedulerLogPrefix(kind)
-		log.Printf("[%s-Promotion] 促销期优先选择渠道: [%d] %s (失败率: %.1f%%, inFlight: %d, candidates: %d)",
-			prefix, selected.Index, upstream.Name, failureRate*100, s.GetChannelInFlight(kind, selected.Index), len(promotedCandidates))
-		return &SelectionResult{
-			Upstream:     upstream,
-			ChannelIndex: selected.Index,
-			Reason:       reason,
-		}
-	}
-	return nil
-}
-
-// pickLeastLoadedChannel 在候选渠道中选择 in-flight 最低者（用于促销等多候选场景）
-func (s *ChannelScheduler) pickLeastLoadedChannel(candidates []ChannelInfo, kind ChannelKind) *ChannelInfo {
-	if len(candidates) == 0 {
-		return nil
-	}
-	bestIdx := 0
-	bestLoad := s.GetChannelInFlight(kind, candidates[0].Index)
-	for i := 1; i < len(candidates); i++ {
-		load := s.GetChannelInFlight(kind, candidates[i].Index)
-		if load < bestLoad || (load == bestLoad && candidates[i].Index < candidates[bestIdx].Index) {
-			bestIdx = i
-			bestLoad = load
-		}
-	}
-	return &candidates[bestIdx]
-}
-
-// findPromotedChannels 查找所有处于促销期的渠道（按优先级排序）
-func (s *ChannelScheduler) findPromotedChannels(activeChannels []ChannelInfo, kind ChannelKind) []ChannelInfo {
-	var promoted []ChannelInfo
-	for i := range activeChannels {
-		ch := &activeChannels[i]
-		if ch.Status != "active" {
-			continue
-		}
-		upstream := s.getUpstreamByIndex(ch.Index, kind)
-		if upstream != nil && config.IsChannelInPromotion(upstream) {
-			promoted = append(promoted, *ch)
-		}
-	}
-	return promoted
-}
-
 // selectFallbackChannel 在正常候选都被健康检查过滤后，按配置顺序选择首个
 // 可探测渠道。这里不能再按失败率或负载择优，否则会绕过用户指定的故障转移顺序。
 // 熔断预检用 Peek（不占探测名额），选中后由 reserveAndReturn 正式占位。
@@ -758,7 +763,7 @@ func (s *ChannelScheduler) selectFallbackChannel(
 			Upstream:     upstream,
 			ChannelIndex: ch.Index,
 			Reason:       "fallback",
-			Probe:        true,
+			probeIntent:  true,
 		}, nil
 	}
 

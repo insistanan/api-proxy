@@ -3,7 +3,6 @@ package proxycore
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -13,53 +12,23 @@ import (
 	"github.com/BenedictKing/api-proxy/internal/config"
 	"github.com/BenedictKing/api-proxy/internal/httpclient"
 	"github.com/BenedictKing/api-proxy/internal/logger"
+	"github.com/BenedictKing/api-proxy/internal/scheduler"
 	"github.com/BenedictKing/api-proxy/internal/utils"
 )
 
 // ShouldForceIdentityEncoding 判定是否应强制上游使用 identity 编码（禁止压缩）。
-// 对流式响应（SSE）、流式端点（如 Gemini streamGenerateContent / alt=sse）或指定 text/event-stream 的请求，
-// 必须强制 identity，防止上游压缩 SSE 流导致分块按行解析失败。
+// 判据唯一出处已收敛到 internal/httpclient（R4-a），此处保留导出供既有调用方使用。
 func ShouldForceIdentityEncoding(req *http.Request, isStream bool) bool {
-	if isStream {
-		return true
-	}
-	if req == nil || req.URL == nil {
-		return false
-	}
-	if strings.Contains(req.URL.Path, "streamGenerateContent") || strings.Contains(req.URL.RawQuery, "alt=sse") {
-		return true
-	}
-	acceptHeader := strings.ToLower(req.Header.Get("Accept"))
-	return strings.Contains(acceptHeader, "text/event-stream")
+	return httpclient.ShouldForceIdentityEncoding(req, isStream)
 }
 
-// SendRequest 发送 HTTP 请求到上游
+// SendRequest 发送 HTTP 请求到上游（R4-a：网络传输委托 internal/httpclient.Send，
+// 本函数只保留业务日志与流量记录职责）。
 // isStream: 是否为流式请求（流式请求使用无超时客户端）
 // apiType: 接口类型（Messages/Responses/Gemini），用于日志标签前缀
-func SendRequest(req *http.Request, upstream *config.UpstreamConfig, envCfg *config.EnvConfig, isStream bool, apiType string, proxyURL string) (*http.Response, error) {
-	clientManager := httpclient.GetManager()
-
-	var client *http.Client
-	var err error
-	if isStream {
-		client, err = clientManager.GetStreamClient(upstream.InsecureSkipVerify, proxyURL)
-	} else {
-		timeout := time.Duration(envCfg.RequestTimeout) * time.Millisecond
-		client, err = clientManager.GetStandardClient(timeout, upstream.InsecureSkipVerify, proxyURL)
-	}
-
-	// 流式请求或 SSE 端点强制设置 Accept-Encoding: identity，防止上游压缩 SSE 流
-	// 普通非流式请求保持清空，由 Go Transport 自动添加 gzip 并处理
-	if ShouldForceIdentityEncoding(req, isStream) {
-		req.Header.Set("Accept-Encoding", "identity")
-	}
-	if err != nil {
-		if req.Body != nil {
-			_ = req.Body.Close()
-		}
-		return nil, fmt.Errorf("创建上游 HTTP 客户端失败: %w", err)
-	}
-
+// permit: 可选的选渠许可句柄（R2-b）。仅在"客户端创建失败、请求从未发出"
+// 这类本地错误时由本函数中性归还；请求已发出的健康结果由调用方收尾。
+func SendRequest(req *http.Request, upstream *config.UpstreamConfig, envCfg *config.EnvConfig, isStream bool, apiType string, proxyURL string, permit *scheduler.ChannelPermit) (*http.Response, error) {
 	if upstream.InsecureSkipVerify && envCfg.EnableRequestLogs {
 		log.Printf("[%s-Request-TLS] 警告: 正在跳过对 %s 的TLS证书验证", apiType, req.URL.String())
 	}
@@ -70,16 +39,24 @@ func SendRequest(req *http.Request, upstream *config.UpstreamConfig, envCfg *con
 		logRequestDetails(req, envCfg, apiType)
 	}
 
-	resp, err := client.Do(req)
+	resp, err := httpclient.Send(req, httpclient.SendOptions{
+		IsStream:           isStream,
+		Timeout:            time.Duration(envCfg.RequestTimeout) * time.Millisecond,
+		ProxyURL:           proxyURL,
+		InsecureSkipVerify: upstream.InsecureSkipVerify,
+		StreamIdleTimeout:  time.Duration(envCfg.StreamIdleTimeout) * time.Second,
+		StreamLabel:        apiType,
+	})
 	if err != nil {
+		// 客户端创建失败（请求从未发出）：探测名额按中性归还，
+		// 不构成渠道故障证据；网络发送失败（请求已发出）由调用方收尾。
+		if strings.Contains(err.Error(), "创建上游 HTTP 客户端失败") && permit != nil {
+			permit.RecordHealthNeutral()
+			permit.Release()
+		}
 		return nil, err
 	}
 
-	// 流式响应：包装 body 为带空闲超时的 reader，检测"TCP 通但流中挂起"的上游。
-	// 空闲超时默认保守（5 分钟），避免误杀思考模型的长静默期。
-	if isStream && resp != nil && resp.Body != nil {
-		resp.Body = httpclient.NewIdleTimeoutReader(resp.Body, time.Duration(envCfg.StreamIdleTimeout)*time.Second, apiType)
-	}
 	if envCfg.EnableResponseLogs && resp != nil && resp.Body != nil {
 		requestID := logger.RequestIDFromContext(req.Context())
 		if requestID == "" {

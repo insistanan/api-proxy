@@ -4,53 +4,19 @@
 package proxycore
 
 import (
-	"context"
 	"net/http"
 
 	"github.com/BenedictKing/api-proxy/internal/config"
+	"github.com/BenedictKing/api-proxy/internal/proxy"
 	"github.com/BenedictKing/api-proxy/internal/types"
 )
 
-// candidateRetryState 收拢单个 BaseURL 生命周期内的 Key 失败和同候选重试状态。
-// 每进入一个 BaseURL 都必须创建新的实例，避免候选状态跨 BaseURL 泄漏。
-type candidateRetryState struct {
-	failedKeys              map[string]bool
-	sameCandidateRetries    map[string]int
-	maxSameCandidateRetries int
-	maxRetries              int
-}
+// candidateRetryState 委托 internal/proxy（R4-b：与 HTTP 框架无关的候选
+// 重试状态提取到独立包，proxycore 只保留薄别名供既有调用方使用）。
+type candidateRetryState = proxy.CandidateRetryState
 
-func newCandidateRetryState(apiKeyCount int) candidateRetryState {
-	const maxSameCandidateRetries = 1
-
-	return candidateRetryState{
-		failedKeys:              make(map[string]bool),
-		sameCandidateRetries:    make(map[string]int),
-		maxSameCandidateRetries: maxSameCandidateRetries,
-		maxRetries:              apiKeyCount * (maxSameCandidateRetries + 1),
-	}
-}
-
-func (s *candidateRetryState) markKeyFailed(apiKey string) {
-	if s == nil {
-		return
-	}
-	s.failedKeys[apiKey] = true
-}
-
-func (s *candidateRetryState) canRetryCandidate(candidate string, ctx context.Context) bool {
-	if s == nil || s.sameCandidateRetries[candidate] >= s.maxSameCandidateRetries {
-		return false
-	}
-	return ctx != nil && ctx.Err() == nil
-}
-
-func (s *candidateRetryState) recordCandidateRetry(candidate string) int {
-	if s == nil {
-		return 0
-	}
-	s.sameCandidateRetries[candidate]++
-	return s.sameCandidateRetries[candidate]
+func newCandidateRetryState(apiKeyCount int) *candidateRetryState {
+	return proxy.NewCandidateRetryState(apiKeyCount)
 }
 
 type compatibilityRetryResult struct {
@@ -87,12 +53,22 @@ type upstreamFailoverState struct {
 	lastError              error
 	lastFailoverError      *FailoverError
 	deprioritizeCandidates map[string]bool
+	// neutralTermination 标记本渠道最终结束原因为中性（容量耗尽、审核
+	// 兼容重试失败等）：后续 Key 失败不能把它改回"真实渠道故障"（R2-a：
+	// 最终取消或中性结束不能因为曾出现一次失败而重新算成渠道故障）。
+	neutralTermination bool
 }
 
 func newUpstreamFailoverState() upstreamFailoverState {
 	return upstreamFailoverState{
 		deprioritizeCandidates: make(map[string]bool),
 	}
+}
+
+// markNeutralTermination 记录一次明确的中性结束原因。
+// 已标记为中性后不再被普通 Key 失败覆盖。
+func (s *upstreamFailoverState) markNeutralTermination() {
+	s.neutralTermination = true
 }
 
 func newUpstreamCapabilityState(upstream *config.UpstreamConfig) upstreamCapabilityState {
