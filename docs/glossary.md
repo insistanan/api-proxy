@@ -16,11 +16,11 @@
 | **故障转移（Failover）** | key / URL / 渠道失败后按显式顺序切换到下一候选。分三层：模型映射目标、单渠道内 Key/BaseURL、跨渠道；渠道与目标模型均先尝试列表第一项，失败后才推进。 | `internal/handlers/proxycore/upstream_failover.go`（模型映射层）、`upstream_attempt_keys.go`（Key/BaseURL 层）、`multi_channel_failover.go`（跨渠道） |
 | **Fuzzy 模式** | 对所有非 2xx 错误都触发 failover 的宽松错误处理模式。 | `config.GetFuzzyModeEnabled` |
 | **Trace 亲和性** | 同一用户/会话绑定同一渠道，保证多轮对话上下文连贯。实现按 `userID + kind` 绑定 `channelIndex`。在选渠顺序中作为**兜底**（新对话尚无对话级亲和时沿用）；对话多轮续接优先走对话级亲和。 | `internal/session/trace_affinity.go` |
-| **对话级亲和（Conversation Affinity）** | 同一**对话**复用最近一次成功命中的渠道（`Record.LastResolved`），保证多轮会话不来回乱切。粘滞带负载感知：渠道健康且 in-flight ≤ `affinityLoadThreshold`(=3) 才沿用，过载/不健康/失败则放行给负载均衡。优先级高于用户级 Trace 亲和。 | `internal/scheduler/selection.go`（`selectConversationAffinity`） |
+| **对话级亲和（Conversation Affinity）** | 同一**对话**复用最近一次成功命中的渠道（`Record.LastResolved`），保证多轮会话不来回乱切。由会话记录维护粘滞，配合对话路由覆盖展示；不再有独立的选渠函数参与生产顺序（R6 退役）。 | `internal/scheduler/conversation.go` |
 | **对话稳定散列（Conversation Hash Spreading）** | 同优先级/评分接近的候选渠道间，按 conversationID 的 FNV-1a 散列做确定性偏移选渠，让不同对话**固定**摊到不同供应商，而非都选当前负载最低——兼顾"分布"与"不来回切"。评分显著更高的渠道仍优先，不被散列掩盖性能。 | `internal/scheduler/adaptive_scheduler.go`（`stableHashOffset` + `selectFromGroup`） |
-| **促销渠道（Promotion）** | 促销期内优先调度的渠道，带调用次数配额，用完自动失效。判定顺序先于 Trace 亲和（完整调度顺序见 `docs/flows.md` F1）。 | `internal/scheduler` |
+| **促销渠道（Promotion）** | 促销期标记与调用次数配额（用完自动失效）保留在渠道配置与会话粘滞中；促销**不再改写生产选渠顺序**（R6 退役了脱节的促销选渠函数，按方案以配置顺序契约为准）。 | `internal/scheduler` |
 | **渠道池（Channel Pool）** | 渠道的逻辑分组，支持按池调度与拖拽排序布局。 | `internal/config`、`main.go` |
-| **性能画像 / 自适应调度** | 按 baseURL+模型统计性能表现，负载均衡时取向性能最优渠道。画像为进程内存，重启丢失。 | `internal/metrics/performance_profile.go`、`internal/scheduler/adaptive_scheduler.go` |
+| **性能画像 / 渠道性能报告** | 按 baseURL+模型统计性能表现，供 `/api/performance/report` 观测展示；**不参与生产选渠**（生产选渠严格按配置顺序，R6 退役了脱节的 adaptive 选渠函数）。画像为进程内存，重启丢失。 | `internal/metrics/performance_profile.go`、`internal/scheduler/adaptive_scheduler.go` |
 | **对话路由覆盖（Route Override）** | 对指定对话强制绑定渠道的覆盖规则，调度时优先级最高，冲突时返回 409 拒绝。 | `internal/conversation`、`scheduler.ValidateFixedChannel` |
 | **内容安全管道** | pre-request / post-response / stream 钩子管线，内置敏感词、凭据、危险命令检测，拦截写 blocked_store。注入 messages / responses / chat / gemini / images 五协议 handler；images 只接 pre-request（含 multipart 表单分支），响应侧是图片不扫描。pre-request 在 vision 前后各跑一次。 | `internal/handlers/hooks/hook_pipeline.go`、`internal/sensitive` |
 | **请求级脱敏映射仓（Vault）** | `sensitiveData.mode=mask` 时保存单次请求内的“稳定语义占位符 → 原文”映射，覆盖同请求的重试、渠道故障转移、非流式响应与 SSE；占位符标识在进程内对同一原文稳定，以保持上游提示词缓存，明文映射请求统一退出时显式清理，不持久化、不跨请求还原。 | `internal/sensitive/vault.go`、`internal/handlers/hooks` |

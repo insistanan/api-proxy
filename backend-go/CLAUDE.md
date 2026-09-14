@@ -19,7 +19,7 @@ make fmt          # 格式化代码
 
 - **新增上游服务**：在 `internal/providers/` 实现 `Provider` 接口（签名以 `provider.go` 为准），并在 `GetProvider()` 按 ServiceType 注册。messages 与 visionlayer 共用该注册表。
 - **新增协议 / 渠道能力**：五协议渠道路由经 `handlers.RegisterChannelRoutes` + `ProtocolSpec` 声明式注册；渠道 CRUD/key/Ping 一律复用 `core/channelcrud`，禁止另写。
-- **调度策略**：优先级顺序（Trace 亲和 > 促销 > 优先级，过滤熔断）在 `internal/scheduler/channel_scheduler.go` 的 `SelectChannel`；改调度前先读 `../docs/flows.md`。
+- **调度策略**：配置顺序（对话路由覆盖 > 命中分组内配置顺序 > 兜底分组，过滤熔断），渠道级熔断经许可句柄（`SelectionResult.Permit`，R2-b）取得与释放；实现在 `internal/scheduler/selection.go` 的 `SelectChannel`。改调度前先读 `../docs/flows.md`。
 - **内容安全**：钩子管线在 `internal/handlers/hooks/`，检测实现在 `internal/sensitive`；main.go 组建管线注入各协议。
 - **视觉分流**：`internal/visionlayer`，在请求发送上游前自动执行（见 `../docs/flows.md` F2），勿绕过。
 
