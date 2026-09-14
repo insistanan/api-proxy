@@ -1,76 +1,77 @@
-# Claude / Codex / Gemini API Proxy
+# api-proxy
 
-[![GitHub release](https://img.shields.io/github/v/release/insistanan/api-proxy)](https://github.com/insistanan/api-proxy/releases/latest)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+**自托管 LLM API 代理网关** —— 多渠道池化调度、五协议统一入口互转、内容安全防护、Web 管理界面，单二进制一体化部署。
 
-一个高性能的多上游 AI 代理服务器：五协议统一入口（Messages / Responses / Gemini / Chat / Images），多渠道智能调度与故障转移，Web 管理面板单二进制部署。
+[English](README-en.md) | 当前版本：v3.3.0（见 [VERSION](VERSION)）
 
-## 🚀 功能特性
+## 功能特性
 
-- **🖥️ 一体化架构**: 后端（Go/Gin）集成前端（Vue 3 + Vuetify），单二进制/单容器部署
-- **五协议入口**: Claude Messages API (`/v1/messages`)、Responses API (`/v1/responses`)、Chat Completions (`/v1/chat/completions`)、Images (`/v1/images/*`)、模型列表 (`/v1beta/models/*`)
-- **🔌 协议转换**: 统一接入 Claude / OpenAI / Gemini 等多上游，Messages 支持协议自动转换
-- **🔐 统一认证**: 一个 `PROXY_ACCESS_KEY` 保护前端界面、管理 API、代理 API
-- **📊 智能调度**: 优先级排序、健康检查、滑动窗口自动熔断（失败率超阈值挂起 15 分钟自动恢复）、Trace 亲和（同用户绑同渠道）、促销渠道、对话路由覆盖
-- **🔄 故障转移**: 渠道 / key / 多 BaseURL 三级 failover，key 失败降级轮换
-- **🖼️ 图片理解**: 图片请求自动转分析描述文本（视觉分流 + 两级缓存 + 并发去重）
-- **🧠 内容安全**: 敏感词 / 凭据 / 危险命令检测管线，拦截记录可查
-- **💬 会话管理**: Responses 多轮会话（previous_response_id 链），SQLite 持久化
-- **🛠️ 工具调用**: 支持工具调用与流式/非流式响应
-- **🧾 缓存统计**: 按 Token 口径展示缓存读/写与命中率
-- **📱 Web 管理面板**: 渠道管理、实时监控、对话/日志/拦截记录、Skills、客户端配置（DSH / OpenCode / Claude Code / PiAgent）、Settings
+- **五协议统一入口**：Claude Messages、OpenAI Responses、OpenAI Chat、Gemini、Images 五种协议互转，客户端用任意协议接入，上游渠道任意搭配
+- **多渠道池化调度**：故障转移、渠道级三态熔断、滑动窗口限流与 429 平滑排队、多 BaseURL 健康管理与动态排序、Trace/BaseURL 会话亲和（提升 prompt cache 命中）
+- **客户端伪装与一键配置**：Claude Code / Codex / OpenCode / pi-agent / DSH / GPT 配置页，一键把各 CLI 工具指向本代理，伪装版本号可配置
+- **内容安全**：敏感数据检测与可逆脱敏（AES-256-GCM）、私有参数递归过滤、危险命令 AI 闸门
+- **渠道评测工作台**：探针 / 套件 / 批次回看 / SSE 实时进度
+- **观测能力**：按渠道与模型维度的指标统计、请求日志与系统日志（SQLite 存储 + CLI 查询）、拦截记录会话分组
+- **一体化部署**：Vue 3 管理界面经 `go:embed` 嵌入 Go 二进制，单端口（默认 3000）同时提供代理 API 与 Web 管理界面
 
-## 🚀 快速开始
+## 快速开始
+
+### Docker（推荐）
 
 ```bash
-# 1. 复制环境变量示例并设置强密钥
-cp backend-go/.env.example backend-go/.env
-# 编辑 .env：设置 PROXY_ACCESS_KEY=<strong-random-key>、ENV=production
-
-# 2. 构建（自动构建前端 + 版本注入，禁止裸 go build）
-make build
-
-# 3. 运行
-make run
-# 或直接运行产物 dist/api-proxy-<platform>
+# 修改 docker-compose.yml 中的 PROXY_ACCESS_KEY（必改）后
+docker compose up -d
 ```
 
-开发模式见 `docs/DEVELOPMENT.md`（热重载 / 前端 dev server）。
+关键环境变量：
 
-## 🗂️ 运行时数据与清理
+| 变量 | 说明 |
+|---|---|
+| `PROXY_ACCESS_KEY` | 访问密钥，**必须修改** |
+| `ENABLE_WEB_UI` | `true`（默认）一体化模式 / `false` 纯 API 模式 |
+| `LOG_LEVEL` / `ENABLE_REQUEST_LOGS` / `ENABLE_RESPONSE_LOGS` | 日志控制 |
 
-运行时配置和本地数据默认保存在 `.config/` 目录：
+配置持久化在 `./.config`，日志在 `./logs`。
 
-| 文件 / 目录 | 保存内容 | 是否可删除 |
-| --- | --- | --- |
-| `config.json` | 渠道、Base URL、API Key、模型映射、分组等全部运行配置 | 不建议。删除等同于重置配置 |
-| `conversations.db` | 本地对话记录、会话上下文、路由关联及图片理解缓存 | 可以。停止服务后删除会自动重建，历史会话清空 |
-| `metrics.db` | 渠道和 key 的请求统计、延迟、RPM/TPM、健康状态及性能数据 | 可以。停止服务后删除会自动重建，统计重新积累 |
-| `blocked-logs.db` | 内容安全拦截记录 | 可以。停止服务后删除会自动重建 |
-| `logs.db` | 运行日志、请求/响应正文、请求元数据（保留今天与昨天） | 可以。停止服务后删除会自动重建 |
+### 从 Release 下载
 
-> 删除或修改 `config.json` 前，请先保留 `.config/backups/` 中的配置备份。
+到 [Releases](../../releases) 下载对应平台产物（linux / macOS / Windows × amd64 / arm64），单文件直接运行，浏览器打开 `http://localhost:3000` 进入管理界面。
 
-## 📚 文档
+### 从源码构建
 
-- 关键数据流（主链路 / 视觉旁路 / 内容安全）：`docs/flows.md`
-- 术语表：`docs/glossary.md`（概念定义，禁止发明平行概念）
-- 能力注册表：`docs/capabilities.md`（写通用能力前先查，有现成实现一律复用）
-- 硬性规则：`docs/invariants.md`
-- 环境变量：`docs/ENVIRONMENT.md`
-- 开发 / 打包 / 发布：`docs/DEVELOPMENT.md`
+要求：Go 1.25、Node 20+（或 bun）、make（Windows 下可用 `npm run check` 代替门禁）。
 
-## 🤝 贡献
+```bash
+make build   # 前端构建 → 嵌入 → Go 编译，产物 dist/api-proxy-go
+make dev     # 后端热重载开发（前端另行在 frontend/ 下 npm run dev）
+make check   # 提交前全量门禁
+```
 
-1. Fork 本项目，创建特性分支开发
-2. 提交信息遵循 Conventional Commits：`feat:` / `fix:` / `refactor:` / `chore:` / `docs:`
-3. 提交前跑全量门禁 `make check`（后端 gofmt + vet + test；前端 type-check + 图标扫描）
-4. 推送并开启 Pull Request
+## 端点一览
 
-## 🔗 友情链接
+| 端点 | 用途 |
+|---|---|
+| `POST /v1/messages`、`/v1/messages/count_tokens` | Claude Messages 协议 |
+| `POST /v1/responses`（含 `/compact`） | OpenAI Responses 协议 |
+| `POST /v1/chat/completions` | OpenAI Chat 协议 |
+| `POST /v1/images/{generations,edits,variations}` | Images 协议 |
+| `POST /v1beta/models/*` | Gemini 协议 |
+| `GET /v1/models` | 模型目录 |
+| `/api/*` | 管理 API（需访问密钥，`x-api-key` 头） |
+| `/health` | 健康检查（公开，Docker HEALTHCHECK 使用） |
 
-- [LINUX DO - 新的理想型社区](https://linux.do/)
+## 文档
 
-## 📄 许可证
+| 文档 | 内容 |
+|---|---|
+| [docs/开发说明.md](docs/开发说明.md) | 环境准备、命令、门禁、发布流程、Docker 部署 |
+| [docs/架构说明.md](docs/架构说明.md) | 架构图、请求流转、调度体系、数据存储、鉴权模型 |
+| [docs/规范与不变量.md](docs/规范与不变量.md) | 代码规范与关键不变量 |
+| [docs/技术栈.md](docs/技术栈.md) | 依赖与工具链总览 |
+| [docs/历史说明.md](docs/历史说明.md) | 版本演进史与关键里程碑 |
 
-本项目基于 MIT 许可证开源 - 查看 [LICENSE](LICENSE) 文件了解详情。
+版本历史见 [CHANGELOG.md](CHANGELOG.md)。
+
+## 许可证
+
+[MIT](LICENSE) 
