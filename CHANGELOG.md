@@ -4,6 +4,42 @@
 
 ---
 
+## [v3.3.0] - 2026-09-14
+
+### 新功能
+
+- **危险命令 AI 闸门** — 命中检测规则 → 会话白/黑名单 → AI 二次判断 → 挂起等待放行（或放行 + 事后否决）；pending 通知组件；allowlist 字面量放行与自定义正则检测规则；危险命令检测总开关关闭时联动关闭 AI 闸门
+- **AI 配置助手** — 浮窗会话 + 行动协议（create_channel / create_pool / set_model_mapping / update_channel）；模型路由按 `settings.assistant.model` 分组匹配词复用渠道编排，status 返回当前命中渠道；设置页新增 AI 助手分区（分组下拉 + 生效渠道展示）；助手支持显式 channelId（不回退不换渠道）
+- **AI 闸门会话级审查去重** — 同对话内同一命令骨架（忽略参数/路径差异）只送审一次，结论进程内缓存，解除名单即失效；拦截记录带结构化 command 字段，拦截页支持移入/移出黑白名单与「仅活跃会话」「危险命令相关」筛选
+- **llmgate 分组模型路由与自动模式全池扫描** — auto 选渠改走 scheduler.SelectChannel 主链路（分组匹配 → 优先级 → 熔断/健康 → 兜底分组），修复无 defaultModel 渠道"未能解析可用模型"导致内部调用必失败的问题；空模型自动模式按四协议 × 配置顺序全池扫描，渠道级失败带 failedChannels 换渠道重选（上限 4）；新增 PreviewChannel 探测接口；调用接入日志关联（CallMetadata：requestID/父请求/会话），限流响应体读取（2MB）
+- **工具版本检测与提醒** — 新增 `/api/tools/:tool/version` 接口（本地 CLI 版本 + npm registry 最新版本，per-tool 缓存 1 小时，force 刷新，两端独立探测互不阻塞）；ToolInstallBanner 组件接入 GPT / Claude Code / OpenCode / PiAgent 四个配置页（安装命令按后端 OS 区分、版本状态徽章、一键复制、重新检测）；发现新版本时右上角徽章下弹提醒气泡（5 秒收起，未升级每小时提醒）
+- **拦截记录展示真实命中片段** — 命中片段从纯元数据改为元数据 + 命中上下文窗口：敏感词/个人信息显示命中原文及前后 60 字符（PII 明文落库，管理员已确认），凭据只显示 [凭据已隐藏:规则] 绝不落明文，危险命令附命令原文，白名单放行附工具输出段首；表格只展示片段行，完整片段在详情弹窗查看
+- **Codex 模型目录动态拉取** — 用 `codex debug models` 获取内置模型替代硬编码模板；自定义条目从内置清单复制 model_messages（满足 Codex 0.144+ 指令硬性校验）；model_catalog_json 按整体替换语义补齐内置条目，目录删空时回退配置键；内置模型标记不可删，新增表单改为对话框
+
+### 修复
+
+- **管理鉴权扩展名绕过（安全）** — WebAuthMiddleware 不再按扩展名放行：静态资源放行改为已注册资源路径（/assets/ 与固定入口文件），带 `.js` 等后缀的 provider ID 等动态路由参数不再被当作静态文件绕过管理鉴权；管理密钥校验收敛到 AdminAuthMiddleware，由各 setupAdmin* 路由组显式绑定
+- **流式检测性能** — 工具参数检测按增量触发；凭据检测器与处置模式初始化时固化；pre_request 钩子按请求体指纹缓存（重试 / vision 前后只扫一次）
+- **npm dist-tags scoped 包名 404** — 对 scoped 包名用 url.PathEscape 转义 `/` 为 %2F，修复 Claude Code / Codex / Pi 配置页"最新版本"查询 404
+
+### 重构（架构优化 R1–R6 首轮，方案见 docs/architecture-optimization-plan.md）
+
+- **网络发送唯一出口** — 新增 `internal/httpclient`（客户端选择 / identity 编码 / 流式空闲超时），eval 与 proxycore 均委托此处
+- **无框架请求编排** — 新增 `internal/proxy`（候选 BaseURL×Key 重试状态与故障分类谓词），带"不导入 gin / handlers / SQLite 驱动"静态断言；providers 新增 RequestInput / BuildRequest / BuildUpstreamRequest 显式请求构造，llmgate / visionlayer 不再伪造 HTTP 框架上下文
+- **渠道许可句柄收口** — scheduler.SelectionResult.Permit（ChannelPermit）统一选渠资源的取得 / 健康记账（恰好一次）/ 释放（幂等），单渠道、多渠道、compact、llmgate、vision 全部经此收尾；熔断半开探测名额在调用结束按结果记账，杜绝探测名额泄漏；新增 permit_test 与 channel_health_test 锁定契约
+- **配置原子写** — 新增 `internal/atomicfile`（同目录临时文件 → 完整写入 → 同步 → 平台替换 → 目录同步，替换为唯一提交点，目录同步失败以 CommittedError 显式暴露）；config 写入统一接入，失败显式传播，杜绝半截配置文件；piagent fileio 平台差异收拢并删除 fileio_unix.go / fileio_windows.go
+- **应用组装拆分** — main.go 拆出 app_lifecycle.go（初始化失败逆序清理已创建资源）与 app_routes.go（路由注册），main 只留入口
+- **定价模块下线** — 整体移除 `internal/pricing`、metrics/cost 与 pricing_handler；全局统计去掉按模型花费端点与 CostUSD 字段（渠道自报价不可信，维护成本高于价值）；前端对应图表与 API 移除
+- **前端状态收敛** — 新增 composables（useAuthFlow / useChannelActions / useChannelActivity / useChannelEditor / channelMetricsFormat），App.vue / AddChannelModal.vue / ChannelOrchestration.vue 的业务操作与界面状态拆分归属；RequestLogsView 重构，新增 PromptBodyDialog 查看完整请求体；助手浮窗重构为 v-overlay 浮层栈，渠道选择器可切换
+- **项目更名** — claude-proxy 更名为 api-proxy（module 路径 `github.com/BenedictKing/api-proxy`）
+
+### 其他
+
+- 构建与门禁对齐：三个 release workflow 与两个 Dockerfile 的 Go 版本声明对齐 go.mod；scripts/check.mjs 接入 ESLint 校验；删除 diagrams/ 全部过时产物（约 7.6 万行），现行架构事实以 docs/ 为准
+- 文档：新增 docs/architecture-optimization-plan.md（R1–R6 设计稿）与 docs/baseline-2026-09-14.md；capabilities / flows / glossary / invariants 与 backend-go/CLAUDE.md 同步本轮事实
+
+---
+
 ## [v3.2.0] - 2026-09-11
 
 ### 新功能
