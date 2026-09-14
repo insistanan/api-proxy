@@ -618,7 +618,7 @@ func addAPIKeyOp(upstreams []UpstreamConfig, index int, apiKey string, label str
 	}
 	for _, key := range upstreams[index].APIKeys {
 		if key == apiKey {
-			return fmt.Errorf("API密钥已存在")
+			return &ConfigError{Message: "API密钥已存在"}
 		}
 	}
 	upstreams[index].APIKeys = append(upstreams[index].APIKeys, apiKey)
@@ -652,7 +652,7 @@ func removeAPIKeyOp(upstreams []UpstreamConfig, index int, apiKey string, label 
 		}
 	}
 	if !found {
-		return fmt.Errorf("API密钥不存在")
+		return &ConfigError{Message: "API密钥不存在"}
 	}
 
 	alreadyInHistory := false

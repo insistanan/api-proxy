@@ -490,6 +490,13 @@ type ConfigManager struct {
 	maxFailureCount int
 	stopChan        chan struct{} // 用于通知 goroutine 停止
 	closeOnce       sync.Once     // 确保 Close 只执行一次
+
+	// persistedDigest 是当前已持久化配置的内容摘要（R3）。
+	// 仅用于 watcher 重载去重（避免自身提交触发“保存→重载→再保存”循环），
+	// 不用于输出配置原文。
+	persistedDigest string
+	// migrated 标记本次进程内发生过旧格式迁移（仅日志用途）。
+	migrated bool
 }
 
 // ============== 核心共享方法 ==============

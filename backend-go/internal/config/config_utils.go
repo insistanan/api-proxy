@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/BenedictKing/api-proxy/internal/atomicfile"
 )
 
 // ============== 工具函数 ==============
@@ -78,6 +80,14 @@ func (e *ConfigError) Error() string {
 func IsConfigError(err error) bool {
 	var target *ConfigError
 	return errors.As(err, &target)
+}
+
+// IsCommittedError 判断配置提交错误是否已过提交点（文件已完成原子替换，
+// 内存快照与磁盘一致）。调用方（管理 API、助手动作等）不得把该错误按
+// "未提交"重试——一次新增会被重试成两次；应读取实际状态并向用户表达
+// "已提交但收尾失败"（R3）。
+func IsCommittedError(err error) bool {
+	return atomicfile.IsCommitted(err)
 }
 
 // ============== 模型重定向 ==============
