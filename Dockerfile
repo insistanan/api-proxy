@@ -2,7 +2,7 @@
 FROM oven/bun:alpine AS bun-runtime
 
 # --- 阶段 2: 构建阶段 (Go + Bun) ---
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 # 声明 VERSION 构建参数（用于 CI 传入版本号，留空则从 VERSION 文件读取）
 ARG VERSION

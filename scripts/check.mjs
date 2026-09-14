@@ -68,5 +68,15 @@ run("后端 go vet", "go", ["vet", "./..."], "backend-go");
 run("后端 go test", "go", ["test", "./..."], "backend-go");
 // Windows 下 npm 是 npm.cmd，必须经 shell 启动；命令串 + 空 args 避免 DEP0190。
 run("前端 type-check + 图标扫描", isWin ? "npm run check" : "npm", isWin ? [] : ["run", "check"], "frontend", isWin ? { shell: true } : {});
+// ESLint 接入门禁（R6）：存量已清零，--max-warnings 0 阻断任何新增
+// 未使用变量 / any / 模板遮蔽问题，不保留只输出警告的假门禁。
+// Windows 下 npm/npx 是 .cmd，必须经 shell 启动；命令串 + 空 args 避免 DEP0190。
+run(
+  "前端 ESLint 校验",
+  isWin ? "npx eslint . --ext .vue,.js,.ts --max-warnings 0" : "npx",
+  isWin ? [] : ["eslint", ".", "--ext", ".vue,.js,.ts", "--max-warnings", "0"],
+  "frontend",
+  isWin ? { shell: true } : {}
+);
 
 console.log("\n[check] 全量门禁通过");
