@@ -9,7 +9,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// WebAuthMiddleware Web 访问控制中间件
+// WebAuthMiddleware Web 访问控制中间件。
+// 只负责页面与 Web UI 开关策略；管理路由的密钥校验由 AdminAuthMiddleware
+// 在路由组上显式绑定（见各 setupAdmin* 注册处），本中间件不得因 URL
+// 后缀或前缀放行管理业务。
 func WebAuthMiddleware(envCfg *config.EnvConfig, cfgManager *config.ConfigManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
@@ -20,8 +23,10 @@ func WebAuthMiddleware(envCfg *config.EnvConfig, cfgManager *config.ConfigManage
 			return
 		}
 
-		// 静态资源文件直接放行
-		if isStaticResource(path) {
+		// 静态资源按已注册的资源路径放行：嵌入前端的 /assets/ 与入口
+		// index.html、favicon 等固定文件。不做扩展名白名单——扩展名
+		// 不是权限依据（provider ID 等动态路由参数可以合法带 .js 后缀）。
+		if isFrontendStaticResource(path) {
 			c.Next()
 			return
 		}
@@ -42,43 +47,57 @@ func WebAuthMiddleware(envCfg *config.EnvConfig, cfgManager *config.ConfigManage
 			return
 		}
 
-		// SPA 页面路由直接交给前端处理，但需要排除 /api* 路径
+		// SPA 页面路由直接交给前端处理，但需要排除 /api* 和 /admin* 路径
 		if path == "/" || path == "/index.html" || (!strings.Contains(path, ".") && !strings.HasPrefix(path, "/api") && !strings.HasPrefix(path, "/admin")) {
 			c.Next()
 			return
 		}
 
-		// 检查访问密钥（管理 API + 管理端点）
+		// 管理路由的鉴权由 AdminAuthMiddleware 在路由组上显式完成。
+		// 这里对 /api、/admin 打上标记后放行：若该路由组漏绑管理鉴权，
+		// 在测试与审计中可通过该标记发现。
 		if strings.HasPrefix(path, "/api") || strings.HasPrefix(path, "/admin") {
-			providedKey := getAPIKey(c)
-			expectedKey := envCfg.ProxyAccessKey
+			c.Set(contextKeyAdminRoute, true)
+			log.Printf("[Auth-Warn] 管理路由 %s 未绑定管理鉴权中间件，请检查路由注册", path)
+		}
 
-			// 记录认证尝试
-			clientIP := c.ClientIP()
-			timestamp := time.Now().Format(time.RFC3339)
+		c.Next()
+	}
+}
 
-			if providedKey == "" || providedKey != expectedKey {
-				// 认证失败 - 记录详细日志
-				reason := "密钥无效"
-				if providedKey == "" {
-					reason = "密钥缺失"
-				}
-				log.Printf("[Auth-Failed] IP: %s | Path: %s | Time: %s | Reason: %s",
-					clientIP, path, timestamp, reason)
+// AdminAuthMiddleware 管理鉴权中间件：校验访问密钥，供 /api 与 /admin
+// 路由组显式绑定。密钥提取与比较规则、日志格式与原 WebAuthMiddleware
+// 管理分支保持一致。
+func AdminAuthMiddleware(envCfg *config.EnvConfig) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		providedKey := getAPIKey(c)
+		expectedKey := envCfg.ProxyAccessKey
 
-				c.JSON(401, gin.H{
-					"error":   "Unauthorized",
-					"message": "Invalid or missing access key",
-				})
-				c.Abort()
-				return
+		// 记录认证尝试
+		clientIP := c.ClientIP()
+		timestamp := time.Now().Format(time.RFC3339)
+
+		if providedKey == "" || providedKey != expectedKey {
+			// 认证失败 - 记录详细日志
+			reason := "密钥无效"
+			if providedKey == "" {
+				reason = "密钥缺失"
 			}
+			log.Printf("[Auth-Failed] IP: %s | Path: %s | Time: %s | Reason: %s",
+				clientIP, c.Request.URL.Path, timestamp, reason)
 
-			// 认证成功 - 记录日志(可选，根据日志级别)
-			// 如果启用了 QuietPollingLogs，则静默轮询端点日志
-			if envCfg.ShouldLog("info") && !(envCfg.QuietPollingLogs && isPollingEndpoint(path)) {
-				log.Printf("[Auth-Success] IP: %s | Path: %s | Time: %s", clientIP, path, timestamp)
-			}
+			c.JSON(401, gin.H{
+				"error":   "Unauthorized",
+				"message": "Invalid or missing access key",
+			})
+			c.Abort()
+			return
+		}
+
+		// 认证成功 - 记录日志(可选，根据日志级别)
+		// 如果启用了 QuietPollingLogs，则静默轮询端点日志
+		if envCfg.ShouldLog("info") && !(envCfg.QuietPollingLogs && isPollingEndpoint(c.Request.URL.Path)) {
+			log.Printf("[Auth-Success] IP: %s | Path: %s | Time: %s", clientIP, c.Request.URL.Path, timestamp)
 		}
 
 		c.Next()
@@ -104,19 +123,23 @@ func isPollingEndpoint(path string) bool {
 	return false
 }
 
-// isStaticResource 判断是否为静态资源
-func isStaticResource(path string) bool {
-	staticExtensions := []string{
-		"/assets/", ".css", ".js", ".ico", ".png", ".jpg",
-		".gif", ".svg", ".woff", ".woff2", ".ttf", ".eot",
-	}
+// contextKeyAdminRoute 标记请求命中 /api 或 /admin 管理路由。
+// WebAuthMiddleware 不再放行/拦截管理业务，仅打标记：路由组必须显式
+// 绑定 AdminAuthMiddleware，漏绑可通过该标记与警告日志发现。
+const contextKeyAdminRoute = "auth.adminRoute"
 
-	for _, ext := range staticExtensions {
-		if strings.HasPrefix(path, ext) || strings.HasSuffix(path, ext) {
-			return true
-		}
+// isFrontendStaticResource 判断是否为已注册的前端静态资源路径。
+// 只放行确定的资源位置：嵌入前端的 /assets/、入口 index.html 与常见
+// 站点图标。不按扩展名匹配任意路径。
+func isFrontendStaticResource(path string) bool {
+	if strings.HasPrefix(path, "/assets/") {
+		return true
 	}
-
+	switch path {
+	case "/index.html", "/favicon.ico", "/favicon.png", "/favicon.svg",
+		"/apple-touch-icon.png", "/site.webmanifest", "/robots.txt":
+		return true
+	}
 	return false
 }
 

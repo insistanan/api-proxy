@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/BenedictKing/api-proxy/internal/atomicfile"
 )
 
 // ErrLocked 表示 pi-agent（proper-lockfile）正持有目标文件锁。
@@ -127,6 +129,7 @@ type WriteResult struct {
 
 // WriteFileAtomic 以"备份 → 同目录临时文件 → 原子替换"的方式写入文件。
 // 返回备份路径与新内容 revision。备份写入失败时中止写入。
+// 文件替换原语委托 internal/atomicfile（唯一平台实现出处）。
 func WriteFileAtomic(path string, data []byte, sensitive bool, backupDir string) (WriteResult, error) {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0700); err != nil {
@@ -146,50 +149,22 @@ func WriteFileAtomic(path string, data []byte, sensitive bool, backupDir string)
 		}
 	}
 
-	tempFile, err := os.CreateTemp(dir, ".piagent-*.tmp")
-	if err != nil {
-		return WriteResult{}, fmt.Errorf("创建临时文件失败: %w", err)
-	}
-	tempPath := tempFile.Name()
-	defer os.Remove(tempPath)
-
 	mode := os.FileMode(0644)
 	if sensitive {
 		mode = 0600
 	}
-	if err := tempFile.Chmod(mode); err != nil {
-		tempFile.Close()
-		return WriteResult{}, fmt.Errorf("设置临时文件权限失败: %w", err)
+	if err := atomicfile.Write(path, data, atomicfile.Options{
+		TempPrefix: ".piagent-",
+		Mode:       mode,
+	}); err != nil {
+		return WriteResult{}, err
 	}
-	if _, err := tempFile.Write(data); err != nil {
-		tempFile.Close()
-		return WriteResult{}, fmt.Errorf("写入临时文件失败: %w", err)
-	}
-	if err := tempFile.Sync(); err != nil {
-		tempFile.Close()
-		return WriteResult{}, fmt.Errorf("同步临时文件失败: %w", err)
-	}
-	if err := tempFile.Close(); err != nil {
-		return WriteResult{}, fmt.Errorf("关闭临时文件失败: %w", err)
-	}
-
-	if err := replaceFile(tempPath, path); err != nil {
-		return WriteResult{}, fmt.Errorf("替换目标文件失败: %w", err)
-	}
-	syncDir(dir)
 
 	return WriteResult{
 		Path:     path,
 		Revision: SHA256Hex(data),
 		Backup:   backupPath,
 	}, nil
-}
-
-func syncDir(dir string) {
-	if d, err := os.Open(dir); err == nil {
-		_ = d.Sync()
-		_ = d.Close()
-	}
 }
 
 // writeBackup 将文件旧内容写入备份目录。sensitive 文件使用 0600 权限。
