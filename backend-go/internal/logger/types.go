@@ -17,6 +17,12 @@ const (
 	writeQueueSize = 8192
 )
 
+// AvailableDate 是一个存在日志的本地日历日及其三张表的总行数。
+type AvailableDate struct {
+	Date  string `json:"date"`
+	Count int64  `json:"count"`
+}
+
 // AppLog 是一条运行日志（原 app.log 的 sqlite 形态）。
 type AppLog struct {
 	ID        int64  `json:"id"`
@@ -55,12 +61,14 @@ type RequestLogRecord struct {
 }
 
 // QueryOptions 描述时段查询。Limit=0 表示不截断。
+// Ascending=true 时按时间正序（CLI 时段查询语义）；默认倒序，配合 Limit 取最近 N 条。
 type QueryOptions struct {
 	From      int64
 	To        int64
 	RequestID string
 	APIType   string
 	Limit     int
+	Ascending bool
 }
 
 // SystemLogListOptions 是 Web 系统日志列表查询。Limit 默认 100、封顶 200。

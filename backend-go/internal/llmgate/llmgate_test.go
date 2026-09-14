@@ -245,10 +245,11 @@ func TestPickChannelGroupRouting(t *testing.T) {
 	}
 	mustAddMessagesChannel(t, cfgManager, "fallback-channel", "messages-fallback", true, []string{"sk-fallback"})
 
-	// releasePick 释放编排选渠占用的 in-flight 预留（直接调 PickChannel 的调用方职责）。
+	// releasePick 释放编排选渠占用的许可（直接调 PickChannel 的调用方职责）。
 	releasePick := func(selected *SelectedChannel) {
-		if selected.Reserved {
-			sch.ReleaseChannelReservation(selected.Kind, selected.ChannelIndex)
+		if selected.Permit != nil {
+			selected.Permit.Release()
+			selected.Permit = nil
 		}
 	}
 
@@ -278,8 +279,8 @@ func TestPickChannelGroupRouting(t *testing.T) {
 	if preview.Upstream.Name != "glm-channel" {
 		t.Fatalf("PreviewChannel 应命中分组渠道，实际: %s", preview.Upstream.Name)
 	}
-	if preview.Reserved {
-		t.Fatal("PreviewChannel 不应保留 in-flight 预留")
+	if preview.Permit != nil {
+		t.Fatal("PreviewChannel 不应保留许可（in-flight 预留 / 探测名额）")
 	}
 	if inFlight := sch.GetChannelInFlight(scheduler.ChannelKindMessages, preview.ChannelIndex); inFlight != 0 {
 		t.Fatalf("PreviewChannel 应释放 in-flight 预留，实际: %d", inFlight)
@@ -311,8 +312,9 @@ func TestPickChannelSkipsModelUnresolvableChannels(t *testing.T) {
 	if selected.Kind != scheduler.ChannelKindChat || selected.Upstream.Name != "chat-primary" {
 		t.Fatalf("应跳过解析不出模型的渠道，实际: kind=%s name=%s", selected.Kind, selected.Upstream.Name)
 	}
-	if selected.Reserved {
-		sch.ReleaseChannelReservation(selected.Kind, selected.ChannelIndex)
+	if selected.Permit != nil {
+		selected.Permit.Release()
+		selected.Permit = nil
 	}
 }
 
@@ -481,17 +483,11 @@ func TestCallClaudeUpstream(t *testing.T) {
 		t.Fatalf("应返回实际复核调用信息: %+v", result)
 	}
 	logStore.Flush()
+	// cmd_gate 类调用不写流量正文（防闸门复核刷屏，见 a7da115）：
+	// 请求元数据仍完整记录（下方 QueryRequestLogs 断言）。
 	traffic, err := logStore.QueryTrafficByRequestID(context.Background(), "review-1")
-	if err != nil || len(traffic) != 3 {
-		t.Fatalf("应持久化提交内容、上游请求和响应: %+v err=%v", traffic, err)
-	}
-	for _, entry := range traffic {
-		if entry.APIType != "cmd_gate" || strings.Contains(entry.HeadersJSON, "sk-test") {
-			t.Fatalf("调用分类应正确且请求头密钥必须脱敏: %+v", entry)
-		}
-	}
-	if traffic[1].AttemptID == "" || traffic[1].AttemptID != traffic[2].AttemptID {
-		t.Fatal("上游请求和响应必须属于同一次尝试")
+	if err != nil || len(traffic) != 0 {
+		t.Fatalf("cmd_gate 调用不应记录流量正文: %+v err=%v", traffic, err)
 	}
 	payloads, err := logStore.QueryRequestLogs(context.Background(), logger.QueryOptions{RequestID: "review-1"})
 	if err != nil || len(payloads) != 1 {
@@ -503,6 +499,27 @@ func TestCallClaudeUpstream(t *testing.T) {
 	}
 	if recorded.ParentRequestID != "request-1" || recorded.ConversationID != "conversation-1" || recorded.APIType != "cmd_gate" || !recorded.Success {
 		t.Fatalf("复核日志应关联原请求与原会话: %+v", recorded)
+	}
+	// 非 cmd_gate 的内部调用（如助手）开启正文日志时记录
+	// 提交内容、上游请求和响应三条流量。
+	if _, err := caller.Call(context.Background(), "", Prompt{
+		Messages: []PromptMessage{{Role: "user", Content: "assistant ping"}},
+		Metadata: CallMetadata{RequestID: "review-body", ParentRequestID: "request-2"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	logStore.Flush()
+	traffic, err = logStore.QueryTrafficByRequestID(context.Background(), "review-body")
+	if err != nil || len(traffic) != 3 {
+		t.Fatalf("非 cmd_gate 调用应持久化提交内容、上游请求和响应: %+v err=%v", traffic, err)
+	}
+	for _, entry := range traffic {
+		if entry.APIType == "cmd_gate" || strings.Contains(entry.HeadersJSON, "sk-test") {
+			t.Fatalf("调用分类应正确且请求头密钥必须脱敏: %+v", entry)
+		}
+	}
+	if traffic[1].AttemptID == "" || traffic[1].AttemptID != traffic[2].AttemptID {
+		t.Fatal("上游请求和响应必须属于同一次尝试")
 	}
 	envCfg.EnableRequestLogs = false
 	envCfg.EnableResponseLogs = false
@@ -575,10 +592,8 @@ func TestPickChannelAutoScansNamedPools(t *testing.T) {
 	if selected.Kind != scheduler.ChannelKindMessages || selected.Upstream.Name != "named-channel" {
 		t.Fatalf("自动模式应全池扫描选中 messages 命名分组渠道，实际: kind=%s name=%s", selected.Kind, selected.Upstream.Name)
 	}
-	if selected.Reserved {
-		sch.ReleaseChannelReservation(selected.Kind, selected.ChannelIndex)
-	}
-	if selected.Probe {
-		sch.RecordCircuitNeutral(selected.Kind, selected.ChannelIndex)
+	if selected.Permit != nil {
+		selected.Permit.Release()
+		selected.Permit = nil
 	}
 }

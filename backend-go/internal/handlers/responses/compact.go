@@ -184,16 +184,34 @@ func handleMultiChannelCompact(
 		upstream := selection.Upstream
 		channelIndex := selection.ChannelIndex
 		releaseReservation := func() {
-			if selection != nil && selection.Reserved {
-				channelScheduler.ReleaseChannelReservation(selection.Kind, selection.ChannelIndex)
-				selection.Reserved = false
+			if selection != nil && selection.Permit != nil {
+				selection.Permit.ReleaseReservation()
 			}
 		}
 
 		// 每个渠道尝试所有 key
 		success, successKey, compactErr := tryCompactChannelWithAllKeys(c, upstream, channelIndex, cfgManager, sessionManager, channelScheduler, bodyBytes, conversationID, envCfg)
 
+		// 渠道结束：经许可句柄记账（成功/失败/取消中性，恰好一次）并释放
+		// 剩余资源（R2-b）。compact 失败原因无法区分审核/容量等中性类，
+		// 按 compactError 的 shouldFailover 分类：可故障转移→失败，其余→中性。
+		finalizeCompactPermit := func(healthSuccess bool) {
+			if selection.Permit == nil {
+				return
+			}
+			if healthSuccess {
+				selection.Permit.RecordHealthSuccess()
+			} else if compactErr != nil && compactErr.shouldFailover {
+				selection.Permit.RecordHealthFailure()
+			} else {
+				selection.Permit.RecordHealthNeutral()
+			}
+			selection.Permit.Release()
+			selection.Permit = nil
+		}
+
 		if success {
+			finalizeCompactPermit(true)
 			releaseReservation()
 			// compact 不产生 usage，但仍需记录成功以更新熔断器/权重
 			if successKey != "" {
@@ -207,6 +225,7 @@ func handleMultiChannelCompact(
 			return
 		}
 
+		finalizeCompactPermit(false)
 		releaseReservation()
 		failedChannels[channelIndex] = true
 		if compactErr != nil {
@@ -371,7 +390,7 @@ func tryCompactWithKey(
 		_ = req.Body.Close()
 		return false, &compactError{status: 500, body: []byte(`{"error":"上游代理配置无效"}`), shouldFailover: false}
 	}
-	resp, err := proxycore.SendRequest(req, upstream, envCfg, false, "Responses", proxyURL)
+	resp, err := proxycore.SendRequest(req, upstream, envCfg, false, "Responses", proxyURL, nil)
 	if err != nil {
 		return false, &compactError{status: 502, body: []byte(`{"error":"上游请求失败"}`), shouldFailover: true}
 	}

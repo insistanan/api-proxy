@@ -37,10 +37,10 @@ type CmdGate struct {
 	waiters map[int64]chan string
 	vetoes  map[int64]*gateVeto
 
-	aiReviewMu sync.Mutex
-	aiReviews  map[string]map[string]cachedGateReview
-	inflight   map[string]*inflightGateReview
-	cacheEpoch uint64
+	aiReviewMu  sync.Mutex
+	aiReviews   map[string]map[string]cachedGateReview
+	inflight    map[string]*inflightGateReview
+	cacheEpoch  uint64
 	reviewSlots chan struct{}
 	activeSlots chan struct{}
 }

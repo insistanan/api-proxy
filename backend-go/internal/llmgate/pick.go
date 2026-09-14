@@ -31,16 +31,11 @@ type SelectedChannel struct {
 	Kind         scheduler.ChannelKind
 	Upstream     *config.UpstreamConfig
 	ChannelIndex int
-	// Reserved 表示本次选择占用了调度器的 in-flight 预留（编排选渠产生）。
-	// 调用方在整个内部调用（含全部重试）结束后必须 ReleaseChannelReservation；
-	// 仅探测可用性时应立即释放（见 Caller.PreviewChannel）。
-	Reserved bool
-	// Probe 表示本次选择占用了渠道熔断器的 HalfOpen 探测名额（编排选渠
-	// 经 AllowChannelByCircuit 产生；直查路径不经过熔断器，恒为 false）。
-	// 与 Reserved 同生命周期：真实调用结束必须以 RecordCircuit* 记账释放，
-	// 仅探测时必须 RecordCircuitNeutral 立即释放，否则名额泄漏会把渠道
-	// 卡死在 HalfOpen——表现为"状态栏显示该渠道、实际请求却选不中它"。
-	Probe bool
+	// Permit 是本次选择取得的调度器许可（R2-b）：持有 in-flight 预留与
+	// 可能的半开探测名额。调用方在整个内部调用（含全部重试）结束后必须
+	// RecordHealth + Release；仅探测可用性时应立即 Release（中性释放名额）。
+	// 可能为 nil（直查路径不经过选渠编排，无许可）。
+	Permit *scheduler.ChannelPermit
 }
 
 // PickChannel 挑选一个可用的内部调用渠道。
@@ -116,18 +111,16 @@ func pickByOrchestration(ctx context.Context, channelScheduler *scheduler.Channe
 					Kind:         kind,
 					Upstream:     result.Upstream.Clone(),
 					ChannelIndex: result.ChannelIndex,
-					Reserved:     result.Reserved,
-					Probe:        result.Probe,
+					Permit:       result.Permit,
 				}, nil
 			}
 			// 该渠道解析不出模型（无 DefaultModel 且映射不命中），调用必然
-			// 失败：释放本次选渠占用的预留与探测名额，排除后重选。
-			if result.Reserved {
-				channelScheduler.ReleaseChannelReservation(kind, result.ChannelIndex)
+			// 失败：释放本次选渠占用的许可（in-flight 预留 + 探测名额），
+			// 排除后重选。
+			if result.Permit != nil {
+				result.Permit.Release()
 			}
-			if result.Probe {
-				channelScheduler.RecordCircuitNeutral(kind, result.ChannelIndex)
-			}
+			result.Permit = nil
 			excluded[result.ChannelIndex] = true
 		}
 	}
@@ -208,9 +201,10 @@ func firstAvailableChannel(cfgManager *config.ConfigManager, channelScheduler *s
 
 // checkChannelAvailable 校验渠道可用性（启用 + 有 Key + 健康 + 未熔断）。
 // 可用返回选中结果；不可用返回原因。
-// 注意：熔断放行走 CircuitAllow（消耗式），渠道处于半开（HalfOpen）时占用
-// 唯一探测名额并标记在返回结果的 Probe 上——调用方必须在调用结束/探测结束
-// 时以 Circuit 记账释放（真实调用按结果 RecordCircuit*，探测恒 RecordNeutral）。
+// 熔断放行走 CircuitAllow（消耗式），渠道处于半开（HalfOpen）时占用唯一
+// 探测名额并封装为许可句柄（持有取得时的状态代次）——调用方必须在调用
+// 结束/探测结束时以许可 RecordHealth + Release 释放（真实调用按结果记账，
+// 探测恒中性释放）。
 func checkChannelAvailable(channelScheduler *scheduler.ChannelScheduler, kind scheduler.ChannelKind, upstream *config.UpstreamConfig, index int) (*SelectedChannel, error) {
 	if config.GetChannelStatus(upstream) != config.ChannelStatusActive {
 		return nil, fmt.Errorf("渠道 %q 未启用", upstream.Name)
@@ -230,7 +224,11 @@ func checkChannelAvailable(channelScheduler *scheduler.ChannelScheduler, kind sc
 			}
 			return nil, fmt.Errorf("渠道 %q 当前不健康", upstream.Name)
 		}
-		return &SelectedChannel{Kind: kind, Upstream: upstream.Clone(), ChannelIndex: index, Probe: circuitResult.Probe}, nil
+		selected := &SelectedChannel{Kind: kind, Upstream: upstream.Clone(), ChannelIndex: index}
+		if circuitResult.Probe {
+			selected.Permit = channelScheduler.NewCircuitProbePermit(kind, index, circuitResult.Generation)
+		}
+		return selected, nil
 	}
 	return &SelectedChannel{Kind: kind, Upstream: upstream.Clone(), ChannelIndex: index}, nil
 }

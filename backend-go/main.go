@@ -19,17 +19,11 @@ import (
 	"github.com/BenedictKing/api-proxy/internal/conversation"
 	"github.com/BenedictKing/api-proxy/internal/eval"
 	"github.com/BenedictKing/api-proxy/internal/handlers"
-	"github.com/BenedictKing/api-proxy/internal/handlers/chat"
-	"github.com/BenedictKing/api-proxy/internal/handlers/gemini"
 	"github.com/BenedictKing/api-proxy/internal/handlers/hooks"
-	"github.com/BenedictKing/api-proxy/internal/handlers/images"
-	"github.com/BenedictKing/api-proxy/internal/handlers/messages"
-	"github.com/BenedictKing/api-proxy/internal/handlers/responses"
 	"github.com/BenedictKing/api-proxy/internal/llmgate"
 	"github.com/BenedictKing/api-proxy/internal/logger"
 	"github.com/BenedictKing/api-proxy/internal/metrics"
 	"github.com/BenedictKing/api-proxy/internal/middleware"
-	"github.com/BenedictKing/api-proxy/internal/pricing"
 	"github.com/BenedictKing/api-proxy/internal/scheduler"
 	"github.com/BenedictKing/api-proxy/internal/sensitive"
 	"github.com/BenedictKing/api-proxy/internal/session"
@@ -58,7 +52,6 @@ type app struct {
 	conversationRegistry  *conversation.Registry
 	metricsStore          *metrics.SQLiteStore
 	metricsByKind         map[scheduler.ChannelKind]*metrics.MetricsManager
-	pricingStore          *pricing.Store
 	channelScheduler      *scheduler.ChannelScheduler
 	adaptiveScheduler     *scheduler.AdaptiveScheduler
 	piAgentAPI            *handlers.PiAgentAPI
@@ -71,9 +64,24 @@ type app struct {
 
 // newApp 构造并装配全部组件：基础设施 → 存储 → 调度器 → 路由。
 // 只做装配，不启动监听；进程退出统一走 shutdown。
+// 初始化中途失败时按逆序清理已创建资源（方案 R4-b 第 6 步），
+// 不把半初始化的资源泄漏给操作系统回收。
 func newApp() (*app, error) {
 	a := &app{}
 	var err error
+
+	// cleanups 收集已创建资源的清理动作；失败时逆序执行。
+	var cleanups []func()
+	defer func() {
+		if err != nil {
+			for i := len(cleanups) - 1; i >= 0; i-- {
+				cleanups[i]()
+			}
+		}
+	}()
+	registerCleanup := func(fn func()) {
+		cleanups = append(cleanups, fn)
+	}
 
 	// 初始化配置管理器
 	a.envCfg = config.NewEnvConfig()
@@ -86,25 +94,20 @@ func newApp() (*app, error) {
 	if err != nil {
 		return nil, fmt.Errorf("初始化日志系统失败: %w", err)
 	}
+	registerCleanup(func() { _ = a.logStore.Close() })
 	a.requestLogStore = metrics.NewRequestLogStore(a.logStore)
 
 	a.cfgManager, err = config.NewConfigManager(".config/config.json")
 	if err != nil {
 		return nil, fmt.Errorf("初始化配置管理器失败: %w", err)
 	}
-
-	// 模型单价表：内置价格在代码里，用户改写与删除墓碑在 .config/pricing.json。
-	// 加载失败一律中止启动，不降级成空表——空价表会让全部花费静默变 0，
-	// 界面上看不出是"没配价"还是"配置坏了"。
-	a.pricingStore, err = pricing.NewStore(pricing.DefaultFilePath)
-	if err != nil {
-		return nil, fmt.Errorf("初始化模型单价表失败: %w", err)
-	}
+	registerCleanup(func() { _ = a.cfgManager.Close() })
 
 	a.blockedStore, err = sensitive.NewBlockedStore(".config/blocked-logs.db")
 	if err != nil {
 		return nil, fmt.Errorf("初始化内容安全拦截记录存储失败: %w", err)
 	}
+	registerCleanup(func() { _ = a.blockedStore.Close() })
 	log.Printf("[ContentSafety-Init] 拦截记录存储已初始化")
 
 	// 初始化会话管理器（Responses API 专用），与对话记录共用持久化数据库。
@@ -117,6 +120,7 @@ func newApp() (*app, error) {
 	if err != nil {
 		return nil, fmt.Errorf("初始化 Responses 会话持久化存储失败: %w", err)
 	}
+	registerCleanup(a.sessionManager.Stop)
 	a.sessionManager.SetMaxSessions(5000) // 全局最多 5000 个活跃 session
 	log.Printf("[Session-Init] 持久化会话管理器已初始化 (保留: 7天, 上限: 5000)")
 
@@ -145,9 +149,8 @@ func newApp() (*app, error) {
 	}
 	a.metricsByKind = make(map[scheduler.ChannelKind]*metrics.MetricsManager, len(metricsKinds))
 	for _, kind := range metricsKinds {
-		// apiType 必须无条件传入：花费折算靠它判断 input_tokens 是否已含缓存
-		// （pricing.IsCacheInclusiveAPIType），空串会被当成 messages 口径，
-		// 于 responses/gemini/chat 上把缓存 Token 重复计一次输入费。
+		// apiType 必须无条件传入：空串会被当成 messages 口径，
+		// 影响 Token 统计的缓存口径归属。
 		// 这里先把可选的 metricsStore 收进接口变量：直接传 nil 的 *SQLiteStore
 		// 会变成"非 nil 接口值"，AddRecord 里的 store != nil 判断随之失效。
 		var store metrics.PersistenceStore
@@ -163,6 +166,7 @@ func newApp() (*app, error) {
 	if err != nil {
 		return nil, fmt.Errorf("初始化对话持久化存储失败: %w", err)
 	}
+	registerCleanup(a.conversationRegistry.Stop)
 
 	// 初始化 URL 管理器（非阻塞，动态排序）
 	urlManager := urlhealth.NewURLManager(30*time.Second, 3) // 30秒冷却期，连续3次失败后移到末尾
@@ -202,12 +206,13 @@ func newApp() (*app, error) {
 		log.Printf("[Circuit-Init] 渠道级熔断已禁用 (CIRCUIT_ENABLED=false)")
 	}
 
-	// 初始化自适应负载均衡
+	// 性能画像与渠道性能报告（/api/performance/report）：仅用于观测展示，
+	// 不参与生产选渠——生产选渠严格按配置顺序（R6：修正历史误导日志）。
 	profileManager := metrics.NewProfileManager()
 	a.adaptiveScheduler = scheduler.NewAdaptiveScheduler(profileManager)
 	a.channelScheduler.SetProfileManager(profileManager)
 	a.channelScheduler.SetAdaptiveScheduler(a.adaptiveScheduler)
-	log.Println("[Main] 自适应负载均衡已启用")
+	log.Println("[Main] 渠道性能画像已启用（仅观测展示，选渠按配置顺序）")
 
 	// 危险命令 AI 闸门：存储与拦截记录同库；遗留的 waiting 记录一律按拦截处理
 	// （重启后内存等待者已不存在）。llmgate.Caller 供闸门与 AI 助手共用。
@@ -215,12 +220,18 @@ func newApp() (*app, error) {
 	if err != nil {
 		return nil, fmt.Errorf("初始化危险命令 AI 闸门存储失败: %w", err)
 	}
+	registerCleanup(func() { _ = a.gateStore.Close() })
 	if expired, expireErr := a.gateStore.ExpireStalePending(context.Background()); expireErr != nil {
 		return nil, fmt.Errorf("清理重启前命令确认记录失败: %w", expireErr)
 	} else if expired > 0 {
 		log.Printf("[Gate-Init] 已将 %d 条重启前遗留的待确认记录标记为过期（按拦截处理）", expired)
 	}
-	gateCaller := &llmgate.Caller{EnvConfig: a.envCfg, CfgManager: a.cfgManager, ChannelScheduler: a.channelScheduler}
+	gateCaller := &llmgate.Caller{
+		EnvConfig:        a.envCfg,
+		CfgManager:       a.cfgManager,
+		ChannelScheduler: a.channelScheduler,
+		RequestLogStore:  a.requestLogStore, // R4-b 装配层注入，不经调度器定位器
+	}
 	a.cmdGate = hooks.NewCmdGate(a.cfgManager, gateCaller, a.gateStore, a.blockedStore)
 	// 内容安全管道注入闸门；未启用时保持"命中即拦截"的既有行为。
 	a.contentSafetyPipeline = hooks.NewContentSafetyPipelineWithRecorder(a.cfgManager, a.blockedStore, a.cmdGate)
@@ -233,6 +244,7 @@ func newApp() (*app, error) {
 	if err != nil {
 		return nil, fmt.Errorf("初始化可逆脱敏持久映射库失败: %w", err)
 	}
+	registerCleanup(func() { _ = a.mappingStore.Close() })
 	if a.cfgManager.GetSettings().ContentSafety.SensitiveData.Mode == config.ContentSafetyModeMask {
 		sensitive.SetPersistentMappingStore(a.mappingStore)
 		log.Printf("[SensitiveData-Init] 可逆脱敏持久映射库已启用（跨重启还原，AES-256-GCM 加密落盘）")
@@ -270,6 +282,7 @@ func newApp() (*app, error) {
 		_ = assistantStore.Close()
 		return nil, fmt.Errorf("初始化 AI 配置助手失败: %w", err)
 	}
+	registerCleanup(func() { _ = a.assistantService.Close() })
 	a.assistantAPI = handlers.NewAssistantAPI(a.assistantService)
 	log.Printf("[Assistant-Init] AI 配置助手已装配")
 
@@ -278,6 +291,7 @@ func newApp() (*app, error) {
 		return nil, fmt.Errorf("初始化评测工作台失败: %w", err)
 	}
 	a.evalService.Start()
+	registerCleanup(a.evalService.Stop)
 
 	// 从现有指标同步数据到性能画像
 	syncConfig := a.cfgManager.GetConfig()
@@ -317,16 +331,18 @@ func newApp() (*app, error) {
 	// 健康检查端点（固定路径 /health，与 Dockerfile HEALTHCHECK 保持一致）
 	r.GET("/health", handlers.HealthCheck(a.envCfg, a.cfgManager))
 
+	// 管理端点显式绑定管理鉴权（R1：不依赖 WebAuthMiddleware 的路径判断）
+	adminGroup := r.Group("/admin", middleware.AdminAuthMiddleware(a.envCfg))
 	// 配置保存端点
-	r.POST("/admin/config/save", handlers.SaveConfigHandler(a.cfgManager))
+	adminGroup.POST("/config/save", handlers.SaveConfigHandler(a.cfgManager))
 
 	// 开发信息端点
 	if a.envCfg.IsDevelopment() {
-		r.GET("/admin/dev/info", handlers.DevInfo(a.envCfg, a.cfgManager))
+		adminGroup.GET("/dev/info", handlers.DevInfo(a.envCfg, a.cfgManager))
 	}
 
-	// Web 管理界面 API 路由
-	apiGroup := r.Group("/api")
+	// Web 管理界面 API 路由（管理鉴权在路由组上显式绑定）
+	apiGroup := r.Group("/api", middleware.AdminAuthMiddleware(a.envCfg))
 	a.setupAdminAPI(apiGroup)
 
 	// 五协议代理端点
@@ -361,300 +377,6 @@ func newApp() (*app, error) {
 	a.mappingWatchDone = make(chan struct{})
 	go a.watchMappingStoreMode()
 	return a, nil
-}
-
-// setupAdminAPI 注册 Web 管理界面 API 路由（/api 组）。
-func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
-	apiGroup.GET("/request-logs", handlers.GetRequestLogs(a.requestLogStore, a.pricingStore))
-	apiGroup.GET("/system-logs", handlers.GetSystemLogs(a.logStore))
-	apiGroup.GET("/system-logs/:requestId", handlers.GetSystemLog(a.logStore))
-	apiGroup.GET("/blocked-logs", handlers.GetBlockedLogs(a.blockedStore, a.channelScheduler.GetConversationRegistry()))
-	apiGroup.GET("/blocked-logs/:id", handlers.GetBlockedLog(a.blockedStore))
-	apiGroup.DELETE("/blocked-logs/:id", handlers.DeleteBlockedLog(a.blockedStore))
-	apiGroup.DELETE("/blocked-logs", handlers.ClearBlockedLogs(a.blockedStore))
-
-	// 危险命令 AI 闸门（待确认列表 / 用户决定 / 会话级白黑名单）
-	apiGroup.GET("/security/gate/pending", handlers.GetGatePending(a.cmdGate))
-	apiGroup.POST("/security/gate/pending/:id/decision", handlers.DecideGatePending(a.cmdGate))
-	apiGroup.GET("/security/gate/decisions", handlers.ListGateDecisions(a.cmdGate))
-	apiGroup.POST("/security/gate/decisions", handlers.AddGateDecision(a.cmdGate))
-	apiGroup.DELETE("/security/gate/decisions/:conversationId", handlers.RemoveGateDecisions(a.cmdGate))
-
-	// 模型单价表（内置价 + 用户改写），花费统计的单价来源
-	apiGroup.GET("/pricing/models", handlers.GetModelPricing(a.pricingStore))
-	apiGroup.POST("/pricing/models", handlers.UpsertModelPricing(a.pricingStore))
-	apiGroup.DELETE("/pricing/models", handlers.DeleteModelPricing(a.pricingStore))
-
-	// 渠道管理 API 路由（messages/responses/gemini/chat/images 五组收敛为一次调用）
-	// 各渠道类型的 CRUD / key 管理 / pools / reorder / status / promotion / metrics / ping
-	// 全部由 handlers.RegisterChannelRoutes 统一注册，差异点通过 ChannelRouteOptions 表达。
-	channelDeps := handlers.ChannelRouteDeps{
-		Cfg:       a.cfgManager,
-		Scheduler: a.channelScheduler,
-		MetricsByKind: func(kind scheduler.ChannelKind) *metrics.MetricsManager {
-			return a.metricsByKind[kind]
-		},
-		Prices: a.pricingStore,
-	}
-
-	// Messages 渠道管理
-	handlers.RegisterChannelRoutes(apiGroup, scheduler.ChannelKindMessages, channelDeps, handlers.ChannelRouteOptions{
-		Crud:           messages.Crud(a.cfgManager, a.channelScheduler),
-		LoadBalance:    messages.UpdateLoadBalance(a.cfgManager),
-		Dashboard:      handlers.GetChannelDashboard(a.cfgManager, a.channelScheduler, scheduler.ChannelKindMessages),
-		SchedulerStats: handlers.GetSchedulerStats(a.channelScheduler),
-	})
-
-	// Responses 渠道管理
-	handlers.RegisterChannelRoutes(apiGroup, scheduler.ChannelKindResponses, channelDeps, handlers.ChannelRouteOptions{
-		Crud:        responses.Crud(a.cfgManager, a.channelScheduler),
-		LoadBalance: responses.UpdateLoadBalance(a.cfgManager),
-		Dashboard:   handlers.GetChannelDashboard(a.cfgManager, a.channelScheduler, scheduler.ChannelKindResponses),
-	})
-
-	// Gemini 渠道管理
-	handlers.RegisterChannelRoutes(apiGroup, scheduler.ChannelKindGemini, channelDeps, handlers.ChannelRouteOptions{
-		Crud:        gemini.Crud(a.cfgManager, a.channelScheduler),
-		LoadBalance: gemini.UpdateLoadBalance(a.cfgManager),
-		Dashboard:   handlers.GetChannelDashboard(a.cfgManager, a.channelScheduler, scheduler.ChannelKindGemini),
-	})
-
-	// Chat 渠道管理
-	handlers.RegisterChannelRoutes(apiGroup, scheduler.ChannelKindChat, channelDeps, handlers.ChannelRouteOptions{
-		Crud:        chat.Crud(a.cfgManager, a.channelScheduler),
-		LoadBalance: chat.UpdateLoadBalance(a.cfgManager),
-		Dashboard:   handlers.GetChannelDashboard(a.cfgManager, a.channelScheduler, scheduler.ChannelKindChat),
-	})
-
-	// Images 渠道管理
-	handlers.RegisterChannelRoutes(apiGroup, scheduler.ChannelKindImages, channelDeps, handlers.ChannelRouteOptions{
-		Crud:        images.Crud(a.cfgManager, a.channelScheduler),
-		LoadBalance: images.UpdateLoadBalance(a.cfgManager),
-		Dashboard:   handlers.GetChannelDashboard(a.cfgManager, a.channelScheduler, scheduler.ChannelKindImages),
-	})
-
-	// 本代理自身暴露的模型列表（客户端配置页按协议分组导入用，走 Web 鉴权而非代理鉴权）
-	apiGroup.GET("/proxy-models", handlers.ProxyModelsHandler(a.cfgManager))
-
-	// 渠道性能报告（自适应负载均衡）
-	apiGroup.GET("/performance/report", func(c *gin.Context) {
-		reports := a.adaptiveScheduler.GetChannelPerformanceReport()
-		c.JSON(200, gin.H{
-			"success": true,
-			"data":    reports,
-		})
-	})
-
-	// 渠道级熔断器（查询 / 手动重置）
-	apiGroup.GET("/circuit-breakers", handlers.GetCircuitBreakers(a.channelScheduler))
-	apiGroup.POST("/circuit-breakers/reset", handlers.ResetCircuitBreaker(a.channelScheduler))
-
-	// 对话与路由覆盖
-	apiGroup.GET("/conversations/route-options", handlers.GetConversationRouteOptions(a.cfgManager))
-	apiGroup.GET("/conversations", handlers.ListConversations(a.channelScheduler))
-	apiGroup.DELETE("/conversations", handlers.DeleteAllConversations(a.channelScheduler, a.sessionManager))
-	apiGroup.GET("/conversations/:id", handlers.GetConversation(a.channelScheduler))
-	apiGroup.PUT("/conversations/:id/name", handlers.SetConversationName(a.channelScheduler))
-	apiGroup.DELETE("/conversations/:id", handlers.DeleteConversation(a.channelScheduler, a.sessionManager))
-	apiGroup.PUT("/conversations/:id/route", handlers.SetConversationRouteOverride(a.channelScheduler, a.cfgManager))
-	apiGroup.DELETE("/conversations/:id/route", handlers.ClearConversationRouteOverride(a.channelScheduler))
-
-	// 管理界面设置
-	apiGroup.GET("/settings/fuzzy-mode", handlers.GetFuzzyMode(a.cfgManager))
-	apiGroup.PUT("/settings/fuzzy-mode", handlers.SetFuzzyMode(a.cfgManager))
-	apiGroup.GET("/settings", handlers.GetSettings(a.cfgManager))
-	apiGroup.PUT("/settings", handlers.UpdateSettings(a.cfgManager))
-	apiGroup.POST("/upstream/models", handlers.DiscoverUpstreamModels(a.cfgManager))
-	apiGroup.GET("/settings/client-disguise", handlers.GetClientDisguise(a.cfgManager))
-	apiGroup.PUT("/settings/client-disguise", handlers.SetClientDisguise(a.cfgManager))
-	apiGroup.GET("/settings/opencode", handlers.GetOpenCodeConfig())
-	apiGroup.PUT("/settings/opencode", handlers.SaveOpenCodeConfig())
-	apiGroup.GET("/settings/claude-code", handlers.GetClaudeCodeSettings())
-	apiGroup.PUT("/settings/claude-code", handlers.SaveClaudeCodeSettings())
-	apiGroup.GET("/settings/codex", handlers.GetCodexSettings())
-	apiGroup.PUT("/settings/codex", handlers.SaveCodexSettings())
-	apiGroup.PUT("/settings/codex/model-catalog", handlers.SaveCodexModelCatalog())
-	apiGroup.GET("/settings/dsh", handlers.GetDSHSettings())
-	apiGroup.PUT("/settings/dsh", handlers.SaveDSHSettings())
-	// CLI 工具版本检测（客户端配置页顶部横幅）
-	apiGroup.GET("/tools/:tool/version", handlers.GetToolVersion())
-	apiGroup.POST("/settings/ccs/pick-path", handlers.PickCcsPath(a.cfgManager))
-	apiGroup.POST("/settings/ccs/import", handlers.ImportToCcs(a.cfgManager))
-
-	// pi-agent 配置管理（沿用 apiGroup 的统一鉴权）
-	apiGroup.GET("/settings/pi-agent", a.piAgentAPI.Status())
-	apiGroup.GET("/settings/pi-agent/providers", a.piAgentAPI.ListProviders())
-	apiGroup.POST("/settings/pi-agent/providers", a.piAgentAPI.CreateProvider())
-	apiGroup.GET("/settings/pi-agent/providers/:id", a.piAgentAPI.GetProvider())
-	apiGroup.PUT("/settings/pi-agent/providers/:id", a.piAgentAPI.UpdateProvider())
-	apiGroup.DELETE("/settings/pi-agent/providers/:id", a.piAgentAPI.DeleteProvider())
-	apiGroup.POST("/settings/pi-agent/validate", a.piAgentAPI.ValidateProvider())
-	apiGroup.POST("/settings/pi-agent/providers/:id/discover-models", a.piAgentAPI.DiscoverModels())
-	apiGroup.POST("/settings/pi-agent/providers/:id/test", a.piAgentAPI.TestProvider())
-	apiGroup.GET("/settings/pi-agent/model-settings", a.piAgentAPI.GetModelSettings())
-	apiGroup.PATCH("/settings/pi-agent/model-settings", a.piAgentAPI.UpdateModelSettings())
-	apiGroup.GET("/skills", a.skillsAPI.List())
-	apiGroup.POST("/skills/content", a.skillsAPI.GetContent())
-	apiGroup.POST("/skills/backup/latest", a.skillsAPI.GetLatestBackup())
-	apiGroup.POST("/skills/note", a.skillsAPI.UpdateNote())
-	apiGroup.POST("/skills/consolidate", a.skillsAPI.Consolidate())
-	apiGroup.POST("/skills/import", a.skillsAPI.Import())
-	apiGroup.GET("/skills/search", a.skillsAPI.Search())
-	apiGroup.POST("/skills/remote/inspect", a.skillsAPI.InspectRemote())
-	apiGroup.POST("/skills/remote/install", a.skillsAPI.InstallRemote())
-	apiGroup.POST("/skills/copy", a.skillsAPI.Copy())
-	apiGroup.DELETE("/skills", a.skillsAPI.Delete())
-	apiGroup.POST("/skills/backup", a.skillsAPI.Backup())
-	a.assistantAPI.Register(apiGroup)
-	handlers.RegisterEvalRoutes(apiGroup, a.evalService)
-}
-
-// setupProxyEndpoints 注册五协议代理端点。
-func (a *app) setupProxyEndpoints(r *gin.Engine) {
-	// 代理端点 - Messages API
-	r.POST("/v1/messages", messages.Handler(a.envCfg, a.cfgManager, a.channelScheduler, a.contentSafetyPipeline))
-	r.POST("/v1/messages/count_tokens", messages.CountTokensHandler(a.envCfg, a.cfgManager, a.channelScheduler))
-
-	// 代理端点 - Models API（转发到上游）
-	r.GET("/v1/models", messages.ModelsHandler(a.envCfg, a.cfgManager, a.channelScheduler))
-	r.GET("/v1/models/:model", messages.ModelsDetailHandler(a.envCfg, a.cfgManager, a.channelScheduler))
-
-	// 代理端点 - Responses API
-	r.POST("/v1/responses", responses.Handler(a.envCfg, a.cfgManager, a.sessionManager, a.channelScheduler, a.contentSafetyPipeline))
-	r.POST("/v1/responses/compact", responses.CompactHandler(a.envCfg, a.cfgManager, a.sessionManager, a.channelScheduler, a.contentSafetyPipeline))
-
-	// 代理端点 - Chat Completions API (OpenAI-compatible 原生协议)
-	r.POST("/v1/chat/completions", chat.Handler(a.envCfg, a.cfgManager, a.channelScheduler, a.contentSafetyPipeline))
-	// 代理端点 - Images API (OpenAI-compatible 独立协议)
-	r.POST("/v1/images/generations", images.Handler(a.envCfg, a.cfgManager, a.channelScheduler, "/images/generations", a.contentSafetyPipeline))
-	r.POST("/v1/images/edits", images.Handler(a.envCfg, a.cfgManager, a.channelScheduler, "/images/edits", a.contentSafetyPipeline))
-	r.POST("/v1/images/variations", images.Handler(a.envCfg, a.cfgManager, a.channelScheduler, "/images/variations", a.contentSafetyPipeline))
-
-	// 代理端点 - Gemini API (原生协议)
-	// 使用通配符捕获 model:action 格式，如 gemini-pro:generateContent
-	// 路径格式：/v1beta/models/{model}:generateContent (Gemini 原生格式)
-	r.POST("/v1beta/models/*modelAction", gemini.Handler(a.envCfg, a.cfgManager, a.channelScheduler, a.contentSafetyPipeline))
-}
-
-// logStartupInfo 输出启动横幅与服务地址信息。
-func (a *app) logStartupInfo() {
-	fmt.Printf("\n[Server-Startup] API代理服务器已启动\n")
-	fmt.Printf("[Server-Info] 版本: %s\n", Version)
-	if BuildTime != "unknown" {
-		fmt.Printf("[Server-Info] 构建时间: %s\n", BuildTime)
-	}
-	if GitCommit != "unknown" {
-		fmt.Printf("[Server-Info] Git提交: %s\n", GitCommit)
-	}
-	fmt.Printf("[Server-Info] 管理界面: http://localhost:%d\n", a.envCfg.Port)
-	fmt.Printf("[Server-Info] API 地址: http://localhost:%d/v1\n", a.envCfg.Port)
-	fmt.Printf("[Server-Info] Messages: POST /v1/messages\n")
-	fmt.Printf("[Server-Info] Responses: POST /v1/responses\n")
-	fmt.Printf("[Server-Info] OpenAI Chat: POST /v1/chat/completions\n")
-	fmt.Printf("[Server-Info] OpenAI Images: POST /v1/images/{generations|edits|variations}\n")
-	fmt.Printf("[Server-Info] Gemini API: POST /v1beta/models/{model}:generateContent\n")
-	fmt.Printf("[Server-Info] Gemini API: POST /v1beta/models/{model}:streamGenerateContent\n")
-	fmt.Printf("[Server-Info] 健康检查: GET /health\n")
-	fmt.Printf("[Server-Info] 环境: %s\n", a.envCfg.Env)
-	// 检查是否使用默认密码，给予提示
-	if a.envCfg.ProxyAccessKey == "your-proxy-access-key" {
-		fmt.Printf("[Server-Warn] 访问密钥: your-proxy-access-key (默认值，建议通过 .env 文件修改)\n")
-	}
-	fmt.Printf("\n")
-}
-
-// watchMappingStoreMode 跟随 sensitiveData.mode 的热切换：
-// mask → 为新请求注入持久库；mask 之外 → 新请求停止使用持久映射。
-// 已开始的请求保留自己的存储与密钥快照，直到请求结束。
-func (a *app) watchMappingStoreMode() {
-	defer close(a.mappingWatchDone)
-	ticker := time.NewTicker(15 * time.Second)
-	defer ticker.Stop()
-	retentionTicker := time.NewTicker(time.Minute)
-	defer retentionTicker.Stop()
-	for {
-		select {
-		case <-a.mappingWatchStop:
-			return
-		case <-retentionTicker.C:
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if err := a.blockedStore.Purge(ctx); err != nil {
-				log.Printf("[ContentSafety-Purge] 清理内容安全历史失败: %v", err)
-			}
-			cancel()
-			ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-			if err := a.gateStore.Purge(ctx); err != nil {
-				log.Printf("[Gate-Purge] 清理命令确认历史失败: %v", err)
-			}
-			cancel()
-			continue
-		case <-ticker.C:
-		}
-		mode := a.cfgManager.GetSettings().ContentSafety.SensitiveData.Mode
-		enabled := sensitive.PersistentMappingStore() != nil
-		want := mode == config.ContentSafetyModeMask
-		if want == enabled {
-			continue
-		}
-		if want {
-			sensitive.SetPersistentMappingStore(a.mappingStore)
-			log.Printf("[SensitiveData-Watch] 已切换到可逆脱敏，持久映射库启用")
-		} else {
-			sensitive.SetPersistentMappingStore(nil)
-			log.Printf("[SensitiveData-Watch] 已离开可逆脱敏，新请求停用持久映射，已有请求沿用原快照")
-		}
-	}
-}
-
-// shutdown 按依赖逆序停止后台组件并关闭持久化存储。
-// 顺序约束：必须先停调度器（数据生产者）再关指标存储，
-// 避免关闭期间后台循环与存储 Close 产生写并发。
-func (a *app) shutdown() {
-	if a.mappingWatchStop != nil {
-		close(a.mappingWatchStop)
-		<-a.mappingWatchDone
-	}
-	sensitive.SetPersistentMissCallback(nil)
-	sensitive.SetPersistentMappingStore(nil)
-	a.channelScheduler.Stop()
-
-	if a.evalService != nil {
-		a.evalService.Stop()
-	}
-
-	if a.metricsStore != nil {
-		if err := a.metricsStore.Close(); err != nil {
-			log.Printf("[Metrics-Shutdown] 警告: 关闭指标存储时发生错误: %v", err)
-		} else {
-			log.Println("[Metrics-Shutdown] 指标存储已安全关闭")
-		}
-	}
-
-	a.conversationRegistry.Stop()
-	a.sessionManager.Stop()
-	if a.assistantService != nil {
-		if err := a.assistantService.Close(); err != nil {
-			log.Printf("[Assistant-Shutdown] 关闭 AI 配置助手存储失败: %v", err)
-		}
-	}
-	if err := a.blockedStore.Close(); err != nil {
-		log.Printf("[ContentSafety-Shutdown] 关闭拦截记录存储失败: %v", err)
-	}
-	if a.gateStore != nil {
-		if err := a.gateStore.Close(); err != nil {
-			log.Printf("[Gate-Shutdown] 关闭闸门存储失败: %v", err)
-		}
-	}
-	if a.mappingStore != nil {
-		if err := a.mappingStore.Close(); err != nil {
-			log.Printf("[SensitiveData-Shutdown] 关闭持久映射库失败: %v", err)
-		}
-	}
-	a.cfgManager.Close()
-	a.requestLogStore.Close()
-	if err := a.logStore.Close(); err != nil {
-		fmt.Fprintf(os.Stderr, "[Logger-Shutdown] 关闭日志存储失败: %v\n", err)
-	}
 }
 
 func main() {
@@ -729,35 +451,5 @@ func main() {
 		// 正常关闭完成
 	case <-time.After(15 * time.Second):
 		log.Println("[Server-Shutdown] 警告: 等待关闭超时")
-	}
-}
-
-func syncUpstreamProfiles(mm *metrics.MetricsManager, pm *metrics.ProfileManager, upstream *config.UpstreamConfig, channelIdx int) {
-	if mm == nil || pm == nil || upstream == nil || len(upstream.APIKeys) == 0 {
-		return
-	}
-
-	models := make(map[string]struct{})
-	if model := strings.TrimSpace(upstream.DefaultModel); model != "" {
-		models[model] = struct{}{}
-	}
-	for sourceModel, targetModels := range upstream.ModelMapping {
-		if source := strings.TrimSpace(sourceModel); source != "" && source != "*" {
-			models[source] = struct{}{}
-		}
-		for _, targetModel := range targetModels {
-			if target := strings.TrimSpace(targetModel); target != "" {
-				models[target] = struct{}{}
-			}
-		}
-	}
-	if len(models) == 0 {
-		return
-	}
-
-	for _, baseURL := range upstream.GetAllBaseURLs() {
-		for model := range models {
-			mm.SyncToProfile(pm, baseURL, upstream.APIKeys, model, channelIdx)
-		}
 	}
 }

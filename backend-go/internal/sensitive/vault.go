@@ -46,7 +46,7 @@ func SetPersistentMappingStore(store *MappingStore) {
 
 var (
 	globalPersistentStoreMu sync.RWMutex
-	globalPlaceholderState = &placeholderKeyState{}
+	globalPlaceholderState  = &placeholderKeyState{}
 	// persistentMissCallback 在还原遇到持久库 miss 时被调用（hooks 层注入审计）。
 	persistentMissCallback func(placeholder string)
 )

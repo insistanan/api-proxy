@@ -37,9 +37,8 @@ type routeOptionGroup struct {
 	Channels []routeOptionChannel `json:"channels"`
 }
 
-func ListConversations(channelScheduler *scheduler.ChannelScheduler) gin.HandlerFunc {
+func ListConversations(registry *conversation.Registry) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		registry := getConversationRegistry(channelScheduler)
 		if registry == nil {
 			c.JSON(http.StatusOK, gin.H{"conversations": []*conversation.Record{}})
 			return
@@ -64,9 +63,8 @@ func ListConversations(channelScheduler *scheduler.ChannelScheduler) gin.Handler
 	}
 }
 
-func GetConversation(channelScheduler *scheduler.ChannelScheduler) gin.HandlerFunc {
+func GetConversation(registry *conversation.Registry) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		registry := getConversationRegistry(channelScheduler)
 		if registry == nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "conversation not found"})
 			return
@@ -81,9 +79,8 @@ func GetConversation(channelScheduler *scheduler.ChannelScheduler) gin.HandlerFu
 	}
 }
 
-func SetConversationName(channelScheduler *scheduler.ChannelScheduler) gin.HandlerFunc {
+func SetConversationName(registry *conversation.Registry) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		registry := getConversationRegistry(channelScheduler)
 		if registry == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "conversation registry is not initialized"})
 			return
@@ -102,9 +99,8 @@ func SetConversationName(channelScheduler *scheduler.ChannelScheduler) gin.Handl
 	}
 }
 
-func DeleteConversation(channelScheduler *scheduler.ChannelScheduler, sessionManager *session.SessionManager) gin.HandlerFunc {
+func DeleteConversation(registry *conversation.Registry, sessionManager *session.SessionManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		registry := getConversationRegistry(channelScheduler)
 		if registry == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "conversation registry is not initialized"})
 			return
@@ -134,9 +130,8 @@ func DeleteConversation(channelScheduler *scheduler.ChannelScheduler, sessionMan
 }
 
 // DeleteAllConversations 删除全部对话、图片理解结果和 Responses 会话链。
-func DeleteAllConversations(channelScheduler *scheduler.ChannelScheduler, sessionManager *session.SessionManager) gin.HandlerFunc {
+func DeleteAllConversations(registry *conversation.Registry, sessionManager *session.SessionManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		registry := getConversationRegistry(channelScheduler)
 		if registry == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "conversation registry is not initialized"})
 			return
@@ -159,9 +154,8 @@ func DeleteAllConversations(channelScheduler *scheduler.ChannelScheduler, sessio
 	}
 }
 
-func SetConversationRouteOverride(channelScheduler *scheduler.ChannelScheduler, cfgManager *config.ConfigManager) gin.HandlerFunc {
+func SetConversationRouteOverride(registry *conversation.Registry, cfgManager *config.ConfigManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		registry := getConversationRegistry(channelScheduler)
 		if registry == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "conversation registry is not initialized"})
 			return
@@ -204,9 +198,8 @@ func SetConversationRouteOverride(channelScheduler *scheduler.ChannelScheduler, 
 	}
 }
 
-func ClearConversationRouteOverride(channelScheduler *scheduler.ChannelScheduler) gin.HandlerFunc {
+func ClearConversationRouteOverride(registry *conversation.Registry) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		registry := getConversationRegistry(channelScheduler)
 		if registry == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "conversation registry is not initialized"})
 			return
@@ -233,13 +226,6 @@ func GetConversationRouteOptions(cfgManager *config.ConfigManager) gin.HandlerFu
 			},
 		})
 	}
-}
-
-func getConversationRegistry(channelScheduler *scheduler.ChannelScheduler) *conversation.Registry {
-	if channelScheduler == nil {
-		return nil
-	}
-	return channelScheduler.GetConversationRegistry()
 }
 
 func buildRouteOptionGroup(cfgManager *config.ConfigManager, kind scheduler.ChannelKind, label string) routeOptionGroup {

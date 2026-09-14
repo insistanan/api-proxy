@@ -206,7 +206,7 @@ type StatusReport struct {
 	// ChannelID 是配置的显式渠道 ID，空 = 自动（按四协议优先级编排）。
 	ChannelID string       `json:"channelId"`
 	Channel   *ChannelInfo `json:"channel"`
-	// Channels 是渠道选择器的全部候选（按四协议优先级顺序）。
+	// Channels 是当前模型下可用的渠道候选（按四协议优先级顺序）。
 	Channels []ChannelOption `json:"channels"`
 }
 
@@ -217,7 +217,7 @@ func (s *Service) Status(ctx context.Context) StatusReport {
 	}
 	model := s.assistantModel()
 	channelID := s.assistantChannelID()
-	report := StatusReport{Model: model, ChannelID: channelID, Channels: s.channelOptions()}
+	report := StatusReport{Model: model, ChannelID: channelID, Channels: s.channelOptions(ctx, model)}
 	selection, err := s.caller.PreviewChannel(ctx, channelID, model)
 	if err != nil {
 		report.Available = false
@@ -233,30 +233,33 @@ func (s *Service) Status(ctx context.Context) StatusReport {
 	return report
 }
 
-// channelOptions 列出四协议（messages → responses → chat → gemini）的全部
-// 渠道作为选择器候选；渠道按配置顺序返回。
-func (s *Service) channelOptions() []ChannelOption {
-	if s == nil || s.cfgManager == nil {
+// channelOptions 按四协议与配置顺序列出当前模型下可用的渠道。
+// 复用实际调用的可用性检查，避免把挂起、熔断或无法解析模型的渠道列为候选。
+func (s *Service) channelOptions(ctx context.Context, model string) []ChannelOption {
+	if s == nil || s.cfgManager == nil || s.caller == nil {
 		return []ChannelOption{}
 	}
 	cfg := s.cfgManager.GetConfig()
-	kinds := []struct {
-		kind      string
-		upstreams []config.UpstreamConfig
-	}{
-		{"messages", cfg.Upstream},
-		{"responses", cfg.ResponsesUpstream},
-		{"chat", cfg.ChatUpstream},
-		{"gemini", cfg.GeminiUpstream},
+	upstreamsByKind := [][]config.UpstreamConfig{
+		cfg.Upstream,
+		cfg.ResponsesUpstream,
+		cfg.ChatUpstream,
+		cfg.GeminiUpstream,
 	}
 	options := make([]ChannelOption, 0, len(cfg.Upstream)+len(cfg.ResponsesUpstream)+len(cfg.ChatUpstream)+len(cfg.GeminiUpstream))
-	for _, entry := range kinds {
-		for index := range entry.upstreams {
-			upstream := entry.upstreams[index]
-			if config.GetChannelStatus(&upstream) == config.ChannelStatusDeleted {
+	for _, upstreams := range upstreamsByKind {
+		for index := range upstreams {
+			upstream := upstreams[index]
+			// 空 ID 会触发自动选渠，不能作为显式渠道候选。
+			if strings.TrimSpace(upstream.ID) == "" || config.GetChannelStatus(&upstream) != config.ChannelStatusActive {
 				continue
 			}
-			options = append(options, ChannelOption{Kind: entry.kind, ID: upstream.ID, Name: upstream.Name})
+			// PreviewChannel 只检查可用性，并立即释放半开探测名额，不发上游请求。
+			selection, err := s.caller.PreviewChannel(ctx, upstream.ID, model)
+			if err != nil {
+				continue
+			}
+			options = append(options, ChannelOption{Kind: string(selection.Kind), ID: selection.Upstream.ID, Name: selection.Upstream.Name})
 		}
 	}
 	return options

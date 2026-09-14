@@ -5,11 +5,12 @@ import (
 	"strconv"
 
 	"github.com/BenedictKing/api-proxy/internal/config"
+	"github.com/BenedictKing/api-proxy/internal/metrics"
 	"github.com/BenedictKing/api-proxy/internal/scheduler"
 	"github.com/gin-gonic/gin"
 )
 
-func GetChannelLogs(channelScheduler *scheduler.ChannelScheduler, cfgManager *config.ConfigManager, kind scheduler.ChannelKind) gin.HandlerFunc {
+func GetChannelLogs(store *metrics.ChannelLogStore, cfgManager *config.ConfigManager, kind scheduler.ChannelKind) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		channelID, err := strconv.Atoi(c.Param("id"))
 		if err != nil || channelID < 0 {
@@ -23,7 +24,10 @@ func GetChannelLogs(channelScheduler *scheduler.ChannelScheduler, cfgManager *co
 			return
 		}
 
-		store := channelScheduler.GetChannelLogStore(kind)
+		if store == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "channel log store is not initialized"})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{
 			"channelIndex": channelID,
 			"channelName":  channelName,

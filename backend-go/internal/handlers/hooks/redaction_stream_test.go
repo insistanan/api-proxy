@@ -281,7 +281,7 @@ func TestRestorationKeepsLogicalChoiceWhenArrayPositionChanges(t *testing.T) {
 	vault := sensitive.NewVault()
 	placeholder := maskTestValue(t, vault, "TEST", "original-value")
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	attached := &attachedHookPipeline{vault: vault, stream: sensitive.NewStreamCmdScanner(nil)}
+	attached := &attachedHookPipeline{pipeline: NewPipeline(), vault: vault, stream: sensitive.NewStreamCmdScanner(nil)}
 	c.Set(contentSafetyPipelineKey, attached)
 	defer ClearAttachedSensitiveData(c)
 	split := len(placeholder) / 2

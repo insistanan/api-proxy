@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/handlers/proxycore"
+	"github.com/BenedictKing/api-proxy/internal/httpclient"
 	"github.com/BenedictKing/api-proxy/internal/utils"
 )
 
@@ -92,7 +92,15 @@ func (s *Sender) Send(ctx context.Context, located config.LocatedChannel, stimul
 	}
 
 	started := time.Now()
-	resp, err := proxycore.SendRequest(req, &upstream, s.envCfg, false, "Eval", proxyURL)
+	// R4-a：评测原生发送直接走 internal/httpclient（唯一网络发送实现），
+	// 不再依赖 handlers/proxycore——评测不做协议转换、不进入生产调度，
+	// 也不应继承代理主链路的请求日志副作用。
+	resp, err := httpclient.Send(req, httpclient.SendOptions{
+		Timeout:            time.Duration(s.envCfg.RequestTimeout) * time.Millisecond,
+		ProxyURL:           proxyURL,
+		InsecureSkipVerify: upstream.InsecureSkipVerify,
+		StreamLabel:        "Eval",
+	})
 	latency := time.Since(started).Milliseconds()
 	if err != nil {
 		return nil, err

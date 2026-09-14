@@ -76,6 +76,7 @@ func runLogsQuery(args []string) error {
 		To:        toTime.UnixMilli(),
 		RequestID: strings.TrimSpace(*requestID),
 		Limit:     *limit,
+		Ascending: true,
 	}
 	ctx := context.Background()
 	var appLogs []logger.AppLog
@@ -132,6 +133,7 @@ func runLogsShow(args []string) error {
 		From:      0,
 		To:        time.Now().UnixMilli(),
 		RequestID: requestID,
+		Ascending: true,
 	}
 	ctx := context.Background()
 	trafficLogs, err := store.QueryTrafficLogs(ctx, opts)

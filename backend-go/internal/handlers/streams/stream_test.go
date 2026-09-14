@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/BenedictKing/api-proxy/internal/config"
+	"github.com/BenedictKing/api-proxy/internal/providers"
 	"github.com/BenedictKing/api-proxy/internal/types"
 	"github.com/BenedictKing/api-proxy/internal/utils"
 	"github.com/gin-gonic/gin"
@@ -181,6 +182,10 @@ type mockPrimeStreamProvider struct {
 
 func (m *mockPrimeStreamProvider) ConvertToProviderRequest(c *gin.Context, upstream *config.UpstreamConfig, apiKey string) (*http.Request, []byte, error) {
 	return nil, nil, nil
+}
+
+func (m *mockPrimeStreamProvider) BuildRequest(input providers.RequestInput, upstream *config.UpstreamConfig, apiKey string) (*providers.RequestOutcome, error) {
+	return nil, nil
 }
 
 func (m *mockPrimeStreamProvider) ConvertToClaudeResponse(providerResp *types.ProviderResponse) (*types.ClaudeResponse, error) {

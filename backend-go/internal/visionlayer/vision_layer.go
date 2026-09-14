@@ -238,8 +238,10 @@ func describeImages(
 		selection, err := channelScheduler.SelectVisionChannel(requestContext, kind, visionChannelID, targetPoolID)
 		if err == nil {
 			result, failCount, attemptErr := describeImagesOnChannel(c, envCfg, cfgManager, channelScheduler, kind, selection, visionModelInput, profile, images, 2)
-			if selection.Reserved {
-				channelScheduler.ReleaseChannelReservation(selection.Kind, selection.ChannelIndex)
+			if selection.Permit != nil {
+				// 图片理解旁路结束：中性释放（旁路结果不计入目标渠道健康度）。
+				selection.Permit.Release()
+				selection.Permit = nil
 			}
 			if attemptErr == nil {
 				return result, nil
@@ -276,10 +278,12 @@ func describeImages(
 			// 避免把尚未尝试的后备渠道也算入负载，并让并发请求看到当前尝试。
 			candidate.Kind = kind
 			channelScheduler.ReserveChannel(kind, candidate.ChannelIndex)
-			candidate.Reserved = true
+			candidate.Permit = channelScheduler.NewReservationPermit(kind, candidate.ChannelIndex)
 			result, failCount, err := describeImagesOnChannel(c, envCfg, cfgManager, channelScheduler, kind, candidate, visionModelInput, profile, images, 2)
-			if candidate.Reserved {
-				channelScheduler.ReleaseChannelReservation(candidate.Kind, candidate.ChannelIndex)
+			if candidate.Permit != nil {
+				// 图片理解旁路结束：中性释放（旁路结果不计入渠道健康度）。
+				candidate.Permit.Release()
+				candidate.Permit = nil
 			}
 			if err == nil {
 				return result, nil
@@ -481,22 +485,23 @@ func buildProviderRequest(
 	body []byte,
 	images []visionImage,
 ) (*http.Request, error) {
-	visionCtx := c.Copy()
-	visionReq := c.Request.Clone(c.Request.Context())
-	visionReq.Method = http.MethodPost
-	visionReq.URL.Path = "/v1/messages"
-	visionReq.URL.RawQuery = ""
-	visionReq.Body = io.NopCloser(bytes.NewReader(body))
-	visionReq.ContentLength = int64(len(body))
-	visionReq.Header = c.Request.Header.Clone()
-	visionReq.Header.Set("Content-Type", "application/json")
-	visionCtx.Request = visionReq
-	request, _, err := provider.ConvertToProviderRequest(visionCtx, upstream, apiKey)
+	// R4-a：以显式输入构造图片理解请求，不再复制伪造 gin 请求形态。
+	// 保留客户端 header（透明代理语义），但目标固定为 Messages 协议。
+	outcome, err := providers.BuildUpstreamRequest(provider, providers.RequestInput{
+		Ctx:    c.Request.Context(),
+		Method: http.MethodPost,
+		Path:   "/v1/messages",
+		Header: c.Request.Header.Clone(),
+		Body:   body,
+	}, upstream, apiKey)
 	if err != nil {
 		return nil, err
 	}
+	request := outcome.Request
 	if err := validateConvertedVisionRequest(request, images); err != nil {
-		_ = request.Body.Close()
+		if request != nil && request.Body != nil {
+			_ = request.Body.Close()
+		}
 		return nil, err
 	}
 	return request, nil

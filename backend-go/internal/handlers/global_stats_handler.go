@@ -4,13 +4,12 @@ import (
 	"time"
 
 	"github.com/BenedictKing/api-proxy/internal/metrics"
-	"github.com/BenedictKing/api-proxy/internal/pricing"
 	"github.com/gin-gonic/gin"
 )
 
 // GetGlobalStatsHistory 获取全局统计历史数据
 // GET /api/{messages|responses}/global/stats/history?duration={1h|6h|24h|today}
-func GetGlobalStatsHistory(metricsManager *metrics.MetricsManager, prices *pricing.Store) gin.HandlerFunc {
+func GetGlobalStatsHistory(metricsManager *metrics.MetricsManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		duration, durationStr, ok := parseStatsDuration(c)
 		if !ok {
@@ -48,30 +47,13 @@ func GetGlobalStatsHistory(metricsManager *metrics.MetricsManager, prices *prici
 		}
 
 		// 获取全局统计数据
-		result := metricsManager.GetGlobalHistoricalStatsWithTokens(duration, interval, prices)
+		result := metricsManager.GetGlobalHistoricalStatsWithTokens(duration, interval)
 
 		// 更新 duration 字符串（特别是 today 情况）
 		if durationStr == "today" {
 			result.Summary.Duration = "today"
 		}
 
-		c.JSON(200, result)
-	}
-}
-
-// GetModelCostStats 按模型拆分统计区间内的用量与花费。
-// GET /api/{kind}/global/stats/models?duration={1h|6h|24h|today}
-func GetModelCostStats(metricsManager *metrics.MetricsManager, prices *pricing.Store) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		duration, durationStr, ok := parseStatsDuration(c)
-		if !ok {
-			return
-		}
-
-		result := metricsManager.GetModelCostStats(duration, prices)
-		if durationStr == "today" {
-			result.Duration = "today"
-		}
 		c.JSON(200, result)
 	}
 }

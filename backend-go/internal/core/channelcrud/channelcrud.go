@@ -82,6 +82,25 @@ func (h *Handlers) resetMetrics(index int) {
 	h.sch.ResetChannelMetrics(index, h.ops.Kind)
 }
 
+// respondConfigError 统一响应配置写操作失败（R3-c）：
+//   - 配置校验/操作错误（ConfigError）返回 400；
+//   - 其余（持久化失败等）返回 500；
+//   - 已过提交点的错误（文件已原子替换、内存与磁盘一致）额外携带
+//     code=CONFIG_COMMITTED 与 committed=true：前端不得把该失败按"未提交"
+//     自动重试——一次新增会被重试成两次；应提示用户刷新查看实际状态。
+func respondConfigError(c *gin.Context, err error) {
+	status := http.StatusInternalServerError
+	if config.IsConfigError(err) {
+		status = http.StatusBadRequest
+	}
+	body := gin.H{"error": err.Error()}
+	if config.IsCommittedError(err) {
+		body["code"] = "CONFIG_COMMITTED"
+		body["committed"] = true
+	}
+	c.JSON(status, body)
+}
+
 // GetUpstreams 获取上游列表（兼容前端 channels 字段名）
 func (h *Handlers) GetUpstreams(c *gin.Context) {
 	c.JSON(200, gin.H{
@@ -100,11 +119,7 @@ func (h *Handlers) AddUpstream(c *gin.Context) {
 
 	created, err := h.ops.Add(upstream)
 	if err != nil {
-		status := http.StatusInternalServerError
-		if config.IsConfigError(err) {
-			status = http.StatusBadRequest
-		}
-		c.JSON(status, gin.H{"error": err.Error()})
+		respondConfigError(c, err)
 		return
 	}
 
@@ -132,15 +147,11 @@ func (h *Handlers) UpdateUpstream(c *gin.Context) {
 
 	shouldResetMetrics, err := h.ops.Update(id, updates)
 	if err != nil {
-		status := http.StatusInternalServerError
-		switch {
-		case strings.Contains(err.Error(), "无效的上游索引"):
+		if strings.Contains(err.Error(), "无效的上游索引") {
 			c.JSON(404, gin.H{"error": "Upstream not found"})
 			return
-		case config.IsConfigError(err):
-			status = http.StatusBadRequest
 		}
-		c.JSON(status, gin.H{"error": err.Error()})
+		respondConfigError(c, err)
 		return
 	}
 
@@ -162,12 +173,11 @@ func (h *Handlers) DeleteUpstream(c *gin.Context) {
 
 	removed, err := h.ops.Remove(id)
 	if err != nil {
-		status := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "无效的上游索引") {
 			c.JSON(404, gin.H{"error": "Upstream not found"})
 			return
 		}
-		c.JSON(status, gin.H{"error": err.Error()})
+		respondConfigError(c, err)
 		return
 	}
 
@@ -204,7 +214,7 @@ func (h *Handlers) AddApiKey(c *gin.Context) {
 		case strings.Contains(err.Error(), "API密钥已存在"):
 			c.JSON(400, gin.H{"error": "API密钥已存在"})
 		default:
-			c.JSON(500, gin.H{"error": "Failed to save config"})
+			respondConfigError(c, err)
 		}
 		return
 	}
@@ -234,7 +244,7 @@ func (h *Handlers) DeleteApiKey(c *gin.Context) {
 		case strings.Contains(err.Error(), "API密钥不存在"):
 			c.JSON(404, gin.H{"error": "API key not found"})
 		default:
-			c.JSON(500, gin.H{"error": "Failed to save config"})
+			respondConfigError(c, err)
 		}
 		return
 	}
@@ -258,7 +268,7 @@ func (h *Handlers) MoveApiKeyToTop(c *gin.Context) {
 	}
 
 	if err := h.ops.MoveKeyTop(id, apiKey); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+		respondConfigError(c, err)
 		return
 	}
 
@@ -281,7 +291,7 @@ func (h *Handlers) MoveApiKeyToBottom(c *gin.Context) {
 	}
 
 	if err := h.ops.MoveKeyBottom(id, apiKey); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+		respondConfigError(c, err)
 		return
 	}
 
@@ -300,7 +310,7 @@ func (h *Handlers) UpdateLoadBalance(c *gin.Context) {
 
 	if err := h.ops.SetLoadBalance(req.Strategy); err != nil {
 		if strings.Contains(err.Error(), "无效的负载均衡策略") {
-			c.JSON(400, gin.H{"error": err.Error()})
+			respondConfigError(c, err)
 			return
 		}
 		c.JSON(500, gin.H{"error": "Failed to save config"})
@@ -321,7 +331,7 @@ func (h *Handlers) ReorderChannels(c *gin.Context) {
 	}
 
 	if err := h.ops.Reorder(req.Order); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+		respondConfigError(c, err)
 		return
 	}
 
@@ -350,7 +360,7 @@ func (h *Handlers) SetChannelStatus(c *gin.Context) {
 			c.JSON(404, gin.H{"error": "Channel not found"})
 			return
 		}
-		c.JSON(400, gin.H{"error": err.Error()})
+		respondConfigError(c, err)
 		return
 	}
 
@@ -377,7 +387,7 @@ func (h *Handlers) SetChannelPromotion(c *gin.Context) {
 	}
 
 	if err := h.ops.SetPromotion(id, time.Duration(req.Duration)*time.Second, req.Count); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+		respondConfigError(c, err)
 		return
 	}
 

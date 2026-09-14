@@ -64,12 +64,19 @@ func SetVersionInfo(version, build, commit string) {
 func SaveConfigHandler(cfgManager *config.ConfigManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if err := cfgManager.SaveConfig(); err != nil {
-			c.JSON(500, gin.H{
+			body := gin.H{
 				"status":    "error",
 				"message":   "配置保存失败",
 				"error":     err.Error(),
 				"timestamp": time.Now().Format(time.RFC3339),
-			})
+			}
+			// 已过提交点的保存失败：文件已是新内容，前端不得按未提交重试。
+			if config.IsCommittedError(err) {
+				body["code"] = "CONFIG_COMMITTED"
+				body["committed"] = true
+				body["message"] = "配置已写入但收尾失败，请刷新查看实际状态"
+			}
+			c.JSON(500, body)
 			return
 		}
 

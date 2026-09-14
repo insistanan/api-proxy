@@ -3,8 +3,6 @@ package metrics
 import (
 	"strings"
 	"time"
-
-	"github.com/BenedictKing/api-proxy/internal/pricing"
 )
 
 // ============ 历史数据查询方法（用于图表可视化）============
@@ -529,8 +527,6 @@ type keyBucketData struct {
 // ============ 全局统计数据结构和方法（用于全局流量统计图表）============
 
 // GlobalHistoryDataPoint 全局历史数据点（含 Token 数据）。
-// CostUSD 是该时间桶内**可计价**请求的花费合计，未计价模型不摊进来；
-// 桶级只给总额，四项拆分放在 Summary.Cost 里，图表按时间轴只画一条花费曲线。
 type GlobalHistoryDataPoint struct {
 	Timestamp           time.Time `json:"timestamp"`
 	RequestCount        int64     `json:"requestCount"`
@@ -541,22 +537,19 @@ type GlobalHistoryDataPoint struct {
 	OutputTokens        int64     `json:"outputTokens"`
 	CacheCreationTokens int64     `json:"cacheCreationTokens"`
 	CacheReadTokens     int64     `json:"cacheReadTokens"`
-	CostUSD             float64   `json:"costUsd"`
 }
 
-// GlobalStatsSummary 全局统计汇总。Cost 是嵌套字段而不是若干平铺的 total*Cost：
-// 花费口径（含未计价计数）与 CostStats 只有一处定义，界面直接读 cost.totalCostUsd。
+// GlobalStatsSummary 全局统计汇总。
 type GlobalStatsSummary struct {
-	TotalRequests            int64     `json:"totalRequests"`
-	TotalSuccess             int64     `json:"totalSuccess"`
-	TotalFailure             int64     `json:"totalFailure"`
-	TotalInputTokens         int64     `json:"totalInputTokens"`
-	TotalOutputTokens        int64     `json:"totalOutputTokens"`
-	TotalCacheCreationTokens int64     `json:"totalCacheCreationTokens"`
-	TotalCacheReadTokens     int64     `json:"totalCacheReadTokens"`
-	AvgSuccessRate           float64   `json:"avgSuccessRate"`
-	Duration                 string    `json:"duration"`
-	Cost                     CostStats `json:"cost"`
+	TotalRequests            int64   `json:"totalRequests"`
+	TotalSuccess             int64   `json:"totalSuccess"`
+	TotalFailure             int64   `json:"totalFailure"`
+	TotalInputTokens         int64   `json:"totalInputTokens"`
+	TotalOutputTokens        int64   `json:"totalOutputTokens"`
+	TotalCacheCreationTokens int64   `json:"totalCacheCreationTokens"`
+	TotalCacheReadTokens     int64   `json:"totalCacheReadTokens"`
+	AvgSuccessRate           float64 `json:"avgSuccessRate"`
+	Duration                 string  `json:"duration"`
 }
 
 // GlobalStatsHistoryResponse 全局统计响应
@@ -565,10 +558,9 @@ type GlobalStatsHistoryResponse struct {
 	Summary    GlobalStatsSummary       `json:"summary"`
 }
 
-// GetGlobalHistoricalStatsWithTokens 获取全局历史统计（包含 Token 数据与花费）
+// GetGlobalHistoricalStatsWithTokens 获取全局历史统计（包含 Token 数据）
 // 聚合所有 Key 的数据，按时间间隔分桶。
-// prices 允许为 nil（Store.CostFor 有 nil 接收者保护），此时全部记录记入未计价。
-func (m *MetricsManager) GetGlobalHistoricalStatsWithTokens(duration, interval time.Duration, prices *pricing.Store) GlobalStatsHistoryResponse {
+func (m *MetricsManager) GetGlobalHistoricalStatsWithTokens(duration, interval time.Duration) GlobalStatsHistoryResponse {
 	// 参数验证
 	if interval <= 0 || duration <= 0 {
 		return GlobalStatsHistoryResponse{
@@ -620,8 +612,6 @@ func (m *MetricsManager) GetGlobalHistoricalStatsWithTokens(duration, interval t
 					b.outputTokens += record.OutputTokens
 					b.cacheCreationTokens += record.CacheCreationInputTokens
 					b.cacheReadTokens += record.CacheReadInputTokens
-					// 花费按桶累加一次，汇总由 merge 复用桶结果，避免同一条记录查两遍单价表。
-					b.cost.addRecord(prices, m.apiType, record)
 
 					// 累加汇总
 					totalRequests++
@@ -641,14 +631,12 @@ func (m *MetricsManager) GetGlobalHistoricalStatsWithTokens(duration, interval t
 
 	// 构建数据点结果
 	dataPoints := make([]GlobalHistoryDataPoint, numPoints)
-	var summaryCost CostStats
 	for i := 0; i < numPoints; i++ {
 		b := buckets[int64(i)]
 		successRate := float64(0)
 		if b.requestCount > 0 {
 			successRate = float64(b.successCount) / float64(b.requestCount) * 100
 		}
-		summaryCost.merge(b.cost)
 		dataPoints[i] = GlobalHistoryDataPoint{
 			Timestamp:           startTime.Add(time.Duration(i+1) * interval),
 			RequestCount:        b.requestCount,
@@ -659,7 +647,6 @@ func (m *MetricsManager) GetGlobalHistoricalStatsWithTokens(duration, interval t
 			OutputTokens:        b.outputTokens,
 			CacheCreationTokens: b.cacheCreationTokens,
 			CacheReadTokens:     b.cacheReadTokens,
-			CostUSD:             b.cost.TotalCostUSD,
 		}
 	}
 
@@ -679,7 +666,6 @@ func (m *MetricsManager) GetGlobalHistoricalStatsWithTokens(duration, interval t
 		TotalCacheReadTokens:     totalCacheRead,
 		AvgSuccessRate:           avgSuccessRate,
 		Duration:                 duration.String(),
-		Cost:                     summaryCost,
 	}
 
 	return GlobalStatsHistoryResponse{
@@ -697,7 +683,6 @@ type globalBucketData struct {
 	outputTokens        int64
 	cacheCreationTokens int64
 	cacheReadTokens     int64
-	cost                CostStats
 }
 
 // CalculateTodayDuration 计算"今日"时间范围（从今天 0 点到现在）

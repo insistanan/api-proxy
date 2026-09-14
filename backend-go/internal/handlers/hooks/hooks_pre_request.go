@@ -167,10 +167,10 @@ type attachedPreRequestCache struct {
 
 type checkedPreRequestBody struct {
 	*bytes.Reader
-	owner    *attachedHookPipeline
-	protocol string
+	owner       *attachedHookPipeline
+	protocol    string
 	contentType string
-	size int
+	size        int
 }
 
 func (b *checkedPreRequestBody) Close() error { return nil }

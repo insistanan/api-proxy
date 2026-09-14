@@ -24,16 +24,16 @@ type streamTextState struct {
 }
 
 type streamToolArgumentState struct {
-	body      strings.Builder
-	name      string
-	rawInput  bool
-	started   bool
-	inString  bool
-	escaped   bool
-	closed    bool
-	scanned   bool
-	stack     []byte
-	digest    [sha256.Size]byte
+	body     strings.Builder
+	name     string
+	rawInput bool
+	started  bool
+	inString bool
+	escaped  bool
+	closed   bool
+	scanned  bool
+	stack    []byte
+	digest   [sha256.Size]byte
 }
 
 func (s *streamToolArgumentState) append(fragment string) error {

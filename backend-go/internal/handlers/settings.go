@@ -61,11 +61,23 @@ func UpdateSettings(cfgManager *config.ConfigManager) gin.HandlerFunc {
 		}
 
 		if err := cfgManager.UpdateSettings(settings); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存全局设置失败"})
+			respondSaveError(c, "保存全局设置失败", err)
 			return
 		}
 		c.JSON(http.StatusOK, cfgManager.GetSettings())
 	}
+}
+
+// respondSaveError 统一响应设置保存失败（R3-c）：已过提交点的错误携带
+// code/committed，前端不得按未提交重试（应刷新查看实际状态）。
+func respondSaveError(c *gin.Context, message string, err error) {
+	body := gin.H{"error": message, "detail": err.Error()}
+	if config.IsCommittedError(err) {
+		body["code"] = "CONFIG_COMMITTED"
+		body["committed"] = true
+		body["error"] = message + "（已写入，请刷新查看实际状态）"
+	}
+	c.JSON(http.StatusInternalServerError, body)
 }
 
 // GetFuzzyMode 获取 Fuzzy 模式状态

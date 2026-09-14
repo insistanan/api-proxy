@@ -18,16 +18,7 @@ import (
 	"github.com/BenedictKing/api-proxy/internal/sensitive"
 	"github.com/BenedictKing/api-proxy/internal/types"
 	"github.com/BenedictKing/api-proxy/internal/utils"
-	"github.com/gin-gonic/gin"
 )
-
-// noopResponseWriter 满足 gin.CreateTestContextOnly 的参数约束。
-// 内部调用不读取客户端响应流（响应体在 http.Client 层读取），这里不会写入任何数据。
-type noopResponseWriter struct{}
-
-func (noopResponseWriter) Header() http.Header       { return http.Header{} }
-func (noopResponseWriter) Write([]byte) (int, error) { return 0, nil }
-func (noopResponseWriter) WriteHeader(int)           {}
 
 const (
 	// DefaultTimeoutSecs 单次内部调用的默认整体超时（含重试）。
@@ -47,8 +38,22 @@ type Caller struct {
 	EnvConfig        *config.EnvConfig
 	CfgManager       *config.ConfigManager
 	ChannelScheduler *scheduler.ChannelScheduler
+	// RequestLogStore 请求日志存储（R4-b 装配层注入，替代调度器服务定位器）。
+	// 为 nil 时回退经 ChannelScheduler 获取（兼容测试与旧装配）。
+	RequestLogStore *metrics.RequestLogStore
 	// TimeoutSecs 单次 Call 的整体超时；0 取 DefaultTimeoutSecs。
 	TimeoutSecs int
+}
+
+// requestLogStore 返回请求日志存储（注入优先，回退定位器兼容旧装配）。
+func (c *Caller) requestLogStore() *metrics.RequestLogStore {
+	if c.RequestLogStore != nil {
+		return c.RequestLogStore
+	}
+	if c.ChannelScheduler == nil {
+		return nil
+	}
+	return c.ChannelScheduler.GetRequestLogStore()
 }
 
 // CallResult 是一次内部调用的结果。
@@ -99,7 +104,7 @@ func (c *Caller) Call(ctx context.Context, channelID string, prompt Prompt) (res
 	defer func() {
 		// 选渠前失败也要有记录，不能只记成功发到上游的调用。
 		if err != nil && !trace.recorded && c.ChannelScheduler != nil {
-			if store := c.ChannelScheduler.GetRequestLogStore(); store != nil {
+			if store := c.requestLogStore(); store != nil {
 				store.Record(metrics.RequestLogEntry{
 					RequestID:       trace.RequestID,
 					AttemptID:       trace.RequestID + "-unavailable",
@@ -182,8 +187,8 @@ func (c *Caller) Call(ctx context.Context, channelID string, prompt Prompt) (res
 const maxChannelAttempts = 4
 
 // PreviewChannel 返回当前配置下内部调用会命中的渠道（不实际发送请求），
-// 用于可用性探测与状态展示。编排选渠产生的 in-flight 预留与熔断半开
-// 探测名额在此立即释放（探测不记账，Neutral 释放）。
+// 用于可用性探测与状态展示。选渠产生的许可（in-flight 预留 + 半开探测
+// 名额）在此立即释放（探测不记账，中性释放名额）。
 func (c *Caller) PreviewChannel(ctx context.Context, channelID string, model string) (*SelectedChannel, error) {
 	if c == nil || c.CfgManager == nil {
 		return nil, fmt.Errorf("内部调用器未初始化")
@@ -192,14 +197,10 @@ func (c *Caller) PreviewChannel(ctx context.Context, channelID string, model str
 	if err != nil {
 		return nil, err
 	}
-	if selection.Reserved && c.ChannelScheduler != nil {
-		c.ChannelScheduler.ReleaseChannelReservation(selection.Kind, selection.ChannelIndex)
-		selection.Reserved = false
-	}
-	if selection.Probe && c.ChannelScheduler != nil {
-		// 探测只预览不真正请求：以 Neutral 释放半开探测名额，不改变健康度。
-		c.ChannelScheduler.RecordCircuitNeutral(selection.Kind, selection.ChannelIndex)
-		selection.Probe = false
+	// 探测只预览不真正请求：立即释放许可（探测名额中性释放，不改变健康度）。
+	if selection.Permit != nil {
+		selection.Permit.Release()
+		selection.Permit = nil
 	}
 	return selection, nil
 }
@@ -220,29 +221,24 @@ type PromptMessage struct {
 }
 
 func (c *Caller) callOnChannel(ctx context.Context, selection *SelectedChannel, prompt Prompt, trace *callLogContext) (result *CallResult, err error) {
-	// 结束时统一释放选渠占用的资源：in-flight 预留 + 熔断半开探测名额。
-	// 探测名额按调用结果记账（成功/失败/取消 Neutral），与主链路
-	// multi_channel_failover 的口径一致；未占用名额时 Record* 是安全空操作。
+	// 结束时统一释放选渠许可（R2-b）：健康结果恰好记账一次（成功 / 失败，
+	// 取消按中性），随后幂等释放 in-flight 预留；未记账的探测名额按中性释放。
+	// 与主链路 multi_channel_failover 的口径一致。
 	defer func() {
-		if c.ChannelScheduler == nil || selection == nil {
+		if selection == nil || selection.Permit == nil {
 			return
 		}
-		if selection.Reserved {
-			c.ChannelScheduler.ReleaseChannelReservation(selection.Kind, selection.ChannelIndex)
-			selection.Reserved = false
+		switch {
+		case ctx.Err() != nil:
+			// 整体超时/取消：不计入渠道健康度（与主链路客户端取消口径一致）。
+			selection.Permit.RecordHealthNeutral()
+		case err != nil:
+			selection.Permit.RecordHealthFailure()
+		default:
+			selection.Permit.RecordHealthSuccess()
 		}
-		if selection.Probe {
-			switch {
-			case ctx.Err() != nil:
-				// 整体超时/取消：不计入渠道健康度（与主链路客户端取消口径一致）。
-				c.ChannelScheduler.RecordCircuitNeutral(selection.Kind, selection.ChannelIndex)
-			case err != nil:
-				c.ChannelScheduler.RecordCircuitFailure(selection.Kind, selection.ChannelIndex)
-			default:
-				c.ChannelScheduler.RecordCircuitSuccess(selection.Kind, selection.ChannelIndex)
-			}
-			selection.Probe = false
-		}
+		selection.Permit.Release()
+		selection.Permit = nil
 	}()
 	upstream := selection.Upstream
 	provider := providers.GetProvider(upstream.ServiceType)
@@ -550,28 +546,29 @@ func (c *Caller) timeoutDuration() time.Duration {
 	return time.Duration(timeout) * time.Second
 }
 
-// buildProviderRequest 借用 provider 的转换链构造上游请求。providers 统一以
-// Claude Messages 请求体为输入（visionlayer 同此约定），这里用一个剥离了
-// 客户端痕迹的合成 gin context 承载（空 header + Context 注入，绝不携带
-// 管理端 cookie / x-proxy-key，与 eval.Sender 的安全约束一致）。
+// buildProviderRequest 以显式输入构造上游请求（R4-a）：
+// providers 统一以 Claude Messages 请求体为输入（visionlayer 同此约定），
+// 经 RequestInput 显式传入 context / method / header / body，
+// 不再伪造 gin 测试上下文；也绝不携带管理端 cookie / x-proxy-key。
 func buildProviderRequest(ctx context.Context, provider providers.Provider, upstream *config.UpstreamConfig, apiKey string, body []byte) (*http.Request, error) {
-	synthetic := gin.CreateTestContextOnly(noopResponseWriter{}, gin.New())
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "/v1/messages", io.NopCloser(bytes.NewReader(body)))
-	req.Header = http.Header{}
-	req.Header.Set("Content-Type", "application/json")
-	synthetic.Request = req
-	upstreamRequest, _, err := provider.ConvertToProviderRequest(synthetic, upstream, apiKey)
+	outcome, err := providers.BuildUpstreamRequest(provider, providers.RequestInput{
+		Ctx:    ctx,
+		Method: http.MethodPost,
+		Path:   "/v1/messages",
+		Header: http.Header{"Content-Type": []string{"application/json"}},
+		Body:   body,
+	}, upstream, apiKey)
 	if err != nil {
 		return nil, err
 	}
-	if upstreamRequest == nil || upstreamRequest.Body == nil {
+	if outcome.Request == nil || outcome.Request.Body == nil {
 		return nil, fmt.Errorf("内部调用渠道 %q 转换后缺少请求体", upstream.Name)
 	}
 	if err := ctx.Err(); err != nil {
-		_ = upstreamRequest.Body.Close()
+		_ = outcome.Request.Body.Close()
 		return nil, err
 	}
-	return upstreamRequest, nil
+	return outcome.Request, nil
 }
 
 func buildClaudeRequestBody(model string, prompt Prompt) ([]byte, error) {
@@ -653,7 +650,7 @@ func (c *Caller) recordAttempt(
 	if store := c.ChannelScheduler.GetChannelLogStore(selection.Kind); store != nil {
 		store.Record(&entry)
 	}
-	if store := c.ChannelScheduler.GetRequestLogStore(); store != nil {
+	if store := c.requestLogStore(); store != nil {
 		store.Record(metrics.RequestLogEntry{
 			RequestID:       entry.RequestID,
 			AttemptID:       entry.AttemptID,

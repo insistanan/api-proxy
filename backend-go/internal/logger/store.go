@@ -25,6 +25,20 @@ const (
 	writeFlush
 )
 
+// PurgeOptions 描述一次手动日志清理：全部清空，或按本地日历日清理某一天
+// （Date 为 YYYY-MM-DD）。二者必须且只能设置其一。
+type PurgeOptions struct {
+	All  bool
+	Date string
+}
+
+// PurgeResult 是手动清理的删除行数统计。
+type PurgeResult struct {
+	DeletedAppLogs     int64 `json:"deletedAppLogs"`
+	DeletedTrafficLogs int64 `json:"deletedTrafficLogs"`
+	DeletedRequestLogs int64 `json:"deletedRequestLogs"`
+}
+
 const (
 	maxQueuedLogBytes    = 32 << 20
 	maxWriteBatchBytes   = 2 << 20
@@ -47,6 +61,7 @@ type Store struct {
 	db        *sql.DB
 	readDB    *sql.DB
 	dbPath    string
+	mu        sync.Mutex
 	queue     chan queuedWrite
 	done      chan struct{}
 	closeOnce sync.Once
@@ -436,7 +451,14 @@ func (s *Store) completeBatch(batch []queuedWrite, err error) {
 	s.queueMu.Unlock()
 }
 
+// applyBatch / VACUUM 必须整段占用写连接；cleanupLoop 的自动清理同样串行化，避免交错。
 func (s *Store) applyBatch(batch []queuedWrite) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.applyBatchLocked(batch)
+}
+
+func (s *Store) applyBatchLocked(batch []queuedWrite) error {
 	if len(batch) == 1 && batch[0].kind == writeFlush {
 		return nil
 	}
@@ -539,6 +561,8 @@ func (s *Store) cleanupExpired() (bool, error) {
 	if s == nil || s.db == nil {
 		return false, fmt.Errorf("日志存储不可清理")
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	cutoff := RetentionCutoff(time.Now()).UnixMilli()
@@ -681,7 +705,7 @@ func (s *Store) QueryRequestLogs(ctx context.Context, opts QueryOptions) ([]json
 		args = append(args, opts.APIType)
 	}
 	order := ` ORDER BY unix_milli DESC, id DESC`
-	if opts.From > 0 || opts.To > 0 {
+	if opts.Ascending {
 		order = ` ORDER BY unix_milli ASC, id ASC`
 	}
 	query += order
