@@ -42,8 +42,8 @@
       </v-list-item>
       <v-list-item
         v-if="supportsCcs"
-        @click="emit('importCcs')"
         title="选择目标应用类型，生成 ccswitch:// 配置"
+        @click="emit('importCcs')"
       >
         <template #prepend><v-icon size="small" color="primary">mdi-application-export</v-icon></template>
         <v-list-item-title>导入到 CCS</v-list-item-title>

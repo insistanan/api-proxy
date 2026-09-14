@@ -18,9 +18,12 @@ export const useAssistantStore = defineStore('assistant', {
     channelId: '',
     /** 当前配置下实际会命中的渠道（status 探测结果） */
     channel: null as AssistantStatusChannel | null,
-    /** 渠道选择器全部候选（按 messages → responses → chat → gemini 顺序） */
+    /** 当前模型下可用的渠道候选（按 messages → responses → chat → gemini 顺序） */
     channels: [] as AssistantChannelOption[],
     statusChecked: false,
+    statusLoading: false,
+    statusRequestId: 0,
+    channelSaving: false,
     sessions: [] as AssistantSession[],
     activeSessionId: null as number | null,
     messages: [] as AssistantMessage[],
@@ -34,33 +37,48 @@ export const useAssistantStore = defineStore('assistant', {
   },
   actions: {
     async checkStatus() {
+      const requestId = ++this.statusRequestId
+      this.statusLoading = true
       try {
         const status = await api.getAssistantStatus()
+        // 打开面板、展开菜单与切换渠道都可能刷新状态，只接收最新一次结果。
+        if (requestId !== this.statusRequestId) return
         this.available = status.available
         this.unavailableReason = status.reason ?? ''
         this.model = status.model ?? ''
         this.channelId = status.channelId ?? ''
         this.channel = status.channel ?? null
         this.channels = status.channels ?? []
-      } catch {
+        this.statusChecked = true
+      } catch (error) {
+        if (requestId !== this.statusRequestId) return
         this.available = false
-        this.unavailableReason = '助手状态查询失败'
-        this.model = ''
-        this.channelId = ''
+        this.unavailableReason = `助手状态查询失败：${error instanceof Error ? error.message : String(error)}`
+        // 查询失败不代表配置已改为自动，保留上次确认的模型与渠道 ID。
         this.channel = null
         this.channels = []
       } finally {
-        this.statusChecked = true
+        if (requestId === this.statusRequestId) {
+          this.statusLoading = false
+        }
       }
     },
     // 切换助手渠道：即时保存并刷新状态。model 与 channelId 必须同时提交，
     // 否则未提交的字段会被设置接口按零值覆盖。
     async selectChannel(channelId: string) {
+      if (this.channelSaving || this.statusLoading || !this.statusChecked) return
+      this.channelSaving = true
+      // 保存开始后，之前发出的查询不能再覆盖状态或清除保存失败的提示。
+      this.statusRequestId++
+      this.statusLoading = false
       try {
         await api.updateSettings({ assistant: { model: this.model, channelId } })
+        this.channelId = channelId
         await this.checkStatus()
       } catch (error) {
-        this.unavailableReason = error instanceof Error ? error.message : '切换助手渠道失败'
+        this.unavailableReason = `切换助手渠道失败：${error instanceof Error ? error.message : String(error)}`
+      } finally {
+        this.channelSaving = false
       }
     },
     async loadSessions() {

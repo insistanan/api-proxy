@@ -51,12 +51,43 @@ export default [
         Event: 'readonly',
         KeyboardEvent: 'readonly',
         MouseEvent: 'readonly',
-        // Node.js 环境
+        // DOM API（按 lint 实际使用补全，R6 环境声明修正）
+        HTMLElement: 'readonly',
+        Element: 'readonly',
+        PointerEvent: 'readonly',
+        CustomEvent: 'readonly',
+        FileReader: 'readonly',
+        DOMException: 'readonly',
+        TextDecoder: 'readonly',
+        TextEncoder: 'readonly',
+        Notification: 'readonly',
+        AudioContext: 'readonly',
+        requestAnimationFrame: 'readonly',
+        cancelAnimationFrame: 'readonly',
+        performance: 'readonly',
+        crypto: 'readonly',
+        getComputedStyle: 'readonly',
+        matchMedia: 'readonly',
+        history: 'readonly',
+        location: 'readonly',
+        addEventListener: 'readonly',
+        removeEventListener: 'readonly'
+      }
+    }
+  },
+
+  // Node 构建脚本（scripts/*.mjs）：Node 环境全局（R6 环境声明修正）
+  {
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      globals: {
+        console: 'readonly',
         process: 'readonly',
-        __dirname: 'readonly',
-        __filename: 'readonly',
-        module: 'readonly',
-        require: 'readonly'
+        URL: 'readonly',
+        URLSearchParams: 'readonly',
+        TextDecoder: 'readonly'
       }
     }
   },
@@ -84,7 +115,11 @@ export default [
           argsIgnorePattern: '^_',
           varsIgnorePattern: '^_'
         }
-      ]
+      ],
+      // TS 文件上关闭基础 no-unused-vars（TS-ESLint 官方要求）：
+      // 基础规则不识别类型语法，对 interface 方法参数（API 契约文档）误报；
+      // @typescript-eslint/no-unused-vars 带 AST 类型信息，接替全量检查。
+      'no-unused-vars': 'off'
     }
   },
 
@@ -131,13 +166,10 @@ export default [
       // 代码质量
       'no-console': process.env.NODE_ENV === 'production' ? 'warn' : 'off',
       'no-debugger': process.env.NODE_ENV === 'production' ? 'error' : 'off',
-      'no-unused-vars': [
-        'warn',
-        {
-          argsIgnorePattern: '^_',
-          varsIgnorePattern: '^_'
-        }
-      ],
+      // TS 文件（含 .vue 的 script）由 @typescript-eslint/no-unused-vars 接管：
+      // 基础规则不识别类型语法，对 interface 方法参数（API 契约文档）误报。
+      // 纯 JS（scripts/*.mjs）不经过 TS 配置块，保留基础规则。
+      'no-unused-vars': 'off',
       'no-undef': 'error',
       'prefer-const': 'warn',
       'no-var': 'error',
@@ -151,6 +183,20 @@ export default [
         }
       ],
       'eol-last': ['error', 'always']
+    }
+  },
+
+  // 纯 JS 构建脚本：不经 TS 配置块，恢复基础 no-unused-vars。
+  {
+    files: ['scripts/**/*.mjs'],
+    rules: {
+      'no-unused-vars': [
+        'warn',
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_'
+        }
+      ]
     }
   },
 

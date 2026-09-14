@@ -44,6 +44,7 @@ import {
   mdiSwapHorizontal,
   mdiArrowRight,
   mdiClose,
+  mdiArrowLeft,
   mdiArrowUpBold,
   mdiArrowUpBoldCircleOutline,
   mdiArrowDownBold,
@@ -142,6 +143,8 @@ import {
   mdiShieldLock,
   mdiEyeOff,
   mdiEyeCheck,
+  mdiBroom,
+  mdiFileFindOutline,
   mdiShieldCheck,
   mdiBellRing,
   mdiRegex
@@ -216,6 +219,7 @@ const iconMap: Record<string, string> = {
   'arrow-up-bold-circle-outline': mdiArrowUpBoldCircleOutline,
   'arrow-down-bold': mdiArrowDownBold,
   'arrow-right': mdiArrowRight,
+  'arrow-left': mdiArrowLeft,
   'swap-horizontal': mdiSwapHorizontal,
   'rotate-right': mdiRotateRight,
   'backup-restore': mdiBackupRestore,
@@ -241,6 +245,8 @@ const iconMap: Record<string, string> = {
   'shield-check': mdiShieldCheck,
   'eye-off': mdiEyeOff,
   'eye-check': mdiEyeCheck,
+  broom: mdiBroom,
+  'file-find-outline': mdiFileFindOutline,
   'bell-ring': mdiBellRing,
   regex: mdiRegex,
 

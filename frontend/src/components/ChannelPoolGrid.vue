@@ -124,7 +124,7 @@
           <v-icon start size="x-small">mdi-key</v-icon>{{ channel.apiKeys?.length || 0 }}
         </v-chip>
         <div class="vision-channel-actions" @click.stop>
-          <slot name="vision-actions" :channel="channel" />
+          <slot name="vision-actions" :channel="channel" ></slot>
           <v-btn icon size="x-small" color="error" variant="text" title="删除渠道" @click="emit('delete', channel.index)">
             <v-icon size="small">mdi-delete</v-icon>
           </v-btn>

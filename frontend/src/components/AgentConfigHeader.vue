@@ -5,7 +5,7 @@
       <p>{{ subtitle }}</p>
     </div>
     <div class="agent-config-header__actions">
-      <slot />
+      <slot ></slot>
     </div>
   </header>
 </template>

@@ -177,7 +177,17 @@
               class="mt-5"
               hint="留空时自动：按 Messages → Responses → Chat → Gemini 优先级编排；指定后固定使用该渠道，不回退不换渠道"
               persistent-hint
-            />
+            >
+              <template #selection="{ item }">
+                <span class="v-select__selection-text">
+                  {{
+                    assistantChannelItems.some(option => option.value === item.value)
+                      ? item.title
+                      : '指定渠道不可用，请重新选择'
+                  }}
+                </span>
+              </template>
+            </v-select>
 
             <v-alert
               v-if="assistantStatus"

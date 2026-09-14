@@ -100,6 +100,23 @@ export interface SystemLogDetail {
   requestLogs?: RequestLogEntry[]
 }
 
+/** 一个存在日志记录的本地日历日（清理入口用）。 */
+export interface LogAvailableDate {
+  date: string
+  count: number
+}
+
+export interface LogDatesResponse {
+  dates: LogAvailableDate[]
+}
+
+/** 手动清理 logs.db 的删除行数统计。 */
+export interface PurgeLogsResult {
+  deletedAppLogs: number
+  deletedTrafficLogs: number
+  deletedRequestLogs: number
+}
+
 export type ContentSafetyAPIType = 'messages' | 'responses' | 'chat' | 'gemini'
 export type BlockedLogType =
   | 'sensitive_word'

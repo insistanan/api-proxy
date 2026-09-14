@@ -89,8 +89,12 @@
     <!-- 渠道选择：自动（四协议优先级编排）或显式指定渠道 -->
     <v-select
       v-model:menu="channelMenuOpen"
-      :model-value="assistantStore.channelId"
+      :model-value="selectedChannelId"
       :items="channelItems"
+      :loading="assistantStore.statusLoading || assistantStore.channelSaving"
+      :disabled="!assistantStore.statusChecked || assistantStore.channelSaving || assistantStore.sending"
+      :list-props="{ disabled: assistantStore.statusLoading }"
+      placeholder="指定渠道不可用，请重新选择"
       item-title="title"
       item-value="value"
       density="compact"
@@ -99,7 +103,7 @@
       class="assistant-panel__channels"
       :menu-props="assistantMenuProps"
       aria-label="选择助手渠道"
-      @update:model-value="assistantStore.selectChannel($event as string)"
+      @update:model-value="selectChannel($event as string)"
     />
 
     <!-- 当前生效的模型路由：分组（匹配词）→ 命中渠道 -->
@@ -109,11 +113,7 @@
 
     <!-- 消息区 -->
     <div ref="messagesRef" class="assistant-panel__messages">
-      <div v-if="!assistantStore.available" class="assistant-panel__hint">
-        <v-icon size="22" class="mb-2">mdi-robot-off</v-icon>
-        <div>{{ assistantStore.unavailableReason || 'AI 助手不可用' }}</div>
-      </div>
-      <div v-else-if="assistantStore.messages.length === 0" class="assistant-panel__hint">
+      <div v-if="assistantStore.messages.length === 0" class="assistant-panel__hint">
         <v-icon size="22" class="mb-2">mdi-chat-outline</v-icon>
         <div>问我任何配置问题，或直接说"帮我建一个 chat 渠道"。</div>
         <div class="text-caption text-medium-emphasis mt-1">协议转换、分组、兜底、模型映射都可以问</div>
@@ -147,8 +147,21 @@
       </template>
     </div>
 
-    <!-- 输入区 -->
-    <div class="assistant-panel__input">
+    <div v-if="statusMessage" id="assistant-status-message" class="assistant-panel__notice" role="status">
+      <span>{{ statusMessage }}</span>
+      <v-btn
+        size="small"
+        variant="text"
+        :loading="assistantStore.statusLoading"
+        :disabled="assistantStore.channelSaving || assistantStore.sending"
+        @click="refreshStatus"
+      >
+        重新检查
+      </v-btn>
+    </div>
+
+    <!-- 渠道不可用时仍允许编辑草稿；可用性只限制发送。 -->
+    <div class="assistant-panel__input" @pointerdown="closeMenus" @focusin="closeMenus">
       <v-textarea
         v-model="draft"
         :rows="draft.includes('\n') ? 3 : 1"
@@ -158,8 +171,10 @@
         density="compact"
         hide-details
         placeholder="输入你的问题…（Enter 发送）"
-        :disabled="!assistantStore.available || assistantStore.sending"
-        @keydown.enter.exact.prevent="send"
+        aria-label="助手消息"
+        :aria-describedby="statusMessage ? 'assistant-status-message' : undefined"
+        :disabled="assistantStore.sending"
+        @keydown.enter.exact="onDraftEnter"
       />
       <v-btn
         class="ml-2"
@@ -169,7 +184,7 @@
         size="small"
         aria-label="发送"
         :loading="assistantStore.sending"
-        :disabled="!assistantStore.available || !draft.trim()"
+        :disabled="!assistantStore.available || assistantStore.statusLoading || assistantStore.channelSaving || !draft.trim()"
         @click="send"
       >
         <v-icon size="18">mdi-send</v-icon>
@@ -185,7 +200,17 @@ import type { AssistantSession } from '@/services/api'
 
 const assistantStore = useAssistantStore()
 const draft = ref('')
+const sendError = ref('')
 const messagesRef = ref<HTMLElement | null>(null)
+
+const statusMessage = computed(() => {
+  if (sendError.value) return sendError.value
+  if (assistantStore.unavailableReason) return assistantStore.unavailableReason
+  if (assistantStore.statusChecked && !assistantStore.available) {
+    return '当前没有可用的助手渠道，请选择其他渠道或恢复渠道后重新检查。'
+  }
+  return ''
+})
 
 const sessionItems = computed<Array<{ id: number; title: string }>>(() =>
   assistantStore.sessions.map((session: AssistantSession) => ({
@@ -201,7 +226,7 @@ const kindLabels: Record<string, string> = {
   gemini: 'Gemini',
 }
 
-// 渠道选择器候选：自动 + 四协议全部渠道（status 已按 m → r → c → g 排序）。
+// 渠道选择器候选：自动 + 当前模型下可用的四协议渠道。
 const channelItems = computed<Array<{ title: string; value: string }>>(() => [
   { title: '自动（Messages → Responses → Chat → Gemini）', value: '' },
   ...assistantStore.channels.map(channel => ({
@@ -209,6 +234,21 @@ const channelItems = computed<Array<{ title: string; value: string }>>(() => [
     value: channel.id,
   })),
 ])
+
+// 已配置渠道变为不可用时显示提示，不把它加回候选，也不静默改成自动。
+const selectedChannelId = computed(() =>
+  channelItems.value.some(item => item.value === assistantStore.channelId) ? assistantStore.channelId : null
+)
+
+const refreshStatus = async () => {
+  sendError.value = ''
+  await assistantStore.checkStatus()
+}
+
+const selectChannel = async (channelId: string) => {
+  sendError.value = ''
+  await assistantStore.selectChannel(channelId)
+}
 
 // 路由信息一行：分组「匹配词」→ 渠道名（协议）；自动模式下走兜底分组。
 const routeLabel = computed(() => {
@@ -236,14 +276,33 @@ const actionLabel = (action: string) =>
 
 const send = async () => {
   const content = draft.value.trim()
-  if (!content || assistantStore.sending || !assistantStore.available) return
+  if (
+    !content ||
+    assistantStore.sending ||
+    assistantStore.statusLoading ||
+    assistantStore.channelSaving ||
+    !assistantStore.available
+  ) {
+    return
+  }
+  sendError.value = ''
   draft.value = ''
   try {
     await assistantStore.send(content)
-  } catch {
-    // 发送失败：恢复输入内容让用户重试（store 已回滚乐观消息）。
+  } catch (error) {
+    // 发送失败保留草稿，并在输入区明确展示原因。
     draft.value = content
+    sendError.value = `发送失败：${error instanceof Error ? error.message : String(error)}`
+  } finally {
+    void assistantStore.checkStatus()
   }
+}
+
+const onDraftEnter = (event: KeyboardEvent) => {
+  // 中文输入法确认候选时的 Enter 不应被拦截为发送。
+  if (event.isComposing || event.keyCode === 229) return
+  event.preventDefault()
+  void send()
 }
 
 const deleteActive = async () => {
@@ -286,10 +345,31 @@ const sessionMenuOpen = ref(false)
 const channelMenuOpen = ref(false)
 const viewportSize = ref<{ width: number; height: number } | null>(null)
 
+const closeMenus = () => {
+  sessionMenuOpen.value = false
+  channelMenuOpen.value = false
+}
+
+watch(channelMenuOpen, open => {
+  if (!open) return
+  sessionMenuOpen.value = false
+  // 面板保持打开时渠道也可能熔断；每次展开刷新，避免一直使用旧候选。
+  if (!assistantStore.statusLoading && !assistantStore.channelSaving && !assistantStore.sending) {
+    void refreshStatus()
+  }
+})
+
+watch(sessionMenuOpen, open => {
+  if (open) channelMenuOpen.value = false
+})
+
 // 菜单挂在 body 下，由父 VOverlay 的栈关系保证层级；高度交给定位器按视口裁定。
 const assistantMenuProps = {
   attach: 'body',
   contentClass: 'assistant-widget-menu',
+  // 选择器自带键盘导航；菜单不应把输入区获得的焦点抢回去。
+  captureFocus: false,
+  retainFocus: false,
   maxHeight: 320,
   location: 'bottom start',
   offset: 4,
@@ -503,8 +583,7 @@ const startDrag = (target: FloatingTarget, event: PointerEvent) => {
     moved: false,
   }
   if (target === 'fab') suppressFabClick = false
-  sessionMenuOpen.value = false
-  channelMenuOpen.value = false
+  closeMenus()
   dragging.value = true
   element.classList.add('assistant-floating--dragging')
   handle.addEventListener('pointermove', updateDrag, { passive: true })
@@ -546,8 +625,7 @@ watch(
     if (open) {
       scheduleViewportFit()
     } else {
-      sessionMenuOpen.value = false
-      channelMenuOpen.value = false
+      closeMenus()
       if (dragState?.target === 'panel') finishDrag(true)
     }
   },
@@ -692,6 +770,28 @@ onBeforeUnmount(() => {
   color: rgba(var(--v-theme-on-surface), 0.6);
   font-size: 0.85rem;
   max-width: 280px;
+}
+
+.assistant-panel__notice {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  color: rgb(var(--v-theme-warning));
+  font-size: 0.75rem;
+}
+
+.assistant-panel__notice > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-height: 80px;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+
+.assistant-panel__notice > .v-btn {
+  flex: 0 0 auto;
 }
 
 .assistant-panel__input {

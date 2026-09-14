@@ -36,9 +36,9 @@
         <div class="tool-install-banner__cmd">
           <code>{{ info.installCmd }}</code>
           <v-tooltip location="top" :text="copied ? '已复制' : '复制命令'">
-            <template #activator="{ props }">
+            <template #activator="{ props: activatorProps }">
               <v-btn
-                v-bind="props"
+                v-bind="activatorProps"
                 icon
                 size="small"
                 variant="text"

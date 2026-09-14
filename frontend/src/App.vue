@@ -360,7 +360,7 @@
               :is="Component"
               :key="route.path"
               @edit="editChannel"
-              @delete="deleteChannel"
+              @delete="handleDeleteChannel"
               @ping="pingChannel"
               @refresh="refreshChannels"
               @error="showErrorToast"
@@ -384,7 +384,7 @@
       v-model:show="dialogStore.showAddChannelModal"
       :channel="dialogStore.editingChannel"
       :channel-type="channelStore.activeTab"
-      @save="saveChannel"
+      @save="handleSaveChannel"
     />
 
     <!-- Toast通知 -->
@@ -420,6 +420,8 @@ import { versionService } from './services/version'
 import GatePendingNotification from './components/GatePendingNotification.vue'
 import AssistantWidget from './components/AssistantWidget.vue'
 import { useAuthStore } from './stores/auth'
+import { useAuthFlow } from './composables/useAuthFlow'
+import { useChannelActions } from './composables/useChannelActions'
 import { useChannelStore } from './stores/channel'
 import { usePreferencesStore } from './stores/preferences'
 import { useDialogStore } from './stores/dialog'
@@ -555,66 +557,6 @@ const topNavActive = computed(() => {
 
 const { toasts, getToastColor, getToastIcon, showToast, showErrorToast, showSuccessToast } = useToast()
 
-// 主要功能函数 - 使用 ChannelStore
-const refreshChannels = async () => {
-  try {
-    await channelStore.refreshChannels()
-  } catch (error) {
-    handleAuthError(error)
-  }
-}
-
-const saveChannel = async (channel: Omit<Channel, 'id' | 'index' | 'latency'>, options?: { isQuickAdd?: boolean }) => {
-  try {
-    const result = await channelStore.saveChannel(channel, dialogStore.editingChannel?.index ?? null, options)
-    showToast(result.message, 'success')
-    if (result.quickAddMessage) {
-      showToast(result.quickAddMessage, 'info')
-    }
-    dialogStore.closeAddChannelModal()
-    await refreshChannels()
-  } catch (error) {
-    handleAuthError(error)
-  }
-}
-
-const editChannel = (channel: Channel) => {
-  dialogStore.openEditChannelModal(channel)
-}
-
-const deleteChannel = async (channelId: number) => {
-  if (!confirm('确定要删除这个渠道吗？')) return
-
-  try {
-    const result = await channelStore.deleteChannel(channelId)
-    showToast(result.message, 'success')
-  } catch (error) {
-    handleAuthError(error)
-  }
-}
-
-const openAddChannelModal = () => {
-  dialogStore.openAddChannelModal()
-}
-
-const pingChannel = async (channelId: number) => {
-  try {
-    await channelStore.pingChannel(channelId)
-    // 不再使用 Toast，延迟结果直接显示在渠道列表中
-  } catch (error) {
-    showToast(`延迟测试失败: ${error instanceof Error ? error.message : '未知错误'}`, 'error')
-  }
-}
-
-const pingAllChannels = async () => {
-  try {
-    await channelStore.pingAllChannels()
-    // 不再使用 Toast，延迟结果直接显示在渠道列表中
-  } catch (error) {
-    showToast(`批量延迟测试失败: ${error instanceof Error ? error.message : '未知错误'}`, 'error')
-  }
-}
-
 // Fuzzy 模式管理
 const loadFuzzyModeStatus = async () => {
   systemStore.setFuzzyModeLoadError(false)
@@ -728,144 +670,34 @@ const setDarkMode = (themeName: 'light' | 'dark' | 'auto') => {
   // PreferencesStore 已通过 pinia-plugin-persistedstate 自动持久化，无需手动写入 localStorage
 }
 
-// 认证状态管理（使用 AuthStore）
-const isAuthenticated = computed(() => authStore.isAuthenticated)
-// 认证相关状态已迁移到 AuthStore
+// 认证流程收敛到 useAuthFlow composable（R5，方案 8.1）：
+// 自动认证 / 手动提交 / 注销 / 认证失败处理离开页面壳，状态本体在 authStore。
+const { isAuthenticated, showAuthDialog, autoAuthenticate, handleAuthSubmit, handleLogout, handleAuthError } =
+  useAuthFlow(showToast)
 
-// 认证尝试限制
-const MAX_AUTH_ATTEMPTS = 5
+// 渠道业务操作收敛到 useChannelActions composable（R5，方案 8.1）：
+// App.vue 逐步退回页面壳；committed 错误（R3）在 composable 内统一消费。
+const {
+  refreshChannels: refreshChannelsAction,
+  saveChannel,
+  deleteChannel,
+  pingChannel,
+  pingAllChannels
+} = useChannelActions(showToast)
 
-// 控制认证对话框显示
-const showAuthDialog = computed({
-  get: () => {
-    // 只有在初始化完成后，且未认证，且不在自动认证中时，才显示对话框
-    return authStore.isInitialized && !isAuthenticated.value && !authStore.isAutoAuthenticating
-  },
-  set: () => {} // 防止外部修改，认证状态只能通过内部逻辑控制
-})
+const refreshChannels = () => refreshChannelsAction(handleAuthError)
 
-// 自动验证保存的密钥
-const autoAuthenticate = async () => {
-  // 检查 AuthStore 中是否有保存的密钥
-  if (!authStore.apiKey) {
-    // 没有保存的密钥，显示登录对话框
-    authStore.setAuthError('请输入访问密钥以继续')
-    authStore.setAutoAuthenticating(false)
-    authStore.setInitialized(true)
-    return false
-  }
+const handleSaveChannel = (channel: Omit<Channel, 'id' | 'index' | 'latency'>, options?: { isQuickAdd?: boolean }) =>
+  saveChannel(channel, options, handleAuthError)
 
-  // 有保存的密钥，尝试自动认证
-  try {
-    // 尝试调用API验证密钥是否有效
-    await channelApiByType('messages').getChannels()
+const handleDeleteChannel = (channelId: number) => deleteChannel(channelId, handleAuthError)
 
-    // 密钥有效，认证成功
-    authStore.setAuthError('')
-    return true
-  } catch (error) {
-    // 仅在明确 401 时视为密钥无效；其他错误（网络/5xx）不应清除密钥
-    if (error instanceof ApiError && error.status === 401) {
-      console.warn('自动认证失败: 认证失败(401)')
-      authStore.clearAuth()
-      authStore.setAuthError('保存的访问密钥已失效，请重新输入')
-      return false
-    }
-
-    console.warn('自动认证暂时失败:', error)
-    showToast(`无法验证访问密钥: ${error instanceof Error ? error.message : '未知错误'}`, 'warning')
-    // 非 401：保留密钥，继续尝试连接后端（后续刷新会更新系统状态）
-    return true
-  } finally {
-    authStore.setAutoAuthenticating(false)
-    authStore.setInitialized(true)
-  }
+const editChannel = (channel: Channel) => {
+  dialogStore.openEditChannelModal(channel)
 }
 
-// 手动设置密钥（用于重新认证）
-const setAuthKey = (key: string) => {
-  authStore.setApiKey(key)
-  authStore.setAuthError('')
-}
-
-// 处理认证提交
-const handleAuthSubmit = async () => {
-  if (!authStore.authKeyInput.trim()) {
-    authStore.setAuthError('请输入访问密钥')
-    return
-  }
-
-  // 检查是否被锁定
-  if (authStore.isAuthLocked) {
-    const remainingSeconds = Math.ceil((authStore.authLockoutTime! - Date.now()) / 1000)
-    authStore.setAuthError(`认证尝试次数过多，请在 ${remainingSeconds} 秒后重试`)
-    return
-  }
-
-  authStore.setAuthLoading(true)
-  authStore.setAuthError('')
-
-  try {
-    // 设置密钥
-    setAuthKey(authStore.authKeyInput.trim())
-
-    // 测试API调用以验证密钥
-    await channelApiByType('messages').getChannels()
-
-    // 认证成功，重置计数器
-    authStore.resetAuthAttempts()
-    authStore.setAuthLockout(null)
-
-    // 如果成功，加载数据
-    await refreshChannels()
-
-    authStore.setAuthKeyInput('')
-
-    // 记录认证成功(前端日志)
-    if (import.meta.env.DEV) {
-      console.info('✅ 认证成功 - 时间:', new Date().toISOString())
-    }
-  } catch (error) {
-    // 仅在明确 401 时计入认证失败；网络/5xx 不计入失败次数，也不清除已保存密钥
-    if (error instanceof ApiError && error.status === 401) {
-      authStore.incrementAuthAttempts()
-
-      // 记录认证失败(前端日志)
-      console.warn('🔒 认证失败 - 尝试次数:', authStore.authAttempts, '时间:', new Date().toISOString())
-
-      // 如果尝试次数过多，锁定5分钟
-      if (authStore.authAttempts >= MAX_AUTH_ATTEMPTS) {
-        authStore.setAuthLockout(new Date(Date.now() + 5 * 60 * 1000))
-        authStore.setAuthError('认证尝试次数过多，请在5分钟后重试')
-      } else {
-        authStore.setAuthError(`访问密钥验证失败 (剩余尝试次数: ${MAX_AUTH_ATTEMPTS - authStore.authAttempts})`)
-      }
-
-      authStore.clearAuth()
-      return
-    }
-
-    showToast(`无法验证访问密钥: ${error instanceof Error ? error.message : '未知错误'}`, 'error')
-  } finally {
-    authStore.setAuthLoading(false)
-  }
-}
-
-// 处理注销
-const handleLogout = () => {
-  authStore.clearAuth()
-  channelStore.clearChannels()
-  authStore.setAuthError('请输入访问密钥以继续')
-  showToast('已安全注销', 'info')
-}
-
-// 处理认证失败
-const handleAuthError = (error: any) => {
-  if (error.message && error.message.includes('认证失败')) {
-    authStore.setAuthError('访问密钥无效或已过期，请重新输入')
-  } else {
-    showToast(`操作失败: ${error instanceof Error ? error.message : '未知错误'}`, 'error')
-  }
+const openAddChannelModal = () => {
+  dialogStore.openAddChannelModal()
 }
 
 // 版本检查

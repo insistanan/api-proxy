@@ -197,7 +197,7 @@
 
       <div v-if="tallySegments.length" class="tally-legend mb-3">
         <span v-for="segment in tallySegments" :key="segment.key" class="tally-legend-item">
-          <span class="tally-dot" :class="`tally-dot--${segment.color}`" />
+          <span class="tally-dot" :class="`tally-dot--${segment.color}`" ></span>
           {{ segment.label }} {{ segment.count }}
         </span>
       </div>
@@ -240,7 +240,7 @@
               :class="`history-tally-seg--${segment.color}`"
               :style="{ flex: segment.ratio }"
               :title="`${segment.label} ${segment.count}`"
-            />
+            ></div>
           </div>
           <div class="history-card-time">{{ recentRunStatusLabel(item) }}</div>
         </div>
@@ -376,8 +376,8 @@
         <div v-else class="history-list">
           <div
             v-for="item in visibleHistoryRuns"
-            :key="item.id"
             :id="`history-run-card-${item.id}`"
+            :key="item.id"
             class="history-card"
             :class="{
               'history-card--active': currentRun?.id === item.id,
@@ -419,7 +419,7 @@
                 :class="`history-tally-seg--${segment.color}`"
                 :style="{ flex: segment.ratio }"
                 :title="`${segment.label} ${segment.count}`"
-              />
+              ></div>
             </div>
 
             <div class="history-card-time">{{ evalFormatTime(item.startedAt || item.createdAt) }}</div>

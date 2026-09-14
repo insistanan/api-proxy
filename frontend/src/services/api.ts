@@ -41,6 +41,7 @@ import type {
   GatePendingResponse,
   GlobalStatsHistoryResponse,
   LogAPIType,
+  LogDatesResponse,
   MetricsHistoryResponse,
   ModelsResponse,
   OpenCodeConfig,
@@ -51,6 +52,7 @@ import type {
   PiAgentProvider,
   PiAgentProvidersResponse,
   PiAgentStatus,
+  PurgeLogsResult,
   PingResult,
   RemoteSkillPreview,
   RequestLogsResponse,
@@ -71,12 +73,28 @@ import type {
 export class ApiError extends Error {
   readonly status: number
   readonly details?: unknown
+  /** 业务错误码（如 CONFIG_COMMITTED：配置已原子提交但收尾失败）。 */
+  readonly code?: string
+  /**
+   * 配置写操作是否已过提交点（文件已写入，内存与磁盘一致）。
+   * 为 true 时不得按"未提交"自动重试（一次新增会被重试成两次），
+   * 应提示用户刷新查看实际状态（R3 committed 语义，与后端配套）。
+   */
+  readonly committed?: boolean
 
-  constructor(message: string, status: number, details?: unknown) {
+  constructor(
+    message: string,
+    status: number,
+    details?: unknown,
+    code?: string,
+    committed?: boolean
+  ) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.details = details
+    this.code = code
+    this.committed = committed
   }
 }
 
@@ -240,7 +258,17 @@ class ApiService {
         throw new ApiError('认证失败，请重新输入访问密钥', response.status, errorBody)
       }
 
-      throw new ApiError(errorMessage, response.status, errorBody)
+      // 提取后端的业务错误码与已提交标记（R3 committed 语义）。
+      const extractField = <T>(field: string): T | undefined => {
+        if (typeof errorBody === 'object' && errorBody !== null && field in errorBody) {
+          return (errorBody as Record<string, unknown>)[field] as T
+        }
+        return undefined
+      }
+      const errorCode = extractField<string>('code')
+      const committed = extractField<boolean>('committed')
+
+      throw new ApiError(errorMessage, response.status, errorBody, errorCode, committed)
     }
 
     if (response.status === 204) return null
@@ -350,10 +378,14 @@ class ApiService {
     return this.request(`/${type}/channels/${channelId}/logs`)
   }
 
-  async getRequestLogs(params: { type?: LogAPIType | ''; limit?: number } = {}): Promise<RequestLogsResponse> {
+  async getRequestLogs(
+    params: { type?: LogAPIType | ''; limit?: number; from?: string; to?: string } = {}
+  ): Promise<RequestLogsResponse> {
     const search = new URLSearchParams()
     if (params.type) search.set('type', params.type)
     if (params.limit) search.set('limit', String(params.limit))
+    if (params.from) search.set('from', params.from)
+    if (params.to) search.set('to', params.to)
     const query = search.toString()
     return this.request(`/request-logs${query ? `?${query}` : ''}`)
   }
@@ -411,6 +443,14 @@ class ApiService {
 
   async clearBlockedLogs(): Promise<{ deleted: number }> {
     return this.request('/blocked-logs', { method: 'DELETE' })
+  }
+
+  async getLogDates(): Promise<LogDatesResponse> {
+    return this.request('/logs/dates')
+  }
+
+  async purgeLogs(body: { scope: 'all' | 'day'; date?: string }): Promise<{ success: boolean; purged: PurgeLogsResult }> {
+    return this.request('/logs/purge', { method: 'POST', body: JSON.stringify(body) })
   }
 
   // 危险命令 AI 闸门：待确认列表 / 用户决定 / 会话级白黑名单
@@ -1213,11 +1253,15 @@ export const testChannelWithModel = async (
 
   if (apiType === 'images') {
     const result = await response.json()
-    const outputs = Array.isArray(result.data)
+    // images 生成分支：每项可能是 URL、修订提示词或 base64 数据。
+    const imageItems: Array<{ url?: string; revised_prompt?: string; b64_json?: string }> = Array.isArray(
+      result.data
+    )
       ? result.data
-          .map((item: any) => item.url || item.revised_prompt || (item.b64_json ? '[base64 image data]' : ''))
-          .filter(Boolean)
       : []
+    const outputs = imageItems
+      .map(item => item.url || item.revised_prompt || (item.b64_json ? '[base64 image data]' : ''))
+      .filter(Boolean)
     onChunk(outputs.length > 0 ? outputs.join('\n') : JSON.stringify(result, null, 2))
     return
   }
@@ -1230,7 +1274,16 @@ export const testChannelWithModel = async (
     if (!line.trim() || !line.startsWith('data:')) return
     const data = line.slice(5).trim()
     if (data === '[DONE]') return
-    let parsed: any
+    // SSE 事件载荷：各协议字段并集，按 apiType 取各自关心的字段。
+    let parsed: {
+      type?: string
+      delta?: { text?: string }
+      response?: { id?: string }
+      id?: string
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
+      choices?: Array<{ delta?: { content?: string } }>
+      completion?: string
+    }
     try {
       parsed = JSON.parse(data)
     } catch {

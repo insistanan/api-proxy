@@ -3,7 +3,7 @@
     <div class="agent-config-location__content">
       <span class="agent-config-location__label">{{ label }}</span>
       <code>{{ path || '路径不可用' }}</code>
-      <slot />
+      <slot ></slot>
     </div>
   </v-alert>
 </template>

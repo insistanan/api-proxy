@@ -745,6 +745,7 @@ import {
   isValidUrl as _isValidQuickInputUrl,
   parseQuickInput as parseQuickInputUtil
 } from '../utils/quickInputParser'
+import { useChannelEditor, cloneModelMapping } from '../composables/useChannelEditor'
 
 interface Props {
   show: boolean
@@ -1158,33 +1159,72 @@ const targetModelPlaceholder = computed(() => {
   }
 })
 
-// 表单数据
-const form = reactive({
-  name: '',
-  serviceType: '' as 'openai' | 'gemini' | 'claude' | 'responses' | 'chat' | '',
-  status: 'active' as ChannelStatus,
-  baseUrl: '',
-  baseUrls: [] as string[],
-  website: '',
-  insecureSkipVerify: false,
-  proxyMode: 'inherit' as 'inherit' | 'direct' | 'custom',
-  proxyUrl: '',
-  lowQuality: false,
-  visionCapable: false,
-  poolId: 'default',
-  excludeFromConversation: false,
-  visionLayerEnabled: false,
-  visionLayerChannelId: '',
-  visionLayerModel: '',
-  temporary: false,
-  injectDummyThoughtSignature: false,
-  stripThoughtSignature: false,
-  disablePromptCacheKey: false,
-  description: '',
-  apiKeys: [] as string[],
-  modelMapping: {} as Record<string, string[]>,  // 支持一对多映射
-  defaultModel: '' as string | { title: string; value: string } | null
-})
+// 表单草域草稿经 useChannelEditor（R5，方案 8.1）：草稿独立于 store，取消不落盘。
+const { form, resetForm: resetFormDraft, loadChannelData: loadChannelDataDraft } = useChannelEditor(props.channelType)
+
+const addApiKey = () => {
+  const key = newApiKey.value.trim()
+  if (!key) return
+
+  // 重置错误状态
+  apiKeyError.value = ''
+  duplicateKeyIndex.value = -1
+
+  // 检查是否与现有密钥重复
+  const duplicateIndex = findDuplicateKeyIndex(key)
+  if (duplicateIndex !== -1) {
+    apiKeyError.value = '该密钥已存在'
+    duplicateKeyIndex.value = duplicateIndex
+    // 清除输入框，让用户重新输入
+    newApiKey.value = ''
+    return
+  }
+
+  // 直接存储原始密钥
+  form.apiKeys.push(key)
+  newApiKey.value = ''
+}
+
+// resetForm：草稿重置 + 组件内 UI 状态（错误提示、模型缓存、快速添加输入）清理。
+const resetForm = () => {
+  resetFormDraft()
+  newApiKey.value = ''
+  baseUrlsText.value = ''
+  originalKeyMap.value.clear()
+  apiKeyError.value = ''
+  duplicateKeyIndex.value = -1
+  targetModelOptions.value = []
+  fetchingModels.value = false
+  fetchModelsError.value = ''
+  keyModelsStatus.value.clear()
+  errors.name = ''
+  errors.serviceType = ''
+  errors.baseUrl = ''
+  quickInput.value = ''
+  quickChannelName.value = ''
+  detectedBaseUrl.value = ''
+  detectedBaseUrls.value = []
+  detectedApiKeys.value = []
+  detectedChannelName.value = ''
+  detectedServiceType.value = null
+  randomSuffix.value = generateRandomString(6)
+}
+
+// loadChannelData：载入编辑目标 + 组件内 UI 状态同步（baseUrl 预览、模型缓存重置）。
+const loadChannelData = (channel: Channel) => {
+  loadChannelDataDraft(channel)
+  if (channel.baseUrls && channel.baseUrls.length > 0) {
+    baseUrlsText.value = channel.baseUrls.join('\n')
+  } else {
+    baseUrlsText.value = channel.baseUrl || ''
+  }
+  originalKeyMap.value.clear()
+  formBaseUrlPreview.value = channel.baseUrl
+  targetModelOptions.value = []
+  fetchingModels.value = false
+  fetchModelsError.value = ''
+  keyModelsStatus.value.clear()
+}
 
 const channelStatusOptions = [
   { title: '活跃', value: 'active' },
@@ -1478,152 +1518,6 @@ const maskApiKey = (key: string): string => {
 }
 
 // 表单操作
-const resetForm = () => {
-  form.name = ''
-  form.serviceType = ''
-  form.status = 'active'
-  form.baseUrl = ''
-  form.baseUrls = []
-  form.website = ''
-  form.insecureSkipVerify = false
-  form.proxyMode = 'inherit'
-  form.proxyUrl = ''
-  form.lowQuality = false
-  form.visionCapable = props.channelType === 'responses'
-  form.poolId = 'default'
-  form.excludeFromConversation = false
-  form.visionLayerEnabled = false
-  form.visionLayerChannelId = ''
-  form.visionLayerModel = ''
-  form.temporary = false
-  form.injectDummyThoughtSignature = false
-  form.stripThoughtSignature = false
-  form.disablePromptCacheKey = false
-  form.description = ''
-  form.apiKeys = []
-  form.modelMapping = {}
-  form.defaultModel = ''
-  newApiKey.value = ''
-    
-  // 重置 baseUrlsText
-  baseUrlsText.value = ''
-
-  // 清空原始密钥映射
-  originalKeyMap.value.clear()
-
-  // 清空密钥错误状态
-  apiKeyError.value = ''
-  duplicateKeyIndex.value = -1
-
-  // 清空模型缓存和状态
-  targetModelOptions.value = []
-  fetchingModels.value = false
-  fetchModelsError.value = ''
-  keyModelsStatus.value.clear()
-  
-  // 清除错误信息
-  errors.name = ''
-  errors.serviceType = ''
-  errors.baseUrl = ''
-
-  // 重置快速添加模式数据
-  quickInput.value = ''
-  quickChannelName.value = ''
-  detectedBaseUrl.value = ''
-  detectedBaseUrls.value = []
-  detectedApiKeys.value = []
-  detectedChannelName.value = ''
-  detectedServiceType.value = null
-  randomSuffix.value = generateRandomString(6)
-}
-
-const loadChannelData = (channel: Channel) => {
-  form.name = channel.name
-  form.serviceType = channel.serviceType
-  form.status = normalizeFormStatus(channel.status)
-  form.baseUrl = channel.baseUrl
-  form.baseUrls = [...(channel.baseUrls || [])]
-  form.website = channel.website || ''
-  form.insecureSkipVerify = !!channel.insecureSkipVerify
-  form.proxyMode = channel.proxyMode || 'inherit'
-  form.proxyUrl = channel.proxyUrl || ''
-  form.lowQuality = !!channel.lowQuality
-  form.visionCapable = !!channel.visionCapable
-  form.poolId = channel.poolId || 'default'
-  form.excludeFromConversation = !!channel.excludeFromConversation
-  form.visionLayerEnabled = !!channel.visionLayerEnabled
-  form.visionLayerChannelId = channel.visionLayerChannelId || ''
-  form.visionLayerModel = channel.visionLayerModel || ''
-  form.temporary = !!channel.temporary
-  form.injectDummyThoughtSignature = !!channel.injectDummyThoughtSignature
-  form.stripThoughtSignature = !!channel.stripThoughtSignature
-  form.disablePromptCacheKey = !!channel.disablePromptCacheKey
-  form.description = channel.description || ''
-
-  // 同步 baseUrlsText（优先使用 baseUrls，否则使用 baseUrl）
-  if (channel.baseUrls && channel.baseUrls.length > 0) {
-    baseUrlsText.value = channel.baseUrls.join('\n')
-  } else {
-    baseUrlsText.value = channel.baseUrl || ''
-  }
-
-  // 直接存储原始密钥，不需要映射关系
-  form.apiKeys = [...channel.apiKeys]
-
-  // 清空原始密钥映射（现在不需要了）
-  originalKeyMap.value.clear()
-
-  form.modelMapping = cloneModelMapping(channel.modelMapping)
-  form.defaultModel = channel.defaultModel || ''
-
-  // 立即同步 baseUrl 到预览变量，避免等待 debounce
-  formBaseUrlPreview.value = channel.baseUrl
-
-  // 清空模型映射输入框
-    
-  // 清空模型缓存和状态（切换渠道时重置）
-  targetModelOptions.value = []
-  fetchingModels.value = false
-  fetchModelsError.value = ''
-  keyModelsStatus.value.clear()
-  }
-
-const cloneModelMapping = (mapping?: Record<string, string[]>): Record<string, string[]> => {
-  const cloned: Record<string, string[]> = {}
-  for (const [rawSource, rawTargets] of Object.entries(mapping || {})) {
-    const source = rawSource.trim()
-    if (!source) continue
-    const targets = [...new Set(rawTargets.map(target => target.trim()).filter(Boolean))]
-    if (targets.length > 0) {
-      cloned[source] = targets
-    }
-  }
-  return cloned
-}
-
-const addApiKey = () => {
-  const key = newApiKey.value.trim()
-  if (!key) return
-
-  // 重置错误状态
-  apiKeyError.value = ''
-  duplicateKeyIndex.value = -1
-
-  // 检查是否与现有密钥重复
-  const duplicateIndex = findDuplicateKeyIndex(key)
-  if (duplicateIndex !== -1) {
-    apiKeyError.value = '该密钥已存在'
-    duplicateKeyIndex.value = duplicateIndex
-    // 清除输入框，让用户重新输入
-    newApiKey.value = ''
-    return
-  }
-
-  // 直接存储原始密钥
-  form.apiKeys.push(key)
-  newApiKey.value = ''
-}
-
 // 检查密钥是否重复，返回重复密钥的索引，如果没有重复返回-1
 const findDuplicateKeyIndex = (newKey: string): number => {
   return form.apiKeys.findIndex(existingKey => existingKey === newKey)

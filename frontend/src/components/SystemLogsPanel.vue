@@ -27,6 +27,9 @@
 
     <div class="system-layout">
       <v-card variant="flat" class="system-list-card">
+        <v-alert v-if="locateWarning" type="warning" variant="tonal" density="compact" class="ma-2 mb-0">
+          {{ locateWarning }}
+        </v-alert>
         <div v-if="listLoading" class="system-empty">
           <v-progress-circular indeterminate size="24" width="2" color="primary" />
         </div>
@@ -35,10 +38,11 @@
         </div>
         <button
           v-for="entry in summaries"
+          :id="`system-log-entry-${entry.requestId}`"
           :key="entry.requestId"
           type="button"
           class="system-list-item"
-          :class="{ selected: entry.requestId === selectedRequestId }"
+          :class="{ selected: entry.requestId === selectedRequestId, 'jump-target': Boolean(highlightRequestId) && entry.requestId === highlightRequestId }"
           @click="emit('select', entry.requestId)"
         >
           <div class="system-list-row">
@@ -67,6 +71,26 @@
         <div v-else-if="detailError" class="system-empty text-error">{{ detailError }}</div>
         <div v-else-if="!detail" class="system-empty">从左侧选择一次请求，查看原请求、发给上游与上游返回。</div>
         <div v-else class="system-detail">
+          <div v-if="highlightRequestId" class="detail-jump-bar">
+            <span class="text-caption text-medium-emphasis">从请求日志跳转，当前展示该请求的完整流量详情</span>
+            <v-btn
+              size="small"
+              variant="tonal"
+              color="primary"
+              prepend-icon="mdi-text-box-search-outline"
+              @click="detailBodyDialog = true"
+            >
+              查看正文
+            </v-btn>
+            <v-btn
+              size="small"
+              variant="text"
+              prepend-icon="mdi-arrow-left"
+              @click="emit('back')"
+            >
+              返回请求日志
+            </v-btn>
+          </div>
           <div class="detail-header">
             <div class="detail-identity">
               <div class="detail-time">{{ formatTime(detail.summary.timestamp) }}</div>
@@ -242,12 +266,15 @@
         </div>
       </v-card>
     </div>
+
+    <PromptBodyDialog v-model="detailBodyDialog" :request-id="selectedRequestId" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import JsonBodyPane from '@/components/JsonBodyPane.vue'
+import PromptBodyDialog from '@/components/PromptBodyDialog.vue'
 import SessionInspector from '@/components/SessionInspector.vue'
 import { api, type LogAPIType, type SystemLogDetail, type SystemLogSummary, type TrafficLog } from '@/services/api'
 
@@ -268,10 +295,12 @@ interface PhaseSection {
 
 const props = defineProps<{
   requestId?: string
+  highlightRequestId?: string
 }>()
 
 const emit = defineEmits<{
   select: [requestId: string]
+  back: []
 }>()
 
 const typeItems: Array<{ title: string; value: TypeFilter }> = [
@@ -315,6 +344,7 @@ const detailError = ref('')
 const detail = ref<SystemLogDetail | null>(null)
 const selectedAttemptIndex = ref(0)
 const synthExpanded = ref(false)
+const detailBodyDialog = ref(false)
 const copiedKey = ref('')
 const headerVisible = reactive<Record<string, boolean>>({})
 const wrapEnabled = reactive<Record<string, boolean>>({})
@@ -477,6 +507,36 @@ const reloadAll = async () => {
   }
 }
 
+// scrollToEntry 把列表滚动到指定 requestId 条目；条目不在当前列表时给出提示。
+const scrollToEntry = async (requestId: string) => {
+  if (!requestId) return
+  await nextTick()
+  const element = document.getElementById(`system-log-entry-${requestId}`)
+  if (!element) {
+    locateWarning.value = '该请求不在当前列表（可能已被更新日志挤出或筛选不匹配），下方仍展示其详情。'
+    return
+  }
+  locateWarning.value = ''
+  element.scrollIntoView({ block: 'center', behavior: 'smooth' })
+}
+
+const locateWarning = ref('')
+
+watch(summaries, () => {
+  if (props.highlightRequestId) {
+    scrollToEntry(props.highlightRequestId)
+  }
+})
+
+watch(
+  () => props.highlightRequestId,
+  requestId => {
+    if (requestId) {
+      scrollToEntry(requestId)
+    }
+  }
+)
+
 watch(typeFilter, () => {
   loadList()
 })
@@ -498,6 +558,9 @@ onMounted(async () => {
   await loadList()
   if (selectedRequestId.value) {
     await loadDetail(selectedRequestId.value)
+  }
+  if (props.highlightRequestId) {
+    scrollToEntry(props.highlightRequestId)
   }
 })
 </script>
@@ -571,6 +634,31 @@ onMounted(async () => {
 .system-list-item.selected,
 .system-list-item:hover {
   background: rgba(var(--v-theme-primary), 0.08);
+}
+
+.system-list-item.jump-target {
+  border: 2px solid rgb(var(--v-theme-warning));
+  animation: jump-target-pulse 0.9s ease-in-out 3;
+}
+
+@keyframes jump-target-pulse {
+  0%,
+  100% {
+    background: transparent;
+  }
+  50% {
+    background: rgba(var(--v-theme-warning), 0.28);
+  }
+}
+
+.detail-jump-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border: 1px dashed rgba(var(--v-theme-warning), 0.6);
+  background: rgba(var(--v-theme-warning), 0.08);
 }
 
 .system-list-row,
