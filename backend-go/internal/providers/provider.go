@@ -15,6 +15,11 @@ type Provider interface {
 	// ConvertToProviderRequest 将 gin context 中的请求转换为目标上游的 http.Request，并返回用于日志的原始请求体
 	ConvertToProviderRequest(c *gin.Context, upstream *config.UpstreamConfig, apiKey string) (*http.Request, []byte, error)
 
+	// BuildRequest 以显式输入构造上游请求（R4-a 主实现）。
+	// ConvertToProviderRequest 是解析 gin 后委托本方法的薄壳；
+	// 内部调用方（llmgate / vision）直接调用本方法，不伪造 HTTP 框架上下文。
+	BuildRequest(input RequestInput, upstream *config.UpstreamConfig, apiKey string) (*RequestOutcome, error)
+
 	// ConvertToClaudeResponse 将提供商响应转换为 Claude 响应
 	ConvertToClaudeResponse(providerResp *types.ProviderResponse) (*types.ClaudeResponse, error)
 

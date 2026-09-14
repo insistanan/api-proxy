@@ -50,14 +50,33 @@ func redirectModelInBody(bodyBytes []byte, upstream *config.UpstreamConfig) []by
 	return newBytes
 }
 
-// ConvertToProviderRequest 转换为 Claude 请求（实现真正的透传）
+// ConvertToProviderRequest 转换为 Claude 请求（实现真正的透传）。
+// R4-a：解析 gin 后委托显式实现 BuildRequest（薄壳）。
 func (p *ClaudeProvider) ConvertToProviderRequest(c *gin.Context, upstream *config.UpstreamConfig, apiKey string) (*http.Request, []byte, error) {
-	// 读取原始请求体
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		return nil, nil, err
 	}
 	c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes)) // 恢复body
+
+	outcome, err := p.BuildRequest(RequestInput{
+		Ctx:                c.Request.Context(),
+		Method:             c.Request.Method,
+		Path:               c.Request.URL.Path,
+		RawQuery:           c.Request.URL.RawQuery,
+		Header:             c.Request.Header,
+		Body:               bodyBytes,
+		ClaudeCodeDisguise: c.GetBool(utils.ContextKeyClaudeCodeDisguise),
+	}, upstream, apiKey)
+	if err != nil {
+		return nil, bodyBytes, err
+	}
+	return outcome.Request, outcome.OriginalBody, nil
+}
+
+// BuildRequest 以显式输入构造 Claude 透传请求（R4-a 主实现，不依赖 gin）。
+func (p *ClaudeProvider) BuildRequest(input RequestInput, upstream *config.UpstreamConfig, apiKey string) (*RequestOutcome, error) {
+	bodyBytes := input.Body
 
 	// 模型重定向：仅修改 model 字段，保持其他内容不变
 	if upstream.ModelMapping != nil && len(upstream.ModelMapping) > 0 {
@@ -72,29 +91,30 @@ func (p *ClaudeProvider) ConvertToProviderRequest(c *gin.Context, upstream *conf
 	}
 
 	// 构建目标URL（"#"后缀与版本前缀约定见 utils.BuildUpstreamURL）
-	endpoint := strings.TrimPrefix(c.Request.URL.Path, "/v1")
+	endpoint := strings.TrimPrefix(input.Path, "/v1")
 	targetURL := utils.BuildUpstreamURL(upstream.GetEffectiveBaseURL(), "/v1", endpoint)
 
-	if c.Request.URL.RawQuery != "" {
-		targetURL += "?" + c.Request.URL.RawQuery
+	if input.RawQuery != "" {
+		targetURL += "?" + input.RawQuery
 	}
 
 	// 创建请求
 	var req *http.Request
+	var err error
 	if len(bodyBytes) > 0 {
-		req, err = http.NewRequestWithContext(c.Request.Context(), c.Request.Method, targetURL, bytes.NewReader(bodyBytes))
+		req, err = http.NewRequestWithContext(input.Ctx, input.Method, targetURL, bytes.NewReader(bodyBytes))
 	} else {
 		// 如果 bodyBytes 为空（例如 GET 请求或原始请求体为空），则直接使用 nil Body
-		req, err = http.NewRequestWithContext(c.Request.Context(), c.Request.Method, targetURL, nil)
+		req, err = http.NewRequestWithContext(input.Ctx, input.Method, targetURL, nil)
 	}
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	// 使用统一的头部处理逻辑
-	req.Header = utils.PrepareUpstreamHeaders(c, req.URL.Host)
+	req.Header = utils.PrepareUpstreamHeadersFromHeader(input.Header, req.URL.Host)
 
-	if c.GetBool(utils.ContextKeyClaudeCodeDisguise) {
+	if input.ClaudeCodeDisguise {
 		var streamRequest struct {
 			Stream bool `json:"stream"`
 		}
@@ -129,7 +149,7 @@ func (p *ClaudeProvider) ConvertToProviderRequest(c *gin.Context, upstream *conf
 		bodyBytes = mergedBody
 	}
 
-	return req, bodyBytes, nil
+	return &RequestOutcome{Request: req, OriginalBody: bodyBytes}, nil
 }
 
 // ConvertToClaudeResponse 转换为 Claude 响应（直接透传）

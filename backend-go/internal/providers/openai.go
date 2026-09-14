@@ -21,9 +21,9 @@ import (
 // OpenAIProvider OpenAI 提供商
 type OpenAIProvider struct{}
 
-// ConvertToProviderRequest 转换为 OpenAI 请求
+// ConvertToProviderRequest 转换为 OpenAI 请求。
+// R4-a：解析 gin 后委托显式实现 BuildRequest（薄壳）。
 func (p *OpenAIProvider) ConvertToProviderRequest(c *gin.Context, upstream *config.UpstreamConfig, apiKey string) (*http.Request, []byte, error) {
-	// 读取和解析原始请求体
 	originalBodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		return nil, nil, fmt.Errorf("读取请求体失败: %w", err)
@@ -31,9 +31,26 @@ func (p *OpenAIProvider) ConvertToProviderRequest(c *gin.Context, upstream *conf
 	// 恢复请求体，以便gin context可以被其他地方再次读取（尽管这里我们已经完全处理了）
 	c.Request.Body = io.NopCloser(bytes.NewReader(originalBodyBytes))
 
+	outcome, err := p.BuildRequest(RequestInput{
+		Ctx:    c.Request.Context(),
+		Method: http.MethodPost,
+		Path:   "/v1/chat/completions",
+		Header: c.Request.Header,
+		Body:   originalBodyBytes,
+	}, upstream, apiKey)
+	if err != nil {
+		return nil, originalBodyBytes, err
+	}
+	return outcome.Request, outcome.OriginalBody, nil
+}
+
+// BuildRequest 以显式输入构造 OpenAI Chat 请求（R4-a 主实现，不依赖 gin）。
+func (p *OpenAIProvider) BuildRequest(input RequestInput, upstream *config.UpstreamConfig, apiKey string) (*RequestOutcome, error) {
+	originalBodyBytes := input.Body
+
 	var claudeReq types.ClaudeRequest
 	if err := json.Unmarshal(originalBodyBytes, &claudeReq); err != nil {
-		return nil, originalBodyBytes, fmt.Errorf("解析Claude请求体失败: %w", err)
+		return nil, fmt.Errorf("解析Claude请求体失败: %w", err)
 	}
 
 	// Chat 推理模型要求将 reasoning_content 原样随 assistant 历史消息回传。
@@ -85,20 +102,20 @@ func (p *OpenAIProvider) ConvertToProviderRequest(c *gin.Context, upstream *conf
 
 	reqBodyBytes, err := json.Marshal(openaiReq)
 	if err != nil {
-		return nil, originalBodyBytes, fmt.Errorf("序列化OpenAI请求体失败: %w", err)
+		return nil, fmt.Errorf("序列化OpenAI请求体失败: %w", err)
 	}
 
 	// 构建URL（"#"后缀与版本前缀约定见 utils.BuildUpstreamURL）
 	url := utils.BuildUpstreamURL(upstream.GetEffectiveBaseURL(), "/v1", "/chat/completions")
 
-	req, err := http.NewRequestWithContext(c.Request.Context(), "POST", url, bytes.NewReader(reqBodyBytes))
+	req, err := http.NewRequestWithContext(input.Ctx, http.MethodPost, url, bytes.NewReader(reqBodyBytes))
 	if err != nil {
-		return nil, originalBodyBytes, fmt.Errorf("创建OpenAI请求失败: %w", err)
+		return nil, fmt.Errorf("创建OpenAI请求失败: %w", err)
 	}
 
 	// 使用统一的头部处理逻辑（透明代理）
 	// 保留客户端的大部分 headers，只移除/替换必要的认证和代理相关 headers
-	req.Header = utils.PrepareUpstreamHeaders(c, req.URL.Host)
+	req.Header = utils.PrepareUpstreamHeadersFromHeader(input.Header, req.URL.Host)
 
 	// 删除开发测试注入的客户端请求头，避免上游严格验证报错。
 	req.Header.Del("X-Codex-Window-Id")
@@ -118,7 +135,7 @@ func (p *OpenAIProvider) ConvertToProviderRequest(c *gin.Context, upstream *conf
 
 	utils.SetAuthenticationHeader(req.Header, apiKey)
 
-	return req, originalBodyBytes, nil
+	return &RequestOutcome{Request: req, OriginalBody: originalBodyBytes}, nil
 }
 
 // convertMessages 转换消息

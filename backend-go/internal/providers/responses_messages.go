@@ -57,21 +57,43 @@ func (p *MessagesResponsesProvider) ConvertToProviderRequest(c *gin.Context, ups
 	}
 	c.Request.Body = io.NopCloser(bytes.NewReader(originalBodyBytes))
 
-	var claudeReq types.ClaudeRequest
-	if err := json.Unmarshal(originalBodyBytes, &claudeReq); err != nil {
-		return nil, originalBodyBytes, fmt.Errorf("解析Claude请求体失败: %w", err)
-	}
-
 	// 主流程已经把经过 registry 解析的内部 conversation ID 写入 context。
-	// Responses 链必须使用这个稳定 ID：compact 清理、渠道路由和链状态才能
-	// 指向同一条会话。只有直接调用 provider 的旧测试/内部调用没有该值时，
-	// 才回退到请求里的外部会话标识。
 	conversationID := ""
 	if value, exists := c.Get(utils.ContextKeyConversationUserID); exists {
 		conversationID, _ = value.(string)
 	}
-	if strings.TrimSpace(conversationID) == "" {
-		conversationID = extractMessagesConversationID(c, &claudeReq)
+
+	outcome, err := p.BuildRequest(RequestInput{
+		Ctx:            c.Request.Context(),
+		Method:         http.MethodPost,
+		Path:           "/v1/responses",
+		Header:         c.Request.Header,
+		Body:           originalBodyBytes,
+		Query:          func(key string) string { return c.Query(key) },
+		ConversationID: conversationID,
+	}, upstream, apiKey)
+	if err != nil {
+		return nil, originalBodyBytes, err
+	}
+	return outcome.Request, outcome.OriginalBody, nil
+}
+
+// BuildRequest 以显式输入构造 Responses 上游请求（R4-a 主实现，不依赖 gin）。
+func (p *MessagesResponsesProvider) BuildRequest(input RequestInput, upstream *config.UpstreamConfig, apiKey string) (*RequestOutcome, error) {
+	originalBodyBytes := input.Body
+
+	var claudeReq types.ClaudeRequest
+	if err := json.Unmarshal(originalBodyBytes, &claudeReq); err != nil {
+		return nil, fmt.Errorf("解析Claude请求体失败: %w", err)
+	}
+
+	// 主流程已经把经过 registry 解析的内部 conversation ID 写入输入。
+	// Responses 链必须使用这个稳定 ID：compact 清理、渠道路由和链状态才能
+	// 指向同一条会话。只有直接调用 provider 的旧测试/内部调用没有该值时，
+	// 才回退到请求里的外部会话标识。
+	conversationID := strings.TrimSpace(input.ConversationID)
+	if conversationID == "" {
+		conversationID = extractMessagesConversationIDFromInput(input.Header, input.Query, &claudeReq)
 	}
 	p.conversationID = conversationID
 	p.claudeReq = &claudeReq
@@ -80,22 +102,22 @@ func (p *MessagesResponsesProvider) ConvertToProviderRequest(c *gin.Context, ups
 	p.enableChain = upstream != nil && upstream.EnablePreviousResponseID && conversationID != ""
 	responsesReq, err := claudeRequestToResponsesRequest(&claudeReq, upstream, conversationID)
 	if err != nil {
-		return nil, originalBodyBytes, err
+		return nil, err
 	}
 	reqBodyBytes, err := utils.MarshalJSONNoEscape(responsesReq)
 	if err != nil {
-		return nil, originalBodyBytes, fmt.Errorf("序列化Responses请求体失败: %w", err)
+		return nil, fmt.Errorf("序列化Responses请求体失败: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, utils.BuildUpstreamURL(upstream.GetEffectiveBaseURL(), "/v1", "/responses"), bytes.NewReader(reqBodyBytes))
+	req, err := http.NewRequestWithContext(input.Ctx, http.MethodPost, utils.BuildUpstreamURL(upstream.GetEffectiveBaseURL(), "/v1", "/responses"), bytes.NewReader(reqBodyBytes))
 	if err != nil {
-		return nil, originalBodyBytes, fmt.Errorf("创建Responses请求失败: %w", err)
+		return nil, fmt.Errorf("创建Responses请求失败: %w", err)
 	}
-	req.Header = utils.PrepareUpstreamHeaders(c, req.URL.Host)
+	req.Header = utils.PrepareUpstreamHeadersFromHeader(input.Header, req.URL.Host)
 	utils.SetAuthenticationHeader(req.Header, apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	return req, originalBodyBytes, nil
+	return &RequestOutcome{Request: req, OriginalBody: originalBodyBytes}, nil
 }
 
 func (p *MessagesResponsesProvider) ConvertToClaudeResponse(providerResp *types.ProviderResponse) (*types.ClaudeResponse, error) {
@@ -860,13 +882,12 @@ func (s *responsesToClaudeStreamState) finish() []string {
 	return out
 }
 
-// proxycoreIsModelCapacity 与 handlers/proxycore.IsUpstreamModelCapacityError 同判据
-// （providers 不能 import proxycore：proxycore→visionlayer→providers 会成环）。
-// 仅匹配已知的明确容量错误措辞，避免裸 capacity 误判业务正文。
+// proxycoreIsModelCapacity 委托 utils.IsUpstreamModelCapacityMessage：
+// 容量错误判据的唯一出处（R4-a 收敛），消除 providers 与 proxycore 的
+// 重复实现（providers 不能 import proxycore：proxycore→visionlayer→providers
+// 会成环；utils 是双方共同依赖）。
 func proxycoreIsModelCapacity(payload string) bool {
-	message := strings.ToLower(payload)
-	return strings.Contains(message, "selected model is at capacity") ||
-		strings.Contains(message, "model is at capacity")
+	return utils.IsUpstreamModelCapacityMessage(payload)
 }
 
 // UpstreamStreamFailedError 表示 Responses 上游在流内报告了失败
@@ -1381,6 +1402,14 @@ func buildClaudeSSE(event string, data map[string]interface{}) string {
 // extractMessagesConversationID 从请求中提取会话 ID，用于 BaseURL 粘滞与 previous_response_id 链。
 func extractMessagesConversationID(c *gin.Context, claudeReq *types.ClaudeRequest) string {
 	if c != nil {
+		return extractMessagesConversationIDFromInput(c.Request.Header, func(key string) string { return c.Query(key) }, claudeReq)
+	}
+	return extractMessagesConversationIDFromInput(nil, nil, claudeReq)
+}
+
+// extractMessagesConversationIDFromInput 以显式输入提取会话 ID（R4-a，无 gin）。
+func extractMessagesConversationIDFromInput(header http.Header, query func(string) string, claudeReq *types.ClaudeRequest) string {
+	if header != nil {
 		for _, headerName := range []string{
 			"X-Conversation-Id",
 			"Conversation-Id",
@@ -1388,11 +1417,13 @@ func extractMessagesConversationID(c *gin.Context, claudeReq *types.ClaudeReques
 			"Session-Id",
 			"X-Claude-Code-Session-Id",
 		} {
-			if value := strings.TrimSpace(c.GetHeader(headerName)); value != "" {
+			if value := strings.TrimSpace(header.Get(headerName)); value != "" {
 				return value
 			}
 		}
-		if value := strings.TrimSpace(c.Query("conversation_id")); value != "" {
+	}
+	if query != nil {
+		if value := strings.TrimSpace(query("conversation_id")); value != "" {
 			return value
 		}
 	}

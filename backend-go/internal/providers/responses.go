@@ -24,7 +24,9 @@ type ResponsesProvider struct {
 	SessionManager *session.SessionManager
 }
 
-// ConvertToProviderRequest 将 Responses 请求转换为上游格式
+// ConvertToProviderRequest 将 Responses 请求转换为上游格式。
+// R4-a：解析 gin 后委托显式实现 BuildRequest（薄壳）；转换产物
+// （previous_response_id 移除 / 历史边界）写回 gin context 供响应出口消费。
 func (p *ResponsesProvider) ConvertToProviderRequest(
 	c *gin.Context,
 	upstream *config.UpstreamConfig,
@@ -34,22 +36,54 @@ func (p *ResponsesProvider) ConvertToProviderRequest(
 	// “已移除 previous_response_id”状态污染后续候选。
 	c.Set(utils.ContextKeyResponsesPreviousIDDropped, false)
 	c.Set(utils.ContextKeyResponsesHistoryBoundary, false)
-	// 1. 读取原始请求体
+	// 读取原始请求体
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		return nil, nil, fmt.Errorf("读取请求体失败: %w", err)
 	}
 	c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 
+	conversationID := ""
+	if value, exists := c.Get(utils.ContextKeyConversationUserID); exists {
+		conversationID, _ = value.(string)
+	}
+
+	outcome, err := p.BuildRequest(RequestInput{
+		Ctx:            c.Request.Context(),
+		Method:         http.MethodPost,
+		Path:           "/v1/responses",
+		Header:         c.Request.Header,
+		Body:           bodyBytes,
+		ConversationID: conversationID,
+		CodexDisguise:  c.GetBool(utils.ContextKeyCodexDisguise),
+	}, upstream, apiKey)
+	if err != nil {
+		if outcome != nil {
+			c.Set(utils.ContextKeyResponsesPreviousIDDropped, outcome.PreviousIDDropped)
+			c.Set(utils.ContextKeyResponsesHistoryBoundary, outcome.HistoryBoundary)
+		}
+		return nil, bodyBytes, err
+	}
+	c.Set(utils.ContextKeyResponsesPreviousIDDropped, outcome.PreviousIDDropped)
+	c.Set(utils.ContextKeyResponsesHistoryBoundary, outcome.HistoryBoundary)
+	return outcome.Request, outcome.OriginalBody, nil
+}
+
+// BuildRequest 以显式输入构造 Responses 上游请求（R4-a 主实现，不依赖 gin）。
+// 转换产物经 RequestOutcome 返回（错误路径同样返回部分产物供调用方消费）。
+func (p *ResponsesProvider) BuildRequest(input RequestInput, upstream *config.UpstreamConfig, apiKey string) (*RequestOutcome, error) {
+	bodyBytes := input.Body
+	outcome := &RequestOutcome{OriginalBody: bodyBytes}
+
 	var reqBody []byte
 	targetModel := ""
 	isStream := false
 
-	// 2. 根据 Responses 上游协议转换请求体
+	// 根据 Responses 上游协议转换请求体
 	if upstream.ServiceType == converters.ResponsesUpstreamResponses {
 		var responsesReq types.ResponsesRequest
 		if err := json.Unmarshal(bodyBytes, &responsesReq); err != nil {
-			return nil, bodyBytes, fmt.Errorf("解析 Responses 请求失败: %w", err)
+			return outcome, fmt.Errorf("解析 Responses 请求失败: %w", err)
 		}
 		model := config.ResolveUpstreamModel(responsesReq.Model, upstream)
 		targetModel = model
@@ -58,63 +92,65 @@ func (p *ResponsesProvider) ConvertToProviderRequest(
 		effectiveRequest := responsesReq
 		effectiveBody := bodyBytes
 		if historyBoundary {
-			c.Set(utils.ContextKeyResponsesHistoryBoundary, true)
-			c.Set(utils.ContextKeyResponsesPreviousIDDropped, true)
+			outcome.HistoryBoundary = true
+			outcome.PreviousIDDropped = true
 			effectiveRequest.PreviousResponseID = ""
+			var err error
 			effectiveBody, err = removeResponsesPreviousResponseID(bodyBytes)
 			if err != nil {
-				return nil, bodyBytes, err
+				return outcome, err
 			}
 		}
-		conversationValue, _ := c.Get(utils.ContextKeyConversationUserID)
-		conversationID, _ := conversationValue.(string)
+		conversationID := input.ConversationID
 		var sess *session.Session
+		var err error
 		if p.SessionManager != nil && strings.TrimSpace(effectiveRequest.PreviousResponseID) != "" {
 			sess, err = p.SessionManager.GetOrCreateSessionForConversation(effectiveRequest.PreviousResponseID, conversationID)
 			if err != nil {
-				return nil, bodyBytes, fmt.Errorf("获取 Responses 透传会话失败: %w", err)
+				return outcome, fmt.Errorf("获取 Responses 透传会话失败: %w", err)
 			}
 		}
 		reqBody, err = converters.ConvertResponsesRequestToUpstream(upstream.ServiceType, model, effectiveBody, isStream, sess, &effectiveRequest, upstream)
 		if err != nil {
-			return nil, bodyBytes, err
+			return outcome, err
 		}
 		if upstream.ServiceType == converters.ResponsesUpstreamResponses &&
 			strings.TrimSpace(responsesReq.PreviousResponseID) != "" &&
 			gjson.GetBytes(reqBody, "previous_response_id").String() == "" {
-			c.Set(utils.ContextKeyResponsesPreviousIDDropped, true)
-			c.Set(utils.ContextKeyResponsesHistoryBoundary, true)
+			outcome.PreviousIDDropped = true
+			outcome.HistoryBoundary = true
 		}
 	} else {
 		var responsesReq types.ResponsesRequest
 		if err := json.Unmarshal(bodyBytes, &responsesReq); err != nil {
-			return nil, bodyBytes, fmt.Errorf("解析 Responses 请求失败: %w", err)
+			return outcome, fmt.Errorf("解析 Responses 请求失败: %w", err)
 		}
 
 		isStream = responsesReq.Stream
 
-		conversationValue, _ := c.Get(utils.ContextKeyConversationUserID)
-		conversationID, _ := conversationValue.(string)
+		conversationID := input.ConversationID
 		historyBoundary := responsesRequestStartsNewHistoryBoundary(&responsesReq)
 		effectiveRequest := responsesReq
 		effectiveBody := bodyBytes
 		if historyBoundary {
-			c.Set(utils.ContextKeyResponsesHistoryBoundary, true)
-			c.Set(utils.ContextKeyResponsesPreviousIDDropped, true)
+			outcome.HistoryBoundary = true
+			outcome.PreviousIDDropped = true
 			effectiveRequest.PreviousResponseID = ""
+			var err error
 			effectiveBody, err = removeResponsesPreviousResponseID(bodyBytes)
 			if err != nil {
-				return nil, bodyBytes, err
+				return outcome, err
 			}
 		}
 		// 获取或创建会话
 		var sess *session.Session
 		if p.SessionManager == nil {
-			return nil, bodyBytes, fmt.Errorf("Responses 会话管理器未初始化")
+			return outcome, fmt.Errorf("Responses 会话管理器未初始化")
 		}
+		var err error
 		sess, err = p.SessionManager.GetOrCreateSessionForConversation(effectiveRequest.PreviousResponseID, conversationID)
 		if err != nil {
-			return nil, bodyBytes, fmt.Errorf("获取会话失败: %w", err)
+			return outcome, fmt.Errorf("获取会话失败: %w", err)
 		}
 		if historyBoundary {
 			// 当前 input 已经是客户端提供的新历史根；旧 session 只用于
@@ -124,14 +160,14 @@ func (p *ResponsesProvider) ConvertToProviderRequest(
 			// input 形态判断不了客户端自己压缩上下文后的形态（摘要成新根 + 重发最近
 			// 几轮），只有与本地会话的重叠能认出来，而这个判断必须等 session 载入后
 			// 才能做。漏掉这里会让转换器把压缩前的整段历史重新前置到新根之前。
-			c.Set(utils.ContextKeyResponsesHistoryBoundary, true)
+			outcome.HistoryBoundary = true
 			if strings.TrimSpace(effectiveRequest.PreviousResponseID) != "" {
-				c.Set(utils.ContextKeyResponsesPreviousIDDropped, true)
+				outcome.PreviousIDDropped = true
 			}
 			effectiveRequest.PreviousResponseID = ""
 			effectiveBody, err = removeResponsesPreviousResponseID(effectiveBody)
 			if err != nil {
-				return nil, bodyBytes, err
+				return outcome, err
 			}
 			sess = nil
 		}
@@ -142,22 +178,22 @@ func (p *ResponsesProvider) ConvertToProviderRequest(
 
 		reqBody, err = converters.ConvertResponsesRequestToUpstream(upstream.ServiceType, effectiveRequest.Model, effectiveBody, effectiveRequest.Stream, sess, &effectiveRequest, upstream)
 		if err != nil {
-			return nil, bodyBytes, err
+			return outcome, err
 		}
 	}
 
-	// 7. 构建 HTTP 请求
+	// 构建 HTTP 请求
 	targetURL := p.buildTargetURLWithModel(upstream, targetModel, isStream)
-	req, err := http.NewRequestWithContext(c.Request.Context(), "POST", targetURL, bytes.NewReader(reqBody))
+	req, err := http.NewRequestWithContext(input.Ctx, http.MethodPost, targetURL, bytes.NewReader(reqBody))
 	if err != nil {
-		return nil, bodyBytes, err
+		return outcome, err
 	}
 
-	// 8. 设置请求头（透明代理）
+	// 设置请求头（透明代理）
 	// 使用统一的头部处理逻辑，保留客户端的大部分 headers
-	req.Header = utils.PrepareUpstreamHeaders(c, req.URL.Host)
+	req.Header = utils.PrepareUpstreamHeadersFromHeader(input.Header, req.URL.Host)
 
-	if c.GetBool(utils.ContextKeyCodexDisguise) {
+	if input.CodexDisguise {
 		utils.ApplyCodexDisguise(req.Header, isStream)
 	}
 
@@ -174,7 +210,8 @@ func (p *ResponsesProvider) ConvertToProviderRequest(
 	// 确保 Content-Type 正确
 	req.Header.Set("Content-Type", "application/json")
 
-	return req, bodyBytes, nil
+	outcome.Request = req
+	return outcome, nil
 }
 
 func responsesRequestStartsNewHistoryBoundary(req *types.ResponsesRequest) bool {

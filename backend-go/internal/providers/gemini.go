@@ -27,9 +27,9 @@ type GeminiProvider struct {
 	injectDummyThoughtSignature bool
 }
 
-// ConvertToProviderRequest 转换为 Gemini 请求
+// ConvertToProviderRequest 转换为 Gemini 请求。
+// R4-a：解析 gin 后委托显式实现 BuildRequest（薄壳）。
 func (p *GeminiProvider) ConvertToProviderRequest(c *gin.Context, upstream *config.UpstreamConfig, apiKey string) (*http.Request, []byte, error) {
-	// 读取和解析原始请求体
 	originalBodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		return nil, nil, fmt.Errorf("读取请求体失败: %w", err)
@@ -37,13 +37,30 @@ func (p *GeminiProvider) ConvertToProviderRequest(c *gin.Context, upstream *conf
 	// 恢复请求体，以便gin context可以被其他地方再次读取（尽管这里我们已经完全处理了）
 	c.Request.Body = io.NopCloser(bytes.NewReader(originalBodyBytes))
 
+	outcome, err := p.BuildRequest(RequestInput{
+		Ctx:    c.Request.Context(),
+		Method: http.MethodPost,
+		Path:   "/v1beta/models",
+		Header: c.Request.Header,
+		Body:   originalBodyBytes,
+	}, upstream, apiKey)
+	if err != nil {
+		return nil, originalBodyBytes, err
+	}
+	return outcome.Request, outcome.OriginalBody, nil
+}
+
+// BuildRequest 以显式输入构造 Gemini 请求（R4-a 主实现，不依赖 gin）。
+func (p *GeminiProvider) BuildRequest(input RequestInput, upstream *config.UpstreamConfig, apiKey string) (*RequestOutcome, error) {
+	originalBodyBytes := input.Body
+
 	var claudeReq types.ClaudeRequest
 	if err := json.Unmarshal(originalBodyBytes, &claudeReq); err != nil {
-		return nil, originalBodyBytes, fmt.Errorf("解析Claude请求体失败: %w", err)
+		return nil, fmt.Errorf("解析Claude请求体失败: %w", err)
 	}
 
 	p.shadowProviderID = buildGeminiShadowProviderID(upstream)
-	p.shadowSessionID = buildGeminiShadowSessionID(c, &claudeReq, originalBodyBytes)
+	p.shadowSessionID = buildGeminiShadowSessionID(input.Header, &claudeReq, originalBodyBytes)
 	p.shadowSnapshot = defaultGeminiShadowStore.Get(p.shadowProviderID, p.shadowSessionID)
 	p.stripThoughtSignature = false
 	p.injectDummyThoughtSignature = false
@@ -54,12 +71,12 @@ func (p *GeminiProvider) ConvertToProviderRequest(c *gin.Context, upstream *conf
 
 	geminiReq, err := p.convertToGeminiRequest(&claudeReq, upstream)
 	if err != nil {
-		return nil, originalBodyBytes, err
+		return nil, err
 	}
 
 	reqBodyBytes, err := json.Marshal(geminiReq)
 	if err != nil {
-		return nil, originalBodyBytes, fmt.Errorf("序列化Gemini请求体失败: %w", err)
+		return nil, fmt.Errorf("序列化Gemini请求体失败: %w", err)
 	}
 
 	model := config.ResolveUpstreamModel(claudeReq.Model, upstream)
@@ -69,14 +86,14 @@ func (p *GeminiProvider) ConvertToProviderRequest(c *gin.Context, upstream *conf
 	}
 	url := buildGeminiGenerateContentURL(baseURL, model, claudeReq.Stream)
 
-	req, err := http.NewRequestWithContext(c.Request.Context(), "POST", url, bytes.NewReader(reqBodyBytes))
+	req, err := http.NewRequestWithContext(input.Ctx, http.MethodPost, url, bytes.NewReader(reqBodyBytes))
 	if err != nil {
-		return nil, originalBodyBytes, fmt.Errorf("创建Gemini请求失败: %w", err)
+		return nil, fmt.Errorf("创建Gemini请求失败: %w", err)
 	}
 
 	// 使用统一的头部处理逻辑（透明代理）
 	// 保留客户端的大部分 headers，只移除/替换必要的认证和代理相关 headers
-	req.Header = utils.PrepareUpstreamHeaders(c, req.URL.Host)
+	req.Header = utils.PrepareUpstreamHeadersFromHeader(input.Header, req.URL.Host)
 
 	// 删除开发测试注入的客户端请求头，避免上游严格验证报错。
 	req.Header.Del("X-Codex-Window-Id")
@@ -96,7 +113,7 @@ func (p *GeminiProvider) ConvertToProviderRequest(c *gin.Context, upstream *conf
 
 	utils.SetGeminiAuthenticationHeader(req.Header, apiKey)
 
-	return req, originalBodyBytes, nil
+	return &RequestOutcome{Request: req, OriginalBody: originalBodyBytes}, nil
 }
 
 func buildGeminiGenerateContentURL(baseURL string, model string, stream bool) string {
@@ -128,14 +145,14 @@ func buildGeminiShadowProviderID(upstream *config.UpstreamConfig) string {
 	return strings.Join(parts, "|")
 }
 
-func buildGeminiShadowSessionID(c *gin.Context, claudeReq *types.ClaudeRequest, originalBody []byte) string {
+func buildGeminiShadowSessionID(header http.Header, claudeReq *types.ClaudeRequest, originalBody []byte) string {
 	if claudeReq != nil && len(claudeReq.Metadata) > 0 {
 		if sessionID := extractGeminiSessionIDFromMetadata(claudeReq.Metadata); sessionID != "" {
 			return sessionID
 		}
 	}
-	if c != nil {
-		if sessionID := strings.TrimSpace(c.GetHeader("X-Claude-Code-Session-Id")); sessionID != "" {
+	if header != nil {
+		if sessionID := strings.TrimSpace(header.Get("X-Claude-Code-Session-Id")); sessionID != "" {
 			return sessionID
 		}
 	}
