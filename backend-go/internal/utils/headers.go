@@ -69,7 +69,18 @@ func disguiseVersionFromEnv(envKey, fallback string) string {
 // PrepareUpstreamHeaders 准备上游请求头（统一头部处理逻辑）
 // 保留原始请求头，移除代理相关头部，设置认证头
 func PrepareUpstreamHeaders(c *gin.Context, targetHost string) http.Header {
-	headers := c.Request.Header.Clone()
+	return PrepareUpstreamHeadersFromHeader(c.Request.Header, targetHost)
+}
+
+// PrepareUpstreamHeadersFromHeader 以显式请求头准备上游请求头
+// （R4-a：providers 的显式输入构造路径不经 gin context）。
+func PrepareUpstreamHeadersFromHeader(source http.Header, targetHost string) http.Header {
+	var headers http.Header
+	if source != nil {
+		headers = source.Clone()
+	} else {
+		headers = make(http.Header)
+	}
 
 	// 设置正确的Host头部
 	headers.Set("Host", targetHost)

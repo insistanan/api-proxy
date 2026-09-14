@@ -100,6 +100,22 @@ func IsContentPolicyErrorBody(bodyBytes []byte) bool {
 	return IsContentPolicyErrorCode(upstreamErrorCode(bodyBytes))
 }
 
+// IsUpstreamModelCapacityMessage 判断错误消息是否为已知的明确模型容量
+// 错误（"selected model is at capacity" / "model is at capacity"）。
+// 唯一判据出处（R4-a 收敛）：proxycore 的响应体分类与 providers 的流内
+// 失败分类共用，避免两处措辞漂移后同一错误被解释成不同结果。
+// 仅匹配已知措辞，避免裸 capacity 误判业务正文。
+func IsUpstreamModelCapacityMessage(message string) bool {
+	lower := strings.ToLower(message)
+	return strings.Contains(lower, "selected model is at capacity") ||
+		strings.Contains(lower, "model is at capacity")
+}
+
+// IsUpstreamModelCapacityErrorBody 判断上游响应体是否为模型容量错误。
+func IsUpstreamModelCapacityErrorBody(bodyBytes []byte) bool {
+	return IsUpstreamModelCapacityMessage(string(bodyBytes))
+}
+
 // IsUpstreamErrorEnvelope 判断 body 是否为"HTTP 2xx 但 body 是错误信封"。
 // 部分 OpenAI 兼容网关用 200 包错误返回，若当成功处理，错误会被原样转给客户端
 // 且不触发 failover。判定条件（全部满足才算命中）：
