@@ -92,7 +92,7 @@ func TestSafetySegmentsMaskUserTextAcrossProtocols(t *testing.T) {
 			}
 
 			prompts := make([]string, 0, 1)
-			changed, err := applyContentSafetySegments(context.Background(), HookContext{APIType: test.protocol}, segments, snapshot, nil, &prompts)
+			changed, err := applyContentSafetySegments(context.Background(), HookContext{APIType: test.protocol}, segments, snapshot, nil, &prompts, false)
 			if err != nil {
 				t.Fatalf("应用内容安全策略失败: %v", err)
 			}
@@ -137,7 +137,7 @@ func TestSafetySegmentsBlockOnlyUserSensitiveWord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("提取片段失败: %v", err)
 	}
-	changed, err := applyContentSafetySegments(context.Background(), HookContext{APIType: "messages"}, segments, snapshot, nil, new([]string))
+	changed, err := applyContentSafetySegments(context.Background(), HookContext{APIType: "messages"}, segments, snapshot, nil, new([]string), false)
 	if err != nil || changed {
 		t.Fatalf("assistant 历史命中不应拦截或修改: changed=%v err=%v", changed, err)
 	}
@@ -147,7 +147,7 @@ func TestSafetySegmentsBlockOnlyUserSensitiveWord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("提取片段失败: %v", err)
 	}
-	_, err = applyContentSafetySegments(context.Background(), HookContext{APIType: "messages"}, segments, snapshot, nil, new([]string))
+	_, err = applyContentSafetySegments(context.Background(), HookContext{APIType: "messages"}, segments, snapshot, nil, new([]string), false)
 	var safetyErr *ContentSafetyError
 	if !errors.As(err, &safetyErr) || safetyErr.Code() != "SENSITIVE_WORD_BLOCKED" {
 		t.Fatalf("用户命中错误 = %#v", err)
@@ -219,7 +219,7 @@ func TestToolResultCredentialIsBlockedWithoutMutatingPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("提取片段失败: %v", err)
 	}
-	_, err = applyContentSafetySegments(context.Background(), HookContext{APIType: "messages"}, segments, snapshot, nil, new([]string))
+	_, err = applyContentSafetySegments(context.Background(), HookContext{APIType: "messages"}, segments, snapshot, nil, new([]string), false)
 	var safetyErr *ContentSafetyError
 	if !errors.As(err, &safetyErr) || safetyErr.Code() != "CREDENTIAL_BLOCKED" {
 		t.Fatalf("工具结果凭据未被阻断: %v", err)
@@ -715,7 +715,7 @@ func TestExtractSafetySegmentsCoversImagesJSONPrompt(t *testing.T) {
 	}
 
 	prompts := make([]string, 0, 1)
-	changed, err := applyContentSafetySegments(context.Background(), HookContext{APIType: "images"}, segments, snapshot, nil, &prompts)
+	changed, err := applyContentSafetySegments(context.Background(), HookContext{APIType: "images"}, segments, snapshot, nil, &prompts, false)
 	if err != nil {
 		t.Fatalf("应用内容安全策略失败: %v", err)
 	}

@@ -37,7 +37,9 @@ func (h *contentSafetyPreRequestHook) runMultipartFormSafety(
 	}
 
 	prompts := make([]string, 0, len(segments))
-	changed, err := applyContentSafetySegments(ctx, metadata, segments, snapshot, h.recorder, &prompts)
+	// multipart 表单字段不在完整请求体的文本字段里（解码值与原始字节可能不一致），
+	// 没有全量前置登记，必须由 applyContentSafetySegments 逐段 ReserveText。
+	changed, err := applyContentSafetySegments(ctx, metadata, segments, snapshot, h.recorder, &prompts, false)
 	if err != nil {
 		return result, err
 	}

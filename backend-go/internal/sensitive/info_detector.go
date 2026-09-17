@@ -25,6 +25,10 @@ type infoRule struct {
 	regex *regexp.Regexp
 	find  func(string) []infoCandidate
 	mask  func(string) string
+	// gate 是规则的必要条件预筛：文本结构特征不满足时该规则必然无命中，
+	// 跳过整段正则扫描。只允许"拦截必无命中"的保守条件，gate 放行仅代表
+	// 需要跑正则，不改变任何检测结果。
+	gate func(textFeatures) bool
 }
 
 type infoCandidate struct {
@@ -33,10 +37,70 @@ type infoCandidate struct {
 	replacement string
 }
 
+// textFeatures 是一次线性扫描收集的文本结构特征。五类敏感信息规则的命中
+// 都依赖特定字符结构（'@' / 点分 / 冒号 / 连续数字），特征缺失时规则
+// 必然无命中；在代码类文本上跳过整段正则的收益远大于这一遍字符统计。
+type textFeatures struct {
+	hasAt       bool // 含 '@'（邮箱）
+	hasDot      bool // 含 '.'（IPv4 点分四段）
+	hasColon    bool // 含 ':'（IPv6 至少两个冒号）
+	maxDigitRun int  // 最长纯数字连续块（手机号 11 位 / 身份证 17 位数字）
+	maxCardRun  int  // 最长"数字与单空格/横线分组"块的数字个数（银行卡 13 位）
+}
+
+// scanTextFeatures 单遍扫描收集 textFeatures。maxCardRun 与银行卡正则的
+// `[0-9](?:[ -]?[0-9]){12,18}` 对齐：分隔符必须夹在两个数字之间；连续
+// 超长数字块同样计数，是否真正命中仍由正则判定（gate 只是必要条件）。
+func scanTextFeatures(text string) textFeatures {
+	var features textFeatures
+	digitRun, cardRun := 0, 0
+	flush := func() {
+		if digitRun > features.maxDigitRun {
+			features.maxDigitRun = digitRun
+		}
+		if cardRun > features.maxCardRun {
+			features.maxCardRun = cardRun
+		}
+		digitRun, cardRun = 0, 0
+	}
+	for i := 0; i < len(text); i++ {
+		value := text[i]
+		switch {
+		case value >= '0' && value <= '9':
+			digitRun++
+			cardRun++
+		case (value == ' ' || value == '-') && i > 0 && i+1 < len(text) &&
+			isASCIIDigit(text[i-1]) && isASCIIDigit(text[i+1]):
+			// 数字间的单个空格/横线：银行卡分组分隔，数字块本身中断。
+			digitRun = 0
+		case value == '@':
+			features.hasAt = true
+			flush()
+		case value == '.':
+			features.hasDot = true
+			flush()
+		case value == ':':
+			features.hasColon = true
+			flush()
+		default:
+			flush()
+		}
+	}
+	flush()
+	return features
+}
+
+func isASCIIDigit(value byte) bool {
+	return value >= '0' && value <= '9'
+}
+
+// 银行卡号去分隔用的替换表：strings.Replacer 只读可并发复用，
+// 避免每个候选都重建替换表。
+var bankCardCompactor = strings.NewReplacer(" ", "", "-", "")
+
 var (
 	idCardPattern   = regexp.MustCompile(`\b[1-9][0-9]{16}[0-9Xx]\b`)
 	ipv4Pattern     = regexp.MustCompile(`\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b`)
-	ipv6Pattern     = regexp.MustCompile(`(?i)[0-9a-f:][0-9a-f:.]*:[0-9a-f:.]*`)
 	bankCardPattern = regexp.MustCompile(`(?:^|[^0-9])([0-9](?:[ -]?[0-9]){12,18})(?:[^0-9]|$)`)
 	phonePattern    = regexp.MustCompile(`\b1[3-9][0-9]{9}\b`)
 
@@ -123,8 +187,12 @@ func (d *InfoDetector) FindAll(text string) []InfoMatch {
 		return nil
 	}
 
+	features := scanTextFeatures(text)
 	candidates := make([]infoCandidateWithRule, 0)
 	for ruleIndex, rule := range d.rules {
+		if rule.gate != nil && !rule.gate(features) {
+			continue
+		}
 		for _, candidate := range findRuleCandidates(rule, text) {
 			candidates = append(candidates, infoCandidateWithRule{
 				infoCandidate: candidate,
@@ -245,25 +313,32 @@ func allInfoRules(ipMaskScope string) []infoRule {
 		{
 			name: config.SensitiveInfoRulePhone,
 			find: findPhoneCandidates,
+			gate: func(f textFeatures) bool { return f.maxDigitRun >= 11 },
 		},
 		{
 			name: config.SensitiveInfoRuleIDCard,
 			find: findIDCardCandidates,
+			// 身份证为 17 位数字 + 校验位（校验位可为 X），纯数字块不足 17 必无命中。
+			gate: func(f textFeatures) bool { return f.maxDigitRun >= 17 },
 		},
 		{
 			name:  config.SensitiveInfoRuleEmail,
 			regex: regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}`),
 			mask:  maskEmail,
+			gate:  func(f textFeatures) bool { return f.hasAt },
 		},
 		{
 			name: config.SensitiveInfoRuleIPAddress,
 			find: func(text string) []infoCandidate {
 				return findIPCandidates(text, ipMaskScope)
 			},
+			// IPv4 依赖点分四段、IPv6 依赖冒号，两者皆无时必无命中。
+			gate: func(f textFeatures) bool { return f.hasDot || f.hasColon },
 		},
 		{
 			name: config.SensitiveInfoRuleBankCard,
 			find: findBankCardCandidates,
+			gate: func(f textFeatures) bool { return f.maxCardRun >= 13 },
 		},
 	}
 }
@@ -290,7 +365,7 @@ func findBankCardCandidates(text string) []infoCandidate {
 			continue
 		}
 		original := text[index[2]:index[3]]
-		digits := strings.NewReplacer(" ", "", "-", "").Replace(original)
+		digits := bankCardCompactor.Replace(original)
 		if !validLuhn(digits) {
 			continue
 		}
@@ -403,18 +478,57 @@ func findIPCandidates(text string, ipMaskScope string) []infoCandidate {
 		candidates = append(candidates, infoCandidate{start: index[0], end: index[1], replacement: "[MASKED_PII:ip_address]"})
 	}
 
-	for _, index := range ipv6Pattern.FindAllStringIndex(text, -1) {
-		original := text[index[0]:index[1]]
-		ip := net.ParseIP(original)
-		if ip == nil {
+	candidates = append(candidates, findIPv6Candidates(text, maskAll)...)
+	return candidates
+}
+
+// findIPv6Candidates 以冒号为锚点手写扫描 IPv6 候选。
+// 旧正则 (?i)[0-9a-f:][0-9a-f:.]*:[0-9a-f:.]* 会把每个"十六进制字符后
+// 跟冒号"的位置都当成候选（"e:"、"0:"、"1:" 均命中），代码与英文文本上
+// 候选数与文本长度成正比，且每个候选都要付一次 net.ParseIP；合法 IPv6
+// 文本必然含至少两个冒号（完整形式 7 个、压缩形式含 "::"），因此这里先
+// 按 [0-9A-Fa-f:.] 切出连续段，仅对段内冒号数 >= 2 的段做一次 ParseIP
+// 精筛。有效候选集合与旧正则一致（合法 IPv6 必出现在整段内），无效候选
+// 的产生量从"每个十六进制字符"降到"每段"。
+func findIPv6Candidates(text string, maskAll bool) []infoCandidate {
+	candidates := make([]infoCandidate, 0)
+	segmentStart, colons := -1, 0
+	for position := 0; position <= len(text); position++ {
+		// 位置等于文本长度时，用哨兵冲刷最后一个未闭合的段。
+		if position < len(text) && isIPv6ClassByte(text[position]) {
+			if segmentStart < 0 {
+				segmentStart = position
+			}
+			if text[position] == ':' {
+				colons++
+			}
 			continue
 		}
-		if !maskAll && isNonPublicIP(ip) {
-			continue
+		if segmentStart >= 0 && colons >= 2 {
+			original := text[segmentStart:position]
+			// 形状快筛：合法 IPv6 要么是完整 8 组（恰好 7 个冒号），
+			// 要么含压缩形式 "::"（含嵌入 IPv4 的表示同样满足）。
+			// 这是充要的必要条件，只有满足时才付 net.ParseIP 的分配。
+			if colons == 7 || strings.Contains(original, "::") {
+				if ip := net.ParseIP(original); ip != nil && (maskAll || !isNonPublicIP(ip)) {
+					candidates = append(candidates, infoCandidate{
+						start: segmentStart, end: position, replacement: "[MASKED_PII:ip_address]",
+					})
+				}
+			}
 		}
-		candidates = append(candidates, infoCandidate{start: index[0], end: index[1], replacement: "[MASKED_PII:ip_address]"})
+		segmentStart, colons = -1, 0
 	}
 	return candidates
+}
+
+// isIPv6ClassByte 判定 IPv6 文本表示可能出现的字符（十六进制、冒号、嵌入
+// IPv4 的点号）。
+func isIPv6ClassByte(value byte) bool {
+	return isASCIIDigit(value) ||
+		value >= 'a' && value <= 'f' ||
+		value >= 'A' && value <= 'F' ||
+		value == ':' || value == '.'
 }
 
 // isNonPublicIP 判断地址是否属于私网、回环、链路本地、组播、未指定地址，

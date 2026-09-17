@@ -561,6 +561,12 @@ func appendMutableJSONValue(
 	}
 }
 
+// applyContentSafetySegments 对提取出的文本片段依次执行敏感词、凭据、
+// 敏感信息与自定义规则检测，按配置 mask/block/audit 模式改写或拦截。
+// segmentsPreReserved 表示段文本已被调用方整体登记过占位符冲突保护
+// （JSON 路径的 hook.Run 对完整请求体做过一次全量 ReserveText，段文本是
+// 请求体的子串，逐段重复扫描纯属性能浪费）；multipart 路径没有全量前置，
+// 必须由本函数逐段登记。
 func applyContentSafetySegments(
 	ctx context.Context,
 	metadata HookContext,
@@ -568,21 +574,23 @@ func applyContentSafetySegments(
 	snapshot *contentSafetySnapshot,
 	recorder BlockedLogRecorder,
 	prompts *[]string,
+	segmentsPreReserved bool,
 ) (bool, error) {
 	vault := metadata.redactionVault
 	if vault == nil {
 		vault = sensitive.NewVaultWithContext(ctx)
 	}
-	for index := range segments {
-		vault.ReserveText(segments[index].Text)
-	}
-	if err := vault.Err(); err != nil {
-		return false, err
+	if !segmentsPreReserved {
+		for index := range segments {
+			vault.ReserveText(segments[index].Text)
+		}
+		if err := vault.Err(); err != nil {
+			return false, err
+		}
 	}
 	changed := false
 	for index := range segments {
 		segment := &segments[index]
-		segmentChanged := false
 		// 白名单放行：命中工具名的 tool_result / tool_argument 跳过全部检测维度，
 		// 并记录一条 whitelist 审计事件，让拦截记录页可见"已放行"的条目。
 		if isWhitelistedSegment(snapshot, segment) {
@@ -648,7 +656,6 @@ func applyContentSafetySegments(
 				}
 				segment.Text = masked
 				changed = true
-				segmentChanged = true
 			}
 			if err := recordSafetyMatches(ctx, metadata, recorder, sensitive.BlockTypeCredential, credentialMode, *segment, credentialSource, credentialHits(credentialMatches)); err != nil {
 				return changed, err
@@ -685,7 +692,6 @@ func applyContentSafetySegments(
 					}
 					segment.Text = masked
 					changed = true
-					segmentChanged = true
 				}
 				if err := recordSafetyMatches(ctx, metadata, recorder, sensitive.BlockTypeSensitiveInfo, mode, *segment, infoSource, infoHits(infoMatches)); err != nil {
 					return changed, err
@@ -694,8 +700,8 @@ func applyContentSafetySegments(
 		}
 
 		// 自定义规则（可逆脱敏，最低优先级）：仅 mask 模式参与，且在凭据/个人信息
-		// 之后执行——内置规则先占住各自区间，自定义规则只处理剩余文本；且后续没有
-		// 其他掩码步骤，宽正则不会把已生成的占位符再包一层（复检只查 credential/info）。
+		// 之后执行——内置规则先占住各自区间，自定义规则只处理剩余文本；且它是最后的
+		// 掩码步骤，宽正则不会把已生成的占位符再包一层（R1-e：改写后不再复检）。
 		// 放行字面量过滤同样生效（命中原文与条目相等则丢弃）。
 		if snapshot.settings.SensitiveData.Mode == config.ContentSafetyModeMask && snapshot.custom != nil && snapshot.custom.Enabled() {
 			customSource := segment.Text
@@ -708,7 +714,6 @@ func applyContentSafetySegments(
 				}
 				segment.Text = masked
 				changed = true
-				segmentChanged = true
 				if err := recordSafetyMatches(ctx, metadata, recorder, sensitive.BlockTypeCustomRule,
 					config.ContentSafetyModeMask, *segment, customSource, customHits(customMatches)); err != nil {
 					return changed, err
@@ -719,12 +724,11 @@ func applyContentSafetySegments(
 		if segment.Mutable && segment.Text != "" {
 			segment.replace(segment.Text)
 		}
-		if snapshot.settings.SensitiveData.Mode == config.ContentSafetyModeMask && (segmentChanged || !infoChecked) {
-			// 未改写片段已经完成相同规则与白名单检查，不必再次扫描整段历史。
-			// 只要任何检测维度改写了文本，仍复检全部凭据与个人信息规则。
-			// 未分类来源没有经过前面的个人信息检测，保留原有末尾校验。
-			// 复检同样过放行字面量过滤：被放行的值（如 localhost）本来就应留在
-			// 文本里，不能被复检误报为"脱敏不干净"。
+		if snapshot.settings.SensitiveData.Mode == config.ContentSafetyModeMask && !infoChecked {
+			// 未分类来源没有经过前面的个人信息检测，保留原有末尾校验；
+			// 已改写片段不再复检（R1-e：脱敏输出假定可信，避免整段二次扫描）。
+			// 校验同样过放行字面量过滤：被放行的值（如 localhost）本来就应留在
+			// 文本里，不能被此处误报为命中。
 			if matches := snapshot.credential.FindAll(segment.Text); len(matches) > 0 {
 				matches = filterAllowlistedCredentialMatches(matches, segment.Text, snapshot.settings.Allowlist)
 				if len(matches) > 0 {

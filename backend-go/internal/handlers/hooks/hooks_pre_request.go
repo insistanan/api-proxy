@@ -708,7 +708,11 @@ func (h *contentSafetyPreRequestHook) Run(ctx context.Context, metadata HookCont
 	if err != nil {
 		return result, err
 	}
-	changed, err := applyContentSafetySegments(ctx, metadata, segments, snapshot, h.recorder, &prompts)
+	// JSON 路径在解码前已对完整请求体做过一次全量 ReserveText（见上方
+	// redactionVault 分支），段文本是请求体的子串，无需逐段重复扫描；
+	// vault 为空时全量登记被跳过，仍由 applyContentSafetySegments 逐段补。
+	segmentsPreReserved := metadata.redactionVault != nil
+	changed, err := applyContentSafetySegments(ctx, metadata, segments, snapshot, h.recorder, &prompts, segmentsPreReserved)
 	if err != nil {
 		return result, err
 	}

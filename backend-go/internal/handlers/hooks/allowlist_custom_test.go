@@ -59,7 +59,7 @@ func TestAllowlistSkipsWholeSegment(t *testing.T) {
 	}
 	segments := []SafetySegment{segment}
 	prompts := make([]string, 0, 1)
-	changed, err := applyContentSafetySegments(context.Background(), HookContext{APIType: "messages"}, segments, snapshot, recorder, &prompts)
+	changed, err := applyContentSafetySegments(context.Background(), HookContext{APIType: "messages"}, segments, snapshot, recorder, &prompts, false)
 	if err != nil {
 		t.Fatalf("整段放行不应报错: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestAllowlistFiltersSubstringMatches(t *testing.T) {
 	}
 	segments := []SafetySegment{segment}
 	prompts := make([]string, 0, 1)
-	changed, err := applyContentSafetySegments(context.Background(), HookContext{APIType: "messages"}, segments, snapshot, nil, &prompts)
+	changed, err := applyContentSafetySegments(context.Background(), HookContext{APIType: "messages"}, segments, snapshot, nil, &prompts, false)
 	if err != nil {
 		t.Fatalf("放行字面量过滤不应报错: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestAllowlistDisabledByDefaultEntries(t *testing.T) {
 	}
 	segments := []SafetySegment{segment}
 	prompts := make([]string, 0, 1)
-	changed, err := applyContentSafetySegments(context.Background(), HookContext{APIType: "messages"}, segments, snapshot, nil, &prompts)
+	changed, err := applyContentSafetySegments(context.Background(), HookContext{APIType: "messages"}, segments, snapshot, nil, &prompts, false)
 	if err != nil {
 		t.Fatalf("不应报错: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestCustomRulesMaskAndRestore(t *testing.T) {
 	}
 	segments := []SafetySegment{segment}
 	prompts := make([]string, 0, 1)
-	changed, err := applyContentSafetySegments(context.Background(), HookContext{APIType: "messages"}, segments, snapshot, nil, &prompts)
+	changed, err := applyContentSafetySegments(context.Background(), HookContext{APIType: "messages"}, segments, snapshot, nil, &prompts, false)
 	if err != nil {
 		t.Fatalf("自定义规则掩码失败: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestCustomRulesAllowlistInteraction(t *testing.T) {
 	}
 	segments := []SafetySegment{segment}
 	prompts := make([]string, 0, 1)
-	changed, err := applyContentSafetySegments(context.Background(), HookContext{APIType: "messages"}, segments, snapshot, nil, &prompts)
+	changed, err := applyContentSafetySegments(context.Background(), HookContext{APIType: "messages"}, segments, snapshot, nil, &prompts, false)
 	if err != nil {
 		t.Fatalf("掩码失败: %v", err)
 	}

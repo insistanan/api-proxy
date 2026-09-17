@@ -23,6 +23,9 @@ type CredentialMatch struct {
 type credentialRule struct {
 	name string
 	find func(string) []credentialCandidate
+	// gate 是规则的必要条件预筛：文本不含该规则必然依赖的结构时跳过整段
+	// 正则扫描。只允许"拦截必无命中"的保守条件，不改变任何检测结果。
+	gate func(text string) bool
 }
 
 type credentialCandidate struct {
@@ -65,7 +68,9 @@ type CredentialDetector struct {
 
 var auditCredentialDetector = &CredentialDetector{enabled: true, rules: allCredentialRules()}
 
-// 审计始终隐藏凭据，不受检测开关和业务白名单影响。
+// 凭据字段名归一化用的替换表（统一处理 snake_case / kebab-case / 点号）。
+// strings.Replacer 只读且可并发复用，避免每个候选都重建一次替换表。
+var secretNameCompactor = strings.NewReplacer("_", "", "-", "", ".", "")
 var auditCommandSecretPattern = regexp.MustCompile(`(?i)--(?:password|passwd|token|api[_-]?key|secret|access[_-]?token)(?:=|[ \t]+)["']?([^\s"';]+)`)
 
 // RedactAuditText 用于日志、待确认展示和审计落库，不能用于计算命令授权身份。
@@ -141,6 +146,9 @@ func (d *CredentialDetector) FindAll(text string) []CredentialMatch {
 	}
 	candidates := make([]credentialCandidateWithRule, 0)
 	for ruleIndex, rule := range d.rules {
+		if rule.gate != nil && !rule.gate(text) {
+			continue
+		}
 		for _, candidate := range rule.find(text) {
 			if candidate.start < 0 || candidate.end > len(text) || candidate.start >= candidate.end {
 				continue
@@ -226,12 +234,40 @@ func validateCredentialRules(rules []string) error {
 
 func allCredentialRules() []credentialRule {
 	return []credentialRule{
-		{name: config.CredentialRulePrivateKey, find: regexpCredentialCandidates(privateKeyPattern)},
-		{name: config.CredentialRuleConnectionString, find: findConnectionStringCandidates},
-		{name: config.CredentialRuleAPIKey, find: findAPIKeyCandidates},
-		{name: config.CredentialRuleNamedSecret, find: findNamedSecretCandidates},
-		{name: config.CredentialRuleHighEntropy, find: findHighEntropyCandidates},
+		{name: config.CredentialRulePrivateKey, find: regexpCredentialCandidates(privateKeyPattern),
+			gate: func(text string) bool { return strings.Contains(text, "BEGIN") }},
+		{name: config.CredentialRuleConnectionString, find: findConnectionStringCandidates,
+			gate: hasColonOrEquals},
+		{name: config.CredentialRuleAPIKey, find: findAPIKeyCandidates,
+			gate: hasKnownAPIKeyMarker},
+		{name: config.CredentialRuleNamedSecret, find: findNamedSecretCandidates,
+			gate: hasColonOrEquals},
+		{name: config.CredentialRuleHighEntropy, find: findHighEntropyCandidates,
+			gate: hasColonOrEquals},
 	}
+}
+
+// hasColonOrEquals 是赋值型凭据规则（连接串、具名秘密、高熵赋值）的必要条件：
+// 它们都要求 "key := value" 形态，无冒号与等号的文本（如纯散文、纯代码流）
+// 必然无命中。
+func hasColonOrEquals(text string) bool {
+	return strings.ContainsAny(text, ":=")
+}
+
+// hasKnownAPIKeyMarker 是已知前缀型密钥规则的必要条件：正则只匹配
+// sk-/gh*_-/github_pat_/xai-/AIza/AKIA/ASIA/eyJ 或 "Bearer " 前缀。
+// 小写化后按子串判定，覆盖前缀不区分大小写的写法。
+func hasKnownAPIKeyMarker(text string) bool {
+	lower := strings.ToLower(text)
+	return strings.Contains(lower, "sk-") ||
+		strings.Contains(lower, "gh") ||
+		strings.Contains(lower, "github_pat_") ||
+		strings.Contains(lower, "xai-") ||
+		strings.Contains(lower, "aiza") ||
+		strings.Contains(lower, "akia") ||
+		strings.Contains(lower, "asia") ||
+		strings.Contains(lower, "eyj") ||
+		strings.Contains(lower, "bearer")
 }
 
 func findAPIKeyCandidates(text string) []credentialCandidate {
@@ -335,7 +371,7 @@ func isLikelyNamedSecretValue(name, value string, quoted bool) bool {
 		return false
 	}
 	normalizedName := strings.ToLower(strings.TrimSpace(name))
-	compactName := strings.NewReplacer("_", "", "-", "", ".", "").Replace(normalizedName)
+	compactName := secretNameCompactor.Replace(normalizedName)
 	weakName := compactName == "token" || compactName == "secret" || compactName == "credential"
 	if weakName && isLikelyIdentifierValue(trimmed) {
 		return false
@@ -424,7 +460,7 @@ func isLikelySecretAssignmentName(name string) bool {
 		return false
 	}
 	// 统一处理 snake_case、kebab-case、点号和驼峰字段名。
-	compact := strings.NewReplacer("_", "", "-", "", ".", "").Replace(normalized)
+	compact := secretNameCompactor.Replace(normalized)
 	for _, marker := range []string{
 		"password", "passwd", "secret", "token", "credential",
 		"privatekey", "apikey", "accesskey", "accesstoken",

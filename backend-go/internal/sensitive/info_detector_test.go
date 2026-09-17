@@ -273,6 +273,132 @@ func TestInfoDetectorDisabled(t *testing.T) {
 	}
 }
 
+// TestInfoDetectorCodeLikeTextNoFalsePositives 用冒号/十六进制密集的代码与
+// 配置文本（旧 IPv6 宽正则的高频误判来源）验证 IP 规则不会产生误掩码。
+// 时间字面量、bash 命令、URL、UUID、CSS 颜色、路径等都不是 IP，必须原样放行。
+func TestInfoDetectorCodeLikeTextNoFalsePositives(t *testing.T) {
+	detector, err := NewInfoDetector(defaultSensitiveInfoSettings())
+	if err != nil {
+		t.Fatalf("创建检测器失败: %v", err)
+	}
+	inputs := []string{
+		"time:12:30:45",
+		"12:34",
+		"deadline:2026-09-17T08:00:00Z",
+		"export PATH=/usr/local/bin:/usr/bin:/bin:$PATH",
+		"https://example.com:8443/path?query=abc",
+		"https://example.com",
+		"uuid=550e8400-e29b-41d4-a716-446655440000",
+		"color: #ff00aa; border-color: #abcdef",
+		"case ${var:-default} in",
+		"triple:::colon 不是合法 IPv6",
+		"gggg:hhhh:iiii 组超出十六进制字符范围",
+		"ratio 2:1:3 与 10:20:30 不是地址",
+	}
+	for _, input := range inputs {
+		t.Run(input, func(t *testing.T) {
+			masked, matches := detector.Mask(input)
+			if masked != input || len(matches) != 0 {
+				t.Fatalf("代码类文本不应被掩码: %q -> %q, matches: %+v", input, masked, matches)
+			}
+		})
+	}
+}
+
+// TestInfoDetectorIPv6BoundaryCases 验证 IPv6 扫描的边界行为：公网地址
+// 混在代码文本中仍应被识别，且识别的区间与原正则候选一致。
+func TestInfoDetectorIPv6BoundaryCases(t *testing.T) {
+	detector, err := NewInfoDetector(defaultSensitiveInfoSettings())
+	if err != nil {
+		t.Fatalf("创建检测器失败: %v", err)
+	}
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "行首完整地址",
+			input:    "2607:f8b0:4005:808::200e",
+			expected: "[MASKED_PII:ip_address]",
+		},
+		{
+			name:     "冒号路径中的地址",
+			input:    "endpoint=2607:f8b0:4005:808::200e 备用",
+			expected: "endpoint=[MASKED_PII:ip_address] 备用",
+		},
+		{
+			name:     "地址后接冒号端口分隔符",
+			input:    "[2606:4700:4700::1111]:443",
+			expected: "[[MASKED_PII:ip_address]]:443",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			masked, matches := detector.Mask(test.input)
+			if masked != test.expected {
+				t.Fatalf("掩码结果错误: got %q, want %q", masked, test.expected)
+			}
+			if len(matches) != 1 {
+				t.Fatalf("命中数量错误: %+v", matches)
+			}
+			if matches[0].Start < 0 || matches[0].End > len(test.input) ||
+				matches[0].Original != test.input[matches[0].Start:matches[0].End] {
+				t.Fatalf("命中原文或偏移错误: %+v", matches[0])
+			}
+		})
+	}
+}
+
+// TestInfoDetectorFeatureGateSkipsImpossibleRules 验证必要条件预筛：
+// 缺少结构特征的文本跳过对应规则，不产生任何命中；特征齐全时规则正常执行。
+func TestInfoDetectorFeatureGateSkipsImpossibleRules(t *testing.T) {
+	detector, err := NewInfoDetector(defaultSensitiveInfoSettings())
+	if err != nil {
+		t.Fatalf("创建检测器失败: %v", err)
+	}
+	if len(detector.rules) == 0 {
+		t.Fatal("默认配置应启用至少一条规则")
+	}
+	for _, rule := range detector.rules {
+		if rule.gate == nil {
+			t.Fatalf("规则 %s 缺少必要条件预筛", rule.name)
+		}
+	}
+
+	// 纯中文散文：无 '@'、无 '.'、无 ':'、无长数字块，所有规则 gate 都应拒绝。
+	plainText := "这是一段普通的项目说明，请继续整理函数的输入输出并补充文档。"
+	features := scanTextFeatures(plainText)
+	if features.hasAt || features.hasDot || features.hasColon {
+		t.Fatalf("纯中文散文不应含有 '@' '.' ':' 特征: %+v", features)
+	}
+	if features.maxDigitRun != 0 || features.maxCardRun != 0 {
+		t.Fatalf("纯中文散文不应有数字块: %+v", features)
+	}
+	for _, rule := range detector.rules {
+		if rule.gate(features) {
+			t.Fatalf("规则 %s 的 gate 对无特征文本应拒绝", rule.name)
+		}
+	}
+
+	// 关键特征触发 gate 放行：真实检测交给正则。
+	if !(scanTextFeatures("a@b.c").hasAt) {
+		t.Fatal("邮箱文本应具备 '@' 特征")
+	}
+	if !(scanTextFeatures("1.2.3.4").hasDot) {
+		t.Fatal("点分文本应具备 '.' 特征")
+	}
+	if !(scanTextFeatures("aa:bb:cc").hasColon) {
+		t.Fatal("冒号文本应具备 ':' 特征")
+	}
+	if got := scanTextFeatures("13800138000").maxDigitRun; got != 11 {
+		t.Fatalf("11 位手机号数字块 = %d", got)
+	}
+	if got := scanTextFeatures("4111 1111 1111 1111").maxCardRun; got != 16 {
+		t.Fatalf("空格分组卡号数字块 = %d", got)
+	}
+}
+
 func defaultSensitiveInfoSettings() config.SensitiveInfoConfig {
 	return config.SensitiveInfoConfig{
 		Enabled: true,

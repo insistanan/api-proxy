@@ -22,7 +22,7 @@ func TestSafetySegmentsRetainVerificationForUnclassifiedSource(t *testing.T) {
 			}}
 			var prompts []string
 			_, err := applyContentSafetySegments(context.Background(), HookContext{APIType: "messages"},
-				segments, snapshot, nil, &prompts)
+				segments, snapshot, nil, &prompts, false)
 			if err == nil || !strings.Contains(err.Error(), "脱敏后仍命中") {
 				t.Fatalf("未经过个人信息检测的来源不能跳过末尾校验: %v", err)
 			}

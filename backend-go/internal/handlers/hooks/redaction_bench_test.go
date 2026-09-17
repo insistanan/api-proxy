@@ -41,9 +41,43 @@ func BenchmarkContentSafetyCleanHistory(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		var prompts []string
-		changed, err := applyContentSafetySegments(context.Background(), metadata, segments, snapshot, nil, &prompts)
+		changed, err := applyContentSafetySegments(context.Background(), metadata, segments, snapshot, nil, &prompts, false)
 		if err != nil || changed {
 			b.Fatalf("无敏感信息的历史不应被改写: %v", err)
+		}
+	}
+}
+
+// BenchmarkContentSafetyCodeLikeHistory 用代码风格文本（Claude Code 场景的
+// 典型载荷：日志、配置、命令行）对照干净中文历史的检测开销。
+// 旧 IPv6 宽正则对这类文本的候选数与文本长度成正比，是此前的主要开销点。
+func BenchmarkContentSafetyCodeLikeHistory(b *testing.B) {
+	settings := config.DefaultContentSafetyConfig()
+	settings.SensitiveData.Mode = config.ContentSafetyModeMask
+	settings.Credential.Enabled = true
+	settings.Credential.EnabledRules = []string{
+		config.CredentialRuleAPIKey, config.CredentialRuleNamedSecret,
+		config.CredentialRuleConnectionString, config.CredentialRulePrivateKey, config.CredentialRuleHighEntropy,
+	}
+	settings.SensitiveInfo.Enabled = true
+	settings.SensitiveInfo.EnabledRules = []string{
+		config.SensitiveInfoRulePhone, config.SensitiveInfoRuleIDCard, config.SensitiveInfoRuleEmail,
+		config.SensitiveInfoRuleIPAddress, config.SensitiveInfoRuleBankCard,
+	}
+	snapshot := newAllowlistTestSnapshot(b, settings)
+	code := strings.Repeat("2026-09-17T08:00:00Z [info] GET /api/v1/users?page=2&limit=50 200 12ms\nexport PATH=/usr/local/bin:/usr/bin:/bin:$PATH\nversion 1.2.3.4, deadline:2026-09-30T23:59:59Z, ratio 2:1:3\nuuid=550e8400-e29b-41d4-a716-446655440000 color=#ff00aa\n", 128)
+	segments := []SafetySegment{{
+		Protocol: "messages", Source: safetySourceUser, Path: "messages[0].content",
+		Text: code, Mutable: true, replace: func(string) {},
+	}}
+	metadata := HookContext{APIType: "messages", redactionVault: sensitive.NewVault()}
+	b.SetBytes(int64(len(code)))
+	b.ReportAllocs()
+	for b.Loop() {
+		var prompts []string
+		changed, err := applyContentSafetySegments(context.Background(), metadata, segments, snapshot, nil, &prompts, false)
+		if err != nil || changed {
+			b.Fatalf("无敏感信息的代码历史不应被改写: %v", err)
 		}
 	}
 }
