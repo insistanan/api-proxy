@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/BenedictKing/api-proxy/internal/config"
@@ -74,6 +75,76 @@ func TestUpstreamAttemptTraversesAllModelCandidatesAfterRetryExhaustion(t *testi
 	}
 	if n := rs.requestCount(); n != 1 {
 		t.Fatalf("上游请求数 = %d, want 1（只有第二个模型候选真正发出）", n)
+	}
+}
+
+// TestUpstreamAttemptTransportFailureSkipsRetryBudgetAndModels 锚点：传输层失败
+// （连接建立后直接断开，上游没给出任何 HTTP 响应）与模型候选无关，按 Key 级
+// 处理——同一个 Key 只尝试一次就换 Key，既不烧满 5 次重试预算，也不在同一个
+// 死链路上继续遍历后续模型候选。否则一次请求会在坏渠道上空等 5 × 首字节超时。
+func TestUpstreamAttemptTransportFailureSkipsRetryBudgetAndModels(t *testing.T) {
+	h := newCompatRetryHarness(t)
+
+	var mu sync.Mutex
+	attempts := map[string]int{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := r.Header.Get("x-api-key")
+		mu.Lock()
+		attempts[key]++
+		mu.Unlock()
+		if key == "key-a" {
+			// 连接建立后不回任何响应直接断开：客户端得到传输层错误。
+			if hijacker, ok := w.(http.Hijacker); ok {
+				if conn, _, err := hijacker.Hijack(); err == nil {
+					_ = conn.Close()
+				}
+			}
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	upstream := &config.UpstreamConfig{
+		BaseURL: server.URL,
+		APIKeys: []string{"key-a", "key-b"},
+		ID:      "up-transport-failure",
+		Name:    "transport-failure",
+		ModelMapping: map[string][]string{
+			"requested-model": {"first-model", "second-model"},
+		},
+	}
+	var attemptedModels []string
+	var successKeys []string
+
+	result := runAttempt(h, t, upstream, []byte(`{}`),
+		func(_ *gin.Context, up *config.UpstreamConfig, apiKey string) (*http.Request, error) {
+			model := config.ResolveUpstreamModel("requested-model", up)
+			attemptedModels = append(attemptedModels, model)
+			req, err := http.NewRequest(http.MethodPost, up.BaseURL, nil)
+			if err != nil {
+				return nil, err
+			}
+			req.Header.Set("x-api-key", apiKey)
+			return req, nil
+		},
+		successRecorder(&successKeys))
+
+	if !result.Handled || result.SuccessKey != "key-b" {
+		t.Fatalf("Handled=%v SuccessKey=%q, want key-b 成功", result.Handled, result.SuccessKey)
+	}
+	if len(attemptedModels) != 2 || attemptedModels[0] != "first-model" || attemptedModels[1] != "first-model" {
+		t.Fatalf("模型尝试序列 = %v, want 每个 Key 只尝试首个模型候选一次", attemptedModels)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if attempts["key-a"] != 1 {
+		t.Fatalf("key-a 尝试次数 = %d, want 1（传输层失败不消耗同候选重试预算）", attempts["key-a"])
+	}
+	if attempts["key-b"] != 1 {
+		t.Fatalf("key-b 尝试次数 = %d, want 1", attempts["key-b"])
 	}
 }
 

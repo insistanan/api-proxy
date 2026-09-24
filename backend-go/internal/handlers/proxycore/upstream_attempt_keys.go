@@ -144,6 +144,12 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 	// 渠道内的尝试层级固定为：Key（外层）→ 模型候选（中层）→ 重试次数（内层）。
 	// 同一个 Key + 同一个模型必须重试到上限仍然失败，才允许切换到下一个模型；
 	// 所有模型候选都失败后才判定该 Key 失败，最后才由外层决定是否换渠道。
+	//
+	// 重试预算只适用于"请求已经发出去并拿到了上游 HTTP 响应"的失败（上游错误
+	// 分类、兼容性重试、内容信封）。请求根本没拿到响应的失败——连接失败、响应头
+	// 超时、响应体读不完整——与模型候选无关：换模型 id 或原地重试同一个请求都会
+	// 按同样的耗时再失败一次（响应头超时默认 120s，烧满 5 次就是十分钟）。这类
+	// 失败按 Key 级处理：标记该 Key 失败后直接换下一个 Key。
 	maxModelAttemptsPerKey := proxy.MaxAttemptsPerModelKey
 
 	for urlIdx, urlResult := range urlResults {
@@ -152,6 +158,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 		failedKeys := make(map[string]bool)
 		keyCount := len(upstream.APIKeys)
 
+	keyLoop:
 		for keyIdx := 0; keyIdx < keyCount; keyIdx++ {
 			apiKey, keyErr := a.NextAPIKey(upstream, failedKeys)
 			if keyErr != nil {
@@ -169,6 +176,15 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 			if envCfg.ShouldLog("info") {
 				log.Printf("[%s-Key] 使用API密钥: %s (BaseURL %d/%d, Key %d/%d)",
 					apiType, utils.MaskAPIKey(apiKey), urlIdx+1, len(urlResults), keyIdx+1, keyCount)
+			}
+
+			// markKeyFailure 把"没拿到上游响应"的失败落到 Key 级：记入失败缓存后
+			// 由调用方 `continue keyLoop` 跳过该 Key 的剩余模型候选与剩余重试次数，
+			// 直接换下一个 Key（没有下一个 Key 就交给外层换渠道）。
+			markKeyFailure := func(reason string) {
+				failedKeys[apiKey] = true
+				cfgManager.MarkKeyAsFailed(apiKey, apiType)
+				log.Printf("[%s-Key] 警告: Key %s %s，切换下一个密钥", apiType, utils.MaskAPIKey(apiKey), reason)
 			}
 
 			for modelIdx, targetModel := range targetModels {
@@ -255,8 +271,8 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 							a.MarkURLFailure(currentBaseURL)
 						}
 						recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", 0, false, attemptStart, "network", err.Error(), true, isStream, nil)
-						log.Printf("[%s-Key] 警告: API密钥失败: %v", apiType, err)
-						continue
+						markKeyFailure(fmt.Sprintf("传输层失败: %v", err))
+						continue keyLoop
 					}
 
 					// 收到响应头，性能画像记录首字节时间
@@ -276,8 +292,8 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 								a.MarkURLFailure(currentBaseURL)
 							}
 							recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", resp.StatusCode, false, attemptStart, "read_body", readErr.Error(), true, isStream, nil)
-							log.Printf("[%s-Key] 警告: 读取上游错误响应体失败 (状态: %d)，尝试下一个密钥: %v", apiType, resp.StatusCode, readErr)
-							continue
+							markKeyFailure(fmt.Sprintf("读取上游错误响应体失败 (状态: %d): %v", resp.StatusCode, readErr))
+							continue keyLoop
 						}
 						respBodyBytes = utils.DecompressGzipIfNeeded(resp, respBodyBytes)
 						retrySucceeded := false
@@ -533,8 +549,8 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 								a.MarkURLFailure(currentBaseURL)
 							}
 							recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", resp.StatusCode, false, attemptStart, "read_body", readErr.Error(), true, isStream, nil)
-							log.Printf("[%s-Key] 警告: 读取上游响应体失败 (状态: %d)，同一 Key 同一模型继续重试: %v", apiType, resp.StatusCode, readErr)
-							continue
+							markKeyFailure(fmt.Sprintf("读取上游响应体失败 (状态: %d): %v", resp.StatusCode, readErr))
+							continue keyLoop
 						}
 						if utils.IsUpstreamErrorEnvelope(sniff) {
 							failoverState.lastError = fmt.Errorf("上游 2xx 响应携带错误信封")
@@ -643,9 +659,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 					apiType, targetModel, utils.MaskAPIKey(apiKey), maxModelAttemptsPerKey)
 			}
 
-			failedKeys[apiKey] = true
-			cfgManager.MarkKeyAsFailed(apiKey, apiType)
-			log.Printf("[%s-Key] 警告: Key %s 在本渠道所有模型候选均失败，切换下一个密钥", apiType, utils.MaskAPIKey(apiKey))
+			markKeyFailure("在本渠道所有模型候选均失败")
 		}
 
 		// 当前 BaseURL 的所有 Key 都失败，记录并尝试下一个 BaseURL
