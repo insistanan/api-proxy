@@ -348,7 +348,7 @@
                   <span class="mode-state">{{ preferencesStore.fuzzyModeEnabled ? '开' : '关' }}</span>
                 </v-btn>
               </template>
-              <span>{{ systemStore.fuzzyModeLoadError ? '加载失败，请刷新页面' : (preferencesStore.fuzzyModeEnabled ? 'Fuzzy 模式已启用：按分组位次顺序尝试渠道，本组全失败后进入兜底分组，抢优先级生效' : 'Fuzzy 模式已关闭：只走命中分组的第一位渠道，渠道内重试耗尽即报错阻断，不换渠道') }}</span>
+              <span>{{ systemStore.fuzzyModeLoadError ? '加载失败，请刷新页面' : (preferencesStore.fuzzyModeEnabled ? 'Fuzzy 模式已启用：按分组位次顺序尝试渠道，本组全失败后进入兜底分组，抢优先级生效' : 'Fuzzy 模式已关闭：只走命中分组的第一位渠道，渠道内按 Key、模型候选依次重试，全部耗尽即报错阻断，不换渠道') }}</span>
             </v-tooltip>
           </div>
         </div>

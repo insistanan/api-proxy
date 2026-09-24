@@ -29,26 +29,25 @@ type HandleSuccessFunc func(c *gin.Context, resp *http.Response, upstreamCopy *c
 // UpstreamAttempt 聚合一次上游故障转移所需的依赖、目标和协议回调。
 // Context、回调和观测字段属于单次请求生命周期，不应被长期保存。
 type UpstreamAttempt struct {
-	Context            *gin.Context
-	EnvConfig          *config.EnvConfig
-	ConfigManager      *config.ConfigManager
-	ChannelScheduler   *scheduler.ChannelScheduler
-	Kind               scheduler.ChannelKind
-	APIType            string
-	MetricsManager     *metrics.MetricsManager
-	Upstream           *config.UpstreamConfig
-	RequestedModel     string
-	AllowModelFailover bool
-	URLResults         []urlhealth.URLLatencyResult
-	RequestBody        []byte
-	IsStream           bool
-	NextAPIKey         NextAPIKeyFunc
-	BuildRequest       BuildRequestFunc
-	DeprioritizeKey    DeprioritizeKeyFunc
-	MarkURLFailure     func(url string)
-	MarkURLSuccess     func(url string)
-	HandleSuccess      HandleSuccessFunc
-	LogContext         AttemptLogContext
+	Context          *gin.Context
+	EnvConfig        *config.EnvConfig
+	ConfigManager    *config.ConfigManager
+	ChannelScheduler *scheduler.ChannelScheduler
+	Kind             scheduler.ChannelKind
+	APIType          string
+	MetricsManager   *metrics.MetricsManager
+	Upstream         *config.UpstreamConfig
+	RequestedModel   string
+	URLResults       []urlhealth.URLLatencyResult
+	RequestBody      []byte
+	IsStream         bool
+	NextAPIKey       NextAPIKeyFunc
+	BuildRequest     BuildRequestFunc
+	DeprioritizeKey  DeprioritizeKeyFunc
+	MarkURLFailure   func(url string)
+	MarkURLSuccess   func(url string)
+	HandleSuccess    HandleSuccessFunc
+	LogContext       AttemptLogContext
 	// Permit 是本次渠道选择的许可句柄（R2-b）。多渠道分派时由外壳传入，
 	// 供发送层的"未发出即失败"路径中性归还探测名额；渠道健康结果记账
 	// 仍由外壳在渠道结束时统一执行。单渠道路径为 nil。

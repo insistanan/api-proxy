@@ -128,14 +128,11 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 	requestLogID := BindRequestLogID(c)
 	capabilities := newUpstreamCapabilityState(upstream)
 
-	// 模型候选：按模型映射配置的显式顺序。非 Fuzzy 模式只保留首个候选
-	// （与 AllowModelFailover=false 的既有语义一致）。
+	// 模型候选：按模型映射配置的显式顺序全部遍历，不跟随 Fuzzy 开关——
+	// 模型候选属于渠道内层级（"换模型"不是"换渠道"）。
 	targetModels := config.ResolveUpstreamModelList(a.RequestedModel, upstream)
 	if len(targetModels) == 0 {
 		targetModels = []string{a.RequestedModel}
-	}
-	if !a.AllowModelFailover && len(targetModels) > 1 {
-		targetModels = targetModels[:1]
 	}
 
 	// 强制探测模式：基于本次优先尝试的 BaseURL 判断（避免 BaseURL/BaseURLs 不一致导致误判）
