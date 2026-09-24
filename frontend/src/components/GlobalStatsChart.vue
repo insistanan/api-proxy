@@ -27,7 +27,18 @@
         <v-btn value="tokens" size="small">
           <v-icon start size="14">mdi-chart-areaspline</v-icon>Token
         </v-btn>
+        <v-btn value="availability" size="small">
+          <v-icon start size="14">mdi-shield-check-outline</v-icon>可用率
+        </v-btn>
       </v-btn-toggle>
+      <v-chip
+        v-if="selectedView === 'availability' && abnormalBucketCount > 0"
+        size="small"
+        color="warning"
+        variant="tonal"
+      >
+        <v-icon start size="14">mdi-alert-outline</v-icon>{{ abnormalBucketCount }} 起异常时段
+      </v-chip>
     </div>
 
     <!-- Summary cards with trend indicators -->
@@ -82,7 +93,7 @@ const props = withDefaults(defineProps<{
   compact?: boolean
 }>(), { compact: false })
 
-type ViewMode = 'traffic' | 'tokens'
+type ViewMode = 'traffic' | 'tokens' | 'availability'
 type Duration = '1h' | '6h' | '24h' | 'today'
 
 const getStorageKey = (apiType: string, key: string) => `globalStats:${apiType}:${key}`
@@ -91,7 +102,7 @@ const loadSavedPreferences = (apiType: string) => {
   const savedView = localStorage.getItem(getStorageKey(apiType, 'viewMode')) as ViewMode | null
   const savedDuration = localStorage.getItem(getStorageKey(apiType, 'duration')) as Duration | null
   return {
-    view: savedView && ['traffic', 'tokens'].includes(savedView) ? savedView : 'traffic',
+    view: savedView && ['traffic', 'tokens', 'availability'].includes(savedView) ? savedView : 'traffic',
     duration: savedDuration && ['1h', '6h', '24h', 'today'].includes(savedDuration) ? savedDuration : '6h'
   }
 }
@@ -138,6 +149,17 @@ const successRateClass = computed(() => {
   if (rate >= 95) return 'text-success'
   if (rate >= 80) return 'text-warning'
   return 'text-error'
+})
+
+// 可用率视图的异常时段阈值（仅用于展示提示，与渠道调度/熔断口径无关）
+const AVAILABILITY_ALERT_THRESHOLD = 90
+
+const abnormalBucketCount = computed(() => {
+  const dataPoints = historyData.value?.dataPoints
+  if (!dataPoints) return 0
+  return dataPoints.filter(
+    dp => dp.requestCount > 0 && (dp.successRate ?? 100) < AVAILABILITY_ALERT_THRESHOLD
+  ).length
 })
 
 // Summary cards with trend
@@ -223,7 +245,9 @@ const chartOptions = computed<ApexOptions>(() => {
     theme: { mode: isDark.value ? 'dark' : 'light' },
     colors: mode === 'traffic'
       ? [chartColors.traffic.primary, chartColors.traffic.success]
-      : [chartColors.tokens.input, chartColors.tokens.output],
+      : mode === 'availability'
+        ? [chartColors.traffic.success, chartColors.traffic.failure]
+        : [chartColors.tokens.input, chartColors.tokens.output],
     fill: {
       type: 'gradient',
       gradient: {
@@ -236,10 +260,21 @@ const chartOptions = computed<ApexOptions>(() => {
     dataLabels: { enabled: false },
     stroke: {
       curve: 'smooth',
-      width: mode === 'tokens' ? [2, 2.5] : [2.5, 2],
-      dashArray: mode === 'tokens' ? [0, 5] : [0, 0],
+      width: mode === 'tokens' ? [2, 2.5] : mode === 'availability' ? [2.5, 1.5] : [2.5, 2],
+      dashArray: mode === 'tokens' ? [0, 5] : mode === 'availability' ? [0, 4] : [0, 0],
       lineCap: 'round'
     },
+    annotations: mode === 'availability' ? {
+      yaxis: [{
+        y: 90,
+        borderColor: isDark.value ? 'rgba(255,255,255,0.28)' : 'rgba(0,0,0,0.24)',
+        strokeDashArray: 4,
+        label: {
+          text: '90%',
+          style: { fontSize: '10px', color: tc.text, background: 'transparent' }
+        }
+      }]
+    } : {},
     grid: {
       borderColor: tc.grid,
       strokeDashArray: 4,
@@ -279,7 +314,14 @@ const chartOptions = computed<ApexOptions>(() => {
         axisBorder: { show: false },
         axisTicks: { show: false }
       }
-    ] : {
+    ] : mode === 'availability' ? {
+      labels: { formatter: (val: number) => `${Math.round(val)}%`, style: { fontSize: '11px', colors: tc.text } },
+      min: 0,
+      max: 100,
+      tickAmount: 5,
+      axisBorder: { show: false },
+      axisTicks: { show: false }
+    } : {
       labels: { formatter: (val: number) => Math.round(val).toString(), style: { fontSize: '11px', colors: tc.text } },
       min: 0,
       axisBorder: { show: false },
@@ -291,7 +333,9 @@ const chartOptions = computed<ApexOptions>(() => {
       y: {
         formatter: (val: number) => mode === 'traffic'
           ? `${Math.round(val)} 请求`
-          : formatNumber(val)
+          : mode === 'availability'
+            ? `${val.toFixed(1)}%`
+            : formatNumber(val)
       },
       style: { fontSize: '12px', fontFamily: 'inherit' },
       marker: { show: true },
@@ -328,6 +372,26 @@ const chartSeries = computed(() => {
       {
         name: '成功',
         data: dataPoints.map(dp => ({ x: new Date(dp.timestamp).getTime(), y: dp.successCount }))
+      }
+    ]
+  }
+  if (mode === 'availability') {
+    // 可用率视图：成功率主线 + 失败率副线，同一 0-100% 轴，低于 90% 的时段
+    // 由顶部"异常时段"计数提示（阈值与渠道调度无关，只用于展示）。
+    return [
+      {
+        name: '成功率',
+        data: dataPoints.map(dp => ({
+          x: new Date(dp.timestamp).getTime(),
+          y: Number(((dp.successRate ?? 0)).toFixed(1))
+        }))
+      },
+      {
+        name: '失败率',
+        data: dataPoints.map(dp => ({
+          x: new Date(dp.timestamp).getTime(),
+          y: Number(Math.max(0, 100 - (dp.successRate ?? 0)).toFixed(1))
+        }))
       }
     ]
   }

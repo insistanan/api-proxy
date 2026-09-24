@@ -104,6 +104,7 @@ import {
   mdiShieldRefresh,
   mdiShieldOffOutline,
   mdiAlertCircleOutline,
+  mdiAlertOutline,
   mdiChartTimelineVariant,
   mdiChartAreaspline,
   mdiChartLine,
@@ -146,6 +147,7 @@ import {
   mdiBroom,
   mdiFileFindOutline,
   mdiShieldCheck,
+  mdiShieldCheckOutline,
   mdiBellRing,
   mdiRegex
 } from '@mdi/js'
@@ -238,11 +240,13 @@ const iconMap: Record<string, string> = {
   'close-circle': mdiCloseCircle,
   'help-circle': mdiHelpCircle,
   alert: mdiAlert,
+  'alert-outline': mdiAlertOutline,
 
   'shield-refresh': mdiShieldRefresh,
   'shield-off-outline': mdiShieldOffOutline,
   'shield-lock': mdiShieldLock,
   'shield-check': mdiShieldCheck,
+  'shield-check-outline': mdiShieldCheckOutline,
   'eye-off': mdiEyeOff,
   'eye-check': mdiEyeCheck,
   broom: mdiBroom,

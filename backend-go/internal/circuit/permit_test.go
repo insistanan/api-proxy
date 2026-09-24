@@ -15,11 +15,9 @@ import (
 // fastBreaker 返回冷却 10ms 的熔断器，便于触发 Open→HalfOpen 迁移。
 func fastBreaker() *Breaker {
 	return NewBreaker(Config{
-		FailureThreshold:   1,
-		MinRequests:        1,
-		ErrorRateThreshold: 0.5,
-		Cooldown:           10 * time.Millisecond,
-		SuccessThreshold:   2,
+		FailureThreshold: 1,
+		Cooldown:         10 * time.Millisecond,
+		SuccessThreshold: 2,
 	})
 }
 

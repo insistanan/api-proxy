@@ -256,13 +256,17 @@ func describeImages(
 		}
 	}
 
-	// 公共池优先；全部可重试失败后，再尝试文本渠道所在分组。
+	// 图片理解渠道的固定顺序：显式配置渠道（见上）→ 公用图片理解池 →
+	// 文本渠道所在分组 → 兜底分组。全部失败即阻断整个请求。
 	stages := []func() []*scheduler.SelectionResult{
 		func() []*scheduler.SelectionResult {
 			return channelScheduler.ListPublicVisionChannels(requestContext, kind, visionChannelID)
 		},
 		func() []*scheduler.SelectionResult {
 			return channelScheduler.ListPoolVisionChannels(requestContext, kind, visionChannelID, targetPoolID)
+		},
+		func() []*scheduler.SelectionResult {
+			return channelScheduler.ListFallbackPoolVisionChannels(requestContext, kind, visionChannelID, targetPoolID)
 		},
 	}
 	for _, loadCandidates := range stages {
@@ -296,9 +300,9 @@ func describeImages(
 	}
 
 	if lastErr == nil {
-		return nil, fmt.Errorf("公共图片理解池和当前分组中没有可用的图片理解渠道")
+		return nil, fmt.Errorf("模型不可用：公用图片理解池、当前分组和兜底分组中没有可用的图片理解渠道")
 	}
-	return nil, fmt.Errorf("所有可用图片理解渠道均失败: %w", lastErr)
+	return nil, fmt.Errorf("模型不可用：所有可用图片理解渠道均失败: %w", lastErr)
 }
 
 // describeImagesOnChannel 在指定的图片理解渠道上尝试解析图片。

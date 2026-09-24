@@ -15,6 +15,11 @@ import (
 	"github.com/BenedictKing/api-proxy/internal/utils"
 )
 
+// MaxAttemptsPerModelKey 同一渠道内"同一个 API Key + 同一个模型候选"的最大
+// 尝试次数。只有达到该上限仍然失败，才允许切换到下一个模型候选；该 Key 的
+// 所有模型候选都失败后，才判定这个 Key 失败并换下一个 Key。
+const MaxAttemptsPerModelKey = 5
+
 // CandidateRetryState 收拢单个候选（BaseURL×Key）生命周期的 Key 失败与
 // 同候选重试状态。每进入一个 BaseURL 都必须创建新实例，避免状态跨候选泄漏。
 type CandidateRetryState struct {

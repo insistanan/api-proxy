@@ -1,12 +1,11 @@
-// 本文件是单渠道内"模型映射层"故障转移的入口：把请求模型解析成候选上游模型序列
-// （多候选按 modelMapping 的显式数组顺序，AllowModelFailover 为假时只保留首个），逐个交给
-// Key/BaseURL 层循环（upstream_attempt_keys.go）尝试。
+// 本文件是单渠道内尝试的入口与 BaseURL 候选构造。
+// 渠道内的尝试层级（Key → 模型候选 → 重试次数）实现在 upstream_attempt_keys.go，
+// 本文件只保留对外入口与模型候选覆盖辅助（applyRequestedModelOverride）。
 // 附带 BaseURL 候选列表的构造（BuildDefaultURLResults）与对话粘性偏好
 // （preferConversationBaseURL）。
 package proxycore
 
 import (
-	"context"
 	"log"
 
 	"github.com/BenedictKing/api-proxy/internal/config"
@@ -14,86 +13,24 @@ import (
 	"github.com/BenedictKing/api-proxy/internal/urlhealth"
 )
 
-// TryWithModelMappingFailover 按模型映射执行上游故障转移。
+// TryWithModelMappingFailover 执行一次渠道内的上游尝试。
 func (a UpstreamAttempt) TryWithModelMappingFailover() UpstreamAttemptResult {
-	return a.tryWithModelMappingFailover()
+	return a.tryWithAllKeys()
 }
 
-// tryWithModelMappingFailover 在模型映射级别进行 failover。
-// 非 Fuzzy 模式下仅尝试首个映射模型，避免跨模型故障转移。
-func (a UpstreamAttempt) tryWithModelMappingFailover() UpstreamAttemptResult {
-	// 获取该模型的映射列表
-	targetModels := config.ResolveUpstreamModelList(a.RequestedModel, a.Upstream)
-
-	if len(targetModels) == 0 {
-		// 没有映射，直接使用原始模型
-		targetModels = []string{a.RequestedModel}
+// applyRequestedModelOverride 把当前尝试的模型候选固化到上游配置上：
+// 覆盖模型映射，避免 Provider 在协议转换阶段再次重定向到别的模型。
+// 模型候选的遍历顺序由 tryWithAllKeys 的 Key → 模型 → 重试分层负责。
+func applyRequestedModelOverride(upstream *config.UpstreamConfig, requestedModel string, targetModel string) {
+	if upstream == nil || targetModel == "" {
+		return
 	}
-	if !a.AllowModelFailover && len(targetModels) > 1 {
-		targetModels = targetModels[:1]
+	if requestedModel == "" {
+		requestedModel = targetModel
 	}
-
-	// 如果只有一个目标模型，直接调用原有逻辑
-	if len(targetModels) == 1 {
-		return a.tryWithAllKeys()
+	upstream.ModelMapping = map[string][]string{
+		requestedModel: {targetModel},
 	}
-
-	// 多个目标模型：依次尝试
-	log.Printf("[%s-ModelMapping] 模型 %s 映射到 %d 个备选: %v", a.APIType, a.RequestedModel, len(targetModels), targetModels)
-
-	var lastFailoverError *FailoverError
-	var lastErr error
-
-	for modelIdx, targetModel := range targetModels {
-		// 检查客户端是否已取消
-		select {
-		case <-a.Context.Request.Context().Done():
-			log.Printf("[%s-Cancel] 客户端已取消，停止模型 failover", a.APIType)
-			// 客户端明确取消：中性结束，立即停止。
-			return newUpstreamAttemptResult(true, "", 0, nil, nil, context.Canceled).withHealth(channelHealthNeutral)
-		default:
-		}
-
-		log.Printf("[%s-ModelMapping] 尝试备选模型 %d/%d: %s -> %s",
-			a.APIType, modelIdx+1, len(targetModels), a.RequestedModel, targetModel)
-
-		// 创建上游副本，临时覆盖模型映射为当前尝试的单一模型
-		upstreamCopy := a.Upstream.Clone()
-		upstreamCopy.ModelMapping = map[string][]string{
-			a.RequestedModel: {targetModel},
-		}
-
-		modelAttempt := a
-		modelAttempt.Upstream = upstreamCopy
-		result := modelAttempt.tryWithAllKeys()
-
-		if result.Handled {
-			if result.SuccessKey != "" {
-				// 成功
-				log.Printf("[%s-ModelMapping] 模型 %s (备选 %d/%d) 请求成功",
-					a.APIType, targetModel, modelIdx+1, len(targetModels))
-				return result
-			}
-			// handled=true 但 successKey 为空：非 failover 错误（如客户端取消、参数错误等）
-			return result
-		}
-
-		// 未处理（failover 错误），保存错误信息并尝试下一个模型
-		if result.FailoverError != nil {
-			lastFailoverError = result.FailoverError
-		}
-		if result.LastError != nil {
-			lastErr = result.LastError
-		}
-
-		log.Printf("[%s-ModelMapping] 模型 %s (备选 %d/%d) 失败，尝试下一个备选模型",
-			a.APIType, targetModel, modelIdx+1, len(targetModels))
-	}
-
-	// 所有模型都失败
-	log.Printf("[%s-ModelMapping] 所有 %d 个备选模型都失败", a.APIType, len(targetModels))
-	// 可重试故障耗尽全部候选模型：渠道按失败记账。
-	return newUpstreamAttemptResult(false, "", 0, lastFailoverError, nil, lastErr).withHealth(channelHealthFailure)
 }
 
 func preferConversationBaseURL(

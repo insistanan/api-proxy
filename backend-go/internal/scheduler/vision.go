@@ -62,10 +62,6 @@ func (s *ChannelScheduler) SelectVisionChannel(ctx context.Context, kind Channel
 		if config.GetChannelStatus(upstream) != config.ChannelStatusActive || len(upstream.APIKeys) == 0 {
 			return nil, fmt.Errorf("图片理解渠道 %q 当前不可用", upstream.Name)
 		}
-		metricsManager := s.getMetricsManager(kind)
-		if !metricsManager.IsChannelHealthyWithKeys(upstream.BaseURL, upstream.APIKeys, index) {
-			return nil, fmt.Errorf("图片理解渠道 %q 当前不健康", upstream.Name)
-		}
 		return s.reserveAndReturnVision(&SelectionResult{
 			Upstream:     upstream.Clone(),
 			ChannelIndex: index,
@@ -86,16 +82,30 @@ func (s *ChannelScheduler) reserveAndReturnVision(result *SelectionResult, kind 
 // ListPublicVisionChannels 按配置序号返回公共图片理解池中可用的渠道。
 // excludeChannelID 用于排除已经尝试过的显式图片理解渠道。
 func (s *ChannelScheduler) ListPublicVisionChannels(ctx context.Context, kind ChannelKind, excludeChannelID string) []*SelectionResult {
-	return s.listVisionChannels(ctx, kind, excludeChannelID, "", true)
+	return s.listVisionChannels(ctx, kind, excludeChannelID, "", true, "vision_layer_public_pool")
 }
 
 // ListPoolVisionChannels 按配置序号返回 ownerPoolID 分组中可用的图片理解渠道。
 // 公共图片理解渠道不属于分组候选，确保公共池全部失败后才进入该阶段。
 func (s *ChannelScheduler) ListPoolVisionChannels(ctx context.Context, kind ChannelKind, excludeChannelID string, ownerPoolID string) []*SelectionResult {
-	return s.listVisionChannels(ctx, kind, excludeChannelID, ownerPoolID, false)
+	return s.listVisionChannels(ctx, kind, excludeChannelID, ownerPoolID, false, "vision_layer_owner_pool")
 }
 
-func (s *ChannelScheduler) listVisionChannels(ctx context.Context, kind ChannelKind, excludeChannelID string, ownerPoolID string, public bool) []*SelectionResult {
+// ListFallbackPoolVisionChannels 返回兜底分组（default）中可用的图片理解渠道，
+// 用于图片理解层"公用池 → 同分组 → 兜底分组"的最后一段兜底。
+// ownerPoolID 已经是兜底分组时返回空，避免重复尝试同一批渠道。
+func (s *ChannelScheduler) ListFallbackPoolVisionChannels(ctx context.Context, kind ChannelKind, excludeChannelID string, ownerPoolID string) []*SelectionResult {
+	ownerPoolID = strings.TrimSpace(ownerPoolID)
+	if ownerPoolID == "" {
+		ownerPoolID = config.DefaultChannelPoolID
+	}
+	if ownerPoolID == config.DefaultChannelPoolID {
+		return nil
+	}
+	return s.listVisionChannels(ctx, kind, excludeChannelID, config.DefaultChannelPoolID, false, "vision_layer_fallback_pool")
+}
+
+func (s *ChannelScheduler) listVisionChannels(ctx context.Context, kind ChannelKind, excludeChannelID string, poolID string, public bool, reason string) []*SelectionResult {
 	if ctx == nil {
 		return nil
 	}
@@ -106,9 +116,9 @@ func (s *ChannelScheduler) listVisionChannels(ctx context.Context, kind ChannelK
 	}
 	channelID := strings.TrimSpace(excludeChannelID)
 	if !public {
-		ownerPoolID = strings.TrimSpace(ownerPoolID)
-		if ownerPoolID == "" {
-			ownerPoolID = config.DefaultChannelPoolID
+		poolID = strings.TrimSpace(poolID)
+		if poolID == "" {
+			poolID = config.DefaultChannelPoolID
 		}
 	}
 
@@ -146,20 +156,12 @@ func (s *ChannelScheduler) listVisionChannels(ctx context.Context, kind ChannelK
 			if targetPoolID == "" {
 				targetPoolID = config.DefaultChannelPoolID
 			}
-			if targetPoolID != ownerPoolID {
+			if targetPoolID != poolID {
 				continue
 			}
 		}
 		if config.GetChannelStatus(upstream) != config.ChannelStatusActive || len(upstream.APIKeys) == 0 {
 			continue
-		}
-		metricsManager := s.getMetricsManager(kind)
-		if !metricsManager.IsChannelHealthyWithKeys(upstream.BaseURL, upstream.APIKeys, index) {
-			continue
-		}
-		reason := "vision_layer_public_pool"
-		if !public {
-			reason = "vision_layer_owner_pool"
 		}
 		results = append(results, &SelectionResult{
 			Upstream:     upstream.Clone(),

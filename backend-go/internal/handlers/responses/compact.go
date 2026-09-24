@@ -173,6 +173,10 @@ func handleMultiChannelCompact(
 ) {
 	failedChannels := make(map[int]bool)
 	maxAttempts := channelScheduler.GetActiveChannelCountForModel(scheduler.ChannelKindResponses, model)
+	// 非 Fuzzy 模式与主链路同口径：只尝试位次第一的渠道，候选耗尽直接报错阻断。
+	if !cfgManager.GetFuzzyModeEnabled() {
+		maxAttempts = 1
+	}
 	var lastErr *compactError
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {

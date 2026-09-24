@@ -180,7 +180,7 @@
                     <div v-bind="tooltipProps" class="metrics-visual">
                       <!-- 15分钟有请求时显示指标条，否则显示 -- -->
                       <template v-if="get15mStats(element.index)?.requestCount">
-                        <!-- 成功率条 -->
+                        <!-- 成功率条：成功填充 + 右侧失败占比，失败绝对量单独标注 -->
                         <div class="mini-metric-bar">
                           <span class="metric-bar-label">成功</span>
                           <div class="mmb-track">
@@ -188,6 +188,12 @@
                               class="mmb-fill"
                               :class="getRateLevel(get15mStats(element.index)?.successRate)"
                               :style="{ width: `${get15mStats(element.index)?.successRate ?? 0}%` }"
+                            ></div>
+                            <!-- 失败占比：从右侧按窗口内失败率覆盖，一眼看出失败量级 -->
+                            <div
+                              v-if="(getFailureRate(get15mStats(element.index)) ?? 0) > 0"
+                              class="mmb-fill-failure"
+                              :style="{ width: `${getFailureRate(get15mStats(element.index)) ?? 0}%` }"
                             ></div>
                             <!-- 指标刷新时重放一次扫光 -->
                             <span
@@ -232,7 +238,11 @@
                         </div>
                         <!-- 请求数 -->
                         <div class="mini-metric-secondary">
-                          <span class="mm-requests">{{ get15mStats(element.index)?.requestCount }} 请求</span>
+                          <span class="mm-requests">近15分钟 {{ get15mStats(element.index)?.requestCount }} 请求</span>
+                          <span
+                            v-if="get15mStats(element.index)?.failureCount"
+                            class="mm-failures"
+                          >失败 {{ get15mStats(element.index)?.failureCount }}</span>
                         </div>
                       </template>
                       <span v-else class="text-caption text-medium-emphasis">--</span>
@@ -643,7 +653,8 @@
         <v-divider />
         <v-card-text class="pt-4">
           <p class="text-body-2 text-medium-emphasis mb-4">
-            促销期渠道将绕过健康检查，获得最高调度优先级。可同时设置时间和次数限制，任一条件满足即自动结束。
+            促销期渠道即"抢优先级"：只在 Fuzzy 模式打开时生效，处于促销期的渠道按各自位次整体排到普通渠道之前，可同时设置多个。
+            Fuzzy 模式关闭时该设置不参与调度（固定走第一位渠道）。可同时设置时间和次数限制，任一条件满足即自动结束。
           </p>
           <v-text-field
             v-model.number="promotionDuration"
@@ -813,6 +824,7 @@ import { useChannelActivity } from '../composables/useChannelActivity'
 import {
   getCacheRateLevel,
   getRateLevel,
+  getFailureRate,
   getCacheHitRate,
   shouldShowCacheHitRate,
   getLatencyColor,
@@ -1791,6 +1803,17 @@ defineExpose({
 }
 .v-theme--dark .mmb-flash { background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent); }
 
+/* 失败占比 — 从轨道右侧覆盖，不做波头 / 流光动效，避免与成功条抢注意力 */
+.mmb-fill-failure {
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  border-radius: 2px;
+  background: linear-gradient(90deg, rgba(var(--v-theme-error), 0.5), rgb(var(--v-theme-error)));
+  transition: width 0.85s var(--ease-spring);
+  z-index: 1;
+  pointer-events: none;
+}
+
 /* 健康（绿）— 平稳 */
 .mmb-fill.high {
   background: linear-gradient(90deg, rgba(var(--v-theme-success), 0.72), rgb(var(--v-theme-success)));
@@ -1870,6 +1893,8 @@ defineExpose({
   color: rgba(var(--v-theme-on-surface-variant), 0.8);
 }
 .mm-sep { opacity: 0.35; }
+/* 失败次数 — 与成功率条同一窗口的绝对量，红色强调 */
+.mm-failures { color: rgb(var(--v-theme-error)); font-weight: 700; }
 .channel-latency { display: flex; align-items: center; min-width: 60px; }
 
 /* ===== 副行：映射 / 评测 / 描述 =====

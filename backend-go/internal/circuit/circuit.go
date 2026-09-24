@@ -1,7 +1,8 @@
 // Package circuit 实现渠道级三态熔断器（Closed / Open / HalfOpen）。
 //
 // 设计参照 cc-switch 的 circuit_breaker.rs：
-//   - Closed：正常放行；连续失败达到阈值，或累计请求达到最小样本后错误率达到阈值，转 Open。
+//   - Closed：正常放行；连续失败达到阈值转 Open。错误率只作为展示指标参与
+//     Snapshot，不作为熔断触发条件（与"位次优先 + 连续失败熔断"的选渠契约一致）。
 //   - Open：拒绝所有请求；冷却时间到期后惰性转 HalfOpen（无后台定时器，在被查询时转换）。
 //   - HalfOpen：限量放行探测请求（默认同时 1 个）；探测连续成功达到阈值转 Closed，
 //     任一探测失败立即回 Open 重新计时。
@@ -29,36 +30,26 @@ const (
 
 // Config 熔断器阈值配置。零值字段回落 DefaultConfig 对应项。
 type Config struct {
-	FailureThreshold   int           // 连续失败多少次转 Open
-	ErrorRateThreshold float64       // 错误率阈值（0-1）
-	MinRequests        int           // 计算错误率前的最小累计请求数
-	Cooldown           time.Duration // Open 冷却时长，到期后转 HalfOpen
-	SuccessThreshold   int           // HalfOpen 连续成功多少次转 Closed
+	FailureThreshold int           // 连续失败多少次转 Open
+	Cooldown         time.Duration // Open 冷却时长，到期后转 HalfOpen
+	SuccessThreshold int           // HalfOpen 连续成功多少次转 Closed
 }
 
 // DefaultConfig 返回与 cc-switch 默认值一致的配置。
 func DefaultConfig() Config {
 	return Config{
-		FailureThreshold:   4,
-		ErrorRateThreshold: 0.6,
-		MinRequests:        10,
-		Cooldown:           60 * time.Second,
-		SuccessThreshold:   2,
+		FailureThreshold: 5,
+		Cooldown:         15 * time.Minute,
+		SuccessThreshold: 2,
 	}
 }
 
 func (c Config) withDefaults() Config {
 	if c.FailureThreshold <= 0 {
-		c.FailureThreshold = 4
-	}
-	if c.ErrorRateThreshold <= 0 || c.ErrorRateThreshold > 1 {
-		c.ErrorRateThreshold = 0.6
-	}
-	if c.MinRequests <= 0 {
-		c.MinRequests = 10
+		c.FailureThreshold = 5
 	}
 	if c.Cooldown <= 0 {
-		c.Cooldown = 60 * time.Second
+		c.Cooldown = 15 * time.Minute
 	}
 	if c.SuccessThreshold <= 0 {
 		c.SuccessThreshold = 2
@@ -171,7 +162,8 @@ func (b *Breaker) RecordSuccessGeneration(generation uint64) {
 	b.recordSuccessLocked(time.Now())
 }
 
-// RecordFailure 记录一次失败请求。Closed 下累计连续失败与错误率；HalfOpen 下立即回 Open。
+// RecordFailure 记录一次失败请求。Closed 下累计连续失败（错误率只累计供展示）；
+// 连续失败达到阈值转 Open；HalfOpen 下立即回 Open。
 func (b *Breaker) RecordFailure() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -321,13 +313,6 @@ func (b *Breaker) recordFailureLocked(now time.Time) {
 			b.tripOpenLocked(now)
 			log.Printf("[Circuit-Open] 连续失败 %d 次触发熔断", b.consecutiveFailures)
 			return
-		}
-		if b.totalRequests >= b.config.MinRequests {
-			errorRate := float64(b.failedRequests) / float64(b.totalRequests)
-			if errorRate >= b.config.ErrorRateThreshold {
-				b.tripOpenLocked(now)
-				log.Printf("[Circuit-Open] 错误率 %.0f%%（%d/%d）触发熔断", errorRate*100, b.failedRequests, b.totalRequests)
-			}
 		}
 	}
 }
