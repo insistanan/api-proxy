@@ -45,6 +45,10 @@ const (
 	maxWriteBatchEntries = 256
 	logWriteTimeout      = 5 * time.Second
 	cleanupBatchSize     = 1000
+	// 自动清理和日志写入共用一条连接。单批预算到点就中断，避免大正文把写入堵住。
+	cleanupTimeout = 2 * time.Second
+	// 流量和请求日志带正文。一次删一千行很容易超预算，超时还会把 WAL 里这笔删除整批回滚。
+	cleanupShrinkBatch = 32
 )
 
 type queuedWrite struct {
@@ -77,6 +81,11 @@ type Store struct {
 	writeErr       error
 	diagnosticMu   sync.Mutex
 	lastDiagnostic time.Time
+
+	// cleanupBatch / cleanupCeiling 按 app、traffic、request 记住删得动的批量。
+	// ceiling 是上次超时的批量，本进程内不再涨回去。只在持有 s.mu 时访问。
+	cleanupBatch   [3]int
+	cleanupCeiling [3]int
 }
 
 func logDatabaseURI(path string) (string, error) {
@@ -561,34 +570,118 @@ func (s *Store) cleanupExpired() (bool, error) {
 	if s == nil || s.db == nil {
 		return false, fmt.Errorf("日志存储不可清理")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
 	cutoff := RetentionCutoff(time.Now()).UnixMilli()
-	statements := []string{
-		`DELETE FROM app_logs WHERE id IN (SELECT id FROM app_logs WHERE unix_milli < ? ORDER BY unix_milli, id LIMIT ?)`,
-		`DELETE FROM traffic_logs WHERE id IN (SELECT id FROM traffic_logs WHERE unix_milli < ? ORDER BY unix_milli, id LIMIT ?)`,
-		`DELETE FROM request_logs WHERE id IN (SELECT id FROM request_logs WHERE unix_milli < ? ORDER BY unix_milli, id LIMIT ?)`,
+	// 顺序必须与 cleanupBatch 的三个槽位一致。
+	targets := []struct {
+		statement string
+		initial   int
+	}{
+		{`DELETE FROM app_logs WHERE id IN (SELECT id FROM app_logs WHERE unix_milli < ? ORDER BY unix_milli, id LIMIT ?)`, cleanupBatchSize},
+		{`DELETE FROM traffic_logs WHERE id IN (SELECT id FROM traffic_logs WHERE unix_milli < ? ORDER BY unix_milli, id LIMIT ?)`, cleanupShrinkBatch},
+		{`DELETE FROM request_logs WHERE id IN (SELECT id FROM request_logs WHERE unix_milli < ? ORDER BY unix_milli, id LIMIT ?)`, cleanupShrinkBatch},
 	}
 	more := false
-	for _, statement := range statements {
+	for i, target := range targets {
 		select {
 		case <-s.done:
 			return false, nil
 		default:
 		}
-		result, err := s.db.ExecContext(ctx, statement, cutoff, cleanupBatchSize)
+		again, err := s.cleanupTable(target.statement, cutoff, i, target.initial)
 		if err != nil {
-			return false, fmt.Errorf("清理过期日志失败: %w", err)
+			return false, err
 		}
-		affected, err := result.RowsAffected()
+		more = more || again
+	}
+	return more, nil
+}
+
+// cleanupTable 删除一张表的一批过期日志，写完或超时后立刻放开写锁。
+// 超时只缩小下次批量；中断会回滚当前批，不能把它记成清理失败，否则会每分钟重试同一批并永远没有进度。
+func (s *Store) cleanupTable(statement string, cutoff int64, table int, initial int) (bool, error) {
+	if table < 0 || table >= len(s.cleanupBatch) {
+		return false, fmt.Errorf("日志清理表序号越界: %d", table)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	batch := s.cleanupBatch[table]
+	if batch < 1 {
+		batch = initial
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+	defer cancel()
+	started := time.Now()
+	result, err := s.db.ExecContext(ctx, statement, cutoff, batch)
+	timedOut := isCleanupTimeout(err)
+	if err != nil && !timedOut {
+		return false, fmt.Errorf("清理过期日志失败: %w", err)
+	}
+	var affected int64
+	if !timedOut {
+		affected, err = result.RowsAffected()
 		if err != nil {
 			return false, fmt.Errorf("读取日志清理结果失败: %w", err)
 		}
-		more = more || affected == cleanupBatchSize
 	}
-	return more, nil
+	next, ceiling, again, giveUp := nextCleanupBatch(batch, s.cleanupCeiling[table], affected, time.Since(started), timedOut)
+	s.cleanupBatch[table] = next
+	s.cleanupCeiling[table] = ceiling
+	if giveUp {
+		return false, fmt.Errorf("清理过期日志失败: %w", err)
+	}
+	return again, nil
+}
+
+// nextCleanupBatch 决定下一批删多少。
+// 超时且还能缩小：记为仍有剩余，不视为失败。单行仍超时才放弃。
+// 删满且远快于预算时放大，但不超过上次超时的批量。未满一批说明这张表已经追上。
+func nextCleanupBatch(batch, ceiling int, affected int64, elapsed time.Duration, timedOut bool) (next, nextCeiling int, more, giveUp bool) {
+	if batch < 1 {
+		batch = cleanupBatchSize
+	}
+	if ceiling < 0 {
+		ceiling = 0
+	}
+	if timedOut {
+		if batch <= 1 {
+			return 1, ceiling, false, true
+		}
+		next = batch / 2
+		if batch > cleanupShrinkBatch {
+			next = cleanupShrinkBatch
+		}
+		if next < 1 {
+			next = 1
+		}
+		return next, batch, true, false
+	}
+	if affected < int64(batch) {
+		return batch, ceiling, false, false
+	}
+	next = batch
+	nextCeiling = ceiling
+	if elapsed < cleanupTimeout/4 && batch < cleanupBatchSize {
+		grown := batch * 2
+		if grown > cleanupBatchSize {
+			grown = cleanupBatchSize
+		}
+		if ceiling == 0 || grown < ceiling {
+			next = grown
+		}
+	}
+	return next, nextCeiling, true, false
+}
+
+func isCleanupTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	// 驱动偶发只返回 SQLITE_INTERRUPT，不带回 context 错误。
+	message := err.Error()
+	return strings.Contains(message, "SQLITE_INTERRUPT") || strings.Contains(message, "sqlite3_interrupt")
 }
 
 // 诊断直接写 stderr，避免重新进入日志队列；故障持续时最多每 10 秒输出一次。

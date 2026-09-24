@@ -65,6 +65,64 @@ func TestCleanupDeletesOlderThanYesterday(t *testing.T) {
 	}
 }
 
+func TestNextCleanupBatchAvoidsRetryingASizeThatTimedOut(t *testing.T) {
+	next, ceiling, more, giveUp := nextCleanupBatch(cleanupBatchSize, 0, 0, cleanupTimeout, true)
+	if giveUp || !more || next != cleanupShrinkBatch || ceiling != cleanupBatchSize {
+		t.Fatalf("大批量超时后应降到 %d 并记住上限 %d，得到 next=%d ceiling=%d more=%v giveUp=%v",
+			cleanupShrinkBatch, cleanupBatchSize, next, ceiling, more, giveUp)
+	}
+
+	next, ceiling, more, giveUp = nextCleanupBatch(next, ceiling, int64(next), cleanupTimeout/5, false)
+	if giveUp || !more || next != cleanupShrinkBatch*2 || ceiling != cleanupBatchSize {
+		t.Fatalf("远快于预算时应放大，得到 next=%d ceiling=%d more=%v giveUp=%v", next, ceiling, more, giveUp)
+	}
+
+	timedOutAt := next
+	next, ceiling, more, giveUp = nextCleanupBatch(timedOutAt, ceiling, 0, cleanupTimeout, true)
+	if giveUp || !more || next != cleanupShrinkBatch || ceiling != timedOutAt {
+		t.Fatalf("放大后再次超时应退回并压低上限，得到 next=%d ceiling=%d more=%v giveUp=%v", next, ceiling, more, giveUp)
+	}
+
+	next, ceiling, more, giveUp = nextCleanupBatch(next, ceiling, int64(cleanupShrinkBatch), time.Millisecond, false)
+	if giveUp || !more || next != cleanupShrinkBatch || ceiling != timedOutAt {
+		t.Fatalf("不应涨回刚超时的批量，得到 next=%d ceiling=%d more=%v giveUp=%v", next, ceiling, more, giveUp)
+	}
+
+	keptCeiling := ceiling
+	next, ceiling, more, giveUp = nextCleanupBatch(1, keptCeiling, 0, cleanupTimeout, true)
+	if !giveUp || more || next != 1 || ceiling != keptCeiling {
+		t.Fatalf("单行超时必须失败且保留上限，得到 next=%d ceiling=%d more=%v giveUp=%v", next, ceiling, more, giveUp)
+	}
+
+	next, ceiling, more, giveUp = nextCleanupBatch(cleanupShrinkBatch, 0, 3, time.Millisecond, false)
+	if more || giveUp || next != cleanupShrinkBatch {
+		t.Fatalf("未删满一批表示这张表已追上，得到 next=%d more=%v giveUp=%v", next, more, giveUp)
+	}
+
+	next, _, more, giveUp = nextCleanupBatch(cleanupShrinkBatch, 0, int64(cleanupShrinkBatch), cleanupTimeout/2, false)
+	if giveUp || !more || next != cleanupShrinkBatch {
+		t.Fatalf("接近预算的满批不应放大，得到 next=%d more=%v giveUp=%v", next, more, giveUp)
+	}
+}
+
+func TestIsCleanupTimeout(t *testing.T) {
+	if !isCleanupTimeout(context.DeadlineExceeded) {
+		t.Fatal("context deadline 应视为本批超时")
+	}
+	if !isCleanupTimeout(fmt.Errorf("清理过期日志失败: %w", context.DeadlineExceeded)) {
+		t.Fatal("包装后的 deadline 应视为本批超时")
+	}
+	if !isCleanupTimeout(fmt.Errorf("Operation terminated by sqlite3_interrupt()(SQLITE_INTERRUPT)")) {
+		t.Fatal("sqlite 中断应视为本批超时")
+	}
+	if isCleanupTimeout(fmt.Errorf("database is locked")) {
+		t.Fatal("锁冲突不能当成批量过大")
+	}
+	if isCleanupTimeout(nil) {
+		t.Fatal("nil 不是超时")
+	}
+}
+
 func TestListSystemLogSummariesGroupsByRequestIDWithoutBody(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "logs.db")
 	store, err := Open(dbPath)
