@@ -515,6 +515,8 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 				sniff, readErr := readBodyWithLimit(resp.Body, maxEnvelopeSniffBytes)
 				if readErr != nil {
 					// 响应体读取中断/超上限：连接已不可靠或响应异常巨大，按网络故障处理。
+					// body 不会被 HandleSuccess 接手，必须显式关闭，否则连接不归还连接池。
+					resp.Body.Close()
 					failoverState.lastError = readErr
 					retryState.MarkKeyFailed(apiKey)
 					cfgManager.MarkKeyAsFailed(apiKey, apiType)
