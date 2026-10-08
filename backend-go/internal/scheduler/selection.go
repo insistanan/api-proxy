@@ -9,6 +9,7 @@ import (
 	"github.com/BenedictKing/api-proxy/internal/circuit"
 	"github.com/BenedictKing/api-proxy/internal/config"
 	"github.com/BenedictKing/api-proxy/internal/conversation"
+	"github.com/BenedictKing/api-proxy/internal/metrics"
 )
 
 // SelectionResult 渠道选择结果
@@ -314,16 +315,11 @@ func (s *ChannelScheduler) GetChannelInFlight(kind ChannelKind, channelIndex int
 	return 0
 }
 
-// SelectChannel 按配置顺序选择渠道。
-// 优先级: 对话路由覆盖 > 强优先级（仅 Fuzzy）> 命中分组位次 > 兜底分组位次。
+// SelectChannel 按配置的故障转移顺序选择渠道。
+// 优先级: 对话路由覆盖 > 当前分组中按顺序排列的第一个可用渠道 > 兜底分组。
 //
-// 渠道顺序是显式配置。除 Fuzzy 模式下的促销（抢优先级）渠道外，失败率、
-// 负载、延迟、对话亲和、自适应评分都不得改写用户配置的位次。
-//
-// 分组兜底两种模式都生效：命中分组没有可尝试的渠道（停用、熔断中、无 Key、
-// 不支持请求模型）时进入兜底分组。Fuzzy 开关只决定"请求失败后是否继续换
-// 渠道"，那由调用方（proxycore 的多渠道外壳）按 Fuzzy 决定尝试次数上限，
-// 非 Fuzzy 下第一个渠道的候选耗尽即报错阻断。
+// 渠道顺序是显式配置，不再由促销、对话亲和、自适应评分、负载或稳定散列改写。
+// 这样每个请求都会先尝试第一个渠道，只有该渠道失败后才进入下一个渠道。
 //
 // 图片不参与选渠：是否直接处理图片或启用图片理解层，由被选中渠道的配置在
 // 请求发送前决定（见 prepareRequestForUpstream → visionlayer.PrepareRequest）。
@@ -352,25 +348,20 @@ func (s *ChannelScheduler) SelectChannel(
 		return nil, fmt.Errorf("选择 %s 分组失败: %w", kind, err)
 	}
 
-	fuzzyMode := s.isFuzzyModeEnabled()
-
-	// 完整路由用于生成候选集合：会话固定渠道等例外逻辑需要看到全部路由，
-	// 分组兜底也依赖它（命中分组无可尝试渠道时落到兜底分组）。
+	// 严格按“命中分组 -> 兜底分组”的顺序选择。只有前一分组没有可实际尝试的渠道时，
+	// 才进入下一分组，避免兜底分组中的渠道抢占正常模型路由。
 	poolIDs := make([]string, 0, len(poolRoute))
 	for _, pool := range poolRoute {
 		poolIDs = append(poolIDs, pool.ID)
 	}
 	channelsByPool := s.getActiveChannelsByPool(kind, poolIDs)
-	var routedChannels []ChannelInfo
-	for _, pool := range poolRoute {
-		routedChannels = append(routedChannels, channelsByPool[pool.ID]...)
-	}
-
 	selectedPool := poolRoute[len(poolRoute)-1]
 	var activeChannels []ChannelInfo
+	var routedChannels []ChannelInfo
 	foundAttemptableGroup := false
 	for _, pool := range poolRoute {
 		channels := channelsByPool[pool.ID]
+		routedChannels = append(routedChannels, channels...)
 		if !foundAttemptableGroup && s.hasAttemptableChannel(channels, failedChannels, kind, requestedModel) {
 			selectedPool = pool
 			activeChannels = channels
@@ -402,15 +393,9 @@ func (s *ChannelScheduler) SelectChannel(
 		return nil, noActiveChannelError(kind)
 	}
 
-	// 强优先级（抢优先级）只在 Fuzzy 模式生效：处于促销期的渠道按原位次整体提前。
-	orderedChannels := activeChannels
-	if fuzzyMode {
-		orderedChannels = promoteChannels(activeChannels)
-	}
-
-	// 严格按配置位次选择第一个可用渠道。failedChannels 只记录本次请求已经
+	// 严格按配置优先级选择第一个可用渠道。failedChannels 只记录本次请求已经
 	// 失败的渠道，因此外层 failover 会自然推进到下一个渠道。
-	if selected := s.selectPriorityChannel(orderedChannels, failedChannels, kind, requestedModel); selected != nil {
+	if selected := s.selectPriorityChannel(activeChannels, failedChannels, kind, requestedModel, s.getMetricsManager(kind)); selected != nil {
 		result, err := s.reserveAndReturn(selected, kind)
 		if err != nil {
 			if IsCandidateUnavailable(err) {
@@ -498,39 +483,12 @@ func noActiveChannelError(kind ChannelKind) error {
 	}
 }
 
-// isFuzzyModeEnabled 读取 Fuzzy 渠道编排开关。
-// 未注入配置时按开启处理，保持"按位次逐个渠道故障转移"的默认语义。
-func (s *ChannelScheduler) isFuzzyModeEnabled() bool {
-	if s == nil || s.configManager == nil {
-		return true
-	}
-	return s.configManager.GetFuzzyModeEnabled()
-}
-
-// promoteChannels 把处于促销期（抢优先级）的渠道按原位次整体提前。
-// 输入已按配置位次排序，因此两个分组内部都保持用户拖拽确定的顺序。
-// 仅在 Fuzzy 模式下由 SelectChannel 调用。
-func promoteChannels(channels []ChannelInfo) []ChannelInfo {
-	promoted := make([]ChannelInfo, 0, len(channels))
-	normal := make([]ChannelInfo, 0, len(channels))
-	for _, channel := range channels {
-		if channel.Promoted {
-			promoted = append(promoted, channel)
-			continue
-		}
-		normal = append(normal, channel)
-	}
-	if len(promoted) == 0 || len(normal) == 0 {
-		return channels
-	}
-	return append(promoted, normal...)
-}
-
 func (s *ChannelScheduler) selectPriorityChannel(
 	activeChannels []ChannelInfo,
 	failedChannels map[int]bool,
 	kind ChannelKind,
 	requestedModel string,
+	metricsManager *metrics.MetricsManager,
 ) *SelectionResult {
 	type priorityCandidate struct {
 		channel  ChannelInfo
@@ -558,6 +516,12 @@ func (s *ChannelScheduler) selectPriorityChannel(
 			log.Printf("[%s-Channel] 跳过不支持模型的渠道: [%d] %s (模型: %s)", prefix, ch.Index, ch.Name, requestedModel)
 			continue
 		}
+		if !metricsManager.IsChannelHealthyWithKeys(upstream.BaseURL, upstream.APIKeys, ch.Index) {
+			failureRate := metricsManager.CalculateChannelFailureRate(upstream.BaseURL, upstream.APIKeys, ch.Index)
+			prefix := kindSchedulerLogPrefix(kind)
+			log.Printf("[%s-Channel] 警告: 跳过不健康渠道: [%d] %s (失败率: %.1f%%)", prefix, ch.Index, ch.Name, failureRate*100)
+			continue
+		}
 		// 渠道级熔断预检（Peek，不占 HalfOpen 探测名额）：Open 未到期直接跳过；
 		// HalfOpen 名额空闲的渠道可作为候选，选中后由 reserveAndReturn 正式占位。
 		if !s.allowByCircuitPeek(kind, ch.Index) {
@@ -578,14 +542,14 @@ func (s *ChannelScheduler) selectPriorityChannel(
 	if len(samePriorityCandidates) == 0 {
 		return nil
 	}
-	// 同一优先级保持配置顺序，不按 in-flight、失败率或动态评分选择，避免请求
+	// 同一优先级也保持配置顺序，不再按 in-flight 或动态评分选择，避免请求
 	// 在多个渠道之间随机分散。reorder 接口会为每个分组写入连续优先级，
 	// 因此这里的第一个候选就是本次应该优先尝试的渠道。
 	best := samePriorityCandidates[0]
 	bestLoad := s.GetChannelInFlight(kind, best.channel.Index)
 	prefix := kindSchedulerLogPrefix(kind)
-	log.Printf("[%s-Channel] 选择渠道: [%d] %s (配置优先级: %d, 促销: %v, inFlight: %d, samePriorityCandidates: %d)",
-		prefix, best.channel.Index, best.upstream.Name, best.channel.Priority, best.channel.Promoted, bestLoad, len(samePriorityCandidates))
+	log.Printf("[%s-Channel] 选择渠道: [%d] %s (配置优先级: %d, 动态分数: %.1f, inFlight: %d, samePriorityCandidates: %d)",
+		prefix, best.channel.Index, best.upstream.Name, best.channel.Priority, best.channel.Score, bestLoad, len(samePriorityCandidates))
 	return &SelectionResult{
 		Upstream:     best.upstream,
 		ChannelIndex: best.channel.Index,

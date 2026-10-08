@@ -189,17 +189,19 @@ func newApp() (*app, error) {
 		a.metricsByKind[scheduler.ChannelKindMessages].GetWindowSize())
 
 	// 渠道级三态熔断器（internal/circuit）。CIRCUIT_ENABLED=false 一键关闭。
-	// 触发条件只有"连续失败达到阈值"：错误率不再参与熔断判定（失败率仅供展示）。
 	circuitConfig := circuit.Config{
-		FailureThreshold: a.envCfg.CircuitFailureThreshold,
-		Cooldown:         time.Duration(a.envCfg.CircuitCooldownSeconds) * time.Second,
-		SuccessThreshold: a.envCfg.CircuitProbeSuccessThreshold,
+		FailureThreshold:   a.envCfg.CircuitFailureThreshold,
+		ErrorRateThreshold: a.envCfg.CircuitErrorRateThreshold,
+		MinRequests:        a.envCfg.CircuitMinRequests,
+		Cooldown:           time.Duration(a.envCfg.CircuitCooldownSeconds) * time.Second,
+		SuccessThreshold:   a.envCfg.CircuitProbeSuccessThreshold,
 	}
 	circuitManager := circuit.NewManager(circuitConfig, a.envCfg.CircuitEnabled)
 	a.channelScheduler.SetCircuitManager(circuitManager)
 	if a.envCfg.CircuitEnabled {
-		log.Printf("[Circuit-Init] 渠道级熔断已启用 (连续失败阈值: %d, 冷却: %ds, 半开成功阈值: %d)",
-			circuitConfig.FailureThreshold, a.envCfg.CircuitCooldownSeconds, circuitConfig.SuccessThreshold)
+		log.Printf("[Circuit-Init] 渠道级熔断已启用 (连续失败阈值: %d, 错误率: %.0f%%, 最小样本: %d, 冷却: %ds, 半开成功阈值: %d)",
+			circuitConfig.FailureThreshold, circuitConfig.ErrorRateThreshold*100, circuitConfig.MinRequests,
+			a.envCfg.CircuitCooldownSeconds, circuitConfig.SuccessThreshold)
 	} else {
 		log.Printf("[Circuit-Init] 渠道级熔断已禁用 (CIRCUIT_ENABLED=false)")
 	}

@@ -78,22 +78,17 @@ func createTestScheduler(t *testing.T, cfg config.Config) (*ChannelScheduler, fu
 	}
 }
 
-// TestPromotionOrderingIsFuzzyOnly 锁定新契约：抢优先级（促销期）只在 Fuzzy
-// 模式打开时生效，把促销渠道按位次整体提前；Fuzzy 关闭时固定走位次第一位渠道，
-// 促销设置不参与调度。
-func TestPromotionOrderingIsFuzzyOnly(t *testing.T) {
+// TestPromotedChannelDoesNotRewriteConfigOrder 锁定 864841f 后的调度契约：
+// 促销不改写故障转移顺序（docs/capabilities.md 渠道选择行）。
+// 健康渠道按配置优先级选择；促销渠道不健康时同样被健康过滤跳过。
+func TestPromotedChannelDoesNotRewriteConfigOrder(t *testing.T) {
 	// 设置促销截止时间为 5 分钟后
 	promotionUntil := time.Now().Add(5 * time.Minute)
 
 	cfg := config.Config{
-		MessagePools: []config.ChannelPool{
-			{ID: "biz", Name: "Biz", ModelMatcher: "claude", Priority: 1},
-			{ID: config.DefaultChannelPoolID, Name: config.FallbackChannelPoolName, ModelMatcher: "*", Priority: 2},
-		},
 		Upstream: []config.UpstreamConfig{
 			{
 				Name:     "normal-channel",
-				PoolID:   "biz",
 				BaseURL:  "https://normal.example.com",
 				APIKeys:  []string{"sk-normal-key"},
 				Status:   "active",
@@ -101,7 +96,6 @@ func TestPromotionOrderingIsFuzzyOnly(t *testing.T) {
 			},
 			{
 				Name:           "promoted-channel",
-				PoolID:         "biz",
 				BaseURL:        "https://promoted.example.com",
 				APIKeys:        []string{"sk-promoted-key"},
 				Status:         "active",
@@ -111,39 +105,43 @@ func TestPromotionOrderingIsFuzzyOnly(t *testing.T) {
 		},
 	}
 
-	cases := []struct {
-		name  string
-		fuzzy bool
-		want  int
-	}{
-		{name: "Fuzzy 关闭：促销不参与调度", fuzzy: false, want: 0},
-		{name: "Fuzzy 打开：促销按位次提前", fuzzy: true, want: 1},
+	scheduler, cleanup := createTestScheduler(t, cfg)
+	defer cleanup()
+
+	// 模拟促销渠道之前有高失败率（使其不健康）
+	metricsManager := scheduler.MetricsManager(ChannelKindMessages)
+	for i := 0; i < 10; i++ {
+		metricsManager.RecordFailure("https://promoted.example.com", "sk-promoted-key", 1)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			scheduler, cleanup := createTestScheduler(t, cfg)
-			defer cleanup()
 
-			if err := scheduler.configManager.SetFuzzyModeEnabled(tc.fuzzy); err != nil {
-				t.Fatalf("设置 Fuzzy 模式失败: %v", err)
-			}
+	// 验证促销渠道确实不健康
+	isHealthy := metricsManager.IsChannelHealthyWithKeys("https://promoted.example.com", []string{"sk-promoted-key"}, 1)
+	if isHealthy {
+		t.Fatal("促销渠道应该被标记为不健康")
+	}
 
-			result, err := scheduler.SelectChannel(context.Background(), "test-user", make(map[int]bool), ChannelKindMessages, "claude-3-5-sonnet")
-			if err != nil {
-				t.Fatalf("选择渠道失败: %v", err)
-			}
-			defer scheduler.ReleaseChannelReservation(result.Kind, result.ChannelIndex)
+	// 选择渠道 - 按配置优先级选择第一个渠道，促销不参与排序
+	result, err := scheduler.SelectChannel(context.Background(), "test-user", make(map[int]bool), ChannelKindMessages, "")
+	if err != nil {
+		t.Fatalf("选择渠道失败: %v", err)
+	}
 
-			if result.ChannelIndex != tc.want {
-				t.Errorf("期望选择 index=%d，实际选择了 index=%d", tc.want, result.ChannelIndex)
-			}
-		})
+	if result.ChannelIndex != 0 {
+		t.Errorf("期望按配置顺序选择渠道 (index=0)，实际选择了 index=%d", result.ChannelIndex)
+	}
+
+	if result.Reason != "priority_order" {
+		t.Errorf("期望选择原因为 priority_order，实际为 %s", result.Reason)
+	}
+
+	if result.Upstream.Name != "normal-channel" {
+		t.Errorf("期望选择 normal-channel，实际选择了 %s", result.Upstream.Name)
 	}
 }
 
-// TestSelectChannel_PromotionPrecedesTraceAffinity 锁定新契约：Trace 亲和不再
-// 参与选渠；Fuzzy 模式下促销（抢优先级）渠道按位次整体提前，压过普通渠道位次。
-func TestSelectChannel_PromotionPrecedesTraceAffinity(t *testing.T) {
+// TestSelectChannel_ConfigOrderPrecedesPromotionAndAffinity 锁定 864841f 后的调度契约：
+// 配置顺序优先，促销与 Trace 亲和都不改写故障转移顺序。
+func TestSelectChannel_ConfigOrderPrecedesPromotionAndAffinity(t *testing.T) {
 	promotionUntil := time.Now().Add(5 * time.Minute)
 	cfg := config.Config{
 		Upstream: []config.UpstreamConfig{
@@ -168,11 +166,6 @@ func TestSelectChannel_PromotionPrecedesTraceAffinity(t *testing.T) {
 	scheduler, cleanup := createTestScheduler(t, cfg)
 	defer cleanup()
 
-	// 强优先级（抢优先级）只在 Fuzzy 模式下生效。
-	if err := scheduler.configManager.SetFuzzyModeEnabled(true); err != nil {
-		t.Fatalf("设置 Fuzzy 模式失败: %v", err)
-	}
-
 	const conversationID = "promotion-before-affinity"
 	scheduler.SetTraceAffinityForKind(ChannelKindMessages, conversationID, 0)
 
@@ -182,8 +175,8 @@ func TestSelectChannel_PromotionPrecedesTraceAffinity(t *testing.T) {
 	}
 	defer scheduler.ReleaseChannelReservation(result.Kind, result.ChannelIndex)
 
-	if result.ChannelIndex != 1 || result.Reason != "priority_order" {
-		t.Fatalf("Fuzzy 模式下促销渠道应压倒 Trace 亲和，got index=%d reason=%s", result.ChannelIndex, result.Reason)
+	if result.ChannelIndex != 0 || result.Reason != "priority_order" {
+		t.Fatalf("配置顺序应优先于促销与亲和，got index=%d reason=%s", result.ChannelIndex, result.Reason)
 	}
 }
 
@@ -413,10 +406,8 @@ func TestPromotedChannelSkippedAfterFailure(t *testing.T) {
 	}
 }
 
-// TestFailureRateDoesNotAffectSelection 锁定新契约：失败率只用于前端展示，
-// 不再参与选渠（渠道健康由三态熔断器负责），位次第一的渠道即使失败率很高
-// 也仍然是本次请求的首选。
-func TestFailureRateDoesNotAffectSelection(t *testing.T) {
+// TestUnhealthyChannelSkipped 测试不健康的渠道被跳过
+func TestUnhealthyChannelSkipped(t *testing.T) {
 	cfg := config.Config{
 		Upstream: []config.UpstreamConfig{
 			{
@@ -439,30 +430,29 @@ func TestFailureRateDoesNotAffectSelection(t *testing.T) {
 	scheduler, cleanup := createTestScheduler(t, cfg)
 	defer cleanup()
 
-	// 模拟第一个渠道失败率极高（旧实现会因此跳过它）
+	// 模拟第一个渠道不健康
 	metricsManager := scheduler.MetricsManager(ChannelKindMessages)
 	for i := 0; i < 10; i++ {
 		metricsManager.RecordFailure("https://unhealthy.example.com", "sk-unhealthy-key", 0)
 	}
 
-	// 选择渠道 - 失败率不影响选渠，仍按位次选择第一个渠道
+	// 选择渠道 - 应该跳过不健康的渠道，选择健康的渠道
 	result, err := scheduler.SelectChannel(context.Background(), "test-user", make(map[int]bool), ChannelKindMessages, "")
 	if err != nil {
 		t.Fatalf("选择渠道失败: %v", err)
 	}
-	defer scheduler.ReleaseChannelReservation(result.Kind, result.ChannelIndex)
 
-	if result.ChannelIndex != 0 {
-		t.Errorf("期望按位次选择渠道 (index=0)，实际选择了 index=%d", result.ChannelIndex)
+	if result.ChannelIndex != 1 {
+		t.Errorf("期望选择健康渠道 (index=1)，实际选择了 index=%d", result.ChannelIndex)
 	}
 
-	if result.Upstream.Name != "unhealthy-channel" {
-		t.Errorf("期望选择 unhealthy-channel，实际选择了 %s", result.Upstream.Name)
+	if result.Upstream.Name != "healthy-channel" {
+		t.Errorf("期望选择 healthy-channel，实际选择了 %s", result.Upstream.Name)
 	}
 }
 
-// TestExpiredPromotionDoesNotApply 测试过期的促销不再参与选渠
-func TestExpiredPromotionDoesNotApply(t *testing.T) {
+// TestExpiredPromotionNotBypassHealthCheck 测试过期的促销不绕过健康检查
+func TestExpiredPromotionNotBypassHealthCheck(t *testing.T) {
 	// 设置促销截止时间为过去
 	promotionUntil := time.Now().Add(-5 * time.Minute)
 

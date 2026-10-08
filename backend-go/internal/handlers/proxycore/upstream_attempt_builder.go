@@ -1,6 +1,6 @@
 // 本文件提供 UpstreamAttempt 的构造收敛入口 NewAttemptBuilder：
 // 由共享依赖（envCfg/cfgManager/channelScheduler）机械推导的字段只写一份
-// （MetricsManager、LogContext 的日志存储等），
+// （MetricsManager、AllowModelFailover、LogContext 的日志存储等），
 // 各协议调用方只需显式声明真正的策略差异（NextAPIKey/BuildRequest/
 // DeprioritizeKey/MarkURL*/HandleSuccess 与 URL 候选序）。
 // NextAPIKey/BuildRequest/HandleSuccess 是必填策略，未设置会在尝试时以
@@ -35,17 +35,18 @@ func NewAttemptBuilder(
 	conversationID string,
 ) *AttemptBuilder {
 	return &AttemptBuilder{attempt: UpstreamAttempt{
-		Context:          c,
-		EnvConfig:        envCfg,
-		ConfigManager:    cfgManager,
-		ChannelScheduler: channelScheduler,
-		Kind:             kind,
-		APIType:          apiType,
-		MetricsManager:   channelScheduler.MetricsManager(kind),
-		Upstream:         upstream,
-		RequestedModel:   requestedModel,
-		RequestBody:      requestBody,
-		IsStream:         isStream,
+		Context:            c,
+		EnvConfig:          envCfg,
+		ConfigManager:      cfgManager,
+		ChannelScheduler:   channelScheduler,
+		Kind:               kind,
+		APIType:            apiType,
+		MetricsManager:     channelScheduler.MetricsManager(kind),
+		Upstream:           upstream,
+		RequestedModel:     requestedModel,
+		AllowModelFailover: cfgManager.GetFuzzyModeEnabled(),
+		RequestBody:        requestBody,
+		IsStream:           isStream,
 		LogContext: AttemptLogContext{
 			ChannelIndex:    channelIndex,
 			Model:           requestedModel,

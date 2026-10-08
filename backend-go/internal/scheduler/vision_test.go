@@ -51,22 +51,6 @@ func TestListVisionChannelsSeparatesPublicAndOwnerPoolsInConfigOrder(t *testing.
 	if got, want := visionChannelIDs(public), []string{"public-second"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("排除已尝试渠道后的公共图片理解池 = %v, want %v", got, want)
 	}
-
-	// 兜底分组（default）的图片理解渠道是第四段兜底，必须与公用池、当前分组互斥。
-	fallback := scheduler.ListFallbackPoolVisionChannels(context.Background(), ChannelKindMessages, "", "owner")
-	if got, want := visionChannelIDs(fallback), []string{"other-pool"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("兜底分组图片理解渠道 = %v, want %v", got, want)
-	}
-	for _, selection := range fallback {
-		if selection.Reason != "vision_layer_fallback_pool" {
-			t.Fatalf("兜底分组图片理解渠道选择原因 = %q", selection.Reason)
-		}
-	}
-
-	// 文本渠道本身就在兜底分组时，不再重复返回同一批渠道。
-	if got := scheduler.ListFallbackPoolVisionChannels(context.Background(), ChannelKindMessages, "", config.DefaultChannelPoolID); len(got) != 0 {
-		t.Fatalf("兜底分组自身不应重复返回兜底图片理解渠道，got %v", visionChannelIDs(got))
-	}
 }
 
 func TestListVisionChannelsStopsForCanceledContext(t *testing.T) {

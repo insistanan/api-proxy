@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/BenedictKing/api-proxy/internal/config"
@@ -18,133 +17,55 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// TestUpstreamAttemptTraversesAllModelCandidatesAfterRetryExhaustion 锁定渠道内
-// 尝试层级：同一个 Key + 同一个模型候选重试到上限仍失败，才切到下一个模型候选。
-// 模型候选遍历不跟随 Fuzzy 开关（属于渠道内层级，不是换渠道）。
-func TestUpstreamAttemptTraversesAllModelCandidatesAfterRetryExhaustion(t *testing.T) {
-	h := newCompatRetryHarness(t)
-	rs := newRecordingServer(t, func(int, *http.Request, string) (int, string) {
-		return http.StatusOK, `{"ok":true}`
-	})
+func TestUpstreamAttemptDisablesModelFailoverAfterFirstMapping(t *testing.T) {
+	cfgManager, err := config.NewConfigManager(filepath.Join(t.TempDir(), "config.json"))
+	if err != nil {
+		t.Fatalf("创建配置管理器失败: %v", err)
+	}
+	t.Cleanup(func() { _ = cfgManager.Close() })
+
+	metricsManager := metrics.NewMetricsManager()
+	t.Cleanup(metricsManager.Stop)
 
 	upstream := &config.UpstreamConfig{
-		BaseURL: rs.server.URL,
-		APIKeys: []string{"key-a", "key-b"},
-		ID:      "up-model-candidates",
-		Name:    "model-candidates",
+		BaseURL: "https://example.com",
+		APIKeys: []string{"test-key"},
 		ModelMapping: map[string][]string{
 			"requested-model": {"first-model", "second-model"},
 		},
 	}
-	var attemptedModels []string
-	var successKeys []string
+	stopErr := errors.New("stop after observing mapped model")
+	var resolvedModels []string
 
-	result := runAttempt(h, t, upstream, []byte(`{}`),
-		func(_ *gin.Context, up *config.UpstreamConfig, apiKey string) (*http.Request, error) {
-			model := config.ResolveUpstreamModel("requested-model", up)
-			attemptedModels = append(attemptedModels, model)
-			if model != "second-model" {
-				// 第一个模型候选固定失败，触发重试上限后应切换到第二个候选。
-				return nil, errors.New("第一个模型候选不可用")
-			}
-			req, err := http.NewRequest(http.MethodPost, up.BaseURL, nil)
-			if err != nil {
-				return nil, err
-			}
-			req.Header.Set("x-api-key", apiKey)
-			return req, nil
+	result := (UpstreamAttempt{
+		Context:            newAttemptTestContext(context.Background()),
+		EnvConfig:          &config.EnvConfig{LogLevel: "error"},
+		ConfigManager:      cfgManager,
+		MetricsManager:     metricsManager,
+		Upstream:           upstream,
+		RequestedModel:     "requested-model",
+		AllowModelFailover: false,
+		URLResults:         BuildDefaultURLResults(upstream.GetAllBaseURLs()),
+		NextAPIKey: func(upstream *config.UpstreamConfig, _ map[string]bool) (string, error) {
+			resolvedModels = append(resolvedModels, config.ResolveUpstreamModel("requested-model", upstream))
+			return "", stopErr
 		},
-		successRecorder(&successKeys))
-
-	if !result.Handled || result.SuccessKey != "key-a" {
-		t.Fatalf("第二次模型候选应成功，Handled=%v SuccessKey=%q", result.Handled, result.SuccessKey)
-	}
-	if len(attemptedModels) != 6 {
-		t.Fatalf("模型尝试序列 = %v, want 首个候选 5 次 + 次个候选 1 次", attemptedModels)
-	}
-	for i, model := range attemptedModels[:5] {
-		if model != "first-model" {
-			t.Fatalf("第 %d 次尝试模型 = %q, want first-model", i+1, model)
-		}
-	}
-	if attemptedModels[5] != "second-model" {
-		t.Fatalf("第 6 次尝试模型 = %q, want second-model", attemptedModels[5])
-	}
-	if len(successKeys) != 1 || successKeys[0] != "key-a" {
-		t.Fatalf("成功 key = %v, want [key-a]", successKeys)
-	}
-	if n := rs.requestCount(); n != 1 {
-		t.Fatalf("上游请求数 = %d, want 1（只有第二个模型候选真正发出）", n)
-	}
-}
-
-// TestUpstreamAttemptTransportFailureSkipsRetryBudgetAndModels 锚点：传输层失败
-// （连接建立后直接断开，上游没给出任何 HTTP 响应）与模型候选无关，按 Key 级
-// 处理——同一个 Key 只尝试一次就换 Key，既不烧满 5 次重试预算，也不在同一个
-// 死链路上继续遍历后续模型候选。否则一次请求会在坏渠道上空等 5 × 首字节超时。
-func TestUpstreamAttemptTransportFailureSkipsRetryBudgetAndModels(t *testing.T) {
-	h := newCompatRetryHarness(t)
-
-	var mu sync.Mutex
-	attempts := map[string]int{}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		key := r.Header.Get("x-api-key")
-		mu.Lock()
-		attempts[key]++
-		mu.Unlock()
-		if key == "key-a" {
-			// 连接建立后不回任何响应直接断开：客户端得到传输层错误。
-			if hijacker, ok := w.(http.Hijacker); ok {
-				if conn, _, err := hijacker.Hijack(); err == nil {
-					_ = conn.Close()
-				}
-			}
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"ok":true}`))
-	}))
-	defer server.Close()
-
-	upstream := &config.UpstreamConfig{
-		BaseURL: server.URL,
-		APIKeys: []string{"key-a", "key-b"},
-		ID:      "up-transport-failure",
-		Name:    "transport-failure",
-		ModelMapping: map[string][]string{
-			"requested-model": {"first-model", "second-model"},
+		BuildRequest: func(*gin.Context, *config.UpstreamConfig, string) (*http.Request, error) {
+			return nil, errors.New("unexpected build request")
 		},
-	}
-	var attemptedModels []string
-	var successKeys []string
-
-	result := runAttempt(h, t, upstream, []byte(`{}`),
-		func(_ *gin.Context, up *config.UpstreamConfig, apiKey string) (*http.Request, error) {
-			model := config.ResolveUpstreamModel("requested-model", up)
-			attemptedModels = append(attemptedModels, model)
-			req, err := http.NewRequest(http.MethodPost, up.BaseURL, nil)
-			if err != nil {
-				return nil, err
-			}
-			req.Header.Set("x-api-key", apiKey)
-			return req, nil
+		HandleSuccess: func(*gin.Context, *http.Response, *config.UpstreamConfig, string) (*types.Usage, error) {
+			return nil, errors.New("unexpected success handler")
 		},
-		successRecorder(&successKeys))
+	}).TryWithModelMappingFailover()
 
-	if !result.Handled || result.SuccessKey != "key-b" {
-		t.Fatalf("Handled=%v SuccessKey=%q, want key-b 成功", result.Handled, result.SuccessKey)
+	if result.Handled {
+		t.Fatalf("Handled = true, want false")
 	}
-	if len(attemptedModels) != 2 || attemptedModels[0] != "first-model" || attemptedModels[1] != "first-model" {
-		t.Fatalf("模型尝试序列 = %v, want 每个 Key 只尝试首个模型候选一次", attemptedModels)
+	if !errors.Is(result.LastError, stopErr) {
+		t.Fatalf("LastError = %v, want %v", result.LastError, stopErr)
 	}
-	mu.Lock()
-	defer mu.Unlock()
-	if attempts["key-a"] != 1 {
-		t.Fatalf("key-a 尝试次数 = %d, want 1（传输层失败不消耗同候选重试预算）", attempts["key-a"])
-	}
-	if attempts["key-b"] != 1 {
-		t.Fatalf("key-b 尝试次数 = %d, want 1", attempts["key-b"])
+	if len(resolvedModels) != 1 || resolvedModels[0] != "first-model" {
+		t.Fatalf("实际尝试模型 = %v, want [first-model]", resolvedModels)
 	}
 }
 
@@ -159,7 +80,8 @@ func TestUpstreamAttemptStopsModelFailoverOnContextCancel(t *testing.T) {
 				"requested-model": {"first-model", "second-model"},
 			},
 		},
-		RequestedModel: "requested-model",
+		RequestedModel:     "requested-model",
+		AllowModelFailover: true,
 	}).TryWithModelMappingFailover()
 
 	if !result.Handled {

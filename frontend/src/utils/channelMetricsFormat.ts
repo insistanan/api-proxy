@@ -19,12 +19,6 @@ export function getRateLevel(rate?: number): string {
   return 'low'
 }
 
-/** 失败率（%）：由成功率折算，缺数据时返回 undefined。 */
-export function getFailureRate(stats?: TimeWindowStats): number | undefined {
-  if (!stats || !stats.requestCount) return undefined
-  return (stats.failureCount / stats.requestCount) * 100
-}
-
 /** 缓存命中率（%）：优先后端 cacheHitRate，缺省按 token 折算。 */
 export function getCacheHitRate(stats?: TimeWindowStats): number | undefined {
   if (!stats) return undefined
@@ -76,10 +70,10 @@ export function formatPromotionRemaining(until?: string, count?: number): string
   return `${minutes}分钟`
 }
 
-/** 格式化统计数据：有请求显示 "N 请求 (成功 X / 失败 Y)"，无请求显示 "--"。 */
+/** 格式化统计数据：有请求显示 "N 请求 (X%)"，无请求显示 "--"。 */
 export function formatStats(stats?: TimeWindowStats): string {
   if (!stats || !stats.requestCount) return '--'
-  return `${stats.requestCount} 请求 (成功 ${stats.successCount} / 失败 ${stats.failureCount})`
+  return `${stats.requestCount} 请求 (${stats.successRate?.toFixed(0)}%)`
 }
 
 /** Token 数量缩写（K/M）。 */

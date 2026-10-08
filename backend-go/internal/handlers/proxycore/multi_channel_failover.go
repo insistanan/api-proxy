@@ -68,12 +68,9 @@ func HandleMultiChannelFailover(
 	var lastFailoverError *FailoverError
 
 	maxChannelAttempts := channelScheduler.GetActiveChannelCountForModel(kind, requestedModel)
-	// 非 Fuzzy 模式锁定第一个渠道：渠道内 Key/模型候选耗尽后直接报错阻断，
-	// 不切到下一个渠道、也不进入兜底分组。Fuzzy 模式才按配置位次顺序转移
-	// （命中分组 → 兜底分组），并由 SelectChannel 负责选区。
-	if !fuzzyMode {
-		maxChannelAttempts = 1
-	}
+	// 渠道故障转移始终按配置顺序执行。Fuzzy 模式只影响错误分类和最终错误
+	// 格式，不应再决定是否尝试下一个渠道，否则普通模式下第一个渠道故障
+	// 会直接把请求结束掉。
 
 	for channelAttempt := 0; channelAttempt < maxChannelAttempts; channelAttempt++ {
 		// 检查客户端是否已断开连接

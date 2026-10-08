@@ -324,7 +324,7 @@ func TestPreviewChannelReleasesCircuitProbe(t *testing.T) {
 	cfgManager, sch := newGateTestEnv(t)
 	mustAddMessagesChannel(t, cfgManager, "primary", "messages-1", true, []string{"sk-msg"})
 	circuitManager := circuit.NewManager(circuit.Config{
-		FailureThreshold: 1, Cooldown: 20 * time.Millisecond, SuccessThreshold: 1,
+		FailureThreshold: 1, MinRequests: 1, Cooldown: 20 * time.Millisecond, SuccessThreshold: 1,
 	}, true)
 	sch.SetCircuitManager(circuitManager)
 	// 触发熔断 Open，等冷却到期（下次 Allow 惰性转 HalfOpen）。

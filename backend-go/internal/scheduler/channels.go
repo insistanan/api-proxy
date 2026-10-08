@@ -7,15 +7,42 @@ import (
 	"github.com/BenedictKing/api-proxy/internal/config"
 )
 
-// ChannelInfo 渠道信息（用于排序）。
-// Promoted 表示渠道当前处于促销期（UI 的"抢优先级"）；只在 Fuzzy 模式下
-// 影响候选顺序，非 Fuzzy 模式始终按配置位次取第一个渠道。
+// ChannelInfo 渠道信息（用于排序）
 type ChannelInfo struct {
 	Index    int
 	Name     string
 	Priority int
 	Status   string
-	Promoted bool
+	Score    float64 // 动态分数（基于失败率），分数越高优先级越高
+}
+
+// calculateChannelScore 计算渠道分数（基于失败率）
+// 分数范围: 0-100，分数越高优先级越高
+// - 无历史数据：100 分（新渠道给满分）
+// - 失败率 0%：100 分
+// - 失败率 20%：80 分
+// - 失败率 50%：50 分
+// - 失败率 80%：20 分
+// - 失败率 100%：0 分
+func (s *ChannelScheduler) calculateChannelScore(upstream *config.UpstreamConfig, channelIndex int, kind ChannelKind) float64 {
+	if upstream == nil || len(upstream.APIKeys) == 0 {
+		return 0
+	}
+
+	metricsManager := s.getMetricsManager(kind)
+	failureRate := metricsManager.CalculateChannelFailureRate(upstream.BaseURL, upstream.APIKeys, channelIndex)
+
+	// 计算基础分数：100 * (1 - failureRate)
+	baseScore := 100 * (1 - failureRate)
+
+	// 检查请求数，如果请求数小于 5，给予新渠道奖励（避免因样本不足被低估）
+	requestCount := metricsManager.GetChannelRequestCount(upstream.BaseURL, upstream.APIKeys, channelIndex)
+	if requestCount < 5 {
+		// 新渠道给予满分
+		return 100
+	}
+
+	return baseScore
 }
 
 // getActiveChannels 获取故障转移序列（按配置优先级排序）。
@@ -92,12 +119,15 @@ func (s *ChannelScheduler) getActiveChannelsByPool(kind ChannelKind, poolIDs []s
 			priority = i + 1
 		}
 
+		// 计算渠道动态分数
+		upstreamCopy := upstream
+		score := s.calculateChannelScore(&upstreamCopy, i, kind)
 		channel := ChannelInfo{
 			Index:    i,
 			Name:     upstream.Name,
 			Priority: priority,
 			Status:   status,
-			Promoted: config.IsChannelInPromotion(&upstream),
+			Score:    score,
 		}
 		if len(requestedPools) == 0 {
 			channelsByPool[""] = append(channelsByPool[""], channel)
@@ -108,8 +138,8 @@ func (s *ChannelScheduler) getActiveChannelsByPool(kind ChannelKind, poolIDs []s
 
 	for poolID := range channelsByPool {
 		channels := channelsByPool[poolID]
-		// 配置优先级和配置索引共同决定故障转移顺序；不参与排序的指标
-		// （失败率、负载、延迟）一律不得改写用户拖拽确定的位次。
+		// 配置优先级和配置索引共同决定故障转移顺序。动态分数只用于展示，
+		// 不能改变用户拖拽后确定的首选渠道。
 		sort.Slice(channels, func(i, j int) bool {
 			if channels[i].Priority != channels[j].Priority {
 				return channels[i].Priority < channels[j].Priority

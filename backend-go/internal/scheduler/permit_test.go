@@ -26,7 +26,7 @@ func newPermitTestEnv(t *testing.T) (*ChannelScheduler, *circuit.Manager) {
 	t.Cleanup(cleanup)
 
 	circuitManager := circuit.NewManager(circuit.Config{
-		FailureThreshold: 1, Cooldown: 20 * time.Millisecond, SuccessThreshold: 1,
+		FailureThreshold: 1, MinRequests: 1, Cooldown: 20 * time.Millisecond, SuccessThreshold: 1,
 	}, true)
 	scheduler.SetCircuitManager(circuitManager)
 	return scheduler, circuitManager

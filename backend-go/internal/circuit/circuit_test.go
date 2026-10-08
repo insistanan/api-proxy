@@ -62,55 +62,44 @@ func TestBreakerSuccessResetsConsecutiveFailures(t *testing.T) {
 	}
 }
 
-// TestBreakerErrorRateAloneDoesNotTrip 锁定新契约：错误率只作为展示指标，
-// 不是熔断触发条件——唯一触发路径是连续失败达到阈值。
-func TestBreakerErrorRateAloneDoesNotTrip(t *testing.T) {
+func TestBreakerOpensOnErrorRate(t *testing.T) {
+	// 错误率 0.6 需 ≥10 请求；交替成功失败 9 次（失败率 0.5）不触发，第 10 次失败触发。
 	b := NewBreaker(DefaultConfig())
-	// "4 连败 + 1 成功" 三轮：15 次请求 12 次失败（错误率 80%，远超旧阈值 0.6），
-	// 但连续失败永远到不了 5。
-	for cycle := 0; cycle < 3; cycle++ {
-		for i := 0; i < 4; i++ {
-			b.Allow()
-			b.RecordFailure()
-		}
+	for i := 0; i < 4; i++ {
 		b.Allow()
 		b.RecordSuccess()
-	}
-	snap := b.Snapshot()
-	if snap.State != StateClosed {
-		t.Fatalf("错误率不应触发熔断，实际 %s", snap.State)
-	}
-	if snap.TotalRequests != 15 || snap.FailedRequests != 12 {
-		t.Fatalf("错误率样本应照常累计（供前端展示），实际 total=%d failed=%d", snap.TotalRequests, snap.FailedRequests)
-	}
-
-	// 连续失败补齐到阈值才熔断。
-	b.Allow()
-	b.RecordFailure()
-	for i := 0; i < 4; i++ {
 		b.Allow()
 		b.RecordFailure()
 	}
+	// 8 次请求，4 失败，率 0.5；不足 10 次。
+	if got := b.Allow(); !got.Allowed {
+		t.Fatalf("样本不足 10 不应按错误率熔断: %+v", got)
+	}
+	b.RecordFailure()
+	// 9 次请求 5 失败（0.56）；仍不足 10。
+	b.Allow()
+	b.RecordFailure()
+	// 10 次请求 6 失败 = 0.6 → Open。
 	if got := b.Allow(); got.Allowed {
-		t.Fatalf("连续失败 %d 次后应熔断拒绝: %+v", DefaultConfig().FailureThreshold, got)
+		t.Fatalf("错误率 0.6（10 请求）应熔断: %+v", got)
 	}
 	if b.Snapshot().State != StateOpen {
 		t.Fatalf("期望 Open，实际 %s", b.Snapshot().State)
 	}
 }
 
-// TestBreakerDefaultConfigMatchesOrchestrationContract 锁定渠道编排契约的
-// 熔断口径：连续失败 5 次熔断、冷却 15 分钟、半开连续成功 2 次恢复。
-func TestBreakerDefaultConfigMatchesOrchestrationContract(t *testing.T) {
-	cfg := DefaultConfig().withDefaults()
-	if cfg.FailureThreshold != 5 {
-		t.Fatalf("连续失败阈值 = %d, want 5", cfg.FailureThreshold)
+func TestBreakerErrorRateBelowThresholdStaysClosed(t *testing.T) {
+	b := NewBreaker(DefaultConfig())
+	for i := 0; i < 10; i++ {
+		b.Allow()
+		if i%3 == 0 {
+			b.RecordFailure()
+		} else {
+			b.RecordSuccess()
+		}
 	}
-	if cfg.Cooldown != 15*time.Minute {
-		t.Fatalf("冷却时长 = %s, want 15m", cfg.Cooldown)
-	}
-	if cfg.SuccessThreshold != 2 {
-		t.Fatalf("半开成功阈值 = %d, want 2", cfg.SuccessThreshold)
+	if got := b.Allow(); !got.Allowed {
+		t.Fatalf("错误率 1/3 未达 0.6 不应熔断: %+v", got)
 	}
 }
 

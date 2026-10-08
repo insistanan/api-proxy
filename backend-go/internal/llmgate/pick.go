@@ -250,8 +250,7 @@ func firstAvailableChannel(cfgManager *config.ConfigManager, channelScheduler *s
 	return nil, nil
 }
 
-// checkChannelAvailable 校验渠道可用性（启用 + 有 Key + 未熔断）。
-// 失败率只用于展示，不参与选渠：渠道健康由三态熔断器负责。
+// checkChannelAvailable 校验渠道可用性（启用 + 有 Key + 健康 + 未熔断）。
 // 可用返回选中结果；不可用返回原因。
 // 熔断放行走 CircuitAllow（消耗式），渠道处于半开（HalfOpen）时占用唯一
 // 探测名额并封装为许可句柄（持有取得时的状态代次）——调用方必须在调用
@@ -268,6 +267,13 @@ func checkChannelAvailable(channelScheduler *scheduler.ChannelScheduler, kind sc
 		circuitResult := channelScheduler.CircuitAllow(kind, index, upstream.Name)
 		if !circuitResult.Allowed {
 			return nil, fmt.Errorf("渠道 %q 当前处于熔断状态", upstream.Name)
+		}
+		metricsManager := channelScheduler.MetricsManager(kind)
+		if metricsManager != nil && !metricsManager.IsChannelHealthyWithKeys(upstream.BaseURL, upstream.APIKeys, index) {
+			if circuitResult.Probe {
+				channelScheduler.RecordCircuitNeutral(kind, index)
+			}
+			return nil, fmt.Errorf("渠道 %q 当前不健康", upstream.Name)
 		}
 		selected := &SelectedChannel{Kind: kind, Upstream: upstream.Clone(), ChannelIndex: index}
 		if circuitResult.Probe {
