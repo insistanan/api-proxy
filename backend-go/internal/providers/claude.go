@@ -20,7 +20,8 @@ import (
 type ClaudeProvider struct{}
 
 // redirectModelInBody 仅修改请求体中的 model 字段，保持其他内容不变
-// 使用 map[string]interface{} 避免结构体字段丢失问题
+// 使用 map[string]interface{} 避免结构体字段丢失问题。
+// Claude Code auto mode 的未知字段（含 safeguards）会留下来，这里也不改写 tool_use.id。
 func redirectModelInBody(bodyBytes []byte, upstream *config.UpstreamConfig) []byte {
 	decoder := json.NewDecoder(bytes.NewReader(bodyBytes))
 	decoder.UseNumber() // 保留数字精度
@@ -78,7 +79,9 @@ func (p *ClaudeProvider) ConvertToProviderRequest(c *gin.Context, upstream *conf
 func (p *ClaudeProvider) BuildRequest(input RequestInput, upstream *config.UpstreamConfig, apiKey string) (*RequestOutcome, error) {
 	bodyBytes := input.Body
 
-	// 模型重定向：仅修改 model 字段，保持其他内容不变
+	// 模型重定向、缓存断点注入和伪装都走 map，不按结构体重编码。
+	// 因此 safeguards 等未知字段和已有 tool_use.id 会原样送到 Claude 上游。
+	// 模型重定向本身只改 model。
 	if upstream.ModelMapping != nil && len(upstream.ModelMapping) > 0 {
 		bodyBytes = redirectModelInBody(bodyBytes, upstream)
 	}

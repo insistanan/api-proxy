@@ -74,6 +74,8 @@ func PrepareUpstreamHeaders(c *gin.Context, targetHost string) http.Header {
 
 // PrepareUpstreamHeadersFromHeader 以显式请求头准备上游请求头
 // （R4-a：providers 的显式输入构造路径不经 gin context）。
+// 未知请求头原样克隆，包括 x-claude-code-* 和客户端自己的 anthropic-beta。
+// 只删除代理头、真实 IP 头和 Accept-Encoding。
 func PrepareUpstreamHeadersFromHeader(source http.Header, targetHost string) http.Header {
 	var headers http.Header
 	if source != nil {
@@ -222,6 +224,7 @@ func ApplyCodexDisguise(headers http.Header, stream bool) {
 }
 
 // ApplyClaudeCodeDisguise 为非 Claude Code 客户端规范化身份头，并保留已有会话与能力字段。
+// anthropic-beta 与客户端已有值合并，不丢弃网关不认识的 beta。
 func ApplyClaudeCodeDisguise(headers http.Header, stream bool) {
 	isClaudeCodeClient := isClaudeCodeUserAgent(headers.Get("User-Agent"))
 	if !isClaudeCodeClient {

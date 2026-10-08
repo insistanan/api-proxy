@@ -164,6 +164,7 @@ func handleNormalResponse(
 		usageSnapshot := *claudeResp.Usage
 		metricsUsage = &usageSnapshot
 	}
+	var usageRewrite claudeUsageRewrite
 	if claudeResp.Usage == nil {
 		estimatedInput := utils.SafeEstimatedInputTokens(utils.EstimateRequestTokens(requestBody))
 		estimatedOutput := utils.EstimateResponseTokens(claudeResp.Content)
@@ -171,6 +172,7 @@ func handleNormalResponse(
 			InputTokens:  estimatedInput,
 			OutputTokens: estimatedOutput,
 		}
+		usageRewrite.injectUsage = true
 		if envCfg.EnableResponseLogs {
 			log.Printf("[Messages-Token] 上游无Usage, 本地估算: input=%d, output=%d", estimatedInput, estimatedOutput)
 		}
@@ -189,10 +191,12 @@ func handleNormalResponse(
 		if claudeResp.Usage.InputTokens <= 1 && !hasCacheTokens {
 			claudeResp.Usage.InputTokens = utils.SafeEstimatedInputTokens(utils.EstimateRequestTokens(requestBody))
 			patched = true
+			usageRewrite.patchInput = true
 		}
 		if claudeResp.Usage.OutputTokens <= 1 {
 			claudeResp.Usage.OutputTokens = utils.EstimateResponseTokens(claudeResp.Content)
 			patched = true
+			usageRewrite.patchOutput = true
 		}
 		if envCfg.EnableResponseLogs {
 			if patched {
@@ -250,18 +254,31 @@ func handleNormalResponse(
 			}
 			clientUsage.InputTokens = correction.InputTokens
 			if correction.ClearCache {
+				usageRewrite.clearCache = true
 				clientUsage.CacheReadInputTokens = 0
 				clientUsage.CacheCreationInputTokens = 0
 				clientUsage.CacheCreation5mInputTokens = 0
 				clientUsage.CacheCreation1hInputTokens = 0
 				clientUsage.CacheTTL = ""
 			}
+			usageRewrite.patchInput = true
 		}
 		clientResp.Usage = &clientUsage
 	}
-	clientBody, err := utils.MarshalJSONNoEscape(&clientResp)
-	if err != nil {
-		return nil, fmt.Errorf("序列化 Messages 响应失败: %w", err)
+	var clientBody []byte
+	if upstream != nil && upstream.ServiceType == "claude" {
+		// 只有 Claude→Claude 能做服务端 auto mode。未知字段（含 safeguard_results）
+		// 和 tool_use.id 必须留下；usage 只在估算、虚假值补全或错报校正时改对应字段。
+		// openai/gemini/responses 上游仍走结构体转换，原始 JSON 不是 Messages 响应。
+		clientBody, err = claudePassthroughBody(bodyBytes, clientResp.Usage, usageRewrite)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		clientBody, err = utils.MarshalJSONNoEscape(&clientResp)
+		if err != nil {
+			return nil, fmt.Errorf("序列化 Messages 响应失败: %w", err)
+		}
 	}
 	clientBody, err = hooks.RunAttachedPostResponseHooks(c.Request.Context(), c, clientBody, resp)
 	if err != nil {

@@ -548,6 +548,9 @@ func ProcessStreamEvent(
 	}
 
 	// 转发给客户端
+	// 未做 usage / message_start 修补的事件按原文字节转发。未知事件和字段
+	// （含 safeguard_results）会留下，这条 Claude 透传路径也不改写 tool_use.id。
+	// 需要补 usage 时按 map 重编码，未知字段仍留在 map 里。
 	if !ctx.ClientGone {
 		proxycore.MarkRequestLogFirstToken(c)
 		if _, err := w.Write([]byte(eventToSend)); err != nil {
