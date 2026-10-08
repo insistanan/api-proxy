@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/BenedictKing/api-proxy/internal/atomicfile"
 	"github.com/gin-gonic/gin"
 	"gopkg.in/yaml.v3"
 )
@@ -42,21 +43,24 @@ type DSHDefaultModel struct {
 
 // dshSettingsResponse 是 GET /settings/dsh 的响应。
 type dshSettingsResponse struct {
-	DSHHome      string                 `json:"dshHome"`
-	Path         string                 `json:"path"`
-	Exists       bool                   `json:"exists"`
-	Writable     bool                   `json:"writable"`
-	Providers    map[string]DSHProvider `json:"providers"`
-	ProviderKeys []string               `json:"providerKeys"` // 有序列表，保持文件顺序
-	DefaultModel *DSHDefaultModel       `json:"defaultModel"`
-	Theme        string                 `json:"theme"`
+	DSHHome          string                          `json:"dshHome"`
+	Path             string                          `json:"path"`
+	CredentialsPath  string                          `json:"credentialsPath"`
+	Exists           bool                            `json:"exists"`
+	Writable         bool                            `json:"writable"`
+	Providers        map[string]DSHProvider          `json:"providers"`
+	ProviderKeys     []string                        `json:"providerKeys"` // 有序列表，保持文件顺序
+	Credentials      map[string]DSHCredentialStatus  `json:"credentials"` // 按 provider key 返回脱敏状态
+	DefaultModel     *DSHDefaultModel                `json:"defaultModel"`
+	Theme            string                          `json:"theme"`
 }
 
 // saveDSHSettingsRequest 是 PUT /settings/dsh 的请求体。
 type saveDSHSettingsRequest struct {
-	Providers    map[string]DSHProvider `json:"providers"`
-	ProviderKeys []string               `json:"providerKeys"` // 可选；为空时用 map 随机序
-	DefaultModel *DSHDefaultModel       `json:"defaultModel"`
+	Providers         map[string]DSHProvider                `json:"providers"`
+	ProviderKeys      []string                              `json:"providerKeys"` // 可选；为空时用 map 随机序
+	DefaultModel      *DSHDefaultModel                      `json:"defaultModel"`
+	CredentialUpdates map[string]dshCredentialUpdate        `json:"credentialUpdates,omitempty"` // 按 provider key 的 keep/replace/remove
 }
 
 // ---- 路径解析 ----
@@ -123,7 +127,7 @@ func extractDSHProviders(root map[string]interface{}) map[string]DSHProvider {
 func mapToDSHProvider(m map[string]interface{}) DSHProvider {
 	p := DSHProvider{}
 	if v, ok := m["apiKeyEnv"].(string); ok {
-		p.APIKeyEnv = v
+		p.APIKeyEnv = strings.TrimSpace(v)
 	}
 	if v, ok := m["api"].(string); ok {
 		p.API = v
@@ -254,18 +258,26 @@ func GetDSHSettings() gin.HandlerFunc {
 		providers := extractDSHProviders(root)
 		// 文件顺序优先（extractDSHProviderKeysOrdered），脏 key 过滤 + 字母序兜底。
 		providerKeys := orderedDSHProviderKeys(extractDSHProviderKeysOrdered(path), providers)
+		credentialsPath := resolveDSHCredentialsPath()
+		credentials, credentialErr := readDSHCredentialStatuses(credentialsPath, providers)
+		if credentialErr != nil {
+			c.JSON(500, gin.H{"error": fmt.Sprintf("读取 DSH 凭据失败: %v", credentialErr)})
+			return
+		}
 
 		writable := checkDSHWritable(path)
 
 		c.JSON(200, dshSettingsResponse{
-			DSHHome:      resolveDSHHome(),
-			Path:         path,
-			Exists:       exists,
-			Writable:     writable,
-			Providers:    providers,
-			ProviderKeys: providerKeys,
-			DefaultModel: extractDSHDefaultModel(root),
-			Theme:        extractDSHTheme(root),
+			DSHHome:         resolveDSHHome(),
+			Path:            path,
+			CredentialsPath: credentialsPath,
+			Exists:          exists,
+			Writable:        writable,
+			Providers:       providers,
+			ProviderKeys:    providerKeys,
+			Credentials:     credentials,
+			DefaultModel:    extractDSHDefaultModel(root),
+			Theme:           extractDSHTheme(root),
 		})
 	}
 }
@@ -364,9 +376,19 @@ func SaveDSHSettings() gin.HandlerFunc {
 		defer dshSettingsMu.Unlock()
 
 		path := resolveDSHSettingsPath()
-		root, _, _, err := readDSHSettingsFile(path)
+		root, previousSettings, settingsExists, err := readDSHSettingsFile(path)
 		if err != nil {
 			c.JSON(500, gin.H{"error": fmt.Sprintf("读取 DSH 配置失败: %v", err)})
+			return
+		}
+		if err := validateDSHCredentialUpdates(req.CredentialUpdates, req.Providers); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		credentialsPath := resolveDSHCredentialsPath()
+		credentialData, credentialsChanged, err := prepareDSHCredentialDocument(credentialsPath, req.CredentialUpdates, req.Providers)
+		if err != nil {
+			c.JSON(500, gin.H{"error": fmt.Sprintf("准备 DSH 凭据失败: %v", err)})
 			return
 		}
 
@@ -401,13 +423,95 @@ func SaveDSHSettings() gin.HandlerFunc {
 			return
 		}
 
+		credentialsCommitted := false
+
+		// 凭据先写入、settings 后写入：替换/新增操作即使 settings 写入失败，
+		// 也只会留下未被引用的凭据，不会让旧配置突然失效。remove 操作反过来，
+		// 先提交 settings，再在凭据失败时回滚 settings，避免旧配置引用已删除密钥。
+		hasCredentialRemoval := hasDSHCredentialAction(req.CredentialUpdates, dshCredentialActionRemove)
+		if credentialsChanged && !hasCredentialRemoval {
+			if err := writeDSHCredentials(credentialsPath, credentialData); err != nil {
+				if !atomicfile.IsCommitted(err) {
+					c.JSON(500, gin.H{"error": fmt.Sprintf("写入 DSH 凭据失败: %v", err)})
+					return
+				}
+				// 原子替换已经完成，只有目录同步收尾失败；继续写 settings，
+				// 但最终必须把“已提交”状态透传给前端，禁止按未提交重试。
+				credentialsCommitted = true
+			}
+		}
+
 		if err := writeDSHSettings(path, data); err != nil {
+			if credentialsCommitted || (credentialsChanged && !hasCredentialRemoval) {
+				c.JSON(500, gin.H{
+					"error":     fmt.Sprintf("写入 DSH 配置失败，但凭据已提交: %v", err),
+					"code":      "DSH_CREDENTIAL_COMMITTED",
+					"committed": true,
+				})
+				return
+			}
 			c.JSON(500, gin.H{"error": fmt.Sprintf("写入 DSH 配置失败: %v", err)})
 			return
 		}
 
-		c.JSON(200, gin.H{"success": true, "path": path})
+		if credentialsChanged && hasCredentialRemoval {
+			if err := writeDSHCredentials(credentialsPath, credentialData); err != nil {
+				if atomicfile.IsCommitted(err) {
+					// settings 已提交，凭据替换也已完成；不能回滚 settings，
+					// 否则会重新引用已删除的密钥。
+					c.JSON(500, gin.H{
+						"error":     fmt.Sprintf("写入 DSH 凭据已提交但收尾失败: %v", err),
+						"code":      "DSH_CREDENTIAL_COMMITTED",
+						"committed": true,
+					})
+					return
+				}
+				rollbackErr := rollbackDSHSettings(path, previousSettings, settingsExists)
+				if rollbackErr != nil {
+					c.JSON(500, gin.H{
+						"error":     fmt.Sprintf("写入 DSH 凭据失败，且配置回滚失败: %v；回滚错误: %v", err, rollbackErr),
+						"code":      "DSH_CONFIG_COMMITTED",
+						"committed": true,
+					})
+					return
+				}
+				c.JSON(500, gin.H{"error": fmt.Sprintf("写入 DSH 凭据失败，配置已回滚: %v", err)})
+				return
+			}
+		}
+
+		if credentialsCommitted {
+			c.JSON(500, gin.H{
+				"error":     "DSH 凭据已写入，但目录同步收尾失败，请刷新查看实际状态",
+				"code":      "DSH_CREDENTIAL_COMMITTED",
+				"committed": true,
+			})
+			return
+		}
+
+		c.JSON(200, gin.H{"success": true, "path": path, "credentialsPath": credentialsPath})
 	}
+}
+
+func hasDSHCredentialAction(updates map[string]dshCredentialUpdate, action string) bool {
+	for _, update := range updates {
+		if update.Action == action {
+			return true
+		}
+	}
+	return false
+}
+
+// rollbackDSHSettings 只用于双文件提交中凭据写失败的补偿路径。
+// settings.yaml 在当前请求前不存在时，删除本次新建文件；其他情况恢复原始字节。
+func rollbackDSHSettings(path string, previous []byte, existed bool) error {
+	if !existed {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	return writeDSHSettings(path, previous)
 }
 
 // marshalDSHYAML 将 root map 序列化为 YAML 字节，同时保证 llm-pi-ai.providers
@@ -619,8 +723,8 @@ func orderedPiAIKeys(piAI map[string]interface{}) []string {
 
 func dshProviderToMap(p DSHProvider) map[string]interface{} {
 	m := make(map[string]interface{})
-	if p.APIKeyEnv != "" {
-		m["apiKeyEnv"] = p.APIKeyEnv
+	if reference := strings.TrimSpace(p.APIKeyEnv); reference != "" {
+		m["apiKeyEnv"] = reference
 	}
 	if p.API != "" {
 		m["api"] = p.API

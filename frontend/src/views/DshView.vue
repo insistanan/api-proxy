@@ -127,7 +127,7 @@
                     item-value="value"
                   />
                   <div class="text-caption text-medium-emphasis mt-1">
-                    选择协议后将自动连接本代理（{{ defaultBaseUrl }}）：协议、Base URL 与密钥环境变量名自动填充，模型可一键导入
+                    选择协议后将自动连接本代理（{{ defaultBaseUrl }}）：协议、Base URL 与当前访问密钥自动填充，模型可一键导入
                   </div>
                 </div>
               </section>
@@ -167,13 +167,43 @@
                 <v-col cols="12">
                   <v-text-field
                     v-model.trim="selectedProvider.apiKeyEnv"
-                    label="API Key 环境变量名"
+                    label="凭据引用名 (apiKeyEnv，可自动生成)"
                     variant="outlined"
                     density="comfortable"
-                    placeholder="例如 LOCAL_API_KEY"
-                    hint="DSH 会从该环境变量读取 API Key；留空则使用 provider 原生认证"
+                    placeholder="留空自动生成，例如 LOCAL_API_KEY"
+                    hint="这是 DSH 的凭据引用名，不是 API Key 本身；填写下方密钥时会自动生成；不填密钥则可留空并使用提供方原生认证"
                     persistent-hint
                   />
+                </v-col>
+                <v-col cols="12">
+                  <v-text-field
+                    v-model="selectedProvider.apiKey"
+                    label="API Key"
+                    type="password"
+                    variant="outlined"
+                    density="comfortable"
+                    autocomplete="new-password"
+                    :placeholder="selectedProvider.apiKeyPresent ? `当前：${selectedProvider.apiKeyMasked}（留空则保留）` : '填写 API Key；点击“连接本代理”会自动带入当前访问密钥'"
+                    @update:model-value="onAPIKeyInput(selectedProvider)"
+                  >
+                    <template #append-inner>
+                      <v-btn
+                        v-if="selectedProvider.apiKeyPresent"
+                        icon="mdi-delete"
+                        size="x-small"
+                        variant="text"
+                        title="清除已保存密钥"
+                        aria-label="清除已保存密钥"
+                        @click.stop="clearAPIKey(selectedProvider)"
+                      />
+                    </template>
+                  </v-text-field>
+                  <div class="text-caption text-medium-emphasis mt-1">
+                    明文只在保存请求中提交，不会写入 settings.yaml；未填写引用名时会自动生成；凭据文件：{{ settings?.credentialsPath || 'DSH_HOME/.credentials.yaml' }}
+                  </div>
+                  <div class="text-caption text-medium-emphasis mt-1">
+                    若系统存在同名环境变量，DSH 官方规则会优先使用环境值；通常无需手动设置环境变量。
+                  </div>
                 </v-col>
               </v-row>
 
@@ -280,7 +310,7 @@
             <div>
               <v-icon size="44" color="primary" class="mb-3">mdi-cog</v-icon>
               <div class="text-subtitle-1 font-weight-bold">选择或添加一个提供商</div>
-              <div class="text-body-2 text-medium-emphasis mt-1">在这里配置 DSH 使用的协议、密钥引用和模型。</div>
+              <div class="text-body-2 text-medium-emphasis mt-1">在这里配置 DSH 使用的协议、API Key 和模型。</div>
             </div>
           </v-card>
         </v-col>
@@ -299,9 +329,10 @@ import AgentConfigHeader from '@/components/AgentConfigHeader.vue'
 import AgentConfigLocation from '@/components/AgentConfigLocation.vue'
 import AgentPromptCard from '@/components/AgentPromptCard.vue'
 import ToolInstallBanner from '@/components/ToolInstallBanner.vue'
-import { api, type DSHSettings, type DSHProvider, type DSHModel, type ApiTab } from '@/services/api'
+import { api, type DSHSettings, type DSHProvider, type DSHModel, type SaveDSHSettings, type ApiTab } from '@/services/api'
 import { useProxyProtocolPick, defaultQuickPickTypeOptions } from '@/composables/useChannelQuickPick'
 import { filterProxyModelsByKind, importProxyModels, buildDSHModel } from '@/composables/useChannelModelImport'
+import { useAuthStore } from '@/stores/auth'
 
 // ---- 常量 ----
 
@@ -368,6 +399,21 @@ const defaultModelOptions = computed(() => {
 
 // ---- 协议选择（连接本代理） ----
 
+// DSH 的 apiKeyEnv 是凭据引用名。用户只填 API Key 时，为它生成一个稳定、
+// 符合 DSH 引用格式的名称，避免把环境变量配置暴露成必填步骤。
+const generatedAPIKeyReference = (routeId: string) => {
+  let normalized = routeId.trim().toUpperCase().replace(/[^A-Z0-9_]/g, '_')
+  if (!normalized) normalized = 'PROVIDER'
+  if (/^[0-9]/.test(normalized)) normalized = `_${normalized}`
+  return `${normalized}_API_KEY`
+}
+
+const ensureAPIKeyReference = (provider: DSHProvider, routeId = selectedProviderKey.value) => {
+  if (!provider.apiKeyEnv?.trim()) {
+    provider.apiKeyEnv = generatedAPIKeyReference(routeId)
+  }
+}
+
 const applyProtocol = async (type: ApiTab, defaultBaseUrl: Promise<string>) => {
   const provider = selectedProvider.value
   if (!provider) return
@@ -375,10 +421,16 @@ const applyProtocol = async (type: ApiTab, defaultBaseUrl: Promise<string>) => {
   provider.api = protocolForChannelType[type]
   // Base URL 默认填本代理地址，可手动改
   provider.baseURL = await defaultBaseUrl
-  // 生成 apiKeyEnv 名称
-  if (!provider.apiKeyEnv) {
-    const routeId = selectedProviderKey.value.toUpperCase().replace(/[^A-Z0-9]/g, '_')
-    provider.apiKeyEnv = `${routeId}_API_KEY`
+  // 生成 apiKeyEnv 引用名；引用名不是密钥值，实际值由下方凭据字段保存。
+  if (!provider.apiKeyEnv?.trim()) {
+    provider.apiKeyEnv = generatedAPIKeyReference(selectedProviderKey.value)
+  }
+  // 与 OpenCode / Codex / pi-agent 一致：连接本代理时复用当前管理页面访问密钥。
+  const authStore = useAuthStore()
+  if (authStore.apiKey) {
+    provider.apiKey = authStore.apiKey
+    provider.apiKeyPresent = true
+    provider.apiKeyAction = 'replace'
   }
 }
 
@@ -455,7 +507,8 @@ const normalizeDSHSettings = (loaded: Partial<DSHSettings>) => {
   const providerKeys = Array.isArray(loaded.providerKeys)
     ? loaded.providerKeys.filter(k => typeof k === 'string' && k in providerMap)
     : []
-  return { providerMap, providerKeys }
+  const credentials = loaded.credentials ?? {}
+  return { providerMap, providerKeys, credentials }
 }
 
 const loadSettings = async () => {
@@ -464,8 +517,17 @@ const loadSettings = async () => {
   try {
     const loaded = await api.getDSHSettings()
     settings.value = loaded
-    const { providerMap, providerKeys: orderedKeys } = normalizeDSHSettings(loaded)
-    providers.value = { ...providerMap }
+    const { providerMap, providerKeys: orderedKeys, credentials } = normalizeDSHSettings(loaded)
+    providers.value = Object.fromEntries(Object.entries(providerMap).map(([key, provider]) => {
+      const credential = credentials[key]
+      return [key, {
+        ...provider,
+        apiKey: '',
+        apiKeyMasked: credential?.apiKeyMasked ?? '',
+        apiKeyPresent: credential?.apiKeyPresent ?? false,
+        apiKeyAction: 'keep'
+      }]
+    }))
     // 后端给的顺序缺失时从 map key 补齐，保持"文件顺序优先、字母序兜底"的约定。
     providerKeys.value = orderedKeys.length
       ? orderedKeys
@@ -489,7 +551,16 @@ const addProvider = () => {
     index += 1
     key = `provider-${index}`
   }
-  providers.value[key] = { api: 'anthropic-messages', baseURL: '', apiKeyEnv: '', models: [] }
+  providers.value[key] = {
+    api: 'anthropic-messages',
+    baseURL: '',
+    apiKeyEnv: '',
+    apiKey: '',
+    apiKeyMasked: '',
+    apiKeyPresent: false,
+    apiKeyAction: 'keep',
+    models: []
+  }
   providerKeys.value.push(key)
   selectedProviderKey.value = key
 }
@@ -543,6 +614,23 @@ const removeModel = (provider: DSHProvider, idx: number) => {
   syncModelFlags()
 }
 
+// API Key 是写入型字段：GET 只带脱敏状态，输入框本身始终保持空白。
+const onAPIKeyInput = (provider: DSHProvider) => {
+  if (provider.apiKey?.trim()) {
+    ensureAPIKeyReference(provider)
+    provider.apiKeyAction = 'replace'
+  } else if (provider.apiKeyAction !== 'remove') {
+    provider.apiKeyAction = 'keep'
+  }
+}
+
+const clearAPIKey = (provider: DSHProvider) => {
+  provider.apiKey = ''
+  provider.apiKeyMasked = ''
+  provider.apiKeyPresent = false
+  provider.apiKeyAction = 'remove'
+}
+
 // 将最大上下文/最大输出长度的输入值归一化：空值、非正数或非法数值统一转为 undefined，
 // 回传后端时省略该字段，不写入 settings.yaml。
 const normalizeModelNumber = (value: unknown): number | undefined => {
@@ -594,8 +682,10 @@ const saveSettings = async () => {
       if (typeof key !== 'string' || !key || key in providersPayload) continue
       const provider = providers.value[key]
       if (!provider) continue
+      if (provider.apiKeyAction === 'replace' && provider.apiKey?.trim()) {
+        ensureAPIKeyReference(provider, key)
+      }
       providersPayload[key] = {
-        ...provider,
         apiKeyEnv: provider.apiKeyEnv || undefined,
         api: provider.api || undefined,
         baseURL: provider.baseURL || undefined,
@@ -605,19 +695,41 @@ const saveSettings = async () => {
       orderedKeys.push(key)
     }
 
+    const credentialUpdates: NonNullable<SaveDSHSettings['credentialUpdates']> = {}
+    for (const key of orderedKeys) {
+      const provider = providers.value[key]
+      if (!provider || !provider.apiKeyAction || provider.apiKeyAction === 'keep') continue
+      credentialUpdates[key] = {
+        action: provider.apiKeyAction,
+        apiKey: provider.apiKeyAction === 'replace' ? provider.apiKey : undefined
+      }
+    }
+
     const defaultModel = (defaultModelProvider.value && defaultModelModel.value)
       ? { provider: defaultModelProvider.value, model: defaultModelModel.value }
       : null
+    const hasCredentialUpdates = Object.keys(credentialUpdates).length > 0
 
     const response = await api.saveDSHSettings({
       providers: providersPayload,
       providerKeys: orderedKeys,
-      defaultModel
+      defaultModel,
+      credentialUpdates: hasCredentialUpdates ? credentialUpdates : undefined
     })
-    notice.value = { visible: true, type: 'success', message: `已保存到 ${response.path}` }
+    notice.value = {
+      visible: true,
+      type: 'success',
+      message: hasCredentialUpdates
+        ? `配置已保存；凭据已更新到 ${response.credentialsPath}`
+        : `已保存到 ${response.path}`
+    }
     await loadSettings()
   } catch (saveError) {
     notice.value = { visible: true, type: 'error', message: saveError instanceof Error ? saveError.message : '保存 DSH 配置失败' }
+    // 原子写入已过提交点时，先重新读取两份文件的实际状态，避免页面继续展示旧快照。
+    if (typeof saveError === 'object' && saveError !== null && 'committed' in saveError && saveError.committed === true) {
+      await loadSettings()
+    }
   } finally {
     saving.value = false
   }

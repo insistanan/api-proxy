@@ -733,7 +733,7 @@ class ApiService {
     return this.request('/settings/dsh')
   }
 
-  async saveDSHSettings(settings: SaveDSHSettings): Promise<{ success: boolean; path: string }> {
+  async saveDSHSettings(settings: SaveDSHSettings): Promise<{ success: boolean; path: string; credentialsPath: string }> {
     return this.request('/settings/dsh', {
       method: 'PUT',
       body: JSON.stringify(settings)

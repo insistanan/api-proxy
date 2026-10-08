@@ -305,10 +305,22 @@ export interface DSHModel {
 
 export interface DSHProvider {
   apiKeyEnv?: string
+  /** 仅用于编辑态；后端 GET 永远不会返回明文。 */
+  apiKey?: string
+  apiKeyMasked?: string
+  apiKeyPresent?: boolean
+  apiKeyAction?: 'keep' | 'replace' | 'remove'
   api?: string
   baseURL?: string
   displayName?: string
   models?: DSHModel[]
+}
+
+export interface DSHCredentialStatus {
+  reference: string
+  apiKeyMasked: string
+  apiKeyPresent: boolean
+  writable: boolean
 }
 
 export interface DSHDefaultModel {
@@ -319,16 +331,24 @@ export interface DSHDefaultModel {
 export interface DSHSettings {
   dshHome: string
   path: string
+  credentialsPath: string
   exists: boolean
   writable: boolean
   providers: Record<string, DSHProvider>
   providerKeys: string[]
+  credentials: Record<string, DSHCredentialStatus>
   defaultModel: DSHDefaultModel | null
   theme: string
+}
+
+export interface DSHCredentialUpdate {
+  action: 'keep' | 'replace' | 'remove'
+  apiKey?: string
 }
 
 export interface SaveDSHSettings {
   providers: Record<string, DSHProvider>
   providerKeys?: string[]
   defaultModel: DSHDefaultModel | null
+  credentialUpdates?: Record<string, DSHCredentialUpdate>
 }
