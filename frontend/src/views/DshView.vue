@@ -447,17 +447,29 @@ const syncModelFlags = () => {
   }
 }
 
+// 从后端响应里安全取出 provider 集合与有序 key 列表。
+// 后端在某些异常路径下（如历史构建的 nil slice）会返回 null，
+// 直接 [...null] 会抛 "undefined is not iterable"，这里统一归一为 []。
+const normalizeDSHSettings = (loaded: Partial<DSHSettings>) => {
+  const providerMap = loaded.providers ?? {}
+  const providerKeys = Array.isArray(loaded.providerKeys)
+    ? loaded.providerKeys.filter(k => typeof k === 'string' && k in providerMap)
+    : []
+  return { providerMap, providerKeys }
+}
+
 const loadSettings = async () => {
   loading.value = true
   error.value = ''
   try {
     const loaded = await api.getDSHSettings()
     settings.value = loaded
-    providers.value = { ...loaded.providers }
-    providerKeys.value = [...loaded.providerKeys]
-    if (!providerKeys.value.length && Object.keys(providers.value).length) {
-      providerKeys.value = Object.keys(providers.value)
-    }
+    const { providerMap, providerKeys: orderedKeys } = normalizeDSHSettings(loaded)
+    providers.value = { ...providerMap }
+    // 后端给的顺序缺失时从 map key 补齐，保持"文件顺序优先、字母序兜底"的约定。
+    providerKeys.value = orderedKeys.length
+      ? orderedKeys
+      : Object.keys(providerMap).sort()
     defaultModelProvider.value = loaded.defaultModel?.provider ?? ''
     defaultModelModel.value = loaded.defaultModel?.model ?? ''
     selectedProviderKey.value = providerKeys.value[0] ?? ''
@@ -574,9 +586,12 @@ const collectModelConfig = (model: DSHModel, idx: number): DSHModel => {
 const saveSettings = async () => {
   saving.value = true
   try {
-    // 收集所有 provider 的模型配置
+    // 收集所有 provider 的模型配置。按 providerKeys 顺序构建，保证写出的
+    // settings.yaml 中 provider 排列与列表一致（后端也按此顺序落盘）。
     const providersPayload: Record<string, DSHProvider> = {}
+    const orderedKeys: string[] = []
     for (const key of providerKeys.value) {
+      if (typeof key !== 'string' || !key || key in providersPayload) continue
       const provider = providers.value[key]
       if (!provider) continue
       providersPayload[key] = {
@@ -587,6 +602,7 @@ const saveSettings = async () => {
         displayName: provider.displayName || undefined,
         models: (provider.models ?? []).map((m, i) => collectModelConfig(m, i))
       }
+      orderedKeys.push(key)
     }
 
     const defaultModel = (defaultModelProvider.value && defaultModelModel.value)
@@ -595,7 +611,7 @@ const saveSettings = async () => {
 
     const response = await api.saveDSHSettings({
       providers: providersPayload,
-      providerKeys: providerKeys.value,
+      providerKeys: orderedKeys,
       defaultModel
     })
     notice.value = { visible: true, type: 'success', message: `已保存到 ${response.path}` }

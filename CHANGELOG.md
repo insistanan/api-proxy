@@ -15,6 +15,7 @@
 ### 修复
 
 - **2xx 信封检测读失败仍关闭响应体** — 回滚选取逻辑时保留这一处：读取失败或超过上限后 body 不再交给成功路径，必须显式 Close，否则连接不归还连接池
+- **DSH providerKeys 不再序列化为 null** — settings 缺失、providers 为空或请求里带了脏 key 时，读取和保存共用同一顺序：文件里实际存在的 key 优先，过滤不存在的 key，其余按字母序补齐；空结果返回 `[]`。避免前端 `[...providerKeys]` 抛出 “undefined is not iterable”
 
 ---
 

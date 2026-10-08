@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -208,6 +209,35 @@ func extractDSHTheme(root map[string]interface{}) string {
 	return ""
 }
 
+// orderedDSHProviderKeys 统一 provider 列表顺序：requested 里实际存在的 key 优先
+// 按传入顺序保留，其余按字母序补齐。requested 为 nil/空或含脏 key 时依然稳定，
+// 且返回值永不为 nil（空 providers 返回空 slice），这样 json.Marshal 会序列化成
+// "providerKeys":[] 而不是 "null"——否则前端 [...providerKeys] 会抛
+// "undefined is not iterable"（见 DshView.vue 的 providerKeys 读取）。
+// 读取（GetDSHSettings）与保存（SaveDSHSettings）共用这一条顺序规则。
+func orderedDSHProviderKeys(requested []string, providers map[string]DSHProvider) []string {
+	if len(providers) == 0 {
+		return []string{}
+	}
+	seen := make(map[string]bool, len(requested))
+	keys := []string{}
+	for _, k := range requested {
+		if _, ok := providers[k]; ok && !seen[k] {
+			keys = append(keys, k)
+			seen[k] = true
+		}
+	}
+	fallback := make([]string, 0, len(providers)-len(keys))
+	for k := range providers {
+		if !seen[k] {
+			fallback = append(fallback, k)
+		}
+	}
+	sort.Strings(fallback)
+	keys = append(keys, fallback...)
+	return keys
+}
+
 // GetDSHSettings 返回 DSH settings.yaml 的解析视图。
 func GetDSHSettings() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -222,12 +252,8 @@ func GetDSHSettings() gin.HandlerFunc {
 		}
 
 		providers := extractDSHProviders(root)
-		providerKeys := extractDSHProviderKeysOrdered(path)
-		if len(providerKeys) == 0 {
-			for k := range providers {
-				providerKeys = append(providerKeys, k)
-			}
-		}
+		// 文件顺序优先（extractDSHProviderKeysOrdered），脏 key 过滤 + 字母序兜底。
+		providerKeys := orderedDSHProviderKeys(extractDSHProviderKeysOrdered(path), providers)
 
 		writable := checkDSHWritable(path)
 
@@ -349,10 +375,11 @@ func SaveDSHSettings() gin.HandlerFunc {
 		if !ok {
 			piAI = make(map[string]interface{})
 		}
-		// 将 typed providers 转回 generic map
+		// 将 typed providers 转回 generic map，顺序由 SaveDSHSettings 统一决定。
+		orderedKeys := orderedDSHProviderKeys(req.ProviderKeys, req.Providers)
 		provMap := make(map[string]interface{})
-		for k, p := range req.Providers {
-			provMap[k] = dshProviderToMap(p)
+		for _, k := range orderedKeys {
+			provMap[k] = dshProviderToMap(req.Providers[k])
 		}
 		piAI["providers"] = provMap
 		root["llm-pi-ai"] = piAI
@@ -432,19 +459,15 @@ func buildPiAINode(piAI map[string]interface{}, providerKeys []string, providers
 	for _, pk := range orderedPiAIKeys(piAI) {
 		if pk == "providers" {
 			providersNode := &yaml.Node{Kind: yaml.MappingNode}
-			orderedKeys := providerKeys
-			if len(orderedKeys) == 0 {
-				for k := range providers {
-					orderedKeys = append(orderedKeys, k)
+			for _, rk := range orderedDSHProviderKeys(providerKeys, providers) {
+				p, ok := providers[rk]
+				if !ok {
+					continue
 				}
-			}
-			for _, rk := range orderedKeys {
-				if p, ok := providers[rk]; ok {
-					pNode := buildProviderNode(p)
-					providersNode.Content = append(providersNode.Content,
-						&yaml.Node{Kind: yaml.ScalarNode, Value: rk},
-						pNode)
-				}
+				pNode := buildProviderNode(p)
+				providersNode.Content = append(providersNode.Content,
+					&yaml.Node{Kind: yaml.ScalarNode, Value: rk},
+					pNode)
 			}
 			piAINode.Content = append(piAINode.Content,
 				&yaml.Node{Kind: yaml.ScalarNode, Value: "providers"},
