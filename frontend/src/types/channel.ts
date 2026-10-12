@@ -60,6 +60,8 @@ export interface Channel {
   proxyMode?: 'inherit' | 'direct' | 'custom'
   proxyUrl?: string
   modelMapping?: Record<string, string[]> // 模型重定向：源模型 -> 目标模型列表（支持多个备选）
+  // 模型映射的目标渠道登记：源模型 -> 目标模型 -> 目标渠道 ID（缺省表示沿用本渠道）
+  modelMappingChannels?: Record<string, Record<string, string>>
   defaultModel?: string
   latency?: number
   status?: ChannelStatus | 'healthy' | 'error' | 'unknown' | ''
@@ -104,6 +106,21 @@ export interface ChannelsResponse {
   channels: Channel[]
   current: number
   loadBalance: string
+}
+
+// 模型映射"目标渠道"下拉候选项（同协议、启用、有密钥、未熔断 Open）
+export interface MappingTargetChannel {
+  id: string
+  name: string
+  index: number
+  poolId: string
+  serviceType: string
+  status: string
+  circuitState: string
+}
+
+export interface MappingTargetChannelsResponse {
+  channels: MappingTargetChannel[]
 }
 
 // 渠道仪表盘响应（合并 channels + metrics + stats）

@@ -76,6 +76,10 @@ func RegisterChannelRoutes(api *gin.RouterGroup, kind scheduler.ChannelKind, dep
 		api.GET(p+"/channels/scheduler/stats", opts.SchedulerStats)
 	}
 
+	// ===== 模型映射目标渠道 =====
+	api.GET(p+"/mapping-targets", ListMappingTargetChannels(deps.Cfg, deps.Scheduler, kind))
+	api.GET(p+"/mapping-targets/:channelId/models", ListMappingTargetChannelModels(deps.Cfg, kind))
+
 	// ===== 指标 =====
 	api.GET(p+"/channels/metrics", GetChannelMetricsWithKind(mm, deps.Cfg, kind))
 	api.GET(p+"/channels/metrics/history", GetChannelMetricsHistoryByKind(mm, deps.Cfg, kind))

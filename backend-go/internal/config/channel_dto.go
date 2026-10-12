@@ -24,6 +24,7 @@ func ChannelToDTO(up *UpstreamConfig, index int) map[string]interface{} {
 		"proxyMode":                   up.ProxyMode,
 		"proxyUrl":                    up.ProxyURL,
 		"modelMapping":                up.ModelMapping,
+		"modelMappingChannels":        up.ModelMappingChannels,
 		"defaultModel":                up.DefaultModel,
 		"latency":                     nil,
 		"status":                      GetChannelStatus(up),

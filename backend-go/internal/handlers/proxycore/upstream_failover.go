@@ -20,31 +20,41 @@ func (a UpstreamAttempt) TryWithModelMappingFailover() UpstreamAttemptResult {
 }
 
 // tryWithModelMappingFailover 在模型映射级别进行 failover。
-// 非 Fuzzy 模式下仅尝试首个映射模型，避免跨模型故障转移。
+// 每个候选是（目标模型，可选的显式目标渠道）：未指定渠道的候选留在本渠道内执行；
+// 指定了渠道的候选交给目标渠道单跳执行（见 upstream_attempt_mapped.go）。
+// 非 Fuzzy 模式下仅尝试首个映射候选，避免跨模型故障转移。
 func (a UpstreamAttempt) tryWithModelMappingFailover() UpstreamAttemptResult {
-	// 获取该模型的映射列表
-	targetModels := config.ResolveUpstreamModelList(a.RequestedModel, a.Upstream)
+	// 目标模型与目标渠道来自同一条映射规则，保证二者始终对应
+	targetModels, targetChannelIDs := config.ResolveUpstreamModelTargets(a.RequestedModel, a.Upstream)
 
 	if len(targetModels) == 0 {
 		// 没有映射，直接使用原始模型
 		targetModels = []string{a.RequestedModel}
+		targetChannelIDs = []string{""}
 	}
 	if !a.AllowModelFailover && len(targetModels) > 1 {
 		targetModels = targetModels[:1]
+		targetChannelIDs = targetChannelIDs[:1]
 	}
 
-	// 如果只有一个目标模型，直接调用原有逻辑
-	if len(targetModels) == 1 {
+	// 只有一个本地目标：直接调用原有逻辑
+	if len(targetModels) == 1 && targetChannelIDs[0] == "" {
 		return a.tryWithAllKeys()
 	}
 
-	// 多个目标模型：依次尝试
+	// 多个候选，或单个显式目标渠道：依次尝试
 	log.Printf("[%s-ModelMapping] 模型 %s 映射到 %d 个备选: %v", a.APIType, a.RequestedModel, len(targetModels), targetModels)
 
 	var lastFailoverError *FailoverError
 	var lastErr error
+	// localAttempted：本渠道自身是否发起过本地候选尝试；mappedRouted：是否有候选转交目标渠道。
+	// 二者决定源渠道的健康结论（见 mappingSourceHealth）。
+	localAttempted := false
+	mappedRouted := false
 
 	for modelIdx, targetModel := range targetModels {
+		channelID := targetChannelIDs[modelIdx]
+
 		// 检查客户端是否已取消
 		select {
 		case <-a.Context.Request.Context().Done():
@@ -54,31 +64,55 @@ func (a UpstreamAttempt) tryWithModelMappingFailover() UpstreamAttemptResult {
 		default:
 		}
 
-		log.Printf("[%s-ModelMapping] 尝试备选模型 %d/%d: %s -> %s",
-			a.APIType, modelIdx+1, len(targetModels), a.RequestedModel, targetModel)
+		var result UpstreamAttemptResult
+		if channelID == "" {
+			log.Printf("[%s-ModelMapping] 尝试备选模型 %d/%d: %s -> %s",
+				a.APIType, modelIdx+1, len(targetModels), a.RequestedModel, targetModel)
+			localAttempted = true
 
-		// 创建上游副本，临时覆盖模型映射为当前尝试的单一模型
-		upstreamCopy := a.Upstream.Clone()
-		upstreamCopy.ModelMapping = map[string][]string{
-			a.RequestedModel: {targetModel},
-		}
+			// 创建上游副本，临时覆盖模型映射为当前尝试的单一模型。
+			// 渠道登记同样清空：本地候选不再解析映射登记（单跳）。
+			upstreamCopy := a.Upstream.Clone()
+			upstreamCopy.ModelMapping = map[string][]string{
+				a.RequestedModel: {targetModel},
+			}
+			upstreamCopy.ModelMappingChannels = nil
 
-		modelAttempt := a
-		modelAttempt.Upstream = upstreamCopy
-		result := modelAttempt.tryWithAllKeys()
-
-		if result.Handled {
-			if result.SuccessKey != "" {
-				// 成功
-				log.Printf("[%s-ModelMapping] 模型 %s (备选 %d/%d) 请求成功",
-					a.APIType, targetModel, modelIdx+1, len(targetModels))
+			modelAttempt := a
+			modelAttempt.Upstream = upstreamCopy
+			result = modelAttempt.tryWithAllKeys()
+			if result.Handled {
+				if result.SuccessKey != "" {
+					log.Printf("[%s-ModelMapping] 模型 %s (备选 %d/%d) 请求成功",
+						a.APIType, targetModel, modelIdx+1, len(targetModels))
+				}
+				// handled=true：成功，或非 failover 错误（如客户端取消、参数错误等）
 				return result
 			}
-			// handled=true 但 successKey 为空：非 failover 错误（如客户端取消、参数错误等）
-			return result
+		} else {
+			mappedRouted = true
+			mappedResult, err := a.tryMappedChannelTarget(targetModel, channelID)
+			if err != nil {
+				lastErr = err
+				log.Printf("[%s-ModelMapping] 映射目标渠道不可用，模型 %s -> %s: %v",
+					a.APIType, a.RequestedModel, targetModel, err)
+				if !a.ConfigManager.GetFuzzyModeEnabled() {
+					// 非 Fuzzy：目标渠道不可用直接报错，不转入正常调度的下一渠道
+					return newUpstreamAttemptResult(false, "", 0, nil, nil, err).
+						withHealth(mappingSourceHealth(localAttempted, mappedRouted)).
+						withAbortFailover()
+				}
+				// Fuzzy：继续下一个候选，全部耗尽后由外层转入正常调度的下一渠道
+				continue
+			}
+			result = mappedResult
+			if result.Handled {
+				// 目标渠道已写回响应：源渠道健康结论由映射路径决定，目标渠道已自行记账
+				return result.withHealth(mappingSourceHealth(localAttempted, mappedRouted))
+			}
 		}
 
-		// 未处理（failover 错误），保存错误信息并尝试下一个模型
+		// 未处理（failover 错误），保存错误信息并尝试下一个候选
 		if result.FailoverError != nil {
 			lastFailoverError = result.FailoverError
 		}
@@ -90,10 +124,11 @@ func (a UpstreamAttempt) tryWithModelMappingFailover() UpstreamAttemptResult {
 			a.APIType, targetModel, modelIdx+1, len(targetModels))
 	}
 
-	// 所有模型都失败
+	// 所有候选都失败
 	log.Printf("[%s-ModelMapping] 所有 %d 个备选模型都失败", a.APIType, len(targetModels))
-	// 可重试故障耗尽全部候选模型：渠道按失败记账。
-	return newUpstreamAttemptResult(false, "", 0, lastFailoverError, nil, lastErr).withHealth(channelHealthFailure)
+	// 可重试故障耗尽全部候选：源渠道的健康结论按参与方式决定。
+	return newUpstreamAttemptResult(false, "", 0, lastFailoverError, nil, lastErr).
+		withHealth(mappingSourceHealth(localAttempted, mappedRouted))
 }
 
 func preferConversationBaseURL(

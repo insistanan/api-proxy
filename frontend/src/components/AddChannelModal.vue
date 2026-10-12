@@ -304,9 +304,12 @@
             <v-col v-if="form.serviceType && props.channelType !== 'chat'" cols="12">
               <ModelMappingEditor
                 v-model="form.modelMapping"
+                v-model:channel-value="form.modelMappingChannels"
                 :hint="modelMappingHint"
                 :source-options="sourceModelOptions"
-                :target-options="targetModelOptions"
+                :target-options-by-channel="targetModelOptionsByChannel"
+                :target-channel-options="targetChannelOptions"
+                :target-status-by-channel="targetStatusByChannel"
                 :target-placeholder="targetModelPlaceholder"
                 @fetch-models="handleFetchModels"
               />
@@ -745,7 +748,7 @@ import {
   isValidUrl as _isValidQuickInputUrl,
   parseQuickInput as parseQuickInputUtil
 } from '../utils/quickInputParser'
-import { useChannelEditor, cloneModelMapping } from '../composables/useChannelEditor'
+import { useChannelEditor, cloneModelMapping, cloneModelMappingChannels } from '../composables/useChannelEditor'
 
 interface Props {
   show: boolean
@@ -1196,6 +1199,8 @@ const resetForm = () => {
   targetModelOptions.value = []
   fetchingModels.value = false
   fetchModelsError.value = ''
+  targetChannelModelOptions.value = {}
+  targetChannelModelStatus.value = {}
   keyModelsStatus.value.clear()
   errors.name = ''
   errors.serviceType = ''
@@ -1223,6 +1228,8 @@ const loadChannelData = (channel: Channel) => {
   targetModelOptions.value = []
   fetchingModels.value = false
   fetchModelsError.value = ''
+  targetChannelModelOptions.value = {}
+  targetChannelModelStatus.value = {}
   keyModelsStatus.value.clear()
 }
 
@@ -1302,6 +1309,20 @@ const copiedKeyIndex = ref<number | null>(null)
   const targetModelOptions = ref<Array<{ title: string; value: string }>>([])
   const fetchingModels = ref(false)
   const fetchModelsError = ref('')
+
+// 模型映射的目标渠道：候选渠道列表（同协议、可用、排除本渠道），以及各目标渠道的模型候选缓存。
+// 键为目标渠道 ID；本渠道的候选沿用上面的 targetModelOptions（键为空串）。
+const targetChannelOptions = ref<Array<{ title: string; value: string }>>([])
+const targetChannelModelOptions = ref<Record<string, Array<{ title: string; value: string }>>>({})
+const targetChannelModelStatus = ref<Record<string, { loading: boolean; error: string }>>({})
+const targetModelOptionsByChannel = computed(() => ({
+  '': targetModelOptions.value,
+  ...targetChannelModelOptions.value
+}))
+const targetStatusByChannel = computed(() => ({
+  '': { loading: fetchingModels.value, error: fetchModelsError.value },
+  ...targetChannelModelStatus.value
+}))
 
 const getStringValue = (val: unknown): string => {
   if (!val) return ''
@@ -1591,8 +1612,57 @@ const copyApiKey = async (key: string, index: number) => {
   }
 }
 
-const handleFetchModels = () => {
+const handleFetchModels = (channelId: string) => {
+  if (channelId) {
+    void fetchChannelTargetModels(channelId)
+    return
+  }
   fetchTargetModels()
+}
+
+// 加载模型映射的目标渠道候选（同协议、可用，排除本渠道）
+const loadMappingTargetChannels = async () => {
+  try {
+    const response = await channelApiByType(props.channelType).listMappingTargets(props.channel?.id)
+    targetChannelOptions.value = (response.channels || []).map(channel => ({
+      title: `${channel.name}（${channel.serviceType}）`,
+      value: channel.id
+    }))
+  } catch (error) {
+    console.error('加载模型映射目标渠道失败:', error)
+    targetChannelOptions.value = []
+  }
+}
+
+// 获取指定目标渠道的模型列表（使用目标渠道自身的密钥，服务端完成探测）。成功后按渠道缓存，失败不缓存以便重试。
+const fetchChannelTargetModels = async (channelId: string) => {
+  if (targetChannelModelOptions.value[channelId] || targetChannelModelStatus.value[channelId]?.loading) {
+    return
+  }
+
+  targetChannelModelStatus.value = {
+    ...targetChannelModelStatus.value,
+    [channelId]: { loading: true, error: '' }
+  }
+
+  try {
+    const response = await channelApiByType(props.channelType).listMappingTargetModels(channelId)
+    const options = response.data
+      .map(model => model.id)
+      .sort()
+      .map(id => ({ title: id, value: id }))
+    targetChannelModelOptions.value = { ...targetChannelModelOptions.value, [channelId]: options }
+    targetChannelModelStatus.value = {
+      ...targetChannelModelStatus.value,
+      [channelId]: { loading: false, error: '' }
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '未知错误'
+    targetChannelModelStatus.value = {
+      ...targetChannelModelStatus.value,
+      [channelId]: { loading: false, error: `无法获取目标渠道的模型列表: ${message}` }
+    }
+  }
 }
 
 const fetchTargetModels = async () => {
@@ -1719,6 +1789,9 @@ const handleSubmit = async () => {
           })
       : [form.baseUrl.trim().replace(/[#/]+$/, '')].filter(Boolean)
 
+  // 提交前统一用清理后的映射（去空白/去重/去空目标），目标渠道登记按其剪枝，保证两者一致
+  const submitModelMapping = props.channelType === 'chat' ? {} : cloneModelMapping(form.modelMapping)
+
   // 构建渠道数据
   const channelData: Omit<Channel, 'id' | 'index' | 'latency'> = {
     name: form.name.trim(),
@@ -1741,7 +1814,9 @@ const handleSubmit = async () => {
     disablePromptCacheKey: form.disablePromptCacheKey,
     description: form.description.trim(),
     apiKeys: processedApiKeys,
-    modelMapping: props.channelType === 'chat' ? {} : cloneModelMapping(form.modelMapping),
+    modelMapping: submitModelMapping,
+    modelMappingChannels:
+      props.channelType === 'chat' ? {} : cloneModelMappingChannels(submitModelMapping, form.modelMappingChannels),
     defaultModel: props.channelType === 'chat' ? getStringValue(form.defaultModel).trim() : ''
   }
 
@@ -1772,6 +1847,7 @@ watch(
       duplicateKeyIndex.value = -1
       void loadVisionChannels()
       void loadPools()
+      void loadMappingTargetChannels()
 
       if (props.channel) {
         // 编辑模式：使用表单模式

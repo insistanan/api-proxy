@@ -31,7 +31,11 @@ type UpstreamConfig struct {
 	ProxyMode          string              `json:"proxyMode,omitempty"` // inherit（继承全局）、direct（直连）、custom（独立代理）
 	ProxyURL           string              `json:"proxyUrl,omitempty"`
 	ModelMapping       map[string][]string `json:"modelMapping,omitempty"` // 模型重定向：源模型 -> 目标模型列表（支持多个备选）
-	DefaultModel       string              `json:"defaultModel,omitempty"`
+	// ModelMappingChannels 是 ModelMapping 的并列覆盖：源模型 -> 目标模型 -> 目标渠道稳定 ID。
+	// 命中的目标若在此登记了渠道，则改由该渠道（同协议、单跳）执行；未登记则沿用本渠道。
+	// 与 ModelMapping 分开存放，避免改动一对多映射的形状。
+	ModelMappingChannels map[string]map[string]string `json:"modelMappingChannels,omitempty"`
+	DefaultModel         string                       `json:"defaultModel,omitempty"`
 	// 多渠道调度相关字段
 	Priority                int        `json:"priority"`                          // 渠道优先级（数字越小优先级越高，默认按索引）
 	Status                  string     `json:"status"`                            // 渠道状态：active（正常）, suspended（暂停）, disabled（备用池）
@@ -112,7 +116,9 @@ type UpstreamUpdate struct {
 	ProxyMode          *string             `json:"proxyMode"`
 	ProxyURL           *string             `json:"proxyUrl"`
 	ModelMapping       map[string][]string `json:"modelMapping"` // 支持一对多映射
-	DefaultModel       *string             `json:"defaultModel"`
+	// ModelMappingChannels 与 ModelMapping 同步更新：传入即整体替换，并按新的 ModelMapping 修剪失效条目。
+	ModelMappingChannels map[string]map[string]string `json:"modelMappingChannels"`
+	DefaultModel         *string                      `json:"defaultModel"`
 	// 多渠道调度相关字段
 	Priority                *int       `json:"priority"`
 	Status                  *string    `json:"status"`

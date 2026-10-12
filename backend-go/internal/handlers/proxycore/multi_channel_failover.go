@@ -23,6 +23,8 @@ type MultiChannelAttemptResult struct {
 	// 不得从 SuccessKey / LastError 推断。Unset 时外壳跳过记账并记录警告
 	// （重复或缺失记账都是契约错误）。
 	Health channelHealthResult
+	// AbortFailover 表示本渠道失败后不得转入下一渠道，外壳立即按 LastError 结束请求。
+	AbortFailover bool
 }
 
 // TrySelectedChannelFunc 尝试一次选中的渠道，返回该渠道的尝试结果。
@@ -167,6 +169,13 @@ func HandleMultiChannelFailover(
 		if selection.Permit != nil {
 			selection.Permit.Release()
 			selection.Permit = nil
+		}
+
+		if result.AbortFailover {
+			// 显式映射目标不可用且未启用 Fuzzy：不转入下一渠道，直接按该错误结束。
+			log.Printf("[%s-Error] 渠道 [%d] 的映射目标不可用且未启用 Fuzzy 模式，终止渠道故障转移", apiType, channelIndex)
+			handleAllFailed(c, result.FailoverError, result.LastError)
+			return
 		}
 
 		if result.FailoverError != nil {

@@ -92,6 +92,9 @@ type UpstreamAttemptResult struct {
 	// Health 是本渠道的最终健康结果（R2-a）。渠道级熔断记账只消费该字段，
 	// 不得从 SuccessKey / LastError 推断。
 	Health channelHealthResult
+	// AbortFailover 表示本次失败不允许转入正常调度的下一渠道，外壳应立即按
+	// LastError 结束请求（例如映射指定的目标渠道不可用且未启用 Fuzzy 模式）。
+	AbortFailover bool
 }
 
 func newUpstreamAttemptResult(
@@ -117,6 +120,12 @@ func newUpstreamAttemptResult(
 // 构造（Health 留 Unset），语义为"该结果不携带渠道健康结论"。
 func (r UpstreamAttemptResult) withHealth(h channelHealthResult) UpstreamAttemptResult {
 	r.Health = h
+	return r
+}
+
+// withAbortFailover 返回标记为"不再故障转移"的副本（见 UpstreamAttemptResult.AbortFailover）。
+func (r UpstreamAttemptResult) withAbortFailover() UpstreamAttemptResult {
+	r.AbortFailover = true
 	return r
 }
 

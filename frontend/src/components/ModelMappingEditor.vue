@@ -12,6 +12,9 @@
       <div class="text-body-2 text-medium-emphasis mb-4">
         {{ hint }}
         <div class="text-caption mt-1">目标模型按列表顺序尝试；拖动左侧手柄可调整优先级。</div>
+        <div class="text-caption mt-1">
+          可为每个目标指定目标渠道（同协议）：命中后改走该渠道的指定模型，不再经过本渠道；未指定则走本渠道。
+        </div>
       </div>
 
       <!-- 现有映射列表 -->
@@ -48,12 +51,16 @@
                     <v-chip
                       size="x-small"
                       closable
+                      :color="isChannelUnavailable(source, target) ? 'warning' : undefined"
                       @click:close.stop="removeTarget(source, target)"
                     >
                       <v-icon size="12" class="mapping-target-drag-handle mr-1" title="拖拽调整优先级">
                         mdi-drag-vertical
                       </v-icon>
                       <code class="text-caption">{{ target }}</code>
+                      <span v-if="getTargetChannelId(source, target)" class="text-caption ml-1">
+                        @ {{ getTargetChannelLabel(source, target) }}
+                      </span>
                     </v-chip>
                   </template>
                 </draggable>
@@ -91,12 +98,27 @@
           @keyup.enter="addMapping"
         />
         <v-icon color="primary">mdi-arrow-right</v-icon>
+        <v-select
+          v-model="localChannelId"
+          label="目标渠道（可选）"
+          :items="targetChannelOptions"
+          item-title="title"
+          item-value="value"
+          variant="outlined"
+          density="comfortable"
+          hide-details
+          class="flex-1-1"
+          placeholder="沿用本渠道"
+          clearable
+          no-data-text="没有可用的同协议渠道"
+        />
+        <v-icon color="primary">mdi-arrow-right</v-icon>
         <v-combobox
           v-model="localTarget"
           label="目标模型名"
           :placeholder="targetPlaceholder"
           :items="availableTargetOptions"
-          :loading="fetchingModels"
+          :loading="activeTargetStatus?.loading ?? false"
           variant="outlined"
           density="comfortable"
           hide-details
@@ -114,8 +136,8 @@
           添加
         </v-btn>
       </div>
-      <div v-if="fetchError" class="text-error text-caption mt-2">
-        {{ fetchError }}
+      <div v-if="targetError" class="text-error text-caption mt-2">
+        {{ targetError }}
       </div>
       <div v-else-if="localSource && existingTargets.length" class="text-caption text-medium-emphasis mt-2">
         当前源模型已配置 {{ existingTargets.length }} 个目标，可继续追加。
@@ -125,26 +147,46 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import draggable from 'vuedraggable'
 
+type Option = { title: string; value: string }
+
 const props = defineProps<{
+  /** 源模型 -> 目标模型列表 */
   modelValue: Record<string, string[]>
+  /** 源模型 -> 目标模型 -> 目标渠道 ID（未登记即沿用本渠道） */
+  channelValue: Record<string, Record<string, string>>
   hint: string
-  sourceOptions: Array<{ title: string; value: string }>
-  targetOptions: Array<{ title: string; value: string }>
+  sourceOptions: Option[]
+  /** 目标模型候选：键为目标渠道 ID，空串表示本渠道 */
+  targetOptionsByChannel: Record<string, Option[]>
+  /** 目标渠道候选（同协议、可用） */
+  targetChannelOptions: Option[]
+  /** 目标模型候选的加载状态与错误：键同 targetOptionsByChannel */
+  targetStatusByChannel: Record<string, { loading: boolean; error: string }>
   targetPlaceholder: string
 }>()
 
 const emit = defineEmits<{
   'update:modelValue': [value: Record<string, string[]>]
-  'fetch-models': [source: string]
+  'update:channelValue': [value: Record<string, Record<string, string>>]
+  /** 目标模型下拉获得焦点；channelId 为空串表示本渠道 */
+  'fetch-models': [channelId: string]
 }>()
 
 const localSource = ref('')
 const localTarget = ref('')
-const fetchingModels = ref(false)
-const fetchError = ref('')
+const localChannelId = ref<string | null>(null)
+
+const selectedChannelId = computed(() => localChannelId.value ?? '')
+
+const channelNameById = computed(() => new Map(props.targetChannelOptions.map(option => [option.value, option.title])))
+
+const activeTargetStatus = computed(() => props.targetStatusByChannel[selectedChannelId.value])
+
+// 目标渠道资源错误只在选择了具体渠道时展示；本渠道错误由表单上方的 Base URL 区域负责展示
+const targetError = computed(() => (selectedChannelId.value ? activeTargetStatus.value?.error ?? '' : ''))
 
 const existingTargets = computed(() => {
   const src = getStringValue(localSource.value)
@@ -154,7 +196,8 @@ const existingTargets = computed(() => {
 
 const availableTargetOptions = computed(() => {
   const existing = new Set(existingTargets.value)
-  return props.targetOptions.filter(opt => !existing.has(opt.value))
+  const candidates = props.targetOptionsByChannel[selectedChannelId.value] ?? []
+  return candidates.filter(opt => !existing.has(opt.value))
 })
 
 const isValid = computed(() => {
@@ -162,6 +205,11 @@ const isValid = computed(() => {
   const tgt = getStringValue(localTarget.value)
   if (!src || !tgt) return false
   return !existingTargets.value.includes(tgt)
+})
+
+// 切换目标渠道后，已选目标模型属于旧渠道的候选，必须清空
+watch(localChannelId, () => {
+  localTarget.value = ''
 })
 
 const getStringValue = (val: unknown): string => {
@@ -176,11 +224,44 @@ const getStringValue = (val: unknown): string => {
 
 const getTargetKey = (target: string): string => target
 
+const getTargetChannelId = (source: string, target: string): string => props.channelValue[source]?.[target] ?? ''
+
+// 目标渠道不在候选列表中（已禁用、熔断 Open、被删除或不同协议）时视为不可用
+const isChannelUnavailable = (source: string, target: string): boolean => {
+  const channelId = getTargetChannelId(source, target)
+  return !!channelId && !channelNameById.value.has(channelId)
+}
+
+const getTargetChannelLabel = (source: string, target: string): string => {
+  const channelId = getTargetChannelId(source, target)
+  if (!channelId) return ''
+  return channelNameById.value.get(channelId) ?? '不可用渠道'
+}
+
 const fetchModels = () => {
-  const src = getStringValue(localSource.value)
-  if (src) {
-    emit('fetch-models', src)
+  emit('fetch-models', selectedChannelId.value)
+}
+
+/** 返回登记了目标渠道的副本：channelId 为空时移除该目标的登记，并剪掉空的源条目。 */
+const withTargetChannel = (
+  channels: Record<string, Record<string, string>>,
+  source: string,
+  target: string,
+  channelId: string
+): Record<string, Record<string, string>> => {
+  const updated = { ...channels }
+  const sourceChannels = { ...(updated[source] || {}) }
+  if (channelId) {
+    sourceChannels[target] = channelId
+  } else {
+    delete sourceChannels[target]
   }
+  if (Object.keys(sourceChannels).length > 0) {
+    updated[source] = sourceChannels
+  } else {
+    delete updated[source]
+  }
+  return updated
 }
 
 const addMapping = () => {
@@ -195,6 +276,9 @@ const addMapping = () => {
   }
   updated[src] = [...updated[src], tgt]
   emit('update:modelValue', updated)
+  if (selectedChannelId.value) {
+    emit('update:channelValue', withTargetChannel(props.channelValue, src, tgt, selectedChannelId.value))
+  }
   localTarget.value = ''
 }
 
@@ -206,6 +290,7 @@ const removeTarget = (source: string, target: string) => {
     delete updated[source]
   }
   emit('update:modelValue', updated)
+  emit('update:channelValue', withTargetChannel(props.channelValue, source, target, ''))
 }
 
 const reorderTargets = (source: string, targets: string[]) => {
@@ -217,10 +302,10 @@ const removeSource = (source: string) => {
   const updated = { ...props.modelValue }
   delete updated[source]
   emit('update:modelValue', updated)
+  const updatedChannels = { ...props.channelValue }
+  delete updatedChannels[source]
+  emit('update:channelValue', updatedChannels)
 }
-
-// Expose fetch state for parent control
-defineExpose({ fetchingModels, fetchError })
 </script>
 
 <style scoped>

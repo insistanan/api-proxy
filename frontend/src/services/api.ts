@@ -45,6 +45,7 @@ import type {
   LogAPIType,
   LogDatesResponse,
   MetricsHistoryResponse,
+  MappingTargetChannelsResponse,
   ModelsResponse,
   OpenCodeConfig,
   PiAgentDiscoverResult,
@@ -179,7 +180,13 @@ class ApiService {
       getChannelKeyMetricsHistory: (channelId, duration = '6h') =>
         this.request(`${p}/channels/${channelId}/keys/metrics/history?duration=${duration}`),
       getGlobalStats: (duration = '24h') => this.request(`${p}/global/stats/history?duration=${duration}`),
-      getChannelDashboard: () => this.request(`${p}/channels/dashboard`)
+      getChannelDashboard: () => this.request(`${p}/channels/dashboard`),
+      listMappingTargets: excludeId => {
+        const query = excludeId ? `?excludeId=${encodeURIComponent(excludeId)}` : ''
+        return this.request(`${p}/mapping-targets${query}`)
+      },
+      listMappingTargetModels: channelId =>
+        this.request(`${p}/mapping-targets/${encodeURIComponent(channelId)}/models`)
     }
   }
 
@@ -1148,6 +1155,8 @@ export interface ChannelApi {
   ): Promise<ChannelKeyMetricsHistoryResponse>
   getGlobalStats(duration?: '1h' | '6h' | '24h' | 'today'): Promise<GlobalStatsHistoryResponse>
   getChannelDashboard(): Promise<ChannelDashboardResponse>
+  listMappingTargets(excludeId?: string): Promise<MappingTargetChannelsResponse>
+  listMappingTargetModels(channelId: string): Promise<ModelsResponse>
 }
 
 /**

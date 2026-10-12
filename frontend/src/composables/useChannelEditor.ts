@@ -30,6 +30,8 @@ export type ChannelFormState = {
   description: string
   apiKeys: string[]
   modelMapping: Record<string, string[]>
+  /** 模型映射的目标渠道登记：源模型 -> 目标模型 -> 目标渠道 ID；未登记即沿用本渠道。 */
+  modelMappingChannels: Record<string, Record<string, string>>
   defaultModel: string
 }
 
@@ -59,6 +61,7 @@ export function defaultChannelForm(channelType: string): ChannelFormState {
     description: '',
     apiKeys: [],
     modelMapping: {},
+    modelMappingChannels: {},
     defaultModel: ''
   }
 }
@@ -72,6 +75,33 @@ export function cloneModelMapping(mapping?: Record<string, string[]>): Record<st
     const targets = [...new Set(rawTargets.map(target => target.trim()).filter(Boolean))]
     if (targets.length > 0) {
       cloned[source] = targets
+    }
+  }
+  return cloned
+}
+
+/**
+ * 目标渠道登记深拷贝，并按已清理的模型映射剪枝：
+ * 只保留 mapping 中仍存在的 源→目标 对，且渠道 ID 非空。
+ * 调用方必须先对 mapping 调用 cloneModelMapping，保证两者一致。
+ */
+export function cloneModelMappingChannels(
+  mapping: Record<string, string[]>,
+  channels?: Record<string, Record<string, string>>
+): Record<string, Record<string, string>> {
+  const cloned: Record<string, Record<string, string>> = {}
+  for (const [source, targets] of Object.entries(mapping)) {
+    const sourceChannels = channels?.[source]
+    if (!sourceChannels) continue
+    const kept: Record<string, string> = {}
+    for (const target of targets) {
+      const channelId = sourceChannels[target]?.trim()
+      if (channelId) {
+        kept[target] = channelId
+      }
+    }
+    if (Object.keys(kept).length > 0) {
+      cloned[source] = kept
     }
   }
   return cloned
@@ -136,6 +166,7 @@ export function useChannelEditor(channelType: string) {
     form.description = channel.description || ''
     form.apiKeys = [...channel.apiKeys]
     form.modelMapping = cloneModelMapping(channel.modelMapping)
+    form.modelMappingChannels = cloneModelMappingChannels(form.modelMapping, channel.modelMappingChannels)
     form.defaultModel = channel.defaultModel || ''
   }
 

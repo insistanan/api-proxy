@@ -375,8 +375,14 @@ func handleSingleChannelProxy(
 		return
 	}
 
-	// 渠道整体失败（可重试错误耗尽候选）：显式按失败记账。
-	recordChannelHealth(channelScheduler, spec.Kind, channelIndex, channelHealthFailure, true, spec.LogName, singlePermit)
+	// 渠道整体失败（可重试错误耗尽候选）：按映射路径给出的健康结论记账。
+	// 单渠道的映射目标可能被转交给其他渠道，此时源渠道结论为中性（见 mappingSourceHealth）；
+	// Unset 仅在无尝试结论时出现，保持原先按失败记账的语义。
+	singleHealth := result.Health
+	if singleHealth == channelHealthUnset {
+		singleHealth = channelHealthFailure
+	}
+	recordChannelHealth(channelScheduler, spec.Kind, channelIndex, singleHealth, true, spec.LogName, singlePermit)
 	log.Printf("[%s-Error] 所有API密钥都失败了", spec.LogName)
 	MarkConversationFailure(channelScheduler, conversationID, spec.Kind, result.LastError)
 	if spec.HandleAllKeysFailed != nil {
@@ -440,6 +446,7 @@ func handleMultiChannelProxy(
 				Usage:             result.Usage,
 				LastError:         result.LastError,
 				Health:            result.Health,
+				AbortFailover:     result.AbortFailover,
 			}
 		},
 		func(selection *scheduler.SelectionResult, result MultiChannelAttemptResult) {

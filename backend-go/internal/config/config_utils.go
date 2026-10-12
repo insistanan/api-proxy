@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"sort"
 	"strings"
 	"time"
@@ -98,23 +99,32 @@ func IsCommittedError(err error) bool {
 // 模型名按客户端发来的原样参与匹配，不对任何形式的后缀做特殊处理：
 // 需要区分同一别名的不同变体时，把完整名字（含变体标记）直接配成 ModelMapping 的键。
 func redirectModelList(model string, upstream *UpstreamConfig) []string {
+	_, targets := matchModelMapping(model, upstream)
+	return targets
+}
+
+// matchModelMapping 按模型重定向规则匹配请求模型，返回命中的源模型键与目标模型列表。
+// 未命中任何规则时源模型键为空串，目标列表为原模型（空模型返回 nil）。
+// 与 ModelMappingChannels 的查找共用同一套匹配逻辑，保证"目标模型"与"目标渠道"
+// 始终来自同一条规则。
+func matchModelMapping(model string, upstream *UpstreamConfig) (string, []string) {
 	model = strings.TrimSpace(model)
 	// "*" 是任意源模型规则：配置后所有模型请求都使用它的目标模型列表。
 	// 必须排在空模型早退之前——内部调用自动模式（空模型）下，只配 "*" 兜底
 	// 映射的透传渠道也要能解析出模型，否则会被误判"解析不出模型"而整体跳过。
 	if mapped, ok := upstream.ModelMapping["*"]; ok && len(mapped) > 0 {
-		return mapped
+		return "*", mapped
 	}
 	if model == "" {
-		return nil
+		return "", nil
 	}
-	if upstream.ModelMapping == nil || len(upstream.ModelMapping) == 0 {
-		return []string{model}
+	if len(upstream.ModelMapping) == 0 {
+		return "", []string{model}
 	}
 
 	// 1. 精确匹配模型名
 	if mapped, ok := upstream.ModelMapping[model]; ok && len(mapped) > 0 {
-		return mapped
+		return model, mapped
 	}
 
 	// 2. 模糊匹配：按源模型长度从长到短排序，确保最长匹配优先
@@ -138,12 +148,34 @@ func redirectModelList(model string, upstream *UpstreamConfig) []string {
 	for _, m := range mappings {
 		if strings.Contains(model, m.source) || strings.Contains(m.source, model) {
 			if len(m.target) > 0 {
-				return m.target
+				return m.source, m.target
 			}
 		}
 	}
 
-	return []string{model}
+	return "", []string{model}
+}
+
+// ResolveUpstreamModelTargets 解析模型的目标列表，并为每个目标给出显式指定的目标渠道稳定 ID。
+// 返回的两个切片等长：channelIDs[i] 为空串表示该目标沿用本渠道。
+// DefaultModel 生效时整体覆盖映射，此时不存在按目标指定渠道的语义，全部返回空串。
+func ResolveUpstreamModelTargets(model string, upstream *UpstreamConfig) ([]string, []string) {
+	if upstream == nil {
+		return []string{strings.TrimSpace(model)}, []string{""}
+	}
+	if strings.TrimSpace(upstream.DefaultModel) != "" {
+		return []string{strings.TrimSpace(upstream.DefaultModel)}, []string{""}
+	}
+	source, targets := matchModelMapping(model, upstream)
+	channelIDs := make([]string, len(targets))
+	if source == "" || len(upstream.ModelMappingChannels) == 0 {
+		return targets, channelIDs
+	}
+	perSource := upstream.ModelMappingChannels[source]
+	for i, target := range targets {
+		channelIDs[i] = perSource[target]
+	}
+	return targets, channelIDs
 }
 
 // redirectModel 模型重定向（返回第一个匹配的模型）
@@ -435,6 +467,12 @@ func (u *UpstreamConfig) Clone() *UpstreamConfig {
 		for k, v := range u.ModelMapping {
 			cloned.ModelMapping[k] = make([]string, len(v))
 			copy(cloned.ModelMapping[k], v)
+		}
+	}
+	if u.ModelMappingChannels != nil {
+		cloned.ModelMappingChannels = make(map[string]map[string]string, len(u.ModelMappingChannels))
+		for source, targets := range u.ModelMappingChannels {
+			cloned.ModelMappingChannels[source] = maps.Clone(targets)
 		}
 	}
 	if u.PromotionUntil != nil {
