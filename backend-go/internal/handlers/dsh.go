@@ -43,24 +43,24 @@ type DSHDefaultModel struct {
 
 // dshSettingsResponse 是 GET /settings/dsh 的响应。
 type dshSettingsResponse struct {
-	DSHHome          string                          `json:"dshHome"`
-	Path             string                          `json:"path"`
-	CredentialsPath  string                          `json:"credentialsPath"`
-	Exists           bool                            `json:"exists"`
-	Writable         bool                            `json:"writable"`
-	Providers        map[string]DSHProvider          `json:"providers"`
-	ProviderKeys     []string                        `json:"providerKeys"` // 有序列表，保持文件顺序
-	Credentials      map[string]DSHCredentialStatus  `json:"credentials"` // 按 provider key 返回脱敏状态
-	DefaultModel     *DSHDefaultModel                `json:"defaultModel"`
-	Theme            string                          `json:"theme"`
+	DSHHome         string                         `json:"dshHome"`
+	Path            string                         `json:"path"`
+	CredentialsPath string                         `json:"credentialsPath"`
+	Exists          bool                           `json:"exists"`
+	Writable        bool                           `json:"writable"`
+	Providers       map[string]DSHProvider         `json:"providers"`
+	ProviderKeys    []string                       `json:"providerKeys"` // 有序列表，保持文件顺序
+	Credentials     map[string]DSHCredentialStatus `json:"credentials"`  // 按 provider key 返回脱敏状态
+	DefaultModel    *DSHDefaultModel               `json:"defaultModel"`
+	Theme           string                         `json:"theme"`
 }
 
 // saveDSHSettingsRequest 是 PUT /settings/dsh 的请求体。
 type saveDSHSettingsRequest struct {
-	Providers         map[string]DSHProvider                `json:"providers"`
-	ProviderKeys      []string                              `json:"providerKeys"` // 可选；为空时用 map 随机序
-	DefaultModel      *DSHDefaultModel                      `json:"defaultModel"`
-	CredentialUpdates map[string]dshCredentialUpdate        `json:"credentialUpdates,omitempty"` // 按 provider key 的 keep/replace/remove
+	Providers         map[string]DSHProvider         `json:"providers"`
+	ProviderKeys      []string                       `json:"providerKeys"` // 可选；为空时用 map 随机序
+	DefaultModel      *DSHDefaultModel               `json:"defaultModel"`
+	CredentialUpdates map[string]dshCredentialUpdate `json:"credentialUpdates,omitempty"` // 按 provider key 的 keep/replace/remove
 }
 
 // ---- 路径解析 ----

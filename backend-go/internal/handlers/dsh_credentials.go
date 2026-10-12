@@ -21,10 +21,10 @@ import (
 )
 
 const (
-	dshCredentialsFileName = ".credentials.yaml"
-	dshCredentialActionKeep = "keep"
+	dshCredentialsFileName     = ".credentials.yaml"
+	dshCredentialActionKeep    = "keep"
 	dshCredentialActionReplace = "replace"
-	dshCredentialActionRemove = "remove"
+	dshCredentialActionRemove  = "remove"
 )
 
 var dshCredentialRefPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
