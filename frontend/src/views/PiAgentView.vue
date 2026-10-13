@@ -92,7 +92,6 @@
                 <v-tooltip text="连通性测试"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-test-tube" size="small" variant="text" aria-label="测试供应商连通性" :disabled="!isExistingProvider || discovering" :loading="testing" @click="testProvider" /></template></v-tooltip>
                 <v-tooltip text="发现 OpenAI 兼容模型"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-magnify" size="small" variant="text" aria-label="发现 OpenAI 兼容模型" :disabled="!isExistingProvider || testing || (Boolean(selectedProvider.api) && !['openai-completions', 'openai-responses'].includes(selectedProvider.api))" :loading="discovering" @click="discoverModels" /></template></v-tooltip>
                 <v-btn color="error" variant="text" size="small" prepend-icon="mdi-delete" :disabled="!isExistingProvider" @click="removeProvider(selectedProvider.id)">删除</v-btn>
-                <v-btn color="primary" size="small" prepend-icon="mdi-content-save" :loading="savingProvider" @click="saveSelectedProvider">保存</v-btn>
               </div>
             </div>
             <v-divider />
@@ -166,7 +165,7 @@
               </div>
 
               <div v-if="selectedProvider.models.length === 0" class="empty-models text-body-2 text-medium-emphasis py-6 text-center">添加至少一个模型后，它才会出现在 pi-agent 的模型列表中。</div>
-              <v-expansion-panels v-else variant="accordion" class="model-panels">
+              <v-expansion-panels v-else multiple variant="accordion" class="model-panels">
                 <v-expansion-panel v-for="(model, index) in selectedProvider.models" :key="model.localId">
                   <template #title>
                     <div class="d-flex align-center ga-2 overflow-hidden">
@@ -193,9 +192,23 @@
                       </v-col>
                     </v-row>
 
-                    <!-- 高级：费用 / 思考等级映射 / 上下文 / JSON -->
+                    <!-- 思考等级映射：常驻展示（不放进折叠面板），仅思考能力启用时显示，与 writer 的 reasoning === true 分支一致 -->
+                    <div v-if="model.reasoning === true" class="mt-3 mb-1">
+                      <div class="text-body-2 font-weight-medium">思考等级</div>
+                      <div class="text-caption text-medium-emphasis">勾选 = 模型支持该等级；右侧可填上游实际取值，留空即等级名；未勾选 = 不支持（pi 中隐藏）</div>
+                    </div>
+                    <v-row v-if="model.reasoning === true">
+                      <v-col v-for="tl in thinkingLevelsList" :key="tl.key" cols="6" sm="4" md="3">
+                        <div class="d-flex align-center ga-1">
+                          <v-checkbox v-model="model.tlEnabled[tl.key]" :label="tl.label" density="compact" hide-details class="tl-checkbox" />
+                          <v-text-field v-model="model.tlValue[tl.key]" :disabled="!model.tlEnabled[tl.key]" variant="outlined" density="compact" :placeholder="tl.key" hide-details style="max-width: 100px;" />
+                        </div>
+                      </v-col>
+                    </v-row>
+
+                    <!-- 高级：上下文窗口 / 费用 / JSON -->
                     <v-expansion-panels variant="accordion" class="mt-2">
-                      <v-expansion-panel title="高级（费用 / 思考等级映射 / 上下文窗口 / JSON）">
+                      <v-expansion-panel title="高级（上下文窗口 / 费用 / JSON）">
                         <v-expansion-panel-text>
                           <v-row>
                             <v-col cols="12" sm="6">
@@ -203,19 +216,6 @@
                             </v-col>
                             <v-col cols="12" sm="6">
                               <v-text-field v-model.number="model.maxTokens" label="最大输出 Token" type="number" min="0" variant="outlined" density="comfortable" />
-                            </v-col>
-                          </v-row>
-
-                          <div class="mt-3 mb-1">
-                            <div class="text-body-2 font-weight-medium">思考等级映射（token 预算）</div>
-                            <div class="text-caption text-medium-emphasis">关闭/不支持的等级留空，开启的填写 token 预算数</div>
-                          </div>
-                          <v-row>
-                            <v-col v-for="tl in thinkingLevelsList" :key="tl.key" cols="6" sm="4" md="3">
-                              <div class="d-flex align-center ga-1">
-                                <v-checkbox v-model="model.tlEnabled[tl.key]" :label="tl.label" density="compact" hide-details class="tl-checkbox" />
-                                <v-text-field v-model="model.tlBudget[tl.key]" :disabled="!model.tlEnabled[tl.key]" variant="outlined" density="compact" type="number" min="0" placeholder="token" hide-details style="max-width: 100px;" />
-                              </div>
                             </v-col>
                           </v-row>
 
@@ -253,6 +253,11 @@
                 </v-expansion-panel>
               </v-expansion-panels>
             </v-card-text>
+
+            <!-- 底部保存条：sticky 常驻视口底部，长表单滚动到底也能直接保存 -->
+            <div class="provider-save-bar">
+              <v-btn color="primary" prepend-icon="mdi-content-save" :loading="savingProvider" @click="saveSelectedProvider">保存</v-btn>
+            </div>
           </v-card>
 
           <v-card v-else elevation="0" class="empty-editor">
@@ -278,7 +283,7 @@ import AgentPromptCard from '@/components/AgentPromptCard.vue'
 import ToolInstallBanner from '@/components/ToolInstallBanner.vue'
 import { api, type ApiError, type PiAgentProvider, type PiAgentStatus, type ApiTab } from '@/services/api'
 import { useProxyProtocolPick, defaultQuickPickTypeOptions } from '@/composables/useChannelQuickPick'
-import { filterProxyModelsByKind, importProxyModels, buildPiAgentModel } from '@/composables/useChannelModelImport'
+import { importProxyModels, buildPiAgentModel } from '@/composables/useChannelModelImport'
 import { useAuthStore } from '@/stores/auth'
 
 const loading = ref(false)
@@ -300,7 +305,6 @@ const reasoningOptions = [
 ]
 
 const thinkingLevelsList = [
-  { key: 'off', label: '关闭' },
   { key: 'minimal', label: '最低' },
   { key: 'low', label: '低' },
   { key: 'medium', label: '中' },
@@ -343,7 +347,7 @@ interface EditableModel {
   costCacheRead: number | null
   costCacheWrite: number | null
   tlEnabled: Record<string, boolean>
-  tlBudget: Record<string, string>
+  tlValue: Record<string, string>
   inputTextEnabled: boolean
   inputImage: boolean
   headersText: string
@@ -406,8 +410,9 @@ const applyProtocol = async (type: ApiTab, defaultBaseUrl: Promise<string>) => {
   if (!provider) return
   // 自动切换协议
   provider.api = protocolForChannelType[type]
-  // Base URL 默认填本代理地址，可手动改
-  provider.baseUrl = await defaultBaseUrl
+  // Base URL 默认填本代理地址，可手动改；OpenAI 协议 SDK 不会自动补 /v1，需要显式带上
+  const proxyBaseUrl = (await defaultBaseUrl).replace(/\/$/, '')
+  provider.baseUrl = provider.api.startsWith('openai-') ? `${proxyBaseUrl}/v1` : proxyBaseUrl
   // 密钥填本代理访问 key（Web 鉴权与代理鉴权共用同一 key）
   const authStore = useAuthStore()
   if (authStore.apiKey) {
@@ -421,11 +426,12 @@ const { selectedType: quickPickType, defaultBaseUrl } = useProxyProtocolPick(app
 const toEditableModel = (m: Record<string, unknown>): EditableModel => {
   const tlMap = (m.thinkingLevelMap as Record<string, string | null>) ?? {}
   const tlEnabled: Record<string, boolean> = {}
-  const tlBudget: Record<string, string> = {}
+  const tlValue: Record<string, string> = {}
   for (const { key } of thinkingLevelsList) {
+    // pi 语义：缺省 = 默认支持；null = 不支持（隐藏）；字符串 = 上游实际取值
     const val = tlMap[key]
-    tlEnabled[key] = val !== undefined && val !== null
-    tlBudget[key] = val ?? ''
+    tlEnabled[key] = val !== null
+    tlValue[key] = typeof val === 'string' ? val : ''
   }
   const cost = m.cost as Record<string, number> | undefined
   const input = (m.input as string[]) ?? []
@@ -442,7 +448,7 @@ const toEditableModel = (m: Record<string, unknown>): EditableModel => {
     costOutput: cost?.output ?? null,
     costCacheRead: cost?.cacheRead ?? null,
     costCacheWrite: cost?.cacheWrite ?? null,
-    tlEnabled, tlBudget,
+    tlEnabled, tlValue,
     inputTextEnabled: input.includes('text'),
     inputImage: input.includes('image'),
     headersText: toJSON(m.headers),
@@ -484,11 +490,14 @@ const toModelObj = (m: EditableModel): Record<string, unknown> => {
   if (m.maxTokens !== null) obj.maxTokens = m.maxTokens
   const cost = { input: m.costInput, output: m.costOutput, cacheRead: m.costCacheRead, cacheWrite: m.costCacheWrite }
   if (Object.values(cost).some(v => v !== null && v !== 0)) obj.cost = cost
-  const tlMap: Record<string, string | null> = {}
-  for (const { key } of thinkingLevelsList) {
-    if (m.tlEnabled[key]) tlMap[key] = m.tlBudget[key] || null
+  // 仅 reasoning=true 时写映射：勾选 = 支持（留空取等级名），未勾选 = null（pi 中隐藏该等级）
+  if (m.reasoning === true) {
+    const tlMap: Record<string, string | null> = {}
+    for (const { key } of thinkingLevelsList) {
+      tlMap[key] = m.tlEnabled[key] ? (m.tlValue[key].trim() || key) : null
+    }
+    obj.thinkingLevelMap = tlMap
   }
-  if (Object.keys(tlMap).length) obj.thinkingLevelMap = tlMap
   const input: string[] = []
   if (m.inputTextEnabled) input.push('text')
   if (m.inputImage) input.push('image')
@@ -530,9 +539,9 @@ const addProvider = () => {
 
 const makeDefaultTL = () => {
   const tlEnabled: Record<string, boolean> = {}
-  const tlBudget: Record<string, string> = {}
-  for (const { key } of thinkingLevelsList) { tlEnabled[key] = false; tlBudget[key] = '' }
-  return { tlEnabled, tlBudget }
+  const tlValue: Record<string, string> = {}
+  for (const { key } of thinkingLevelsList) { tlEnabled[key] = false; tlValue[key] = '' }
+  return { tlEnabled, tlValue }
 }
 
 const addModel = () => {
@@ -545,15 +554,15 @@ const addModel = () => {
   })
 }
 
-// 一键导入本代理模型（按所选协议分组，导入即替换）
+// 一键导入本代理模型：导入本代理暴露的全部分组，不按协议过滤（分组名与协议无关，任一协议都可能配置同名分组）；导入即替换
 const importProxyModelsToProvider = async () => {
   const provider = selectedProvider.value
   if (!provider || !quickPickType.value) return
   try {
     const response = await api.getProxyModels()
-    const modelIds = filterProxyModelsByKind(response.data, quickPickType.value)
+    const modelIds = response.data.map(entry => entry.id.trim()).filter(Boolean)
     if (modelIds.length === 0) {
-      notice.value = { visible: true, type: 'error', message: `本代理 ${quickPickType.value} 协议分组下暂无模型，请先在渠道管理中配置分组` }
+      notice.value = { visible: true, type: 'error', message: '本代理暂无可导入的模型，请先在渠道管理中配置分组' }
       return
     }
     const count = importProxyModels(quickPickType.value, modelIds, buildPiAgentModel, (models) => {
@@ -571,16 +580,16 @@ const importProxyModelsToProvider = async () => {
         costCacheRead: null,
         costCacheWrite: null,
         ...makeDefaultTL(),
-        // 思考等级映射默认开启 medium/high/xhigh/max
-        tlEnabled: { off: false, minimal: false, low: false, medium: true, high: true, xhigh: true, max: true },
-        tlBudget: { off: '', minimal: '', low: '', medium: '', high: '', xhigh: '', max: '' },
+        // 思考等级映射默认支持 medium/high/xhigh/max（取值即等级名，同 DSH 默认）
+        tlEnabled: { minimal: false, low: false, medium: true, high: true, xhigh: true, max: true },
+        tlValue: { minimal: '', low: '', medium: '', high: '', xhigh: '', max: '' },
         inputTextEnabled: m.input.includes('text'),
         inputImage: m.input.includes('image'),
         headersText: '',
         compatText: ''
       }))
     })
-    notice.value = { visible: true, type: 'success', message: `已导入本代理 ${quickPickType.value} 分组的 ${count} 个模型（已替换原有模型）` }
+    notice.value = { visible: true, type: 'success', message: `已导入本代理全部分组的 ${count} 个模型（已替换原有模型）` }
   } catch (importError) {
     handleApiError(importError, '获取本代理模型列表失败')
   }
@@ -774,4 +783,20 @@ onMounted(() => loadAll())
 
 <style scoped>
 .mono-text { font-family: 'JetBrains Mono', 'Cascadia Code', monospace; }
+
+/* v-card 默认 overflow:hidden 会让 sticky 失效；clip 不建立滚动容器，sticky 才能相对视口生效，圆角裁切效果不变 */
+.provider-editor-card {
+  overflow: clip;
+}
+
+.provider-save-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 20px;
+  background: rgb(var(--v-theme-surface));
+  border-top: 1px solid rgba(var(--v-theme-outline), 0.4);
+}
 </style>
