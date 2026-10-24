@@ -4,6 +4,7 @@ package proxycore
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/BenedictKing/api-proxy/internal/config"
 	"github.com/BenedictKing/api-proxy/internal/metrics"
@@ -42,6 +43,7 @@ type UpstreamAttempt struct {
 	URLResults         []urlhealth.URLLatencyResult
 	RequestBody        []byte
 	IsStream           bool
+	RequestTimeout     time.Duration
 	NextAPIKey         NextAPIKeyFunc
 	BuildRequest       BuildRequestFunc
 	DeprioritizeKey    DeprioritizeKeyFunc

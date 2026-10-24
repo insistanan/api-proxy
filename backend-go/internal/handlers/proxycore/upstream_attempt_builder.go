@@ -8,6 +8,8 @@
 package proxycore
 
 import (
+	"time"
+
 	"github.com/BenedictKing/api-proxy/internal/config"
 	"github.com/BenedictKing/api-proxy/internal/scheduler"
 	"github.com/BenedictKing/api-proxy/internal/urlhealth"
@@ -47,6 +49,7 @@ func NewAttemptBuilder(
 		AllowModelFailover: cfgManager.GetFuzzyModeEnabled(),
 		RequestBody:        requestBody,
 		IsStream:           isStream,
+		RequestTimeout:     time.Duration(envCfg.RequestTimeout) * time.Millisecond,
 		LogContext: AttemptLogContext{
 			ChannelIndex:    channelIndex,
 			Model:           requestedModel,
@@ -55,6 +58,14 @@ func NewAttemptBuilder(
 			RequestLogStore: channelScheduler.GetRequestLogStore(),
 		},
 	}}
+}
+
+// WithRequestTimeout 设置本次尝试的普通请求整体超时；传入 0 时保留环境配置默认值。
+func (b *AttemptBuilder) WithRequestTimeout(timeout time.Duration) *AttemptBuilder {
+	if timeout > 0 {
+		b.attempt.RequestTimeout = timeout
+	}
+	return b
 }
 
 // WithURLResults 设置本次尝试的 BaseURL 候选序。

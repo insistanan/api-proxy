@@ -208,7 +208,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 			ratelimit.GetDefaultLimiter().WaitOrAcquire(c.Request.Context(), currentBaseURL, 0, 0, 0, 2*time.Second)
 
 			req = AttachRequestLogID(c, req)
-			resp, err := SendRequest(req, upstream, envCfg, isStream, apiType, proxyURL, a.Permit)
+			resp, err := SendRequest(req, upstream, envCfg, isStream, apiType, proxyURL, a.Permit, a.RequestTimeout)
 			if err != nil {
 				failoverState.lastError = err
 				// 区分客户端取消和真实渠道故障（统一口径）
@@ -713,7 +713,7 @@ func (a UpstreamAttempt) retrySameCandidateRequest(
 	}
 
 	req = AttachRequestLogID(a.Context, req)
-	resp, err := SendRequest(req, upstreamCopy, a.EnvConfig, a.IsStream, a.APIType, proxyURL, a.Permit)
+	resp, err := SendRequest(req, upstreamCopy, a.EnvConfig, a.IsStream, a.APIType, proxyURL, a.Permit, a.RequestTimeout)
 	if err != nil {
 		return compatibilityRetryResult{PreparationStage: "send_request", Err: err}
 	}

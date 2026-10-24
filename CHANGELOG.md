@@ -4,6 +4,16 @@
 
 ---
 
+## [v3.3.4] - 2026-10-25
+
+### 修复
+
+- **Images 流式透传** — 请求显式设置 `stream=true` 时，即使上游没有返回 `text/event-stream`，代理也会逐块刷新转发，避免 partial image 事件被缓冲
+- **Responses 原生生图字段保留** — 原生 Responses 生图请求继续按原始 JSON 局部改写模型，保留 `n`、`size`、`quality`、`background`、`partial_images`、`input_image_mask` 等官方工具参数
+- **生图请求超时** — Images 请求和 Responses `image_generation` 请求使用 10 分钟请求/流空闲窗口，减少长耗时生图被代理默认 5 分钟限制中止
+
+---
+
 ## [v3.3.3] - 2026-10-25
 
 ### 修复

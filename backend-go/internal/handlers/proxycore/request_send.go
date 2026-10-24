@@ -28,7 +28,7 @@ func ShouldForceIdentityEncoding(req *http.Request, isStream bool) bool {
 // apiType: 接口类型（Messages/Responses/Gemini），用于日志标签前缀
 // permit: 可选的选渠许可句柄（R2-b）。仅在"客户端创建失败、请求从未发出"
 // 这类本地错误时由本函数中性归还；请求已发出的健康结果由调用方收尾。
-func SendRequest(req *http.Request, upstream *config.UpstreamConfig, envCfg *config.EnvConfig, isStream bool, apiType string, proxyURL string, permit *scheduler.ChannelPermit) (*http.Response, error) {
+func SendRequest(req *http.Request, upstream *config.UpstreamConfig, envCfg *config.EnvConfig, isStream bool, apiType string, proxyURL string, permit *scheduler.ChannelPermit, requestTimeout time.Duration) (*http.Response, error) {
 	if upstream.InsecureSkipVerify && envCfg.EnableRequestLogs {
 		log.Printf("[%s-Request-TLS] 警告: 正在跳过对 %s 的TLS证书验证", apiType, req.URL.String())
 	}
@@ -39,12 +39,21 @@ func SendRequest(req *http.Request, upstream *config.UpstreamConfig, envCfg *con
 		logRequestDetails(req, envCfg, apiType)
 	}
 
+	if requestTimeout <= 0 {
+		requestTimeout = time.Duration(envCfg.RequestTimeout) * time.Millisecond
+	}
+	streamIdleTimeout := time.Duration(envCfg.StreamIdleTimeout) * time.Second
+	if isStream && requestTimeout > streamIdleTimeout {
+		// 生图流式请求使用同一套请求超时策略，避免 partial_images 间隔超过
+		// 默认 5 分钟时被空闲 reader 提前中止。
+		streamIdleTimeout = requestTimeout
+	}
 	resp, err := httpclient.Send(req, httpclient.SendOptions{
 		IsStream:           isStream,
-		Timeout:            time.Duration(envCfg.RequestTimeout) * time.Millisecond,
+		Timeout:            requestTimeout,
 		ProxyURL:           proxyURL,
 		InsecureSkipVerify: upstream.InsecureSkipVerify,
-		StreamIdleTimeout:  time.Duration(envCfg.StreamIdleTimeout) * time.Second,
+		StreamIdleTimeout:  streamIdleTimeout,
 		StreamLabel:        apiType,
 	})
 	if err != nil {

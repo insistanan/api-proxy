@@ -390,7 +390,7 @@ func tryCompactWithKey(
 		_ = req.Body.Close()
 		return false, &compactError{status: 500, body: []byte(`{"error":"上游代理配置无效"}`), shouldFailover: false}
 	}
-	resp, err := proxycore.SendRequest(req, upstream, envCfg, false, "Responses", proxyURL, nil)
+	resp, err := proxycore.SendRequest(req, upstream, envCfg, false, "Responses", proxyURL, nil, 0)
 	if err != nil {
 		return false, &compactError{status: 502, body: []byte(`{"error":"上游请求失败"}`), shouldFailover: true}
 	}

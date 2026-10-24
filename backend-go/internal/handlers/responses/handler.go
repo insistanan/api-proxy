@@ -70,6 +70,12 @@ func Handler(
 			req, _, err := provider.ConvertToProviderRequest(c, up, apiKey)
 			return req, err
 		},
+		RequestTimeoutOverride: func(body []byte) time.Duration {
+			if isResponsesImageGenerationRequest(body) {
+				return 10 * time.Minute
+			}
+			return 0
+		},
 		HandleSuccess: func(c *gin.Context, resp *http.Response, up *config.UpstreamConfig, apiKey string, body []byte, startTime time.Time) (*types.Usage, error) {
 			var responsesReq types.ResponsesRequest
 			if len(body) > 0 {

@@ -2,11 +2,18 @@ package images
 
 import (
 	"bytes"
+	"io"
 	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/BenedictKing/api-proxy/internal/config"
 	"github.com/BenedictKing/api-proxy/internal/utils"
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
 )
 
 // buildImagesForm 构造 /v1/images/edits 常见的表单请求：model + prompt + 图片文件。
@@ -135,4 +142,20 @@ func TestApplyImagesModelMappingKeepsBodyWhenModelUnchanged(t *testing.T) {
 	if mappedJSONContentType != "application/json" || !bytes.Equal(mappedJSON, jsonBody) {
 		t.Errorf("无需映射时 JSON 载荷必须原样透传: %s", mappedJSON)
 	}
+}
+
+func TestHandleImagesSuccessFlushesRequestedStreamWithoutSSEContentType(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"stream":true}`))
+	response := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(`{"type":"partial_image"}`)),
+	}
+
+	_, err := handleImagesSuccess(ctx, response, &config.EnvConfig{}, time.Now(), true)
+	require.NoError(t, err)
+	require.True(t, recorder.Flushed, "请求 stream=true 时即使上游 Content-Type 不是 SSE 也必须 flush")
+	require.Equal(t, `{"type":"partial_image"}`, recorder.Body.String())
 }

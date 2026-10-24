@@ -45,8 +45,15 @@ func Handler(
 		BuildUpstreamRequest: func(c *gin.Context, up *config.UpstreamConfig, apiKey string, body []byte) (*http.Request, error) {
 			return buildImagesUpstreamRequest(c, up, apiKey, endpoint, body)
 		},
+		RequestTimeoutOverride: func([]byte) time.Duration {
+			return 10 * time.Minute
+		},
 		HandleSuccess: func(c *gin.Context, resp *http.Response, up *config.UpstreamConfig, apiKey string, body []byte, startTime time.Time) (*types.Usage, error) {
-			return handleImagesSuccess(c, resp, envCfg, startTime, false)
+			// Images 的 stream 位于 JSON 或 multipart 字段中；解析阶段已经识别，
+			// 成功出口也必须把它传给转发器，否则上游返回非 SSE Content-Type
+			// 时会按普通 JSON 缓冲，客户端收不到实时事件。
+			requestMeta := extractImagesRequestMetadata(c.GetHeader("Content-Type"), body)
+			return handleImagesSuccess(c, resp, envCfg, startTime, requestMeta.Stream)
 		},
 	}
 	return func(c *gin.Context) {

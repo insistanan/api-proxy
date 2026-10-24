@@ -50,6 +50,10 @@ type ProtocolSpec struct {
 	// HandleSuccess 处理上游 2xx 响应（含流式与非流式分派）。
 	HandleSuccess func(c *gin.Context, resp *http.Response, up *config.UpstreamConfig, apiKey string, body []byte, startTime time.Time) (*types.Usage, error)
 
+	// RequestTimeoutOverride 可按原始请求覆盖普通上游请求超时。
+	// 生图任务通常比对话请求耗时更长，返回 0 表示沿用 EnvConfig.RequestTimeout。
+	RequestTimeoutOverride func(body []byte) time.Duration
+
 	// HandleAllFailed 可选：所有渠道都失败时的错误响应格式。
 	// 若为 nil，使用默认 HandleAllChannelsFailed（gin.H 格式）。
 	// Gemini 协议需要覆盖此选项以返回 types.GeminiError 格式。
@@ -251,6 +255,12 @@ func buildProtocolAttempt(
 		WithBuildRequest(func(c *gin.Context, upstreamCopy *config.UpstreamConfig, apiKey string) (*http.Request, error) {
 			return spec.BuildUpstreamRequest(c, upstreamCopy, apiKey, bodyBytes)
 		}).
+		WithRequestTimeout(func() time.Duration {
+			if spec.RequestTimeoutOverride == nil {
+				return 0
+			}
+			return spec.RequestTimeoutOverride(bodyBytes)
+		}()).
 		WithDeprioritizeKey(func(apiKey string) {
 			if err := cfgManager.MoveAPIKeyToBottomForKind(string(deprioritizeKind), channelIndex, apiKey); err != nil {
 				log.Printf("[%s-Key] 警告: 密钥降级失败: %v", spec.LogName, err)

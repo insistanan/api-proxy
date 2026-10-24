@@ -921,3 +921,38 @@ func TestOpenAIChatConverter_ForwardsPromptCacheKey(t *testing.T) {
 		t.Errorf("prompt_cache_retention 应转发，期望 7d，实际: %v", resultMap["prompt_cache_retention"])
 	}
 }
+
+func TestResponsesPassthroughPreservesImageGenerationFields(t *testing.T) {
+	body := []byte(`{"model":"gpt-image-1","stream":true,"tools":[{"type":"image_generation","n":3,"quality":"high","size":"1536x1024","background":"transparent","output_format":"png","output_compression":80,"moderation":"low","partial_images":2,"input_fidelity":"high","input_image_mask":{"image_url":"data:image/png;base64,mask"},"action":"edit"}],"tool_choice":{"type":"image_generation"},"metadata":{"trace":"keep"}}`)
+	got, err := convertResponsesPassthroughRequest("gpt-image-1", body, nil)
+	if err != nil {
+		t.Fatalf("透传生图请求失败: %v", err)
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal(got, &payload); err != nil {
+		t.Fatalf("透传结果不是有效 JSON: %v", err)
+	}
+	tools, ok := payload["tools"].([]interface{})
+	if !ok || len(tools) != 1 {
+		t.Fatalf("生图工具字段丢失: %#v", payload["tools"])
+	}
+	tool, ok := tools[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("生图工具不是对象: %#v", tools[0])
+	}
+	for key, want := range map[string]interface{}{
+		"n": float64(3), "quality": "high", "size": "1536x1024", "background": "transparent",
+		"output_format": "png", "output_compression": float64(80), "moderation": "low",
+		"partial_images": float64(2), "input_fidelity": "high", "action": "edit",
+	} {
+		if tool[key] != want {
+			t.Errorf("工具字段 %s 被改写或丢失: got %#v, want %#v", key, tool[key], want)
+		}
+	}
+	if _, ok := tool["input_image_mask"].(map[string]interface{}); !ok {
+		t.Errorf("input_image_mask 被丢失: %#v", tool["input_image_mask"])
+	}
+	if _, ok := payload["tool_choice"].(map[string]interface{}); !ok {
+		t.Errorf("tool_choice 被丢失: %#v", payload["tool_choice"])
+	}
+}
