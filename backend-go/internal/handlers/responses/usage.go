@@ -747,8 +747,12 @@ func correctedInputTokens(requestBody []byte, upstreamInput, upstreamCached int)
 	if len(requestBody) == 0 {
 		return 0, false
 	}
-	return utils.SanityCheckedInputTokens(
-		utils.EstimateResponsesRequestTokens(requestBody), upstreamInput, upstreamCached)
+	return utils.SanityCheckedInputTokensForRequest(
+		requestBody,
+		utils.EstimateResponsesRequestTokens(requestBody),
+		upstreamInput,
+		upstreamCached,
+	)
 }
 
 // upstreamCachedTokensFromUsageMap 汇总 usage 里上游单独回报的缓存 token 总量。

@@ -240,7 +240,8 @@ func handleNormalResponse(
 		// messages+claude 上游是全代理唯一完全不校验、原样透传的路径，实测中转渠道会
 		// 双向错报（448KB 报 26032 / 压缩后 24KB 报 209736），客户端据此误判压缩时机。
 		// 只改客户端副本；上方 claudeResp.Usage 原件继续供指标与请求日志使用。
-		if correction, need := utils.SanityCheckedAnthropicUsage(
+		if correction, need := utils.SanityCheckedAnthropicUsageForRequest(
+			requestBody,
 			utils.EstimateRequestTokens(requestBody),
 			claudeResp.Usage.InputTokens,
 			claudeResp.Usage.CacheReadInputTokens,

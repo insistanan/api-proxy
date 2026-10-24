@@ -248,3 +248,190 @@ func TestEstimateRequestTokens(t *testing.T) {
 		})
 	}
 }
+
+func TestEstimateRequestTokensSkipsOpaqueMediaPayload(t *testing.T) {
+	pdfData := strings.Repeat("A", 1024*1024)
+	imageData := strings.Repeat("B", 200000)
+	prompt := "请阅读这个 PDF"
+
+	tests := []struct {
+		name        string
+		request     map[string]interface{}
+		maxExpected int
+		minExpected int
+		wantOpaque  bool
+	}{
+		{
+			name: "messages_pdf_document",
+			request: map[string]interface{}{
+				"model": "claude-opus-4-6",
+				"messages": []interface{}{
+					map[string]interface{}{
+						"role": "user",
+						"content": []interface{}{
+							map[string]interface{}{"type": "text", "text": prompt},
+							map[string]interface{}{
+								"type": "document",
+								"source": map[string]interface{}{
+									"type":       "base64",
+									"media_type": "application/pdf",
+									"data":       pdfData,
+								},
+							},
+						},
+					},
+				},
+			},
+			minExpected: estimatedFileTokens,
+			maxExpected: estimatedFileTokens + 200,
+			wantOpaque:  true,
+		},
+		{
+			name: "messages_image_block",
+			request: map[string]interface{}{
+				"model": "claude-opus-4-6",
+				"messages": []interface{}{
+					map[string]interface{}{
+						"role": "user",
+						"content": []interface{}{
+							map[string]interface{}{"type": "text", "text": prompt},
+							map[string]interface{}{
+								"type": "image",
+								"source": map[string]interface{}{
+									"type":       "base64",
+									"media_type": "image/png",
+									"data":       imageData,
+								},
+							},
+						},
+					},
+				},
+			},
+			minExpected: estimatedImageTokens,
+			maxExpected: estimatedImageTokens + 200,
+			wantOpaque:  true,
+		},
+		{
+			name: "document_text_source_still_counts_text",
+			request: map[string]interface{}{
+				"model": "claude-opus-4-6",
+				"messages": []interface{}{
+					map[string]interface{}{
+						"role": "user",
+						"content": []interface{}{
+							map[string]interface{}{
+								"type": "document",
+								"source": map[string]interface{}{
+									"type": "text",
+									"data": strings.Repeat("hello world ", 100),
+								},
+							},
+						},
+					},
+				},
+			},
+			minExpected: 200,
+			maxExpected: 800,
+			wantOpaque:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bodyBytes, err := json.Marshal(tt.request)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			got := EstimateRequestTokens(bodyBytes)
+			if got < tt.minExpected || got > tt.maxExpected {
+				t.Fatalf("EstimateRequestTokens() = %d, want %d..%d", got, tt.minExpected, tt.maxExpected)
+			}
+			if RequestContainsOpaqueMedia(bodyBytes) != tt.wantOpaque {
+				t.Fatalf("RequestContainsOpaqueMedia() = %v, want %v", RequestContainsOpaqueMedia(bodyBytes), tt.wantOpaque)
+			}
+		})
+	}
+}
+
+func TestEstimateResponsesRequestTokensSkipsOpaqueMediaPayload(t *testing.T) {
+	pdfData := strings.Repeat("A", 1024*1024)
+	prompt := "summarize this file"
+
+	tests := []struct {
+		name        string
+		request     map[string]interface{}
+		maxExpected int
+		minExpected int
+		wantOpaque  bool
+	}{
+		{
+			name: "responses_input_file",
+			request: map[string]interface{}{
+				"model": "gpt-5.4",
+				"input": []interface{}{
+					map[string]interface{}{
+						"type": "message",
+						"role": "user",
+						"content": []interface{}{
+							map[string]interface{}{"type": "input_text", "text": prompt},
+							map[string]interface{}{
+								"type":      "input_file",
+								"filename":  "notes.pdf",
+								"file_data": "data:application/pdf;base64," + pdfData,
+							},
+						},
+					},
+				},
+			},
+			minExpected: estimatedFileTokens,
+			maxExpected: estimatedFileTokens + 200,
+			wantOpaque:  true,
+		},
+		{
+			name: "responses_unknown_item_with_file_data",
+			request: map[string]interface{}{
+				"model": "gpt-5.4",
+				"input": []interface{}{
+					map[string]interface{}{
+						"type":      "document",
+						"file_data": pdfData,
+					},
+				},
+			},
+			minExpected: estimatedFileTokens,
+			maxExpected: estimatedFileTokens + 50,
+			wantOpaque:  true,
+		},
+		{
+			name: "responses_custom_tool_call_output_still_counts_text",
+			request: map[string]interface{}{
+				"model": "gpt-5.6-luna",
+				"input": []interface{}{
+					map[string]interface{}{
+						"type":   "custom_tool_call_output",
+						"output": strings.Repeat("tool result ", 3000),
+					},
+				},
+			},
+			minExpected: 8000,
+			maxExpected: 20000,
+			wantOpaque:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bodyBytes, err := json.Marshal(tt.request)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			got := EstimateResponsesRequestTokens(bodyBytes)
+			if got < tt.minExpected || got > tt.maxExpected {
+				t.Fatalf("EstimateResponsesRequestTokens() = %d, want %d..%d", got, tt.minExpected, tt.maxExpected)
+			}
+			if RequestContainsOpaqueMedia(bodyBytes) != tt.wantOpaque {
+				t.Fatalf("RequestContainsOpaqueMedia() = %v, want %v", RequestContainsOpaqueMedia(bodyBytes), tt.wantOpaque)
+			}
+		})
+	}
+}

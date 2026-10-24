@@ -1,6 +1,10 @@
 package utils
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 // TestSanityCheckedInputTokens 锁定上游 usage 合理性校验的契约。
 //
@@ -216,6 +220,70 @@ func TestSanityCheckedAnthropicUsage(t *testing.T) {
 		}
 		if correction.InputTokens != 7000 || !correction.ClearCache {
 			t.Fatalf("unexpected correction: %+v", correction)
+		}
+	})
+}
+
+func TestSanityCheckedInputTokensForRequestSkipsOpaqueMedia(t *testing.T) {
+	pdfBody, err := json.Marshal(map[string]interface{}{
+		"model": "claude-opus-4-6",
+		"messages": []interface{}{
+			map[string]interface{}{
+				"role": "user",
+				"content": []interface{}{
+					map[string]interface{}{"type": "text", "text": "read this"},
+					map[string]interface{}{
+						"type": "document",
+						"source": map[string]interface{}{
+							"type":       "base64",
+							"media_type": "application/pdf",
+							"data":       strings.Repeat("A", 1024*1024),
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	estimated := EstimateRequestTokens(pdfBody)
+	if estimated > estimatedFileTokens+200 {
+		t.Fatalf("media-aware estimate still exploded: %d", estimated)
+	}
+
+	t.Run("带附件时即使估算与上游差很大也不覆盖", func(t *testing.T) {
+		_, need := SanityCheckedInputTokensForRequest(pdfBody, 400000, 8000, 0)
+		if need {
+			t.Fatal("opaque media request must not be overwritten by local estimate")
+		}
+		_, need = SanityCheckedAnthropicUsageForRequest(pdfBody, 400000, 8000, 0, 0, 0, 0)
+		if need {
+			t.Fatal("opaque media Anthropic usage must not be overwritten")
+		}
+	})
+
+	t.Run("纯文本长对话仍校正双向错报", func(t *testing.T) {
+		textBody, err := json.Marshal(map[string]interface{}{
+			"model": "claude-opus-4-6",
+			"messages": []interface{}{
+				map[string]interface{}{
+					"role":    "user",
+					"content": strings.Repeat("abcdefgh ", 17500),
+				},
+			},
+		})
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		estimatedText := EstimateRequestTokens(textBody)
+		if estimatedText < UsageSanityMinTokensForTest {
+			t.Fatalf("text estimate %d below sanity floor", estimatedText)
+		}
+		got, need := SanityCheckedInputTokensForRequest(textBody, estimatedText, 7723, 0)
+		if !need || got != estimatedText {
+			t.Fatalf("plain text under-report should still correct: need=%v got=%d want=%d", need, got, estimatedText)
 		}
 	})
 }

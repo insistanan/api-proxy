@@ -288,7 +288,8 @@ func sanityCheckMessageStreamInputTokens(event string, requestBody []byte, enabl
 			return "", false
 		}
 		upstreamUsage := extractUsageFromMap(usage)
-		correction, need := utils.SanityCheckedAnthropicUsage(
+		correction, need := utils.SanityCheckedAnthropicUsageForRequest(
+			requestBody,
 			utils.EstimateRequestTokens(requestBody),
 			upstreamUsage.InputTokens,
 			upstreamUsage.CacheReadInputTokens,

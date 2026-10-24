@@ -2,9 +2,20 @@ package utils
 
 import (
 	"encoding/json"
+	"strings"
 	"unicode"
 
 	"github.com/BenedictKing/api-proxy/internal/types"
+)
+
+const (
+	// estimatedImageTokens 是未知尺寸图片/音视频的保守视觉定额。
+	// 对齐 Claude 对约 1024² 图的量级，避免把 base64 字符长度当成文本 token。
+	estimatedImageTokens = 1600
+
+	// estimatedFileTokens 是 PDF/文件附件的固定定额。
+	// 真实页数与解析成本只有上游知道；本地只给一个不会触发 200K 压缩的占位值。
+	estimatedFileTokens = 4096
 )
 
 // EstimateTokens 估算文本的 token 数量
@@ -34,66 +45,131 @@ func EstimateTokens(text string) int {
 	return int(cjkTokens + otherTokens + 0.5) // 四舍五入
 }
 
-// estimateMessagesTokens 估算消息数组的 token 数量
-func estimateMessagesTokens(messages interface{}) int {
-	if messages == nil {
-		return 0
-	}
-
-	// 序列化为 JSON 后估算
-	data, err := json.Marshal(messages)
-	if err != nil {
-		return 0
-	}
-
-	// 每条消息额外开销约 4 tokens
-	msgCount := 0
-	if arr, ok := messages.([]interface{}); ok {
-		msgCount = len(arr)
-	}
-
-	return EstimateTokens(string(data)) + msgCount*4
+// EstimateRequestTokens 从请求体估算输入 token。
+// 只统计文本和工具定义；图片/PDF/文件走定额，不把 base64 当成长文本。
+func EstimateRequestTokens(bodyBytes []byte) int {
+	tokens, _ := analyzeMessagesRequest(bodyBytes)
+	return tokens
 }
 
-// EstimateRequestTokens 从请求体估算输入 token
-func EstimateRequestTokens(bodyBytes []byte) int {
+// EstimateResponsesRequestTokens 从 Responses API 请求体估算输入 token。
+// 支持 instructions、input (string 或 []item) 格式；媒体块同样走定额。
+func EstimateResponsesRequestTokens(bodyBytes []byte) int {
+	tokens, _ := analyzeResponsesRequest(bodyBytes)
+	return tokens
+}
+
+// RequestContainsOpaqueMedia 判断请求是否含图片、PDF、文件等不透明媒体。
+// 这类内容的真实 token 只能由上游计量，本地估算不得覆盖客户端 usage。
+func RequestContainsOpaqueMedia(bodyBytes []byte) bool {
+	if _, opaque := analyzeMessagesRequest(bodyBytes); opaque {
+		return true
+	}
+	_, opaque := analyzeResponsesRequest(bodyBytes)
+	return opaque
+}
+
+func analyzeMessagesRequest(bodyBytes []byte) (int, bool) {
 	if len(bodyBytes) == 0 {
-		return 0
+		return 0, false
 	}
 
 	var req map[string]interface{}
 	if err := json.Unmarshal(bodyBytes, &req); err != nil {
-		return EstimateTokens(string(bodyBytes))
+		tokens, opaque := estimateString(string(bodyBytes))
+		return tokens, opaque
 	}
 
 	total := 0
+	opaque := false
 
-	// system prompt
 	if system, ok := req["system"]; ok {
-		if str, ok := system.(string); ok {
-			total += EstimateTokens(str)
-		} else if arr, ok := system.([]interface{}); ok {
-			for _, item := range arr {
-				if m, ok := item.(map[string]interface{}); ok {
-					if text, ok := m["text"].(string); ok {
-						total += EstimateTokens(text)
-					}
-				}
-			}
-		}
+		tokens, hasMedia := estimateValue(system)
+		total += tokens
+		opaque = opaque || hasMedia
 	}
 
-	// messages
 	if messages, ok := req["messages"]; ok {
-		total += estimateMessagesTokens(messages)
+		tokens, hasMedia := estimateMessagesTokens(messages)
+		total += tokens
+		opaque = opaque || hasMedia
 	}
 
-	// tools (每个工具约 100-200 tokens)
 	if tools, ok := req["tools"].([]interface{}); ok {
 		total += len(tools) * 150
 	}
 
-	return total
+	return total, opaque
+}
+
+func analyzeResponsesRequest(bodyBytes []byte) (int, bool) {
+	if len(bodyBytes) == 0 {
+		return 0, false
+	}
+
+	var req map[string]interface{}
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
+		tokens, opaque := estimateString(string(bodyBytes))
+		return tokens, opaque
+	}
+
+	total := 0
+	opaque := false
+
+	if instructions, ok := req["instructions"].(string); ok {
+		tokens, hasMedia := estimateString(instructions)
+		total += tokens
+		opaque = opaque || hasMedia
+	}
+
+	if input := req["input"]; input != nil {
+		tokens, hasMedia := estimateResponsesInputTokens(input)
+		total += tokens
+		opaque = opaque || hasMedia
+	}
+
+	if tools, ok := req["tools"].([]interface{}); ok {
+		estimatedTools := estimateJSONTokens(tools)
+		minimumTools := len(tools) * 150
+		if estimatedTools < minimumTools {
+			estimatedTools = minimumTools
+		}
+		total += estimatedTools
+	}
+
+	return total, opaque
+}
+
+func estimateJSONTokens(value interface{}) int {
+	if value == nil {
+		return 0
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return 0
+	}
+	return EstimateTokens(string(data))
+}
+
+func estimateMessagesTokens(messages interface{}) (int, bool) {
+	if messages == nil {
+		return 0, false
+	}
+
+	arr, ok := messages.([]interface{})
+	if !ok {
+		return estimateValue(messages)
+	}
+
+	total := 0
+	opaque := false
+	for _, item := range arr {
+		total += 4
+		tokens, hasMedia := estimateValue(item)
+		total += tokens
+		opaque = opaque || hasMedia
+	}
+	return total, opaque
 }
 
 // EstimateResponseTokens 从响应内容估算输出 token
@@ -141,69 +217,28 @@ func isCJK(r rune) bool {
 		unicode.Is(unicode.Hangul, r)
 }
 
-// ============== Responses API Token 估算 ==============
-
-// EstimateResponsesRequestTokens 从 Responses API 请求体估算输入 token
-// 支持 instructions、input (string 或 []item) 格式
-func EstimateResponsesRequestTokens(bodyBytes []byte) int {
-	if len(bodyBytes) == 0 {
-		return 0
-	}
-
-	var req map[string]interface{}
-	if err := json.Unmarshal(bodyBytes, &req); err != nil {
-		return EstimateTokens(string(bodyBytes))
-	}
-
-	total := 0
-
-	// instructions (系统指令)
-	if instructions, ok := req["instructions"].(string); ok {
-		total += EstimateTokens(instructions)
-	}
-
-	// input 字段处理
-	if input := req["input"]; input != nil {
-		total += estimateResponsesInputTokens(input)
-	}
-
-	// tools（优先按定义本身估算；简单工具保留每个工具约 150 token 的下限）
-	if tools, ok := req["tools"].([]interface{}); ok {
-		estimatedTools := estimateResponsesValueTokens(tools)
-		minimumTools := len(tools) * 150
-		if estimatedTools < minimumTools {
-			estimatedTools = minimumTools
-		}
-		total += estimatedTools
-	}
-
-	return total
-}
-
-// estimateResponsesInputTokens 估算 Responses input 字段的 token
-func estimateResponsesInputTokens(input interface{}) int {
+func estimateResponsesInputTokens(input interface{}) (int, bool) {
 	switch v := input.(type) {
 	case string:
-		// 简单字符串输入
-		return EstimateTokens(v)
+		return estimateString(v)
 	case []interface{}:
-		// 消息数组格式
 		total := 0
+		opaque := false
 		for _, item := range v {
 			if m, ok := item.(map[string]interface{}); ok {
-				// 每条消息额外开销约 4 tokens
 				total += 4
-				total += estimateResponsesInputItemTokens(m)
+				tokens, hasMedia := estimateResponsesInputItemTokens(m)
+				total += tokens
+				opaque = opaque || hasMedia
+				continue
 			}
+			tokens, hasMedia := estimateValue(item)
+			total += tokens
+			opaque = opaque || hasMedia
 		}
-		return total
+		return total, opaque
 	default:
-		// 其他情况序列化后估算
-		data, err := json.Marshal(input)
-		if err != nil {
-			return 0
-		}
-		return EstimateTokens(string(data))
+		return estimateValue(input)
 	}
 }
 
@@ -211,16 +246,16 @@ func estimateResponsesInputTokens(input interface{}) int {
 // 同一语义在不同兼容实现中可能叫 content/input/output；不能把这些别名
 // 无条件相加，否则一个同时带 input 与 content 的 custom_tool_call，或同时带
 // output 与 content 的 function_call_output，会把同一份工具数据重复计入。
-// 对未知类型保守地估算整个 item，避免静默漏掉新协议字段。
-func estimateResponsesInputItemTokens(item map[string]interface{}) int {
+// 未知类型走媒体感知递归，不再把整个 item（含 base64）序列化后当文本。
+func estimateResponsesInputItemTokens(item map[string]interface{}) (int, bool) {
 	if item == nil {
-		return 0
+		return 0, false
 	}
 
 	itemType, _ := item["type"].(string)
 	switch itemType {
 	case "", "message", "text":
-		return estimateResponsesValueTokens(item["content"])
+		return estimateValue(item["content"])
 	case "function_call":
 		return estimateResponsesCallFields(item["name"], item["arguments"])
 	case "custom_tool_call":
@@ -239,61 +274,298 @@ func estimateResponsesInputItemTokens(item map[string]interface{}) int {
 	case "function_call_output", "custom_tool_call_output", "tool_result":
 		return estimateResponsesOutputFieldTokens(item)
 	case "tool_search_output":
-		total := estimateResponsesOutputFieldTokens(item)
-		total += estimateResponsesValueTokens(item["tools"])
-		return total
+		total, opaque := estimateResponsesOutputFieldTokens(item)
+		tokens, hasMedia := estimateValue(item["tools"])
+		return total + tokens, opaque || hasMedia
 	case "reasoning":
 		// summary 与 encrypted/content 是不同字段：summary 是可读摘要，
 		// encrypted_content 是上游要求回传的 opaque 上下文，不能因为不可读而丢弃。
-		return estimateResponsesValueTokens(item["summary"]) +
-			estimateResponsesValueTokens(item["content"]) +
-			estimateResponsesValueTokens(item["encrypted_content"])
+		summaryTokens, summaryOpaque := estimateValue(item["summary"])
+		contentTokens, contentOpaque := estimateValue(item["content"])
+		encryptedTokens, encryptedOpaque := estimateValue(item["encrypted_content"])
+		return summaryTokens + contentTokens + encryptedTokens,
+			summaryOpaque || contentOpaque || encryptedOpaque
 	default:
-		data, err := json.Marshal(item)
-		if err != nil {
-			return 0
-		}
-		return EstimateTokens(string(data))
+		return estimateObject(item)
 	}
 }
 
-func estimateResponsesCallFields(name, arguments interface{}) int {
-	total := estimateResponsesValueTokens(name)
-	return total + estimateResponsesValueTokens(arguments)
+func estimateResponsesCallFields(name, arguments interface{}) (int, bool) {
+	total, opaque := estimateValue(name)
+	tokens, hasMedia := estimateValue(arguments)
+	return total + tokens, opaque || hasMedia
 }
 
-func estimateResponsesOutputFieldTokens(item map[string]interface{}) int {
+func estimateResponsesOutputFieldTokens(item map[string]interface{}) (int, bool) {
 	if output, exists := item["output"]; exists && output != nil {
-		return estimateResponsesValueTokens(output)
+		return estimateValue(output)
 	}
-	return estimateResponsesValueTokens(item["content"])
+	return estimateValue(item["content"])
 }
 
 // estimateContentTokens 估算 content 字段的 token
 func estimateContentTokens(content interface{}) int {
-	return estimateResponsesValueTokens(content)
+	tokens, _ := estimateValue(content)
+	return tokens
 }
 
-// estimateResponsesValueTokens 递归估算 Responses item 中的文本或结构化值。
-// Responses 的 content/output 既可能是字符串，也可能是多层数组/对象；只读取
-// text 会漏掉 custom_tool_call_output.output 这类长工具结果，进而严重低估上下文。
-func estimateResponsesValueTokens(content interface{}) int {
+func estimateValue(content interface{}) (int, bool) {
 	switch v := content.(type) {
+	case nil:
+		return 0, false
 	case string:
-		return EstimateTokens(v)
+		return estimateString(v)
 	case []interface{}:
 		total := 0
+		opaque := false
 		for _, item := range v {
-			total += estimateResponsesValueTokens(item)
+			tokens, hasMedia := estimateValue(item)
+			total += tokens
+			opaque = opaque || hasMedia
 		}
-		return total
+		return total, opaque
+	case map[string]interface{}:
+		return estimateObject(v)
 	default:
-		data, err := json.Marshal(content)
-		if err != nil {
-			return 0
-		}
-		return EstimateTokens(string(data))
+		return 0, false
 	}
+}
+
+func estimateObject(obj map[string]interface{}) (int, bool) {
+	if obj == nil {
+		return 0, false
+	}
+
+	if inline := firstMap(obj, "inlineData", "inline_data"); inline != nil {
+		tokens, opaque := estimateInlineMedia(inline)
+		rest, restOpaque := estimateObjectIgnoring(obj, "inlineData", "inline_data")
+		return tokens + rest, opaque || restOpaque
+	}
+	if fileData := firstMap(obj, "fileData", "file_data"); fileData != nil && looksLikeMediaFileData(fileData) {
+		tokens, opaque := estimateFileData(fileData)
+		rest, restOpaque := estimateObjectIgnoring(obj, "fileData", "file_data")
+		return tokens + rest, opaque || restOpaque
+	}
+
+	itemType := strings.ToLower(strings.TrimSpace(asString(obj["type"])))
+	switch itemType {
+	case "image", "image_url", "input_image", "input_audio", "audio", "video":
+		return estimatedImageTokens + estimateMediaSideText(obj), true
+	case "document":
+		return estimateDocument(obj)
+	case "input_file", "file":
+		return estimatedFileTokens + estimateMediaSideText(obj), true
+	}
+
+	return estimateObjectIgnoring(obj)
+}
+
+func estimateDocument(obj map[string]interface{}) (int, bool) {
+	extra := estimateMediaSideText(obj)
+	source, _ := obj["source"].(map[string]interface{})
+	if source == nil {
+		return estimatedFileTokens + extra, true
+	}
+
+	sourceType := strings.ToLower(strings.TrimSpace(asString(source["type"])))
+	switch sourceType {
+	case "text":
+		text := asString(source["data"])
+		if text == "" {
+			text = asString(source["text"])
+		}
+		return extra + EstimateTokens(text), false
+	case "content":
+		tokens, opaque := estimateValue(source["content"])
+		return extra + tokens, opaque
+	default:
+		return estimatedFileTokens + extra, true
+	}
+}
+
+func estimateInlineMedia(inline map[string]interface{}) (int, bool) {
+	mime := strings.ToLower(strings.TrimSpace(firstString(inline, "mimeType", "mime_type", "media_type")))
+	if mime == "" {
+		return estimatedImageTokens, true
+	}
+	return quotaForMIME(mime), true
+}
+
+func estimateFileData(fileData map[string]interface{}) (int, bool) {
+	mime := strings.ToLower(strings.TrimSpace(firstString(fileData, "mimeType", "mime_type", "media_type")))
+	return quotaForMIME(mime), true
+}
+
+func looksLikeMediaFileData(fileData map[string]interface{}) bool {
+	mime := strings.ToLower(strings.TrimSpace(firstString(fileData, "mimeType", "mime_type", "media_type")))
+	if mime == "" {
+		return false
+	}
+	return strings.HasPrefix(mime, "image/") ||
+		strings.HasPrefix(mime, "audio/") ||
+		strings.HasPrefix(mime, "video/") ||
+		strings.Contains(mime, "pdf")
+}
+
+func quotaForMIME(mime string) int {
+	if strings.HasPrefix(mime, "image/") || strings.HasPrefix(mime, "audio/") || strings.HasPrefix(mime, "video/") {
+		return estimatedImageTokens
+	}
+	return estimatedFileTokens
+}
+
+func estimateMediaSideText(obj map[string]interface{}) int {
+	total := 0
+	for _, key := range []string{"title", "context", "filename", "name", "text"} {
+		if text, ok := obj[key].(string); ok {
+			total += EstimateTokens(text)
+		}
+	}
+	return total
+}
+
+func estimateObjectIgnoring(obj map[string]interface{}, skipKeys ...string) (int, bool) {
+	skip := make(map[string]struct{}, len(skipKeys))
+	for _, key := range skipKeys {
+		skip[key] = struct{}{}
+	}
+
+	total := 0
+	opaque := false
+	for key, value := range obj {
+		if _, exists := skip[key]; exists {
+			continue
+		}
+		if isBinaryPayloadKey(key) {
+			tokens, hasMedia := estimateBinaryPayload(value)
+			total += tokens
+			opaque = opaque || hasMedia
+			continue
+		}
+		tokens, hasMedia := estimateValue(value)
+		total += tokens
+		opaque = opaque || hasMedia
+	}
+	return total, opaque
+}
+
+func estimateBinaryPayload(value interface{}) (int, bool) {
+	switch v := value.(type) {
+	case string:
+		if isDataURL(v) {
+			return dataURLQuota(v), true
+		}
+		if isOpaqueBase64(v) {
+			return 0, true
+		}
+		return EstimateTokens(v), false
+	case map[string]interface{}:
+		if url := firstString(v, "url", "image_url"); url != "" && isDataURL(url) {
+			return dataURLQuota(url), true
+		}
+		return estimateValue(v)
+	default:
+		return estimateValue(value)
+	}
+}
+
+func estimateString(s string) (int, bool) {
+	if isDataURL(s) {
+		return dataURLQuota(s), true
+	}
+	return EstimateTokens(s), false
+}
+
+func isBinaryPayloadKey(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "data", "file_data", "filedata", "b64_json", "image_url":
+		return true
+	default:
+		return false
+	}
+}
+
+func isDataURL(s string) bool {
+	trimmed := strings.TrimSpace(s)
+	if !strings.HasPrefix(strings.ToLower(trimmed), "data:") {
+		return false
+	}
+	_, payload, found := strings.Cut(trimmed, ",")
+	return found && payload != ""
+}
+
+func dataURLQuota(s string) int {
+	mime := dataURLMediaType(s)
+	if strings.HasPrefix(mime, "image/") || strings.HasPrefix(mime, "audio/") || strings.HasPrefix(mime, "video/") {
+		return estimatedImageTokens
+	}
+	return estimatedFileTokens
+}
+
+func dataURLMediaType(s string) string {
+	trimmed := strings.TrimSpace(s)
+	if !strings.HasPrefix(strings.ToLower(trimmed), "data:") {
+		return ""
+	}
+	header, _, found := strings.Cut(trimmed[5:], ",")
+	if !found {
+		return ""
+	}
+	header = strings.ToLower(header)
+	header, _, _ = strings.Cut(header, ";")
+	return strings.TrimSpace(header)
+}
+
+func isOpaqueBase64(s string) bool {
+	if len(s) < 512 {
+		return false
+	}
+	checked := 0
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch c {
+		case '\n', '\r':
+			continue
+		}
+		if !isBase64Char(c) {
+			return false
+		}
+		checked++
+		if checked >= 512 {
+			return true
+		}
+	}
+	return checked >= 512
+}
+
+func isBase64Char(c byte) bool {
+	return (c >= 'A' && c <= 'Z') ||
+		(c >= 'a' && c <= 'z') ||
+		(c >= '0' && c <= '9') ||
+		c == '+' || c == '/' || c == '='
+}
+
+func firstMap(obj map[string]interface{}, keys ...string) map[string]interface{} {
+	for _, key := range keys {
+		if nested, ok := obj[key].(map[string]interface{}); ok {
+			return nested
+		}
+	}
+	return nil
+}
+
+func firstString(obj map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := obj[key].(string); ok && value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func asString(v interface{}) string {
+	s, _ := v.(string)
+	return s
 }
 
 // EstimateResponsesOutputTokens 从 Responses API 响应估算输出 token

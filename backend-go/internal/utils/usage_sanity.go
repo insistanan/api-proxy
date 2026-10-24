@@ -89,6 +89,31 @@ func SanityCheckedAnthropicUsage(
 	cacheCreation5m int,
 	cacheCreation1h int,
 ) (AnthropicUsageCorrection, bool) {
+	return SanityCheckedAnthropicUsageForRequest(
+		nil,
+		estimatedTotal,
+		upstreamInput,
+		cacheRead,
+		cacheCreation,
+		cacheCreation5m,
+		cacheCreation1h,
+	)
+}
+
+// SanityCheckedAnthropicUsageForRequest 与 SanityCheckedAnthropicUsage 相同，
+// 但请求含不透明媒体时禁止用本地估算覆盖上游 usage。
+func SanityCheckedAnthropicUsageForRequest(
+	requestBody []byte,
+	estimatedTotal int,
+	upstreamInput int,
+	cacheRead int,
+	cacheCreation int,
+	cacheCreation5m int,
+	cacheCreation1h int,
+) (AnthropicUsageCorrection, bool) {
+	if RequestContainsOpaqueMedia(requestBody) {
+		return AnthropicUsageCorrection{}, false
+	}
 	upstreamCached := AnthropicCachedInputTokens(
 		cacheRead,
 		cacheCreation,
@@ -128,6 +153,15 @@ func SanityCheckedAnthropicUsage(
 // 返回值按 Anthropic 语义给出（不含缓存部分），使 input + cached 之和回到真实规模，
 // 不与调用方保留的缓存字段重叠。
 func SanityCheckedInputTokens(estimatedTotal, upstreamInput, upstreamCached int) (int, bool) {
+	return SanityCheckedInputTokensForRequest(nil, estimatedTotal, upstreamInput, upstreamCached)
+}
+
+// SanityCheckedInputTokensForRequest 与 SanityCheckedInputTokens 相同，
+// 但请求含图片/PDF/文件时直接信任上游 usage，避免把 base64 估算当成长文本覆盖客户端。
+func SanityCheckedInputTokensForRequest(requestBody []byte, estimatedTotal, upstreamInput, upstreamCached int) (int, bool) {
+	if RequestContainsOpaqueMedia(requestBody) {
+		return 0, false
+	}
 	if estimatedTotal <= 0 {
 		return 0, false
 	}
