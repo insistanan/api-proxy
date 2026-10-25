@@ -627,3 +627,42 @@ func TestCorrectUnderreportedInputTokens(t *testing.T) {
 		}
 	})
 }
+
+func TestNormalizeContextDetailsInputTokens(t *testing.T) {
+	t.Run("流式使用明确的当前上下文值", func(t *testing.T) {
+		event := "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":272884,\"output_tokens\":1484,\"total_tokens\":274368,\"context_details\":{\"input_tokens\":99463}}}}\n\n"
+		out := normalizeContextDetailsInputTokensInCompletedEvent(event, false)
+		usage := extractCompletedPayload(t, out)["response"].(map[string]interface{})["usage"].(map[string]interface{})
+		if got := int(usage["input_tokens"].(float64)); got != 99463 {
+			t.Fatalf("input_tokens = %d, want 99463", got)
+		}
+		if got := int(usage["total_tokens"].(float64)); got != 100947 {
+			t.Fatalf("total_tokens = %d, want 100947", got)
+		}
+	})
+
+	t.Run("缺少明确上下文值时保持原样", func(t *testing.T) {
+		event := "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":100,\"output_tokens\":5,\"total_tokens\":105}}}\n\n"
+		if out := normalizeContextDetailsInputTokensInCompletedEvent(event, false); out != event {
+			t.Fatalf("缺少 context_details 时不应改写")
+		}
+	})
+
+	t.Run("非流式修改客户端副本", func(t *testing.T) {
+		resp := &types.ResponsesResponse{
+			Usage: types.ResponsesUsage{InputTokens: 272884, OutputTokens: 1484, TotalTokens: 274368},
+			Extra: map[string]interface{}{"usage": map[string]interface{}{
+				"input_tokens": 272884, "output_tokens": 1484,
+				"context_details": map[string]interface{}{"input_tokens": 99463.0},
+			}},
+		}
+		clientUsage := resp.Usage
+		normalizeContextDetailsInputTokensInResponse(resp, &clientUsage, false)
+		if clientUsage.InputTokens != 99463 || clientUsage.TotalTokens != 100947 {
+			t.Fatalf("客户端副本 usage = %+v", clientUsage)
+		}
+		if resp.Usage.InputTokens != 272884 {
+			t.Fatalf("原始 usage 不应被修改: %+v", resp.Usage)
+		}
+	})
+}

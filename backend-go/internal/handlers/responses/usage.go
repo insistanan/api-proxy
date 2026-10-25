@@ -736,6 +736,86 @@ func stripAccumulatedCacheFromCompletedEvent(event string, requestBody []byte) s
 	return rewritten
 }
 
+// contextDetailsInputTokensFromUsageMap 读取上游明确给出的当前上下文输入量。
+//
+// 部分 OpenAI 兼容上游（例如 Grok）把 usage.input_tokens 用作累计计费用量，
+// 同时在 context_details.input_tokens 中给出本次请求实际占用的上下文。该字段
+// 比代理根据请求体做的估算可靠，且不影响 usage 原始值的计费与指标用途。
+func contextDetailsInputTokensFromUsageMap(usage map[string]interface{}) (int, bool) {
+	details, ok := usage["context_details"].(map[string]interface{})
+	if !ok {
+		return 0, false
+	}
+	value, ok := details["input_tokens"].(float64)
+	if !ok || value <= 0 || value != float64(int(value)) {
+		return 0, false
+	}
+	return int(value), true
+}
+
+// normalizeContextDetailsInputTokensInCompletedEvent 将上游明确的当前上下文
+// 统计同步到客户端 usage。原始 upstreamUsage 在调用此函数前已经单独收集，
+// 因此这里只改变下发给客户端的副本。
+func normalizeContextDetailsInputTokensInCompletedEvent(event string, enableLog bool) string {
+	rewritten, _ := utils.RewriteSSEDataLines(event, func(payload string) (string, bool) {
+		var data map[string]interface{}
+		if err := json.Unmarshal([]byte(payload), &data); err != nil {
+			return "", false
+		}
+		if data["type"] != "response.completed" {
+			return "", false
+		}
+		response, ok := data["response"].(map[string]interface{})
+		if !ok {
+			return "", false
+		}
+		usage, ok := response["usage"].(map[string]interface{})
+		if !ok {
+			return "", false
+		}
+		contextInput, ok := contextDetailsInputTokensFromUsageMap(usage)
+		if !ok {
+			return "", false
+		}
+		upstreamInput, _ := usage["input_tokens"].(float64)
+		outputTokens, _ := usage["output_tokens"].(float64)
+		usage["input_tokens"] = contextInput
+		usage["total_tokens"] = contextInput + int(outputTokens)
+		if enableLog && int(upstreamInput) != contextInput {
+			log.Printf("[Responses-Stream-Token] 使用上游 context_details.input_tokens: %d -> %d（仅改下发值）",
+				int(upstreamInput), contextInput)
+		}
+		patchedJSON, err := json.Marshal(data)
+		if err != nil {
+			return "", false
+		}
+		return string(patchedJSON), true
+	})
+	return rewritten
+}
+
+// normalizeContextDetailsInputTokensInResponse 是非流式响应对应的客户端副本
+// 修正。resp.Extra 保留了上游原始响应，不能从已归一化的 ResponsesUsage 反推。
+func normalizeContextDetailsInputTokensInResponse(resp *types.ResponsesResponse, clientUsage *types.ResponsesUsage, enableLog bool) {
+	if resp == nil || clientUsage == nil || resp.Extra == nil {
+		return
+	}
+	rawUsage, ok := resp.Extra["usage"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	contextInput, ok := contextDetailsInputTokensFromUsageMap(rawUsage)
+	if !ok {
+		return
+	}
+	if enableLog && clientUsage.InputTokens != contextInput {
+		log.Printf("[Responses-Token] 使用上游 context_details.input_tokens: %d -> %d（仅改下发值）",
+			clientUsage.InputTokens, contextInput)
+	}
+	clientUsage.InputTokens = contextInput
+	clientUsage.TotalTokens = contextInput + clientUsage.OutputTokens
+}
+
 // correctedInputTokens 是 Responses 透传分支的 usage 合理性校正入口。
 // 具体阈值和双向判定统一由 utils.SanityCheckedInputTokens 管理，避免各协议各自维护
 // 一套容易漂移的规则。

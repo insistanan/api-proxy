@@ -217,6 +217,7 @@ func handleSuccess(
 		clientUsage := responsesResp.Usage
 		correctUnderreportedInputTokensInResponse(responsesResp, &clientUsage, usageRequestJSON, envCfg)
 		responsesResp.Usage = clientUsage
+		normalizeContextDetailsInputTokensInResponse(responsesResp, &responsesResp.Usage, envCfg.EnableResponseLogs)
 	}
 	responseBody, err := utils.MarshalJSONNoEscape(responsesResp)
 	if err != nil {

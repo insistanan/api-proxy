@@ -322,6 +322,12 @@ func handleStreamSuccess(
 					// 只有仍处于真实链式增量模式时才跳过；压缩边界已经使用不带旧 ID 的
 					// usageRequestJSON，因此必须按新的完整历史重新校正。
 					eventToSend = correctUnderreportedInputTokensInCompletedEvent(eventToSend, usageRequestJSON, envCfg)
+					// 某些 OpenAI 兼容上游的 input_tokens 是累计计费用量；若回包
+					// 明确提供 context_details.input_tokens，最后优先使用该当前上下文值。
+					eventToSend = normalizeContextDetailsInputTokensInCompletedEvent(
+						eventToSend,
+						envCfg.EnableResponseLogs,
+					)
 				}
 			}
 			if streamResponseID == "" {
