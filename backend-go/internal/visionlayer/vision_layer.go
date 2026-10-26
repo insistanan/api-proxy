@@ -34,6 +34,10 @@ func PrepareRequest(
 	conversationID string,
 	request *http.Request,
 ) error {
+	if kind == scheduler.ChannelKindImages {
+		// Images 入口里的图片是生图/图生图素材，不是对话里需要理解的内容。
+		return nil
+	}
 	if request == nil || request.Body == nil || targetUpstream == nil || targetUpstream.VisionCapable {
 		return nil
 	}

@@ -1,7 +1,10 @@
 package visionlayer
 
 import (
+	"bytes"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -9,6 +12,27 @@ import (
 	"github.com/BenedictKing/api-proxy/internal/scheduler"
 	"github.com/BenedictKing/api-proxy/internal/utils"
 )
+
+func TestPrepareRequestSkipsImagesProtocolImageToImage(t *testing.T) {
+	body := []byte(`{"model":"gpt-4.1","input":[{"role":"user","content":[{"type":"input_text","text":"给猫加帽子"},{"type":"input_image","image_url":"https://example.com/cat.png"}]}],"tools":[{"type":"image_generation","model":"gpt-image-2"}]}`)
+	req, err := http.NewRequest(http.MethodPost, "https://upstream.example.com/v1/responses", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("创建请求失败: %v", err)
+	}
+	err = PrepareRequest(nil, nil, nil, nil, scheduler.ChannelKindImages, &config.UpstreamConfig{
+		Name: "shuai", ServiceType: "responses",
+	}, "gpt-image-2", "", req)
+	if err != nil {
+		t.Fatalf("Images 图生图不应进入图片理解层: %v", err)
+	}
+	got, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatalf("读取请求体失败: %v", err)
+	}
+	if string(got) != string(body) {
+		t.Fatalf("Images 图生图请求体被改写: %s", got)
+	}
+}
 
 func TestPreferredVisionChannelID(t *testing.T) {
 	tests := []struct {
