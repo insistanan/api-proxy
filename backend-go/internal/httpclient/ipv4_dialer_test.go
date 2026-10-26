@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func TestIPv4DialerConnectsToIPv4Loopback(t *testing.T) {
+func TestDialerConnectsToIPv4Loopback(t *testing.T) {
 	ln, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("无法监听 tcp4: %v", err)
@@ -32,8 +32,8 @@ func TestIPv4DialerConnectsToIPv4Loopback(t *testing.T) {
 	_ = conn.Close()
 }
 
-func TestIPv4DialerLiteralIPv6Unchanged(t *testing.T) {
-	// IPv6 字面量不应被强制改成 IPv4，交由标准拨号器处理（此处只验证不 panic）。
+func TestDialerLiteralIPv6Unchanged(t *testing.T) {
+	// IPv6 字面量交由标准拨号器处理（此处只验证不 panic）。
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 

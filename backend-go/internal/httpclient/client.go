@@ -15,59 +15,22 @@ import (
 	"github.com/BenedictKing/api-proxy/internal/config"
 )
 
-// ipv4Dialer 优先使用 IPv4 建立 TCP 连接。
-// 直接请求上游时，这会把上游域名解析到 IPv4（避免服务商/渠道只回 IPv6 导致连接异常）；
-// 走 HTTP/HTTPS/SOCKS5 代理时，http.Transport 的 DialContext 只负责连接代理服务器，
-// 因此这里强制的是“本机 -> 代理”这一段使用 IPv4，不会改变代理转发上游的原有逻辑。
+// ipv4Dialer 保留原有拨号器名称以兼容现有测试和调用点。
+//
+// 早期实现会先手工解析 A 记录，再逐个顺序拨号。这会把直连路径固定在
+// IPv4；当某个 CDN 的 IPv4 出口质量较差时，请求会出现连接成功但首字节很慢。
+// 这里改为交给 net.Dialer 处理，让系统 resolver 和 Happy Eyeballs 在 IPv4/IPv6
+// 之间选择实际可用的更快路径。代理连接也复用同一套标准拨号行为。
 type ipv4Dialer struct {
 	d *net.Dialer
 }
 
-// DialContext 实现 net.ContextDialer。优先解析 A 记录并尝试 IPv4；仅当域名没有 IPv4 记录时回退默认拨号。
+// DialContext 实现 net.ContextDialer。
 func (d *ipv4Dialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	if network != "tcp" && network != "tcp4" {
-		return d.d.DialContext(ctx, network, addr)
-	}
-
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return d.d.DialContext(ctx, network, addr)
-	}
-
-	// 已经是 IP 字面量时交给标准拨号器；IPv6 字面量不强改，避免完全不可达。
-	if ip := net.ParseIP(host); ip != nil {
-		if ip.To4() != nil {
-			return d.d.DialContext(ctx, "tcp4", addr)
-		}
-		return d.d.DialContext(ctx, network, addr)
-	}
-
-	// 域名：优先取 IPv4 地址；若解析失败或没有 A 记录，再回退默认拨号（兼容纯 IPv6 上游）。
-	ips, err := net.DefaultResolver.LookupIP(ctx, "ip4", host)
-	if err != nil || len(ips) == 0 {
-		return d.d.DialContext(ctx, network, addr)
-	}
-
-	var lastErr error
-	for _, ip := range ips {
-		ipv4 := ip.To4()
-		if ipv4 == nil {
-			continue
-		}
-		ipv4Addr := net.JoinHostPort(ipv4.String(), port)
-		conn, dialErr := d.d.DialContext(ctx, "tcp4", ipv4Addr)
-		if dialErr == nil {
-			return conn, nil
-		}
-		lastErr = dialErr
-	}
-	if lastErr != nil {
-		return nil, lastErr
-	}
 	return d.d.DialContext(ctx, network, addr)
 }
 
-// ipv4PreferredDialer 全局共享的 IPv4 优先拨号器。
+// ipv4PreferredDialer 全局共享的标准双栈拨号器。
 var ipv4PreferredDialer = &ipv4Dialer{
 	d: &net.Dialer{
 		Timeout:   30 * time.Second,
