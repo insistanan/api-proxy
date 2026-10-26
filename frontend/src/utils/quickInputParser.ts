@@ -187,7 +187,7 @@ const detectServiceTypeAndCleanUrl = (
     const path = parsed.pathname.toLowerCase()
 
     // 检测端点并移除
-    const endpoints = ['/messages', '/chat/completions', '/responses', '/generatecontent']
+    const endpoints = ['/messages', '/chat/completions', '/responses', '/images/generations', '/images/edits', '/images/variations', '/generatecontent']
     for (const ep of endpoints) {
       if (path.includes(ep)) {
         // 移除端点路径，保留 /v1 等版本前缀
@@ -196,7 +196,7 @@ const detectServiceTypeAndCleanUrl = (
         const serviceType =
           ep === '/messages'
             ? 'claude'
-            : ep === '/chat/completions'
+            : ep === '/chat/completions' || ep.startsWith('/images/')
               ? 'openai'
               : ep === '/responses'
                 ? 'responses'

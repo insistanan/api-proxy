@@ -12,7 +12,7 @@
       <div class="text-body-2 text-medium-emphasis mb-4">
         {{ hint }}
         <div class="text-caption mt-1">目标模型按列表顺序尝试；拖动左侧手柄可调整优先级。</div>
-        <div class="text-caption mt-1">
+        <div v-if="allowTargetChannel" class="text-caption mt-1">
           可为每个目标指定目标渠道（同协议）：命中后改走该渠道的指定模型，不再经过本渠道；未指定则走本渠道。
         </div>
       </div>
@@ -58,7 +58,7 @@
                         mdi-drag-vertical
                       </v-icon>
                       <code class="text-caption">{{ target }}</code>
-                      <span v-if="getTargetChannelId(source, target)" class="text-caption ml-1">
+                      <span v-if="allowTargetChannel && getTargetChannelId(source, target)" class="text-caption ml-1">
                         @ {{ getTargetChannelLabel(source, target) }}
                       </span>
                     </v-chip>
@@ -76,14 +76,28 @@
       </div>
 
       <!-- 添加新映射 -->
-      <div class="d-flex align-center ga-2 mb-3">
+      <div v-if="allowWildcard" class="d-flex align-center ga-2 mb-3">
         <v-btn size="small" color="primary" variant="tonal" @click="localSource = '*'">
           使用 * 匹配任意源模型
         </v-btn>
         <span class="text-caption text-medium-emphasis">选择后，任何请求模型都会映射到右侧目标模型。</span>
       </div>
       <div class="d-flex align-center ga-2">
+        <v-select
+          v-if="strictSourceSelection"
+          v-model="localSource"
+          label="客户端图片模型"
+          :items="sourceOptions"
+          item-title="title"
+          item-value="value"
+          variant="outlined"
+          density="comfortable"
+          hide-details
+          class="flex-1-1"
+          clearable
+        />
         <v-combobox
+          v-else
           v-model="localSource"
           label="源模型名"
           :items="sourceOptions"
@@ -99,6 +113,7 @@
         />
         <v-icon color="primary">mdi-arrow-right</v-icon>
         <v-select
+          v-if="allowTargetChannel"
           v-model="localChannelId"
           label="目标渠道（可选）"
           :items="targetChannelOptions"
@@ -112,8 +127,36 @@
           clearable
           no-data-text="没有可用的同协议渠道"
         />
-        <v-icon color="primary">mdi-arrow-right</v-icon>
+        <v-icon v-if="allowTargetChannel" color="primary">mdi-arrow-right</v-icon>
+        <v-select
+          v-if="strictTargetSelection && allowTargetChannel"
+          v-model="localTarget"
+          label="图片生成工具模型"
+          :placeholder="targetPlaceholder"
+          :items="availableTargetOptions"
+          variant="outlined"
+          density="comfortable"
+          hide-details
+          class="flex-1-1"
+          clearable
+        />
         <v-combobox
+          v-else-if="strictTargetSelection"
+          v-model="localTarget"
+          label="图片生成工具模型"
+          :placeholder="targetPlaceholder"
+          :items="availableTargetOptions"
+          item-title="title"
+          item-value="value"
+          variant="outlined"
+          density="comfortable"
+          hide-details
+          class="flex-1-1"
+          clearable
+          @keyup.enter="addMapping"
+        />
+        <v-combobox
+          v-else
           v-model="localTarget"
           label="目标模型名"
           :placeholder="targetPlaceholder"
@@ -166,6 +209,10 @@ const props = defineProps<{
   /** 目标模型候选的加载状态与错误：键同 targetOptionsByChannel */
   targetStatusByChannel: Record<string, { loading: boolean; error: string }>
   targetPlaceholder: string
+  strictSourceSelection?: boolean
+  strictTargetSelection?: boolean
+  allowWildcard?: boolean
+  allowTargetChannel?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -179,6 +226,7 @@ const localSource = ref('')
 const localTarget = ref('')
 const localChannelId = ref<string | null>(null)
 
+const allowTargetChannel = computed(() => props.allowTargetChannel !== false)
 const selectedChannelId = computed(() => localChannelId.value ?? '')
 
 const channelNameById = computed(() => new Map(props.targetChannelOptions.map(option => [option.value, option.title])))

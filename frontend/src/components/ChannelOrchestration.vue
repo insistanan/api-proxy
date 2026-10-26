@@ -162,7 +162,7 @@
               >
                 <v-icon size="14">mdi-open-in-new</v-icon>
               </v-btn>
-              <span class="text-caption text-medium-emphasis ml-2">{{ element.serviceType }}</span>
+              <span class="text-caption text-medium-emphasis ml-2">{{ channelServiceLabel(channelType, element.serviceType) }}</span>
               <!-- 展开图标 -->
               <v-icon
                 size="x-small"
@@ -459,7 +459,7 @@
                 @keydown.enter="$emit('edit', channel)"
                 @keydown.space.prevent="$emit('edit', channel)"
               >{{ channel.name }}</span>
-              <span class="text-caption text-disabled ml-2">{{ channel.serviceType }}</span>
+              <span class="text-caption text-disabled ml-2">{{ channelServiceLabel(channelType, channel.serviceType) }}</span>
               <v-chip v-if="channel.temporary" size="x-small" color="warning" variant="tonal" class="ml-2">
                 临时 {{ formatDateTime(channel.temporaryUntil) }}
               </v-chip>
@@ -594,7 +594,7 @@
                 @keydown.enter="$emit('edit', channel)"
                 @keydown.space.prevent="$emit('edit', channel)"
               >{{ channel.name }}</span>
-              <span class="text-caption text-disabled ml-2">{{ channel.serviceType }}</span>
+              <span class="text-caption text-disabled ml-2">{{ channelServiceLabel(channelType, channel.serviceType) }}</span>
             </div>
             <div class="channel-info-meta">
               <ChannelMappingBlock
@@ -810,6 +810,7 @@ import type { ApexOptions } from 'apexcharts'
 import { api, channelApiByType, type Channel, type ChannelMetrics, type ChannelStatus, type TimeWindowStats, type ChannelRecentActivity, type ChannelLogEntry, type EvalChannelLatest } from '../services/api'
 import { evalAggregateColor, evalAgoLabel, evalFormatTime } from '../utils/eval'
 import { useChannelActivity } from '../composables/useChannelActivity'
+import { channelServiceLabel } from '@/utils/imagesChannelProtocol'
 import {
   getCacheRateLevel,
   getRateLevel,

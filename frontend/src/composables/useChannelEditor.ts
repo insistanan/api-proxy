@@ -2,7 +2,7 @@
 // AddChannelModal 的编辑、校验与 payload 组装收敛）。
 // 职责边界：表单草稿持有独立状态；取消不修改 store；保存成功后由
 // 调用方以服务端结果刷新。本文件不发起任何网络请求。
-import { reactive } from 'vue'
+import { reactive, toValue, type MaybeRefOrGetter } from 'vue'
 import type { Channel, ChannelStatus } from '@/services/api'
 
 /** 表单草稿：AddChannelModal 的唯一可编辑状态本体。 */
@@ -33,13 +33,14 @@ export type ChannelFormState = {
   /** 模型映射的目标渠道登记：源模型 -> 目标模型 -> 目标渠道 ID；未登记即沿用本渠道。 */
   modelMappingChannels: Record<string, Record<string, string>>
   defaultModel: string
+  responsesModel: string
 }
 
 /** 新渠道的默认草稿。responses 协议默认启用图片理解（历史行为）。 */
 export function defaultChannelForm(channelType: string): ChannelFormState {
   return {
     name: '',
-    serviceType: '',
+    serviceType: channelType === 'images' ? 'openai' : '',
     status: 'active',
     baseUrl: '',
     baseUrls: [],
@@ -62,7 +63,8 @@ export function defaultChannelForm(channelType: string): ChannelFormState {
     apiKeys: [],
     modelMapping: {},
     modelMappingChannels: {},
-    defaultModel: ''
+    defaultModel: '',
+    responsesModel: ''
   }
 }
 
@@ -131,16 +133,17 @@ function isPersistableStatus(value: string | undefined): value is ChannelStatus 
 }
 
 /** 渠道编辑器：草域草稿 + 载入编辑目标。 */
-export function useChannelEditor(channelType: string) {
-  const form = reactive<ChannelFormState>(defaultChannelForm(channelType))
+export function useChannelEditor(channelType: MaybeRefOrGetter<string>) {
+  const form = reactive<ChannelFormState>(defaultChannelForm(toValue(channelType)))
 
   /** 重置为默认草稿（取消/新建）。 */
   const resetForm = (): void => {
-    Object.assign(form, defaultChannelForm(channelType))
+    Object.assign(form, defaultChannelForm(toValue(channelType)))
   }
 
   /** 载入编辑目标（草稿复制自服务端数据，未保存前不影响 store）。 */
   const loadChannelData = (channel: Channel): void => {
+    const currentChannelType = toValue(channelType)
     form.name = channel.name
     form.serviceType = channel.serviceType
     // 前端 Channel.status 含运行时衍生值（''/error/healthy 等，来自 dashboard 合并）；
@@ -152,13 +155,13 @@ export function useChannelEditor(channelType: string) {
     form.insecureSkipVerify = !!channel.insecureSkipVerify
     form.proxyMode = channel.proxyMode || 'inherit'
     form.proxyUrl = channel.proxyUrl || ''
-    form.lowQuality = !!channel.lowQuality
-    form.visionCapable = !!channel.visionCapable
+    form.lowQuality = currentChannelType !== 'images' && !!channel.lowQuality
+    form.visionCapable = currentChannelType !== 'images' && !!channel.visionCapable
     form.poolId = channel.poolId || 'default'
-    form.excludeFromConversation = !!channel.excludeFromConversation
-    form.visionLayerEnabled = !!channel.visionLayerEnabled
-    form.visionLayerChannelId = channel.visionLayerChannelId || ''
-    form.visionLayerModel = channel.visionLayerModel || ''
+    form.excludeFromConversation = currentChannelType !== 'images' && !!channel.excludeFromConversation
+    form.visionLayerEnabled = currentChannelType !== 'images' && !!channel.visionLayerEnabled
+    form.visionLayerChannelId = currentChannelType === 'images' ? '' : channel.visionLayerChannelId || ''
+    form.visionLayerModel = currentChannelType === 'images' ? '' : channel.visionLayerModel || ''
     form.temporary = !!channel.temporary
     form.injectDummyThoughtSignature = !!channel.injectDummyThoughtSignature
     form.stripThoughtSignature = !!channel.stripThoughtSignature
@@ -168,6 +171,7 @@ export function useChannelEditor(channelType: string) {
     form.modelMapping = cloneModelMapping(channel.modelMapping)
     form.modelMappingChannels = cloneModelMappingChannels(form.modelMapping, channel.modelMappingChannels)
     form.defaultModel = channel.defaultModel || ''
+    form.responsesModel = channel.responsesModel || ''
   }
 
   return { form, resetForm, loadChannelData }

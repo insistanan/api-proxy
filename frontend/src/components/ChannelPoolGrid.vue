@@ -81,7 +81,7 @@
                   <ChannelStatusBadge :status="element.status || 'active'" />
                   <div class="pool-channel-main">
                     <span class="font-weight-medium">{{ element.name }}</span>
-                    <span class="text-caption text-medium-emphasis">{{ element.serviceType }}</span>
+                    <span class="text-caption text-medium-emphasis">{{ channelServiceLabel(props.channelType, element.serviceType) }}</span>
                   </div>
                 </div>
               </slot>
@@ -118,7 +118,7 @@
         </button>
         <ChannelStatusBadge v-else :status="channel.status || 'active'" />
         <span class="font-weight-medium text-truncate">{{ channel.name }}</span>
-        <span class="text-caption text-medium-emphasis">{{ channel.serviceType }}</span>
+        <span class="text-caption text-medium-emphasis">{{ channelServiceLabel(props.channelType, channel.serviceType) }}</span>
         <v-spacer />
         <v-chip size="x-small" variant="outlined">
           <v-icon start size="x-small">mdi-key</v-icon>{{ channel.apiKeys?.length || 0 }}
@@ -176,6 +176,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import draggable from 'vuedraggable'
 import { api, type Channel, type ChannelPool } from '../services/api'
 import ChannelStatusBadge from './ChannelStatusBadge.vue'
+import { channelServiceLabel } from '@/utils/imagesChannelProtocol'
 
 const props = defineProps<{
   channels: Channel[]

@@ -63,6 +63,7 @@ export interface Channel {
   // 模型映射的目标渠道登记：源模型 -> 目标模型 -> 目标渠道 ID（缺省表示沿用本渠道）
   modelMappingChannels?: Record<string, Record<string, string>>
   defaultModel?: string
+  responsesModel?: string // Images 转 Responses 时的主模型，与图片模型映射分开配置
   latency?: number
   status?: ChannelStatus | 'healthy' | 'error' | 'unknown' | ''
   index: number

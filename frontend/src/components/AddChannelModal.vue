@@ -58,6 +58,16 @@
           />
 
           <!-- 检测状态提示 -->
+          <ImagesChannelProtocolFields
+            v-if="props.channelType === 'images'"
+            v-model:service-type="form.serviceType"
+            v-model:responses-model="form.responsesModel"
+            :model-options="targetModelOptions"
+            :models-loading="fetchingModels"
+            :models-error="fetchModelsError"
+            class="mt-4"
+            @fetch-models="handleFetchModels('')"
+          />
           <v-card variant="outlined" class="mt-4 detection-status-card" rounded="lg">
             <v-card-text class="pa-4">
               <div class="d-flex flex-column ga-3">
@@ -127,7 +137,7 @@
                     <div class="text-body-2 font-weight-medium">渠道类型</div>
                     <div class="text-caption text-medium-emphasis">
                       {{ props.channelType === 'gemini' ? 'Gemini' : props.channelType === 'responses' ? 'Responses' : props.channelType === 'chat' ? 'Chat' : props.channelType === 'images' ? 'Images' : 'Messages' }} -
-                      {{ getDefaultServiceType() }}
+                      {{ props.channelType === 'images' ? imagesProtocolLabel(form.serviceType) : getDefaultServiceType() }}
                     </div>
                   </div>
                 </div>
@@ -155,7 +165,17 @@
             </v-col>
 
             <v-col cols="12" md="6">
+              <ImagesChannelProtocolFields
+                v-if="props.channelType === 'images'"
+                v-model:service-type="form.serviceType"
+                v-model:responses-model="form.responsesModel"
+                :model-options="targetModelOptions"
+                :models-loading="fetchingModels"
+                :models-error="fetchModelsError"
+                @fetch-models="handleFetchModels('')"
+              />
               <v-select
+                v-else
                 v-model="form.serviceType"
                 label="服务类型 *"
                 :items="serviceTypeOptions"
@@ -311,6 +331,10 @@
                 :target-channel-options="targetChannelOptions"
                 :target-status-by-channel="targetStatusByChannel"
                 :target-placeholder="targetModelPlaceholder"
+                :strict-source-selection="props.channelType === 'images'"
+                :strict-target-selection="props.channelType === 'images'"
+                :allow-wildcard="props.channelType !== 'images'"
+                :allow-target-channel="props.channelType !== 'images'"
                 @fetch-models="handleFetchModels"
               />
             </v-col>
@@ -545,7 +569,7 @@
             </v-col>
 
             <!-- 低质量渠道标记 -->
-            <v-col cols="12">
+            <v-col v-if="props.channelType !== 'images'" cols="12">
               <div class="d-flex align-center justify-space-between">
                 <div class="d-flex align-center ga-2">
                   <v-icon color="info">mdi-speedometer-slow</v-icon>
@@ -561,7 +585,7 @@
             </v-col>
 
             <!-- 图片理解能力与图片理解层 -->
-            <v-col cols="12">
+            <v-col v-if="props.channelType !== 'images'" cols="12">
               <v-card variant="outlined" rounded="lg">
                 <v-card-title class="d-flex align-center ga-2 pa-4 pb-2">
                   <v-icon color="primary">mdi-image-search-outline</v-icon>
@@ -743,6 +767,8 @@ import { useTheme } from 'vuetify'
 import type { Channel, ChannelPool, ChannelStatus } from '../services/api'
 import { api, fetchUpstreamModels, channelApiByType, ApiError } from '../services/api'
 import ModelMappingEditor from './ModelMappingEditor.vue'
+import ImagesChannelProtocolFields from './ImagesChannelProtocolFields.vue'
+import { imagesExpectedRequestUrl, imagesModelOptions, imagesProtocolLabel, isImagesServiceType } from '@/utils/imagesChannelProtocol'
 import {
   isValidApiKey as _isValidApiKey,
   isValidUrl as _isValidQuickInputUrl,
@@ -808,7 +834,9 @@ const toggleMode = () => {
     if (generatedChannelName.value) {
       form.name = generatedChannelName.value
     }
-    form.serviceType = detectedServiceType.value || getDefaultServiceTypeValue()
+    if (props.channelType !== 'images') {
+      form.serviceType = detectedServiceType.value || getDefaultServiceTypeValue()
+    }
   }
   // 切换回快速模式时不做任何清理，保留 quickInput 原有内容
   isQuickMode.value = !isQuickMode.value
@@ -822,6 +850,9 @@ const parseQuickInput = () => {
   detectedApiKeys.value = result.detectedApiKeys
   detectedChannelName.value = result.detectedChannelName
   detectedServiceType.value = result.detectedServiceType
+  if (props.channelType === 'images' && result.detectedServiceType && isImagesServiceType(result.detectedServiceType)) {
+    form.serviceType = result.detectedServiceType
+  }
 }
 
 // 获取默认服务类型
@@ -857,7 +888,7 @@ const getDefaultServiceTypeValue = (): 'openai' | 'gemini' | 'claude' | 'respons
 
 // 快速模式表单验证
 const isQuickFormValid = computed(() => {
-  return detectedBaseUrls.value.length > 0 && detectedApiKeys.value.length > 0
+  return detectedBaseUrls.value.length > 0 && detectedApiKeys.value.length > 0 && isImagesProtocolValid.value
 })
 
 // 生成随机字符串
@@ -915,6 +946,9 @@ const generatedChannelName = computed(() => {
 // 生成单个 URL 的预期请求地址
 const getExpectedRequestUrl = (inputBaseUrl: string): string => {
   if (!inputBaseUrl) return ''
+  if (props.channelType === 'images') {
+    return imagesExpectedRequestUrl(inputBaseUrl, form.serviceType)
+  }
 
   let baseUrl = inputBaseUrl
   const skipVersion = baseUrl.endsWith('#')
@@ -982,6 +1016,12 @@ const formExpectedRequestUrls = computed(() => {
 
   if (urls.length === 0) return []
 
+  if (props.channelType === 'images') {
+    return urls
+      .filter(url => url && isValidUrl(url.replace(/#$/, '')))
+      .map(baseUrl => ({ baseUrl, expectedUrl: imagesExpectedRequestUrl(baseUrl, form.serviceType) }))
+  }
+
   // 根据 serviceType 确定端点
   let endpoint = ''
   if (props.channelType === 'responses') {
@@ -1034,7 +1074,8 @@ const handleQuickSubmit = () => {
 
   const channelData = {
     name: generatedChannelName.value,
-    serviceType: detectedServiceType.value || getDefaultServiceTypeValue(),
+    serviceType: props.channelType === 'images' ? form.serviceType as Channel['serviceType'] : detectedServiceType.value || getDefaultServiceTypeValue(),
+    responsesModel: props.channelType === 'images' && form.serviceType === 'responses' ? form.responsesModel.trim() : '',
     baseUrl: detectedBaseUrl.value,
     baseUrls: detectedBaseUrls.value,
     apiKeys: detectedApiKeys.value,
@@ -1085,6 +1126,9 @@ const serviceTypeOptions = computed(() => {
 
 // 全部源模型选项 - 根据渠道类型动态显示
 const allSourceModelOptions = computed(() => {
+  if (props.channelType === 'images') {
+    return [...imagesModelOptions]
+  }
   if (props.channelType === 'gemini') {
     // Gemini API 常用模型别名（模糊匹配，无需指定版本）
     return [
@@ -1135,6 +1179,9 @@ const sourceModelOptions = computed(() => [
 
 // 模型重定向的示例文本 - 根据渠道类型动态显示
 const modelMappingHint = computed(() => {
+  if (props.channelType === 'images') {
+    return '客户端请求的图片模型映射到右侧固定图片模型。Responses 主模型在上方单独配置并从上游模型列表查询；这里不查询远端对话模型。'
+  }
   if (props.channelType === 'gemini') {
     return '配置模型名称映射，将请求中的模型名重定向到目标模型。使用模糊匹配（如 gemini-flash 可匹配 gemini-2.5-flash 等版本）；选择 "*（任意源模型）" 会将所有模型请求映射到指定目标。'
   }
@@ -1149,6 +1196,9 @@ const modelMappingHint = computed(() => {
 })
 
 const targetModelPlaceholder = computed(() => {
+  if (props.channelType === 'images') {
+    return '例如：gpt-image-1.5'
+  }
   if (props.channelType === 'gemini') {
     return '例如：gemini-2.0-flash'
   }
@@ -1163,7 +1213,7 @@ const targetModelPlaceholder = computed(() => {
 })
 
 // 表单草域草稿经 useChannelEditor（R5，方案 8.1）：草稿独立于 store，取消不落盘。
-const { form, resetForm: resetFormDraft, loadChannelData: loadChannelDataDraft } = useChannelEditor(props.channelType)
+const { form, resetForm: resetFormDraft, loadChannelData: loadChannelDataDraft } = useChannelEditor(() => props.channelType)
 
 const addApiKey = () => {
   const key = newApiKey.value.trim()
@@ -1316,8 +1366,11 @@ const targetChannelOptions = ref<Array<{ title: string; value: string }>>([])
 const targetChannelModelOptions = ref<Record<string, Array<{ title: string; value: string }>>>({})
 const targetChannelModelStatus = ref<Record<string, { loading: boolean; error: string }>>({})
 const targetModelOptionsByChannel = computed(() => ({
-  '': targetModelOptions.value,
-  ...targetChannelModelOptions.value
+  '': props.channelType === 'images' ? [...imagesModelOptions] : targetModelOptions.value,
+  ...Object.fromEntries(Object.keys(targetChannelModelOptions.value).map(channelId => [
+    channelId,
+    props.channelType === 'images' ? [...imagesModelOptions] : targetChannelModelOptions.value[channelId]
+  ]))
 }))
 const targetStatusByChannel = computed(() => ({
   '': { loading: fetchingModels.value, error: fetchModelsError.value },
@@ -1433,11 +1486,15 @@ const subtitleClasses = computed(() => {
 
 const isFormValid = computed(() => {
   return (
-    form.name.trim() && form.serviceType && form.baseUrl.trim() && isValidUrl(form.baseUrl) && form.apiKeys.length > 0 &&
+    form.name.trim() && form.serviceType && form.baseUrl.trim() && isValidUrl(form.baseUrl) && form.apiKeys.length > 0 && isImagesProtocolValid.value &&
     (!form.visionLayerEnabled || form.visionLayerChannelId) &&
     (form.proxyMode !== 'custom' || rules.proxyUrl(form.proxyUrl) === true)
   )
 })
+
+const isImagesProtocolValid = computed(() => props.channelType !== 'images' || (
+  isImagesServiceType(form.serviceType) && (form.serviceType !== 'responses' || !!form.responsesModel.trim())
+))
 
 const visionChannels = ref<Channel[]>([])
 const visionChannelsLoading = ref(false)
@@ -1625,7 +1682,7 @@ const loadMappingTargetChannels = async () => {
   try {
     const response = await channelApiByType(props.channelType).listMappingTargets(props.channel?.id)
     targetChannelOptions.value = (response.channels || []).map(channel => ({
-      title: `${channel.name}（${channel.serviceType}）`,
+      title: `${channel.name}（${props.channelType === 'images' ? imagesProtocolLabel(channel.serviceType) : channel.serviceType}）`,
       value: channel.id
     }))
   } catch (error) {
@@ -1666,13 +1723,23 @@ const fetchChannelTargetModels = async (channelId: string) => {
 }
 
 const fetchTargetModels = async () => {
-  if (!form.baseUrl) {
+  const modelBaseUrl = props.channelType === 'images' && isQuickMode.value
+    ? detectedBaseUrl.value
+    : form.baseUrl
+  const modelBaseUrls = props.channelType === 'images' && isQuickMode.value
+    ? detectedBaseUrls.value
+    : form.baseUrls
+  const modelApiKeys = props.channelType === 'images' && isQuickMode.value
+    ? detectedApiKeys.value
+    : form.apiKeys
+
+  if (!modelBaseUrl) {
     fetchModelsError.value = '请先填写 Base URL'
     return
   }
 
   // 无 API Key 时仍尝试一次空密钥探测（Ollama 等本地上游）
-  const keysToCheck = form.apiKeys.length > 0 ? form.apiKeys : ['']
+  const keysToCheck = modelApiKeys.length > 0 ? modelApiKeys : ['']
 
   // 如果已经有模型列表且所有 key 都已检测过,直接返回(缓存)
   if (targetModelOptions.value.length > 0) {
@@ -1696,8 +1763,8 @@ const fetchTargetModels = async () => {
     keyModelsStatus.value.set(apiKey, { loading: true, success: false })
 
     try {
-      const response = await fetchUpstreamModels(form.baseUrl, apiKey, form.serviceType, {
-        baseUrls: form.baseUrls,
+      const response = await fetchUpstreamModels(modelBaseUrl, apiKey, form.serviceType, {
+        baseUrls: modelBaseUrls,
         insecureSkipVerify: form.insecureSkipVerify,
         proxyMode: form.proxyMode,
         proxyUrl: form.proxyMode === 'custom' ? form.proxyUrl.trim() : ''
@@ -1796,22 +1863,23 @@ const handleSubmit = async () => {
   const channelData: Omit<Channel, 'id' | 'index' | 'latency'> = {
     name: form.name.trim(),
     serviceType: form.serviceType as 'openai' | 'gemini' | 'claude' | 'responses' | 'chat',
+    responsesModel: props.channelType === 'images' && form.serviceType === 'responses' ? form.responsesModel.trim() : '',
     baseUrl: deduplicatedUrls[0] || '',
     website: form.website.trim(), // 空字符串也需要传递，以便清除已有值
     insecureSkipVerify: form.insecureSkipVerify,
     proxyMode: form.proxyMode,
     proxyUrl: form.proxyMode === 'custom' ? form.proxyUrl.trim() : '',
-    lowQuality: form.lowQuality,
-    visionCapable: form.visionCapable,
+    lowQuality: props.channelType === 'images' ? false : form.lowQuality,
+    visionCapable: props.channelType === 'images' ? false : form.visionCapable,
     poolId: form.poolId,
-    excludeFromConversation: form.excludeFromConversation,
-    visionLayerEnabled: form.visionLayerEnabled,
-    visionLayerChannelId: form.visionLayerChannelId || undefined,
-    visionLayerModel: form.visionLayerModel.trim(),
+    excludeFromConversation: props.channelType === 'images' ? false : form.excludeFromConversation,
+    visionLayerEnabled: props.channelType === 'images' ? false : form.visionLayerEnabled,
+    visionLayerChannelId: props.channelType === 'images' ? '' : form.visionLayerChannelId || undefined,
+    visionLayerModel: props.channelType === 'images' ? '' : form.visionLayerModel.trim(),
     temporary: form.temporary,
-    injectDummyThoughtSignature: form.injectDummyThoughtSignature,
-    stripThoughtSignature: form.stripThoughtSignature,
-    disablePromptCacheKey: form.disablePromptCacheKey,
+    injectDummyThoughtSignature: props.channelType === 'images' ? false : form.injectDummyThoughtSignature,
+    stripThoughtSignature: props.channelType === 'images' ? false : form.stripThoughtSignature,
+    disablePromptCacheKey: props.channelType === 'images' ? false : form.disablePromptCacheKey,
     description: form.description.trim(),
     apiKeys: processedApiKeys,
     modelMapping: submitModelMapping,
@@ -1845,7 +1913,7 @@ watch(
       // 无论是编辑还是新增，都先清理密钥错误状态
       apiKeyError.value = ''
       duplicateKeyIndex.value = -1
-      void loadVisionChannels()
+      if (props.channelType !== 'images') void loadVisionChannels()
       void loadPools()
       void loadMappingTargetChannels()
 
