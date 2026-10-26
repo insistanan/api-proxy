@@ -1,5 +1,5 @@
 <template>
-  <div class="request-logs-view">
+  <div class="request-logs-view" :class="{ 'system-tab-active': activeTab === 'system' }">
     <div class="logs-toolbar">
       <v-tabs v-model="activeTab" color="primary" density="comfortable" class="logs-tabs">
         <v-tab value="request">请求日志</v-tab>
@@ -7,7 +7,7 @@
       </v-tabs>
     </div>
 
-    <div v-show="activeTab === 'request'">
+    <div v-show="activeTab === 'request'" class="request-tab-panel">
       <div class="logs-actions mb-4">
         <v-select
           v-model="datePreset"
@@ -518,6 +518,10 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  height: calc(100vh - 112px);
+  height: calc(100dvh - 112px);
+  min-height: 0;
+  overflow: hidden;
 }
 
 .logs-toolbar {
@@ -549,6 +553,18 @@ onMounted(() => {
 
 .date-preset-select {
   max-width: 160px;
+}
+
+.system-tab-active > :deep(.system-logs-panel) {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.request-tab-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
 }
 
 .action-cell {
@@ -588,6 +604,13 @@ onMounted(() => {
 
 .dialog-title {
   font-weight: 700;
+}
+
+@media (max-width: 600px) {
+  .request-logs-view {
+    height: calc(100vh - 88px);
+    height: calc(100dvh - 88px);
+  }
 }
 
 @media (max-width: 900px) {

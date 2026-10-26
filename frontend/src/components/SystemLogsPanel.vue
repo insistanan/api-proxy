@@ -570,6 +570,8 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  height: 100%;
+  min-height: 0;
 }
 
 .system-toolbar {
@@ -599,11 +601,14 @@ onMounted(async () => {
   display: grid;
   grid-template-columns: 360px minmax(0, 1fr);
   gap: 16px;
-  min-height: 70vh;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .system-list-card,
 .system-detail-card {
+  min-height: 0;
   border: 2px solid rgb(var(--v-theme-on-surface));
   border-radius: 0;
   box-shadow: 5px 5px 0 0 rgb(var(--v-theme-on-surface));
@@ -760,6 +765,7 @@ onMounted(async () => {
 @media (max-width: 1100px) {
   .system-layout {
     grid-template-columns: 1fr;
+    grid-template-rows: minmax(160px, 34%) minmax(0, 1fr);
   }
 
   .system-toolbar {
