@@ -117,6 +117,98 @@ func handleImagesResponsesSuccess(c *gin.Context, resp *http.Response, envCfg *c
 	return usage, nil
 }
 
+type nativeImagesJSONData struct {
+	Base64        json.RawMessage `json:"b64_json"`
+	RevisedPrompt string          `json:"revised_prompt"`
+}
+
+type nativeImagesJSONResponse struct {
+	Created      int64                  `json:"created"`
+	Data         []nativeImagesJSONData `json:"data"`
+	OutputFormat string                 `json:"output_format"`
+	Background   string                 `json:"background"`
+	Size         string                 `json:"size"`
+	Quality      string                 `json:"quality"`
+	Usage        json.RawMessage        `json:"usage"`
+	Error        json.RawMessage        `json:"error"`
+}
+
+// writeImagesJSONAsCompletedStream 把上游完整 Images JSON 包成一条 completed SSE。
+// 不解码或再编码整段 base64，只把原始 JSON 字符串切片写进事件。
+func writeImagesJSONAsCompletedStream(c *gin.Context, resp *http.Response, envCfg *config.EnvConfig, endpoint string) error {
+	reader, _, err := utils.WrapStreamReaderIfNeeded(resp)
+	if err != nil {
+		resp.Body.Close()
+		return fmt.Errorf("解压 Images 响应失败: %w", err)
+	}
+	defer reader.Close()
+	if envCfg == nil || envCfg.MaxRequestBodySize <= 0 {
+		return fmt.Errorf("Images 响应大小限制必须为正数")
+	}
+	body, err := utils.ReadWithOutputLimit(reader, envCfg.MaxRequestBodySize)
+	if err != nil {
+		return fmt.Errorf("读取 Images 响应失败: %w", err)
+	}
+	var response nativeImagesJSONResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return fmt.Errorf("解析 Images 响应失败: %w", err)
+	}
+	if len(response.Error) > 0 && string(response.Error) != "null" {
+		return nativeImagesJSONError(response.Error)
+	}
+	if len(response.Data) == 0 {
+		return fmt.Errorf("Images 接口未返回任何图片数据")
+	}
+	created := response.Created
+	if created == 0 {
+		created = time.Now().Unix()
+	}
+	writer := newImagesStreamWriter(c, resp.Header, endpoint)
+	for _, item := range response.Data {
+		quoted, err := quotedImagesBase64JSON(item.Base64)
+		if err != nil {
+			return writer.failure(err)
+		}
+		if err := writer.completed(responsesImageItem{
+			ResultJSON:    quoted,
+			RevisedPrompt: item.RevisedPrompt,
+			OutputFormat:  response.OutputFormat,
+			Background:    response.Background,
+			Size:          response.Size,
+			Quality:       response.Quality,
+			Usage:         response.Usage,
+		}, created); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func quotedImagesBase64JSON(raw json.RawMessage) (string, error) {
+	quoted := strings.TrimSpace(string(raw))
+	if len(quoted) < 2 || quoted[0] != '"' || quoted[len(quoted)-1] != '"' {
+		return "", fmt.Errorf("Images 响应 data.b64_json 必须是 JSON 字符串")
+	}
+	if len(quoted) == 2 {
+		return "", fmt.Errorf("Images 响应缺少图片数据")
+	}
+	return quoted, nil
+}
+
+func nativeImagesJSONError(raw json.RawMessage) error {
+	var details struct {
+		Message string `json:"message"`
+		Code    string `json:"code"`
+	}
+	if err := json.Unmarshal(raw, &details); err != nil {
+		return fmt.Errorf("Images 接口返回无效的错误信息: %w", err)
+	}
+	if details.Message == "" {
+		return fmt.Errorf("Images 接口返回错误，错误码为 %s", details.Code)
+	}
+	return fmt.Errorf("Images 接口失败: %s", details.Message)
+}
+
 func convertResponsesImageResponse(response responsesImageResponse) (imagesResponse, error) {
 	if len(response.Error) > 0 && string(response.Error) != "null" {
 		return imagesResponse{}, responsesImageError(response.Error)

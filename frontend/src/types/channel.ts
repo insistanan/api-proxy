@@ -64,6 +64,8 @@ export interface Channel {
   modelMappingChannels?: Record<string, Record<string, string>>
   defaultModel?: string
   responsesModel?: string // Images 转 Responses 时的主模型，与图片模型映射分开配置
+  imagesExtraParams?: Record<string, string> // Images 自定义上游参数，值为发送前再解析的文本
+  imagesForceNonStream?: boolean // Images 强制上游非流式，回程仍按客户端要求返回 JSON 或 completed SSE
   latency?: number
   status?: ChannelStatus | 'healthy' | 'error' | 'unknown' | ''
   index: number

@@ -37,6 +37,12 @@ type UpstreamConfig struct {
 	ModelMappingChannels map[string]map[string]string `json:"modelMappingChannels,omitempty"`
 	DefaultModel         string                       `json:"defaultModel,omitempty"`
 	ResponsesModel       string                       `json:"responsesModel,omitempty"` // Images 转 Responses 时的主模型；图片模型仍由 modelMapping 决定
+	// ImagesExtraParams 是 Images 渠道的自定义上游参数。值按文本保存，发送前再解析类型。
+	// 只注入原生 Images 的 JSON 或 multipart；Responses 渠道只保存，不注入。
+	ImagesExtraParams map[string]string `json:"imagesExtraParams,omitempty"`
+	// ImagesForceNonStream 强制上游使用 stream: false。
+	// 客户端要 JSON 时原样返回完整结果；要 SSE 时把完整结果包成一条 completed 事件。
+	ImagesForceNonStream bool `json:"imagesForceNonStream,omitempty"`
 	// 多渠道调度相关字段
 	Priority                int        `json:"priority"`                          // 渠道优先级（数字越小优先级越高，默认按索引）
 	Status                  string     `json:"status"`                            // 渠道状态：active（正常）, suspended（暂停）, disabled（备用池）
@@ -121,6 +127,10 @@ type UpstreamUpdate struct {
 	ModelMappingChannels map[string]map[string]string `json:"modelMappingChannels"`
 	DefaultModel         *string                      `json:"defaultModel"`
 	ResponsesModel       *string                      `json:"responsesModel"`
+	// ImagesExtraParams 为 nil 表示本次更新未传、不覆盖；空 map 表示清空。
+	ImagesExtraParams map[string]string `json:"imagesExtraParams"`
+	// ImagesForceNonStream 为 nil 表示本次更新未传、不覆盖。
+	ImagesForceNonStream *bool `json:"imagesForceNonStream"`
 	// 多渠道调度相关字段
 	Priority                *int       `json:"priority"`
 	Status                  *string    `json:"status"`

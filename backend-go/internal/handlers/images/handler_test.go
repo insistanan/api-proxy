@@ -154,8 +154,60 @@ func TestHandleImagesSuccessFlushesRequestedStreamWithoutSSEContentType(t *testi
 		Body:       io.NopCloser(strings.NewReader(`{"type":"partial_image"}`)),
 	}
 
-	_, err := handleImagesSuccess(ctx, response, &config.EnvConfig{}, time.Now(), true)
+	_, err := handleImagesSuccess(ctx, response, &config.EnvConfig{}, time.Now(), "/images/generations", true, false)
 	require.NoError(t, err)
 	require.True(t, recorder.Flushed, "请求 stream=true 时即使上游 Content-Type 不是 SSE 也必须 flush")
 	require.Equal(t, `{"type":"partial_image"}`, recorder.Body.String())
+}
+
+func TestHandleImagesSuccessWrapsJSONAsCompletedWhenForceNonStream(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"stream":true}`))
+	response := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": {"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"created":123,"data":[{"b64_json":"AQID","revised_prompt":"猫"}],"output_format":"png"}`)),
+	}
+
+	_, err := handleImagesSuccess(ctx, response, &config.EnvConfig{MaxRequestBodySize: 1024 * 1024}, time.Now(), "/images/generations", true, true)
+	require.NoError(t, err)
+	require.Equal(t, "text/event-stream", recorder.Header().Get("Content-Type"))
+	require.Equal(t, 1, strings.Count(recorder.Body.String(), "event: image_generation.completed"))
+	require.NotContains(t, recorder.Body.String(), "partial_image")
+	require.Contains(t, recorder.Body.String(), `"b64_json":"AQID"`)
+	require.Contains(t, recorder.Body.String(), `"revised_prompt":"猫"`)
+}
+
+func TestHandleImagesSuccessForceNonStreamRejectsJSONWithoutImageData(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"stream":true}`))
+	response := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": {"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"type":"partial_image"}`)),
+	}
+
+	_, err := handleImagesSuccess(ctx, response, &config.EnvConfig{MaxRequestBodySize: 1024 * 1024}, time.Now(), "/images/generations", true, true)
+	require.ErrorContains(t, err, "未返回任何图片数据")
+}
+
+func TestHandleImagesSuccessForwardsUpstreamSSEEvenIfForceNonStream(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"stream":true}`))
+	body := "event: image_generation.completed
+data: {"b64_json":"AQID"}
+
+"
+	response := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": {"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+
+	_, err := handleImagesSuccess(ctx, response, &config.EnvConfig{}, time.Now(), "/images/generations", true, true)
+	require.NoError(t, err)
+	require.Equal(t, body, recorder.Body.String())
 }

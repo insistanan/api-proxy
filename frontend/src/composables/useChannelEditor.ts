@@ -4,6 +4,7 @@
 // 调用方以服务端结果刷新。本文件不发起任何网络请求。
 import { reactive, toValue, type MaybeRefOrGetter } from 'vue'
 import type { Channel, ChannelStatus } from '@/services/api'
+import { rowsFromImagesExtraParams, type ImagesExtraParamRow } from '@/utils/imagesExtraParams'
 
 /** 表单草稿：AddChannelModal 的唯一可编辑状态本体。 */
 export type ChannelFormState = {
@@ -34,6 +35,8 @@ export type ChannelFormState = {
   modelMappingChannels: Record<string, Record<string, string>>
   defaultModel: string
   responsesModel: string
+  imagesExtraParams: ImagesExtraParamRow[]
+  imagesForceNonStream: boolean
 }
 
 /** 新渠道的默认草稿。responses 协议默认启用图片理解（历史行为）。 */
@@ -64,7 +67,9 @@ export function defaultChannelForm(channelType: string): ChannelFormState {
     modelMapping: {},
     modelMappingChannels: {},
     defaultModel: '',
-    responsesModel: ''
+    responsesModel: '',
+    imagesExtraParams: [],
+    imagesForceNonStream: false
   }
 }
 
@@ -172,6 +177,8 @@ export function useChannelEditor(channelType: MaybeRefOrGetter<string>) {
     form.modelMappingChannels = cloneModelMappingChannels(form.modelMapping, channel.modelMappingChannels)
     form.defaultModel = channel.defaultModel || ''
     form.responsesModel = channel.responsesModel || ''
+    form.imagesExtraParams = rowsFromImagesExtraParams(channel.imagesExtraParams)
+    form.imagesForceNonStream = currentChannelType === 'images' && !!channel.imagesForceNonStream
   }
 
   return { form, resetForm, loadChannelData }

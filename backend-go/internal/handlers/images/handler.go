@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"mime"
 	"net/http"
 	"strings"
 	"time"
@@ -50,13 +49,13 @@ func Handler(
 		},
 		HandleSuccess: func(c *gin.Context, resp *http.Response, up *config.UpstreamConfig, apiKey string, body []byte, startTime time.Time) (*types.Usage, error) {
 			// Images 的 stream 位于 JSON 或 multipart 字段中；解析阶段已经识别，
-			// 成功出口也必须把它传给转发器，否则上游返回非 SSE Content-Type
-			// 时会按普通 JSON 缓冲，客户端收不到实时事件。
+			// 成功出口也必须用原始请求判断回程格式。强制非流式只改写出站正文，
+			// 不能用改写后的 stream=false 去决定返回 JSON 还是 SSE。
 			requestMeta := extractImagesRequestMetadata(c.GetHeader("Content-Type"), body)
 			if up.ServiceType == "responses" {
 				return handleImagesResponsesSuccess(c, resp, envCfg, endpoint, requestMeta.Stream)
 			}
-			return handleImagesSuccess(c, resp, envCfg, startTime, requestMeta.Stream)
+			return handleImagesSuccess(c, resp, envCfg, startTime, endpoint, requestMeta.Stream, up.ImagesForceNonStream)
 		},
 	}
 	return func(c *gin.Context) {
@@ -90,79 +89,22 @@ func buildImagesUpstreamRequest(c *gin.Context, upstream *config.UpstreamConfig,
 	return req, nil
 }
 
-func applyImagesModelMapping(contentType string, bodyBytes []byte, upstream *config.UpstreamConfig) ([]byte, string, error) {
-	if boundary, ok := utils.MultipartBoundary(contentType); ok {
-		metadata := extractImagesRequestMetadata(contentType, bodyBytes)
-		if strings.TrimSpace(metadata.Model) == "" || config.ResolveUpstreamModel(metadata.Model, upstream) == metadata.Model {
-			return bodyBytes, contentType, nil
-		}
-		return applyImagesMultipartModelMapping(boundary, bodyBytes, upstream)
-	}
-
-	mediaType, _, err := mime.ParseMediaType(contentType)
-	if err != nil {
-		return bodyBytes, contentType, nil
-	}
-	if !strings.Contains(mediaType, "json") {
-		return bodyBytes, contentType, nil
-	}
-
-	var payload map[string]interface{}
-	decoder := json.NewDecoder(bytes.NewReader(bodyBytes))
-	decoder.UseNumber()
-	if err := decoder.Decode(&payload); err != nil {
-		return nil, "", fmt.Errorf("解析 Images 请求体失败: %w", err)
-	}
-
-	if model, ok := payload["model"].(string); ok && strings.TrimSpace(model) != "" {
-		mappedModel := config.ResolveUpstreamModel(model, upstream)
-		if mappedModel == model {
-			return bodyBytes, contentType, nil
-		}
-		payload["model"] = mappedModel
-	} else {
-		return bodyBytes, contentType, nil
-	}
-
-	mappedBody, err := utils.MarshalJSONNoEscape(payload)
-	if err != nil {
-		return nil, "", err
-	}
-	return mappedBody, contentType, nil
-}
-
-// applyImagesMultipartModelMapping 把 multipart 表单里的 model 字段改写为上游模型名，
-// 并整表重新编码。返回的 Content-Type 带**新的** boundary，调用方必须同步到请求头。
-func applyImagesMultipartModelMapping(boundary string, bodyBytes []byte, upstream *config.UpstreamConfig) ([]byte, string, error) {
-	parts, err := utils.ParseMultipartParts(bodyBytes, boundary)
-	if err != nil {
-		return nil, "", fmt.Errorf("解析 Images multipart 请求体失败: %w", err)
-	}
-
-	for index := range parts {
-		// 带 filename 的部件是上传的图片/蒙版，即使表单字段名恰好叫 model 也不是模型名。
-		if parts[index].FormName != "model" || parts[index].FileName != "" {
-			continue
-		}
-		model := strings.TrimSpace(string(parts[index].Content))
-		if model == "" {
-			continue
-		}
-		parts[index].Content = []byte(config.ResolveUpstreamModel(model, upstream))
-	}
-
-	mappedBody, mappedContentType, err := utils.EncodeMultipartParts(parts)
-	if err != nil {
-		return nil, "", fmt.Errorf("重建 Images multipart 请求体失败: %w", err)
-	}
-	return mappedBody, mappedContentType, nil
-}
-
 func buildOpenAIEndpointURL(baseURL string, endpoint string) string {
 	return utils.BuildUpstreamURL(baseURL, "/v1", endpoint)
 }
 
-func handleImagesSuccess(c *gin.Context, resp *http.Response, envCfg *config.EnvConfig, startTime time.Time, requestedStream bool) (*types.Usage, error) {
+func handleImagesSuccess(c *gin.Context, resp *http.Response, envCfg *config.EnvConfig, startTime time.Time, endpoint string, requestedStream, forceNonStream bool) (*types.Usage, error) {
+	if forceNonStream && requestedStream && !streams.IsEventStreamResponse(resp) {
+		if envCfg.EnableResponseLogs {
+			log.Printf("[Images-Stream] Images 强制非流式结果转为 completed: %dms, 状态: %d", time.Since(startTime).Milliseconds(), resp.StatusCode)
+		}
+		err := writeImagesJSONAsCompletedStream(c, resp, envCfg, endpoint)
+		if envCfg.EnableResponseLogs {
+			log.Printf("[Images-Stream] Images 强制非流式 completed 转发完成: %dms", time.Since(startTime).Milliseconds())
+		}
+		return nil, err
+	}
+
 	defer resp.Body.Close()
 
 	isStream := requestedStream || streams.IsEventStreamResponse(resp)
@@ -208,21 +150,16 @@ func extractImagesRequestMetadata(contentType string, bodyBytes []byte) imagesRe
 		return metadata
 	}
 
-	mediaType, _, err := mime.ParseMediaType(contentType)
-	if err != nil {
+	// 元数据只用于选渠和日志。正文不是可识别的 JSON 时保持空值，
+	// 真正的出站改写会在构建请求时对非法 JSON 显式报错。
+	payload, ok, err := readImagesJSONObject(contentType, bodyBytes)
+	if err != nil || !ok {
 		return metadata
 	}
-	if !strings.Contains(mediaType, "json") {
-		return metadata
+	if model, ok := payload["model"].(string); ok {
+		metadata.Model = strings.TrimSpace(model)
 	}
-
-	var payload map[string]interface{}
-	decoder := json.NewDecoder(bytes.NewReader(bodyBytes))
-	decoder.UseNumber()
-	if err := decoder.Decode(&payload); err == nil {
-		metadata.Model, _ = payload["model"].(string)
-		metadata.Stream = parseImagesStreamValue(payload["stream"])
-	}
+	metadata.Stream = parseImagesStreamValue(payload["stream"])
 	return metadata
 }
 

@@ -475,6 +475,9 @@ func (u *UpstreamConfig) Clone() *UpstreamConfig {
 			cloned.ModelMappingChannels[source] = maps.Clone(targets)
 		}
 	}
+	if u.ImagesExtraParams != nil {
+		cloned.ImagesExtraParams = maps.Clone(u.ImagesExtraParams)
+	}
 	if u.PromotionUntil != nil {
 		t := *u.PromotionUntil
 		cloned.PromotionUntil = &t

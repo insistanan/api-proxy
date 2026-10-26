@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"mime"
 	"net/http"
 	"strings"
@@ -101,21 +100,12 @@ func readImagesPayload(contentType string, body []byte) (map[string]interface{},
 		}
 		return payload, nil
 	}
-	mediaType, _, err := mime.ParseMediaType(contentType)
-	if err != nil || !strings.Contains(mediaType, "json") {
+	payload, ok, err := readImagesJSONObject(contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	if !ok || payload == nil {
 		return nil, fmt.Errorf("Responses 图片渠道只接受 JSON 或 multipart/form-data 请求")
-	}
-	var payload map[string]interface{}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.UseNumber()
-	if err := decoder.Decode(&payload); err != nil {
-		return nil, fmt.Errorf("解析 Images JSON 请求失败: %w", err)
-	}
-	if err := decoder.Decode(new(interface{})); err != io.EOF {
-		return nil, fmt.Errorf("Images 请求必须是单个 JSON 对象")
-	}
-	if payload == nil {
-		return nil, fmt.Errorf("Images 请求不能为空")
 	}
 	return payload, nil
 }
@@ -140,8 +130,12 @@ func multipartImageReference(part utils.MultipartPart) (map[string]interface{}, 
 func convertImagesRequestToResponses(payload map[string]interface{}, upstream *config.UpstreamConfig, isEdit bool) (map[string]interface{}, error) {
 	model, _ := payload["model"].(string)
 	prompt, _ := payload["prompt"].(string)
-	if strings.TrimSpace(model) == "" || strings.TrimSpace(prompt) == "" {
+	resolvedModel, modelChanged := resolveImagesUpstreamModel(model, upstream)
+	if resolvedModel == "" || strings.TrimSpace(prompt) == "" {
 		return nil, fmt.Errorf("Responses 图片渠道要求 Images 请求包含 model 和 prompt")
+	}
+	if modelChanged {
+		logImagesModelMapping(model, resolvedModel)
 	}
 	if format, exists := payload["response_format"]; exists && format != "b64_json" {
 		return nil, fmt.Errorf("Responses 图片渠道只能返回 b64_json，无法生成托管图片 URL")
@@ -151,11 +145,18 @@ func convertImagesRequestToResponses(payload map[string]interface{}, upstream *c
 			return nil, fmt.Errorf("Images 参数 stream 必须是布尔值")
 		}
 	}
-	tool := map[string]interface{}{"type": "image_generation", "model": config.ResolveUpstreamModel(model, upstream)}
+	// 顶层 model 是 Responses 主模型。真正的生图模型只写进 image_generation 工具。
+	// 渠道自定义参数不注入这条路径，未知字段会被上游拒绝。
+	forceNonStream := upstream != nil && upstream.ImagesForceNonStream
+	tool := map[string]interface{}{"type": "image_generation", "model": resolvedModel}
 	for key, value := range payload {
 		switch key {
-		case "size", "quality", "background", "output_format", "moderation", "input_fidelity", "output_compression", "n", "partial_images":
+		case "size", "quality", "background", "output_format", "moderation", "input_fidelity", "output_compression", "n":
 			tool[key] = value
+		case "partial_images":
+			if !forceNonStream {
+				tool[key] = value
+			}
 		case "model", "prompt", "stream", "response_format", "images", "image", "mask", "user", "metadata":
 			// 通用字段在下方分别写入 Responses 请求。
 		default:
@@ -215,10 +216,13 @@ func convertImagesRequestToResponses(payload map[string]interface{}, upstream *c
 		"input": []interface{}{map[string]interface{}{"role": "user", "content": content}},
 		"tools": []interface{}{tool}, "tool_choice": map[string]interface{}{"type": "image_generation"},
 	}
-	for _, key := range []string{"stream", "user"} {
-		if value, exists := payload[key]; exists {
-			result[key] = value
-		}
+	if forceNonStream {
+		result["stream"] = false
+	} else if value, exists := payload["stream"]; exists {
+		result["stream"] = value
+	}
+	if value, exists := payload["user"]; exists {
+		result["user"] = value
 	}
 	if raw, exists := payload["metadata"]; exists {
 		metadata, ok := raw.(map[string]interface{})

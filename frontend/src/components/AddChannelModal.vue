@@ -333,10 +333,91 @@
                 :target-placeholder="targetModelPlaceholder"
                 :strict-source-selection="props.channelType === 'images'"
                 :strict-target-selection="props.channelType === 'images'"
-                :allow-wildcard="props.channelType !== 'images'"
+                :allow-wildcard="true"
                 :allow-target-channel="props.channelType !== 'images'"
                 @fetch-models="handleFetchModels"
               />
+            </v-col>
+
+            <v-col v-if="props.channelType === 'images'" cols="12">
+              <div class="d-flex align-center justify-space-between">
+                <div class="d-flex align-center ga-2">
+                  <v-icon color="primary">mdi-lightning-bolt</v-icon>
+                  <div>
+                    <div class="text-body-1 font-weight-medium">强制非流式</div>
+                    <div class="text-caption text-medium-emphasis">
+                      发给上游的请求一律使用 stream: false。客户端要 JSON 就返回完整 JSON；要 SSE 时把完整结果包成一条 completed 事件，不含 partial。
+                    </div>
+                  </div>
+                </div>
+                <v-switch v-model="form.imagesForceNonStream" inset color="primary" hide-details />
+              </div>
+            </v-col>
+
+            <v-col v-if="props.channelType === 'images'" cols="12">
+              <v-card variant="outlined" rounded="lg">
+                <v-card-title class="d-flex align-center justify-space-between pa-4 pb-2">
+                  <div class="d-flex align-center ga-2">
+                    <v-icon color="primary">mdi-code-json</v-icon>
+                    <span class="text-body-1 font-weight-bold">自定义请求参数 (可选)</span>
+                  </div>
+                  <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-plus" @click="addImagesExtraParam">
+                    添加
+                  </v-btn>
+                </v-card-title>
+                <v-card-text class="pt-2">
+                  <div class="text-body-2 text-medium-emphasis mb-4">
+                    以参数名和参数值追加到上游生图请求。客户端已经传入的同名字段保持不变。
+                    true、false、null、JSON 数字、对象和数组按对应类型发送，其余按字符串发送。要强制字符串，值请写成带引号的 JSON，例如 "false"。
+                    <div class="text-caption mt-1">不能使用 model 和 stream。model 由模型重定向写入；stream 由强制非流式配置覆盖，未开启时跟随客户端请求。</div>
+                    <div v-if="form.serviceType === 'responses'" class="text-caption mt-1">
+                      当前是 Responses 渠道：这些参数只会保存，不会注入到 /v1/responses。图片模型仍由上方模型重定向写入 image_generation 工具。
+                    </div>
+                  </div>
+                  <div v-if="form.imagesExtraParams.length" class="d-flex flex-column ga-3">
+                    <div
+                      v-for="(row, index) in form.imagesExtraParams"
+                      :key="index"
+                      class="d-flex align-center ga-2"
+                    >
+                      <v-text-field
+                        v-model="row.key"
+                        label="参数名"
+                        placeholder="例如：watermark"
+                        variant="outlined"
+                        density="comfortable"
+                        hide-details
+                        class="flex-1-1"
+                        @update:model-value="imagesExtraParamsError = ''"
+                      />
+                      <v-text-field
+                        v-model="row.value"
+                        label="参数值"
+                        placeholder="例如：false 或 &quot;false&quot;"
+                        variant="outlined"
+                        density="comfortable"
+                        hide-details
+                        class="flex-1-1"
+                        @update:model-value="imagesExtraParamsError = ''"
+                      />
+                      <v-btn
+                        size="small"
+                        color="error"
+                        icon
+                        variant="text"
+                        title="删除参数"
+                        @click="removeImagesExtraParam(index)"
+                      >
+                        <v-icon size="small" color="error">mdi-delete</v-icon>
+                      </v-btn>
+                    </div>
+                  </div>
+                  <div v-else class="text-caption text-medium-emphasis">还没有自定义参数。点击添加后填写参数名和参数值。</div>
+                  <div v-if="imagesExtraParamsError" class="text-error text-caption mt-2">
+                    {{ imagesExtraParamsError }}
+                  </div>
+                </v-card-text>
+              </v-card>
             </v-col>
 
             <!-- API密钥管理 -->
@@ -775,6 +856,7 @@ import {
   parseQuickInput as parseQuickInputUtil
 } from '../utils/quickInputParser'
 import { useChannelEditor, cloneModelMapping, cloneModelMappingChannels } from '../composables/useChannelEditor'
+import { compileImagesExtraParams } from '@/utils/imagesExtraParams'
 
 interface Props {
   show: boolean
@@ -1180,7 +1262,7 @@ const sourceModelOptions = computed(() => [
 // 模型重定向的示例文本 - 根据渠道类型动态显示
 const modelMappingHint = computed(() => {
   if (props.channelType === 'images') {
-    return '客户端请求的图片模型映射到右侧固定图片模型。Responses 主模型在上方单独配置并从上游模型列表查询；这里不查询远端对话模型。'
+    return '任意客户端图片模型都会落到右侧上游生图模型。原生 Images 改写请求体的 model；Responses 改写 image_generation 工具里的 model，顶层对话模型仍用上方的 Responses 主模型。选择「*（任意源模型）」后，外面请求什么模型都会使用同一个上游生图模型。'
   }
   if (props.channelType === 'gemini') {
     return '配置模型名称映射，将请求中的模型名重定向到目标模型。使用模糊匹配（如 gemini-flash 可匹配 gemini-2.5-flash 等版本）；选择 "*（任意源模型）" 会将所有模型请求映射到指定目标。'
@@ -1197,7 +1279,7 @@ const modelMappingHint = computed(() => {
 
 const targetModelPlaceholder = computed(() => {
   if (props.channelType === 'images') {
-    return '例如：gpt-image-1.5'
+    return '例如：sensenova-u1.5-lite'
   }
   if (props.channelType === 'gemini') {
     return '例如：gemini-2.0-flash'
@@ -1214,6 +1296,18 @@ const targetModelPlaceholder = computed(() => {
 
 // 表单草域草稿经 useChannelEditor（R5，方案 8.1）：草稿独立于 store，取消不落盘。
 const { form, resetForm: resetFormDraft, loadChannelData: loadChannelDataDraft } = useChannelEditor(() => props.channelType)
+
+const imagesExtraParamsError = ref('')
+
+const addImagesExtraParam = () => {
+  imagesExtraParamsError.value = ''
+  form.imagesExtraParams.push({ key: '', value: '' })
+}
+
+const removeImagesExtraParam = (index: number) => {
+  imagesExtraParamsError.value = ''
+  form.imagesExtraParams.splice(index, 1)
+}
 
 const addApiKey = () => {
   const key = newApiKey.value.trim()
@@ -1838,6 +1932,17 @@ const handleSubmit = async () => {
   const { valid } = await formRef.value.validate()
   if (!valid) return
 
+  let imagesExtraParams: Record<string, string> | undefined
+  if (props.channelType === 'images') {
+    const compiled = compileImagesExtraParams(form.imagesExtraParams)
+    if (compiled.error) {
+      imagesExtraParamsError.value = compiled.error
+      return
+    }
+    imagesExtraParamsError.value = ''
+    imagesExtraParams = compiled.params
+  }
+
   // 直接使用原始密钥，不需要转换
   const processedApiKeys = form.apiKeys.filter(key => key.trim())
 
@@ -1885,7 +1990,9 @@ const handleSubmit = async () => {
     modelMapping: submitModelMapping,
     modelMappingChannels:
       props.channelType === 'chat' ? {} : cloneModelMappingChannels(submitModelMapping, form.modelMappingChannels),
-    defaultModel: props.channelType === 'chat' ? getStringValue(form.defaultModel).trim() : ''
+    defaultModel: props.channelType === 'chat' ? getStringValue(form.defaultModel).trim() : '',
+    ...(props.channelType === 'images' ? { imagesForceNonStream: form.imagesForceNonStream } : {}),
+    ...(imagesExtraParams ? { imagesExtraParams } : {})
   }
 
   // 多 BaseURL 支持
@@ -1913,6 +2020,7 @@ watch(
       // 无论是编辑还是新增，都先清理密钥错误状态
       apiKeyError.value = ''
       duplicateKeyIndex.value = -1
+      imagesExtraParamsError.value = ''
       if (props.channelType !== 'images') void loadVisionChannels()
       void loadPools()
       void loadMappingTargetChannels()

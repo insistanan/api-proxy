@@ -11,6 +11,11 @@ func ValidateImagesUpstream(upstream *UpstreamConfig) error {
 	if upstream == nil {
 		return &ConfigError{Message: "Images 渠道配置不能为空"}
 	}
+	normalized, err := normalizeImagesExtraParams(upstream.ImagesExtraParams)
+	if err != nil {
+		return err
+	}
+	upstream.ImagesExtraParams = normalized
 	switch upstream.ServiceType {
 	case "openai":
 		return nil

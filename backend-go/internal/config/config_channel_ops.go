@@ -368,6 +368,16 @@ func applyCommonUpdates(upstream *UpstreamConfig, index int, updates UpstreamUpd
 	if updates.ResponsesModel != nil {
 		upstream.ResponsesModel = strings.TrimSpace(*updates.ResponsesModel)
 	}
+	if updates.ImagesExtraParams != nil {
+		normalized, err := normalizeImagesExtraParams(updates.ImagesExtraParams)
+		if err != nil {
+			return false, err
+		}
+		upstream.ImagesExtraParams = normalized
+	}
+	if updates.ImagesForceNonStream != nil {
+		upstream.ImagesForceNonStream = *updates.ImagesForceNonStream
+	}
 	if updates.Description != nil {
 		upstream.Description = *updates.Description
 	}
