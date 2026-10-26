@@ -1,8 +1,28 @@
 package config
 
 import (
+	"strings"
 	"time"
 )
+
+// ValidateImagesUpstream 保证图片渠道的协议选择与实际适配能力一致。
+// openai 沿用旧配置值，在 Images 分组中表示 Images API。
+func ValidateImagesUpstream(upstream *UpstreamConfig) error {
+	if upstream == nil {
+		return &ConfigError{Message: "Images 渠道配置不能为空"}
+	}
+	switch upstream.ServiceType {
+	case "openai":
+		return nil
+	case "responses":
+		if strings.TrimSpace(upstream.ResponsesModel) == "" {
+			return &ConfigError{Message: "Responses 图片渠道必须配置 Responses 主模型"}
+		}
+		return nil
+	default:
+		return &ConfigError{Message: "Images 渠道的上游协议仅支持 Images API（openai）或 Responses API（responses）"}
+	}
+}
 
 // ============== Images 渠道方法（薄委托） ==============
 

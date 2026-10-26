@@ -36,6 +36,9 @@ type upstreamAttemptPreflight struct {
 // 上限的巨型响应按读失败处理，走 failover 让其他候选接手。
 const maxEnvelopeSniffBytes = 10 * 1024 * 1024
 
+// Images 成功响应可能包含很大的 base64 JSON；只缓冲足以识别常见错误信封的前缀。
+const maxImagesEnvelopeSniffBytes = 64 * 1024
+
 // readBodyWithLimit 读取响应体，超过 limit 返回错误（与静默截断相比，
 // 显式失败能触发 failover 而不是把半个 JSON 交给下游解析）。
 func readBodyWithLimit(body io.Reader, limit int64) ([]byte, error) {
@@ -47,6 +50,21 @@ func readBodyWithLimit(body io.Reader, limit int64) ([]byte, error) {
 		return nil, fmt.Errorf("上游响应体超过 %d MB 上限", limit/1024/1024)
 	}
 	return limited, nil
+}
+
+// readImagesErrorEnvelopePrefix 只缓冲有限前缀。超过预算时立即恢复完整响应流，
+// 让 Images 适配器继续处理大块 base64，而不在共享错误信封检查阶段整包缓存。
+func readImagesErrorEnvelopePrefix(resp *http.Response) ([]byte, bool, error) {
+	prefix, err := io.ReadAll(io.LimitReader(resp.Body, maxImagesEnvelopeSniffBytes+1))
+	if int64(len(prefix)) > maxImagesEnvelopeSniffBytes {
+		resp.Body = io.NopCloser(io.MultiReader(bytes.NewReader(prefix), resp.Body))
+		return nil, false, nil
+	}
+	if err != nil {
+		resp.Body = io.NopCloser(io.MultiReader(bytes.NewReader(prefix), resp.Body))
+		return nil, false, fmt.Errorf("读取 Images 上游错误信封失败: %w", err)
+	}
+	return prefix, true, nil
 }
 
 // looksLikeJSONResponse 判断上游响应是否声称 JSON 载荷。错误信封只可能是
@@ -512,7 +530,14 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 			// 在 streams 层 prime-then-commit）。全量读取与 HandleSuccess 非流式
 			// 路径的 io.ReadAll 开销相同；上限外的超大响应按读失败处理。
 			if !isStream && looksLikeJSONResponse(resp) {
-				sniff, readErr := readBodyWithLimit(resp.Body, maxEnvelopeSniffBytes)
+				var sniff []byte
+				var readErr error
+				sniffComplete := true
+				if apiType == "images" {
+					sniff, sniffComplete, readErr = readImagesErrorEnvelopePrefix(resp)
+				} else {
+					sniff, readErr = readBodyWithLimit(resp.Body, maxEnvelopeSniffBytes)
+				}
 				if readErr != nil {
 					// 响应体读取中断/超上限：连接已不可靠或响应异常巨大，按网络故障处理。
 					// body 不会被 HandleSuccess 接手，必须显式关闭，否则连接不归还连接池。
@@ -528,7 +553,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 					log.Printf("[%s-Key] 警告: 读取上游响应体失败 (状态: %d)，尝试下一个密钥: %v", apiType, resp.StatusCode, readErr)
 					continue
 				}
-				if utils.IsUpstreamErrorEnvelope(sniff) {
+				if sniffComplete && utils.IsUpstreamErrorEnvelope(sniff) {
 					failoverState.lastError = fmt.Errorf("上游 2xx 响应携带错误信封")
 					failoverState.lastFailoverError = &FailoverError{Status: resp.StatusCode, Body: sniff}
 					retryState.MarkKeyFailed(apiKey)
@@ -542,7 +567,9 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 					continue
 				}
 				// 非命中：body 原样放回，HandleSuccess 正常消费。
-				resp.Body = io.NopCloser(bytes.NewReader(sniff))
+				if sniffComplete {
+					resp.Body = io.NopCloser(bytes.NewReader(sniff))
+				}
 			}
 
 			usage, err = a.HandleSuccess(c, resp, upstreamCopy, apiKey)

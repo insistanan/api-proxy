@@ -48,6 +48,12 @@ func (cm *ConfigManager) addChannel(kind string, up UpstreamConfig) (AddedUpstre
 
 	cs := cm.channelSetFor(kind)
 	up.DefaultModel = strings.TrimSpace(up.DefaultModel)
+	if kind == "images" {
+		up.ResponsesModel = strings.TrimSpace(up.ResponsesModel)
+		if err := ValidateImagesUpstream(&up); err != nil {
+			return AddedUpstream{}, err
+		}
+	}
 	previous := *cs.upstreams
 	next, result, err := addValidatedUpstreamOp(previous, *cs.pools, up)
 	if err != nil {
@@ -80,6 +86,11 @@ func (cm *ConfigManager) updateChannel(kind string, index int, updates UpstreamU
 	shouldReset, err := applyCommonUpdatesToList(next, *cs.pools, index, updates, cs.name)
 	if err != nil {
 		return false, err
+	}
+	if kind == "images" {
+		if err := ValidateImagesUpstream(&next[index]); err != nil {
+			return false, err
+		}
 	}
 
 	*cs.upstreams = next

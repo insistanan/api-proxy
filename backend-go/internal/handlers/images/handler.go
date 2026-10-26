@@ -53,6 +53,9 @@ func Handler(
 			// 成功出口也必须把它传给转发器，否则上游返回非 SSE Content-Type
 			// 时会按普通 JSON 缓冲，客户端收不到实时事件。
 			requestMeta := extractImagesRequestMetadata(c.GetHeader("Content-Type"), body)
+			if up.ServiceType == "responses" {
+				return handleImagesResponsesSuccess(c, resp, envCfg, endpoint, requestMeta.Stream)
+			}
 			return handleImagesSuccess(c, resp, envCfg, startTime, requestMeta.Stream)
 		},
 	}
@@ -62,6 +65,12 @@ func Handler(
 }
 
 func buildImagesUpstreamRequest(c *gin.Context, upstream *config.UpstreamConfig, apiKey string, endpoint string, originalBody []byte) (*http.Request, error) {
+	if err := config.ValidateImagesUpstream(upstream); err != nil {
+		return nil, err
+	}
+	if upstream.ServiceType == "responses" {
+		return buildImagesResponsesRequest(c, upstream, apiKey, endpoint, originalBody)
+	}
 	bodyBytes, contentType, err := applyImagesModelMapping(c.GetHeader("Content-Type"), originalBody, upstream)
 	if err != nil {
 		return nil, err

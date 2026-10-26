@@ -26,6 +26,7 @@ func ChannelToDTO(up *UpstreamConfig, index int) map[string]interface{} {
 		"modelMapping":                up.ModelMapping,
 		"modelMappingChannels":        up.ModelMappingChannels,
 		"defaultModel":                up.DefaultModel,
+		"responsesModel":              up.ResponsesModel,
 		"latency":                     nil,
 		"status":                      GetChannelStatus(up),
 		"priority":                    GetChannelPriority(up, index),

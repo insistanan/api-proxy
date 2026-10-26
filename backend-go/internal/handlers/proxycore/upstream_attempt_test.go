@@ -360,6 +360,23 @@ func TestUpstreamAttempt2xxNormalJSONPassesThrough(t *testing.T) {
 	}
 }
 
+func TestReadImagesErrorEnvelopePrefixRestoresLargeBody(t *testing.T) {
+	original := strings.Repeat("A", maxImagesEnvelopeSniffBytes+4096)
+	response := &http.Response{Body: io.NopCloser(strings.NewReader(original))}
+
+	prefix, complete, err := readImagesErrorEnvelopePrefix(response)
+	if err != nil || complete || len(prefix) != 0 {
+		t.Fatalf("超出探测预算时应恢复流而不缓存正文: complete=%v prefix=%d err=%v", complete, len(prefix), err)
+	}
+	restored, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("读取恢复后的正文失败: %v", err)
+	}
+	if string(restored) != original {
+		t.Fatalf("恢复后的正文不完整: got=%d want=%d", len(restored), len(original))
+	}
+}
+
 func TestUpstreamAttemptThinkingBudgetRectifierRetriesSuccessfully(t *testing.T) {
 	var requestCount int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

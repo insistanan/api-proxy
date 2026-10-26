@@ -1,6 +1,7 @@
 package proxycore
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/BenedictKing/api-proxy/internal/logger"
@@ -52,4 +53,26 @@ func RequestLogID(c *gin.Context) string {
 		return logger.RequestIDFromContext(c.Request.Context())
 	}
 	return ""
+}
+
+type detachedCancellationContext struct {
+	context.Context
+	parent context.Context
+}
+
+func (detached detachedCancellationContext) Value(key any) any {
+	if detached.parent == nil {
+		return nil
+	}
+	return detached.parent.Value(key)
+}
+
+// DetachClientCancellation 保留父 context 的请求值，但 Done 不再跟随客户端取消。
+// 图片已经完整写给浏览器后，上游 response.completed 仍可能携带 usage；
+// 此时不能因为浏览器关闭 SSE 而中止已经开始的上游读取。
+func DetachClientCancellation(parent context.Context) context.Context {
+	if parent == nil {
+		parent = context.Background()
+	}
+	return detachedCancellationContext{Context: context.Background(), parent: parent}
 }

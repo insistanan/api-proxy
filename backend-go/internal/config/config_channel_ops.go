@@ -365,6 +365,9 @@ func applyCommonUpdates(upstream *UpstreamConfig, index int, updates UpstreamUpd
 	if updates.ServiceType != nil {
 		upstream.ServiceType = *updates.ServiceType
 	}
+	if updates.ResponsesModel != nil {
+		upstream.ResponsesModel = strings.TrimSpace(*updates.ResponsesModel)
+	}
 	if updates.Description != nil {
 		upstream.Description = *updates.Description
 	}

@@ -36,6 +36,7 @@ type UpstreamConfig struct {
 	// 与 ModelMapping 分开存放，避免改动一对多映射的形状。
 	ModelMappingChannels map[string]map[string]string `json:"modelMappingChannels,omitempty"`
 	DefaultModel         string                       `json:"defaultModel,omitempty"`
+	ResponsesModel       string                       `json:"responsesModel,omitempty"` // Images 转 Responses 时的主模型；图片模型仍由 modelMapping 决定
 	// 多渠道调度相关字段
 	Priority                int        `json:"priority"`                          // 渠道优先级（数字越小优先级越高，默认按索引）
 	Status                  string     `json:"status"`                            // 渠道状态：active（正常）, suspended（暂停）, disabled（备用池）
@@ -119,6 +120,7 @@ type UpstreamUpdate struct {
 	// ModelMappingChannels 与 ModelMapping 同步更新：传入即整体替换，并按新的 ModelMapping 修剪失效条目。
 	ModelMappingChannels map[string]map[string]string `json:"modelMappingChannels"`
 	DefaultModel         *string                      `json:"defaultModel"`
+	ResponsesModel       *string                      `json:"responsesModel"`
 	// 多渠道调度相关字段
 	Priority                *int       `json:"priority"`
 	Status                  *string    `json:"status"`

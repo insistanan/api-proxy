@@ -60,6 +60,8 @@ make check   # 提交前全量门禁
 | `/api/*` | 管理 API（需访问密钥，`x-api-key` 头） |
 | `/health` | 健康检查（公开，Docker HEALTHCHECK 使用） |
 
+Images 渠道的上游协议可选 **Images API** 或 **Responses API**，客户端统一调用 `/v1/images/generations`、`/v1/images/edits`。Responses 渠道需配置 `responsesModel` 主模型，客户端 `model` 及模型映射用于图片生成工具；JSON 与 SSE 都转换为 Images 格式，图片以 `b64_json` 返回。Responses 渠道不提供托管图片 URL 或 variations；这些请求需使用 Images API 渠道。
+
 ## 文档
 
 | 文档 | 内容 |
