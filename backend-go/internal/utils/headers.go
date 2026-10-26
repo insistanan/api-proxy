@@ -165,11 +165,28 @@ func ForwardResponseHeaders(upstreamHeaders http.Header, clientWriter http.Respo
 // bodyDecoded 为 true 时剥除 content-encoding（因为 body 已经变为明文）；
 // bodyDecoded 为 false 时保留 content-encoding（透传模式，由客户端自行解压）。
 func ForwardResponseHeadersEx(upstreamHeaders http.Header, clientWriter http.ResponseWriter, bodyDecoded bool) {
-	// 不应转发的头部列表（由框架或代理层自动处理）
+	// 不应转发的头部列表（由框架或代理层自动处理）。
+	// 上游 CORS 必须丢掉：网关自己的 CORS 中间件已经写好浏览器可见的来源，
+	// 而部分图片上游会同时返回 Allow-Origin: * 与 Allow-Credentials: true。
+	// Header.Add 会把两套头叠在一起，浏览器随即拒绝响应并断开连接；
+	// 此时上游通常已经完成生图并扣费。
 	skipHeaders := map[string]bool{
-		"transfer-encoding": true, // 由框架自动处理
-		"content-length":    true, // 由框架自动处理
-		"connection":        true, // 代理层控制
+		"transfer-encoding":                    true,
+		"content-length":                       true,
+		"connection":                           true,
+		"keep-alive":                           true,
+		"proxy-authenticate":                   true,
+		"proxy-authorization":                  true,
+		"te":                                   true,
+		"trailer":                              true,
+		"upgrade":                              true,
+		"access-control-allow-origin":          true,
+		"access-control-allow-credentials":     true,
+		"access-control-allow-headers":         true,
+		"access-control-allow-methods":         true,
+		"access-control-expose-headers":        true,
+		"access-control-max-age":               true,
+		"access-control-allow-private-network": true,
 	}
 	if bodyDecoded {
 		skipHeaders["content-encoding"] = true // 如果已解压则不应转发

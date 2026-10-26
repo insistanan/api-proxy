@@ -90,6 +90,12 @@ func TestIsClientSideCancel(t *testing.T) {
 	if !IsClientSideCancel(context.Canceled) {
 		t.Fatal("context.Canceled 应识别为客户端取消")
 	}
+	if !IsClientSideCancel(errors.New("write tcp [::1]:9996->[::1]:9657: wsasend: An existing connection was forcibly closed by the remote host")) {
+		t.Fatal("Windows 客户端断开写回错误应识别为客户端取消")
+	}
+	if !IsClientSideCancel(errors.New("write tcp [::1]:9996->[::1]:6740: wsasend: An established connection was aborted by the software in your host machine.")) {
+		t.Fatal("Windows 本机中止写回错误应识别为客户端取消")
+	}
 	if IsClientSideCancel(errors.New("broken pipe")) {
 		t.Fatal("连接故障不是客户端取消")
 	}

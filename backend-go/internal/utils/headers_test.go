@@ -304,3 +304,40 @@ func TestDisguiseVersionFromEnv(t *testing.T) {
 		}
 	})
 }
+
+func TestForwardResponseHeadersExSkipsUpstreamCORS(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	recorder.Header().Set("Access-Control-Allow-Origin", "https://user.github.io")
+	recorder.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+	upstream := http.Header{}
+	upstream.Set("Access-Control-Allow-Origin", "*")
+	upstream.Set("Access-Control-Allow-Credentials", "true")
+	upstream.Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
+	upstream.Set("Access-Control-Allow-Headers", "*")
+	upstream.Set("Access-Control-Max-Age", "43200")
+	upstream.Set("X-Oneapi-Request-Id", "req-1")
+	upstream.Set("Content-Type", "text/event-stream")
+
+	ForwardResponseHeadersEx(upstream, recorder, true)
+
+	origin := recorder.Header().Values("Access-Control-Allow-Origin")
+	if len(origin) != 1 || origin[0] != "https://user.github.io" {
+		t.Fatalf("上游 CORS 来源不应叠加，得到 %#v", origin)
+	}
+	if got := recorder.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Fatalf("不应转发上游 Allow-Credentials，得到 %q", got)
+	}
+	if got := recorder.Header().Get("Access-Control-Allow-Headers"); got != "Content-Type, Authorization" {
+		t.Fatalf("应保留网关自己的 Allow-Headers，得到 %q", got)
+	}
+	if got := recorder.Header().Get("Access-Control-Max-Age"); got != "" {
+		t.Fatalf("不应转发上游 Max-Age，得到 %q", got)
+	}
+	if got := recorder.Header().Get("X-Oneapi-Request-Id"); got != "req-1" {
+		t.Fatalf("普通响应头应保留，得到 %q", got)
+	}
+	if got := recorder.Header().Get("Content-Type"); got != "text/event-stream" {
+		t.Fatalf("Content-Type = %q", got)
+	}
+}

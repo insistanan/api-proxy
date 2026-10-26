@@ -124,7 +124,7 @@ func (cm *ClientManager) GetStandardClient(timeout time.Duration, insecure bool,
 		MaxIdleConnsPerHost:   10,
 		IdleConnTimeout:       90 * time.Second,
 		DisableCompression:    false,
-		TLSHandshakeTimeout:   10 * time.Second,
+		TLSHandshakeTimeout:   15 * time.Second,
 		ResponseHeaderTimeout: responseHeaderTimeout,
 		ExpectContinueTimeout: 1 * time.Second,
 		// 统一走 HTTP/1.1，避免 HTTP/2 在部分代理/上游下触发 "http2: timeout awaiting response headers"
@@ -195,7 +195,7 @@ func (cm *ClientManager) GetStreamClient(insecure bool, proxyURL string) (*http.
 		MaxIdleConnsPerHost:   20,
 		IdleConnTimeout:       120 * time.Second,
 		DisableCompression:    true,
-		TLSHandshakeTimeout:   10 * time.Second,
+		TLSHandshakeTimeout:   15 * time.Second,
 		ResponseHeaderTimeout: time.Duration(envConfig.ResponseHeaderTimeout) * time.Second, // 首字节超时
 		ExpectContinueTimeout: 1 * time.Second,
 		// 统一走 HTTP/1.1，避免 HTTP/2 在部分代理/上游下触发 "http2: timeout awaiting response headers"

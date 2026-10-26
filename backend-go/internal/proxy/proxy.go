@@ -11,6 +11,7 @@ package proxy
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/BenedictKing/api-proxy/internal/utils"
 )
@@ -135,11 +136,23 @@ func IsUpstreamModelCapacityErrorBody(body []byte) bool {
 	return utils.IsUpstreamModelCapacityErrorBody(body)
 }
 
-// IsClientSideCancel 判断错误是否为客户端明确取消（context.Canceled），
-// 不应计入渠道失败。broken pipe / connection reset 是连接故障需要 failover。
+// IsClientSideCancel 判断错误是否为客户端明确取消。
+//
+// 浏览器或本机隧道在响应头阶段断开时，Windows 的 net/http 可能把写回错误
+// 表示为 wsasend，而不是 context.Canceled。10054 是 forcibly closed by the
+// remote host，10053 是 aborted by the software in your host machine。
+// 两者都发生在代理向客户端写响应的阶段，不应把已经返回 200 的上游渠道记为失败。
 func IsClientSideCancel(err error) bool {
 	if err == nil {
 		return false
 	}
-	return errors.Is(err, context.Canceled)
+	if errors.Is(err, context.Canceled) {
+		return true
+	}
+	message := strings.ToLower(err.Error())
+	if !strings.Contains(message, "wsasend") {
+		return false
+	}
+	return strings.Contains(message, "forcibly closed by the remote host") ||
+		strings.Contains(message, "aborted by the software in your host machine")
 }

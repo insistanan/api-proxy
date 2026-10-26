@@ -74,7 +74,7 @@ func Send(req *http.Request, opts SendOptions) (*http.Response, error) {
 		req.Header.Set("Accept-Encoding", "identity")
 	}
 
-	resp, err := client.Do(req)
+	resp, err := doWithTLSHandshakeRetry(client, req)
 	if err != nil {
 		return nil, err
 	}
@@ -84,4 +84,26 @@ func Send(req *http.Request, opts SendOptions) (*http.Response, error) {
 		resp.Body = NewIdleTimeoutReader(resp.Body, opts.StreamIdleTimeout, opts.StreamLabel)
 	}
 	return resp, nil
+}
+
+// TLS 握手未完成时 HTTP 请求尚未发送；可重放请求体时最多重试一次，
+// 缓解上游首次握手抖动，同时不重发已被上游接收的图片生成请求。
+func doWithTLSHandshakeRetry(client *http.Client, req *http.Request) (*http.Response, error) {
+	resp, err := client.Do(req)
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "tls handshake timeout") {
+		return resp, err
+	}
+	if req.Body != nil && req.GetBody == nil {
+		return nil, err
+	}
+
+	retryRequest := req.Clone(req.Context())
+	if req.GetBody != nil {
+		body, bodyErr := req.GetBody()
+		if bodyErr != nil {
+			return nil, fmt.Errorf("重建 TLS 握手重试请求体失败: %w", bodyErr)
+		}
+		retryRequest.Body = body
+	}
+	return client.Do(retryRequest)
 }
