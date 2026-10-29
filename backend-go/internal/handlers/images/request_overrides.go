@@ -8,6 +8,7 @@ import (
 	"log"
 	"mime"
 	"net/textproto"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -111,11 +112,11 @@ func rewriteImagesJSONModel(payload map[string]interface{}, upstream *config.Ups
 	return true, nil
 }
 
-// injectImagesExtraParams 只补客户端没有的字段。已有同名字段保持原值，避免覆盖调用方显式传入的参数。
+// injectImagesExtraParams 把渠道配置的自定义参数写入请求，同名字段以渠道配置为准，覆盖客户端传入的值。
 func injectImagesExtraParams(payload map[string]interface{}, extra map[string]interface{}) bool {
 	changed := false
 	for key, value := range extra {
-		if _, exists := payload[key]; exists {
+		if existing, exists := payload[key]; exists && reflect.DeepEqual(existing, value) {
 			continue
 		}
 		payload[key] = value
@@ -263,10 +264,6 @@ func appendImagesMultipartParams(parts []utils.MultipartPart, extra map[string]i
 	if len(extra) == 0 {
 		return parts, false, nil
 	}
-	existing := make(map[string]struct{}, len(parts))
-	for _, part := range parts {
-		existing[part.FormName] = struct{}{}
-	}
 	keys := make([]string, 0, len(extra))
 	for key := range extra {
 		keys = append(keys, key)
@@ -275,12 +272,27 @@ func appendImagesMultipartParams(parts []utils.MultipartPart, extra map[string]i
 
 	changed := false
 	for _, key := range keys {
-		if _, exists := existing[key]; exists {
-			continue
-		}
 		text, err := formatImagesExtraParamText(extra[key])
 		if err != nil {
 			return nil, false, err
+		}
+		// 同名文本字段全部改写为渠道配置值；同名上传文件无法用文本覆盖，明确报错而不是并存两个字段。
+		found := false
+		for index := range parts {
+			if parts[index].FormName != key {
+				continue
+			}
+			if parts[index].FileName != "" {
+				return nil, false, &config.ConfigError{Message: fmt.Sprintf("Images 自定义参数 %s 与上传文件字段同名", key)}
+			}
+			found = true
+			if string(parts[index].Content) != text {
+				parts[index].Content = []byte(text)
+				changed = true
+			}
+		}
+		if found {
+			continue
 		}
 		part, err := newImagesTextPart(key, text)
 		if err != nil {

@@ -212,6 +212,10 @@ vite.config.ts.timestamp-*
 !.claude/skills/version-bump/
 !.claude/skills/codex-review/
 !.claude/skills/github-release/
+!.claude/skills/generate-image/
+
+# 生图 skill 落盘目录
+/temp/
 
 .aider*
 *.log

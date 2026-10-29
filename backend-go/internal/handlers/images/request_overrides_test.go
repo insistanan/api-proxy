@@ -45,7 +45,7 @@ func TestApplyImagesModelMappingRewritesExactAndWildcardJSON(t *testing.T) {
 	require.Equal(t, "sensenova-u1.5-lite", decodeImagesJSONObject(t, mapped)["model"])
 }
 
-func TestApplyImagesModelMappingInjectsTypedExtraParamsWithoutOverwriting(t *testing.T) {
+func TestApplyImagesModelMappingInjectsTypedExtraParamsOverridingClientValues(t *testing.T) {
 	upstream := &config.UpstreamConfig{
 		ImagesExtraParams: map[string]string{
 			"watermark": "false",
@@ -63,7 +63,7 @@ func TestApplyImagesModelMappingInjectsTypedExtraParamsWithoutOverwriting(t *tes
 	require.NoError(t, err)
 	payload := decodeImagesJSONObject(t, mapped)
 	require.Equal(t, "gpt-image-1", payload["model"])
-	require.Equal(t, json.Number("1"), payload["n"])
+	require.Equal(t, json.Number("9"), payload["n"])
 	require.Equal(t, false, payload["watermark"])
 	require.Equal(t, "false", payload["label"])
 	require.Equal(t, json.Number("2"), payload["count"])

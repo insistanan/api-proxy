@@ -172,7 +172,7 @@ func TestNativeImagesRequestRewritesMappedModelAndExtraParamsWithoutContentType(
 	var payload map[string]interface{}
 	require.NoError(t, decoder.Decode(&payload))
 	require.Equal(t, "sensenova-u1.5-lite", payload["model"])
-	require.Equal(t, json.Number("1"), payload["n"])
+	require.Equal(t, json.Number("9"), payload["n"])
 	require.Equal(t, false, payload["watermark"])
 }
 

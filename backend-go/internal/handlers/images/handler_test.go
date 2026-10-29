@@ -197,10 +197,7 @@ func TestHandleImagesSuccessForwardsUpstreamSSEEvenIfForceNonStream(t *testing.T
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"stream":true}`))
-	body := "event: image_generation.completed
-data: {"b64_json":"AQID"}
-
-"
+	body := "event: image_generation.completed\ndata: {\"b64_json\":\"AQID\"}\n\n"
 	response := &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": {"text/event-stream"}},

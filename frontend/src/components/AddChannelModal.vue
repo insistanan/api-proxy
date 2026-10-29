@@ -367,7 +367,7 @@
                 </v-card-title>
                 <v-card-text class="pt-2">
                   <div class="text-body-2 text-medium-emphasis mb-4">
-                    以参数名和参数值追加到上游生图请求。客户端已经传入的同名字段保持不变。
+                    以参数名和参数值追加到上游生图请求。同名字段以这里配置的值为准，覆盖客户端传入的值。
                     true、false、null、JSON 数字、对象和数组按对应类型发送，其余按字符串发送。要强制字符串，值请写成带引号的 JSON，例如 "false"。
                     <div class="text-caption mt-1">不能使用 model 和 stream。model 由模型重定向写入；stream 由强制非流式配置覆盖，未开启时跟随客户端请求。</div>
                     <div v-if="form.serviceType === 'responses'" class="text-caption mt-1">
