@@ -6,7 +6,7 @@ import { PROTOCOL_DEFAULTS } from './channelDefaults'
  *
  * 模型来源：本代理自身暴露的模型列表（GET /api/proxy-models，等同 /v1/models）。
  * 每个条目的 owned_by 形如 "pool:messages" / "pool:messages,responses"，标识该模型属于哪些协议分组；
- * owned_by 为 "api-proxy" 的是静态家族别名（opus/sonnet/gpt/gemini/chat），不属于任何协议分组。
+ * 与静态家族别名同名的分组也保留上述协议归属；只有未配置同名分组的别名才标记为 "api-proxy"。
  *
  * 导入策略：选定协议后，只导入 owned_by 含该协议的模型（按协议分组过滤），
  * 然后替换 provider.models（导入即替换）。
@@ -23,7 +23,7 @@ export interface ProxyModelEntry {
  *
  * 过滤规则：
  * - owned_by 以 "pool:" 开头且协议列表含指定 kind → 归属该协议，导入
- * - owned_by 为 "api-proxy"（静态家族别名）→ 不属于具体协议分组，跳过
+ * - owned_by 为 "api-proxy"（未配置同名分组的静态别名）→ 不属于具体协议分组，跳过
  */
 export function filterProxyModelsByKind(entries: ModelEntry[], kind: ApiTab): string[] {
   const prefix = 'pool:'

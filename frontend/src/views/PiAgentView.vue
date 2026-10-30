@@ -283,7 +283,7 @@ import AgentPromptCard from '@/components/AgentPromptCard.vue'
 import ToolInstallBanner from '@/components/ToolInstallBanner.vue'
 import { api, type ApiError, type PiAgentProvider, type PiAgentStatus, type ApiTab } from '@/services/api'
 import { useProxyProtocolPick, defaultQuickPickTypeOptions } from '@/composables/useChannelQuickPick'
-import { importProxyModels, buildPiAgentModel } from '@/composables/useChannelModelImport'
+import { filterProxyModelsByKind, importProxyModels, buildPiAgentModel } from '@/composables/useChannelModelImport'
 import { useAuthStore } from '@/stores/auth'
 
 const loading = ref(false)
@@ -554,15 +554,15 @@ const addModel = () => {
   })
 }
 
-// 一键导入本代理模型：导入本代理暴露的全部分组，不按协议过滤（分组名与协议无关，任一协议都可能配置同名分组）；导入即替换
+// 一键导入本代理模型（按所选协议分组，导入即替换）
 const importProxyModelsToProvider = async () => {
   const provider = selectedProvider.value
   if (!provider || !quickPickType.value) return
   try {
     const response = await api.getProxyModels()
-    const modelIds = response.data.map(entry => entry.id.trim()).filter(Boolean)
+    const modelIds = filterProxyModelsByKind(response.data, quickPickType.value)
     if (modelIds.length === 0) {
-      notice.value = { visible: true, type: 'error', message: '本代理暂无可导入的模型，请先在渠道管理中配置分组' }
+      notice.value = { visible: true, type: 'error', message: `本代理 ${quickPickType.value} 协议分组下暂无模型，请先在渠道管理中配置分组` }
       return
     }
     const count = importProxyModels(quickPickType.value, modelIds, buildPiAgentModel, (models) => {
@@ -589,7 +589,7 @@ const importProxyModelsToProvider = async () => {
         compatText: ''
       }))
     })
-    notice.value = { visible: true, type: 'success', message: `已导入本代理全部分组的 ${count} 个模型（已替换原有模型）` }
+    notice.value = { visible: true, type: 'success', message: `已导入本代理 ${quickPickType.value} 分组的 ${count} 个模型（已替换原有模型）` }
   } catch (importError) {
     handleApiError(importError, '获取本代理模型列表失败')
   }

@@ -717,7 +717,7 @@ class ApiService {
   /**
    * 获取本代理自身暴露的模型列表（等同 /v1/models 的内容，但走 Web 鉴权）。
    * 返回条目的 owned_by 形如 "pool:messages" / "pool:messages,responses"，
-   * 标识该模型属于哪些协议分组；owned_by 为 "api-proxy" 的是静态家族别名。
+   * 标识该模型属于哪些协议分组（包含同名家族别名）；"api-proxy" 表示未配置同名分组的静态别名。
    */
   async getProxyModels(): Promise<ModelsResponse> {
     return this.request('/proxy-models')

@@ -143,21 +143,28 @@ func staticFamilyModels() []ModelEntry {
 // 不再暴露渠道级上游模型或 Chat 路由别名（如 model__c0__kxxxxxxxx）。
 func publicModelEntries(cfgManager *config.ConfigManager) []ModelEntry {
 	familyModels := staticFamilyModels()
-	seen := make(map[string]bool, len(familyModels)+16)
-	for _, model := range familyModels {
-		seen[model.ID] = true
+	familyIndexes := make(map[string]int, len(familyModels))
+	for index, model := range familyModels {
+		familyIndexes[model.ID] = index
 	}
 
-	poolModels := poolMatcherModels(cfgManager, seen)
+	poolModels := poolMatcherModels(cfgManager)
 	data := make([]ModelEntry, 0, len(familyModels)+len(poolModels))
 	data = append(data, familyModels...)
-	data = append(data, poolModels...)
+	for _, model := range poolModels {
+		if index, ok := familyIndexes[model.ID]; ok {
+			// 同名模型只保留一条，但必须保留真实分组归属，供客户端按协议导入。
+			data[index].OwnedBy = model.OwnedBy
+			continue
+		}
+		data = append(data, model)
+	}
 	return data
 }
 
 // poolMatcherModels 把非通配符分组的 modelMatcher 暴露为可选模型 ID。
 // 客户端用该 ID 发请求时，调度器按 contains 最长匹配进入对应分组，再走渠道映射/故障转移。
-func poolMatcherModels(cfgManager *config.ConfigManager, seen map[string]bool) []ModelEntry {
+func poolMatcherModels(cfgManager *config.ConfigManager) []ModelEntry {
 	if cfgManager == nil {
 		return nil
 	}
@@ -173,9 +180,6 @@ func poolMatcherModels(cfgManager *config.ConfigManager, seen map[string]bool) [
 			}
 			// 对外模型 ID 保持与调度匹配规则一致（小写 contains）
 			matcher = strings.ToLower(matcher)
-			if seen[matcher] {
-				continue
-			}
 			kinds := matcherKinds[matcher]
 			alreadyListed := false
 			for _, existingKind := range kinds {
@@ -207,7 +211,6 @@ func poolMatcherModels(cfgManager *config.ConfigManager, seen map[string]bool) [
 			Created: modelCreatedFallback,
 			OwnedBy: "pool:" + strings.Join(kinds, ","),
 		})
-		seen[matcher] = true
 	}
 	return models
 }

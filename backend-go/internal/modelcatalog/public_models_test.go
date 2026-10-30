@@ -81,28 +81,51 @@ func TestOpenAIModelsIncludesPoolMatchers(t *testing.T) {
 	}
 }
 
-func TestOpenAIModelsSkipsFamilyCollisionFromPool(t *testing.T) {
+func TestOpenAIModelsPreservesFamilyPoolKinds(t *testing.T) {
 	t.Parallel()
 
+	// 覆盖截图中的五个分组及全部固定别名，确保同名去重不会丢失协议归属。
+	matchers := []string{"opus", "sonnet", "gpt", "gemini", "chat", "claude", "deepseek", "glm", "grok", "kimi"}
+	pools := make([]config.ChannelPool, 0, len(matchers))
+	for index, matcher := range matchers {
+		pools = append(pools, config.ChannelPool{ID: matcher, Name: matcher, ModelMatcher: matcher, Priority: index + 1})
+	}
 	cfgManager := newTestConfigManager(t, config.Config{
-		MessagePools: []config.ChannelPool{
-			{ID: "sonnet-pool", Name: "Sonnet Pool", ModelMatcher: "sonnet", Priority: 1},
-			{ID: config.DefaultChannelPoolID, Name: "默认子池", ModelMatcher: "*", Priority: 2},
-		},
+		MessagePools:   pools,
+		ResponsesPools: []config.ChannelPool{{ID: "gpt", Name: "GPT", ModelMatcher: "gpt"}},
+		ChatPools:      []config.ChannelPool{{ID: "sonnet", Name: "Sonnet", ModelMatcher: " SONNET "}},
+		GeminiPools:    []config.ChannelPool{{ID: "gemini", Name: "Gemini", ModelMatcher: "gemini"}},
+		ImagesPools:    []config.ChannelPool{{ID: "gpt", Name: "GPT", ModelMatcher: "gpt"}},
 	})
 
 	response := OpenAIModels(context.Background(), cfgManager)
-	count := 0
-	for _, model := range response.Data {
-		if model.ID == "sonnet" {
-			count++
-			if model.OwnedBy != "api-proxy" {
-				t.Fatalf("family sonnet should win over pool, owned_by=%q", model.OwnedBy)
-			}
-		}
+	if len(response.Data) != len(matchers) {
+		t.Fatalf("models = %v, want %v", modelIDs(response.Data), matchers)
 	}
-	if count != 1 {
-		t.Fatalf("sonnet count = %d, want 1", count)
+	wantKinds := map[string]string{
+		"opus":     "pool:messages",
+		"sonnet":   "pool:chat,messages",
+		"gpt":      "pool:images,messages,responses",
+		"gemini":   "pool:gemini,messages",
+		"chat":     "pool:messages",
+		"claude":   "pool:messages",
+		"deepseek": "pool:messages",
+		"glm":      "pool:messages",
+		"grok":     "pool:messages",
+		"kimi":     "pool:messages",
+	}
+	seen := make(map[string]bool)
+	for _, model := range response.Data {
+		if seen[model.ID] {
+			t.Fatalf("duplicate model %q", model.ID)
+		}
+		seen[model.ID] = true
+		if want, ok := wantKinds[model.ID]; !ok || model.OwnedBy != want {
+			t.Fatalf("model %q owned_by = %q, want %q", model.ID, model.OwnedBy, want)
+		}
+		if detail, ok := ModelDetail(context.Background(), cfgManager, model.ID); !ok || detail != model {
+			t.Fatalf("ModelDetail(%q) = %+v, %v; want %+v", model.ID, detail, ok, model)
+		}
 	}
 }
 
