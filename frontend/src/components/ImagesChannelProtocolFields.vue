@@ -21,6 +21,7 @@
       :items="modelOptions"
       item-title="title"
       item-value="value"
+      :return-object="false"
       :loading="modelsLoading"
       :error-messages="modelsError"
       hint="这是 /v1/responses 的顶层模型；图片生成工具使用下方固定模型映射。"
