@@ -54,6 +54,7 @@ type chatToClaudeStreamState struct {
 	hasStreamUsage      bool
 	pendingStopReason   string
 	messageDeltaEmitted bool
+	messageStopEmitted  bool
 	streamFailed        bool
 }
 
@@ -202,12 +203,16 @@ func (s *chatToClaudeStreamState) ProcessLine(line string) []string {
 	return out
 }
 
-// Finish 流结束（[DONE] 或 scanner EOF）时的统一收尾。
+// Finish 流结束（[DONE] 或 scanner EOF）时的统一收尾，只执行一次。
 func (s *chatToClaudeStreamState) Finish() []string {
 	if s.streamFailed {
 		// 错误流：不伪造成功收尾（message_delta/message_stop 由错误路径处理）。
 		return nil
 	}
+	if s.messageStopEmitted {
+		return nil
+	}
+	s.messageStopEmitted = true
 
 	// 缓存本轮完整 assistant 消息。工具调用回合通常没有文本，仍需用其
 	// 工具调用内容关联 reasoning_content，供 Claude Code 下一轮回传时补回。

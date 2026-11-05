@@ -547,6 +547,10 @@ func (p *OpenAIProvider) HandleStreamResponseCtx(ctx context.Context, body io.Re
 					return
 				}
 			}
+			// [DONE] 已完成收尾，立即关闭上游；不能等 EOF 再发一次终止事件。
+			if state.messageStopEmitted {
+				return
+			}
 		}
 		if err := scanner.Err(); err != nil {
 			if isDisconnectLikeError(err) {

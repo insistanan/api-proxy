@@ -6,6 +6,51 @@ import (
 	"testing"
 )
 
+func TestOpenAIProviderHandleStreamResponse_EmitsSingleTerminalEvent(t *testing.T) {
+	tests := []struct {
+		name string
+		tail string
+	}{
+		{name: "DONE 后关闭连接", tail: "data: [DONE]\n\n"},
+		{name: "没有 DONE 的正常 EOF"},
+		{name: "重复 DONE", tail: "data: [DONE]\n\ndata: [DONE]\n\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := strings.Join([]string{
+				`data: {"model":"deepseek","choices":[{"delta":{"content":"正常回复"},"finish_reason":null}]}`,
+				`data: {"model":"deepseek","choices":[{"delta":{},"finish_reason":"stop"}]}`,
+			}, "\n\n") + "\n\n" + tt.tail
+			eventChan, errChan, err := (&OpenAIProvider{}).HandleStreamResponse(io.NopCloser(strings.NewReader(body)))
+			if err != nil {
+				t.Fatalf("启动流处理失败: %v", err)
+			}
+			var events strings.Builder
+			seenStop := false
+			for event := range eventChan {
+				if seenStop {
+					t.Fatalf("message_stop 后不应再发送事件: %s", event)
+				}
+				events.WriteString(event)
+				seenStop = strings.Contains(event, "event: message_stop\n")
+			}
+			for err := range errChan {
+				if err != nil {
+					t.Fatalf("流处理失败: %v", err)
+				}
+			}
+			for _, eventType := range []string{"message_start", "message_delta", "message_stop"} {
+				if got := strings.Count(events.String(), "event: "+eventType+"\n"); got != 1 {
+					t.Fatalf("%s 应恰好出现一次，实际 %d 次:\n%s", eventType, got, events.String())
+				}
+			}
+			if !strings.Contains(events.String(), `"text":"正常回复"`) {
+				t.Fatalf("正文未正常发送:\n%s", events.String())
+			}
+		})
+	}
+}
+
 func TestOpenAIProviderHandleStreamResponse_EmptyToolCallsKeepsSingleTextBlock(t *testing.T) {
 	body := strings.Join([]string{
 		`data: {"id":"chatcmpl_test","model":"z-ai/glm-5.1","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}`,
