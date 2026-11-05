@@ -91,7 +91,7 @@
               <div class="agent-config-panel-actions">
                 <v-tooltip text="连通性测试"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-test-tube" size="small" variant="text" aria-label="测试供应商连通性" :disabled="!isExistingProvider || discovering" :loading="testing" @click="testProvider" /></template></v-tooltip>
                 <v-tooltip text="发现 OpenAI 兼容模型"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-magnify" size="small" variant="text" aria-label="发现 OpenAI 兼容模型" :disabled="!isExistingProvider || testing || (Boolean(selectedProvider.api) && !['openai-completions', 'openai-responses'].includes(selectedProvider.api))" :loading="discovering" @click="discoverModels" /></template></v-tooltip>
-                <v-btn color="error" variant="text" size="small" prepend-icon="mdi-delete" :disabled="!isExistingProvider" @click="removeProvider(selectedProvider.id)">删除</v-btn>
+                <v-btn color="error" variant="text" size="small" prepend-icon="mdi-delete" :disabled="savingProvider || deletingProvider" @click="removeProvider(selectedProvider.localId)">删除</v-btn>
               </div>
             </div>
             <v-divider />
@@ -271,6 +271,23 @@
       </v-row>
     </template>
 
+    <v-dialog v-model="deleteProviderDialog" max-width="500" :persistent="deletingProvider">
+      <v-card>
+        <v-card-title>删除供应商</v-card-title>
+        <v-card-text>
+          确认删除供应商“{{ providerToDelete?.name || providerToDelete?.id || '新供应商' }}”及其模型吗？
+          <v-alert v-if="deleteProviderError" type="error" variant="tonal" density="compact" class="mt-4">
+            {{ deleteProviderError }}
+          </v-alert>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" :disabled="deletingProvider" @click="deleteProviderDialog = false">取消</v-btn>
+          <v-btn color="error" :loading="deletingProvider" @click="confirmDeleteProvider">删除</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <AgentPromptCard agent="pi" class="mt-5" />
   </div>
 </template>
@@ -376,6 +393,16 @@ const providers = ref<EditableProvider[]>([])
 const selectedProviderId = ref('')
 const providersRevision = ref('')
 const savingProvider = ref(false)
+const deleteProviderDialog = ref(false)
+const deletingProvider = ref(false)
+const deleteProviderError = ref('')
+const providerToDelete = ref<{
+  localId: string
+  id: string
+  name: string
+  persisted: boolean
+  revision: string
+} | null>(null)
 const testing = ref(false)
 const discovering = ref(false)
 
@@ -627,17 +654,42 @@ const saveSelectedProvider = async () => {
   }
 }
 
-const removeProvider = async (id: string) => {
-  const provider = providers.value.find(p => p.id === id)
-  if (!provider || !window.confirm(`删除供应商“${provider.name || provider.id}”及其模型？`)) return
+const removeProvider = (localId: string) => {
+  const provider = providers.value.find(p => p.localId === localId)
+  if (!provider || savingProvider.value || deletingProvider.value) return
+  // 固定确认时的目标与版本，避免后续选择或刷新改变待删除的配置。
+  providerToDelete.value = {
+    localId: provider.localId, id: provider.id, name: provider.name,
+    persisted: provider.persisted, revision: providersRevision.value
+  }
+  deleteProviderError.value = ''
+  deleteProviderDialog.value = true
+}
+
+const confirmDeleteProvider = async () => {
+  const provider = providerToDelete.value
+  if (!provider || deletingProvider.value) return
+  deletingProvider.value = true
+  deleteProviderError.value = ''
   try {
-    const result = await api.deletePiAgentProvider(id, providersRevision.value)
-    providersRevision.value = result.revision
-    notice.value = { visible: true, type: 'success', message: `已删除供应商 ${id}` }
-    await loadProviders()
-    selectedProviderId.value = providers.value[0]?.localId ?? ''
+    if (provider.persisted) {
+      const result = await api.deletePiAgentProvider(provider.id, provider.revision)
+      providersRevision.value = result.revision
+    }
+    // 仅移除已删除的供应商，保留其他供应商尚未保存的编辑。
+    providers.value = providers.value.filter(p => p.localId !== provider.localId)
+    if (!selectedProvider.value) selectedProviderId.value = providers.value[0]?.localId ?? ''
+    deleteProviderDialog.value = false
+    notice.value = { visible: true, type: 'success', message: `已删除供应商 ${provider.name || provider.id || '新供应商'}` }
   } catch (error) {
-    handleApiError(error, '删除供应商失败')
+    deleteProviderError.value = handleApiError(error, '删除供应商失败')
+    const apiError = error as ApiError
+    if (apiError?.code === 'revision_conflict' || apiError?.code === 'revision_required') {
+      // 刷新后需重新确认目标，不能重复提交旧版本的删除请求。
+      deleteProviderDialog.value = false
+    }
+  } finally {
+    deletingProvider.value = false
   }
 }
 
@@ -722,14 +774,15 @@ const handleApiError = (error: unknown, fallback: string) => {
   if (apiError?.status === 403) {
     disabled.value = true
     notice.value = { visible: true, type: 'error', message: apiError.message || 'pi-agent 配置管理未启用' }
-    return
+    return notice.value.message
   }
-  if (apiError?.status === 409 || apiError?.status === 428) {
-    notice.value = { visible: true, type: 'error', message: apiError.status === 428 ? '保存前需要先读取最新配置，已刷新，请重试' : '配置文件已被外部修改，已刷新，请重试' }
-    loadAll(true)
-    return
+  if (apiError?.code === 'revision_conflict' || apiError?.code === 'revision_required') {
+    notice.value = { visible: true, type: 'error', message: apiError.code === 'revision_required' ? '操作需要最新配置版本，正在刷新，请刷新完成后重试' : '配置文件已被外部修改，正在刷新，请刷新完成后重试' }
+    void loadAll(true)
+    return notice.value.message
   }
   notice.value = { visible: true, type: 'error', message: apiError?.message || fallback }
+  return notice.value.message
 }
 
 const loadStatus = async (): Promise<boolean> => {
