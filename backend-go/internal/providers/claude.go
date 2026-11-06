@@ -101,15 +101,8 @@ func (p *ClaudeProvider) BuildRequest(input RequestInput, upstream *config.Upstr
 		targetURL += "?" + input.RawQuery
 	}
 
-	// 创建请求
-	var req *http.Request
-	var err error
-	if len(bodyBytes) > 0 {
-		req, err = http.NewRequestWithContext(input.Ctx, input.Method, targetURL, bytes.NewReader(bodyBytes))
-	} else {
-		// 如果 bodyBytes 为空（例如 GET 请求或原始请求体为空），则直接使用 nil Body
-		req, err = http.NewRequestWithContext(input.Ctx, input.Method, targetURL, nil)
-	}
+	// 先构造 URL 和请求头；请求体在所有改写完成后统一设置。
+	req, err := http.NewRequestWithContext(input.Ctx, input.Method, targetURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -128,17 +121,6 @@ func (p *ClaudeProvider) BuildRequest(input RequestInput, upstream *config.Upstr
 			bodyBytes,
 			req.Header.Get("X-Claude-Code-Session-Id"),
 		)
-		if len(bodyBytes) > 0 {
-			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-			req.GetBody = func() (io.ReadCloser, error) {
-				return io.NopCloser(bytes.NewReader(bodyBytes)), nil
-			}
-		} else {
-			req.Body = nil
-			req.GetBody = nil
-		}
-		req.ContentLength = int64(len(bodyBytes))
-		req.Header.Del("Content-Length")
 	}
 
 	// 设置认证头（会覆盖客户端的认证头）
@@ -151,6 +133,17 @@ func (p *ClaudeProvider) BuildRequest(input RequestInput, upstream *config.Upstr
 	if mergedBody, ok := copilotopt.MergeToolResults(bodyBytes); ok {
 		bodyBytes = mergedBody
 	}
+
+	// 首次发送与重试必须读取同一份最终载荷，不能捕获仍在改写的 bodyBytes。
+	requestBody := bodyBytes
+	if len(requestBody) > 0 {
+		req.Body = io.NopCloser(bytes.NewReader(requestBody))
+		req.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(requestBody)), nil
+		}
+	}
+	req.ContentLength = int64(len(requestBody))
+	req.Header.Del("Content-Length")
 
 	return &RequestOutcome{Request: req, OriginalBody: bodyBytes}, nil
 }
@@ -187,8 +180,6 @@ func (p *ClaudeProvider) HandleStreamResponseCtx(ctx context.Context, body io.Re
 
 		scanner := pump.newScanner(body)
 
-		toolUseStopEmitted := false
-
 		// 注意：为了让下游的 token 注入/修补逻辑保持正确，这里必须按「完整 SSE 事件」转发。
 		// 上游以空行分隔事件：event/data/id/retry/... + "\n"，空行 => 事件结束。
 		var eventBuf strings.Builder
@@ -197,9 +188,26 @@ func (p *ClaudeProvider) HandleStreamResponseCtx(ctx context.Context, body io.Re
 			if eventBuf.Len() == 0 {
 				return true
 			}
-			ok := trySend(eventBuf.String())
+			event := eventBuf.String()
 			eventBuf.Reset()
-			return ok
+			terminal := false
+			if strings.Contains(event, "message_stop") {
+				for _, line := range strings.Split(event, "\n") {
+					payload, isData := utils.SSEDataJSON(line)
+					if !isData {
+						continue
+					}
+					var data struct {
+						Type string `json:"type"`
+					}
+					if json.Unmarshal([]byte(payload), &data) == nil && data.Type == "message_stop" {
+						terminal = true
+						break
+					}
+				}
+			}
+			// 收到完整终止事件即结束读取；随后上游关闭连接不属于流处理失败。
+			return trySend(event) && !terminal
 		}
 
 		for scanner.Scan() {
@@ -211,12 +219,6 @@ func (p *ClaudeProvider) HandleStreamResponseCtx(ctx context.Context, body io.Re
 			}
 
 			line := scanner.Text()
-
-			// 检测是否发送了 tool_use 相关的 stop_reason（通常在 data 行中）
-			if strings.Contains(line, `"stop_reason":"tool_use"`) ||
-				strings.Contains(line, `"stop_reason": "tool_use"`) {
-				toolUseStopEmitted = true
-			}
 
 			// 透传所有 SSE 字段（包括注释、id、retry 等）
 			eventBuf.WriteString(line)
@@ -236,12 +238,7 @@ func (p *ClaudeProvider) HandleStreamResponseCtx(ctx context.Context, body io.Re
 		}
 
 		if err := scanner.Err(); err != nil {
-			// 在 tool_use 场景下，客户端主动断开是正常行为
-			// 如果已经发送了 tool_use stop 事件，并且错误是连接断开相关的，则忽略该错误
-			if toolUseStopEmitted && isDisconnectLikeError(err) {
-				// 这是预期的客户端行为，不报告错误
-				return
-			}
+			// 未收到完整 message_stop 的连接中断仍需上报，不能把截断当成完成。
 			pump.fail(err)
 		}
 	}()

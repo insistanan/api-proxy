@@ -6,6 +6,7 @@ package providers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -17,6 +18,8 @@ import (
 	"github.com/BenedictKing/api-proxy/internal/config"
 	"github.com/BenedictKing/api-proxy/internal/types"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 const sampleClaudeBody = `{"model":"claude-3-5-sonnet","max_tokens":128,"stream":false,"system":"你是测试","messages":[{"role":"user","content":"ping"}]}`
@@ -110,6 +113,120 @@ func TestClaudeProviderExplicitMatchesGin(t *testing.T) {
 	}
 	if !strings.Contains(string(outcome.OriginalBody), "mapped-model") {
 		t.Fatal("模型映射应生效")
+	}
+}
+
+// 工具结果合并会改变载荷长度；首次发送及多次重放必须使用合并后的同一份内容。
+func TestClaudeProviderBuildRequest_FinalBodyIsReplayable(t *testing.T) {
+	toolBody := `{"model":"claude-3-5-sonnet","max_tokens":128,"stream":true,"safeguards":{"enabled":true},"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"tool-1","name":"read_file","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"输出"},{"type":"text","text":"补充文本"}]}]}`
+	cases := []struct {
+		name     string
+		body     string
+		disguise bool
+		merged   bool
+	}{
+		{name: "关闭伪装合并工具结果", body: toolBody, merged: true},
+		{name: "开启伪装合并工具结果", body: toolBody, disguise: true, merged: true},
+		{name: "关闭伪装普通请求", body: sampleClaudeBody},
+		{name: "开启伪装普通请求", body: sampleClaudeBody, disguise: true},
+		{name: "空请求体"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			headers := http.Header{}
+			headers.Set("Content-Length", "999999")
+			headers.Set("X-Claude-Code-Session-Id", "session-test")
+			outcome, err := (&ClaudeProvider{}).BuildRequest(RequestInput{
+				Ctx:                context.Background(),
+				Method:             http.MethodPost,
+				Path:               "/v1/messages",
+				RawQuery:           "beta=true",
+				Header:             headers,
+				Body:               []byte(tc.body),
+				ClaudeCodeDisguise: tc.disguise,
+			}, &config.UpstreamConfig{
+				BaseURL:                     "https://upstream.example.com",
+				DisablePromptCacheInjection: true,
+			}, "sk-test")
+			require.NoError(t, err)
+			body := assertRequestBodyReplay(t, outcome.Request)
+			require.Equal(t, outcome.OriginalBody, body)
+			require.Empty(t, outcome.Request.Header.Get("Content-Length"))
+			require.Equal(t, "beta=true", outcome.Request.URL.RawQuery)
+			require.Equal(t, "999999", headers.Get("Content-Length"), "不能修改客户端请求头")
+			if tc.merged {
+				blocks := gjson.GetBytes(body, "messages.1.content").Array()
+				require.Len(t, blocks, 1, "首次发送也必须应用工具结果合并")
+				require.Equal(t, "tool_result", blocks[0].Get("type").String())
+				require.Contains(t, blocks[0].Get("content").String(), "补充文本")
+				require.True(t, gjson.GetBytes(body, "safeguards.enabled").Bool())
+			}
+		})
+	}
+}
+
+func assertRequestBodyReplay(t *testing.T, req *http.Request) []byte {
+	t.Helper()
+	if req.Body == nil {
+		require.Zero(t, req.ContentLength)
+		require.Nil(t, req.GetBody)
+		return []byte{}
+	}
+	body, err := io.ReadAll(req.Body)
+	require.NoError(t, err)
+	require.NoError(t, req.Body.Close())
+	require.Equal(t, int64(len(body)), req.ContentLength)
+	require.NotNil(t, req.GetBody)
+	for attempt := 0; attempt < 2; attempt++ {
+		replay, err := req.GetBody()
+		require.NoError(t, err)
+		replayed, err := io.ReadAll(replay)
+		require.NoError(t, err)
+		require.NoError(t, replay.Close())
+		require.Equal(t, body, replayed, "首次发送与重放的请求体必须逐字节一致")
+	}
+	return body
+}
+
+func TestResponsesProviderBuildRequest_CodexDisguiseBodyIsReplayable(t *testing.T) {
+	t.Setenv("CODEX_DISGUISE_VERSION", "8.8.8")
+	body := `{"model":"gpt-5","input":"你好","stream":true,"prompt_cache_key":"old-key","prompt_cache_retention":"24h"}`
+	for _, disguise := range []bool{false, true} {
+		name := "关闭伪装"
+		if disguise {
+			name = "开启伪装"
+		}
+		t.Run(name, func(t *testing.T) {
+			headers := http.Header{}
+			headers.Set("User-Agent", "codex_cli_rs/0.133.0 old-client")
+			headers.Set("version", "0.133.0")
+			headers.Set("session_id", "session-test")
+			outcome, err := (&ResponsesProvider{}).BuildRequest(RequestInput{
+				Ctx:           context.Background(),
+				Header:        headers,
+				Body:          []byte(body),
+				CodexDisguise: disguise,
+			}, &config.UpstreamConfig{
+				BaseURL:               "https://upstream.example.com",
+				ServiceType:           "responses",
+				DisablePromptCacheKey: true,
+				ModelMapping:          map[string][]string{"gpt-5": {"mapped-model"}},
+			}, "sk-test")
+			require.NoError(t, err)
+			finalBody := assertRequestBodyReplay(t, outcome.Request)
+			require.Equal(t, "mapped-model", gjson.GetBytes(finalBody, "model").String())
+			require.False(t, gjson.GetBytes(finalBody, "prompt_cache_key").Exists())
+			require.False(t, gjson.GetBytes(finalBody, "prompt_cache_retention").Exists())
+			require.Equal(t, "session-test", outcome.Request.Header.Get("session_id"))
+			if disguise {
+				require.True(t, strings.HasPrefix(outcome.Request.Header.Get("User-Agent"), "codex_cli_rs/8.8.8 "))
+				require.Equal(t, "8.8.8", outcome.Request.Header.Get("version"))
+			} else {
+				require.Equal(t, headers.Get("User-Agent"), outcome.Request.Header.Get("User-Agent"))
+				require.Equal(t, "0.133.0", outcome.Request.Header.Get("version"))
+			}
+			require.Equal(t, "0.133.0", headers.Get("version"), "不能修改客户端请求头")
+		})
 	}
 }
 

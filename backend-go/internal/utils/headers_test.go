@@ -246,6 +246,34 @@ func TestEnsureCompatibleUserAgent(t *testing.T) {
 }
 
 func TestDisguiseVersionFromEnv(t *testing.T) {
+	t.Run("Codex旧版本头与UA同步更新并保留会话追踪", func(t *testing.T) {
+		t.Setenv(envKeyCodexDisguiseVersion, "8.8.8")
+		headers := http.Header{}
+		headers.Set("User-Agent", "codex_cli_rs/0.133.0 old-client")
+		headers.Set("version", "0.133.0")
+		headers.Set("session_id", "session-existing")
+		headers.Set("X-Codex-Installation-Id", "installation-existing")
+		headers.Set("X-Codex-Window-Id", "window-existing")
+		headers.Set("X-Oai-Request-Id", "request-existing")
+		ApplyCodexDisguise(headers, true)
+		if !strings.HasPrefix(headers.Get("User-Agent"), "codex_cli_rs/8.8.8 ") || headers.Get("version") != "8.8.8" {
+			t.Fatalf("伪装版本不一致: User-Agent=%q version=%q", headers.Get("User-Agent"), headers.Get("version"))
+		}
+		for key, want := range map[string]string{
+			"session_id":              "session-existing",
+			"X-Codex-Installation-Id": "installation-existing",
+			"X-Codex-Window-Id":       "window-existing",
+			"X-Oai-Request-Id":        "request-existing",
+		} {
+			if got := headers.Get(key); got != want {
+				t.Fatalf("已有 %s 被改变: got %q, want %q", key, got, want)
+			}
+		}
+		if headers.Get("X-Request-Id") != "" {
+			t.Fatal("已有 X-Oai-Request-Id 时不应生成另一份追踪 ID")
+		}
+	})
+
 	t.Run("未设置环境变量时返回默认值", func(t *testing.T) {
 		if got := claudeCodeDisguiseVersion(); got != defaultClaudeCodeDisguiseVersion {
 			t.Fatalf("claudeCodeDisguiseVersion() = %q, want %q", got, defaultClaudeCodeDisguiseVersion)

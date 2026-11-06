@@ -212,9 +212,8 @@ func ApplyCodexDisguise(headers http.Header, stream bool) {
 	if headers.Get("originator") == "" {
 		headers.Set("originator", "codex_cli_rs")
 	}
-	if headers.Get("version") == "" {
-		headers.Set("version", codexDisguiseVersion())
-	}
+	// 与覆盖后的 User-Agent 使用同一版本，避免旧客户端的 version 头残留。
+	headers.Set("version", codexDisguiseVersion())
 
 	if headers.Get("session_id") == "" {
 		headers.Set("session_id", uuid.NewString())

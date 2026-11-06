@@ -375,6 +375,9 @@ func tryCompactWithKey(
 	}
 
 	req.Header = utils.PrepareUpstreamHeaders(c, req.URL.Host)
+	if c.GetBool(utils.ContextKeyCodexDisguise) {
+		utils.ApplyCodexDisguise(req.Header, false)
+	}
 	req.Header.Del("authorization")
 	req.Header.Del("x-api-key")
 	utils.SetAuthenticationHeader(req.Header, apiKey)
