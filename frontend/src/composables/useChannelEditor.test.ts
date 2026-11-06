@@ -92,4 +92,49 @@ describe('渠道草稿与提交', () => {
     type.value = 'gemini'
     expect(editor.buildPayload(false)).not.toHaveProperty('imagesForceNonStream')
   })
+
+  it('输出配置可载入、修改和清除，并保持草稿隔离', () => {
+    const editor = useChannelEditor('images')
+    const channel: Channel = {
+      name: 'GIF 渠道', serviceType: 'responses', index: 0, baseUrl: 'https://api.example', apiKeys: ['fixture'],
+      imagesOutputFormat: 'gif', imagesFrameCount: 9, imagesFrameDurationMs: 200
+    }
+    editor.loadChannelData(channel)
+    editor.form.imagesFrameCount = '12'
+    expect(editor.buildPayload(true)).toMatchObject({ imagesOutputFormat: 'gif', imagesFrameCount: 12, imagesFrameDurationMs: 200 })
+    expect(channel.imagesFrameCount).toBe(9)
+    editor.form.imagesOutputFormat = 'png'
+    expect(editor.buildPayload(true)).toMatchObject({ imagesOutputFormat: 'png', imagesFrameCount: 0, imagesFrameDurationMs: 0 })
+    editor.form.imagesOutputFormat = ''
+    expect(editor.buildPayload(true)).toMatchObject({ imagesOutputFormat: '', imagesFrameCount: 0, imagesFrameDurationMs: 0 })
+    editor.resetForm()
+    expect(editor.form.imagesOutputFormat).toBe('')
+  })
+
+  it.each([undefined, 0])('旧渠道未设置帧参数（%s）时，选择 GIF 自动带入建议值且不改原配置', value => {
+    const channel: Channel = {
+      name: '旧渠道', serviceType: 'openai', index: 0, baseUrl: 'https://api.example', apiKeys: ['fixture'],
+      imagesFrameCount: value, imagesFrameDurationMs: value
+    }
+    const editor = useChannelEditor('images')
+    editor.loadChannelData(channel)
+    expect(editor.buildPayload(true)).toMatchObject({ imagesOutputFormat: '', imagesFrameCount: 0, imagesFrameDurationMs: 0 })
+    editor.form.imagesOutputFormat = 'gif'
+    expect(editor.buildPayload(true)).toMatchObject({ imagesOutputFormat: 'gif', imagesFrameCount: 9, imagesFrameDurationMs: 200 })
+    expect(channel.imagesFrameCount).toBe(value)
+    expect(channel.imagesFrameDurationMs).toBe(value)
+    editor.form.imagesFrameCount = ''
+    editor.form.imagesFrameDurationMs = null
+    expect(editor.buildPayload(true)).toMatchObject({ imagesFrameCount: 0, imagesFrameDurationMs: 0 })
+  })
+
+  it.each([[12, 100], [-1, 10]])('已配置的帧参数 %s/%s 原样载入，不被建议值覆盖', (frameCount, frameDurationMs) => {
+    const editor = useChannelEditor('images')
+    editor.loadChannelData({
+      name: 'GIF 渠道', serviceType: 'responses', index: 0, baseUrl: '', apiKeys: [],
+      imagesOutputFormat: 'gif', imagesFrameCount: frameCount, imagesFrameDurationMs: frameDurationMs
+    })
+    expect(editor.form.imagesFrameCount).toBe(frameCount)
+    expect(editor.form.imagesFrameDurationMs).toBe(frameDurationMs)
+  })
 })

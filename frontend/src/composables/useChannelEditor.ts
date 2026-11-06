@@ -5,6 +5,8 @@
 import { reactive, toValue, type MaybeRefOrGetter } from 'vue'
 import type { Channel, ChannelStatus } from '@/services/api'
 import { rowsFromImagesExtraParams, type ImagesExtraParamRow } from '@/utils/imagesExtraParams'
+import type { ImagesOutputFormat } from '@/types/channel'
+import { imagesGIFDefaults } from '@/utils/imagesChannelProtocol'
 
 /** 表单草稿：AddChannelModal 的唯一可编辑状态本体。 */
 export type ChannelFormState = {
@@ -37,6 +39,9 @@ export type ChannelFormState = {
   responsesModel: string
   imagesExtraParams: ImagesExtraParamRow[]
   imagesForceNonStream: boolean
+  imagesOutputFormat: ImagesOutputFormat
+  imagesFrameCount: number | string | null
+  imagesFrameDurationMs: number | string | null
 }
 
 /** 新渠道的默认草稿。responses 协议默认启用图片理解（历史行为）。 */
@@ -69,7 +74,10 @@ export function defaultChannelForm(channelType: string): ChannelFormState {
     defaultModel: '',
     responsesModel: '',
     imagesExtraParams: [],
-    imagesForceNonStream: false
+    imagesForceNonStream: false,
+    imagesOutputFormat: '',
+    imagesFrameCount: imagesGIFDefaults.frameCount,
+    imagesFrameDurationMs: imagesGIFDefaults.frameDurationMs
   }
 }
 
@@ -141,6 +149,15 @@ function modelValueString(value: unknown): string {
 }
 
 /** 组装保存请求：表单显示与网络编排不再各自维护一套字段转换。 */
+export function buildImagesOutputSettings(form: ChannelFormState) {
+  const isGIF = form.imagesOutputFormat === 'gif'
+  return {
+    imagesOutputFormat: form.imagesOutputFormat,
+    imagesFrameCount: isGIF && form.imagesFrameCount !== null && form.imagesFrameCount !== '' ? Number(form.imagesFrameCount) : 0,
+    imagesFrameDurationMs: isGIF && form.imagesFrameDurationMs !== null && form.imagesFrameDurationMs !== '' ? Number(form.imagesFrameDurationMs) : 0
+  }
+}
+
 export function buildChannelPayload(
   form: ChannelFormState,
   channelType: string,
@@ -177,6 +194,7 @@ export function buildChannelPayload(
     modelMappingChannels: isChat ? {} : cloneModelMappingChannels(mapping, form.modelMappingChannels),
     defaultModel: isChat ? modelValueString(form.defaultModel).trim() : '',
     ...(isImages ? { imagesForceNonStream: form.imagesForceNonStream } : {}),
+    ...(isImages ? buildImagesOutputSettings(form) : {}),
     ...(imagesExtraParams ? { imagesExtraParams } : {})
   }
   if (urls.length > 1) channel.baseUrls = urls
@@ -233,6 +251,11 @@ export function useChannelEditor(channelType: MaybeRefOrGetter<string>) {
     form.responsesModel = channel.responsesModel || ''
     form.imagesExtraParams = rowsFromImagesExtraParams(channel.imagesExtraParams)
     form.imagesForceNonStream = currentChannelType === 'images' && !!channel.imagesForceNonStream
+    form.imagesOutputFormat = currentChannelType === 'images' ? channel.imagesOutputFormat || '' : ''
+    form.imagesFrameCount = channel.imagesFrameCount === undefined || channel.imagesFrameCount === 0
+      ? imagesGIFDefaults.frameCount : channel.imagesFrameCount
+    form.imagesFrameDurationMs = channel.imagesFrameDurationMs === undefined || channel.imagesFrameDurationMs === 0
+      ? imagesGIFDefaults.frameDurationMs : channel.imagesFrameDurationMs
   }
 
   const buildPayload = (isEditing: boolean, imagesExtraParams?: Record<string, string>) =>

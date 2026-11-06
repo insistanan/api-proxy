@@ -2,6 +2,7 @@ package images
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -55,12 +56,14 @@ type imagesResponse struct {
 // handleImagesResponsesSuccess 只输出 Images 协议，绝不把 Responses 的
 // output/text/reasoning 当作成功图片返回。关闭与解压都覆盖客户端断连出口。
 func handleImagesResponsesSuccess(c *gin.Context, resp *http.Response, envCfg *config.EnvConfig, endpoint string, requestedStream bool) (*types.Usage, error) {
+	lifecycle := responsesLifecycle(c)
+	defer lifecycle.close()
 	reader, _, err := utils.WrapStreamReaderIfNeeded(resp)
 	if err != nil {
 		resp.Body.Close()
 		return nil, fmt.Errorf("解压 Responses 图片响应失败: %w", err)
 	}
-	defer reader.Close()
+	defer utils.BindStreamBody(lifecycle.ctx, reader)()
 	if envCfg.MaxRequestBodySize <= 0 {
 		return nil, fmt.Errorf("Responses 图片响应大小限制必须为正数")
 	}
@@ -70,6 +73,9 @@ func handleImagesResponsesSuccess(c *gin.Context, resp *http.Response, envCfg *c
 		// 只查看正文首个非空白字节，避免为判断传输格式预读整张图片。
 		for {
 			prefix, err := buffered.Peek(1)
+			if cause := context.Cause(lifecycle.ctx); cause != nil {
+				return nil, fmt.Errorf("读取 Responses 图片响应中止: %w", cause)
+			}
 			if err != nil {
 				return nil, fmt.Errorf("读取 Responses 图片响应开头失败: %w", err)
 			}
@@ -85,6 +91,9 @@ func handleImagesResponsesSuccess(c *gin.Context, resp *http.Response, envCfg *c
 		}
 	}
 	body, err := utils.ReadWithOutputLimit(buffered, envCfg.MaxRequestBodySize)
+	if cause := context.Cause(lifecycle.ctx); cause != nil {
+		return nil, fmt.Errorf("读取 Responses 图片响应中止: %w", cause)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("读取 Responses 图片响应失败: %w", err)
 	}

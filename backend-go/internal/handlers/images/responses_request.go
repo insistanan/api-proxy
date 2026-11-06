@@ -2,13 +2,13 @@ package images
 
 import (
 	"bytes"
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"mime"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/BenedictKing/api-proxy/internal/config"
 	"github.com/BenedictKing/api-proxy/internal/handlers/proxycore"
@@ -20,25 +20,26 @@ import (
 // 工具，Responses 顶层 model 单独取渠道配置，避免把图片模型当作对话主模型。
 func buildImagesResponsesRequest(c *gin.Context, upstream *config.UpstreamConfig, apiKey, endpoint string, body []byte) (*http.Request, error) {
 	if endpoint != "/images/generations" && endpoint != "/images/edits" {
-		return nil, fmt.Errorf("Responses 图片渠道不支持 %s，请使用 Images API 渠道", endpoint)
+		return nil, &proxycore.RequestValidationError{Err: fmt.Errorf("Responses 图片渠道不支持 %s，请使用 Images API 渠道", endpoint)}
 	}
 	payload, err := readImagesPayload(c.GetHeader("Content-Type"), body)
 	if err != nil {
-		return nil, err
+		return nil, &proxycore.RequestValidationError{Err: err}
 	}
 	converted, err := convertImagesRequestToResponses(payload, upstream, endpoint == "/images/edits")
 	if err != nil {
-		return nil, err
+		return nil, &proxycore.RequestValidationError{Err: err}
 	}
 	encoded, err := utils.MarshalJSONNoEscape(converted)
 	if err != nil {
 		return nil, fmt.Errorf("编码 Responses 图片请求失败: %w", err)
 	}
-	req, err := http.NewRequestWithContext(responsesImageUpstreamContext(c), http.MethodPost,
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost,
 		buildOpenAIEndpointURL(upstream.GetEffectiveBaseURL(), "/responses"), bytes.NewReader(encoded))
 	if err != nil {
-		return nil, fmt.Errorf("创建 Responses 图片请求失败: %w", err)
+		return nil, &config.ConfigError{Message: fmt.Sprintf("创建 Responses 图片请求失败: %s", err)}
 	}
+	req = req.WithContext(resetResponsesLifecycle(c).ctx)
 	req.Header = utils.PrepareUpstreamHeaders(c, req.URL.Host)
 	req.Header.Set("Content-Type", "application/json")
 	// 响应需要转换，使用同一解压入口处理上游仍然返回的压缩正文。
@@ -79,7 +80,7 @@ func readImagesPayload(contentType string, body []byte) (map[string]interface{},
 			}
 			value := strings.TrimSpace(string(part.Content))
 			switch part.FormName {
-			case "n", "output_compression", "partial_images":
+			case "n", "output_compression", "partial_images", "frame_count", "frame_duration_ms":
 				var number json.Number
 				if err := json.Unmarshal([]byte(value), &number); err != nil {
 					return nil, fmt.Errorf("Images 参数 %s 必须是数字: %w", part.FormName, err)
@@ -91,6 +92,12 @@ func readImagesPayload(contentType string, body []byte) (map[string]interface{},
 					return nil, fmt.Errorf("Images 参数 stream 必须是布尔值: %w", err)
 				}
 				payload[part.FormName] = stream
+			case "svg", "metadata":
+				var object map[string]interface{}
+				if err := json.Unmarshal([]byte(value), &object); err != nil || object == nil {
+					return nil, fmt.Errorf("Images 参数 %s 必须是 JSON 对象", part.FormName)
+				}
+				payload[part.FormName] = object
 			default:
 				payload[part.FormName] = string(part.Content)
 			}
@@ -128,6 +135,7 @@ func multipartImageReference(part utils.MultipartPart) (map[string]interface{}, 
 }
 
 func convertImagesRequestToResponses(payload map[string]interface{}, upstream *config.UpstreamConfig, isEdit bool) (map[string]interface{}, error) {
+	applyImagesOutputConfig(payload, upstream)
 	model, _ := payload["model"].(string)
 	prompt, _ := payload["prompt"].(string)
 	resolvedModel, modelChanged := resolveImagesUpstreamModel(model, upstream)
@@ -145,19 +153,30 @@ func convertImagesRequestToResponses(payload map[string]interface{}, upstream *c
 			return nil, fmt.Errorf("Images 参数 stream 必须是布尔值")
 		}
 	}
+	if n, exists := payload["n"]; exists && n != nil {
+		count, err := imagesIntegerParameter("n", n)
+		if err != nil {
+			return nil, err
+		}
+		if count != 1 {
+			return nil, fmt.Errorf("Responses 图片渠道只支持 n=1；多图生成请使用 Images API 渠道")
+		}
+	}
 	// 顶层 model 是 Responses 主模型。真正的生图模型只写进 image_generation 工具。
 	// 渠道自定义参数不注入这条路径，未知字段会被上游拒绝。
 	forceNonStream := upstream != nil && upstream.ImagesForceNonStream
 	tool := map[string]interface{}{"type": "image_generation", "model": resolvedModel}
 	for key, value := range payload {
 		switch key {
-		case "size", "quality", "background", "output_format", "moderation", "input_fidelity", "output_compression", "n":
-			tool[key] = value
+		case "size", "quality", "background", "output_format", "moderation", "input_fidelity", "output_compression", "complexity", "frame_count", "frame_duration_ms", "svg":
+			if value != nil {
+				tool[key] = value
+			}
 		case "partial_images":
 			if !forceNonStream {
 				tool[key] = value
 			}
-		case "model", "prompt", "stream", "response_format", "images", "image", "mask", "user", "metadata":
+		case "model", "prompt", "stream", "response_format", "images", "image", "mask", "user", "metadata", "safety_identifier", "n":
 			// 通用字段在下方分别写入 Responses 请求。
 		default:
 			return nil, fmt.Errorf("Images 参数 %q 无法转换为 Responses 图片请求", key)
@@ -211,6 +230,9 @@ func convertImagesRequestToResponses(payload map[string]interface{}, upstream *c
 	} else {
 		tool["action"] = "generate"
 	}
+	if err := validateImagesOutputParameters(tool, true); err != nil {
+		return nil, err
+	}
 	result := map[string]interface{}{
 		"model": upstream.ResponsesModel,
 		"input": []interface{}{map[string]interface{}{"role": "user", "content": content}},
@@ -223,6 +245,15 @@ func convertImagesRequestToResponses(payload map[string]interface{}, upstream *c
 	}
 	if value, exists := payload["user"]; exists {
 		result["user"] = value
+	}
+	if value, exists := payload["safety_identifier"]; exists {
+		if value != nil {
+			identifier, ok := value.(string)
+			if !ok || utf8.RuneCountInString(identifier) > 128 {
+				return nil, fmt.Errorf("Images safety_identifier 必须是长度不超过 128 的字符串")
+			}
+		}
+		result["safety_identifier"] = value
 	}
 	if raw, exists := payload["metadata"]; exists {
 		metadata, ok := raw.(map[string]interface{})
@@ -256,13 +287,4 @@ func responsesImageReference(raw interface{}) (map[string]interface{}, error) {
 		}
 	}
 	return nil, fmt.Errorf("Images 参考图缺少有效的 image_url 或 file_id")
-}
-
-// responsesImageUpstreamContext 保留请求值和超时，但不再跟随浏览器取消。
-// 工作台收到完整图片后会立即关闭 SSE，此时上游通常还没发出 response.completed。
-func responsesImageUpstreamContext(c *gin.Context) context.Context {
-	if c == nil || c.Request == nil {
-		return context.Background()
-	}
-	return proxycore.DetachClientCancellation(c.Request.Context())
 }

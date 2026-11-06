@@ -2,7 +2,9 @@ package images
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -45,7 +47,7 @@ func Handler(
 			return buildImagesUpstreamRequest(c, up, apiKey, endpoint, body)
 		},
 		RequestTimeoutOverride: func([]byte) time.Duration {
-			return 10 * time.Minute
+			return imagesRequestTimeout
 		},
 		HandleSuccess: func(c *gin.Context, resp *http.Response, up *config.UpstreamConfig, apiKey string, body []byte, startTime time.Time) (*types.Usage, error) {
 			// Images 的 stream 位于 JSON 或 multipart 字段中；解析阶段已经识别，
@@ -55,10 +57,16 @@ func Handler(
 			if up.ServiceType == "responses" {
 				return handleImagesResponsesSuccess(c, resp, envCfg, endpoint, requestMeta.Stream)
 			}
-			return handleImagesSuccess(c, resp, envCfg, startTime, endpoint, requestMeta.Stream, up.ImagesForceNonStream)
+			_, _, outputNonStream := imagesOutputOverrides(up)
+			return handleImagesSuccess(c, resp, envCfg, startTime, endpoint, requestMeta.Stream, up.ImagesForceNonStream || outputNonStream)
 		},
 	}
 	return func(c *gin.Context) {
+		// 总预算覆盖排队和所有候选，换 Key 或渠道不能重新获得十分钟。
+		ctx, cancel := context.WithTimeout(c.Request.Context(), imagesRequestTimeout)
+		defer cancel()
+		c.Request = c.Request.WithContext(ctx)
+		defer finishResponsesLifecycle(c)
 		proxycore.RunProxyRequest(c, envCfg, cfgManager, channelScheduler, spec)
 	}
 }
@@ -72,13 +80,20 @@ func buildImagesUpstreamRequest(c *gin.Context, upstream *config.UpstreamConfig,
 	}
 	bodyBytes, contentType, err := applyImagesModelMapping(c.GetHeader("Content-Type"), originalBody, upstream)
 	if err != nil {
-		return nil, err
+		var configErr *config.ConfigError
+		if errors.As(err, &configErr) {
+			return nil, err
+		}
+		return nil, &proxycore.RequestValidationError{Err: err}
+	}
+	if err := validateNativeImagesMultipartOutput(contentType, bodyBytes); err != nil {
+		return nil, &proxycore.RequestValidationError{Err: err}
 	}
 
 	url := buildOpenAIEndpointURL(upstream.GetEffectiveBaseURL(), endpoint)
 	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, url, bytes.NewReader(bodyBytes))
 	if err != nil {
-		return nil, fmt.Errorf("创建 Images 请求失败: %w", err)
+		return nil, &config.ConfigError{Message: fmt.Sprintf("创建 Images 请求失败: %s", err)}
 	}
 
 	req.Header = utils.PrepareUpstreamHeaders(c, req.URL.Host)

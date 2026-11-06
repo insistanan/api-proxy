@@ -70,4 +70,33 @@ describe('渠道表单提交入口', () => {
     expect(validate).not.toHaveBeenCalled()
     expect(emit).not.toHaveBeenCalled()
   })
+
+  it('渠道选择 GIF 会保存独立输出设置，无需自定义参数行', async () => {
+    const { state, emit } = await setupForm()
+    Object.assign(state.form as ChannelFormState, { imagesOutputFormat: 'gif', imagesFrameCount: '9', imagesFrameDurationMs: '200', imagesExtraParams: [] })
+    await submit(state)
+    expect(emit).toHaveBeenCalledWith('save', expect.objectContaining({ imagesOutputFormat: 'gif', imagesFrameCount: 9, imagesFrameDurationMs: 200 }))
+  })
+
+  it('GIF 帧参数非法时不保存，并显示明确错误', async () => {
+    const { state, emit } = await setupForm()
+    Object.assign(state.form as ChannelFormState, { imagesOutputFormat: 'gif', imagesFrameCount: 17 })
+    await submit(state)
+    expect(emit).not.toHaveBeenCalled()
+    expect((state.imagesOutputError as Ref<string>).value).toContain('2–16')
+  })
+
+  it('快速添加同样保存 GIF 设置，非法帧参数不会提交', async () => {
+    const { state, emit } = await setupForm()
+    ;(state.detectedBaseUrl as Ref<string>).value = 'https://images.example'
+    ;(state.detectedBaseUrls as Ref<string[]>).value = ['https://images.example']
+    ;(state.detectedApiKeys as Ref<string[]>).value = ['fixture-key']
+    Object.assign(state.form as ChannelFormState, { imagesOutputFormat: 'gif', imagesFrameCount: 9, imagesFrameDurationMs: 200 })
+    ;(state.handleQuickSubmit as () => void)()
+    expect(emit).toHaveBeenCalledWith('save', expect.objectContaining({ imagesOutputFormat: 'gif', imagesFrameCount: 9, imagesFrameDurationMs: 200 }), { isQuickAdd: true })
+    emit.mockClear()
+    ;(state.form as ChannelFormState).imagesFrameCount = 17
+    ;(state.handleQuickSubmit as () => void)()
+    expect(emit).not.toHaveBeenCalled()
+  })
 })

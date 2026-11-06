@@ -70,6 +70,14 @@
             class="mt-4"
             @fetch-models="handleFetchModels('')"
           />
+          <ImagesOutputFields
+            v-if="props.channelType === 'images'"
+            v-model:output-format="form.imagesOutputFormat"
+            v-model:frame-count="form.imagesFrameCount"
+            v-model:frame-duration-ms="form.imagesFrameDurationMs"
+            :service-type="form.serviceType"
+            class="mt-4"
+          />
           <v-card variant="outlined" class="mt-4 detection-status-card" rounded="lg">
             <v-card-text class="pa-4">
               <div class="d-flex flex-column ga-3">
@@ -216,6 +224,16 @@
               />
             </v-col>
 
+            <v-col v-if="props.channelType === 'images'" cols="12">
+              <ImagesOutputFields
+                v-model:output-format="form.imagesOutputFormat"
+                v-model:frame-count="form.imagesFrameCount"
+                v-model:frame-duration-ms="form.imagesFrameDurationMs"
+                :service-type="form.serviceType"
+              />
+              <div v-if="imagesOutputError" class="text-error text-caption mt-2">{{ imagesOutputError }}</div>
+            </v-col>
+
             <!-- 基础URL -->
             <v-col cols="12">
               <v-textarea
@@ -347,12 +365,22 @@
                   <v-icon color="primary">mdi-lightning-bolt</v-icon>
                   <div>
                     <div class="text-body-1 font-weight-medium">强制非流式</div>
-                    <div class="text-caption text-medium-emphasis">
+                    <div v-if="isNativeSpecialOutput" class="text-caption text-medium-emphasis">
+                      当前输出格式自动使用非流式生成。客户端要 SSE 时返回一条 completed 事件。
+                    </div>
+                    <div v-else class="text-caption text-medium-emphasis">
                       发给上游的请求一律使用 stream: false。客户端要 JSON 就返回完整 JSON；要 SSE 时把完整结果包成一条 completed 事件，不含 partial。
                     </div>
                   </div>
                 </div>
-                <v-switch v-model="form.imagesForceNonStream" inset color="primary" hide-details />
+                <v-switch
+                  :model-value="form.imagesForceNonStream || isNativeSpecialOutput"
+                  :disabled="isNativeSpecialOutput"
+                  inset
+                  color="primary"
+                  hide-details
+                  @update:model-value="form.imagesForceNonStream = Boolean($event)"
+                />
               </div>
             </v-col>
 
@@ -372,6 +400,7 @@
                     以参数名和参数值追加到上游生图请求。同名字段以这里配置的值为准，覆盖客户端传入的值。
                     true、false、null、JSON 数字、对象和数组按对应类型发送，其余按字符串发送。要强制字符串，值请写成带引号的 JSON，例如 "false"。
                     <div class="text-caption mt-1">不能使用 model 和 stream。model 由模型重定向写入；stream 由强制非流式配置覆盖，未开启时跟随客户端请求。</div>
+                    <div class="text-caption mt-1">输出格式和 GIF 帧参数优先使用上方的输出设置；选择 GIF/SVG 时会清除不支持的预览和压缩参数。</div>
                     <div v-if="form.serviceType === 'responses'" class="text-caption mt-1">
                       当前是 Responses 渠道：这些参数只会保存，不会注入到 /v1/responses。图片模型仍由上方模型重定向写入 image_generation 工具。
                     </div>
@@ -854,13 +883,14 @@ import type { Channel, ChannelPool, ChannelStatus } from '../services/api'
 import { api, fetchUpstreamModels, channelApiByType, ApiError } from '../services/api'
 import ModelMappingEditor from './ModelMappingEditor.vue'
 import ImagesChannelProtocolFields from './ImagesChannelProtocolFields.vue'
-import { imagesExpectedRequestUrl, imagesModelOptions, imagesProtocolLabel, isImagesServiceType } from '@/utils/imagesChannelProtocol'
+import ImagesOutputFields from './ImagesOutputFields.vue'
+import { imagesExpectedRequestUrl, imagesModelOptions, imagesProtocolLabel, isImagesServiceType, validateImagesOutputSettings } from '@/utils/imagesChannelProtocol'
 import {
   isValidApiKey as _isValidApiKey,
   isValidUrl as _isValidQuickInputUrl,
   parseQuickInput as parseQuickInputUtil
 } from '../utils/quickInputParser'
-import { useChannelEditor } from '../composables/useChannelEditor'
+import { useChannelEditor, buildImagesOutputSettings } from '../composables/useChannelEditor'
 import { compileImagesExtraParams } from '@/utils/imagesExtraParams'
 
 interface Props {
@@ -976,7 +1006,9 @@ const getDefaultServiceTypeValue = (): 'openai' | 'gemini' | 'claude' | 'respons
 
 // 快速模式表单验证
 const isQuickFormValid = computed(() => {
-  return detectedBaseUrls.value.length > 0 && detectedApiKeys.value.length > 0 && isImagesProtocolValid.value
+  return detectedBaseUrls.value.length > 0 && detectedApiKeys.value.length > 0 && isImagesProtocolValid.value && (
+    props.channelType !== 'images' || !validateImagesOutputSettings(form)
+  )
 })
 
 // 生成随机字符串
@@ -1165,6 +1197,7 @@ const handleQuickSubmit = () => {
     name: generatedChannelName.value,
     serviceType: props.channelType === 'images' ? form.serviceType as Channel['serviceType'] : detectedServiceType.value || getDefaultServiceTypeValue(),
     responsesModel: props.channelType === 'images' && form.serviceType === 'responses' ? form.responsesModel.trim() : '',
+    ...(props.channelType === 'images' ? buildImagesOutputSettings(form) : {}),
     baseUrl: detectedBaseUrl.value,
     baseUrls: detectedBaseUrls.value,
     apiKeys: detectedApiKeys.value,
@@ -1305,6 +1338,13 @@ const targetModelPlaceholder = computed(() => {
 const { form, resetForm: resetFormDraft, loadChannelData: loadChannelDataDraft, buildPayload } = useChannelEditor(() => props.channelType)
 
 const imagesExtraParamsError = ref('')
+const imagesOutputError = ref('')
+const isNativeSpecialOutput = computed(() => form.serviceType === 'openai' && (
+  form.imagesOutputFormat === 'gif' || form.imagesOutputFormat === 'svg'
+))
+watch(() => [form.imagesOutputFormat, form.imagesFrameCount, form.imagesFrameDurationMs, form.serviceType], () => {
+  imagesOutputError.value = ''
+})
 
 const addImagesExtraParam = () => {
   imagesExtraParamsError.value = ''
@@ -1932,6 +1972,8 @@ const handleSubmit = async () => {
 
   let imagesExtraParams: Record<string, string> | undefined
   if (props.channelType === 'images') {
+    imagesOutputError.value = validateImagesOutputSettings(form)
+    if (imagesOutputError.value) return
     const compiled = compileImagesExtraParams(form.imagesExtraParams)
     if (compiled.error) {
       imagesExtraParamsError.value = compiled.error
@@ -1959,6 +2001,7 @@ watch(
       apiKeyError.value = ''
       duplicateKeyIndex.value = -1
       imagesExtraParamsError.value = ''
+      imagesOutputError.value = ''
       if (props.channelType !== 'images') void loadVisionChannels()
       void loadPools()
       void loadMappingTargetChannels()

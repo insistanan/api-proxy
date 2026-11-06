@@ -5,6 +5,8 @@ import type { ChannelRecentActivity } from './metrics'
 // 渠道状态枚举
 export type ChannelStatus = 'active' | 'suspended' | 'disabled' | 'deprecated' | 'deleted'
 
+export type ImagesOutputFormat = '' | 'png' | 'jpeg' | 'webp' | 'gif' | 'svg'
+
 // 渠道指标
 // 分时段统计
 export interface TimeWindowStats {
@@ -66,6 +68,9 @@ export interface Channel {
   responsesModel?: string // Images 转 Responses 时的主模型，与图片模型映射分开配置
   imagesExtraParams?: Record<string, string> // Images 自定义上游参数，值为发送前再解析的文本
   imagesForceNonStream?: boolean // Images 强制上游非流式，回程仍按客户端要求返回 JSON 或 completed SSE
+  imagesOutputFormat?: ImagesOutputFormat // 空值跟随请求，显式格式在两种上游协议中都生效
+  imagesFrameCount?: number // GIF 帧数，零表示不覆盖
+  imagesFrameDurationMs?: number // GIF 每帧时长（毫秒），零表示不覆盖
   latency?: number
   status?: ChannelStatus | 'healthy' | 'error' | 'unknown' | ''
   index: number

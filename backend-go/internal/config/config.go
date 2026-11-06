@@ -44,6 +44,11 @@ type UpstreamConfig struct {
 	// ImagesForceNonStream 强制上游使用 stream: false。
 	// 客户端要 JSON 时原样返回完整结果；要 SSE 时把完整结果包成一条 completed 事件。
 	ImagesForceNonStream bool `json:"imagesForceNonStream,omitempty"`
+	// ImagesOutputFormat 为空时跟随请求；显式选择时在两种图片协议中统一覆盖。
+	ImagesOutputFormat string `json:"imagesOutputFormat,omitempty"`
+	// GIF 帧参数为零时不覆盖，沿用请求或上游默认值。
+	ImagesFrameCount      int `json:"imagesFrameCount,omitempty"`
+	ImagesFrameDurationMS int `json:"imagesFrameDurationMs,omitempty"`
 	// 多渠道调度相关字段
 	Priority                int        `json:"priority"`                          // 渠道优先级（数字越小优先级越高，默认按索引）
 	Status                  string     `json:"status"`                            // 渠道状态：active（正常）, suspended（暂停）, disabled（备用池）
@@ -132,6 +137,10 @@ type UpstreamUpdate struct {
 	ImagesExtraParams map[string]string `json:"imagesExtraParams"`
 	// ImagesForceNonStream 为 nil 表示本次更新未传、不覆盖。
 	ImagesForceNonStream *bool `json:"imagesForceNonStream"`
+	// 输出设置未传时保留；空字符串和零分别用于清除格式与 GIF 帧覆盖。
+	ImagesOutputFormat    *string `json:"imagesOutputFormat"`
+	ImagesFrameCount      *int    `json:"imagesFrameCount"`
+	ImagesFrameDurationMS *int    `json:"imagesFrameDurationMs"`
 	// 多渠道调度相关字段
 	Priority                *int       `json:"priority"`
 	Status                  *string    `json:"status"`

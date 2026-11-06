@@ -361,6 +361,15 @@ func applyCommonUpdates(upstream *UpstreamConfig, index int, updates UpstreamUpd
 	if updates.ImagesForceNonStream != nil {
 		upstream.ImagesForceNonStream = *updates.ImagesForceNonStream
 	}
+	if updates.ImagesOutputFormat != nil {
+		upstream.ImagesOutputFormat = strings.TrimSpace(*updates.ImagesOutputFormat)
+	}
+	if updates.ImagesFrameCount != nil {
+		upstream.ImagesFrameCount = *updates.ImagesFrameCount
+	}
+	if updates.ImagesFrameDurationMS != nil {
+		upstream.ImagesFrameDurationMS = *updates.ImagesFrameDurationMS
+	}
 	if updates.Description != nil {
 		upstream.Description = *updates.Description
 	}

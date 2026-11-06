@@ -16,6 +16,10 @@ func ValidateImagesUpstream(upstream *UpstreamConfig) error {
 		return err
 	}
 	upstream.ImagesExtraParams = normalized
+	upstream.ImagesOutputFormat = strings.TrimSpace(upstream.ImagesOutputFormat)
+	if err := validateImagesOutputConfig(upstream); err != nil {
+		return err
+	}
 	switch upstream.ServiceType {
 	case "openai":
 		return nil
@@ -27,6 +31,26 @@ func ValidateImagesUpstream(upstream *UpstreamConfig) error {
 	default:
 		return &ConfigError{Message: "Images 渠道的上游协议仅支持 Images API（openai）或 Responses API（responses）"}
 	}
+}
+
+func validateImagesOutputConfig(upstream *UpstreamConfig) error {
+	switch upstream.ImagesOutputFormat {
+	case "", "png", "jpeg", "webp", "gif", "svg":
+	default:
+		return &ConfigError{Message: "Images 输出格式必须为 png、jpeg、webp、gif、svg 或空值（跟随请求）"}
+	}
+	if upstream.ImagesOutputFormat != "gif" && (upstream.ImagesFrameCount != 0 || upstream.ImagesFrameDurationMS != 0) {
+		return &ConfigError{Message: "GIF 帧参数只能在渠道输出格式为 gif 时配置"}
+	}
+	if count := upstream.ImagesFrameCount; count != 0 && (count < 2 || count > 16) {
+		return &ConfigError{Message: "GIF 帧数必须在 2–16 之间"}
+	}
+	if duration := upstream.ImagesFrameDurationMS; duration != 0 {
+		if duration < 20 || (upstream.ServiceType == "responses" && duration > 2000) {
+			return &ConfigError{Message: "GIF 帧时长至少为 20 毫秒，Responses 渠道不能超过 2000 毫秒"}
+		}
+	}
+	return nil
 }
 
 // ============== Images 渠道方法（薄委托） ==============

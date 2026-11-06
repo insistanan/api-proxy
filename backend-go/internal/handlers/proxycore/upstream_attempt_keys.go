@@ -43,6 +43,12 @@ var errRateLimitQueueTimeout = errors.New("上游仍处于限流冷却，排队�
 // Images 成功响应可能包含很大的 base64 JSON；只缓冲足以识别常见错误信封的前缀。
 const maxImagesEnvelopeSniffBytes = 64 * 1024
 
+// prefixReadCloser 回放已读取的前缀，同时保留原响应体的关闭责任。
+type prefixReadCloser struct {
+	io.Reader
+	io.Closer
+}
+
 // readBodyWithLimit 读取响应体，超过 limit 返回错误（与静默截断相比，
 // 显式失败能触发 failover 而不是把半个 JSON 交给下游解析）。
 func readBodyWithLimit(body io.Reader, limit int64) ([]byte, error) {
@@ -61,11 +67,11 @@ func readBodyWithLimit(body io.Reader, limit int64) ([]byte, error) {
 func readImagesErrorEnvelopePrefix(resp *http.Response) ([]byte, bool, error) {
 	prefix, err := io.ReadAll(io.LimitReader(resp.Body, maxImagesEnvelopeSniffBytes+1))
 	if int64(len(prefix)) > maxImagesEnvelopeSniffBytes {
-		resp.Body = io.NopCloser(io.MultiReader(bytes.NewReader(prefix), resp.Body))
+		resp.Body = &prefixReadCloser{Reader: io.MultiReader(bytes.NewReader(prefix), resp.Body), Closer: resp.Body}
 		return nil, false, nil
 	}
 	if err != nil {
-		resp.Body = io.NopCloser(io.MultiReader(bytes.NewReader(prefix), resp.Body))
+		resp.Body = &prefixReadCloser{Reader: io.MultiReader(bytes.NewReader(prefix), resp.Body), Closer: resp.Body}
 		return nil, false, fmt.Errorf("读取 Images 上游错误信封失败: %w", err)
 	}
 	return prefix, true, nil
@@ -191,6 +197,20 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 				return newUpstreamAttemptResult(true, "", 0, nil, nil, c.Request.Context().Err()).withHealth(channelHealthNeutral)
 			}
 			if err != nil && prepareStage == "build_request" {
+				var requestErr *RequestValidationError
+				var configErr *config.ConfigError
+				if errors.As(err, &requestErr) || errors.As(err, &configErr) {
+					if req != nil && req.Body != nil {
+						_ = req.Body.Close()
+					}
+					status, errorType := http.StatusBadRequest, "invalid_request_error"
+					if configErr != nil {
+						status, errorType = http.StatusInternalServerError, "configuration_error"
+					}
+					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", status, false, attemptStart, errorType, err.Error(), false, isStream, nil)
+					c.JSON(status, gin.H{"error": gin.H{"message": err.Error(), "type": errorType, "code": errorType}})
+					return newUpstreamAttemptResult(true, "", 0, nil, nil, err).withHealth(channelHealthNeutral)
+				}
 				failoverState.lastError = err
 				retryState.MarkKeyFailed(apiKey)
 				channelScheduler.RecordFailure(currentBaseURL, apiKey, logCtx.ChannelIndex, kind)
@@ -575,7 +595,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 				var sniff []byte
 				var readErr error
 				sniffComplete := true
-				if apiType == "images" {
+				if kind == scheduler.ChannelKindImages {
 					sniff, sniffComplete, readErr = readImagesErrorEnvelopePrefix(resp)
 				} else {
 					sniff, readErr = readBodyWithLimit(resp.Body, maxEnvelopeSniffBytes)
@@ -740,6 +760,9 @@ func (a UpstreamAttempt) buildPreparedAttemptRequest(
 	a.Context.Request = a.Context.Request.WithContext(logger.ContextWithAttemptID(a.Context.Request.Context(), nextAttemptLogID("attempt")))
 	req, err := a.BuildRequest(a.Context, upstreamCopy, apiKey)
 	if err != nil {
+		if req != nil && req.Body != nil {
+			_ = req.Body.Close()
+		}
 		return nil, "build_request", err
 	}
 	prepareStage, err := prepareRequestForUpstream(

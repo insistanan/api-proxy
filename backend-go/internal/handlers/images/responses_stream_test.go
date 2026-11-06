@@ -101,7 +101,9 @@ func TestResponsesStreamCanReturnNormalImagesJSON(t *testing.T) {
 
 func TestResponsesStreamClientCloseAfterImageKeepsUsage(t *testing.T) {
 	c, recorder := imageStreamContext()
+	flushed := notifyImagesFlush(c, recorder)
 	requestContext, cancel := context.WithCancel(c.Request.Context())
+	defer cancel()
 	c.Request = c.Request.WithContext(requestContext)
 	base64 := strings.Repeat("AQID", 64*1024)
 	item := fmt.Sprintf(`{"id":"image-1","type":"image_generation_call","status":"completed","result":"%s"}`, base64)
@@ -124,9 +126,11 @@ func TestResponsesStreamClientCloseAfterImageKeepsUsage(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("图片事件没有写出")
 	}
-	require.Eventually(t, func() bool {
-		return strings.Contains(recorder.Body.String(), "event: image_generation.completed")
-	}, 2*time.Second, 10*time.Millisecond)
+	select {
+	case <-flushed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("完整图片没有写出")
+	}
 	cancel()
 	completed := fmt.Sprintf("event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"created_at\":123,\"usage\":{\"input_tokens\":9233,\"output_tokens\":702,\"input_tokens_details\":{\"cached_tokens\":4224}},\"output\":[%s]}}\n\n", item)
 	_, err := io.WriteString(writer, completed)

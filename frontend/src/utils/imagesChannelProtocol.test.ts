@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ref } from 'vue'
 import { useChannelEditor } from '@/composables/useChannelEditor'
-import { channelServiceLabel, imagesExpectedRequestUrl, imagesModelOptions, isImagesServiceType } from './imagesChannelProtocol'
+import { channelServiceLabel, imagesExpectedRequestUrl, imagesModelOptions, isImagesServiceType, validateImagesOutputSettings } from './imagesChannelProtocol'
 import { defaultChannelForm } from '@/composables/useChannelEditor'
 import { parseQuickInput } from './quickInputParser'
 
@@ -25,6 +25,9 @@ describe('Images 渠道协议管理', () => {
     expect(channelServiceLabel('messages', 'openai')).toBe('openai')
     expect(imagesModelOptions.map(option => option.value)).toContain('gpt-image-2.5-sunburst')
     expect(imagesModelOptions.map(option => option.value)).toContain('gpt-image-2.5')
+    expect(imagesModelOptions[0].value).toBe('gpt-image-2.6-sunburst')
+    expect(imagesModelOptions[1].value).toBe('gpt-image-2.6-flare')
+    expect(imagesModelOptions.map(option => option.value)).not.toContain('gpt-image-1')
     expect(defaultChannelForm('images').serviceType).toBe('openai')
   })
 
@@ -39,5 +42,20 @@ describe('Images 渠道协议管理', () => {
     const result = parseQuickInput(`https://api.example.com/v1/images/${endpoint} sk-test-key`)
     expect(result.detectedBaseUrl).toBe('https://api.example.com/v1')
     expect(result.detectedServiceType).toBe('openai')
+  })
+
+  it('GIF 参数校验区分协议，并允许留空继承', () => {
+    const form = defaultChannelForm('images')
+    form.imagesOutputFormat = 'gif'
+    expect(validateImagesOutputSettings(form)).toBe('')
+    form.imagesFrameCount = '2.5'
+    expect(validateImagesOutputSettings(form)).toContain('帧数')
+    form.imagesFrameCount = null
+    form.imagesFrameDurationMs = 3000
+    expect(validateImagesOutputSettings(form)).toBe('')
+    form.serviceType = 'responses'
+    expect(validateImagesOutputSettings(form)).toContain('20–2000')
+    form.imagesFrameDurationMs = ''
+    expect(validateImagesOutputSettings(form)).toBe('')
   })
 })

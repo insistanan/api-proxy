@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -91,6 +90,11 @@ func (writer *imagesStreamWriter) imageEvent(name, quotedBase64 string, metadata
 	if _, err := io.WriteString(writer.context.Writer, "}\n\n"); err != nil {
 		return err
 	}
+	if name == writer.prefix+".completed" {
+		if value, exists := writer.context.Get(responsesImageLifecycleKey); exists {
+			value.(*responsesImageLifecycle).markDelivered()
+		}
+	}
 	writer.context.Writer.Flush()
 	return nil
 }
@@ -139,9 +143,14 @@ func (writer *imagesStreamWriter) failure(err error) error {
 // 去重标识；response.completed 只读取元数据并补发尚未出现的图片。
 // 若随后收到 failed/incomplete 或连接截断，返回 Images 错误事件。
 func convertResponsesImageStream(c *gin.Context, reader io.Reader, headers http.Header, endpoint string, requestedStream bool, maximumBytes int64) (*types.Usage, error) {
+	lifecycle := responsesLifecycle(c)
+	defer lifecycle.close()
+	if body, ok := reader.(io.ReadCloser); ok {
+		defer utils.BindStreamBody(lifecycle.ctx, body)()
+	}
 	writer := newImagesStreamWriter(c, headers, endpoint)
 	buffered := bufio.NewReaderSize(reader, 32*1024)
-	readContext := responsesImageReadContext(c)
+	readContext := lifecycle.ctx
 	seen := make(map[string]struct{})
 	var pending []responsesImageItem
 	var pendingBytes int64
@@ -185,13 +194,10 @@ func convertResponsesImageStream(c *gin.Context, reader io.Reader, headers http.
 	}
 	for {
 		name, raw, readErr := readResponsesImageEvent(readContext, buffered, maximumBytes)
+		if cause := context.Cause(readContext); cause != nil {
+			return nil, writer.failure(fmt.Errorf("读取 Responses 图片流中止: %w", cause))
+		}
 		if readErr != nil && readErr != io.EOF {
-			if len(seen) > 0 && errors.Is(readErr, context.Canceled) {
-				return nil, nil
-			}
-			if c.Request.Context().Err() != nil {
-				return nil, c.Request.Context().Err()
-			}
 			return nil, writer.failure(fmt.Errorf("读取 Responses 图片流失败: %w", readErr))
 		}
 		raw = strings.TrimSpace(raw)
@@ -262,14 +268,4 @@ func convertResponsesImageStream(c *gin.Context, reader io.Reader, headers http.
 			return nil, writer.failure(fmt.Errorf("Responses 图片流提前结束，未收到 response.completed"))
 		}
 	}
-}
-
-// responsesImageReadContext 让已交付图片后的用量读取不受浏览器提前断开影响。
-// 工作台解析到 image_generation.completed 就会取消 SSE；若继续使用请求 context，
-// response.completed 中的 usage 会被 context.Canceled 截断，日志只能记成 0 token。
-func responsesImageReadContext(c *gin.Context) context.Context {
-	if c == nil || c.Request == nil {
-		return context.Background()
-	}
-	return proxycore.DetachClientCancellation(c.Request.Context())
 }

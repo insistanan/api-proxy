@@ -49,6 +49,11 @@ func applyImagesModelMapping(contentType string, bodyBytes []byte, upstream *con
 	if err != nil {
 		return nil, "", err
 	}
+	outputParams, _, outputNonStream := imagesOutputOverrides(upstream)
+	for key, value := range outputParams {
+		extra[key] = value
+	}
+	forceNonStream = forceNonStream || outputNonStream
 
 	if boundary, ok := utils.MultipartBoundary(contentType); ok {
 		return applyImagesMultipartOverrides(boundary, contentType, bodyBytes, upstream, extra, forceNonStream)
@@ -78,8 +83,14 @@ func applyImagesJSONOverrides(contentType string, bodyBytes []byte, payload map[
 	if injectImagesExtraParams(payload, extra) {
 		changed = true
 	}
+	if applyImagesOutputConfig(payload, upstream) {
+		changed = true
+	}
 	if forceNonStream && applyImagesForceNonStreamJSON(payload) {
 		changed = true
+	}
+	if err := validateImagesOutputParameters(payload, false); err != nil {
+		return nil, "", err
 	}
 	if !changed {
 		return bodyBytes, contentType, nil
@@ -173,6 +184,10 @@ func applyImagesMultipartOverrides(boundary, contentType string, bodyBytes []byt
 	if wrote {
 		changed = true
 	}
+	_, removedFields, _ := imagesOutputOverrides(upstream)
+	updated, wrote = stripImagesMultipartFields(parts, removedFields)
+	parts = updated
+	changed = changed || wrote
 	if forceNonStream {
 		updated, wrote, err = rewriteImagesMultipartStreamFalse(parts)
 		if err != nil {
@@ -248,16 +263,71 @@ func rewriteImagesMultipartStreamFalse(parts []utils.MultipartPart) ([]utils.Mul
 }
 
 func stripImagesMultipartPartialImages(parts []utils.MultipartPart) ([]utils.MultipartPart, bool) {
+	return stripImagesMultipartFields(parts, []string{"partial_images"})
+}
+
+func stripImagesMultipartFields(parts []utils.MultipartPart, names []string) ([]utils.MultipartPart, bool) {
 	filtered := parts[:0]
 	changed := false
 	for _, part := range parts {
-		if part.FormName == "partial_images" && part.FileName == "" {
+		remove := false
+		for _, name := range names {
+			if part.FormName == name && part.FileName == "" {
+				remove = true
+				break
+			}
+		}
+		if remove {
 			changed = true
 			continue
 		}
 		filtered = append(filtered, part)
 	}
 	return filtered, changed
+}
+
+// imagesOutputOverrides 是两种上游协议的唯一输出覆盖规则。
+// 显式切换格式时清除仅属于其他格式的控制参数，蒙版和多图数量仍保留并校验。
+func imagesOutputOverrides(upstream *config.UpstreamConfig) (map[string]interface{}, []string, bool) {
+	if upstream == nil || upstream.ImagesOutputFormat == "" {
+		return nil, nil, false
+	}
+	format := upstream.ImagesOutputFormat
+	params := map[string]interface{}{"output_format": format}
+	var removed []string
+	if format == "gif" {
+		if upstream.ImagesFrameCount != 0 {
+			params["frame_count"] = upstream.ImagesFrameCount
+		}
+		if upstream.ImagesFrameDurationMS != 0 {
+			params["frame_duration_ms"] = upstream.ImagesFrameDurationMS
+		}
+	} else {
+		removed = append(removed, "frame_count", "frame_duration_ms")
+	}
+	if format != "svg" {
+		removed = append(removed, "svg")
+	}
+	specialFormat := format == "gif" || format == "svg"
+	if specialFormat {
+		removed = append(removed, "output_compression", "partial_images", "prompt_rewriter")
+	}
+	return params, removed, specialFormat && upstream.ServiceType != "responses"
+}
+
+func applyImagesOutputConfig(payload map[string]interface{}, upstream *config.UpstreamConfig) bool {
+	params, removed, forceNonStream := imagesOutputOverrides(upstream)
+	changed := injectImagesExtraParams(payload, params)
+	for _, key := range removed {
+		if _, exists := payload[key]; exists {
+			delete(payload, key)
+			changed = true
+		}
+	}
+	if forceNonStream && applyImagesForceNonStreamJSON(payload) {
+		changed = true
+	}
+	return changed
 }
 
 func appendImagesMultipartParams(parts []utils.MultipartPart, extra map[string]interface{}) ([]utils.MultipartPart, bool, error) {
