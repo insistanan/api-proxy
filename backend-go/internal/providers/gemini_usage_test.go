@@ -120,17 +120,19 @@ data: {"candidates":[{"content":{"parts":[{"text":"b"}],"role":"model"},"finishR
 
 // 反证切片 3 修复：第三方兼容网关把 usage 终值放在**没有 candidates** 的纯
 // usageMetadata 尾 chunk。抓取点必须在 candidates 守卫之前，否则读不到。
-// 同时该 chunk 在 message_delta（finishReason chunk）之后到达 → 只留痕，不重发。
+// message_delta 在流尾统一发送，必须包含尾包终值且不重复终止。
 func TestGeminiStreamUsage_TrailingUsageOnlyChunkCaptured(t *testing.T) {
 	got := collectGeminiClaudeStream(t, `data: {"candidates":[{"content":{"parts":[{"text":"hi"}],"role":"model"},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":3,"thoughtsTokenCount":2}}
 
 data: {"usageMetadata":{"promptTokenCount":10,"cachedContentTokenCount":4,"candidatesTokenCount":6,"thoughtsTokenCount":2,"totalTokenCount":18}}
 `)
 
-	// 尾 chunk 的 usage 虽晚于 message_delta，但 captureUsage 已更新内部值——
-	// message_delta 里的值来自 finishReason chunk（6 不在其中），仍须是 3+2=5；
-	// 关键是不丢失"上游报过 usage"这一事实（usageSeen=true，不再打整流未提供的警告）。
-	if !strings.Contains(got, `"output_tokens":5`) {
-		t.Errorf("message_delta 应取 finishReason chunk 的 3+2=5，实际:\n%s", got)
+	for _, want := range []string{`"output_tokens":8`, `"input_tokens":6`, `"cache_read_input_tokens":4`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("尾包 usage 缺少 %s，实际:\n%s", want, got)
+		}
+	}
+	if strings.Count(got, "event: message_delta\n") != 1 || strings.Count(got, "event: message_stop\n") != 1 {
+		t.Fatalf("流必须恰好定稿一次:\n%s", got)
 	}
 }

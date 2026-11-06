@@ -21,6 +21,11 @@ func collectGeminiResponsesEvents(t *testing.T, lines []string) []string {
 		}
 		all = append(all, events...)
 	}
+	final, err := FinishUpstreamStreamToResponses(ResponsesUpstreamGemini, []byte(`{"model":"gemini-2.5-pro"}`), &state)
+	if err != nil {
+		t.Fatalf("流尾定稿失败: %v", err)
+	}
+	all = append(all, final...)
 	return all
 }
 
@@ -117,9 +122,7 @@ func TestConvertGeminiStreamToResponses_NegativeInputClampedToZero(t *testing.T)
 	}
 }
 
-// 已知限制（非期望行为，但必须锁定以免被误改）：部分第三方兼容网关把 usage 终值
-// 单独放在 finishReason 之后的尾 chunk。逐行转换没有"流结束"回调，此时 completed
-// 已按零 usage 发出，后到的值补不进去 —— completed() 幂等，只发一次，同时打警告日志。
+// 尾包终值必须进入唯一的 response.completed，不得提前按零 usage 定稿。
 func TestConvertGeminiStreamToResponses_TrailingUsageChunkKeepsSingleCompleted(t *testing.T) {
 	events := collectGeminiResponsesEvents(t, []string{
 		`data: {"candidates":[{"content":{"parts":[{"text":"done"}],"role":"model"},"finishReason":"STOP","index":0}]}`,
@@ -128,5 +131,46 @@ func TestConvertGeminiStreamToResponses_TrailingUsageChunkKeepsSingleCompleted(t
 
 	if got := countResponsesEvents(events, "response.completed"); got != 1 {
 		t.Fatalf("response.completed 应恰好出现 1 次（completed 幂等），实际 %d 次", got)
+	}
+	completed := events[len(events)-1]
+	if !strings.Contains(completed, `"input_tokens":42`) || !strings.Contains(completed, `"output_tokens":8`) {
+		t.Fatalf("完成事件必须携带尾包 usage: %s", completed)
+	}
+}
+
+func TestResponsesConverterFinalizationRequiresSignalAndIsIdempotent(t *testing.T) {
+	for _, upstream := range []string{ResponsesUpstreamGemini, ResponsesUpstreamOpenAI} {
+		t.Run(upstream, func(t *testing.T) {
+			var state any
+			prefix, terminal := `data: {"candidates":[{"content":{"parts":[{"text":"hello"}]}}]}`, `data: {"candidates":[{"finishReason":"STOP"}]}`
+			if upstream == ResponsesUpstreamOpenAI {
+				prefix = `data: {"choices":[{"delta":{"content":"hello"}}]}`
+				terminal = `data: {"choices":[{"finish_reason":"stop"}]}`
+			}
+			_, err := ConvertUpstreamStreamLineToResponses(context.Background(), upstream, "m", nil, []byte(prefix), &state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := FinishUpstreamStreamToResponses(upstream, nil, &state)
+			if err != nil || len(before) != 0 {
+				t.Fatalf("没有定稿信号不能补完成事件: %v, %v", before, err)
+			}
+			_, err = ConvertUpstreamStreamLineToResponses(context.Background(), upstream, "m", nil, []byte(terminal), &state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			final, err := FinishUpstreamStreamToResponses(upstream, nil, &state)
+			if err != nil || countResponsesEvents(final, "response.completed") != 1 {
+				t.Fatalf("应恰好定稿一次: %v, %v", final, err)
+			}
+			again, err := FinishUpstreamStreamToResponses(upstream, nil, &state)
+			if err != nil || len(again) != 0 {
+				t.Fatalf("重复收尾不能补第二个完成事件: %v, %v", again, err)
+			}
+			extra, err := ConvertUpstreamStreamLineToResponses(context.Background(), upstream, "m", nil, []byte(prefix), &state)
+			if err != nil || len(extra) != 0 {
+				t.Fatalf("定稿后不能重开内容: %v, %v", extra, err)
+			}
+		})
 	}
 }

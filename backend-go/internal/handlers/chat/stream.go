@@ -3,9 +3,7 @@ package chat
 import (
 	"bufio"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -22,6 +20,7 @@ import (
 func handleStreamSuccess(c *gin.Context, resp *http.Response, envCfg *config.EnvConfig, startTime time.Time) (*types.Usage, error) {
 	stopVeto := hooks.BindAttachedStreamVeto(c, resp.Body)
 	defer stopVeto()
+	defer utils.BindStreamBody(c.Request.Context(), resp.Body)()
 	if envCfg.EnableResponseLogs {
 		responseTime := time.Since(startTime).Milliseconds()
 		log.Printf("[Chat-Stream] Chat 流式响应开始: %dms, 状态: %d", responseTime, resp.StatusCode)
@@ -40,9 +39,13 @@ func handleStreamSuccess(c *gin.Context, resp *http.Response, envCfg *config.Env
 		log.Printf("[Chat-Stream] 警告: 上游流式响应包含 Content-Encoding: %s，尝试流式解压", encoding)
 		wrappedBody, wrapped, wrapErr := utils.WrapStreamReaderIfNeeded(resp)
 		if wrapErr != nil {
-			log.Printf("[Chat-Stream] 警告: 包装流式解压 Reader 失败 (%s): %v", encoding, wrapErr)
+			if err := c.Request.Context().Err(); err != nil {
+				return nil, err
+			}
+			return nil, fmt.Errorf("包装 Chat 流式解压 Reader 失败 (%s): %w", encoding, wrapErr)
 		} else if wrapped {
 			resp.Body = wrappedBody
+			defer wrappedBody.Close()
 			utils.StripEntityHeadersForRebuiltBody(resp.Header)
 		}
 	}
@@ -50,6 +53,9 @@ func handleStreamSuccess(c *gin.Context, resp *http.Response, envCfg *config.Env
 	flusher, _ := c.Writer.(http.Flusher)
 	reader := bufio.NewReaderSize(resp.Body, 64*1024)
 	var streamUsage *types.Usage
+	completion := chatStreamCompletion{choices: make(map[int]bool)}
+	var streamReadErr error
+	var trailingEventOpen, trailingLineTerminated bool
 
 	for {
 		// 危险命令 AI 闸门的事后否决：非阻塞检查，用户在否决窗口内加黑名单即终止当前流。
@@ -63,13 +69,16 @@ func handleStreamSuccess(c *gin.Context, resp *http.Response, envCfg *config.Env
 			return nil, err
 		}
 		if len(rawLine) == 0 && readErr != nil {
-			if errors.Is(readErr, io.EOF) {
-				break
-			}
-			return nil, readErr
+			streamReadErr = readErr
+			break
 		}
 
 		line := strings.TrimSuffix(strings.TrimSuffix(string(rawLine), "\n"), "\r")
+		trailingEventOpen = line != ""
+		trailingLineTerminated = strings.HasSuffix(string(rawLine), "\n")
+		if err := completion.consume(line); err != nil {
+			return nil, err
+		}
 		if usage := extractChatUsageFromSSELine(line); usage != nil {
 			streamUsage = mergeChatUsage(streamUsage, usage)
 		}
@@ -95,12 +104,39 @@ func handleStreamSuccess(c *gin.Context, resp *http.Response, envCfg *config.Env
 		if flusher != nil {
 			flusher.Flush()
 		}
+		if completion.done {
+			// 不再读取 [DONE] 后的连接；补齐事件分隔符供 SSE 客户端分派。
+			separator := "\n"
+			if !strings.HasSuffix(string(rawLine), "\n") {
+				separator = "\n\n"
+			}
+			if _, err := c.Writer.Write([]byte(separator)); err != nil {
+				return nil, err
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
+			break
+		}
 
 		if readErr != nil {
-			if errors.Is(readErr, io.EOF) {
-				break
-			}
-			return nil, readErr
+			streamReadErr = readErr
+			break
+		}
+	}
+	if err := utils.CheckStreamCompletion(c.Request.Context(), completion.completed(), streamReadErr); err != nil {
+		return nil, err
+	}
+	if trailingEventOpen && !completion.done {
+		separator := "\n"
+		if !trailingLineTerminated {
+			separator = "\n\n"
+		}
+		if _, err := c.Writer.Write([]byte(separator)); err != nil {
+			return nil, err
+		}
+		if flusher != nil {
+			flusher.Flush()
 		}
 	}
 	remaining, err := hooks.DrainAttachedStreamRestoration(c)
@@ -116,6 +152,59 @@ func handleStreamSuccess(c *gin.Context, resp *http.Response, envCfg *config.Env
 		return nil, err
 	}
 	return streamUsage, nil
+}
+
+// chatStreamCompletion 跟踪透传 Chat 流的各个 choice，保留定稿后的 usage 尾包。
+type chatStreamCompletion struct {
+	choices map[int]bool
+	done    bool
+}
+
+func (s *chatStreamCompletion) consume(line string) error {
+	payload, isData := utils.ParseSSEDataLine(line)
+	if !isData || payload == "" {
+		return nil
+	}
+	if payload == utils.SSEDoneMarker {
+		s.done = true
+		return nil
+	}
+	var chunk struct {
+		Error   json.RawMessage `json:"error"`
+		Choices []struct {
+			Index        int    `json:"index"`
+			FinishReason string `json:"finish_reason"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+		return fmt.Errorf("解析 Chat SSE 数据失败: %w", err)
+	}
+	if strings.TrimSpace(payload) == "null" {
+		return fmt.Errorf("上游 Chat SSE 数据不是 JSON 对象")
+	}
+	if len(chunk.Error) > 0 && string(chunk.Error) != "null" {
+		return fmt.Errorf("上游 Chat 流返回错误: %s", payload)
+	}
+	for _, choice := range chunk.Choices {
+		finished := choice.FinishReason != "" && choice.FinishReason != "none" && choice.FinishReason != "null"
+		s.choices[choice.Index] = s.choices[choice.Index] || finished
+	}
+	return nil
+}
+
+func (s *chatStreamCompletion) completed() bool {
+	if len(s.choices) == 0 {
+		return false
+	}
+	if s.done {
+		return true
+	}
+	for _, finished := range s.choices {
+		if !finished {
+			return false
+		}
+	}
+	return true
 }
 
 type chatStreamToolArgumentFragment struct {

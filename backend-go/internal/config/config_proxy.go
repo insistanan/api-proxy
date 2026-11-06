@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -142,13 +143,9 @@ func (cm *ConfigManager) UpdateSettings(settings SettingsConfig) error {
 
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
-	previous := cloneSettingsConfig(cm.config.Settings)
-	cm.config.Settings = settings
-	if err := cm.saveConfigLocked(cm.config); err != nil {
-		cm.config.Settings = previous
-		return err
-	}
-	return nil
+	candidate := cloneConfig(cm.config)
+	candidate.Settings = settings
+	return cm.saveConfigLocked(candidate)
 }
 
 // UpdateNetworkSettings 全量设置网络分组。
@@ -162,13 +159,9 @@ func (cm *ConfigManager) UpdateNetworkSettings(settings NetworkSettings) error {
 
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
-	previous := cm.config.Settings.Network
-	cm.config.Settings.Network = settings
-	if err := cm.saveConfigLocked(cm.config); err != nil {
-		cm.config.Settings.Network = previous
-		return err
-	}
-	return nil
+	candidate := cloneConfig(cm.config)
+	candidate.Settings.Network = settings
+	return cm.saveConfigLocked(candidate)
 }
 
 // ValidateContentSafetyConfig 校验内容安全规则选择，拒绝未知、空白或重复配置。
@@ -518,13 +511,15 @@ func NormalizePromptSettings(prompts, previous PromptSettings) PromptSettings {
 }
 
 func cloneSettingsConfig(settings SettingsConfig) SettingsConfig {
-	settings.ContentSafety.SensitiveWord.CustomWords = append([]string{}, settings.ContentSafety.SensitiveWord.CustomWords...)
-	settings.ContentSafety.SensitiveInfo.EnabledRules = append([]string{}, settings.ContentSafety.SensitiveInfo.EnabledRules...)
-	settings.ContentSafety.Credential.EnabledRules = append([]string{}, settings.ContentSafety.Credential.EnabledRules...)
-	settings.ContentSafety.DangerousCmd.EnabledRules = append([]string{}, settings.ContentSafety.DangerousCmd.EnabledRules...)
-	settings.ContentSafety.Whitelist.ToolNames = append([]string{}, settings.ContentSafety.Whitelist.ToolNames...)
+	settings.ContentSafety.SensitiveWord.CustomWords = slices.Clone(settings.ContentSafety.SensitiveWord.CustomWords)
+	settings.ContentSafety.SensitiveInfo.EnabledRules = slices.Clone(settings.ContentSafety.SensitiveInfo.EnabledRules)
+	settings.ContentSafety.Credential.EnabledRules = slices.Clone(settings.ContentSafety.Credential.EnabledRules)
+	settings.ContentSafety.DangerousCmd.EnabledRules = slices.Clone(settings.ContentSafety.DangerousCmd.EnabledRules)
+	settings.ContentSafety.Whitelist.ToolNames = slices.Clone(settings.ContentSafety.Whitelist.ToolNames)
+	settings.ContentSafety.Allowlist.Entries = slices.Clone(settings.ContentSafety.Allowlist.Entries)
+	settings.ContentSafety.CustomRules.Rules = slices.Clone(settings.ContentSafety.CustomRules.Rules)
 	// 提示词条目含大段文本，按值拷贝 slice 会被共享修改污染，必须逐条复制。
-	settings.Prompts.Entries = append([]PromptEntry{}, settings.Prompts.Entries...)
+	settings.Prompts.Entries = slices.Clone(settings.Prompts.Entries)
 	return settings
 }
 

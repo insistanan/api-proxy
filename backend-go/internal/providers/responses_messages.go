@@ -148,7 +148,7 @@ func (p *MessagesResponsesProvider) HandleStreamResponseCtx(ctx context.Context,
 	go func() {
 		defer close(eventChan)
 		defer close(errChan)
-		defer body.Close()
+		defer utils.BindStreamBody(ctx, body)()
 
 		send := pump.send
 		fail := pump.fail
@@ -163,11 +163,19 @@ func (p *MessagesResponsesProvider) HandleStreamResponseCtx(ctx context.Context,
 			default:
 			}
 			line := strings.TrimSpace(scanner.Text())
-			if line == "" || line == "data: [DONE]" {
+			if payload, isData := utils.ParseSSEDataLine(line); isData && payload == utils.SSEDoneMarker {
+				break
+			}
+			if line == "" {
 				continue
 			}
 			for _, event := range state.processLine(line) {
-				send(event)
+				if !send(event) {
+					return
+				}
+			}
+			if state.completed || state.failed {
+				break
 			}
 		}
 		// 流内失败（response.failed / 顶层 error）：经 errChan 上报由消费端统一
@@ -176,15 +184,13 @@ func (p *MessagesResponsesProvider) HandleStreamResponseCtx(ctx context.Context,
 			fail(NewUpstreamStreamFailedError(state.capacityError, state.failedMessage))
 			return
 		}
-		for _, event := range state.finish() {
-			send(event)
+		if !pump.finishRead(state.completed, scanner.Err()) {
+			return
 		}
-		if err := scanner.Err(); err != nil {
-			if isDisconnectLikeError(err) {
+		for _, event := range state.finish() {
+			if !send(event) {
 				return
 			}
-			fail(err)
-			return
 		}
 		// 思考内容按 Claude Messages 契约下发；下一轮转换默认跳过历史
 		// thinking，因此不会把它再次送入 Responses 上游。成功完成的本轮
@@ -681,6 +687,7 @@ type responsesToClaudeStreamState struct {
 	assistantText       strings.Builder
 	completedOutput     []types.ResponsesItem
 	completed           bool
+	messageStopped      bool
 	// Upstream Responses usage fields captured from response.completed / usage events.
 	// Without these, request logs always show cacheReadTokens=0 for Claude entry.
 	inputTokens              int
@@ -712,6 +719,9 @@ func newResponsesToClaudeStreamState() *responsesToClaudeStreamState {
 }
 
 func (s *responsesToClaudeStreamState) processLine(line string) []string {
+	if s.completed || s.failed {
+		return nil
+	}
 	if strings.HasPrefix(line, "event:") {
 		return nil
 	}
@@ -720,12 +730,10 @@ func (s *responsesToClaudeStreamState) processLine(line string) []string {
 		return nil
 	}
 	root := gjson.Parse(data)
-	if root.Get("error").Exists() {
+	if !gjson.Valid(data) || !root.IsObject() {
 		s.failed = true
-		return []string{buildClaudeSSE("error", map[string]interface{}{
-			"type":  "error",
-			"error": root.Get("error").Value(),
-		})}
+		s.failedMessage = "上游 Responses SSE 数据不是有效 JSON 对象"
+		return nil
 	}
 
 	eventType := root.Get("type").String()
@@ -733,9 +741,13 @@ func (s *responsesToClaudeStreamState) processLine(line string) []string {
 	// response.failed 的错误信封在 response.error 下（与顶层 error 事件不同形态）。
 	// 不处理会让流尾 finish() 伪造 message_stop，客户端把失败当成功终止。
 	// model at capacity 类容量错误转 RetrySameCandidateError 由上层同渠道重试。
-	if eventType == "response.failed" {
+	if eventType == "response.failed" || eventType == "error" ||
+		(root.Get("error").Exists() && root.Get("error").Type != gjson.Null) || root.Get("response.status").String() == "failed" {
 		s.failed = true
 		failedPayload := root.Get("response.error").Raw
+		if failedPayload == "" {
+			failedPayload = root.Get("error").Raw
+		}
 		if failedPayload == "" {
 			failedPayload = data
 		}
@@ -781,13 +793,13 @@ func (s *responsesToClaudeStreamState) processLine(line string) []string {
 	case strings.Contains(eventType, "function_call_arguments.done"):
 		s.captureToolCall(root)
 		out = append(out, s.emitToolUse(root)...)
-	case strings.Contains(eventType, "response.completed"):
+	case eventType == "response.completed" || eventType == "response.incomplete":
 		s.completed = true
 		out = append(out, s.emitCompletedOutput(root)...)
 		if s.stopReason == "" {
 			s.stopReason = "end_turn"
 		}
-		if status := root.Get("response.status").String(); status == "incomplete" {
+		if status := root.Get("response.status").String(); status == "incomplete" || eventType == "response.incomplete" {
 			s.stopReason = "max_tokens"
 		}
 		// Final usage is usually on response.completed; re-capture then emit message_delta with real tokens.
@@ -865,10 +877,11 @@ func (s *responsesToClaudeStreamState) emitCompletedOutput(root gjson.Result) []
 }
 
 func (s *responsesToClaudeStreamState) finish() []string {
-	if s.failed {
+	if s.failed || !s.completed || s.messageStopped {
 		// 错误流：不伪造成功终止（message_delta/message_stop 由错误路径统一处理）。
 		return nil
 	}
+	s.messageStopped = true
 	out := []string{}
 	out = append(out, s.closeReasoningBlock()...)
 	out = append(out, s.closeTextBlock()...)

@@ -10,47 +10,31 @@ func (cm *ConfigManager) DuplicateChannel(kind string, index int) error {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
-	now := time.Now()
-	var err error
-	switch kind {
-	case "responses":
-		cm.config.ResponsesUpstream, err = insertClonedUpstream(cm.config.ResponsesUpstream, index, now)
-	case "gemini":
-		cm.config.GeminiUpstream, err = insertClonedUpstream(cm.config.GeminiUpstream, index, now)
-	case "chat":
-		cm.config.ChatUpstream, err = insertClonedUpstream(cm.config.ChatUpstream, index, now)
-	case "images":
-		cm.config.ImagesUpstream, err = insertClonedUpstream(cm.config.ImagesUpstream, index, now)
-	default:
-		cm.config.Upstream, err = insertClonedUpstream(cm.config.Upstream, index, now)
-	}
+	candidate := cloneConfig(cm.config)
+	cs, err := candidate.channelSetFor(kind)
 	if err != nil {
 		return err
 	}
-	return cm.saveConfigLocked(cm.config)
+	*cs.upstreams, err = insertClonedUpstream(*cs.upstreams, index, time.Now())
+	if err != nil {
+		return err
+	}
+	return cm.saveConfigLocked(candidate)
 }
 
 func (cm *ConfigManager) TidyProblemChannels(kind string) error {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
-	changed := false
-	switch kind {
-	case "responses":
-		changed = reorderProblemChannelsStable(cm.config.ResponsesUpstream)
-	case "gemini":
-		changed = reorderProblemChannelsStable(cm.config.GeminiUpstream)
-	case "chat":
-		changed = reorderProblemChannelsStable(cm.config.ChatUpstream)
-	case "images":
-		changed = reorderProblemChannelsStable(cm.config.ImagesUpstream)
-	default:
-		changed = reorderProblemChannelsStable(cm.config.Upstream)
+	candidate := cloneConfig(cm.config)
+	cs, err := candidate.channelSetFor(kind)
+	if err != nil {
+		return err
 	}
-	if !changed {
+	if !reorderProblemChannelsStable(*cs.upstreams) {
 		return nil
 	}
-	return cm.saveConfigLocked(cm.config)
+	return cm.saveConfigLocked(candidate)
 }
 
 func (cm *ConfigManager) startChannelLifecycleWorker() {
@@ -79,23 +63,24 @@ func (cm *ConfigManager) runChannelLifecycle(now time.Time, cleanupDeprecated bo
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
+	candidate := cloneConfig(cm.config)
 	changed := false
 	var listChanged bool
-	cm.config.Upstream, listChanged = applyLifecycleToUpstreams(cm.config.Upstream, now, cleanupDeprecated, "Messages")
+	candidate.Upstream, listChanged = applyLifecycleToUpstreams(candidate.Upstream, now, cleanupDeprecated, "Messages")
 	changed = changed || listChanged
-	cm.config.ResponsesUpstream, listChanged = applyLifecycleToUpstreams(cm.config.ResponsesUpstream, now, cleanupDeprecated, "Responses")
+	candidate.ResponsesUpstream, listChanged = applyLifecycleToUpstreams(candidate.ResponsesUpstream, now, cleanupDeprecated, "Responses")
 	changed = changed || listChanged
-	cm.config.GeminiUpstream, listChanged = applyLifecycleToUpstreams(cm.config.GeminiUpstream, now, cleanupDeprecated, "Gemini")
+	candidate.GeminiUpstream, listChanged = applyLifecycleToUpstreams(candidate.GeminiUpstream, now, cleanupDeprecated, "Gemini")
 	changed = changed || listChanged
-	cm.config.ChatUpstream, listChanged = applyLifecycleToUpstreams(cm.config.ChatUpstream, now, cleanupDeprecated, "Chat")
+	candidate.ChatUpstream, listChanged = applyLifecycleToUpstreams(candidate.ChatUpstream, now, cleanupDeprecated, "Chat")
 	changed = changed || listChanged
-	cm.config.ImagesUpstream, listChanged = applyLifecycleToUpstreams(cm.config.ImagesUpstream, now, cleanupDeprecated, "Images")
+	candidate.ImagesUpstream, listChanged = applyLifecycleToUpstreams(candidate.ImagesUpstream, now, cleanupDeprecated, "Images")
 	changed = changed || listChanged
 
 	if !changed {
 		return nil
 	}
-	if err := cm.saveConfigLocked(cm.config); err != nil {
+	if err := cm.saveConfigLocked(candidate); err != nil {
 		return fmt.Errorf("保存生命周期维护结果失败: %w", err)
 	}
 	return nil

@@ -242,8 +242,8 @@ func checkResponsesEventUsage(event string, enableLog bool) (bool, bool, respons
 
 		eventType, _ := data["type"].(string)
 
-		// 检查 response.completed 事件中的 usage
-		if eventType == "response.completed" {
+		// 完成与达到输出限制都携带最终 usage，不能把 incomplete 的真实值丢掉。
+		if eventType == "response.completed" || eventType == "response.incomplete" {
 			if response, ok := data["response"].(map[string]interface{}); ok {
 				if usage, ok := response["usage"].(map[string]interface{}); ok {
 					usageData := extractResponsesUsageFromMap(usage)
@@ -261,15 +261,15 @@ func checkResponsesEventUsage(event string, enableLog bool) (bool, bool, respons
 					}
 
 					if enableLog {
-						log.Printf("[Responses-Stream-Token] response.completed: InputTokens=%d, OutputTokens=%d, TotalTokens=%d, CacheCreation=%d, CacheRead=%d, HasClaudeCache=%v, 需补全=%v",
-							usageData.InputTokens, usageData.OutputTokens, usageData.TotalTokens, usageData.CacheCreationInputTokens, usageData.CacheReadInputTokens, usageData.HasClaudeCache, needPatch)
+						log.Printf("[Responses-Stream-Token] %s: InputTokens=%d, OutputTokens=%d, TotalTokens=%d, CacheCreation=%d, CacheRead=%d, HasClaudeCache=%v, 需补全=%v",
+							eventType, usageData.InputTokens, usageData.OutputTokens, usageData.TotalTokens, usageData.CacheCreationInputTokens, usageData.CacheReadInputTokens, usageData.HasClaudeCache, needPatch)
 					}
 					return true, needPatch, usageData
 				} else if enableLog {
-					log.Printf("[Responses-Stream-Token] response.completed 事件中无 usage 字段")
+					log.Printf("[Responses-Stream-Token] %s 事件中无 usage 字段", eventType)
 				}
 			} else if enableLog {
-				log.Printf("[Responses-Stream-Token] response.completed 事件中无 response 字段")
+				log.Printf("[Responses-Stream-Token] %s 事件中无 response 字段", eventType)
 			}
 		}
 	}

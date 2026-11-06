@@ -3,6 +3,9 @@ package providers
 import (
 	"context"
 	"io"
+	"strings"
+
+	"github.com/BenedictKing/api-proxy/internal/utils"
 )
 
 // HandleStreamResponse 处理流式响应
@@ -23,7 +26,7 @@ func (p *GeminiProvider) HandleStreamResponseCtx(ctx context.Context, body io.Re
 	go func() {
 		defer close(eventChan)
 		defer close(errChan)
-		defer body.Close()
+		defer utils.BindStreamBody(ctx, body)()
 
 		send := pump.send
 		fail := pump.fail
@@ -32,7 +35,11 @@ func (p *GeminiProvider) HandleStreamResponseCtx(ctx context.Context, body io.Re
 		scanner := pump.newScanner(body)
 
 		for scanner.Scan() {
-			jsonStr, isData := parseGeminiSSEDataLine(scanner.Text())
+			line := strings.TrimSpace(scanner.Text())
+			if payload, isData := utils.ParseSSEDataLine(line); isData && payload == utils.SSEDoneMarker {
+				break
+			}
+			jsonStr, isData := parseGeminiSSEDataLine(line)
 			if !isData {
 				continue
 			}
@@ -41,13 +48,15 @@ func (p *GeminiProvider) HandleStreamResponseCtx(ctx context.Context, body io.Re
 					return
 				}
 			}
-		}
-		if err := scanner.Err(); err != nil {
-			if isDisconnectLikeError(err) {
-				// 客户端主动断开：shadow/reasoning 均不登记（半截流），直接退出。
-				return
+			if state.streamError != nil {
+				break
 			}
-			fail(err)
+		}
+		if state.streamError != nil {
+			fail(state.streamError)
+			return
+		}
+		if !pump.finishRead(state.pendingStopReason != "", scanner.Err()) {
 			return
 		}
 		for _, event := range state.Finish(shadowProviderID, shadowSessionID) {

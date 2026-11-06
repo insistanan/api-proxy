@@ -533,7 +533,7 @@ func (p *OpenAIProvider) HandleStreamResponseCtx(ctx context.Context, body io.Re
 	go func() {
 		defer close(eventChan)
 		defer close(errChan)
-		defer body.Close()
+		defer utils.BindStreamBody(ctx, body)()
 
 		send := pump.send
 		fail := pump.fail
@@ -551,19 +551,17 @@ func (p *OpenAIProvider) HandleStreamResponseCtx(ctx context.Context, body io.Re
 			if state.messageStopEmitted {
 				return
 			}
-		}
-		if err := scanner.Err(); err != nil {
-			if isDisconnectLikeError(err) {
-				// 客户端主动断开：不再伪造成功收尾。
-				return
+			if state.Failed() || state.doneSeen {
+				break
 			}
-			fail(err)
-			return
 		}
 		if state.Failed() {
 			// 上游错误事件：经 errChan 交给消费端统一写 error 事件并补协议终止序列，
 			// 生产端不再伪造 message_stop。
-			fail(fmt.Errorf("upstream returned an error event"))
+			fail(state.streamError)
+			return
+		}
+		if !pump.finishRead(state.Completed(), scanner.Err()) {
 			return
 		}
 		for _, event := range state.Finish() {

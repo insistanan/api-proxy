@@ -83,19 +83,18 @@ func (cm *ConfigManager) loadConfig() error {
 		return err
 	}
 
-	// 候选全部通过：发布为当前快照，并记录已持久化摘要。
-	cm.config = candidate
-	cm.persistedDigest = configDigest(data)
-
 	// 启动迁移（补默认值/旧格式迁移/归一化/无 Key 自检）需要回写。
 	if needSave {
-		if err := cm.saveConfigLocked(cm.config); err != nil {
+		if err := cm.saveConfigLocked(candidate); err != nil {
 			log.Printf("[Config-Migration] 警告: 保存迁移后的配置失败: %v", err)
 			return err
 		}
 		if cm.migrated {
 			log.Printf("[Config-Migration] 配置迁移完成")
 		}
+	} else {
+		cm.config = candidate
+		cm.persistedDigest = configDigest(data)
 	}
 
 	return nil
@@ -161,17 +160,17 @@ func (cm *ConfigManager) reloadFromDisk() error {
 		return err
 	}
 
-	cm.config = candidate
-	cm.persistedDigest = digest
-	log.Printf("[Config-Watcher] 配置已重载")
-
-	// 外部编辑引入的迁移需求同样回写（摘要已更新，不会循环）。
+	// 需要迁移时先回写再发布；失败保留旧快照与摘要，后续重载仍可重试。
 	if needSave {
-		if err := cm.saveConfigLocked(cm.config); err != nil {
+		if err := cm.saveConfigLocked(candidate); err != nil {
 			log.Printf("[Config-Watcher] 警告: 保存重载后的迁移配置失败: %v", err)
 			return err
 		}
+	} else {
+		cm.config = candidate
+		cm.persistedDigest = digest
 	}
+	log.Printf("[Config-Watcher] 配置已重载")
 	return nil
 }
 

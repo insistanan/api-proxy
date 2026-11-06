@@ -174,7 +174,7 @@ func (p *ClaudeProvider) HandleStreamResponseCtx(ctx context.Context, body io.Re
 	go func() {
 		defer close(eventChan)
 		defer close(errChan)
-		defer body.Close()
+		defer utils.BindStreamBody(ctx, body)()
 
 		trySend := pump.send
 
@@ -190,6 +190,9 @@ func (p *ClaudeProvider) HandleStreamResponseCtx(ctx context.Context, body io.Re
 			}
 			event := eventBuf.String()
 			eventBuf.Reset()
+			if !strings.HasSuffix(event, "\n\n") {
+				event += "\n"
+			}
 			terminal := false
 			if strings.Contains(event, "message_stop") {
 				for _, line := range strings.Split(event, "\n") {
@@ -237,10 +240,8 @@ func (p *ClaudeProvider) HandleStreamResponseCtx(ctx context.Context, body io.Re
 			return
 		}
 
-		if err := scanner.Err(); err != nil {
-			// 未收到完整 message_stop 的连接中断仍需上报，不能把截断当成完成。
-			pump.fail(err)
-		}
+		// 完整 message_stop 已在 flushEvent 中结束读取；到这里说明缺少完成事件。
+		pump.finishRead(false, scanner.Err())
 	}()
 
 	return eventChan, errChan, nil

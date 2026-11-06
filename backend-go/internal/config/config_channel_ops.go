@@ -29,21 +29,12 @@ func (cm *ConfigManager) MarkPromptCacheKeyUnsupported(channelType, upstreamID s
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
-	var upstreams []UpstreamConfig
-	switch channelType {
-	case "messages":
-		upstreams = cm.config.Upstream
-	case "responses":
-		upstreams = cm.config.ResponsesUpstream
-	case "gemini":
-		upstreams = cm.config.GeminiUpstream
-	case "chat":
-		upstreams = cm.config.ChatUpstream
-	case "images":
-		upstreams = cm.config.ImagesUpstream
-	default:
-		return fmt.Errorf("不支持的渠道类型: %s", channelType)
+	candidate := cloneConfig(cm.config)
+	cs, err := candidate.channelSetFor(channelType)
+	if err != nil {
+		return err
 	}
+	upstreams := *cs.upstreams
 
 	for index := range upstreams {
 		if upstreams[index].ID != upstreamID {
@@ -54,8 +45,7 @@ func (cm *ConfigManager) MarkPromptCacheKeyUnsupported(channelType, upstreamID s
 		}
 
 		upstreams[index].DisablePromptCacheKey = true
-		if err := cm.saveConfigLocked(cm.config); err != nil {
-			upstreams[index].DisablePromptCacheKey = false
+		if err := cm.saveConfigLocked(candidate); err != nil {
 			return fmt.Errorf("保存渠道缓存键能力失败: %w", err)
 		}
 		log.Printf("[Config-ChannelCapability] 渠道 %s (%s) 不支持 prompt_cache_key，已自动禁用", upstreams[index].Name, upstreamID)
@@ -76,21 +66,12 @@ func (cm *ConfigManager) MarkReasoningContentRequired(channelType, upstreamID st
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
-	var upstreams []UpstreamConfig
-	switch channelType {
-	case "messages":
-		upstreams = cm.config.Upstream
-	case "responses":
-		upstreams = cm.config.ResponsesUpstream
-	case "gemini":
-		upstreams = cm.config.GeminiUpstream
-	case "chat":
-		upstreams = cm.config.ChatUpstream
-	case "images":
-		upstreams = cm.config.ImagesUpstream
-	default:
-		return fmt.Errorf("不支持的渠道类型: %s", channelType)
+	candidate := cloneConfig(cm.config)
+	cs, err := candidate.channelSetFor(channelType)
+	if err != nil {
+		return err
 	}
+	upstreams := *cs.upstreams
 
 	for index := range upstreams {
 		if upstreams[index].ID != upstreamID {
@@ -101,8 +82,7 @@ func (cm *ConfigManager) MarkReasoningContentRequired(channelType, upstreamID st
 		}
 
 		upstreams[index].RequireReasoningContent = true
-		if err := cm.saveConfigLocked(cm.config); err != nil {
-			upstreams[index].RequireReasoningContent = false
+		if err := cm.saveConfigLocked(candidate); err != nil {
 			return fmt.Errorf("保存渠道推理字段能力失败: %w", err)
 		}
 		log.Printf("[Config-ChannelCapability] 渠道 %s (%s) 要求补全 reasoning_content，已自动启用兼容模式", upstreams[index].Name, upstreamID)
@@ -331,6 +311,9 @@ func addValidatedUpstreamOp(upstreams []UpstreamConfig, pools []ChannelPool, ups
 }
 
 func cloneUpstreamList(upstreams []UpstreamConfig) []UpstreamConfig {
+	if upstreams == nil {
+		return nil
+	}
 	cloned := make([]UpstreamConfig, len(upstreams))
 	for index := range upstreams {
 		cloned[index] = *upstreams[index].Clone()

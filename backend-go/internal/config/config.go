@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"slices"
 	"sync"
 	"time"
 
@@ -553,53 +554,23 @@ type ConfigManager struct {
 func (cm *ConfigManager) GetConfig() Config {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
+	return cloneConfig(cm.config)
+}
 
-	// 深拷贝整个 Config 结构体
-	cloned := cm.config
-
-	// 深拷贝 Upstream slice
-	if cm.config.Upstream != nil {
-		cloned.Upstream = make([]UpstreamConfig, len(cm.config.Upstream))
-		for i := range cm.config.Upstream {
-			cloned.Upstream[i] = *cm.config.Upstream[i].Clone()
-		}
-	}
-
-	// 深拷贝 ResponsesUpstream slice
-	if cm.config.ResponsesUpstream != nil {
-		cloned.ResponsesUpstream = make([]UpstreamConfig, len(cm.config.ResponsesUpstream))
-		for i := range cm.config.ResponsesUpstream {
-			cloned.ResponsesUpstream[i] = *cm.config.ResponsesUpstream[i].Clone()
-		}
-	}
-
-	// 深拷贝 GeminiUpstream slice
-	if cm.config.GeminiUpstream != nil {
-		cloned.GeminiUpstream = make([]UpstreamConfig, len(cm.config.GeminiUpstream))
-		for i := range cm.config.GeminiUpstream {
-			cloned.GeminiUpstream[i] = *cm.config.GeminiUpstream[i].Clone()
-		}
-	}
-
-	if cm.config.ChatUpstream != nil {
-		cloned.ChatUpstream = make([]UpstreamConfig, len(cm.config.ChatUpstream))
-		for i := range cm.config.ChatUpstream {
-			cloned.ChatUpstream[i] = *cm.config.ChatUpstream[i].Clone()
-		}
-	}
-
-	if cm.config.ImagesUpstream != nil {
-		cloned.ImagesUpstream = make([]UpstreamConfig, len(cm.config.ImagesUpstream))
-		for i := range cm.config.ImagesUpstream {
-			cloned.ImagesUpstream[i] = *cm.config.ImagesUpstream[i].Clone()
-		}
-	}
-	cloned.MessagePools = append([]ChannelPool(nil), cm.config.MessagePools...)
-	cloned.ResponsesPools = append([]ChannelPool(nil), cm.config.ResponsesPools...)
-	cloned.GeminiPools = append([]ChannelPool(nil), cm.config.GeminiPools...)
-	cloned.ChatPools = append([]ChannelPool(nil), cm.config.ChatPools...)
-	cloned.ImagesPools = append([]ChannelPool(nil), cm.config.ImagesPools...)
-
+// cloneConfig 隔离读取快照与写入候选；调用方持锁读取当前配置后再复制。
+func cloneConfig(current Config) Config {
+	cloned := current
+	cloned.Upstream = cloneUpstreamList(current.Upstream)
+	cloned.ResponsesUpstream = cloneUpstreamList(current.ResponsesUpstream)
+	cloned.GeminiUpstream = cloneUpstreamList(current.GeminiUpstream)
+	cloned.ChatUpstream = cloneUpstreamList(current.ChatUpstream)
+	cloned.ImagesUpstream = cloneUpstreamList(current.ImagesUpstream)
+	cloned.MessagePools = slices.Clone(current.MessagePools)
+	cloned.ResponsesPools = slices.Clone(current.ResponsesPools)
+	cloned.GeminiPools = slices.Clone(current.GeminiPools)
+	cloned.ChatPools = slices.Clone(current.ChatPools)
+	cloned.ImagesPools = slices.Clone(current.ImagesPools)
+	cloned.Settings = cloneSettingsConfig(current.Settings)
 	return cloned
 }
 
@@ -766,9 +737,9 @@ func (cm *ConfigManager) SetFuzzyModeEnabled(enabled bool) error {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
-	cm.config.FuzzyModeEnabled = enabled
-
-	if err := cm.saveConfigLocked(cm.config); err != nil {
+	candidate := cloneConfig(cm.config)
+	candidate.FuzzyModeEnabled = enabled
+	if err := cm.saveConfigLocked(candidate); err != nil {
 		return err
 	}
 
@@ -799,16 +770,17 @@ func (cm *ConfigManager) SetClientDisguiseEnabled(protocol string, enabled bool)
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
+	candidate := cloneConfig(cm.config)
 	switch protocol {
 	case "messages":
-		cm.config.ClaudeCodeDisguiseEnabled = enabled
+		candidate.ClaudeCodeDisguiseEnabled = enabled
 	case "responses":
-		cm.config.CodexDisguiseEnabled = enabled
+		candidate.CodexDisguiseEnabled = enabled
 	default:
 		return fmt.Errorf("不支持的伪装协议: %s", protocol)
 	}
 
-	if err := cm.saveConfigLocked(cm.config); err != nil {
+	if err := cm.saveConfigLocked(candidate); err != nil {
 		return err
 	}
 

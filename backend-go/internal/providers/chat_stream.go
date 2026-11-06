@@ -56,6 +56,8 @@ type chatToClaudeStreamState struct {
 	messageDeltaEmitted bool
 	messageStopEmitted  bool
 	streamFailed        bool
+	streamError         error
+	doneSeen            bool
 }
 
 func newChatToClaudeStreamState() *chatToClaudeStreamState {
@@ -69,20 +71,31 @@ func newChatToClaudeStreamState() *chatToClaudeStreamState {
 // ProcessLine 处理一行上游 SSE，返回要发给客户端的 Claude SSE 事件串。
 // 返回的每个元素都是完整事件（含 event: 前缀与尾部空行）。
 func (s *chatToClaudeStreamState) ProcessLine(line string) []string {
+	if s.streamFailed || s.messageStopEmitted {
+		return nil
+	}
 	line = strings.TrimSpace(line)
 	if line == "" {
 		return nil
 	}
 	jsonStr, isData := utils.ParseSSEDataLine(line)
-	if !isData {
+	if !isData || jsonStr == "" {
 		return nil
 	}
 	if jsonStr == utils.SSEDoneMarker {
+		s.doneSeen = true
 		return s.Finish()
 	}
 
 	var chunk map[string]interface{}
 	if err := json.Unmarshal([]byte(jsonStr), &chunk); err != nil {
+		s.streamFailed = true
+		s.streamError = fmt.Errorf("解析 Chat SSE 数据失败: %w", err)
+		return nil
+	}
+	if chunk == nil {
+		s.streamFailed = true
+		s.streamError = fmt.Errorf("上游 Chat SSE 数据不是 JSON 对象")
 		return nil
 	}
 
@@ -92,12 +105,25 @@ func (s *chatToClaudeStreamState) ProcessLine(line string) []string {
 
 	// 上游错误：只标记失败，事件由消费端统一写（ProcessStreamEvents 的
 	// BuildStreamErrorEvent 会按协议补终止序列）。不再伪造 message_stop。
-	if _, ok := chunk["error"]; ok {
+	if upstreamError, ok := chunk["error"]; ok && upstreamError != nil {
 		s.streamFailed = true
+		s.streamError = NewUpstreamStreamFailedError(utils.IsUpstreamModelCapacityErrorBody([]byte(jsonStr)), jsonStr)
+		return nil
+	}
+	// finish_reason 后只吸收 usage，不能重新打开正文或工具块。
+	if s.pendingStopReason != "" {
 		return nil
 	}
 
 	var out []string
+	choices, ok := chunk["choices"].([]interface{})
+	if !ok || len(choices) == 0 {
+		return nil
+	}
+	choice, ok := choices[0].(map[string]interface{})
+	if !ok {
+		return nil
+	}
 
 	// 首个有效 chunk 发 message_start
 	if !s.messageStartEmitted {
@@ -107,17 +133,9 @@ func (s *chatToClaudeStreamState) ProcessLine(line string) []string {
 		out = append(out, s.emitMessageStart())
 	}
 
-	choices, ok := chunk["choices"].([]interface{})
-	if !ok || len(choices) == 0 {
-		return out
-	}
-	choice, ok := choices[0].(map[string]interface{})
-	if !ok {
-		return out
-	}
 	delta, ok := choice["delta"].(map[string]interface{})
 	if !ok {
-		return out
+		delta = nil
 	}
 
 	// reasoning 只登记缓存，不发给客户端（含 reasoning 别名兼容）。
@@ -205,7 +223,7 @@ func (s *chatToClaudeStreamState) ProcessLine(line string) []string {
 
 // Finish 流结束（[DONE] 或 scanner EOF）时的统一收尾，只执行一次。
 func (s *chatToClaudeStreamState) Finish() []string {
-	if s.streamFailed {
+	if s.streamFailed || !s.Completed() {
 		// 错误流：不伪造成功收尾（message_delta/message_stop 由错误路径处理）。
 		return nil
 	}
@@ -240,6 +258,11 @@ func (s *chatToClaudeStreamState) Finish() []string {
 
 // Failed 报告本次流是否以错误告终（上游 error 事件）。
 func (s *chatToClaudeStreamState) Failed() bool { return s.streamFailed }
+
+// Completed 要求有效消息与协议定稿信号，允许兼容上游仅用 [DONE] 收尾。
+func (s *chatToClaudeStreamState) Completed() bool {
+	return s.messageStartEmitted && (s.doneSeen || s.pendingStopReason != "")
+}
 
 // SnapshotAssistantMessage 导出本轮 assistant 消息（供错误路径登记缓存等用途）。
 func chatStopReasonFromFinish(finishReason string) string {

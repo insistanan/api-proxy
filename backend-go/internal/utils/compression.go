@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/andybalholm/brotli"
 	"github.com/klauspost/compress/zstd"
@@ -250,28 +251,35 @@ type decompressReadCloser struct {
 	sourceCloser io.Closer
 	readerCloser io.Closer
 	customClose  func()
+	readMu       sync.Mutex
+	closeOnce    sync.Once
+	closeErr     error
 }
 
 func (wrapper *decompressReadCloser) Read(p []byte) (int, error) {
+	wrapper.readMu.Lock()
+	defer wrapper.readMu.Unlock()
 	return wrapper.reader.Read(p)
 }
 
 func (wrapper *decompressReadCloser) Close() error {
-	var firstError error
-	if wrapper.customClose != nil {
-		wrapper.customClose()
-	}
-	if wrapper.readerCloser != nil {
-		if err := wrapper.readerCloser.Close(); err != nil && firstError == nil {
-			firstError = err
+	wrapper.closeOnce.Do(func() {
+		// 先关闭源连接解除 Read 阻塞，再串行释放解码器，避免取消时 Close/Read 竞态。
+		if wrapper.sourceCloser != nil {
+			wrapper.closeErr = wrapper.sourceCloser.Close()
 		}
-	}
-	if wrapper.sourceCloser != nil {
-		if err := wrapper.sourceCloser.Close(); err != nil && firstError == nil {
-			firstError = err
+		wrapper.readMu.Lock()
+		defer wrapper.readMu.Unlock()
+		if wrapper.customClose != nil {
+			wrapper.customClose()
 		}
-	}
-	return firstError
+		if wrapper.readerCloser != nil {
+			if err := wrapper.readerCloser.Close(); err != nil && wrapper.closeErr == nil {
+				wrapper.closeErr = err
+			}
+		}
+	})
+	return wrapper.closeErr
 }
 
 // WrapStreamReaderIfNeeded 检查响应头是否含有 Content-Encoding。

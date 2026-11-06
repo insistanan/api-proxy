@@ -6,8 +6,8 @@
 //   - usage 抓取点必须在 candidates 守卫之前（第三方兼容网关会把终值放在只有
 //     usageMetadata 的尾 chunk）；last-wins 覆盖（thinking 模型早期 chunk 只有
 //     promptTokenCount/thoughtsTokenCount，first-wins 会把 output 锁在 0）。
-//   - 定稿信号只认 candidate.finishReason；message_delta 只发一次，其后到达的
-//     usage 覆盖记 usageArrivedLate 留痕。
+//   - 定稿信号只认 candidate.finishReason；message_delta 延迟到流尾，只发一次，
+//     保留 finishReason 之后到达的最终 usage。
 //   - Gemini thought part 只登记 shadow / reasoning 缓存，绝不转换为客户端
 //     可见的 thinking block（d70d8be 决策，与 Chat 上游同口径）。
 //   - thoughtSignature shadow 收集逻辑保留（本项目特有：同 session 回放补签名）。
@@ -55,13 +55,14 @@ type geminiToClaudeStreamState struct {
 	toolUseParts        []types.ClaudeContent
 
 	// 上游真实 usage（抓取点在 candidates 守卫之前）
-	usageInput       int
-	usageOutput      int
-	usageThoughts    int
-	usageCacheRead   int
-	usageSeen        bool
-	messageDeltaSent bool
-	usageArrivedLate bool
+	usageInput        int
+	usageOutput       int
+	usageThoughts     int
+	usageCacheRead    int
+	usageSeen         bool
+	pendingStopReason string
+	messageStopped    bool
+	streamError       error
 }
 
 func newGeminiToClaudeStreamState() *geminiToClaudeStreamState {
@@ -121,16 +122,12 @@ func (s *geminiToClaudeStreamState) captureUsage(chunk map[string]interface{}) {
 	} else if s.usageThoughts > 0 {
 		s.usageOutput = s.usageThoughts
 	}
-	if s.messageDeltaSent {
-		s.usageArrivedLate = true
-	}
 }
 
 // buildMessageDeltaUsage 构造 message_delta 的 usage 负载。
 // 上游没给 usageMetadata 时保持 0：不猜测、不用请求体估算（客户端每轮全量重发，
 // 估算值会离真实输入差一个数量级），由流结束后的日志留痕。
 func (s *geminiToClaudeStreamState) buildMessageDeltaUsage() map[string]interface{} {
-	s.messageDeltaSent = true
 	if !s.usageSeen {
 		return map[string]interface{}{"output_tokens": 0}
 	}
@@ -177,8 +174,25 @@ func geminiStopReasonFromFinish(finishReason string, hasToolCall bool) string {
 
 // ProcessChunk 处理一个上游 SSE data JSON，返回要发给客户端的 Claude SSE 事件。
 func (s *geminiToClaudeStreamState) ProcessChunk(jsonStr string) []string {
+	if s.streamError != nil || s.messageStopped {
+		return nil
+	}
 	var chunk map[string]interface{}
 	if err := json.Unmarshal([]byte(jsonStr), &chunk); err != nil {
+		s.streamError = fmt.Errorf("解析 Gemini SSE 数据失败: %w", err)
+		return nil
+	}
+	if chunk == nil {
+		s.streamError = fmt.Errorf("上游 Gemini SSE 数据不是 JSON 对象")
+		return nil
+	}
+	if upstreamError, exists := chunk["error"]; exists && upstreamError != nil {
+		s.streamError = NewUpstreamStreamFailedError(utils.IsUpstreamModelCapacityErrorBody([]byte(jsonStr)), jsonStr)
+		return nil
+	}
+	// 定稿后仍可接收纯 usage 尾包，不再接收正文或工具调用。
+	if s.pendingStopReason != "" {
+		s.captureUsage(chunk)
 		return nil
 	}
 
@@ -220,20 +234,8 @@ func (s *geminiToClaudeStreamState) ProcessChunk(jsonStr string) []string {
 		return out
 	}
 
-	content, ok := candidate["content"].(map[string]interface{})
-	if !ok {
-		// 可能只有 finishReason 没有 content
-		if finishReason, ok := candidate["finishReason"].(string); ok {
-			out = append(out, s.closeTextBlock()...)
-			out = append(out, s.emitMessageDelta(geminiStopReasonFromFinish(finishReason, s.hasToolCall)))
-		}
-		return out
-	}
-
-	parts, ok := content["parts"].([]interface{})
-	if !ok {
-		return out
-	}
+	content, _ := candidate["content"].(map[string]interface{})
+	parts, _ := content["parts"].([]interface{})
 
 	for _, p := range parts {
 		part, ok := p.(map[string]interface{})
@@ -340,9 +342,9 @@ func (s *geminiToClaudeStreamState) ProcessChunk(jsonStr string) []string {
 	}
 
 	// 处理结束原因
-	if finishReason, ok := candidate["finishReason"].(string); ok {
+	if finishReason, ok := candidate["finishReason"].(string); ok && finishReason != "" {
 		out = append(out, s.closeTextBlock()...)
-		out = append(out, s.emitMessageDelta(geminiStopReasonFromFinish(finishReason, s.hasToolCall)))
+		s.pendingStopReason = geminiStopReasonFromFinish(finishReason, s.hasToolCall)
 	}
 
 	return out
@@ -350,17 +352,19 @@ func (s *geminiToClaudeStreamState) ProcessChunk(jsonStr string) []string {
 
 // Finish 流结束时的统一收尾：关块、shadow 登记、reasoning 缓存、usage 留痕。
 func (s *geminiToClaudeStreamState) Finish(shadowProviderID, shadowSessionID string) []string {
+	if s.streamError != nil || s.pendingStopReason == "" || s.messageStopped {
+		return nil
+	}
+	s.messageStopped = true
 	// 确保流结束时关闭任何未关闭的文本块
 	out := s.closeTextBlock()
+	out = append(out, s.emitMessageDelta(s.pendingStopReason))
 
 	// usage 失配留痕：两种情况都会让客户端与指标看到 0，必须能从日志查出来，
 	// 不允许静默当成"这一轮真的是 0 token"。
 	switch {
 	case !s.usageSeen:
 		log.Printf("[Gemini-Stream-Token] 警告: 上游整条流未提供 usageMetadata, usage 记为 0")
-	case s.usageArrivedLate:
-		log.Printf("[Gemini-Stream-Token] 警告: usageMetadata 在 message_delta 之后才到达(上游把终值单独放在尾 chunk), 客户端侧 usage 记为 0; 实际 input=%d output=%d(含 thinking %d) cache_read=%d",
-			s.usageInput, s.usageOutput, s.usageThoughts, s.usageCacheRead)
 	}
 
 	if len(s.shadowParts) > 0 {

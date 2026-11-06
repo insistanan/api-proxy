@@ -155,7 +155,7 @@ func HandleStreamResponse(
 	requestBody []byte,
 	requestModel string,
 ) (*types.Usage, error) {
-	defer resp.Body.Close()
+	defer utils.BindStreamBody(c.Request.Context(), resp.Body)()
 	stopVeto := hooks.BindAttachedStreamVeto(c, resp.Body)
 	defer stopVeto()
 	streamCtx, cancelStream := context.WithCancel(c.Request.Context())
@@ -178,9 +178,13 @@ func HandleStreamResponse(
 		log.Printf("[Messages-Stream] 警告: 上游流式响应包含 Content-Encoding: %s，尝试流式解压", encoding)
 		wrappedBody, wrapped, wrapErr := utils.WrapStreamReaderIfNeeded(resp)
 		if wrapErr != nil {
-			log.Printf("[Messages-Stream] 警告: 包装流式解压 Reader 失败 (%s): %v", encoding, wrapErr)
+			if err := c.Request.Context().Err(); err != nil {
+				return nil, err
+			}
+			return nil, fmt.Errorf("包装 Messages 流式解压 Reader 失败 (%s): %w", encoding, wrapErr)
 		} else if wrapped {
 			resp.Body = wrappedBody
+			defer wrappedBody.Close()
 			utils.StripEntityHeadersForRebuiltBody(resp.Header)
 		}
 	}

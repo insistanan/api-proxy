@@ -42,8 +42,10 @@ type Ops struct {
 	// Add 添加上游，返回创建结果（含新渠道 ID 与索引）。
 	Add func(config.UpstreamConfig) (config.AddedUpstream, error)
 	// Update 部分更新上游，返回是否需要重置熔断指标。
+	// 已提交错误仍返回有效标记，以便完成提交后的清理。
 	Update func(int, config.UpstreamUpdate) (bool, error)
 	// Remove 删除上游，返回被删除的渠道（用于清理指标）。
+	// 已提交错误仍返回被删除渠道，普通错误不执行清理。
 	Remove func(int) (*config.UpstreamConfig, error)
 	// AddKey 为指定渠道添加 API 密钥。
 	AddKey func(int, string) error
@@ -146,6 +148,9 @@ func (h *Handlers) UpdateUpstream(c *gin.Context) {
 	}
 
 	shouldResetMetrics, err := h.ops.Update(id, updates)
+	if shouldResetMetrics && (err == nil || config.IsCommittedError(err)) {
+		h.resetMetrics(id)
+	}
 	if err != nil {
 		if strings.Contains(err.Error(), "无效的上游索引") {
 			c.JSON(404, gin.H{"error": "Upstream not found"})
@@ -153,10 +158,6 @@ func (h *Handlers) UpdateUpstream(c *gin.Context) {
 		}
 		respondConfigError(c, err)
 		return
-	}
-
-	if shouldResetMetrics {
-		h.resetMetrics(id)
 	}
 
 	c.JSON(200, gin.H{"message": "上游已更新"})
@@ -172,6 +173,11 @@ func (h *Handlers) DeleteUpstream(c *gin.Context) {
 	}
 
 	removed, err := h.ops.Remove(id)
+	// 已提交错误表示删除已经生效，指标与亲和性也必须同步清理。
+	if h.sch != nil && (err == nil || config.IsCommittedError(err)) {
+		h.sch.DeleteChannelMetrics(removed, id, h.ops.Kind)
+		h.sch.GetTraceAffinityManager().RemoveByChannelForKind(string(h.ops.Kind), id)
+	}
 	if err != nil {
 		if strings.Contains(err.Error(), "无效的上游索引") {
 			c.JSON(404, gin.H{"error": "Upstream not found"})
@@ -179,12 +185,6 @@ func (h *Handlers) DeleteUpstream(c *gin.Context) {
 		}
 		respondConfigError(c, err)
 		return
-	}
-
-	// 删除成功后清理指标数据与 trace 亲和性绑定
-	if h.sch != nil {
-		h.sch.DeleteChannelMetrics(removed, id, h.ops.Kind)
-		h.sch.GetTraceAffinityManager().RemoveByChannelForKind(string(h.ops.Kind), id)
 	}
 
 	c.JSON(200, gin.H{"message": "上游已删除", "removed": removed})

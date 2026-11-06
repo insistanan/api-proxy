@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"sort"
 	"strings"
 	"time"
@@ -18,6 +17,7 @@ type responsesStreamState struct {
 	Seq               int
 	Started           bool
 	Completed         bool
+	FinishPending     bool
 	ResponseID        string
 	CreatedAt         int64
 	Model             string
@@ -38,12 +38,18 @@ type responsesStreamBlock struct {
 
 func ConvertClaudeStreamToResponses(_ context.Context, model string, originalRequestJSON []byte, line []byte, state *any) ([]string, error) {
 	st := ensureResponsesStreamState(state, model)
+	if st.Completed {
+		return nil, nil
+	}
 	data, isData := utils.SSEDataJSON(strings.TrimSpace(string(line)))
 	if !isData {
 		return nil, nil
 	}
 
 	root := gjson.Parse(data)
+	if !gjson.Valid(data) || !root.IsObject() {
+		return nil, fmt.Errorf("上游 Claude SSE 数据不是有效 JSON 对象")
+	}
 	eventType := root.Get("type").String()
 	var out []string
 
@@ -83,12 +89,13 @@ func ConvertClaudeStreamToResponses(_ context.Context, model string, originalReq
 
 func ConvertGeminiStreamToResponses(_ context.Context, model string, originalRequestJSON []byte, line []byte, state *any) ([]string, error) {
 	st := ensureResponsesStreamState(state, model)
+	if st.Completed {
+		return nil, nil
+	}
 	data, isData := utils.SSEDataJSON(strings.TrimSpace(string(line)))
 	if !isData {
 		return nil, nil
 	}
-	out := st.ensureStarted(originalRequestJSON)
-
 	var chunk types.GeminiStreamChunk
 	if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 		return nil, fmt.Errorf("解析 Gemini 流式响应失败: %w", err)
@@ -96,19 +103,11 @@ func ConvertGeminiStreamToResponses(_ context.Context, model string, originalReq
 	// usage 必须在 candidates 循环之前无条件吸收，并且不能拿"有没有 usage"当定稿信号。
 	// Gemini 流的每个 chunk 都可能带 usageMetadata（累积值），所以"见到 usage 就定稿"
 	// 会在第一个 chunk 就发出 response.completed，把后续全部内容甩到定稿之后。
-	// 这条流唯一可靠的定稿信号是 candidate.finishReason（Gemini SSE 没有 message_stop
-	// 之类的显式终止事件，对比 ConvertClaudeStreamToResponses 用 message_stop 定稿）。
+	// candidate.finishReason 只登记定稿状态；读取结束时再发送完成事件以吸收 usage 尾包。
 	// last-wins 覆盖，不能改成"首个非空生效"：thinking 模型的早期 chunk 会给出只含
 	// promptTokenCount/thoughtsTokenCount 的 usageMetadata（没有 candidatesTokenCount），
 	// first-wins 会把 output_tokens 永久锁在 0。
 	if chunk.UsageMetadata != nil {
-		if st.Completed {
-			// 上游把终值单独放在 finishReason 之后的尾 chunk（部分第三方兼容网关如此）。
-			// completed() 是幂等的，此刻已经带着零 usage 发出去了，这里的值补不进去。
-			// 逐行转换没有"流结束"回调可用，所以只能留痕，不静默当成 0 token。
-			log.Printf("[Responses-Stream-Token] 警告: Gemini usageMetadata 在 response.completed 之后才到达, 该响应的 usage 已按 0 发出; 实际 prompt=%d candidates=%d thoughts=%d cached=%d",
-				chunk.UsageMetadata.PromptTokenCount, chunk.UsageMetadata.CandidatesTokenCount, chunk.UsageMetadata.ThoughtsTokenCount, chunk.UsageMetadata.CachedContentTokenCount)
-		}
 		st.Usage.InputTokens = chunk.UsageMetadata.PromptTokenCount - chunk.UsageMetadata.CachedContentTokenCount
 		if st.Usage.InputTokens < 0 {
 			st.Usage.InputTokens = 0
@@ -127,6 +126,10 @@ func ConvertGeminiStreamToResponses(_ context.Context, model string, originalReq
 			st.Usage.OutputTokensDetails = &types.OutputTokensDetails{ReasoningTokens: chunk.UsageMetadata.ThoughtsTokenCount}
 		}
 	}
+	if st.FinishPending {
+		return nil, nil
+	}
+	out := st.ensureStarted(originalRequestJSON)
 
 	for _, candidate := range chunk.Candidates {
 		if candidate.Content != nil {
@@ -146,7 +149,8 @@ func ConvertGeminiStreamToResponses(_ context.Context, model string, originalReq
 		}
 		if candidate.FinishReason != "" {
 			out = append(out, st.closeAllBlocks()...)
-			out = append(out, st.completed(originalRequestJSON)...)
+			st.FinishPending = true
+			break
 		}
 	}
 	return out, nil

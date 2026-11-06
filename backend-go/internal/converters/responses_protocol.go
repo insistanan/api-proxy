@@ -83,6 +83,18 @@ func ConvertUpstreamResponseToResponses(serviceType string, originalRequestJSON 
 
 // ConvertUpstreamStreamLineToResponses 将单行上游 SSE 转换为 Responses SSE。
 func ConvertUpstreamStreamLineToResponses(ctx context.Context, serviceType string, model string, originalRequestJSON []byte, line []byte, state *any) ([]string, error) {
+	if payload, isData := utils.ParseSSEDataLineBytes(line); isData && len(payload) > 0 && string(payload) != utils.SSEDoneMarker {
+		root := gjson.ParseBytes(payload)
+		if !gjson.ValidBytes(payload) || !root.IsObject() {
+			return nil, fmt.Errorf("上游 %s SSE 数据不是有效 JSON 对象", serviceType)
+		}
+		if serviceType != ResponsesUpstreamResponses && (root.Get("type").String() == "error" ||
+			(root.Get("error").Exists() && root.Get("error").Type != gjson.Null)) {
+			return []string{emitMapEvent("response.failed", map[string]interface{}{
+				"type": "response.failed", "response": map[string]interface{}{"error": root.Value()},
+			})}, nil
+		}
+	}
 	switch serviceType {
 	case ResponsesUpstreamResponses:
 		return []string{string(line) + "\n"}, nil
@@ -95,6 +107,26 @@ func ConvertUpstreamStreamLineToResponses(ctx context.Context, serviceType strin
 	default:
 		return nil, fmt.Errorf("Responses 上游 serviceType %q 不支持", serviceType)
 	}
+}
+
+// FinishUpstreamStreamToResponses 在读取结束时定稿，保留 finish_reason 之后的 usage。
+// 没有协议定稿信号时返回空事件，由 handler 根据读取结果判定截断或空响应。
+func FinishUpstreamStreamToResponses(serviceType string, originalRequestJSON []byte, state *any) ([]string, error) {
+	switch serviceType {
+	case ResponsesUpstreamOpenAI:
+		if st, ok := (*state).(*chatToResponsesState); ok && st.FinishPending {
+			return st.generateCompletedEvents(originalRequestJSON), nil
+		}
+	case ResponsesUpstreamGemini:
+		if st, ok := (*state).(*responsesStreamState); ok && st.FinishPending {
+			return st.completed(originalRequestJSON), nil
+		}
+	case ResponsesUpstreamClaude, ResponsesUpstreamResponses:
+		// 这两种协议已经在显式终止事件处定稿。
+	default:
+		return nil, fmt.Errorf("Responses 上游 serviceType %q 不支持", serviceType)
+	}
+	return nil, nil
 }
 
 func convertResponsesPassthroughRequest(model string, bodyBytes []byte, upstream *config.UpstreamConfig) ([]byte, error) {

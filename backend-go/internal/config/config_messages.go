@@ -1,6 +1,7 @@
 package config
 
 import (
+	"log"
 	"time"
 )
 
@@ -72,22 +73,16 @@ func (cm *ConfigManager) ConsumePromotionCount(channelIndex int, channelType str
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
-	var upstreams []UpstreamConfig
-	switch channelType {
-	case "responses":
-		upstreams = cm.config.ResponsesUpstream
-	case "gemini":
-		upstreams = cm.config.GeminiUpstream
-	case "chat":
-		upstreams = cm.config.ChatUpstream
-	case "images":
-		upstreams = cm.config.ImagesUpstream
-	default:
-		upstreams = cm.config.Upstream
+	candidate := cloneConfig(cm.config)
+	cs, err := candidate.channelSetFor(channelType)
+	if err != nil {
+		log.Printf("[Config-Promotion] 消费促销次数失败: %v", err)
+		return
 	}
-
-	if consumePromotionOp(upstreams, channelIndex, channelType) {
-		_ = cm.saveConfigLocked(cm.config)
+	if consumePromotionOp(*cs.upstreams, channelIndex, channelType) {
+		if err := cm.saveConfigLocked(candidate); err != nil {
+			log.Printf("[Config-Promotion] 保存促销次数失败: %v", err)
+		}
 	}
 }
 

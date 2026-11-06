@@ -38,7 +38,7 @@ func hasResponsesContent(event string) bool {
 			continue
 		}
 		eventType, _ := data["type"].(string)
-		if eventType == "response.completed" {
+		if eventType == "response.completed" || eventType == "response.incomplete" {
 			if response, ok := data["response"].(map[string]interface{}); ok {
 				if output, ok := response["output"].([]interface{}); ok && len(output) > 0 {
 					return true
@@ -74,10 +74,17 @@ func responsesStreamEventError(event string) error {
 		}
 		var data map[string]interface{}
 		if err := json.Unmarshal([]byte(payload), &data); err != nil {
-			continue
+			return fmt.Errorf("解析 Responses SSE 数据失败: %w", err)
+		}
+		if data == nil {
+			return fmt.Errorf("上游 Responses SSE 数据不是 JSON 对象")
 		}
 		eventType, _ := data["type"].(string)
-		if eventType != "response.failed" && eventType != "error" {
+		failed := eventType == "response.failed" || eventType == "error" || data["error"] != nil
+		if response, ok := data["response"].(map[string]interface{}); ok && response["status"] == "failed" {
+			failed = true
+		}
+		if !failed {
 			continue
 		}
 		if proxycore.IsUpstreamModelCapacityError([]byte(payload)) {
@@ -106,7 +113,7 @@ func hasDeliveredResponsesToolCall(event string) bool {
 		}
 		item, _ := data["item"].(map[string]interface{})
 		itemType, _ := item["type"].(string)
-		if itemType == "function_call" || itemType == "custom_tool_call" {
+		if (itemType == "function_call" || itemType == "custom_tool_call") && item["status"] == "completed" {
 			return true
 		}
 	}
@@ -114,8 +121,7 @@ func hasDeliveredResponsesToolCall(event string) bool {
 }
 
 // handleStreamSuccess 处理流式响应。
-// 返回 error 仅在"空响应未写入客户端"场景下非 nil（ErrEmptyStreamResponse），
-// 使上层 UpstreamAttempt 的 Key/BaseURL 轮转可以安全 failover。
+// 未写入客户端的空响应可重试；中途截断、转换失败和写入失败显式上报。
 // 在缓冲阶段（尚未收到内容 delta 前），所有 SSE 事件只缓冲不 flush；
 // 若最终 response.completed 时 output 为空，则返回 ErrEmptyStreamResponse。
 func handleStreamSuccess(
@@ -163,15 +169,20 @@ func handleStreamSuccess(
 
 	stopVeto := hooks.BindAttachedStreamVeto(c, resp.Body)
 	defer stopVeto()
+	defer utils.BindStreamBody(c.Request.Context(), resp.Body)()
 	// 检查流式响应是否含有 Content-Encoding。由于已强制设置 Accept-Encoding: identity，
 	// 正常情况下上游不应压缩 SSE；若上游违规压缩，尝试包装流式解码 Reader 以防分块解析失败。
 	if encoding := utils.GetContentEncoding(resp.Header); encoding != "" {
 		log.Printf("[Responses-Stream] 警告: 上游流式响应包含 Content-Encoding: %s，尝试流式解压", encoding)
 		wrappedBody, wrapped, wrapErr := utils.WrapStreamReaderIfNeeded(resp)
 		if wrapErr != nil {
-			log.Printf("[Responses-Stream] 警告: 包装流式解压 Reader 失败 (%s): %v", encoding, wrapErr)
+			if err := c.Request.Context().Err(); err != nil {
+				return nil, err
+			}
+			return nil, fmt.Errorf("包装 Responses 流式解压 Reader 失败 (%s): %w", encoding, wrapErr)
 		} else if wrapped {
 			resp.Body = wrappedBody
+			defer wrappedBody.Close()
 			utils.StripEntityHeadersForRebuiltBody(resp.Header)
 		}
 	}
@@ -185,6 +196,8 @@ func handleStreamSuccess(
 	needTokenPatch := false
 	clientGone := false
 	toolCallDelivered := false
+	streamCompleted := false
+	var streamWriteErr error
 	var streamResponseID string
 
 	// ---- 空响应检测：缓冲阶段 ----
@@ -203,6 +216,7 @@ func handleStreamSuccess(
 		proxycore.MarkRequestLogFirstToken(c)
 		if _, err := c.Writer.Write([]byte(event)); err != nil {
 			clientGone = true
+			streamWriteErr = err
 			if !isClientDisconnectError(err) {
 				log.Printf("[Responses-Stream] 警告: 流式响应传输错误: %v", err)
 			}
@@ -231,18 +245,26 @@ func handleStreamSuccess(
 			return nil, hooks.HandleAttachedStreamVeto(c)
 		default:
 		}
-		rawLine, readErr := reader.ReadBytes('\n')
+		var rawLine []byte
+		readErr := streamReadErr
+		if readErr == nil {
+			rawLine, readErr = reader.ReadBytes('\n')
+		}
 		if err := hooks.AttachedStreamVetoError(c); err != nil {
 			return nil, err
 		}
-		if len(rawLine) == 0 && readErr != nil {
-			if !errors.Is(readErr, io.EOF) {
-				streamReadErr = readErr
-			}
-			break
-		}
-
 		line := strings.TrimSuffix(strings.TrimSuffix(string(rawLine), "\n"), "\r")
+		finalizing := len(rawLine) == 0 && readErr != nil
+		if payload, isData := utils.ParseSSEDataLine(line); isData && payload == utils.SSEDoneMarker && upstreamType == converters.ResponsesUpstreamGemini {
+			finalizing = true
+		}
+		if finalizing {
+			streamReadErr = readErr
+			// 工具调用交付后的取消由后面的成功例外处理，不能继续补发完成事件。
+			if c.Request.Context().Err() != nil {
+				break
+			}
+		}
 
 		if streamLoggingEnabled {
 			logBuffer.Write(rawLine)
@@ -251,25 +273,21 @@ func handleStreamSuccess(
 			}
 		}
 
-		// 处理转换后的事件
-		var eventsToProcess []string
-
-		events, err := converters.ConvertUpstreamStreamLineToResponses(
-			c.Request.Context(),
-			upstreamType,
-			originalReq.Model,
-			originalRequestJSON,
-			[]byte(line),
-			&converterState,
-		)
+		// 正常读取与流尾定稿共用下面的事件处理链，避免两套 usage/安全/会话逻辑。
+		var events []string
+		var err error
+		if finalizing {
+			events, err = converters.FinishUpstreamStreamToResponses(upstreamType, originalRequestJSON, &converterState)
+		} else {
+			events, err = converters.ConvertUpstreamStreamLineToResponses(
+				c.Request.Context(), upstreamType, originalReq.Model, originalRequestJSON, []byte(line), &converterState,
+			)
+		}
 		if err != nil {
 			log.Printf("[Responses-Stream] 流式响应转换失败: %v", err)
-			streamReadErr = fmt.Errorf("转换上游流式响应失败: %w", err)
-			break
+			return nil, fmt.Errorf("转换上游流式响应失败: %w", err)
 		}
-		eventsToProcess = events
-
-		for _, event := range eventsToProcess {
+		for _, event := range events {
 			if eventErr := responsesStreamEventError(event); eventErr != nil {
 				return nil, eventErr
 			}
@@ -289,7 +307,11 @@ func handleStreamSuccess(
 
 			// 在 response.completed 事件前注入/修补 usage
 			eventToSend := event
-			if isResponsesCompletedEvent(event) {
+			if upstreamType == converters.ResponsesUpstreamResponses && isResponsesTerminalEvent(event) {
+				// 原生终止行提前收尾时也必须形成完整 SSE 事件。
+				eventToSend = strings.TrimRight(eventToSend, "\n") + "\n\n"
+			}
+			if isResponsesTerminalEvent(event) {
 				// 仅按 Responses output item 的语义字段估算 output_tokens。
 				// 不能把 reasoning/function-call/audio 的 SSE delta 与完整
 				// response.completed JSON envelope 混成普通文本，否则无 usage
@@ -298,7 +320,7 @@ func handleStreamSuccess(
 				if !hasUsage {
 					// 上游完全没有 usage，注入本地估算
 					var injectedInput, injectedOutput int
-					eventToSend, injectedInput, injectedOutput = injectResponsesUsageToCompletedEventWithTokens(event, usageRequestJSON, estimatedOutputTokens, envCfg)
+					eventToSend, injectedInput, injectedOutput = injectResponsesUsageToCompletedEventWithTokens(eventToSend, usageRequestJSON, estimatedOutputTokens, envCfg)
 					// 更新 collectedUsage 以便最终日志输出
 					collectedUsage.InputTokens = injectedInput
 					collectedUsage.OutputTokens = injectedOutput
@@ -308,7 +330,7 @@ func handleStreamSuccess(
 					}
 				} else if needTokenPatch {
 					// 需要修补虚假值
-					eventToSend = patchResponsesCompletedEventUsageWithTokens(event, usageRequestJSON, estimatedOutputTokens, &collectedUsage, envCfg)
+					eventToSend = patchResponsesCompletedEventUsageWithTokens(eventToSend, usageRequestJSON, estimatedOutputTokens, &collectedUsage, envCfg)
 				}
 				// 透传分支（上游本身就是 responses 协议）剥离累积式缓存统计：
 				// grok-4.6 等 OpenAI 兼容上游的 input_tokens_details.cached_tokens 是跨请求
@@ -377,7 +399,7 @@ func handleStreamSuccess(
 
 					// 如果是 response.completed 且仍在缓冲阶段，说明是空响应
 					// （没有收到任何内容 delta 就完成了）
-					if isResponsesCompletedEvent(eventToSend) {
+					if isResponsesTerminalEvent(eventToSend) {
 						log.Printf("[Responses-Stream] 检测到空响应 (model at capacity)，buffered=%d, written=%v",
 							len(bufferedEvents), c.Writer.Written())
 						// 不写入任何数据，返回 error 让上层 failover
@@ -398,16 +420,22 @@ func handleStreamSuccess(
 			}
 
 			// 正常（已退出缓冲阶段）转发给客户端
-			if writeEvent(eventToSend) && hasDeliveredResponsesToolCall(eventToSend) {
-				toolCallDelivered = true
+			if writeEvent(eventToSend) {
+				if hasDeliveredResponsesToolCall(eventToSend) {
+					toolCallDelivered = true
+				}
+				if isResponsesTerminalEvent(eventToSend) {
+					streamCompleted = true
+				}
 			}
+		}
+		// 转换器只有在显式终止或读取尾部 usage 后才发完成事件，不再等待连接关闭。
+		if clientGone || streamCompleted || finalizing {
+			break
 		}
 
 		if readErr != nil {
-			if !errors.Is(readErr, io.EOF) {
-				streamReadErr = readErr
-			}
-			break
+			streamReadErr = readErr
 		}
 	}
 
@@ -416,24 +444,31 @@ func handleStreamSuccess(
 	if contextErr != nil && !toolCallCompletedCancellation {
 		return nil, contextErr
 	}
-	if streamReadErr != nil && !toolCallCompletedCancellation {
-		return nil, streamReadErr
+	if streamWriteErr != nil && !toolCallCompletedCancellation {
+		return nil, streamWriteErr
 	}
 	if toolCallCompletedCancellation && envCfg.ShouldLog("info") {
 		log.Printf("[Responses-Stream] 工具调用已完整交付，客户端结束当前流，按成功回合记录")
 	}
 
 	// 流正常结束但没有内容时才按瞬时空响应重试；不要覆盖转换或读取错误。
-	if buffering && !c.Writer.Written() {
+	if buffering && !c.Writer.Written() && (streamReadErr == nil || errors.Is(streamReadErr, io.EOF)) {
 		log.Printf("[Responses-Stream] 流结束仍无内容，判定为空响应 (buffered=%d)", len(bufferedEvents))
 		return nil, proxycore.NewRetrySameCandidateError(ErrEmptyStreamResponse)
+	}
+	if !toolCallCompletedCancellation {
+		if err := utils.CheckStreamCompletion(c.Request.Context(), streamCompleted, streamReadErr); err != nil {
+			return nil, err
+		}
 	}
 	remaining, err := hooks.DrainAttachedStreamRestoration(c)
 	if err != nil {
 		return nil, err
 	}
 	for _, event := range remaining {
-		writeEvent(event)
+		if !writeEvent(event) && !toolCallCompletedCancellation {
+			return nil, streamWriteErr
+		}
 	}
 	if err := hooks.FlushAttachedStreamHooks(c); err != nil {
 		return nil, err
@@ -720,8 +755,28 @@ func responsesStreamToolArgumentKey(data map[string]interface{}, fallback int) s
 
 // isResponsesCompletedEvent 检测是否为 response.completed 事件
 func isResponsesCompletedEvent(event string) bool {
-	return strings.Contains(event, `"type":"response.completed"`) ||
-		strings.Contains(event, `"type": "response.completed"`)
+	return responsesEventType(event) == "response.completed"
+}
+
+func isResponsesTerminalEvent(event string) bool {
+	eventType := responsesEventType(event)
+	return eventType == "response.completed" || eventType == "response.incomplete"
+}
+
+func responsesEventType(event string) string {
+	for _, line := range strings.Split(event, "\n") {
+		payload, isData := utils.SSEDataJSON(line)
+		if !isData {
+			continue
+		}
+		var data struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal([]byte(payload), &data) == nil {
+			return data.Type
+		}
+	}
+	return ""
 }
 
 func extractResponsesCompletedID(event string) string {

@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"log"
 	"sort"
 	"strings"
 )
@@ -162,57 +161,29 @@ func (cm *ConfigManager) GetChannelPools(kind string) []ChannelPool {
 }
 
 func (cm *ConfigManager) channelPoolsLocked(kind string) []ChannelPool {
-	switch kind {
-	case "messages":
-		return cm.config.MessagePools
-	case "responses":
-		return cm.config.ResponsesPools
-	case "gemini":
-		return cm.config.GeminiPools
-	case "chat":
-		return cm.config.ChatPools
-	case "images":
-		return cm.config.ImagesPools
-	default:
+	cs, err := cm.config.channelSetFor(kind)
+	if err != nil {
 		return nil
 	}
-}
-
-func (cm *ConfigManager) setChannelPoolsLocked(kind string, pools []ChannelPool) error {
-	switch kind {
-	case "messages":
-		cm.config.MessagePools = pools
-	case "responses":
-		cm.config.ResponsesPools = pools
-	case "gemini":
-		cm.config.GeminiPools = pools
-	case "chat":
-		cm.config.ChatPools = pools
-	case "images":
-		cm.config.ImagesPools = pools
-	default:
-		return fmt.Errorf("不支持的渠道类型: %s", kind)
-	}
-	return nil
+	return *cs.pools
 }
 
 func (cm *ConfigManager) CreateChannelPool(kind string, pool ChannelPool) (ChannelPool, error) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
-	previous := append([]ChannelPool(nil), cm.channelPoolsLocked(kind)...)
-	pool.ID = newChannelPoolID()
-	pool.Priority = len(previous) + 1
-	pools, err := normalizeChannelPools(append(previous, pool))
+	candidate := cloneConfig(cm.config)
+	cs, err := candidate.channelSetFor(kind)
 	if err != nil {
 		return ChannelPool{}, err
 	}
-	if err := cm.setChannelPoolsLocked(kind, pools); err != nil {
+	pool.ID = newChannelPoolID()
+	pool.Priority = len(*cs.pools) + 1
+	pools, err := normalizeChannelPools(append(*cs.pools, pool))
+	if err != nil {
 		return ChannelPool{}, err
 	}
-	if err := cm.saveConfigLocked(cm.config); err != nil {
-		if rollbackErr := cm.setChannelPoolsLocked(kind, previous); rollbackErr != nil {
-			log.Printf("[Config-Pool] 警告: 创建分组保存失败且回滚内存状态失败: 保存错误: %v, 回滚错误: %v", err, rollbackErr)
-		}
+	*cs.pools = pools
+	if err := cm.saveConfigLocked(candidate); err != nil {
 		return ChannelPool{}, err
 	}
 	for _, item := range pools {
@@ -229,8 +200,12 @@ func (cm *ConfigManager) UpdateChannelPool(kind string, id string, update Channe
 	}
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
-	pools := append([]ChannelPool(nil), cm.channelPoolsLocked(kind)...)
-	previous := append([]ChannelPool(nil), pools...)
+	candidate := cloneConfig(cm.config)
+	cs, err := candidate.channelSetFor(kind)
+	if err != nil {
+		return err
+	}
+	pools := *cs.pools
 	for index := range pools {
 		if pools[index].ID != id {
 			continue
@@ -245,16 +220,8 @@ func (cm *ConfigManager) UpdateChannelPool(kind string, id string, update Channe
 		if err != nil {
 			return err
 		}
-		if err := cm.setChannelPoolsLocked(kind, normalized); err != nil {
-			return err
-		}
-		if err := cm.saveConfigLocked(cm.config); err != nil {
-			if rollbackErr := cm.setChannelPoolsLocked(kind, previous); rollbackErr != nil {
-				log.Printf("[Config-Pool] 警告: 更新分组保存失败且回滚内存状态失败: 保存错误: %v, 回滚错误: %v", err, rollbackErr)
-			}
-			return err
-		}
-		return nil
+		*cs.pools = normalized
+		return cm.saveConfigLocked(candidate)
 	}
 	return fmt.Errorf("分组不存在")
 }
@@ -264,11 +231,13 @@ func (cm *ConfigManager) SaveChannelPoolLayout(kind string, layout []ChannelPool
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
-	pools := cm.channelPoolsLocked(kind)
-	upstreams := cloneUpstreamList(cm.channelUpstreamsLocked(kind))
-	if pools == nil || upstreams == nil {
-		return fmt.Errorf("不支持的渠道类型: %s", kind)
+	candidate := cloneConfig(cm.config)
+	cs, err := candidate.channelSetFor(kind)
+	if err != nil {
+		return err
 	}
+	pools := *cs.pools
+	upstreams := *cs.upstreams
 
 	poolLayouts := make(map[string][]string, len(layout))
 	seenChannels := make(map[string]struct{})
@@ -358,35 +327,7 @@ func (cm *ConfigManager) SaveChannelPoolLayout(kind string, layout []ChannelPool
 	if err := validateAllVisionLayerConfigs(upstreams); err != nil {
 		return err
 	}
-	previous := cm.channelUpstreamsLocked(kind)
-	if err := cm.setChannelUpstreamsLocked(kind, upstreams); err != nil {
-		return err
-	}
-	if err := cm.saveConfigLocked(cm.config); err != nil {
-		if rollbackErr := cm.setChannelUpstreamsLocked(kind, previous); rollbackErr != nil {
-			log.Printf("[Config-Pool] 警告: 保存渠道归属保存失败且回滚内存状态失败: 保存错误: %v, 回滚错误: %v", err, rollbackErr)
-		}
-		return err
-	}
-	return nil
-}
-
-func (cm *ConfigManager) setChannelUpstreamsLocked(kind string, upstreams []UpstreamConfig) error {
-	switch kind {
-	case "messages":
-		cm.config.Upstream = upstreams
-	case "responses":
-		cm.config.ResponsesUpstream = upstreams
-	case "gemini":
-		cm.config.GeminiUpstream = upstreams
-	case "chat":
-		cm.config.ChatUpstream = upstreams
-	case "images":
-		cm.config.ImagesUpstream = upstreams
-	default:
-		return fmt.Errorf("不支持的渠道类型: %s", kind)
-	}
-	return nil
+	return cm.saveConfigLocked(candidate)
 }
 
 func (cm *ConfigManager) DeleteChannelPool(kind string, id string) error {
@@ -395,14 +336,18 @@ func (cm *ConfigManager) DeleteChannelPool(kind string, id string) error {
 	}
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
-	previous := append([]ChannelPool(nil), cm.channelPoolsLocked(kind)...)
-	for _, upstream := range cm.channelUpstreamsLocked(kind) {
+	candidate := cloneConfig(cm.config)
+	cs, err := candidate.channelSetFor(kind)
+	if err != nil {
+		return err
+	}
+	for _, upstream := range *cs.upstreams {
 		if upstream.PoolID == id {
 			return fmt.Errorf("分组仍包含渠道，无法删除")
 		}
 	}
-	pools := cm.channelPoolsLocked(kind)
-	filtered := make([]ChannelPool, 0, len(pools)-1)
+	pools := *cs.pools
+	filtered := make([]ChannelPool, 0, len(pools))
 	found := false
 	for _, pool := range pools {
 		if pool.ID == id {
@@ -418,33 +363,8 @@ func (cm *ConfigManager) DeleteChannelPool(kind string, id string) error {
 	if err != nil {
 		return err
 	}
-	if err := cm.setChannelPoolsLocked(kind, normalized); err != nil {
-		return err
-	}
-	if err := cm.saveConfigLocked(cm.config); err != nil {
-		if rollbackErr := cm.setChannelPoolsLocked(kind, previous); rollbackErr != nil {
-			log.Printf("[Config-Pool] 警告: 删除分组保存失败且回滚内存状态失败: 保存错误: %v, 回滚错误: %v", err, rollbackErr)
-		}
-		return err
-	}
-	return nil
-}
-
-func (cm *ConfigManager) channelUpstreamsLocked(kind string) []UpstreamConfig {
-	switch kind {
-	case "messages":
-		return cm.config.Upstream
-	case "responses":
-		return cm.config.ResponsesUpstream
-	case "gemini":
-		return cm.config.GeminiUpstream
-	case "chat":
-		return cm.config.ChatUpstream
-	case "images":
-		return cm.config.ImagesUpstream
-	default:
-		return nil
-	}
+	*cs.pools = normalized
+	return cm.saveConfigLocked(candidate)
 }
 
 func ensurePoolsAndAssignments(pools []ChannelPool, upstreams []UpstreamConfig) ([]ChannelPool, bool, error) {

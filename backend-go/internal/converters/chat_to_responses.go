@@ -46,8 +46,11 @@ type chatToResponsesState struct {
 	CacheCreation1hTokens int64  // cache_creation_1h_input_tokens
 	CacheTTL              string // "5m" | "1h" | "mixed"
 	// 首次消息标记
-	FirstChunk  bool
-	CustomTools map[string]customToolSpec
+	FirstChunk    bool
+	FinishPending bool
+	Completed     bool
+	Failed        bool
+	CustomTools   map[string]customToolSpec
 }
 
 func emitResponsesEvent(event string, payload string) string {
@@ -95,6 +98,9 @@ func ConvertOpenAIChatToResponses(ctx context.Context, modelName string, origina
 		}
 	}
 	st := (*param).(*chatToResponsesState)
+	if st.Completed || st.Failed {
+		return nil
+	}
 
 	// 期望 `data: {..}` 格式（冒号后空格可选，判定走 utils 单一出处）
 	payload, isData := utils.ParseSSEDataLineBytes(rawJSON)
@@ -118,7 +124,8 @@ func ConvertOpenAIChatToResponses(ctx context.Context, modelName string, origina
 	// 消费端（responsesStreamEventError 按该 type 上报并终止流），不再静默丢弃
 	// 后于 [DONE] 伪造 response.completed。model at capacity 类容量错误的识别
 	// 由消费端按事件载荷统一判定。
-	if errObj := root.Get("error"); errObj.Exists() && !root.Get("choices").Exists() {
+	if errObj := root.Get("error"); errObj.Exists() && errObj.Type != gjson.Null {
+		st.Failed = true
 		failed := `{"type":"response.failed","sequence_number":0,"response":{"id":"","object":"response","created_at":0,"status":"failed","error":null}}`
 		failed, _ = sjson.Set(failed, "sequence_number", nextSeq())
 		failed, _ = sjson.Set(failed, "response.id", st.ResponseID)
@@ -187,10 +194,10 @@ func ConvertOpenAIChatToResponses(ctx context.Context, modelName string, origina
 	}
 
 	for _, choice := range choices.Array() {
-		delta := choice.Get("delta")
-		if !delta.Exists() {
-			continue
+		if st.FinishPending {
+			break
 		}
+		delta := choice.Get("delta")
 
 		finishReason := choice.Get("finish_reason").String()
 
@@ -394,7 +401,8 @@ func ConvertOpenAIChatToResponses(ctx context.Context, modelName string, origina
 		}
 
 		// 处理 finish_reason
-		if finishReason != "" && finishReason != "null" {
+		if finishReason != "" && finishReason != "null" && finishReason != "none" {
+			st.FinishPending = true
 			// 关闭所有打开的 blocks
 			if st.ReasoningActive {
 				out = append(out, st.closeReasoningBlock(nextSeq)...)
@@ -664,6 +672,10 @@ func (st *chatToResponsesState) closeFuncBlocks(nextSeq func() int) []string {
 
 // generateCompletedEvents 生成完成事件
 func (st *chatToResponsesState) generateCompletedEvents(originalRequestRawJSON []byte) []string {
+	if st.Completed || st.Failed || st.FirstChunk {
+		return nil
+	}
+	st.Completed = true
 	var out []string
 	nextSeq := func() int { st.Seq++; return st.Seq }
 

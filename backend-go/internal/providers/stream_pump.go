@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"io"
-	"strings"
 
 	"github.com/BenedictKing/api-proxy/internal/utils"
 )
@@ -33,6 +32,9 @@ func newStreamPump(ctx context.Context) *streamPump {
 
 // send 向 eventChan 发送一个事件；客户端断连（ctx 取消）时返回 false，调用方应立即退出。
 func (p *streamPump) send(event string) bool {
+	if p.ctx.Err() != nil {
+		return false
+	}
 	select {
 	case p.eventChan <- event:
 		return true
@@ -58,12 +60,13 @@ func (p *streamPump) newScanner(body io.Reader) *bufio.Scanner {
 	return scanner
 }
 
-// isDisconnectLikeError 判断 scanner 错误是否为连接断开类（客户端主动
-// 断开或上游中断）。各 provider 对这类错误的收尾动作不同（吞掉 /
-// 补 message_stop / 按 tool_use 状态区分），但谓词语义一致。
-func isDisconnectLikeError(err error) bool {
-	msg := err.Error()
-	return strings.Contains(msg, "broken pipe") ||
-		strings.Contains(msg, "connection reset") ||
-		strings.Contains(msg, "EOF")
+// finishRead 验证协议完成状态；取消不伪造成功，也不记录上游故障。
+func (p *streamPump) finishRead(completed bool, readErr error) bool {
+	if err := utils.CheckStreamCompletion(p.ctx, completed, readErr); err != nil {
+		if p.ctx.Err() == nil {
+			p.fail(err)
+		}
+		return false
+	}
+	return true
 }
