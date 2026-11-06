@@ -385,6 +385,10 @@ func (h *Handlers) SetChannelPromotion(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "无效的请求参数"})
 		return
 	}
+	if req.Duration < 0 || req.Count < 0 || int64(req.Duration) > int64((1<<63-1)/time.Second) {
+		c.JSON(400, gin.H{"error": "促销时长和次数必须是有效的非负整数"})
+		return
+	}
 
 	if err := h.ops.SetPromotion(id, time.Duration(req.Duration)*time.Second, req.Count); err != nil {
 		respondConfigError(c, err)

@@ -42,7 +42,7 @@
       </v-list-item>
       <v-list-item
         v-if="supportsCcs"
-        title="选择目标应用类型，生成 ccswitch:// 配置"
+        aria-label="导入到 CCS"
         @click="emit('importCcs')"
       >
         <template #prepend><v-icon size="small" color="primary">mdi-application-export</v-icon></template>
@@ -51,10 +51,6 @@
       <v-list-item @click="emit('quickTest')">
         <template #prepend><v-icon size="small" color="success">mdi-test-tube</v-icon></template>
         <v-list-item-title>快捷测试</v-list-item-title>
-      </v-list-item>
-      <v-list-item v-if="showEval" @click="emit('eval')">
-        <template #prepend><v-icon size="small" color="primary">mdi-test-tube</v-icon></template>
-        <v-list-item-title>评测此渠道</v-list-item-title>
       </v-list-item>
       <v-list-item @click="emit('ping')">
         <template #prepend><v-icon size="small">mdi-speedometer</v-icon></template>
@@ -118,7 +114,6 @@ withDefaults(defineProps<{
   supportsVisionCapability?: boolean
   canDelete?: boolean
   allowReorder?: boolean
-  showEval?: boolean
   /** 该渠道类型是否支持导入 CC Switch（弹窗中选择目标应用类型） */
   supportsCcs?: boolean
 }>(), {
@@ -128,7 +123,6 @@ withDefaults(defineProps<{
   supportsVisionCapability: true,
   canDelete: true,
   allowReorder: true,
-  showEval: true,
   supportsCcs: false
 })
 
@@ -139,7 +133,6 @@ const emit = defineEmits<{
   copyConfig: []
   importCcs: []
   quickTest: []
-  eval: []
   ping: []
   logs: []
   promotion: []

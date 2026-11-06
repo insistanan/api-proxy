@@ -86,6 +86,12 @@ export interface SystemLogSummary {
   channelName?: string
   model?: string
   status?: string
+  conversationId?: string
+  requestHash?: string
+  client?: string
+  errorType?: string
+  errorMessage?: string
+  startedAt?: number
 }
 
 export interface SystemLogsResponse {

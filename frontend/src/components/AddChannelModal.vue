@@ -15,7 +15,7 @@
         </div>
         <div class="d-flex align-center ga-2 header-actions">
           <!-- 模式切换按钮（仅在添加模式显示） -->
-          <v-btn v-if="!isEditing" variant="outlined" size="small" class="mode-toggle-btn" @click="toggleMode">
+          <v-btn v-if="!isEditing" variant="outlined" size="small" class="mode-toggle-btn" :disabled="saving" @click="toggleMode">
             <v-icon start size="16">{{ isQuickMode ? 'mdi-form-textbox' : 'mdi-lightning-bolt' }}</v-icon>
             {{ isQuickMode ? '详细配置' : '快速添加' }}
           </v-btn>
@@ -25,6 +25,7 @@
             variant="text"
             class="header-action-btn"
             title="关闭"
+            :disabled="saving"
             @click="handleCancel"
           >
             <v-icon size="18">mdi-close</v-icon>
@@ -33,6 +34,7 @@
       </v-card-title>
 
       <v-card-text class="pa-6 dialog-card-body">
+        <fieldset :disabled="saving" :inert="saving" class="agent-config-editor">
         <!-- 快速添加模式 -->
         <div v-if="!isEditing && isQuickMode">
           <v-textarea
@@ -812,16 +814,18 @@
             </v-col>
           </v-row>
         </v-form>
+        </fieldset>
       </v-card-text>
 
       <v-card-actions class="pa-6 dialog-card-actions">
         <v-spacer />
-        <v-btn variant="text" @click="handleCancel"> 取消 </v-btn>
+        <v-btn variant="text" :disabled="saving" @click="handleCancel"> 取消 </v-btn>
         <v-btn
           v-if="!isEditing && isQuickMode"
           color="primary"
           variant="elevated"
-          :disabled="!isQuickFormValid"
+          :disabled="!isQuickFormValid || saving"
+          :loading="saving"
           prepend-icon="mdi-check"
           @click="handleQuickSubmit"
         >
@@ -831,7 +835,8 @@
           v-else
           color="primary"
           variant="elevated"
-          :disabled="!isFormValid"
+          :disabled="!isFormValid || saving"
+          :loading="saving"
           prepend-icon="mdi-check"
           @click="handleSubmit"
         >
@@ -855,11 +860,12 @@ import {
   isValidUrl as _isValidQuickInputUrl,
   parseQuickInput as parseQuickInputUtil
 } from '../utils/quickInputParser'
-import { useChannelEditor, cloneModelMapping, cloneModelMappingChannels } from '../composables/useChannelEditor'
+import { useChannelEditor } from '../composables/useChannelEditor'
 import { compileImagesExtraParams } from '@/utils/imagesExtraParams'
 
 interface Props {
   show: boolean
+  saving?: boolean
   channel?: Channel | null
   channelType?: 'messages' | 'responses' | 'gemini' | 'chat' | 'images'
 }
@@ -1152,6 +1158,7 @@ const formExpectedRequestUrls = computed(() => {
 
 // 处理快速添加提交
 const handleQuickSubmit = () => {
+  if (props.saving) return
   if (!isQuickFormValid.value) return
 
   const channelData = {
@@ -1295,7 +1302,7 @@ const targetModelPlaceholder = computed(() => {
 })
 
 // 表单草域草稿经 useChannelEditor（R5，方案 8.1）：草稿独立于 store，取消不落盘。
-const { form, resetForm: resetFormDraft, loadChannelData: loadChannelDataDraft } = useChannelEditor(() => props.channelType)
+const { form, resetForm: resetFormDraft, loadChannelData: loadChannelDataDraft, buildPayload } = useChannelEditor(() => props.channelType)
 
 const imagesExtraParamsError = ref('')
 
@@ -1470,16 +1477,6 @@ const targetStatusByChannel = computed(() => ({
   '': { loading: fetchingModels.value, error: fetchModelsError.value },
   ...targetChannelModelStatus.value
 }))
-
-const getStringValue = (val: unknown): string => {
-  if (!val) return ''
-  if (typeof val === 'string') return val
-  if (typeof val === 'object' && 'value' in val) {
-    const value = (val as { value?: unknown }).value
-    return typeof value === 'string' ? value : ''
-  }
-  return ''
-}
 
 // API Key 的 models 状态管理
 interface KeyModelsStatus {
@@ -1927,6 +1924,7 @@ const fetchTargetModels = async () => {
 }
 
 const handleSubmit = async () => {
+  if (props.saving) return
   if (!formRef.value) return
 
   const { valid } = await formRef.value.validate()
@@ -1943,71 +1941,11 @@ const handleSubmit = async () => {
     imagesExtraParams = compiled.params
   }
 
-  // 直接使用原始密钥，不需要转换
-  const processedApiKeys = form.apiKeys.filter(key => key.trim())
-
-  // 处理 BaseURL：去重（忽略末尾 / 和 # 差异），并移除 UI 专用的尾部 #
-  const seenUrls = new Set<string>()
-  const deduplicatedUrls =
-    form.baseUrls.length > 0
-      ? form.baseUrls
-          .map(url => url.trim().replace(/[#/]+$/, ''))
-          .filter(Boolean)
-          .filter(url => {
-            const normalized = url.replace(/[#/]+$/, '')
-            if (seenUrls.has(normalized)) return false
-            seenUrls.add(normalized)
-            return true
-          })
-      : [form.baseUrl.trim().replace(/[#/]+$/, '')].filter(Boolean)
-
-  // 提交前统一用清理后的映射（去空白/去重/去空目标），目标渠道登记按其剪枝，保证两者一致
-  const submitModelMapping = props.channelType === 'chat' ? {} : cloneModelMapping(form.modelMapping)
-
-  // 构建渠道数据
-  const channelData: Omit<Channel, 'id' | 'index' | 'latency'> = {
-    name: form.name.trim(),
-    serviceType: form.serviceType as 'openai' | 'gemini' | 'claude' | 'responses' | 'chat',
-    responsesModel: props.channelType === 'images' && form.serviceType === 'responses' ? form.responsesModel.trim() : '',
-    baseUrl: deduplicatedUrls[0] || '',
-    website: form.website.trim(), // 空字符串也需要传递，以便清除已有值
-    insecureSkipVerify: form.insecureSkipVerify,
-    proxyMode: form.proxyMode,
-    proxyUrl: form.proxyMode === 'custom' ? form.proxyUrl.trim() : '',
-    lowQuality: props.channelType === 'images' ? false : form.lowQuality,
-    visionCapable: props.channelType === 'images' ? false : form.visionCapable,
-    poolId: form.poolId,
-    excludeFromConversation: props.channelType === 'images' ? false : form.excludeFromConversation,
-    visionLayerEnabled: props.channelType === 'images' ? false : form.visionLayerEnabled,
-    visionLayerChannelId: props.channelType === 'images' ? '' : form.visionLayerChannelId || undefined,
-    visionLayerModel: props.channelType === 'images' ? '' : form.visionLayerModel.trim(),
-    temporary: form.temporary,
-    injectDummyThoughtSignature: props.channelType === 'images' ? false : form.injectDummyThoughtSignature,
-    stripThoughtSignature: props.channelType === 'images' ? false : form.stripThoughtSignature,
-    disablePromptCacheKey: props.channelType === 'images' ? false : form.disablePromptCacheKey,
-    description: form.description.trim(),
-    apiKeys: processedApiKeys,
-    modelMapping: submitModelMapping,
-    modelMappingChannels:
-      props.channelType === 'chat' ? {} : cloneModelMappingChannels(submitModelMapping, form.modelMappingChannels),
-    defaultModel: props.channelType === 'chat' ? getStringValue(form.defaultModel).trim() : '',
-    ...(props.channelType === 'images' ? { imagesForceNonStream: form.imagesForceNonStream } : {}),
-    ...(imagesExtraParams ? { imagesExtraParams } : {})
-  }
-
-  // 多 BaseURL 支持
-  if (deduplicatedUrls.length > 1) {
-    channelData.baseUrls = deduplicatedUrls
-  }
-
-  if (isEditing.value) {
-    channelData.status = form.status
-  }
-
-  emit('save', channelData)
+  emit('save', buildPayload(isEditing.value, imagesExtraParams))
 }
 
 const handleCancel = () => {
+  if (props.saving) return
   emit('update:show', false)
   resetForm()
 }

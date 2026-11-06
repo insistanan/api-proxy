@@ -55,19 +55,19 @@ export function isLatencyValid(channel: Channel, now: number): boolean {
 
 /** 判断渠道是否处于促销期。 */
 export function isInPromotion(channel: Channel): boolean {
-  if (channel.promotionCount && channel.promotionCount > 0) return true
-  if (!channel.promotionUntil) return false
-  return new Date(channel.promotionUntil) > new Date()
+  if (channel.promotionUntil) return new Date(channel.promotionUntil).getTime() > Date.now()
+  return (channel.promotionCount ?? 0) > 0
 }
 
 /** 格式化促销期剩余时间。 */
 export function formatPromotionRemaining(until?: string, count?: number): string {
-  if (count && count > 0) return `剩 ${count} 次`
-  if (!until) return ''
-  const remaining = Math.max(0, new Date(until).getTime() - Date.now())
-  const minutes = Math.ceil(remaining / 60000)
-  if (minutes <= 0) return '即将结束'
-  return `${minutes}分钟`
+  const limits: string[] = []
+  if (until) {
+    const minutes = Math.ceil(Math.max(0, new Date(until).getTime() - Date.now()) / 60000)
+    limits.push(minutes > 0 ? `${minutes}分钟` : '已结束')
+  }
+  if (count && count > 0) limits.push(`剩 ${count} 次`)
+  return limits.join(' / ')
 }
 
 /** 格式化统计数据：有请求显示 "N 请求 (X%)"，无请求显示 "--"。 */

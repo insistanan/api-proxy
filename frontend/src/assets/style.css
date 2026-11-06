@@ -265,7 +265,7 @@ body::before {
 
 /* ============================================================
    元信息块 — 渠道行副行 / 池卡片里"标签 + 值"的统一外形
-   多个组件（ChannelMappingBlock、ChannelOrchestration 的评测块）共用，
+   渠道映射组件（ChannelMappingBlock）使用，
    放全局避免各自 scoped 里再抄一遍基类
    ============================================================ */
 .meta-block {
@@ -312,13 +312,6 @@ body::before {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
-.meta-block-time {
-  flex: 0 0 auto;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  opacity: 0.72;
-}
-.meta-block-go { flex: 0 0 auto; opacity: 0.6; }
 .meta-block--muted {
   border-style: dashed;
   color: rgba(var(--v-theme-on-surface), 0.5);

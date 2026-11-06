@@ -33,6 +33,8 @@ type SQLiteStore struct {
 	closed       bool           // 是否已关闭
 	flushMu      sync.Mutex     // 串行化 flush 与 delete 操作，避免并发竞态
 	asyncFlushWg sync.WaitGroup // 追踪 AddRecord 触发的异步 flush goroutine
+	closeOnce    sync.Once
+	closeErr     error
 }
 
 // SQLiteStoreConfig SQLite 存储配置
@@ -154,10 +156,13 @@ func (s *SQLiteStore) AddRecord(record PersistentRecord) {
 	}
 	s.writeBuffer = append(s.writeBuffer, record)
 	shouldFlush := len(s.writeBuffer) >= s.batchSize
+	// 与 closed 检查共用锁，确保 Close 开始等待后不会再登记异步写入。
+	if shouldFlush {
+		s.asyncFlushWg.Add(1)
+	}
 	s.bufferMu.Unlock()
 
 	if shouldFlush {
-		s.asyncFlushWg.Add(1)
 		go func() {
 			defer s.asyncFlushWg.Done()
 			// 获取 flush 锁，与 DeleteRecordsByMetricsKeys 串行化
@@ -390,19 +395,22 @@ func (s *SQLiteStore) doCleanup() {
 
 // Close 关闭存储
 func (s *SQLiteStore) Close() error {
-	// 标记为已关闭，阻止新记录
-	s.bufferMu.Lock()
-	s.closed = true
-	s.bufferMu.Unlock()
+	s.closeOnce.Do(func() {
+		// 标记为已关闭，阻止新记录
+		s.bufferMu.Lock()
+		s.closed = true
+		s.bufferMu.Unlock()
 
-	// 停止后台循环（flushLoop 会在退出前执行最后一次 flush）
-	close(s.stopCh)
-	s.wg.Wait()
+		// 停止后台循环（flushLoop 会在退出前执行最后一次 flush）
+		close(s.stopCh)
+		s.wg.Wait()
 
-	// 等待所有 AddRecord 触发的异步 flush goroutine 完成
-	s.asyncFlushWg.Wait()
+		// 等待所有 AddRecord 触发的异步 flush goroutine 完成
+		s.asyncFlushWg.Wait()
 
-	return s.db.Close()
+		s.closeErr = s.db.Close()
+	})
+	return s.closeErr
 }
 
 // GetRecordCount 获取记录总数（用于调试）

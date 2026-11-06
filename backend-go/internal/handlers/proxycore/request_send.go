@@ -3,6 +3,7 @@ package proxycore
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -29,14 +30,24 @@ func ShouldForceIdentityEncoding(req *http.Request, isStream bool) bool {
 // permit: 可选的选渠许可句柄（R2-b）。仅在"客户端创建失败、请求从未发出"
 // 这类本地错误时由本函数中性归还；请求已发出的健康结果由调用方收尾。
 func SendRequest(req *http.Request, upstream *config.UpstreamConfig, envCfg *config.EnvConfig, isStream bool, apiType string, proxyURL string, permit *scheduler.ChannelPermit, requestTimeout time.Duration) (*http.Response, error) {
+	if err := req.Context().Err(); err != nil {
+		if req.Body != nil {
+			_ = req.Body.Close()
+		}
+		return nil, err
+	}
+	if logger.AttemptIDFromContext(req.Context()) == "" {
+		req = req.WithContext(logger.ContextWithAttemptID(req.Context(), logger.NewRequestID()))
+	}
 	if upstream.InsecureSkipVerify && envCfg.EnableRequestLogs {
 		log.Printf("[%s-Request-TLS] 警告: 正在跳过对 %s 的TLS证书验证", apiType, req.URL.String())
 	}
 
 	if envCfg.EnableRequestLogs {
-		log.Printf("[%s-Request-URL] 实际请求URL: %s", apiType, req.URL.String())
-		log.Printf("[%s-Request-Method] 请求方法: %s", apiType, req.Method)
-		logRequestDetails(req, envCfg, apiType)
+		log.Printf("[%s-Request] requestId=%s attemptId=%s %s %s", apiType, logger.RequestIDFromContext(req.Context()), logger.AttemptIDFromContext(req.Context()), req.Method, req.URL.String())
+		if err := logRequestDetails(req, envCfg, apiType, isStream); err != nil {
+			return nil, err
+		}
 	}
 
 	if requestTimeout <= 0 {
@@ -57,6 +68,12 @@ func SendRequest(req *http.Request, upstream *config.UpstreamConfig, envCfg *con
 		StreamLabel:        apiType,
 	})
 	if err != nil {
+		if envCfg.EnableResponseLogs {
+			logger.RecordTraffic(logger.TrafficLog{
+				RequestID: logger.RequestIDFromContext(req.Context()), AttemptID: logger.AttemptIDFromContext(req.Context()),
+				Phase: logger.PhaseUpstreamError, APIType: apiType, Method: req.Method, URL: req.URL.String(), Body: err.Error(), Stream: isStream,
+			})
+		}
 		// 客户端创建失败（请求从未发出）：探测名额按中性归还，
 		// 不构成渠道故障证据；网络发送失败（请求已发出）由调用方收尾。
 		if strings.Contains(err.Error(), "创建上游 HTTP 客户端失败") && permit != nil {
@@ -77,12 +94,17 @@ func SendRequest(req *http.Request, upstream *config.UpstreamConfig, envCfg *con
 		}
 		resp.Body = logger.CaptureResponseBody(resp.Body, logger.TrafficLog{
 			RequestID:   requestID,
+			AttemptID:   logger.AttemptIDFromContext(req.Context()),
 			APIType:     apiType,
 			Method:      req.Method,
 			URL:         urlText,
 			StatusCode:  resp.StatusCode,
 			Stream:      isStream,
 			HeadersJSON: logger.MaskedHeaderJSON(resp.Header),
+		})
+		logger.RecordTraffic(logger.TrafficLog{
+			RequestID: requestID, AttemptID: logger.AttemptIDFromContext(req.Context()), Phase: logger.PhaseUpstreamHeaders,
+			APIType: apiType, StatusCode: resp.StatusCode, Stream: isStream,
 		})
 	}
 
@@ -91,7 +113,7 @@ func SendRequest(req *http.Request, upstream *config.UpstreamConfig, envCfg *con
 
 // logRequestDetails 记录请求头与请求体（受 ENABLE_REQUEST_LOGS / RAW_LOG_OUTPUT 控制）
 // apiType: 接口类型（Messages/Responses/Gemini），用于日志标签前缀
-func logRequestDetails(req *http.Request, envCfg *config.EnvConfig, apiType string) {
+func logRequestDetails(req *http.Request, envCfg *config.EnvConfig, apiType string, isStream bool) error {
 	// 对请求头做敏感信息脱敏
 	reqHeaders := make(map[string]string)
 	for key, values := range req.Header {
@@ -106,19 +128,27 @@ func logRequestDetails(req *http.Request, envCfg *config.EnvConfig, apiType stri
 	} else {
 		reqHeadersJSON, _ = json.MarshalIndent(maskedReqHeaders, "", "  ")
 	}
-	log.Printf("[%s-Request-Headers] 实际请求头:\n%s", apiType, string(reqHeadersJSON))
+	if envCfg.ShouldLog("debug") {
+		log.Printf("[%s-Request-Headers] 实际请求头:\n%s", apiType, string(reqHeadersJSON))
+	}
 
 	if req.Body != nil {
 		bodyBytes, err := io.ReadAll(req.Body)
+		if err != nil {
+			_ = req.Body.Close()
+			return fmt.Errorf("读取上游请求正文失败: %w", err)
+		}
 		if err == nil {
 			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-			var formattedBody string
-			if envCfg.RawLogOutput {
-				formattedBody = utils.FormatJSONBytesRaw(bodyBytes)
-			} else {
-				formattedBody = utils.FormatJSONBytesForLog(bodyBytes, 500)
+			if envCfg.ShouldLog("debug") {
+				var formattedBody string
+				if envCfg.RawLogOutput {
+					formattedBody = utils.FormatJSONBytesRaw(bodyBytes)
+				} else {
+					formattedBody = utils.FormatJSONBytesForLog(bodyBytes, 500)
+				}
+				log.Printf("[%s-Request-Body] 实际请求体:\n%s", apiType, formattedBody)
 			}
-			log.Printf("[%s-Request-Body] 实际请求体:\n%s", apiType, formattedBody)
 			requestID := logger.RequestIDFromContext(req.Context())
 			urlText := ""
 			if req.URL != nil {
@@ -126,6 +156,8 @@ func logRequestDetails(req *http.Request, envCfg *config.EnvConfig, apiType stri
 			}
 			logger.RecordTraffic(logger.TrafficLog{
 				RequestID:   requestID,
+				AttemptID:   logger.AttemptIDFromContext(req.Context()),
+				Stream:      isStream,
 				Phase:       logger.PhaseUpstreamRequest,
 				APIType:     apiType,
 				Method:      req.Method,
@@ -135,4 +167,5 @@ func logRequestDetails(req *http.Request, envCfg *config.EnvConfig, apiType stri
 			})
 		}
 	}
+	return nil
 }

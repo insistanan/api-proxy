@@ -20,7 +20,7 @@ Vue 3 管理前端：api-proxy 的 Web 管理界面，构建产物经 `go:embed`
 | `composables/` | 12 个组合式函数——**状态本体在 store（唯一来源），composable 只做编排**（"R5/方案 8.1" 收敛原则） |
 | `stores/` | 6 个 Pinia store：auth / channel / preferences / dialog / system / assistant |
 | `services/` | `api.ts`（唯一 API 封装层）+ `version.ts`（Release 版本检查，30 分钟缓存） |
-| `types/` | 按领域拆分类型（channel / client-config / conversation / eval / logs / metrics / model / security / settings / skill / assistant），`types/index.ts` 统一再导出 |
+| `types/` | 按领域拆分类型（channel / client-config / conversation / logs / metrics / model / security / settings / skill / assistant），`types/index.ts` 统一再导出 |
 | `utils/` | sse.ts（SSE 流读取）/ quickInputParser（唯一有单测的模块）/ ccsDeepLink / platform / uuid 等 |
 | `plugins/vuetify.ts` | 全量组件注册 + 自定义 SVG iconSet + 双主题（"砚与铜"配色）+ 全局组件默认值 |
 | `router/` | History 模式，`/` 重定向 `/channels/messages`，动态路由 `/channels/:type` |

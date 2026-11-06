@@ -15,7 +15,7 @@ Go 后端：api-proxy 代理网关核心。跨模块的架构图、请求流转�
 
 | 文件 | 职责 |
 |---|---|
-| `main.go` | `app` struct 聚合 + `newApp()` 线性装配 + 优雅关闭；`app` 字段顺序即依赖顺序 |
+| `main.go` | `app` struct 聚合 + `newApp()` 线性装配 + 监听与信号处理；资源成功创建后登记释放责任 |
 | `app_routes.go` | 路由装配（`/api` 管理组 + 五协议代理端点） |
 | `app_lifecycle.go` | 启动横幅、脱敏模式热跟随、逆序 shutdown |
 | `version.go` | `Version`/`BuildTime`/`GitCommit`（由 ldflags 注入） |
@@ -28,7 +28,7 @@ Go 后端：api-proxy 代理网关核心。跨模块的架构图、请求流转�
 | 调度与稳定性 | `scheduler`（ChannelScheduler + ChannelPermit）、`circuit`（三态熔断）、`ratelimit`（滑动窗口限流）、`urlhealth`（多 BaseURL 健康管理） |
 | 观测 | `metrics`（按 ChannelKind 分组 + SQLite 持久化）、`session`（Responses 会话 + Trace/BaseURL 亲和）、`conversation`（对话注册表）、`logger`（SQLite 日志存储）、`cli`（`api-proxy logs` 子命令） |
 | 内容安全 | `sensitive`（检测/掩码/可逆脱敏）、`llmgate`（危险命令 AI 闸门 + AI 助手共用能力）、`handlers/hooks`（三阶段钩子管线）、`bodyfilter`、`cacheinject`、`copilotopt`、`mediasanitizer`、`rectifier` |
-| 管理界面支撑 | `assistant`（AI 配置助手）、`skills`（Agent Skill 目录管理）、`piagent`、`eval`（评测工作台）、`modelcatalog`（模型目录 + Chat 路由别名）、`core/channelcrud`（协议无关渠道 CRUD） |
+| 管理界面支撑 | `assistant`（AI 配置助手）、`skills`（Agent Skill 目录管理）、`piagent`、`modelcatalog`（模型目录 + Chat 路由别名）、`core/channelcrud`（协议无关渠道 CRUD） |
 | 基础设施 | `config`（EnvConfig + ConfigManager 热重载）、`httpclient`（网络发送唯一出口）、`proxy`（框架无关编排核心，有静态依赖断言）、`atomicfile`（原子写原语）、`middleware`（auth/cors/logger）、`utils`（通用工具，约 7k 行） |
 
 ## 架构核心（详见 docs/架构说明.md）
@@ -60,7 +60,7 @@ Go 后端：api-proxy 代理网关核心。跨模块的架构图、请求流转�
 
 ## 数据存储
 
-全部 SQLite（WAL 模式，`SetMaxOpenConns(1)`），文件在运行目录 `.config/` 下：`config.json`、`logs.db`、`blocked-logs.db`、`conversations.db`、`metrics.db`（可选）、`redaction-mappings.db` + `master-key`（AES-256-GCM）、`assistant.db`、`eval.db`。结构演进无 migration 框架，靠 `CREATE TABLE IF NOT EXISTS` + config 包内 JSON 迁移逻辑。
+全部 SQLite（WAL 模式，`SetMaxOpenConns(1)`），文件在运行目录 `.config/` 下：`config.json`、`logs.db`、`blocked-logs.db`、`conversations.db`、`metrics.db`（可选）、`redaction-mappings.db` + `master-key`（AES-256-GCM）、`assistant.db`。结构演进无 migration 框架，靠 `CREATE TABLE IF NOT EXISTS` + config 包内 JSON 迁移逻辑。
 
 ## 代码规范（详见 docs/规范与不变量.md）
 
@@ -72,8 +72,8 @@ Go 后端：api-proxy 代理网关核心。跨模块的架构图、请求流转�
 
 ## 关键不变量（违反必出 bug，全文见 docs/规范与不变量.md）
 
-1. shutdown 逆序：先停数据生产者（scheduler）再关存储；`app` 字段顺序即构造顺序，不可调换
-2. 生产选渠严格按配置顺序，性能画像仅观测不参与选渠
+1. shutdown 逆序：先排空 HTTP 请求，再停数据生产者（scheduler）并等待后台任务退出，最后关闭存储；清理登记表是启动失败与正常关闭的唯一释放入口
+2. 生产选渠默认按配置顺序；健康促销渠道在所属分组内临时优先，仍受熔断准入限制。促销任一限制达到后恢复配置顺序，性能画像仅观测
 3. 流式响应必须用 `HandleStreamResponseCtx`（带 context），客户端断连立即停读上游
 4. `ChannelPermit`：defer 释放，结束时 RecordHealth 恰好一次再 Release，均可幂等
 5. `apiType` 必须无条件传入 metrics（空串会被当 messages 口径）；可选 store 收进接口变量避免 typed-nil

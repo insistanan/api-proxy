@@ -28,18 +28,6 @@ func upstreamsByKind(cfg config.Config, kind scheduler.ChannelKind) ([]config.Up
 	}
 }
 
-func channelKindFromLegacyFlag(isResponses bool) scheduler.ChannelKind {
-	if isResponses {
-		return scheduler.ChannelKindResponses
-	}
-	return scheduler.ChannelKindMessages
-}
-
-// GetChannelMetricsWithConfig 获取渠道指标（需要配置管理器来获取 baseURL 和 keys）
-func GetChannelMetricsWithConfig(metricsManager *metrics.MetricsManager, cfgManager *config.ConfigManager, isResponses bool) gin.HandlerFunc {
-	return GetChannelMetricsWithKind(metricsManager, cfgManager, channelKindFromLegacyFlag(isResponses))
-}
-
 // GetChannelMetricsWithKind 获取指定一等公民渠道类型的指标
 func GetChannelMetricsWithKind(metricsManager *metrics.MetricsManager, cfgManager *config.ConfigManager, kind scheduler.ChannelKind) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -73,50 +61,6 @@ func GetChannelMetricsWithKind(metricsManager *metrics.MetricsManager, cfgManage
 			}
 			if resp.CircuitBrokenAt != nil {
 				item["circuitBrokenAt"] = *resp.CircuitBrokenAt
-			}
-
-			result = append(result, item)
-		}
-
-		c.JSON(200, result)
-	}
-}
-
-// GetAllKeyMetrics 获取所有 Key 的原始指标
-func GetAllKeyMetrics(metricsManager *metrics.MetricsManager) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		allMetrics := metricsManager.GetAllKeyMetrics()
-
-		result := make([]gin.H, 0, len(allMetrics))
-		for _, m := range allMetrics {
-			if m == nil {
-				continue
-			}
-
-			successRate := float64(100)
-			if m.RequestCount > 0 {
-				successRate = float64(m.SuccessCount) / float64(m.RequestCount) * 100
-			}
-
-			item := gin.H{
-				"metricsKey":          m.MetricsKey,
-				"baseUrl":             m.BaseURL,
-				"keyMask":             m.KeyMask,
-				"requestCount":        m.RequestCount,
-				"successCount":        m.SuccessCount,
-				"failureCount":        m.FailureCount,
-				"successRate":         successRate,
-				"consecutiveFailures": m.ConsecutiveFailures,
-			}
-
-			if m.LastSuccessAt != nil {
-				item["lastSuccessAt"] = m.LastSuccessAt.Format("2006-01-02T15:04:05Z07:00")
-			}
-			if m.LastFailureAt != nil {
-				item["lastFailureAt"] = m.LastFailureAt.Format("2006-01-02T15:04:05Z07:00")
-			}
-			if m.CircuitBrokenAt != nil {
-				item["circuitBrokenAt"] = m.CircuitBrokenAt.Format("2006-01-02T15:04:05Z07:00")
 			}
 
 			result = append(result, item)
@@ -329,14 +273,6 @@ type MetricsHistoryResponse struct {
 	DataPoints   []metrics.HistoryDataPoint `json:"dataPoints"`
 }
 
-// GetChannelMetricsHistory 获取渠道指标历史数据（用于时间序列图表）
-// Query params:
-//   - duration: 时间范围 (1h, 6h, 24h)，默认 24h
-//   - interval: 时间间隔 (5m, 15m, 1h)，默认根据 duration 自动选择
-func GetChannelMetricsHistory(metricsManager *metrics.MetricsManager, cfgManager *config.ConfigManager, isResponses bool) gin.HandlerFunc {
-	return GetChannelMetricsHistoryByKind(metricsManager, cfgManager, channelKindFromLegacyFlag(isResponses))
-}
-
 // GetChannelMetricsHistoryByKind 获取指定一等公民渠道的指标历史数据
 func GetChannelMetricsHistoryByKind(metricsManager *metrics.MetricsManager, cfgManager *config.ConfigManager, kind scheduler.ChannelKind) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -422,12 +358,6 @@ var keyColors = []string{
 	"#10b981", // Emerald - Backup 2
 	"#8b5cf6", // Violet - Fallback
 	"#ec4899", // Pink - Canary
-}
-
-// GetChannelKeyMetricsHistory 获取渠道下各 Key 的历史数据（用于 Key 趋势图表）
-// GET /api/channels/:id/keys/metrics/history?duration=6h
-func GetChannelKeyMetricsHistory(metricsManager *metrics.MetricsManager, cfgManager *config.ConfigManager, isResponses bool) gin.HandlerFunc {
-	return GetChannelKeyMetricsHistoryByKind(metricsManager, cfgManager, channelKindFromLegacyFlag(isResponses))
 }
 
 // GetChannelKeyMetricsHistoryByKind 获取指定一等公民渠道下各 Key 的历史数据

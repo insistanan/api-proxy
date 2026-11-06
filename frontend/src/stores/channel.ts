@@ -1,13 +1,13 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { api, channelApiByType, type ApiTab, type Channel, type ChannelsResponse, type ChannelMetrics, type ChannelDashboardResponse } from '@/services/api'
+import { api, ApiError, channelApiByType, type ApiTab, type Channel, type ChannelsResponse, type ChannelMetrics, type ChannelDashboardResponse } from '@/services/api'
 
 /**
  * 渠道数据管理 Store
  *
  * 职责：
- * - 管理四种 API 类型的渠道数据（Messages/Responses/Gemini/Chat）
+ * - 管理五种 API 类型的渠道数据
  * - 管理渠道指标和统计数据
  * - 提供渠道操作方法（添加、编辑、删除、测试延迟等）
  * - 管理自动刷新定时器
@@ -77,6 +77,8 @@ export const useChannelStore = defineStore('channel', () => {
 
   // 批量延迟测试加载状态
   const isPingingAll = ref(false)
+  const isSavingChannel = ref(false)
+  const isDeletingChannel = ref(false)
 
   // 最后一次刷新状态（用于 systemStatus 更新）
   const lastRefreshSuccess = ref(true)
@@ -86,9 +88,9 @@ export const useChannelStore = defineStore('channel', () => {
   let autoRefreshRunning = false
   const AUTO_REFRESH_INTERVAL = 2000 // 2秒
 
-  // 刷新并发控制：同一时间只允许一个 refresh 在跑；期间再次调用会被合并成一次后续刷新
+  // 刷新按发起协议排队；每次调用仅接收自己协议的结果，某项失败不阻断后续刷新。
   let refreshLoopPromise: Promise<void> | null = null
-  let refreshRequested = false
+  const queuedRefreshes = new Map<ApiTab, Promise<void>>()
 
   // ===== 计算属性 =====
 
@@ -127,7 +129,7 @@ export const useChannelStore = defineStore('channel', () => {
 
     const now = Date.now()
     return newChannels.map(newCh => {
-      const existingCh = existingChannels.find(ch => ch.index === newCh.index)
+      const existingCh = newCh.id ? existingChannels.find(ch => ch.id === newCh.id) : undefined
       // 只有在 5 分钟有效期内才保留本地延迟测试结果
       if (existingCh?.latencyTestTime && (now - existingCh.latencyTestTime) < LATENCY_VALID_DURATION) {
         return {
@@ -145,9 +147,9 @@ export const useChannelStore = defineStore('channel', () => {
   /**
    * 刷新渠道数据
    */
-  async function refreshChannels() {
-    refreshRequested = true
-    if (refreshLoopPromise) return refreshLoopPromise
+  async function refreshChannels(tab: ApiTab = activeTab.value) {
+    const queued = queuedRefreshes.get(tab)
+    if (queued) return queued
 
     const doRefresh = async (tab: ApiTab) => {
       try {
@@ -172,19 +174,18 @@ export const useChannelStore = defineStore('channel', () => {
       }
     }
 
-    refreshLoopPromise = (async () => {
-      try {
-        while (refreshRequested) {
-          refreshRequested = false
-          const tab = activeTab.value
-          await doRefresh(tab)
-        }
-      } finally {
-        refreshLoopPromise = null
-      }
-    })()
-
-    return refreshLoopPromise
+    const runRefresh = () => {
+      queuedRefreshes.delete(tab)
+      return doRefresh(tab)
+    }
+    // 前项成功或失败都继续排队，但失败仍由前项自己的调用方接收。
+    const request = (refreshLoopPromise ?? Promise.resolve()).then(runRefresh, runRefresh)
+    const completion = request.finally(() => {
+      if (refreshLoopPromise === completion) refreshLoopPromise = null
+    })
+    queuedRefreshes.set(tab, completion)
+    refreshLoopPromise = completion
+    return completion
   }
 
   /**
@@ -193,46 +194,45 @@ export const useChannelStore = defineStore('channel', () => {
   async function saveChannel(
     channel: Omit<Channel, 'id' | 'index' | 'latency'>,
     editingChannelIndex: number | null,
-    options?: { isQuickAdd?: boolean }
-  ) {
-    const tab = activeTab.value
+    options?: { isQuickAdd?: boolean },
+    tab: ApiTab = activeTab.value
+  ): Promise<{ message: string; quickAddMessage?: string; warning?: string }> {
     const ca = tabApi(tab)
 
     if (editingChannelIndex !== null) {
       // 更新现有渠道
       await ca.updateChannel(editingChannelIndex, channel)
-      return { success: true, message: '渠道更新成功' }
+      return { message: '渠道更新成功' }
     } else {
       // 添加新渠道
       const createdChannel = await ca.addChannel(channel)
 
-      // 快速添加模式：后端新增时已设为最高优先级，仅为本次创建的渠道设置促销期。
+      // 创建与促销是两个提交点，后一步失败不能让用户重复创建渠道。
       if (options?.isQuickAdd) {
         try {
           const channelIndex = createdChannel.channel.index
           await ca.setPromotion(channelIndex, 300, 0)
 
           return {
-            success: true,
             message: '渠道添加成功',
-            quickAddMessage: `渠道 ${channel.name} 已设为最高优先级（5分钟内优先使用）`
+            quickAddMessage: `渠道 ${channel.name} 已设置促销（5分钟内优先使用，仍受健康检查与熔断限制）`
           }
         } catch (err) {
-          console.warn('设置快速添加优先级失败:', err)
-          // 不影响主流程
+          const message = err instanceof Error ? err.message : '未知错误'
+          const detail = err instanceof ApiError && err.committed ? '促销已写入，但收尾失败' : '促销设置失败'
+          return { message: '渠道添加成功', warning: `${detail}: ${message}。渠道已创建，请勿重复添加` }
         }
       }
 
-      return { success: true, message: '渠道添加成功' }
+      return { message: '渠道添加成功' }
     }
   }
 
   /**
    * 删除渠道
    */
-  async function deleteChannel(channelId: number) {
-    await tabApi().deleteChannel(channelId)
-    await refreshChannels()
+  async function deleteChannel(channelId: number, tab: ApiTab = activeTab.value) {
+    await tabApi(tab).deleteChannel(channelId)
     return { success: true, message: '渠道删除成功' }
   }
 
@@ -241,9 +241,10 @@ export const useChannelStore = defineStore('channel', () => {
    */
   async function pingChannel(channelId: number) {
     const tab = activeTab.value
+    const targetId = channelsDataMap.value[tab].channels.find(c => c.index === channelId)?.id
     const result = await tabApi(tab).pingChannel(channelId)
 
-    const channel = channelsDataMap.value[tab].channels?.find(c => c.index === channelId)
+    const channel = targetId === undefined ? undefined : channelsDataMap.value[tab].channels.find(c => c.id === targetId)
     if (channel) {
       channel.latency = result.latency
       channel.latencyTestTime = Date.now()
@@ -259,13 +260,15 @@ export const useChannelStore = defineStore('channel', () => {
     if (isPingingAll.value) return { success: false, message: '正在测试中' }
 
     const tab = activeTab.value
+    const targets = new Map(channelsDataMap.value[tab].channels.map(c => [c.index, c.id]))
     isPingingAll.value = true
     try {
       const results = await tabApi(tab).pingAllChannels()
 
       const now = Date.now()
       results.forEach(result => {
-        const channel = channelsDataMap.value[tab].channels?.find(c => c.index === result.id)
+        const targetId = targets.get(result.id)
+        const channel = targetId === undefined ? undefined : channelsDataMap.value[tab].channels.find(c => c.id === targetId)
         if (channel) {
           channel.latency = result.latency
           channel.latencyTestTime = now  // 记录测试时间，用于 5 分钟后清除
@@ -282,8 +285,9 @@ export const useChannelStore = defineStore('channel', () => {
    * 更新负载均衡策略
    */
   async function updateLoadBalance(strategy: string) {
-    await tabApi().updateLoadBalance(strategy)
-    channelsDataMap.value[activeTab.value].loadBalance = strategy
+    const tab = activeTab.value
+    await tabApi(tab).updateLoadBalance(strategy)
+    channelsDataMap.value[tab].loadBalance = strategy
     return { success: true, message: `负载均衡策略已更新为: ${strategy}` }
   }
 
@@ -362,6 +366,8 @@ export const useChannelStore = defineStore('channel', () => {
     activeTab,
     channelsDataMap,
     isPingingAll,
+    isSavingChannel,
+    isDeletingChannel,
     lastRefreshSuccess,
 
     // 计算属性

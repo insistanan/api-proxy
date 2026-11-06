@@ -33,13 +33,19 @@ type trafficRowMeta struct {
 	StatusCode int
 	Stream     bool
 	Truncated  bool
+	Lifecycle  *RequestLifecycle
 }
 
 type requestLogMeta struct {
-	ChannelName   string `json:"channelName"`
-	Model         string `json:"model"`
-	ResolvedModel string `json:"resolvedModel"`
-	Status        string `json:"status"`
+	ChannelName    string `json:"channelName"`
+	Model          string `json:"model"`
+	ResolvedModel  string `json:"resolvedModel"`
+	Status         string `json:"status"`
+	ConversationID string `json:"conversationId"`
+	StatusCode     int    `json:"statusCode"`
+	ErrorType      string `json:"errorType"`
+	ErrorMessage   string `json:"errorMessage"`
+	Retried        bool   `json:"retried"`
 }
 
 // ListSystemLogSummaries 按 request_id 聚合 traffic_logs，列表不带正文。
@@ -100,7 +106,9 @@ func (s *Store) ListSystemLogSummaries(ctx context.Context, opts SystemLogListOp
 
 	summaries := make([]SystemLogSummary, 0, len(requestIDs))
 	for _, requestID := range requestIDs {
-		summaries = append(summaries, buildSystemLogSummary(requestID, metasByRequest[requestID], requestMetaByID[requestID]))
+		summary := buildSystemLogSummary(requestID, metasByRequest[requestID], requestMetaByID[requestID])
+		s.adjustLifecycleStatus(&summary, metasByRequest[requestID])
+		summaries = append(summaries, summary)
 	}
 	return summaries, nil
 }
@@ -114,10 +122,7 @@ func (s *Store) QueryTrafficByRequestID(ctx context.Context, requestID string) (
 	if requestID == "" {
 		return nil, fmt.Errorf("requestId 不能为空")
 	}
-	query := `SELECT id, unix_milli, timestamp, request_id, attempt_id, phase, api_type, method, url,
-		status_code, stream, headers_json, body, truncated, original_bytes
-		FROM traffic_logs WHERE request_id = ?
-		ORDER BY unix_milli ASC, id ASC`
+	query := s.trafficSelect() + ` WHERE t.request_id = ? ORDER BY t.unix_milli ASC, t.id ASC`
 	rows, err := s.readDB.QueryContext(ctx, query, requestID)
 	if err != nil {
 		return nil, fmt.Errorf("查询系统日志详情失败: %w", err)
@@ -164,6 +169,10 @@ func (s *Store) GetSystemLogDetail(ctx context.Context, requestID string) (*Syst
 	}
 	metas := make([]trafficRowMeta, 0, len(trafficLogs))
 	for _, entry := range trafficLogs {
+		lifecycle, err := parseTrafficLifecycle(entry.Phase, entry.Body)
+		if err != nil {
+			return nil, err
+		}
 		metas = append(metas, trafficRowMeta{
 			RequestID:  entry.RequestID,
 			UnixMilli:  entry.UnixMilli,
@@ -173,15 +182,18 @@ func (s *Store) GetSystemLogDetail(ctx context.Context, requestID string) (*Syst
 			StatusCode: entry.StatusCode,
 			Stream:     entry.Stream,
 			Truncated:  entry.Truncated,
+			Lifecycle:  lifecycle,
 		})
 	}
 	var latestRequestMeta *requestLogMeta
 	if len(requestLogs) > 0 {
-		latestRequestMeta = parseRequestLogMeta(requestLogs[0])
+		latestRequestMeta = parseRequestLogMeta(requestLogs[len(requestLogs)-1])
 	}
+	summary := buildSystemLogSummary(requestID, metas, latestRequestMeta)
+	s.adjustLifecycleStatus(&summary, metas)
 	return &SystemLogDetail{
 		RequestID:   requestID,
-		Summary:     buildSystemLogSummary(requestID, metas, latestRequestMeta),
+		Summary:     summary,
 		TrafficLogs: trafficLogs,
 		RequestLogs: requestLogs,
 	}, nil
@@ -189,7 +201,8 @@ func (s *Store) GetSystemLogDetail(ctx context.Context, requestID string) (*Syst
 
 func (s *Store) loadTrafficRowMeta(ctx context.Context, requestIDs []string) (map[string][]trafficRowMeta, error) {
 	placeholders, args := sqlInPlaceholders(requestIDs)
-	query := `SELECT request_id, unix_milli, timestamp, phase, api_type, status_code, stream, truncated
+	query := `SELECT request_id, unix_milli, timestamp, phase, api_type, status_code, stream, truncated,
+		CASE WHEN phase IN ('request_start', 'request_end') THEN body ELSE '' END
 		FROM traffic_logs WHERE request_id IN (` + placeholders + `)
 		ORDER BY unix_milli ASC, id ASC`
 	rows, err := s.readDB.QueryContext(ctx, query, args...)
@@ -202,14 +215,19 @@ func (s *Store) loadTrafficRowMeta(ctx context.Context, requestIDs []string) (ma
 	for rows.Next() {
 		var row trafficRowMeta
 		var streamValue, truncatedValue int
+		var lifecycleBody string
 		if err := rows.Scan(
 			&row.RequestID, &row.UnixMilli, &row.Timestamp, &row.Phase, &row.APIType,
-			&row.StatusCode, &streamValue, &truncatedValue,
+			&row.StatusCode, &streamValue, &truncatedValue, &lifecycleBody,
 		); err != nil {
 			return nil, err
 		}
 		row.Stream = streamValue != 0
 		row.Truncated = truncatedValue != 0
+		row.Lifecycle, err = parseTrafficLifecycle(row.Phase, lifecycleBody)
+		if err != nil {
+			return nil, err
+		}
 		result[row.RequestID] = append(result[row.RequestID], row)
 	}
 	return result, rows.Err()
@@ -257,7 +275,14 @@ func buildSystemLogSummary(requestID string, rows []trafficRowMeta, meta *reques
 		Phases:    make([]string, 0, 4),
 	}
 	seenPhase := make(map[string]struct{}, 4)
+	var started, ended *RequestLifecycle
 	for _, row := range rows {
+		if row.Phase == PhaseRequestStart {
+			started = row.Lifecycle
+		}
+		if row.Phase == PhaseRequestEnd {
+			ended = row.Lifecycle
+		}
 		if _, exists := seenPhase[row.Phase]; !exists && row.Phase != "" {
 			seenPhase[row.Phase] = struct{}{}
 			summary.Phases = append(summary.Phases, row.Phase)
@@ -269,7 +294,7 @@ func buildSystemLogSummary(requestID string, rows []trafficRowMeta, meta *reques
 		if summary.APIType == "" && row.Phase == PhaseClientRequest && row.APIType != "" {
 			summary.APIType = row.APIType
 		}
-		if row.Phase == PhaseUpstreamResponse {
+		if row.Phase == PhaseUpstreamResponse || row.Phase == PhaseUpstreamHeaders {
 			summary.StatusCode = row.StatusCode
 		}
 		if row.Stream {
@@ -293,6 +318,9 @@ func buildSystemLogSummary(requestID string, rows []trafficRowMeta, meta *reques
 		}
 	}
 	if meta != nil {
+		summary.ConversationID = meta.ConversationID
+		summary.ErrorType = meta.ErrorType
+		summary.ErrorMessage = meta.ErrorMessage
 		summary.ChannelName = strings.TrimSpace(meta.ChannelName)
 		summary.Status = strings.TrimSpace(meta.Status)
 		summary.Model = strings.TrimSpace(meta.ResolvedModel)
@@ -300,7 +328,59 @@ func buildSystemLogSummary(requestID string, rows []trafficRowMeta, meta *reques
 			summary.Model = strings.TrimSpace(meta.Model)
 		}
 	}
+	if started != nil {
+		summary.ConversationID = started.ConversationID
+		summary.RequestHash = started.RequestHash
+		summary.Client = started.Client
+		summary.StartedAt = started.StartedAt
+		if summary.Model == "" {
+			summary.Model = started.Model
+		}
+		summary.Status = "processing"
+		if meta != nil && meta.Retried {
+			summary.Status = "retrying"
+		}
+	}
+	if ended != nil {
+		if summary.ConversationID == "" {
+			summary.ConversationID = ended.ConversationID
+		}
+		summary.RequestHash = ended.RequestHash
+		summary.Client = ended.Client
+		summary.StartedAt = ended.StartedAt
+		summary.Status = ended.Status
+		summary.StatusCode = ended.StatusCode
+		summary.ErrorType = ended.ErrorType
+		summary.ErrorMessage = ended.ErrorMessage
+		if summary.Model == "" {
+			summary.Model = ended.Model
+		}
+	}
 	return summary
+}
+
+func parseTrafficLifecycle(phase, body string) (*RequestLifecycle, error) {
+	if phase != PhaseRequestStart && phase != PhaseRequestEnd {
+		return nil, nil
+	}
+	var state RequestLifecycle
+	if err := json.Unmarshal([]byte(body), &state); err != nil {
+		return nil, fmt.Errorf("解析请求生命周期日志失败: %w", err)
+	}
+	return &state, nil
+}
+
+func (s *Store) adjustLifecycleStatus(summary *SystemLogSummary, rows []trafficRowMeta) {
+	if summary.Status != "processing" && summary.Status != "retrying" {
+		return
+	}
+	for _, row := range rows {
+		if row.Phase == PhaseRequestStart && row.Lifecycle != nil && s.bootID != "" && row.Lifecycle.BootID != "" && row.Lifecycle.BootID != s.bootID {
+			summary.Status = "interrupted"
+			summary.ErrorType = "process_interrupted"
+			summary.ErrorMessage = "上次进程退出前没有记录请求结束"
+		}
+	}
 }
 
 func sqlInPlaceholders(values []string) (string, []any) {
@@ -417,6 +497,9 @@ func (s *Store) Purge(ctx context.Context, opts PurgeOptions) (PurgeResult, erro
 			return result, fmt.Errorf("读取 %s 清理结果失败: %w", table, err)
 		}
 		*counters[i] = deleted
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM traffic_bodies WHERE NOT EXISTS (SELECT 1 FROM traffic_body_refs r WHERE r.body_hash = traffic_bodies.body_hash)`); err != nil {
+		return result, fmt.Errorf("清理无引用正文失败: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return result, fmt.Errorf("提交日志清理事务失败: %w", err)

@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -17,7 +19,6 @@ import (
 	"github.com/BenedictKing/api-proxy/internal/cli"
 	"github.com/BenedictKing/api-proxy/internal/config"
 	"github.com/BenedictKing/api-proxy/internal/conversation"
-	"github.com/BenedictKing/api-proxy/internal/eval"
 	"github.com/BenedictKing/api-proxy/internal/handlers"
 	"github.com/BenedictKing/api-proxy/internal/handlers/hooks"
 	"github.com/BenedictKing/api-proxy/internal/llmgate"
@@ -35,7 +36,7 @@ import (
 var frontendFS embed.FS
 
 // app 聚合一次进程运行的全部组件。
-// 字段顺序即构造依赖顺序；关闭顺序见 shutdown，两者不可随意调换。
+// 资源在创建成功后登记清理；启动失败与正常关闭均由同一登记表逆序释放。
 type app struct {
 	envCfg                *config.EnvConfig
 	cfgManager            *config.ConfigManager
@@ -53,35 +54,28 @@ type app struct {
 	metricsStore          *metrics.SQLiteStore
 	metricsByKind         map[scheduler.ChannelKind]*metrics.MetricsManager
 	channelScheduler      *scheduler.ChannelScheduler
-	adaptiveScheduler     *scheduler.AdaptiveScheduler
+	profileManager        *metrics.ProfileManager
 	piAgentAPI            *handlers.PiAgentAPI
 	skillsAPI             *handlers.SkillsAPI
 	assistantService      *assistant.Service
 	assistantAPI          *handlers.AssistantAPI
-	evalService           *eval.Service
 	engine                *gin.Engine
+	cleanups              []appCleanup
+	shutdownOnce          sync.Once
+	shutdownErr           error
 }
 
 // newApp 构造并装配全部组件：基础设施 → 存储 → 调度器 → 路由。
 // 只做装配，不启动监听；进程退出统一走 shutdown。
 // 初始化中途失败时按逆序清理已创建资源（方案 R4-b 第 6 步），
 // 不把半初始化的资源泄漏给操作系统回收。
-func newApp() (*app, error) {
+func newApp() (_ *app, err error) {
 	a := &app{}
-	var err error
-
-	// cleanups 收集已创建资源的清理动作；失败时逆序执行。
-	var cleanups []func()
 	defer func() {
 		if err != nil {
-			for i := len(cleanups) - 1; i >= 0; i-- {
-				cleanups[i]()
-			}
+			err = errors.Join(err, a.shutdown())
 		}
 	}()
-	registerCleanup := func(fn func()) {
-		cleanups = append(cleanups, fn)
-	}
 
 	// 初始化配置管理器
 	a.envCfg = config.NewEnvConfig()
@@ -94,20 +88,20 @@ func newApp() (*app, error) {
 	if err != nil {
 		return nil, fmt.Errorf("初始化日志系统失败: %w", err)
 	}
-	registerCleanup(func() { _ = a.logStore.Close() })
+	a.registerCleanup("日志存储", a.logStore.Close)
 	a.requestLogStore = metrics.NewRequestLogStore(a.logStore)
 
 	a.cfgManager, err = config.NewConfigManager(".config/config.json")
 	if err != nil {
 		return nil, fmt.Errorf("初始化配置管理器失败: %w", err)
 	}
-	registerCleanup(func() { _ = a.cfgManager.Close() })
+	a.registerCleanup("配置管理器", a.cfgManager.Close)
 
 	a.blockedStore, err = sensitive.NewBlockedStore(".config/blocked-logs.db")
 	if err != nil {
 		return nil, fmt.Errorf("初始化内容安全拦截记录存储失败: %w", err)
 	}
-	registerCleanup(func() { _ = a.blockedStore.Close() })
+	a.registerCleanup("拦截记录存储", a.blockedStore.Close)
 	log.Printf("[ContentSafety-Init] 拦截记录存储已初始化")
 
 	// 初始化会话管理器（Responses API 专用），与对话记录共用持久化数据库。
@@ -120,9 +114,16 @@ func newApp() (*app, error) {
 	if err != nil {
 		return nil, fmt.Errorf("初始化 Responses 会话持久化存储失败: %w", err)
 	}
-	registerCleanup(a.sessionManager.Stop)
+	a.registerCleanup("Responses 会话", func() error { a.sessionManager.Stop(); return nil })
 	a.sessionManager.SetMaxSessions(5000) // 全局最多 5000 个活跃 session
 	log.Printf("[Session-Init] 持久化会话管理器已初始化 (保留: 7天, 上限: 5000)")
+
+	// 对话存储先于调度组件创建，关闭时必须等依赖它的生产者退出。
+	a.conversationRegistry, err = conversation.NewPersistentRegistry(".config/conversations.db")
+	if err != nil {
+		return nil, fmt.Errorf("初始化对话持久化存储失败: %w", err)
+	}
+	a.registerCleanup("对话注册表", func() error { a.conversationRegistry.Stop(); return nil })
 
 	// 初始化指标持久化存储（可选）
 	if a.envCfg.MetricsPersistenceEnabled {
@@ -131,9 +132,9 @@ func newApp() (*app, error) {
 			RetentionDays: a.envCfg.MetricsRetentionDays,
 		})
 		if err != nil {
-			log.Printf("[Metrics-Init] 警告: 初始化指标持久化存储失败: %v，将使用纯内存模式", err)
-			a.metricsStore = nil
+			return nil, fmt.Errorf("初始化指标持久化存储失败: %w", err)
 		}
+		a.registerCleanup("指标存储", a.metricsStore.Close)
 	} else {
 		log.Printf("[Metrics-Init] 指标持久化已禁用，使用纯内存模式")
 	}
@@ -148,6 +149,21 @@ func newApp() (*app, error) {
 		scheduler.ChannelKindImages,
 	}
 	a.metricsByKind = make(map[scheduler.ChannelKind]*metrics.MetricsManager, len(metricsKinds))
+	var traceAffinityManager *session.TraceAffinityManager
+	// 构造调度器前由装配层持有组件，成功后由调度器聚合停止，只有一个清理入口。
+	a.registerCleanup("调度与观测", func() error {
+		if a.channelScheduler != nil {
+			a.channelScheduler.Stop()
+		} else {
+			for _, mm := range a.metricsByKind {
+				mm.Stop()
+			}
+			if traceAffinityManager != nil {
+				traceAffinityManager.Stop()
+			}
+		}
+		return nil
+	})
 	for _, kind := range metricsKinds {
 		// apiType 必须无条件传入：空串会被当成 messages 口径，
 		// 影响 Token 统计的缓存口径归属。
@@ -161,12 +177,7 @@ func newApp() (*app, error) {
 			a.envCfg.MetricsWindowSize, a.envCfg.MetricsFailureThreshold, store, string(kind))
 	}
 
-	traceAffinityManager := session.NewTraceAffinityManager()
-	a.conversationRegistry, err = conversation.NewPersistentRegistry(".config/conversations.db")
-	if err != nil {
-		return nil, fmt.Errorf("初始化对话持久化存储失败: %w", err)
-	}
-	registerCleanup(a.conversationRegistry.Stop)
+	traceAffinityManager = session.NewTraceAffinityManager()
 
 	// 初始化 URL 管理器（非阻塞，动态排序）
 	urlManager := urlhealth.NewURLManager(30*time.Second, 3) // 30秒冷却期，连续3次失败后移到末尾
@@ -207,12 +218,10 @@ func newApp() (*app, error) {
 	}
 
 	// 性能画像与渠道性能报告（/api/performance/report）：仅用于观测展示，
-	// 不参与生产选渠——生产选渠严格按配置顺序（R6：修正历史误导日志）。
-	profileManager := metrics.NewProfileManager()
-	a.adaptiveScheduler = scheduler.NewAdaptiveScheduler(profileManager)
-	a.channelScheduler.SetProfileManager(profileManager)
-	a.channelScheduler.SetAdaptiveScheduler(a.adaptiveScheduler)
-	log.Println("[Main] 渠道性能画像已启用（仅观测展示，选渠按配置顺序）")
+	// 不参与生产选渠——默认遵循配置顺序，健康促销在分组内临时优先。
+	a.profileManager = metrics.NewProfileManager()
+	a.channelScheduler.SetProfileManager(a.profileManager)
+	log.Println("[Main] 渠道性能画像已启用（仅观测展示，默认按配置顺序选渠，健康促销在分组内临时优先）")
 
 	// 危险命令 AI 闸门：存储与拦截记录同库；遗留的 waiting 记录一律按拦截处理
 	// （重启后内存等待者已不存在）。llmgate.Caller 供闸门与 AI 助手共用。
@@ -220,7 +229,7 @@ func newApp() (*app, error) {
 	if err != nil {
 		return nil, fmt.Errorf("初始化危险命令 AI 闸门存储失败: %w", err)
 	}
-	registerCleanup(func() { _ = a.gateStore.Close() })
+	a.registerCleanup("命令闸门存储", a.gateStore.Close)
 	if expired, expireErr := a.gateStore.ExpireStalePending(context.Background()); expireErr != nil {
 		return nil, fmt.Errorf("清理重启前命令确认记录失败: %w", expireErr)
 	} else if expired > 0 {
@@ -244,7 +253,7 @@ func newApp() (*app, error) {
 	if err != nil {
 		return nil, fmt.Errorf("初始化可逆脱敏持久映射库失败: %w", err)
 	}
-	registerCleanup(func() { _ = a.mappingStore.Close() })
+	a.registerCleanup("持久映射存储", a.mappingStore.Close)
 	if a.cfgManager.GetSettings().ContentSafety.SensitiveData.Mode == config.ContentSafetyModeMask {
 		sensitive.SetPersistentMappingStore(a.mappingStore)
 		log.Printf("[SensitiveData-Init] 可逆脱敏持久映射库已启用（跨重启还原，AES-256-GCM 加密落盘）")
@@ -264,6 +273,11 @@ func newApp() (*app, error) {
 			log.Printf("[SensitiveData-Restore] 写入还原未命中审计失败: %v", recordErr)
 		}
 	})
+	a.registerCleanup("脱敏全局绑定", func() error {
+		sensitive.SetPersistentMissCallback(nil)
+		sensitive.SetPersistentMappingStore(nil)
+		return nil
+	})
 
 	// pi-agent 与 skills 管理 API（实例持有各自的互斥锁与存储）
 	a.piAgentAPI, err = handlers.NewPiAgentAPI()
@@ -277,21 +291,13 @@ func newApp() (*app, error) {
 	if err != nil {
 		return nil, fmt.Errorf("初始化 AI 配置助手存储失败: %w", err)
 	}
+	a.registerCleanup("AI 配置助手存储", assistantStore.Close)
 	a.assistantService, err = assistant.NewService(a.cfgManager, gateCaller, assistantStore)
 	if err != nil {
-		_ = assistantStore.Close()
 		return nil, fmt.Errorf("初始化 AI 配置助手失败: %w", err)
 	}
-	registerCleanup(func() { _ = a.assistantService.Close() })
 	a.assistantAPI = handlers.NewAssistantAPI(a.assistantService)
 	log.Printf("[Assistant-Init] AI 配置助手已装配")
-
-	a.evalService, err = eval.NewService(eval.DefaultDBPath, a.cfgManager, a.envCfg, a.channelScheduler)
-	if err != nil {
-		return nil, fmt.Errorf("初始化评测工作台失败: %w", err)
-	}
-	a.evalService.Start()
-	registerCleanup(a.evalService.Stop)
 
 	// 从现有指标同步数据到性能画像
 	syncConfig := a.cfgManager.GetConfig()
@@ -307,7 +313,7 @@ func newApp() (*app, error) {
 	}
 	for _, entry := range kindToUpstreams {
 		for i := range entry.upstreams {
-			syncUpstreamProfiles(a.metricsByKind[entry.kind], profileManager, &entry.upstreams[i], i)
+			syncUpstreamProfiles(a.metricsByKind[entry.kind], a.profileManager, &entry.upstreams[i], i)
 		}
 	}
 	log.Println("[Main] 已从现有指标同步性能画像数据")
@@ -376,6 +382,11 @@ func newApp() (*app, error) {
 	a.mappingWatchStop = make(chan struct{})
 	a.mappingWatchDone = make(chan struct{})
 	go a.watchMappingStoreMode()
+	a.registerCleanup("脱敏后台跟随", func() error {
+		close(a.mappingWatchStop)
+		<-a.mappingWatchDone
+		return nil
+	})
 	return a, nil
 }
 
@@ -398,58 +409,29 @@ func main() {
 	// 设置版本信息到 handlers 包
 	handlers.SetVersionInfo(Version, BuildTime, GitCommit)
 
+	if err := runServer(); err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
+	}
+}
+
+// runServer 保证监听失败、收到信号和正常退出都先回收资源，再由 main 决定退出码。
+func runServer() (err error) {
 	application, err := newApp()
 	if err != nil {
-		log.Fatalf("%v", err)
+		return err
 	}
+	defer func() { err = errors.Join(err, application.shutdown()) }()
 
 	addr := fmt.Sprintf(":%d", application.envCfg.Port)
 	application.logStartupInfo()
-
-	// 创建 HTTP 服务器
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           application.engine,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-
-	// 用于传递关闭结果
-	shutdownDone := make(chan struct{})
-
-	// 优雅关闭：监听系统信号
-	go func() {
-		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-		<-sigChan
-		signal.Stop(sigChan) // 停止信号监听，避免资源泄漏
-
-		log.Println("[Server-Shutdown] 收到关闭信号，正在优雅关闭服务器...")
-
-		// 创建超时上下文
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		if err := srv.Shutdown(ctx); err != nil {
-			log.Printf("[Server-Shutdown] 警告: 服务器关闭时发生错误: %v", err)
-		} else {
-			log.Println("[Server-Shutdown] 服务器已安全关闭")
-		}
-
-		application.shutdown()
-		close(shutdownDone)
-	}()
-
-	// 启动服务器（阻塞直到关闭）
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("服务器启动失败: %v", err)
-	}
-
-	// 等待关闭完成（带超时保护，避免死锁）
-	select {
-	case <-shutdownDone:
-		// 正常关闭完成
-	case <-time.After(15 * time.Second):
-		log.Println("[Server-Shutdown] 警告: 等待关闭超时")
-	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	return serveUntilStopped(ctx, srv, 10*time.Second)
 }

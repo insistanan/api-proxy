@@ -336,7 +336,6 @@
                 :copied="copiedChannelIndex === element.index"
                 :supports-vision-capability="supportsVisionCapability"
                 :can-delete="canDeleteChannel(element)"
-                :show-eval="channelType !== 'images'"
                 :supports-ccs="channelType !== 'images'"
                 @edit="$emit('edit', element)"
                 @duplicate="duplicateChannel(element.index)"
@@ -344,7 +343,6 @@
                 @copy-config="copyChannelConfig(element)"
                 @import-ccs="openCcsImport(element)"
                 @quick-test="handleQuickTest(element)"
-                @eval="openEvalForChannel(element)"
                 @ping="$emit('ping', element.index)"
                 @logs="openLogsDialog(element)"
                 @promotion="openPromotionDialog(element)"
@@ -359,7 +357,7 @@
             </div>
               </div><!-- .channel-row-content -->
 
-              <!-- 副行：映射 / 评测 / 描述。主行名称列塞不下它们，挤在一起会被压成看不出内容的小方块。
+              <!-- 副行：映射 / 描述。主行名称列塞不下它们，挤在一起会被压成看不出内容的小方块。
                    映射未配置也照样占位显示——漏配映射是常见误配，必须一眼看得到 -->
               <div class="channel-row-meta" @click.stop>
                 <ChannelMappingBlock
@@ -367,24 +365,6 @@
                   :channel-type="channelType"
                   @edit="$emit('edit', element)"
                 />
-
-                <button
-                  v-if="evalChipFor(element)"
-                  type="button"
-                  class="meta-block meta-block--eval"
-                  :class="`is-${evalChipFor(element)!.color}`"
-                  :title="`${evalChipFor(element)!.tooltip} — 点击查看该渠道的历史评测`"
-                  :aria-label="`查看 ${element.name} 的历史评测记录`"
-                  @click.stop="openEvalForChannel(element)"
-                >
-                  <v-icon size="14" class="meta-block-icon">
-                    {{ evalChipFor(element)!.watching ? 'mdi-clock-outline' : 'mdi-clipboard-check-outline' }}
-                  </v-icon>
-                  <span class="meta-block-label">评测</span>
-                  <span class="meta-block-value">{{ evalChipFor(element)!.label }}</span>
-                  <span class="meta-block-time">{{ evalChipFor(element)!.ago }}</span>
-                  <v-icon size="13" class="meta-block-go">mdi-chevron-right</v-icon>
-                </button>
 
                 <span v-if="element.description" class="meta-desc" :title="element.description">
                   {{ element.description }}
@@ -412,7 +392,6 @@
           :copied="copiedChannelIndex === channel.index"
           :supports-vision-capability="supportsVisionCapability"
           :allow-reorder="false"
-          :show-eval="channelType !== 'images'"
           :supports-ccs="channelType !== 'images'"
           @edit="$emit('edit', channel)"
           @duplicate="duplicateChannel(channel.index)"
@@ -420,7 +399,6 @@
           @copy-config="copyChannelConfig(channel)"
           @import-ccs="openCcsImport(channel)"
           @quick-test="handleQuickTest(channel)"
-          @eval="openEvalForChannel(channel)"
           @ping="$emit('ping', channel.index)"
           @logs="openLogsDialog(channel)"
           @promotion="openPromotionDialog(channel)"
@@ -633,7 +611,7 @@
     </div>
   </v-card>
 
-    <v-dialog v-model="showPromotionDialog" max-width="420">
+    <v-dialog v-model="showPromotionDialog" max-width="420" :persistent="isSavingPromotion">
       <v-card>
         <v-card-title class="d-flex align-center">
           <v-icon color="info" class="mr-2">mdi-rocket-launch</v-icon>
@@ -643,10 +621,12 @@
         <v-divider />
         <v-card-text class="pt-4">
           <p class="text-body-2 text-medium-emphasis mb-4">
-            促销期渠道将绕过健康检查，获得最高调度优先级。可同时设置时间和次数限制，任一条件满足即自动结束。
+            促销渠道在所属分组内临时优先，仍受健康检查与熔断限制。可同时设置时间和成功请求次数，任一限制达到即结束；两项均为 0 时清除促销。
           </p>
+          <v-alert v-if="promotionError" type="error" variant="tonal" density="compact" class="mb-4">{{ promotionError }}</v-alert>
           <v-text-field
             v-model.number="promotionDuration"
+            :disabled="isSavingPromotion"
             label="促销时长（分钟）"
             type="number"
             :min="0"
@@ -657,6 +637,7 @@
           />
           <v-text-field
             v-model.number="promotionCount"
+            :disabled="isSavingPromotion"
             label="促销请求次数"
             type="number"
             :min="0"
@@ -668,8 +649,8 @@
         <v-divider />
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" @click="closePromotionDialog">取消</v-btn>
-          <v-btn color="info" variant="flat" @click="confirmPromotion">确认设置</v-btn>
+          <v-btn variant="text" :disabled="isSavingPromotion" @click="closePromotionDialog">取消</v-btn>
+          <v-btn color="info" variant="flat" :loading="isSavingPromotion" :disabled="isSavingPromotion" @click="confirmPromotion">确认设置</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -804,11 +785,10 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
 import VueApexCharts from 'vue3-apexcharts'
 import type { ApexOptions } from 'apexcharts'
-import { api, channelApiByType, type Channel, type ChannelMetrics, type ChannelStatus, type TimeWindowStats, type ChannelRecentActivity, type ChannelLogEntry, type EvalChannelLatest } from '../services/api'
-import { evalAggregateColor, evalAgoLabel, evalFormatTime } from '../utils/eval'
+import { api, ApiError, channelApiByType, type ApiTab, type Channel, type ChannelMetrics, type ChannelStatus, type TimeWindowStats, type ChannelRecentActivity, type ChannelLogEntry } from '../services/api'
+import { useChannelStore } from '@/stores/channel'
 import { useChannelActivity } from '../composables/useChannelActivity'
 import { channelServiceLabel } from '@/utils/imagesChannelProtocol'
 import {
@@ -834,7 +814,7 @@ import KeyTrendChart from './KeyTrendChart.vue'
 import QuickTestModal from './QuickTestModal.vue'
 
 const apexchart = VueApexCharts
-const router = useRouter()
+const channelStore = useChannelStore()
 
 const props = defineProps<{
   channels: Channel[]
@@ -989,6 +969,9 @@ const logTrendChartOptions = computed<ApexOptions>(() => ({
 // 促销弹窗相关
 const showPromotionDialog = ref(false)
 const promotionChannel = ref<Channel | null>(null)
+const promotionChannelType = ref<ApiTab>('messages')
+const isSavingPromotion = ref(false)
+const promotionError = ref('')
 const promotionDuration = ref(5) // 默认 5 分钟
 const promotionCount = ref(0) // 默认 0 = 不限制次数
 
@@ -1016,63 +999,6 @@ const toggleChannelChart = (channelIndex: number) => {
 const handleQuickTest = (channel: Channel) => {
   quickTestChannel.value = channel
   showQuickTestModal.value = true
-}
-
-const evalLatestMap = ref<Record<string, EvalChannelLatest>>({})
-let evalLatestTimer: ReturnType<typeof setInterval> | null = null
-
-/** 渠道行评测块要显示的内容。 */
-type EvalRowBlock = {
-  label: string
-  color: string
-  watching: boolean
-  ago: string
-  tooltip: string
-}
-
-/**
- * 按渠道 UUID 预先算好评测块，模板里同一渠道要读四五次（图标、配色、文案、时间），
- * 每次都重算一遍聚合与时间格式化没有意义。
- */
-const evalBlockMap = computed<Record<string, EvalRowBlock>>(() => {
-  if (props.channelType === 'images') return {}
-  const blocks: Record<string, EvalRowBlock> = {}
-  for (const [channelId, latest] of Object.entries(evalLatestMap.value)) {
-    if (!latest) continue
-    blocks[channelId] = {
-      label: latest.label,
-      color: evalAggregateColor(latest.aggregate),
-      watching: latest.watching,
-      ago: evalAgoLabel(latest.finishedAt),
-      tooltip: [
-        latest.suiteName || '未知套件',
-        evalFormatTime(latest.finishedAt),
-        latest.watching ? '值班中' : '未值班'
-      ].join(' · ')
-    }
-  }
-  return blocks
-})
-
-const evalChipFor = (channel: Channel): EvalRowBlock | null => {
-  if (channel.status === 'disabled' || channel.status === 'deprecated') return null
-  if (!channel.id) return null
-  return evalBlockMap.value[channel.id] ?? null
-}
-
-const openEvalForChannel = (channel: Channel) => {
-  if (!channel.id) return
-  void router.push({ path: '/eval', query: { channel: channel.id } })
-}
-
-const refreshEvalLatestMap = async () => {
-  if (props.channelType === 'images') return
-  try {
-    const response = await api.getEvalLatestMap()
-    evalLatestMap.value = response.channels || {}
-  } catch {
-    // 渠道页芯片失败不打断编排；评测页会显示完整错误
-  }
 }
 
 // 复制渠道配置到剪贴板
@@ -1284,13 +1210,17 @@ const toggleChannelPrimaryStatus = async (channel: Channel) => {
 }
 
 const openPromotionDialog = (channel: Channel) => {
-  promotionChannel.value = channel
+  if (isSavingPromotion.value) return
+  promotionChannel.value = { ...channel }
+  promotionChannelType.value = props.channelType
+  promotionError.value = ''
   promotionDuration.value = 5
   promotionCount.value = 0
   showPromotionDialog.value = true
 }
 
 const closePromotionDialog = () => {
+  if (isSavingPromotion.value) return
   showPromotionDialog.value = false
   promotionChannel.value = null
 }
@@ -1391,47 +1321,63 @@ const formatLogTokenPair = (left?: number, right?: number): string => {
   return `${formatNumber(left)} / ${formatNumber(right)}`
 }
 
-const normalizePromotionInput = (value: unknown): number => {
-  const parsed = typeof value === 'number'
-    ? value
-    : Number(String(value ?? '').trim())
-
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return 0
-  }
-
-  return Math.floor(parsed)
-}
-
 const confirmPromotion = async () => {
-  if (!promotionChannel.value) return
+  if (!promotionChannel.value || isSavingPromotion.value) return
   const channel = promotionChannel.value
-  const durationMinutes = normalizePromotionInput(promotionDuration.value)
-  const count = normalizePromotionInput(promotionCount.value)
-
-  promotionDuration.value = durationMinutes
-  promotionCount.value = count
-
-  const durationSeconds = durationMinutes * 60
-
+  const tab = promotionChannelType.value
+  const durationMinutes = Number(promotionDuration.value)
+  const count = Number(promotionCount.value)
+  const ca = channelApiByType(tab)
+  let changed = false
+  let settingPromotion = false
+  isSavingPromotion.value = true
+  promotionError.value = ''
   try {
-    if (channel.status === 'suspended') {
-      await channelApiByType(props.channelType).resumeChannel(channel.index)
-      await setChannelStatus(channel.index, 'active')
+    if (!Number.isSafeInteger(durationMinutes) || durationMinutes < 0 ||
+        !Number.isSafeInteger(durationMinutes * 60) || !Number.isSafeInteger(count) || count < 0) {
+      throw new Error('促销时长和次数必须是有效的非负整数')
+    }
+    if (channel.status === 'suspended' && (durationMinutes > 0 || count > 0)) {
+      // resume 只重置熔断；持久化状态必须单独设为 active。
+      await ca.resumeChannel(channel.index)
+      await ca.setStatus(channel.index, 'active')
+      channel.status = 'active'
+      changed = true
     }
 
-    await channelApiByType(props.channelType).setPromotion(channel.index, durationSeconds, count)
-    emit('refresh')
-    const durationText = durationMinutes > 0 ? `${durationMinutes}分钟内` : ''
-    const countText = count > 0 ? `${count}次请求内` : ''
+    settingPromotion = true
+    await ca.setPromotion(channel.index, durationMinutes * 60, count)
+    changed = true
+    const durationText = durationMinutes > 0 ? `${durationMinutes}分钟` : ''
+    const countText = count > 0 ? `${count}次成功请求` : ''
     const combined = [durationText, countText].filter(Boolean).join(' / ')
-    emit('success', `渠道 ${channel.name} 已设为最高优先级${combined ? '（' + combined + '）' : ''}`)
+    emit('success', combined ? `渠道 ${channel.name} 已设置促销（${combined}，任一限制达到即结束）` : `渠道 ${channel.name} 已清除促销`)
+    showPromotionDialog.value = false
+    promotionChannel.value = null
   } catch (error) {
-    console.error('Failed to set promotion:', error)
     const errorMessage = error instanceof Error ? error.message : '未知错误'
-    emit('error', `设置优先级失败: ${errorMessage}`)
+    if (error instanceof ApiError && error.committed) {
+      changed = true
+      if (settingPromotion) {
+        showPromotionDialog.value = false
+        promotionChannel.value = null
+        emit('error', `促销变更已写入，但收尾失败: ${errorMessage}。请刷新查看实际状态，请勿重复提交`)
+      } else {
+        channel.status = 'active'
+        promotionError.value = `渠道恢复已写入，但收尾失败: ${errorMessage}。促销尚未设置`
+      }
+    } else {
+      promotionError.value = `${changed ? '渠道已恢复，但促销设置失败' : '设置促销失败'}: ${errorMessage}`
+    }
   } finally {
-    closePromotionDialog()
+    if (changed) {
+      try {
+        await channelStore.refreshChannels(tab)
+      } catch (error) {
+        emit('error', `变更已写入，但刷新失败: ${error instanceof Error ? error.message : '未知错误'}。请刷新查看实际状态`)
+      }
+    }
+    isSavingPromotion.value = false
   }
 }
 
@@ -1466,10 +1412,6 @@ const handleDeleteChannel = (channel: Channel) => {
 // 组件挂载时加载指标并启动延迟过期检查定时器
 onMounted(() => {
   refreshMetrics()
-  void refreshEvalLatestMap()
-  evalLatestTimer = setInterval(() => {
-    void refreshEvalLatestMap()
-  }, 30000)
   // 每 30 秒更新一次 currentTime，触发延迟显示的响应式更新
   latencyCheckTimer = setInterval(() => {
     currentTime.value = Date.now()
@@ -1489,10 +1431,6 @@ onUnmounted(() => {
   if (activityUpdateTimer) {
     clearInterval(activityUpdateTimer)
     activityUpdateTimer = null
-  }
-  if (evalLatestTimer) {
-    clearInterval(evalLatestTimer)
-    evalLatestTimer = null
   }
 })
 
@@ -1873,7 +1811,7 @@ defineExpose({
 .mm-sep { opacity: 0.35; }
 .channel-latency { display: flex; align-items: center; min-width: 60px; }
 
-/* ===== 副行：映射 / 评测 / 描述 =====
+/* ===== 副行：映射 / 描述 =====
    缩进到与名称列大致对齐，靠一条竖线表明"这是上一行的补充信息" */
 .channel-row-meta {
   display: flex;
@@ -1889,24 +1827,6 @@ defineExpose({
 /* 副行内的块一律不参与收缩：被压扁到只剩边框就等于没显示 */
 .channel-row-meta > * { flex: 0 0 auto; max-width: 100%; }
 
-.meta-block--eval {
-  cursor: pointer;
-  border-color: currentColor;
-  background: color-mix(in srgb, currentColor 12%, transparent);
-}
-.meta-block--eval:hover,
-.meta-block--eval:focus-visible {
-  background: color-mix(in srgb, currentColor 20%, transparent);
-  transform: translateY(-1px);
-}
-.meta-block--eval.is-success { color: rgb(var(--v-theme-success)); }
-.meta-block--eval.is-warning { color: rgb(var(--v-theme-warning)); }
-.meta-block--eval.is-error { color: rgb(var(--v-theme-error)); }
-.meta-block--eval.is-grey { color: rgba(var(--v-theme-on-surface), 0.62); }
-/* 结论文字用正文色，避免整块都是同一种警示色而读不出层次 */
-.meta-block--eval .meta-block-value,
-.meta-block--eval .meta-block-time { color: rgb(var(--v-theme-on-surface)); }
-
 .meta-desc {
   overflow: hidden;
   min-width: 0;
@@ -1915,7 +1835,7 @@ defineExpose({
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-/* 描述是唯一允许被压缩的项：它可以省略号，映射与评测不行 */
+/* 描述允许省略号，映射需要完整展示 */
 .channel-row-meta > .meta-desc { flex: 1 1 auto; }
 
 .channel-rpm-tpm { display: flex; flex-direction: column; align-items: center; min-width: 60px; }

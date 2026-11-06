@@ -18,6 +18,7 @@ import (
 const openCodeSchemaURL = "https://opencode.ai/config.json"
 
 var openCodeConfigMu sync.Mutex
+var errOpenCodeRevisionConflict = errors.New("配置文件已被外部修改，请刷新后重试")
 
 type openCodeConfigResponse struct {
 	Path       string                 `json:"path"`
@@ -26,6 +27,7 @@ type openCodeConfigResponse struct {
 	Model      string                 `json:"model"`
 	SmallModel string                 `json:"smallModel"`
 	Providers  []openCodeProviderView `json:"providers"`
+	Revision   string                 `json:"revision"`
 }
 
 type openCodeProviderView struct {
@@ -58,6 +60,7 @@ type openCodeVariantView struct {
 
 type saveOpenCodeConfigRequest struct {
 	Providers []saveOpenCodeProvider `json:"providers" binding:"required"`
+	Revision  *string                `json:"revision"`
 }
 
 type saveOpenCodeProvider struct {
@@ -108,6 +111,7 @@ func GetOpenCodeConfig() gin.HandlerFunc {
 			Model:      stringValue(root["model"]),
 			SmallModel: stringValue(root["small_model"]),
 			Providers:  openCodeProviderViews(objectValue(root["provider"])),
+			Revision:   sha256HexOrEmpty(raw),
 		}
 		c.JSON(200, response)
 	}
@@ -125,6 +129,10 @@ func SaveOpenCodeConfig() gin.HandlerFunc {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
+		if req.Revision == nil {
+			c.JSON(428, gin.H{"error": "保存需要配置版本，请先刷新配置", "code": "revision_required"})
+			return
+		}
 
 		openCodeConfigMu.Lock()
 		defer openCodeConfigMu.Unlock()
@@ -133,6 +141,10 @@ func SaveOpenCodeConfig() gin.HandlerFunc {
 		root, raw, _, err := readOpenCodeConfig(path)
 		if err != nil {
 			c.JSON(500, gin.H{"error": fmt.Sprintf("读取 OpenCode 配置失败: %v", err)})
+			return
+		}
+		if *req.Revision != sha256HexOrEmpty(raw) {
+			c.JSON(409, gin.H{"error": errOpenCodeRevisionConflict.Error(), "code": "revision_conflict"})
 			return
 		}
 		if root == nil {
@@ -152,11 +164,15 @@ func SaveOpenCodeConfig() gin.HandlerFunc {
 		}
 		data = append(data, '\n')
 		if err := writeOpenCodeConfig(path, raw, data); err != nil {
+			if errors.Is(err, errOpenCodeRevisionConflict) {
+				c.JSON(409, gin.H{"error": err.Error(), "code": "revision_conflict"})
+				return
+			}
 			c.JSON(500, gin.H{"error": fmt.Sprintf("保存 OpenCode 配置失败: %v", err)})
 			return
 		}
 
-		c.JSON(200, gin.H{"success": true, "path": path})
+		c.JSON(200, gin.H{"success": true, "path": path, "revision": sha256HexOrEmpty(data)})
 	}
 }
 
@@ -469,6 +485,14 @@ func writeOpenCodeConfig(path string, previous, data []byte) error {
 	}
 	if err := tempFile.Close(); err != nil {
 		return err
+	}
+	// 外部编辑器不受 API 互斥锁保护，替换前再比较原始字节，避免覆盖期间的修改。
+	current, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("检查 OpenCode 配置版本失败: %w", err)
+	}
+	if !bytes.Equal(current, previous) {
+		return errOpenCodeRevisionConflict
 	}
 	return os.Rename(tempPath, path)
 }

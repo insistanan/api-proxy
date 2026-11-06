@@ -22,6 +22,8 @@ type BaseURLAffinityManager struct {
 	affinity map[string]*BaseURLAffinity
 	ttl      time.Duration
 	stopCh   chan struct{}
+	doneCh   chan struct{}
+	stopOnce sync.Once
 }
 
 // NewBaseURLAffinityManager 创建默认 30 分钟 TTL 的管理器。
@@ -38,6 +40,7 @@ func newBaseURLAffinityManagerWithTTL(ttl time.Duration) *BaseURLAffinityManager
 		affinity: make(map[string]*BaseURLAffinity),
 		ttl:      ttl,
 		stopCh:   make(chan struct{}),
+		doneCh:   make(chan struct{}),
 	}
 	go manager.cleanupLoop()
 	return manager
@@ -118,6 +121,7 @@ func (manager *BaseURLAffinityManager) Cleanup() int {
 }
 
 func (manager *BaseURLAffinityManager) cleanupLoop() {
+	defer close(manager.doneCh)
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 	for {
@@ -130,15 +134,11 @@ func (manager *BaseURLAffinityManager) cleanupLoop() {
 	}
 }
 
-// Stop 停止后台清理。
+// Stop 停止并等待后台清理退出；并发或重复调用安全。
 func (manager *BaseURLAffinityManager) Stop() {
 	if manager == nil {
 		return
 	}
-	select {
-	case <-manager.stopCh:
-		// already closed
-	default:
-		close(manager.stopCh)
-	}
+	manager.stopOnce.Do(func() { close(manager.stopCh) })
+	<-manager.doneCh
 }

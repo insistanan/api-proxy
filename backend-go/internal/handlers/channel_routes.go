@@ -19,9 +19,9 @@ type ChannelRouteDeps struct {
 
 // ChannelRouteOptions 各渠道类型的路由差异点。
 // 大多数端点（CRUD / key 管理 / pools / reorder / status / promotion / metrics / ping）
-// 对所有渠道类型完全一致，只有以下三处存在协议特有差异，用可选字段表达：
+// 对所有渠道类型完全一致，下列字段用于装配已绑定协议的 handler：
 //   - LoadBalance：该渠道类型是否注册 /{kind}/loadbalance 端点
-//   - Dashboard：该渠道类型的 dashboard 实现（messages 用通用版，gemini/chat/images 用协议包版）
+//   - Dashboard：该渠道类型的 dashboard 实现（当前五协议共用按 kind 取快照的实现）
 //   - SchedulerStats：该渠道类型是否注册 /{kind}/channels/scheduler/stats 端点
 type ChannelRouteOptions struct {
 	Crud           *channelcrud.Handlers

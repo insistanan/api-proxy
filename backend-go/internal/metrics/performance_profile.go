@@ -111,6 +111,8 @@ type ProfileManager struct {
 
 	// 后台更新任务
 	stopCh         chan struct{}
+	doneCh         chan struct{}
+	stopOnce       sync.Once
 	updateInterval time.Duration // 评分更新间隔（默认30秒）
 }
 
@@ -120,6 +122,7 @@ func NewProfileManager() *ProfileManager {
 		profiles:        make(map[string]*PerformanceProfile),
 		activeSnapshots: make(map[uint64]*PerformanceSnapshot),
 		stopCh:          make(chan struct{}),
+		doneCh:          make(chan struct{}),
 		updateInterval:  30 * time.Second,
 	}
 
@@ -567,6 +570,7 @@ func (pm *ProfileManager) updateProfileWithSnapshot(profile *PerformanceProfile,
 
 // backgroundScoreUpdater 后台定期更新健康评分
 func (pm *ProfileManager) backgroundScoreUpdater() {
+	defer close(pm.doneCh)
 	ticker := time.NewTicker(pm.updateInterval)
 	defer ticker.Stop()
 
@@ -716,14 +720,10 @@ func calculateTierFromScore(score float64) string {
 	}
 }
 
-// Stop 停止后台更新任务（幂等，重复调用安全）
+// Stop 停止并等待后台评分退出；并发或重复调用共享同一次关闭。
 func (pm *ProfileManager) Stop() {
-	select {
-	case <-pm.stopCh:
-		// already closed
-	default:
-		close(pm.stopCh)
-	}
+	pm.stopOnce.Do(func() { close(pm.stopCh) })
+	<-pm.doneCh
 }
 
 // ============== 统计辅助函数 ==============

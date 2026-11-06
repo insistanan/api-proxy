@@ -496,16 +496,22 @@ func handleStreamSuccess(
 			parseFailed := synthesizer.IsParseFailed()
 			if synthesizedContent != "" && !parseFailed {
 				synth := strings.TrimSpace(synthesizedContent)
-				log.Printf("[Responses-Stream] 上游流式响应合成内容:\n%s", utils.RedactSensitivePlaceholdersForLog(synth))
+				if envCfg.ShouldLog("debug") {
+					log.Printf("[Responses-Stream] 上游流式响应合成内容:\n%s", utils.RedactSensitivePlaceholdersForLog(synth))
+				}
 				logger.RecordStreamSynth(c.Request.Context(), "Responses", synth)
 			} else if logBuffer.Len() > 0 {
 				raw := logBuffer.String()
-				log.Printf("[Responses-Stream] 上游流式响应原始内容:\n%s", utils.RedactSensitivePlaceholdersForLog(raw))
+				if envCfg.ShouldLog("debug") {
+					log.Printf("[Responses-Stream] 上游流式响应原始内容:\n%s", utils.RedactSensitivePlaceholdersForLog(raw))
+				}
 				logger.RecordStreamSynth(c.Request.Context(), "Responses", raw)
 			}
 		} else if logBuffer.Len() > 0 {
 			raw := logBuffer.String()
-			log.Printf("[Responses-Stream] 上游流式响应原始内容:\n%s", utils.RedactSensitivePlaceholdersForLog(raw))
+			if envCfg.ShouldLog("debug") {
+				log.Printf("[Responses-Stream] 上游流式响应原始内容:\n%s", utils.RedactSensitivePlaceholdersForLog(raw))
+			}
 			logger.RecordStreamSynth(c.Request.Context(), "Responses", raw)
 		}
 	}

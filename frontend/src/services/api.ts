@@ -1,6 +1,5 @@
 // API服务模块
 import { useAuthStore } from '@/stores/auth'
-import { readSSEStream } from '@/utils/sse'
 // 本文件主体（ApiService）自身使用的类型，从 @/types 具名导入。
 import type {
   AgentPromptAgent,
@@ -30,13 +29,6 @@ import type {
   ConversationsResponse,
   CreatedChannelResponse,
   DSHSettings,
-  EvalChannelLatest,
-  EvalProbe,
-  EvalRun,
-  EvalStartRunRequest,
-  EvalSuite,
-  EvalValidateReport,
-  EvalWatchConfig,
   GateDecision,
   GateDecisionResponse,
   GatePending,
@@ -132,7 +124,7 @@ if (import.meta.env.DEV) {
   })
 }
 
-// 类型定义已按领域拆分到 @/types（channel / eval / logs / metrics / ...）。
+// 类型定义已按领域拆分到 @/types（channel / logs / metrics / ...）。
 // 此处转发，使既有 import { Channel } from '@/services/api' 全部保持可用。
 export * from '@/types'
 
@@ -199,11 +191,11 @@ class ApiService {
   private normalizePromotionValue(value: unknown): number {
     const parsed = typeof value === 'number' ? value : Number(String(value ?? '').trim())
 
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      return 0
+    if (!Number.isSafeInteger(parsed) || parsed < 0) {
+      throw new Error('促销限制必须是有效的非负整数')
     }
 
-    return Math.floor(parsed)
+    return parsed
   }
 
   private async parseResponseBody(response: Response): Promise<unknown> {
@@ -668,7 +660,7 @@ class ApiService {
     return this.request('/settings/opencode')
   }
 
-  async saveOpenCodeConfig(config: { providers: SaveOpenCodeProvider[] }): Promise<{ success: boolean; path: string }> {
+  async saveOpenCodeConfig(config: { providers: SaveOpenCodeProvider[]; revision: string }): Promise<{ success: boolean; path: string; revision: string }> {
     return this.request('/settings/opencode', {
       method: 'PUT',
       body: JSON.stringify(config)
@@ -970,112 +962,6 @@ class ApiService {
 
   // ===== Images API =====
 
-  async listEvalProbes(): Promise<{ probes: EvalProbe[] }> {
-    return this.request('/eval/probes')
-  }
-
-  async createEvalProbe(probe: Partial<EvalProbe>): Promise<{ probe: EvalProbe; validate: EvalValidateReport }> {
-    return this.request('/eval/probes', { method: 'POST', body: JSON.stringify(probe) })
-  }
-
-  async updateEvalProbe(id: string, probe: Partial<EvalProbe>): Promise<{ probe: EvalProbe }> {
-    return this.request(`/eval/probes/${id}`, { method: 'PUT', body: JSON.stringify(probe) })
-  }
-
-  async deleteEvalProbe(id: string): Promise<void> {
-    return this.request(`/eval/probes/${id}`, { method: 'DELETE' })
-  }
-
-  async validateEvalProbe(probe: Partial<EvalProbe>): Promise<EvalValidateReport> {
-    return this.request('/eval/probes/validate', { method: 'POST', body: JSON.stringify(probe) })
-  }
-
-  async listEvalSuites(): Promise<{ suites: EvalSuite[] }> {
-    return this.request('/eval/suites')
-  }
-
-  async createEvalSuite(suite: Partial<EvalSuite>): Promise<{ suite: EvalSuite }> {
-    return this.request('/eval/suites', { method: 'POST', body: JSON.stringify(suite) })
-  }
-
-  async updateEvalSuite(id: string, suite: Partial<EvalSuite>): Promise<{ suite: EvalSuite }> {
-    return this.request(`/eval/suites/${id}`, { method: 'PUT', body: JSON.stringify(suite) })
-  }
-
-  async deleteEvalSuite(id: string): Promise<void> {
-    return this.request(`/eval/suites/${id}`, { method: 'DELETE' })
-  }
-
-  async startEvalRun(payload: EvalStartRunRequest): Promise<{ run: EvalRun }> {
-    return this.request('/eval/runs', { method: 'POST', body: JSON.stringify(payload) })
-  }
-
-  /**
-   * 评测批次历史。channelId 为渠道稳定 UUID：渠道行深链进来时按渠道过滤，
-   * 否则该渠道的历史会被全局最近 N 条挤掉（后端 limit 默认 30、上限 200）。
-   */
-  async listEvalRuns(options?: {
-    channelId?: string
-    limit?: number
-  }): Promise<{ runs: EvalRun[]; busy: boolean; currentRunId: string }> {
-    const params = new URLSearchParams()
-    if (options?.channelId) params.set('channel', options.channelId)
-    if (options?.limit) params.set('limit', String(options.limit))
-    const query = params.toString()
-    return this.request(`/eval/runs${query ? `?${query}` : ''}`)
-  }
-
-  async getEvalRun(id: string): Promise<{ run: EvalRun }> {
-    return this.request(`/eval/runs/${id}`)
-  }
-
-  async cancelEvalRun(id: string): Promise<{ ok: boolean }> {
-    return this.request(`/eval/runs/${id}/cancel`, { method: 'POST' })
-  }
-
-  async getEvalLatestMap(): Promise<{
-    channels: Record<string, EvalChannelLatest>
-    watch: EvalWatchConfig
-    busy: boolean
-  }> {
-    return this.request('/eval/channels/latest-map')
-  }
-
-  async getEvalWatch(): Promise<{ watch: EvalWatchConfig }> {
-    return this.request('/eval/watch')
-  }
-
-  async putEvalWatch(watch: Partial<EvalWatchConfig>): Promise<{ watch: EvalWatchConfig }> {
-    return this.request('/eval/watch', { method: 'PUT', body: JSON.stringify(watch) })
-  }
-
-  async estimateEvalRun(payload: EvalStartRunRequest): Promise<{ estimatedCalls: number; suiteCheap: boolean }> {
-    return this.request('/eval/estimate', { method: 'POST', body: JSON.stringify(payload) })
-  }
-
-  /**
-   * 订阅评测批次进度。后端只在 status / 已完成格子数变化时发帧，跑完自动关闭。
-   * EventSource 带不了 x-api-key，所以走 fetch + readSSEStream。
-   */
-  async streamEvalRun(
-    id: string,
-    onData: (payload: { run?: EvalRun; error?: string }) => void,
-    options?: { signal?: AbortSignal }
-  ): Promise<void> {
-    const headers: Record<string, string> = { Accept: 'text/event-stream' }
-    const apiKey = this.getApiKey()
-    if (apiKey) {
-      headers['x-api-key'] = apiKey
-    }
-    const response = await fetch(`${API_BASE}/eval/runs/${encodeURIComponent(id)}/events`, {
-      headers,
-      signal: options?.signal
-    })
-    if (!response.ok) {
-      throw new ApiError(`评测进度流打开失败: HTTP ${response.status}`, response.status)
-    }
-    await readSSEStream<{ run?: EvalRun; error?: string }>(response, onData, options)
-  }
 }
 
 // 健康检查响应类型

@@ -26,6 +26,8 @@ type TraceAffinityManager struct {
 	affinity map[string]*TraceAffinity // key: channel_kind + conversation_id
 	ttl      time.Duration
 	stopCh   chan struct{} // 用于停止清理 goroutine
+	doneCh   chan struct{}
+	stopOnce sync.Once
 }
 
 // NewTraceAffinityManager 创建 Trace 亲和性管理器（默认 30 分钟无活动过期）
@@ -43,6 +45,7 @@ func newTraceAffinityManagerWithTTL(ttl time.Duration) *TraceAffinityManager {
 		affinity: make(map[string]*TraceAffinity),
 		ttl:      ttl,
 		stopCh:   make(chan struct{}),
+		doneCh:   make(chan struct{}),
 	}
 
 	// 启动定期清理
@@ -176,6 +179,7 @@ func (m *TraceAffinityManager) Cleanup() int {
 
 // cleanupLoop 定期清理过期记录
 func (m *TraceAffinityManager) cleanupLoop() {
+	defer close(m.doneCh)
 	ticker := time.NewTicker(5 * time.Minute) // 每 5 分钟清理一次
 	defer ticker.Stop()
 
@@ -189,14 +193,10 @@ func (m *TraceAffinityManager) cleanupLoop() {
 	}
 }
 
-// Stop 停止清理 goroutine，释放资源（幂等，重复调用安全）
+// Stop 停止并等待清理退出；并发或重复调用安全。
 func (m *TraceAffinityManager) Stop() {
-	select {
-	case <-m.stopCh:
-		// already closed
-	default:
-		close(m.stopCh)
-	}
+	m.stopOnce.Do(func() { close(m.stopCh) })
+	<-m.doneCh
 }
 
 // SizeForKind 返回指定渠道池的亲和记录数量。

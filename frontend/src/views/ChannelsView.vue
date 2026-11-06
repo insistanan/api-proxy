@@ -59,6 +59,6 @@ const dialogStore = useDialogStore()
 
 const emitAddChannel = () => {
   // 打开添加渠道对话框
-  dialogStore.openAddChannelModal()
+  dialogStore.openAddChannelModal(channelStore.activeTab)
 }
 </script>

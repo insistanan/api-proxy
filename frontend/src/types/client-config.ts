@@ -73,6 +73,7 @@ export interface OpenCodeProvider {
 }
 
 export interface OpenCodeConfig {
+  revision: string
   path: string
   exists: boolean
   jsonc: boolean

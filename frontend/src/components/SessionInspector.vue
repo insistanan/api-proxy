@@ -13,6 +13,7 @@
       </div>
       <div class="d-flex align-center ga-2">
         <v-btn
+          v-if="replayable"
           size="small"
           variant="tonal"
           color="primary"
@@ -119,12 +120,14 @@ const props = withDefaults(
     wrap?: boolean
     url?: string
     method?: string
+    replayable?: boolean
   }>(),
   {
     body: '',
     wrap: true,
     url: '',
-    method: 'POST'
+    method: 'POST',
+    replayable: true
   }
 )
 
@@ -135,7 +138,7 @@ const rawCopied = ref(false)
 interface ParsedToolCall {
   id?: string
   name: string
-  args: any
+  args: unknown
 }
 
 interface ParsedToolResult {
@@ -160,8 +163,9 @@ const parsedItems = computed<ParsedItem[]>(() => {
     const items: ParsedItem[] = []
 
     // 1. Anthropic Claude 格式 (messages / content)
-    if (Array.isArray(data.messages)) {
-      for (const m of data.messages) {
+    const claudeMessages = Array.isArray(data.messages) ? data.messages : Array.isArray(data.content) && data.role ? [data] : undefined
+    if (claudeMessages) {
+      for (const m of claudeMessages) {
         const item: ParsedItem = { role: m.role || 'user' }
         if (typeof m.content === 'string') {
           item.text = m.content
@@ -181,6 +185,10 @@ const parsedItems = computed<ParsedItem[]>(() => {
             }
           }
         }
+        if (Array.isArray(m.tool_calls)) {
+          item.toolCalls = m.tool_calls.map((call: { id?: string; function?: { name?: string; arguments?: unknown } }) => ({ id: call.id, name: call.function?.name || 'function', args: call.function?.arguments }))
+        }
+        if (m.role === 'tool') item.toolResults = [{ toolUseId: m.tool_call_id, content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }]
         items.push(item)
       }
       return items
@@ -195,7 +203,7 @@ const parsedItems = computed<ParsedItem[]>(() => {
         thinking: msg.reasoning_content || ''
       }
       if (Array.isArray(msg.tool_calls)) {
-        item.toolCalls = msg.tool_calls.map((tc: any) => ({
+        item.toolCalls = msg.tool_calls.map((tc: { id?: string; function?: { name?: string; arguments?: unknown } }) => ({
           id: tc.id,
           name: tc.function?.name || 'function',
           args: tc.function?.arguments
@@ -206,12 +214,15 @@ const parsedItems = computed<ParsedItem[]>(() => {
     }
 
     // 3. OpenAI Responses 格式 (input 列表)
-    if (Array.isArray(data.input)) {
-      for (const entry of data.input) {
-        if (entry.type === 'message') {
+    const responseItems = Array.isArray(data.input) ? data.input : Array.isArray(data.output) ? data.output : typeof data.input === 'string' ? [{ type: 'message', role: 'user', content: [{ text: data.input }] }] : undefined
+    if (responseItems) {
+      for (const entry of responseItems) {
+        if (entry.type === 'message' || (!entry.type && entry.role)) {
           const item: ParsedItem = { role: entry.role || 'user' }
           if (Array.isArray(entry.content)) {
-            item.text = entry.content.map((c: any) => c.text || '').filter(Boolean).join('\n')
+            item.text = entry.content.map((c: { text?: string }) => c.text || '').filter(Boolean).join('\n')
+          } else if (typeof entry.content === 'string') {
+            item.text = entry.content
           }
           items.push(item)
         } else if (entry.type === 'function_call') {
@@ -277,7 +288,7 @@ function roleColor(role: string): string {
   }
 }
 
-function formatArgs(args: any): string {
+function formatArgs(args: unknown): string {
   if (!args) return '{}'
   if (typeof args === 'string') {
     try {
@@ -300,7 +311,7 @@ async function copyRawBody() {
 
 async function copyCurlCommand() {
   if (!props.body) return
-  const url = props.url || 'http://localhost:8080/v1/messages'
+  const url = new URL(props.url || '/v1/messages', window.location.origin).href
   const curl = `curl -X ${props.method || 'POST'} "${url}" \\\n  -H "Content-Type: application/json" \\\n  -d '${props.body.replace(/'/g, "'\\''")}'`
   await navigator.clipboard.writeText(curl)
   curlCopied.value = true

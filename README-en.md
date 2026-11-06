@@ -12,7 +12,6 @@
 - **Multi-channel pooled scheduling**: failover, per-channel three-state circuit breaker, sliding-window rate limiting with 429 smoothing, multi-BaseURL health management and dynamic ordering, Trace/BaseURL session affinity (improves prompt cache hit rate)
 - **Client disguise & one-click setup**: configuration pages for Claude Code / Codex / OpenCode / pi-agent / DSH / GPT that point each CLI tool at this proxy, with configurable disguise version strings
 - **Content security**: sensitive-data detection with reversible redaction (AES-256-GCM), recursive private-parameter filtering, and an AI gate for dangerous commands
-- **Channel evaluation workbench**: probes / suites / batch review / real-time SSE progress
 - **Observability**: per-channel and per-model metrics, request & system logs (SQLite-backed with CLI queries), grouped interception records
 - **All-in-one deployment**: the Vue 3 admin UI is embedded into the Go binary via `go:embed`; a single port (3000 by default) serves both the proxy API and the web UI
 

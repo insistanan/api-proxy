@@ -931,18 +931,18 @@ func setPromotionOp(upstreams []UpstreamConfig, index int, duration time.Duratio
 		return fmt.Errorf("无效的上游索引: %d", index)
 	}
 	upstream := &upstreams[index]
+	if duration < 0 || count < 0 {
+		return fmt.Errorf("促销时长和次数不能为负数")
+	}
+	upstream.PromotionUntil = nil
+	upstream.PromotionCount = count
 	if duration > 0 {
 		until := time.Now().Add(duration)
 		upstream.PromotionUntil = &until
-		upstream.PromotionCount = 0
-		log.Printf("[Config-Promotion] 已设置 %s 渠道 [%d] %s 促销期: %v", label, index, upstream.Name, duration)
-	} else if count > 0 {
-		upstream.PromotionUntil = nil
-		upstream.PromotionCount = count
-		log.Printf("[Config-Promotion] 已设置 %s 渠道 [%d] %s 促销次数: %d", label, index, upstream.Name, count)
+	}
+	if duration > 0 || count > 0 {
+		log.Printf("[Config-Promotion] 已设置 %s 渠道 [%d] %s 促销限制: 时长=%v, 次数=%d", label, index, upstream.Name, duration, count)
 	} else {
-		upstream.PromotionUntil = nil
-		upstream.PromotionCount = 0
 		log.Printf("[Config-Promotion] 已清除 %s 渠道 [%d] %s 的促销期", label, index, upstream.Name)
 	}
 	return nil
@@ -954,7 +954,7 @@ func consumePromotionOp(upstreams []UpstreamConfig, index int, label string) boo
 		return false
 	}
 	upstream := &upstreams[index]
-	if upstream.PromotionCount <= 0 {
+	if upstream.PromotionCount <= 0 || !IsChannelInPromotion(upstream) {
 		return false
 	}
 	upstream.PromotionCount--

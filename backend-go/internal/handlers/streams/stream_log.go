@@ -33,7 +33,7 @@ func logStreamCompletion(c *gin.Context, ctx *Context, envCfg *config.EnvConfig,
 	}
 
 	if envCfg.EnableResponseLogs {
-		logSynthesizedContent(c, ctx)
+		logSynthesizedContent(c, ctx, envCfg.ShouldLog("debug"))
 	}
 
 	// 推断隐式缓存读取
@@ -65,12 +65,12 @@ func logStreamCompletion(c *gin.Context, ctx *Context, envCfg *config.EnvConfig,
 // logPartialResponse 记录部分响应日志
 func logPartialResponse(c *gin.Context, ctx *Context, envCfg *config.EnvConfig) {
 	if envCfg.EnableResponseLogs {
-		logSynthesizedContent(c, ctx)
+		logSynthesizedContent(c, ctx, envCfg.ShouldLog("debug"))
 	}
 }
 
 // logSynthesizedContent 记录合成内容
-func logSynthesizedContent(c *gin.Context, ctx *Context) {
+func logSynthesizedContent(c *gin.Context, ctx *Context, debug bool) {
 	if ctx.Synthesizer != nil {
 		content := ctx.Synthesizer.GetSynthesizedContent()
 		if content != "" && !ctx.Synthesizer.IsParseFailed() {
@@ -84,7 +84,9 @@ func logSynthesizedContent(c *gin.Context, ctx *Context) {
 				}
 			}
 
-			log.Printf("[Messages-Stream] 上游流式响应合成内容:\n%s", utils.RedactSensitivePlaceholdersForLog(strings.TrimSpace(trimmed)))
+			if debug {
+				log.Printf("[Messages-Stream] 上游流式响应合成内容:\n%s", utils.RedactSensitivePlaceholdersForLog(strings.TrimSpace(trimmed)))
+			}
 			if c != nil {
 				logger.RecordStreamSynth(c.Request.Context(), "Messages", strings.TrimSpace(trimmed))
 			}
@@ -93,7 +95,9 @@ func logSynthesizedContent(c *gin.Context, ctx *Context) {
 	}
 	if ctx.LogBuffer.Len() > 0 {
 		raw := ctx.LogBuffer.String()
-		log.Printf("[Messages-Stream] 上游流式响应原始内容:\n%s", utils.RedactSensitivePlaceholdersForLog(raw))
+		if debug {
+			log.Printf("[Messages-Stream] 上游流式响应原始内容:\n%s", utils.RedactSensitivePlaceholdersForLog(raw))
+		}
 		if c != nil {
 			logger.RecordStreamSynth(c.Request.Context(), "Messages", raw)
 		}

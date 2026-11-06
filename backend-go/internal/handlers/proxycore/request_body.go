@@ -78,15 +78,17 @@ func LogOriginalRequest(c *gin.Context, bodyBytes []byte, envCfg *config.EnvConf
 	}
 
 	requestID := BindRequestLogID(c)
-	log.Printf("[Request-Receive] 收到%s请求: %s %s", apiType, c.Request.Method, c.Request.URL.Path)
+	log.Printf("[Request-Receive] requestId=%s 收到%s请求: %s %s", requestID, apiType, c.Request.Method, c.Request.URL.Path)
 
-	var formattedBody string
-	if envCfg.RawLogOutput {
-		formattedBody = utils.FormatJSONBytesRaw(bodyBytes)
-	} else {
-		formattedBody = utils.FormatJSONBytesForLog(bodyBytes, 500)
+	if envCfg.ShouldLog("debug") {
+		var formattedBody string
+		if envCfg.RawLogOutput {
+			formattedBody = utils.FormatJSONBytesRaw(bodyBytes)
+		} else {
+			formattedBody = utils.FormatJSONBytesForLog(bodyBytes, 500)
+		}
+		log.Printf("[Request-OriginalBody] 原始请求体:\n%s", formattedBody)
 	}
-	log.Printf("[Request-OriginalBody] 原始请求体:\n%s", formattedBody)
 
 	sanitizedHeaders := make(map[string]string)
 	for key, values := range c.Request.Header {
@@ -101,7 +103,9 @@ func LogOriginalRequest(c *gin.Context, bodyBytes []byte, envCfg *config.EnvConf
 	} else {
 		headersJSON, _ = json.MarshalIndent(maskedHeaders, "", "  ")
 	}
-	log.Printf("[Request-OriginalHeaders] 原始请求头:\n%s", string(headersJSON))
+	if envCfg.ShouldLog("debug") {
+		log.Printf("[Request-OriginalHeaders] 原始请求头:\n%s", string(headersJSON))
+	}
 
 	logger.RecordTraffic(logger.TrafficLog{
 		RequestID:   requestID,

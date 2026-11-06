@@ -3,6 +3,7 @@
 package main
 
 import (
+	"github.com/BenedictKing/api-proxy/internal/core/channelcrud"
 	"github.com/BenedictKing/api-proxy/internal/handlers"
 	"github.com/BenedictKing/api-proxy/internal/handlers/chat"
 	"github.com/BenedictKing/api-proxy/internal/handlers/gemini"
@@ -35,65 +36,13 @@ func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
 	apiGroup.POST("/security/gate/decisions", handlers.AddGateDecision(a.cmdGate))
 	apiGroup.DELETE("/security/gate/decisions/:conversationId", handlers.RemoveGateDecisions(a.cmdGate))
 
-	// 渠道管理 API 路由（messages/responses/gemini/chat/images 五组收敛为一次调用）
-	// 各渠道类型的 CRUD / key 管理 / pools / reorder / status / promotion / metrics / ping
-	// 全部由 handlers.RegisterChannelRoutes 统一注册，差异点通过 ChannelRouteOptions 表达。
-	channelDeps := handlers.ChannelRouteDeps{
-		Cfg:       a.cfgManager,
-		Scheduler: a.channelScheduler,
-		MetricsByKind: func(kind scheduler.ChannelKind) *metrics.MetricsManager {
-			return a.metricsByKind[kind]
-		},
-		LogStoreByKind: a.channelScheduler.GetChannelLogStore,
-	}
-
-	// Messages 渠道管理
-	handlers.RegisterChannelRoutes(apiGroup, scheduler.ChannelKindMessages, channelDeps, handlers.ChannelRouteOptions{
-		Crud:           messages.Crud(a.cfgManager, a.channelScheduler),
-		LoadBalance:    messages.UpdateLoadBalance(a.cfgManager),
-		Dashboard:      handlers.GetChannelDashboard(a.cfgManager, a.channelScheduler, scheduler.ChannelKindMessages),
-		SchedulerStats: handlers.GetSchedulerStats(a.channelScheduler),
-	})
-
-	// Responses 渠道管理
-	handlers.RegisterChannelRoutes(apiGroup, scheduler.ChannelKindResponses, channelDeps, handlers.ChannelRouteOptions{
-		Crud:        responses.Crud(a.cfgManager, a.channelScheduler),
-		LoadBalance: responses.UpdateLoadBalance(a.cfgManager),
-		Dashboard:   handlers.GetChannelDashboard(a.cfgManager, a.channelScheduler, scheduler.ChannelKindResponses),
-	})
-
-	// Gemini 渠道管理
-	handlers.RegisterChannelRoutes(apiGroup, scheduler.ChannelKindGemini, channelDeps, handlers.ChannelRouteOptions{
-		Crud:        gemini.Crud(a.cfgManager, a.channelScheduler),
-		LoadBalance: gemini.UpdateLoadBalance(a.cfgManager),
-		Dashboard:   handlers.GetChannelDashboard(a.cfgManager, a.channelScheduler, scheduler.ChannelKindGemini),
-	})
-
-	// Chat 渠道管理
-	handlers.RegisterChannelRoutes(apiGroup, scheduler.ChannelKindChat, channelDeps, handlers.ChannelRouteOptions{
-		Crud:        chat.Crud(a.cfgManager, a.channelScheduler),
-		LoadBalance: chat.UpdateLoadBalance(a.cfgManager),
-		Dashboard:   handlers.GetChannelDashboard(a.cfgManager, a.channelScheduler, scheduler.ChannelKindChat),
-	})
-
-	// Images 渠道管理
-	handlers.RegisterChannelRoutes(apiGroup, scheduler.ChannelKindImages, channelDeps, handlers.ChannelRouteOptions{
-		Crud:        images.Crud(a.cfgManager, a.channelScheduler),
-		LoadBalance: images.UpdateLoadBalance(a.cfgManager),
-		Dashboard:   handlers.GetChannelDashboard(a.cfgManager, a.channelScheduler, scheduler.ChannelKindImages),
-	})
+	a.setupChannelAdminAPI(apiGroup)
 
 	// 本代理自身暴露的模型列表（客户端配置页按协议分组导入用，走 Web 鉴权而非代理鉴权）
 	apiGroup.GET("/proxy-models", handlers.ProxyModelsHandler(a.cfgManager))
 
-	// 渠道性能报告（自适应负载均衡）
-	apiGroup.GET("/performance/report", func(c *gin.Context) {
-		reports := a.adaptiveScheduler.GetChannelPerformanceReport()
-		c.JSON(200, gin.H{
-			"success": true,
-			"data":    reports,
-		})
-	})
+	// 性能报告只读取画像，观测和选渠的依赖在装配层分开。
+	apiGroup.GET("/performance/report", handlers.GetChannelPerformanceReport(a.profileManager))
 
 	// 渠道级熔断器（查询 / 手动重置）
 	apiGroup.GET("/circuit-breakers", handlers.GetCircuitBreakers(a.channelScheduler))
@@ -160,7 +109,40 @@ func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
 	apiGroup.DELETE("/skills", a.skillsAPI.Delete())
 	apiGroup.POST("/skills/backup", a.skillsAPI.Backup())
 	a.assistantAPI.Register(apiGroup)
-	handlers.RegisterEvalRoutes(apiGroup, a.evalService)
+}
+
+// setupChannelAdminAPI 装配五协议渠道管理路由，沿用调用方路由组的鉴权。
+func (a *app) setupChannelAdminAPI(apiGroup *gin.RouterGroup) {
+	channelDeps := handlers.ChannelRouteDeps{
+		Cfg:       a.cfgManager,
+		Scheduler: a.channelScheduler,
+		MetricsByKind: func(kind scheduler.ChannelKind) *metrics.MetricsManager {
+			return a.metricsByKind[kind]
+		},
+		LogStoreByKind: a.channelScheduler.GetChannelLogStore,
+	}
+
+	// 每种协议只构造一次 handler 集合，负载均衡复用同一实例。
+	for _, channel := range []struct {
+		kind scheduler.ChannelKind
+		crud *channelcrud.Handlers
+	}{
+		{scheduler.ChannelKindMessages, messages.Crud(a.cfgManager, a.channelScheduler)},
+		{scheduler.ChannelKindResponses, responses.Crud(a.cfgManager, a.channelScheduler)},
+		{scheduler.ChannelKindGemini, gemini.Crud(a.cfgManager, a.channelScheduler)},
+		{scheduler.ChannelKindChat, chat.Crud(a.cfgManager, a.channelScheduler)},
+		{scheduler.ChannelKindImages, images.Crud(a.cfgManager, a.channelScheduler)},
+	} {
+		opts := handlers.ChannelRouteOptions{
+			Crud:        channel.crud,
+			LoadBalance: channel.crud.UpdateLoadBalance,
+			Dashboard:   handlers.GetChannelDashboard(a.cfgManager, a.channelScheduler, channel.kind),
+		}
+		if channel.kind == scheduler.ChannelKindMessages {
+			opts.SchedulerStats = handlers.GetSchedulerStats(a.channelScheduler)
+		}
+		handlers.RegisterChannelRoutes(apiGroup, channel.kind, channelDeps, opts)
+	}
 }
 
 // setupProxyEndpoints 注册五协议代理端点。

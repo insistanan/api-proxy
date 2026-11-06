@@ -9,7 +9,6 @@ import (
 	"github.com/BenedictKing/api-proxy/internal/core/channelcrud"
 	"github.com/BenedictKing/api-proxy/internal/httpclient"
 	"github.com/BenedictKing/api-proxy/internal/scheduler"
-	"github.com/gin-gonic/gin"
 )
 
 // Crud 返回本协议专用的渠道管理 handler 集合。
@@ -39,9 +38,4 @@ func Crud(cfgManager *config.ConfigManager, sch *scheduler.ChannelScheduler) *ch
 		SetPromotion:   cfgManager.SetGeminiChannelPromotion,
 		SetLoadBalance: cfgManager.SetGeminiLoadBalance,
 	}, sch)
-}
-
-// UpdateLoadBalance 更新负载均衡策略（RegisterChannelRoutes 的可选端点）
-func UpdateLoadBalance(cfgManager *config.ConfigManager) gin.HandlerFunc {
-	return Crud(cfgManager, nil).UpdateLoadBalance
 }

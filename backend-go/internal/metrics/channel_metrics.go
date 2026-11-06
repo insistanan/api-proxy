@@ -18,6 +18,7 @@ func NewMetricsManager() *MetricsManager {
 		failureThreshold:    0.5,              // 默认 50% 失败率阈值
 		circuitRecoveryTime: 15 * time.Minute, // 默认 15 分钟自动恢复
 		stopCh:              make(chan struct{}),
+		doneCh:              make(chan struct{}),
 	}
 	// 启动后台熔断恢复任务
 	go m.cleanupCircuitBreakers()
@@ -38,6 +39,7 @@ func NewMetricsManagerWithConfig(windowSize int, failureThreshold float64) *Metr
 		failureThreshold:    failureThreshold,
 		circuitRecoveryTime: 15 * time.Minute,
 		stopCh:              make(chan struct{}),
+		doneCh:              make(chan struct{}),
 	}
 	// 启动后台熔断恢复任务
 	go m.cleanupCircuitBreakers()
@@ -58,6 +60,7 @@ func NewMetricsManagerWithPersistence(windowSize int, failureThreshold float64, 
 		failureThreshold:    failureThreshold,
 		circuitRecoveryTime: 15 * time.Minute,
 		stopCh:              make(chan struct{}),
+		doneCh:              make(chan struct{}),
 		store:               store,
 		apiType:             apiType,
 	}

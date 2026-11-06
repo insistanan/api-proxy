@@ -7,7 +7,6 @@
 - 多渠道池化调度与故障转移，五协议统一入口互转（Claude Messages / OpenAI Responses / Gemini / OpenAI Chat / Images）
 - 客户端伪装与一键配置页（Claude Code / Codex / OpenCode / pi-agent / DSH / GPT）
 - 内容安全：敏感数据检测、可逆脱敏、危险命令 AI 闸门
-- 渠道评测工作台（探针 / 评分 / 批次回看）
 - Go 后端 + Vue 3 前端，前端产物 `go:embed` 嵌入，单二进制单端口（默认 3000）一体化部署
 
 单 Go module：`github.com/BenedictKing/api-proxy`（Go 1.25），无 go workspace。

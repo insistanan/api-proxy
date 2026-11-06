@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 	"sync"
 
 	"github.com/BenedictKing/api-proxy/internal/circuit"
@@ -316,10 +317,9 @@ func (s *ChannelScheduler) GetChannelInFlight(kind ChannelKind, channelIndex int
 }
 
 // SelectChannel 按配置的故障转移顺序选择渠道。
-// 优先级: 对话路由覆盖 > 当前分组中按顺序排列的第一个可用渠道 > 兜底分组。
+// 优先级: 对话路由覆盖 > 命中分组内健康促销渠道 > 配置顺序 > 兜底分组。
 //
-// 渠道顺序是显式配置，不再由促销、对话亲和、自适应评分、负载或稳定散列改写。
-// 这样每个请求都会先尝试第一个渠道，只有该渠道失败后才进入下一个渠道。
+// 促销结束后恢复配置顺序；对话亲和、自适应评分、负载不改变故障转移顺序。
 //
 // 图片不参与选渠：是否直接处理图片或启用图片理解层，由被选中渠道的配置在
 // 请求发送前决定（见 prepareRequestForUpstream → visionlayer.PrepareRequest）。
@@ -393,7 +393,7 @@ func (s *ChannelScheduler) SelectChannel(
 		return nil, noActiveChannelError(kind)
 	}
 
-	// 严格按配置优先级选择第一个可用渠道。failedChannels 只记录本次请求已经
+	// 按分组内临时促销和配置优先级选择可用渠道。failedChannels 只记录本次请求已经
 	// 失败的渠道，因此外层 failover 会自然推进到下一个渠道。
 	if selected := s.selectPriorityChannel(activeChannels, failedChannels, kind, requestedModel, s.getMetricsManager(kind)); selected != nil {
 		result, err := s.reserveAndReturn(selected, kind)
@@ -490,13 +490,6 @@ func (s *ChannelScheduler) selectPriorityChannel(
 	requestedModel string,
 	metricsManager *metrics.MetricsManager,
 ) *SelectionResult {
-	type priorityCandidate struct {
-		channel  ChannelInfo
-		upstream *config.UpstreamConfig
-	}
-	var samePriorityCandidates []priorityCandidate
-	currentPriority := -1
-
 	for _, ch := range activeChannels {
 		if failedChannels[ch.Index] {
 			continue
@@ -528,36 +521,23 @@ func (s *ChannelScheduler) selectPriorityChannel(
 			continue
 		}
 
-		if len(samePriorityCandidates) == 0 {
-			currentPriority = ch.Priority
-		} else if ch.Priority != currentPriority {
-			break
+		// 候选已按促销和配置顺序排列，首个通过准入的渠道即为本次选择。
+		prefix := kindSchedulerLogPrefix(kind)
+		log.Printf("[%s-Channel] 选择渠道: [%d] %s (配置优先级: %d, 促销: %t)",
+			prefix, ch.Index, upstream.Name, ch.Priority, ch.Promoted)
+		reason := "priority_order"
+		if ch.Promoted {
+			reason = "promotion"
 		}
-		samePriorityCandidates = append(samePriorityCandidates, priorityCandidate{
-			channel:  ch,
-			upstream: upstream,
-		})
+		return &SelectionResult{
+			Upstream:     upstream,
+			ChannelIndex: ch.Index,
+			Reason:       reason,
+			// Peek 不占探测名额，选中后仍须正式取得许可。
+			probeIntent: true,
+		}
 	}
-
-	if len(samePriorityCandidates) == 0 {
-		return nil
-	}
-	// 同一优先级也保持配置顺序，不再按 in-flight 或动态评分选择，避免请求
-	// 在多个渠道之间随机分散。reorder 接口会为每个分组写入连续优先级，
-	// 因此这里的第一个候选就是本次应该优先尝试的渠道。
-	best := samePriorityCandidates[0]
-	bestLoad := s.GetChannelInFlight(kind, best.channel.Index)
-	prefix := kindSchedulerLogPrefix(kind)
-	log.Printf("[%s-Channel] 选择渠道: [%d] %s (配置优先级: %d, 动态分数: %.1f, inFlight: %d, samePriorityCandidates: %d)",
-		prefix, best.channel.Index, best.upstream.Name, best.channel.Priority, best.channel.Score, bestLoad, len(samePriorityCandidates))
-	return &SelectionResult{
-		Upstream:     best.upstream,
-		ChannelIndex: best.channel.Index,
-		Reason:       "priority_order",
-		// Peek 预检通过不代表已占位；标记待 reserveAndReturn 以 CircuitAllow
-		// 正式占用（可能取得 HalfOpen 探测名额）。
-		probeIntent: true,
-	}
+	return nil
 }
 
 // hasAttemptableChannel 判断当前分组是否仍有渠道值得在本次请求中尝试。
@@ -583,13 +563,6 @@ func (s *ChannelScheduler) hasAttemptableChannel(
 		return true
 	}
 	return false
-}
-
-// allowByCircuit 渠道级熔断放行判定。未启用（circuitManager 为 nil）时恒放行。
-// Open 未到期返回 false；冷却到期惰性转 HalfOpen 并占用探测名额放行。
-// 探测名额由渠道级记账（scheduler 层 RecordCircuit* 系列）释放。
-func (s *ChannelScheduler) allowByCircuit(kind ChannelKind, channelIndex int, channelName string) bool {
-	return s.AllowChannelByCircuit(kind, channelIndex, channelName)
 }
 
 // allowByCircuitPeek 渠道级熔断预判（选渠候选过滤用）：只读不占探测名额。
@@ -739,7 +712,15 @@ func (s *ChannelScheduler) selectFallbackChannel(
 	failedChannels map[int]bool,
 	kind ChannelKind,
 ) (*SelectionResult, error) {
-	for _, channel := range activeChannels {
+	// 不健康渠道只按配置顺序参与恢复探测，促销不会增加探测优先级。
+	candidates := append([]ChannelInfo(nil), activeChannels...)
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].Priority != candidates[j].Priority {
+			return candidates[i].Priority < candidates[j].Priority
+		}
+		return candidates[i].Index < candidates[j].Index
+	})
+	for _, channel := range candidates {
 		ch := &channel
 		if failedChannels[ch.Index] {
 			continue
@@ -768,12 +749,4 @@ func (s *ChannelScheduler) selectFallbackChannel(
 	}
 
 	return nil, fmt.Errorf("所有渠道都不可用")
-}
-
-// maskConversationID 掩码内部 conversation record ID（保护隐私）。
-func maskConversationID(conversationID string) string {
-	if len(conversationID) <= 16 {
-		return "***"
-	}
-	return conversationID[:8] + "***" + conversationID[len(conversationID)-4:]
 }

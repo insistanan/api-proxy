@@ -176,14 +176,10 @@ func (m *MetricsManager) ResetAll() {
 	m.keyMetrics = make(map[string]*KeyMetrics)
 }
 
-// Stop 停止后台清理任务（幂等，重复调用安全）
+// Stop 停止并等待后台清理退出；并发或重复调用共享同一次关闭。
 func (m *MetricsManager) Stop() {
-	select {
-	case <-m.stopCh:
-		// already closed
-	default:
-		close(m.stopCh)
-	}
+	m.stopOnce.Do(func() { close(m.stopCh) })
+	<-m.doneCh
 }
 
 // DeleteKeysForChannel 删除指定渠道的所有内存指标
@@ -243,6 +239,7 @@ func (m *MetricsManager) DeleteChannelMetrics(baseURLs, apiKeys []string, channe
 
 // cleanupCircuitBreakers 后台任务：定期检查并恢复超时的熔断 Key，清理过期指标
 func (m *MetricsManager) cleanupCircuitBreakers() {
+	defer close(m.doneCh)
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 

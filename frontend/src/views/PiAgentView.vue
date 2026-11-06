@@ -2,8 +2,8 @@
   <div class="agent-config-page piagent-page">
     <AgentConfigHeader title="pi 配置" subtitle="管理当前服务运行用户的 pi-agent 模型供应商">
       <template #default>
-        <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="loadAll">刷新</v-btn>
-        <v-btn color="primary" prepend-icon="mdi-content-save" :loading="savingProvider" :disabled="!selectedProvider" @click="saveSelectedProvider">保存</v-btn>
+        <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="editorBusy || deleteProviderDialog" @click="loadAll">刷新</v-btn>
+        <v-btn color="primary" prepend-icon="mdi-content-save" :loading="savingProvider" :disabled="!selectedProvider || loading || editorBusy || deleteProviderDialog" @click="saveSelectedProvider">保存</v-btn>
       </template>
     </AgentConfigHeader>
 
@@ -23,7 +23,7 @@
 
     <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-4" />
 
-    <template v-if="!disabled && !loading">
+    <fieldset v-if="!disabled && !loading" :disabled="editorBusy || deleteProviderDialog" :inert="editorBusy || deleteProviderDialog" class="agent-config-editor">
       <AgentConfigLocation v-if="status" label="配置目录" :path="status.configDir">
         <v-chip v-if="!status.exists" size="x-small" color="warning" label>目录不存在</v-chip>
         <v-chip v-else-if="!status.writable" size="x-small" color="error" label>不可写</v-chip>
@@ -269,7 +269,7 @@
           </v-card>
         </v-col>
       </v-row>
-    </template>
+    </fieldset>
 
     <v-dialog v-model="deleteProviderDialog" max-width="500" :persistent="deletingProvider">
       <v-card>
@@ -306,7 +306,7 @@ import { useAuthStore } from '@/stores/auth'
 const loading = ref(false)
 const disabled = ref(false)
 const loadError = ref('')
-const notice = ref({ visible: false, type: 'success' as 'success' | 'error', message: '' })
+const notice = ref({ visible: false, type: 'success' as 'success' | 'error' | 'warning', message: '' })
 const status = ref<PiAgentStatus | null>(null)
 
 const apiProtocols = [
@@ -405,6 +405,7 @@ const providerToDelete = ref<{
 } | null>(null)
 const testing = ref(false)
 const discovering = ref(false)
+const preparingProvider = ref(false)
 
 const selectedProvider = computed(() => providers.value.find(p => p.localId === selectedProviderId.value) ?? null)
 const isExistingProvider = computed(() => Boolean(selectedProvider.value?.persisted))
@@ -434,16 +435,23 @@ const quickPickTypeOptions = defaultQuickPickTypeOptions
 
 const applyProtocol = async (type: ApiTab, defaultBaseUrl: Promise<string>) => {
   const provider = selectedProvider.value
-  if (!provider) return
-  // 自动切换协议
-  provider.api = protocolForChannelType[type]
-  // Base URL 默认填本代理地址，可手动改；OpenAI 协议 SDK 不会自动补 /v1，需要显式带上
-  const proxyBaseUrl = (await defaultBaseUrl).replace(/\/$/, '')
-  provider.baseUrl = provider.api.startsWith('openai-') ? `${proxyBaseUrl}/v1` : proxyBaseUrl
-  // 密钥填本代理访问 key（Web 鉴权与代理鉴权共用同一 key）
-  const authStore = useAuthStore()
-  if (authStore.apiKey) {
-    provider.apiKey = authStore.apiKey
+  if (!provider || editorBusy.value || loading.value) return
+  preparingProvider.value = true
+  try {
+    const proxyBaseUrl = (await defaultBaseUrl).replace(/\/$/, '')
+    // 自动切换协议
+    provider.api = protocolForChannelType[type]
+    // Base URL 默认填本代理地址，可手动改；OpenAI 协议 SDK 不会自动补 /v1，需要显式带上
+    provider.baseUrl = provider.api.startsWith('openai-') ? `${proxyBaseUrl}/v1` : proxyBaseUrl
+    // 密钥填本代理访问 key（Web 鉴权与代理鉴权共用同一 key）
+    const authStore = useAuthStore()
+    if (authStore.apiKey) {
+      provider.apiKey = authStore.apiKey
+    }
+  } catch (error) {
+    handleApiError(error, '连接本代理失败')
+  } finally {
+    preparingProvider.value = false
   }
 }
 
@@ -584,15 +592,17 @@ const addModel = () => {
 // 一键导入本代理模型（按所选协议分组，导入即替换）
 const importProxyModelsToProvider = async () => {
   const provider = selectedProvider.value
-  if (!provider || !quickPickType.value) return
+  const type = quickPickType.value
+  if (!provider || !type || editorBusy.value || loading.value) return
+  preparingProvider.value = true
   try {
     const response = await api.getProxyModels()
-    const modelIds = filterProxyModelsByKind(response.data, quickPickType.value)
+    const modelIds = filterProxyModelsByKind(response.data, type)
     if (modelIds.length === 0) {
-      notice.value = { visible: true, type: 'error', message: `本代理 ${quickPickType.value} 协议分组下暂无模型，请先在渠道管理中配置分组` }
+      notice.value = { visible: true, type: 'error', message: `本代理 ${type} 协议分组下暂无模型，请先在渠道管理中配置分组` }
       return
     }
-    const count = importProxyModels(quickPickType.value, modelIds, buildPiAgentModel, (models) => {
+    const count = importProxyModels(type, modelIds, buildPiAgentModel, (models) => {
       provider.models = models.map(m => ({
         localId: localID(),
         id: m.id,
@@ -616,9 +626,11 @@ const importProxyModelsToProvider = async () => {
         compatText: ''
       }))
     })
-    notice.value = { visible: true, type: 'success', message: `已导入本代理 ${quickPickType.value} 分组的 ${count} 个模型（已替换原有模型）` }
+    notice.value = { visible: true, type: 'success', message: `已导入本代理 ${type} 分组的 ${count} 个模型（已替换原有模型）` }
   } catch (importError) {
     handleApiError(importError, '获取本代理模型列表失败')
+  } finally {
+    preparingProvider.value = false
   }
 }
 
@@ -629,7 +641,8 @@ const removeModel = (index: number) => {
 
 const saveSelectedProvider = async () => {
   const provider = selectedProvider.value
-  if (!provider) return
+  if (!provider || editorBusy.value || loading.value || deleteProviderDialog.value) return
+  let written = false
   savingProvider.value = true
   try {
     if (!provider.id.trim()) throw new Error('供应商标识不能为空')
@@ -645,10 +658,18 @@ const saveSelectedProvider = async () => {
       providersRevision.value = result.revision
       notice.value = { visible: true, type: 'success', message: `已创建供应商 ${provider.id}` }
     }
-    await loadProviders()
-    selectedProviderId.value = providers.value.find(p => p.id === provider.id)?.localId ?? ''
+    written = true
+    provider.persisted = true
+    provider.id = provider.id.trim()
+    const refreshed = await api.getPiAgentProviders()
+    const saved = refreshed.providers.find(p => p.id === provider.id)
+    if (!saved) throw new Error(`保存后未找到供应商 ${provider.id}`)
+    // 只刷新本次保存的供应商，其余供应商的未保存草稿保留。
+    const updated = { ...toEditableProvider(saved), localId: provider.localId }
+    providers.value = providers.value.map(p => p.localId === provider.localId ? updated : p)
   } catch (error) {
-    handleApiError(error, '保存供应商失败')
+    if (written) notice.value = { visible: true, type: 'warning', message: `供应商已保存，但刷新失败: ${error instanceof Error ? error.message : '未知错误'}。请勿重复创建` }
+    else handleApiError(error, '保存供应商失败')
   } finally {
     savingProvider.value = false
   }
@@ -695,7 +716,7 @@ const confirmDeleteProvider = async () => {
 
 const testProvider = async () => {
   const provider = selectedProvider.value
-  if (!provider) return
+  if (!provider || editorBusy.value || loading.value || deleteProviderDialog.value) return
   testing.value = true
   try {
     if (!provider.baseUrl.trim()) throw new Error('请先填写 Base URL')
@@ -714,7 +735,7 @@ const testProvider = async () => {
 
 const discoverModels = async () => {
   const provider = selectedProvider.value
-  if (!provider) return
+  if (!provider || editorBusy.value || loading.value || deleteProviderDialog.value) return
   discovering.value = true
   try {
     if (!provider.baseUrl.trim()) throw new Error('请先填写 Base URL')
@@ -746,8 +767,10 @@ const discoverModels = async () => {
 const modelSettings = ref({ defaultProvider: '', defaultModel: '', defaultThinkingLevel: '', enabledModels: [] as string[] })
 const settingsRevision = ref('')
 const savingSettings = ref(false)
+const editorBusy = computed(() => savingProvider.value || savingSettings.value || deletingProvider.value || testing.value || discovering.value || preparingProvider.value)
 
 const saveModelSettings = async () => {
+  if (editorBusy.value || loading.value || deleteProviderDialog.value) return
   savingSettings.value = true
   try {
     const result = await api.updatePiAgentModelSettings({
@@ -777,55 +800,43 @@ const handleApiError = (error: unknown, fallback: string) => {
     return notice.value.message
   }
   if (apiError?.code === 'revision_conflict' || apiError?.code === 'revision_required') {
-    notice.value = { visible: true, type: 'error', message: apiError.code === 'revision_required' ? '操作需要最新配置版本，正在刷新，请刷新完成后重试' : '配置文件已被外部修改，正在刷新，请刷新完成后重试' }
-    void loadAll(true)
+    notice.value = { visible: true, type: 'error', message: '配置版本已失效，当前编辑已保留。请先记录需要保留的修改，再刷新配置后重新编辑' }
     return notice.value.message
   }
   notice.value = { visible: true, type: 'error', message: apiError?.message || fallback }
   return notice.value.message
 }
 
-const loadStatus = async (): Promise<boolean> => {
+const applyProviders = (result: Awaited<ReturnType<typeof api.getPiAgentProviders>>) => {
+  providersRevision.value = result.revision
+  const prevSelectionId = selectedProvider.value?.id ?? ''
+  providers.value = result.providers.map(toEditableProvider)
+  const target = prevSelectionId ? providers.value.find(p => p.id === prevSelectionId) : undefined
+  selectedProviderId.value = target?.localId ?? providers.value[0]?.localId ?? ''
+}
+
+const applyModelSettings = (result: Awaited<ReturnType<typeof api.getPiAgentModelSettings>>) => {
+  settingsRevision.value = result.revision
+  modelSettings.value = {
+    defaultProvider: result.settings.defaultProvider ?? '',
+    defaultModel: result.settings.defaultModel ?? '',
+    defaultThinkingLevel: result.settings.defaultThinkingLevel ?? '',
+    enabledModels: result.settings.enabledModels ?? []
+  }
+}
+
+const loadAll = async () => {
+  if (loading.value || editorBusy.value || deleteProviderDialog.value) return
+  loading.value = true
+  loadError.value = ''
   try {
     status.value = await api.getPiAgentStatus()
     disabled.value = false
-    return true
-  } catch (error) { handleApiError(error, '加载 pi-agent 状态失败') }
-  return false
-}
-
-const loadProviders = async () => {
-  try {
-    const result = await api.getPiAgentProviders()
-    providersRevision.value = result.revision
-    const prevSelectionId = selectedProvider.value?.id ?? ''
-    providers.value = result.providers.map(toEditableProvider)
-    const target = prevSelectionId ? providers.value.find(p => p.id === prevSelectionId) : undefined
-    selectedProviderId.value = target?.localId ?? providers.value[0]?.localId ?? ''
-  } catch (error) { handleApiError(error, '加载供应商失败') }
-}
-
-const loadModelSettings = async () => {
-  try {
-    const result = await api.getPiAgentModelSettings()
-    settingsRevision.value = result.revision
-    modelSettings.value = {
-      defaultProvider: result.settings.defaultProvider ?? '',
-      defaultModel: result.settings.defaultModel ?? '',
-      defaultThinkingLevel: result.settings.defaultThinkingLevel ?? '',
-      enabledModels: result.settings.enabledModels ?? []
-    }
-  } catch (error) { handleApiError(error, '加载默认模型设置失败') }
-}
-
-const loadAll = async (silent = false) => {
-  if (!silent) loading.value = true
-  loadError.value = ''
-  try {
-    if (!await loadStatus() || disabled.value) return
-    await Promise.all([loadProviders(), loadModelSettings()])
+    const [loadedProviders, loadedSettings] = await Promise.all([api.getPiAgentProviders(), api.getPiAgentModelSettings()])
+    applyProviders(loadedProviders)
+    applyModelSettings(loadedSettings)
   } catch (error) {
-    loadError.value = error instanceof Error ? error.message : '加载 pi-agent 配置失败'
+    loadError.value = handleApiError(error, '加载 pi-agent 配置失败')
   } finally {
     loading.value = false
   }

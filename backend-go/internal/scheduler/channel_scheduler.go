@@ -23,14 +23,12 @@ type ChannelScheduler struct {
 	conversationRegistry *conversation.Registry
 	urlManager           *urlhealth.URLManager   // URL 管理器（非阻塞，动态排序）
 	profileManager       *metrics.ProfileManager // 性能画像管理器
-	adaptiveScheduler    *AdaptiveScheduler      // 自适应调度器
 	circuitManager       *circuit.Manager        // 渠道级三态熔断器（nil 表示未启用）
 	// inFlightByKind 记录选渠后、真正发出上游请求前的在途预留。
-	// 让并发对话在 StartRequest 之前就能看到彼此占用，从而分摊到不同供应商。
+	// 用于许可生命周期和在途观测，不参与渠道排序。
 	inFlightByKind map[ChannelKind]map[int]int64
 
-	// stopOnce 保证 Stop 幂等：下属组件的 Stop（BaseURLAffinityManager 除外）
-	// 是裸 close(channel)，重复调用会 panic。
+	// stopOnce 保证聚合停止只执行一次，下属组件也支持并发停止并等待任务退出。
 	stopOnce sync.Once
 }
 
@@ -112,7 +110,7 @@ func (s *ChannelScheduler) getMetricsManager(kind ChannelKind) *metrics.MetricsM
 // 幂等，可安全多次调用；必须在 main 关闭持久化存储（metricsStore 等）之前
 // 调用，保证"先停数据生产者、再关存储"的顺序。
 // 不含 conversationRegistry / sessionManager 等由 main 直接创建并 defer
-// 停止的组件；AdaptiveScheduler 与 URLManager 为纯内存计算，无后台循环。
+// 停止的组件；URLManager 为纯内存计算，无后台循环。
 func (s *ChannelScheduler) Stop() {
 	if s == nil {
 		return
@@ -193,16 +191,6 @@ func (s *ChannelScheduler) GetProfileManager() *metrics.ProfileManager {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.profileManager
-}
-
-// SetAdaptiveScheduler 设置自适应调度器
-func (s *ChannelScheduler) SetAdaptiveScheduler(as *AdaptiveScheduler) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.adaptiveScheduler = as
 }
 
 // MetricsManager 按渠道类型返回对应的指标管理器，是外部取用指标管理器的唯一入口。

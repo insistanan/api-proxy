@@ -539,6 +539,8 @@ type ConfigManager struct {
 	maxFailureCount int
 	stopChan        chan struct{} // 用于通知 goroutine 停止
 	closeOnce       sync.Once     // 确保 Close 只执行一次
+	closeErr        error
+	workers         sync.WaitGroup
 
 	// persistedDigest 是当前已持久化配置的内容摘要（R3）。
 	// 仅用于 watcher 重载去重（避免自身提交触发“保存→重载→再保存”循环），
@@ -697,6 +699,7 @@ func (cm *ConfigManager) clearFailedKeysForUpstream(upstream *UpstreamConfig, ap
 
 // cleanupExpiredFailures 清理过期的失败记录
 func (cm *ConfigManager) cleanupExpiredFailures() {
+	defer cm.workers.Done()
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 

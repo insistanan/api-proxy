@@ -2,8 +2,8 @@
   <div class="agent-config-page opencode-page">
     <AgentConfigHeader title="OpenCode 配置" subtitle="管理当前服务运行用户的 OpenCode 模型提供商和默认模型">
       <template #default>
-        <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="loadConfig">刷新</v-btn>
-        <v-btn color="primary" prepend-icon="mdi-content-save" :loading="saving" :disabled="loading" @click="saveConfig">保存配置</v-btn>
+        <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="editorBusy" @click="loadConfig">刷新</v-btn>
+        <v-btn color="primary" prepend-icon="mdi-content-save" :loading="saving" :disabled="loading || editorBusy || !config" @click="saveConfig">保存配置</v-btn>
       </template>
     </AgentConfigHeader>
 
@@ -15,7 +15,7 @@
 
     <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-5" />
 
-    <template v-else>
+    <fieldset v-else :disabled="editorBusy" :inert="editorBusy" class="agent-config-editor">
       <AgentConfigLocation
         :label="config?.exists ? '当前配置文件' : '首次保存将创建配置文件'"
         :path="config?.path"
@@ -228,7 +228,7 @@
         </v-col>
       </v-row>
 
-    </template>
+    </fieldset>
 
     <AgentPromptCard agent="opencode" class="mt-5" />
 
@@ -311,6 +311,8 @@ function makeDefaultVariants(): EditableVariant[] {
 
 const loading = ref(false)
 const saving = ref(false)
+const preparingProvider = ref(false)
+const editorBusy = computed(() => saving.value || preparingProvider.value)
 const loadError = ref('')
 const config = ref<OpenCodeConfig | null>(null)
 const providers = ref<EditableProvider[]>([])
@@ -331,17 +333,25 @@ const protocolForChannelType: Record<ApiTab, OpenCodeProtocol> = {
 
 const applyProtocol = async (type: ApiTab, defaultBaseUrl: Promise<string>) => {
   const provider = selectedProvider.value
-  if (!provider) return
-  // 自动切换协议与 SDK 包
-  provider.protocol = protocolForChannelType[type]
-  applyProtocolNpm(provider)
-  // Base URL 默认填本代理地址，可手动改
-  provider.baseUrl = await defaultBaseUrl
-  // 密钥填本代理访问 key（Web 鉴权与代理鉴权共用同一 key）
-  const authStore = useAuthStore()
-  if (authStore.apiKey) {
-    provider.apiKey = authStore.apiKey
-    provider.apiKeyAction = 'replace'
+  if (!provider || editorBusy.value || loading.value) return
+  preparingProvider.value = true
+  try {
+    const baseUrl = await defaultBaseUrl
+    // 自动切换协议与 SDK 包
+    provider.protocol = protocolForChannelType[type]
+    applyProtocolNpm(provider)
+    // Base URL 默认填本代理地址，可手动改
+    provider.baseUrl = baseUrl
+    // 密钥填本代理访问 key（Web 鉴权与代理鉴权共用同一 key）
+    const authStore = useAuthStore()
+    if (authStore.apiKey) {
+      provider.apiKey = authStore.apiKey
+      provider.apiKeyAction = 'replace'
+    }
+  } catch (error) {
+    notice.value = { visible: true, type: 'error', message: error instanceof Error ? error.message : '连接本代理失败' }
+  } finally {
+    preparingProvider.value = false
   }
 }
 
@@ -413,18 +423,25 @@ const toEditableProvider = (provider: OpenCodeProvider): EditableProvider => ({
 })
 
 const loadConfig = async () => {
+  if (loading.value || editorBusy.value) return
   loading.value = true
   loadError.value = ''
   try {
     const loaded = await api.getOpenCodeConfig()
-    config.value = loaded
-    providers.value = loaded.providers.map(toEditableProvider)
-    selectedProviderId.value = providers.value[0]?.id ?? ''
+    applyLoadedConfig(loaded)
   } catch (error) {
     loadError.value = error instanceof Error ? error.message : '加载 OpenCode 配置失败'
   } finally {
     loading.value = false
   }
+}
+
+const applyLoadedConfig = (loaded: OpenCodeConfig) => {
+  const selectedId = selectedProviderId.value
+  config.value = loaded
+  providers.value = loaded.providers.map(toEditableProvider)
+  selectedProviderId.value = providers.value.some(provider => provider.id === selectedId)
+    ? selectedId : providers.value[0]?.id ?? ''
 }
 
 const addProvider = () => {
@@ -479,15 +496,17 @@ const addModel = (provider: EditableProvider) => {
 // 一键导入本代理模型（按所选协议分组，导入即替换）
 const importProxyModelsToProvider = async () => {
   const provider = selectedProvider.value
-  if (!provider || !quickPickType.value) return
+  const type = quickPickType.value
+  if (!provider || !type || editorBusy.value || loading.value) return
+  preparingProvider.value = true
   try {
     const response = await api.getProxyModels()
-    const modelIds = filterProxyModelsByKind(response.data, quickPickType.value)
+    const modelIds = filterProxyModelsByKind(response.data, type)
     if (modelIds.length === 0) {
-      notice.value = { visible: true, type: 'error', message: `本代理 ${quickPickType.value} 协议分组下暂无模型，请先在渠道管理中配置分组` }
+      notice.value = { visible: true, type: 'error', message: `本代理 ${type} 协议分组下暂无模型，请先在渠道管理中配置分组` }
       return
     }
-    const count = importProxyModels(quickPickType.value, modelIds, buildOpenCodeModel, (models) => {
+    const count = importProxyModels(type, modelIds, buildOpenCodeModel, (models) => {
       provider.models = models.map(m => ({
         localId: localID(),
         key: m.key,
@@ -502,9 +521,11 @@ const importProxyModelsToProvider = async () => {
         optionsText: ''
       }))
     })
-    notice.value = { visible: true, type: 'success', message: `已导入本代理 ${quickPickType.value} 分组的 ${count} 个模型（已替换原有模型）` }
+    notice.value = { visible: true, type: 'success', message: `已导入本代理 ${type} 分组的 ${count} 个模型（已替换原有模型）` }
   } catch (importError) {
     notice.value = { visible: true, type: 'error', message: importError instanceof Error ? importError.message : '获取本代理模型列表失败' }
+  } finally {
+    preparingProvider.value = false
   }
 }
 
@@ -595,14 +616,21 @@ const prepareProvider = (provider: EditableProvider): SaveOpenCodeProvider => {
 }
 
 const saveConfig = async () => {
+  if (editorBusy.value || loading.value || !config.value) return
   saving.value = true
   try {
-    const payload = { providers: providers.value.map(prepareProvider) }
+    const payload = { providers: providers.value.map(prepareProvider), revision: config.value.revision }
     const response = await api.saveOpenCodeConfig(payload)
+    config.value.revision = response.revision
     notice.value = { visible: true, type: 'success', message: `已保存到 ${response.path}` }
-    await loadConfig()
+    try {
+      applyLoadedConfig(await api.getOpenCodeConfig())
+    } catch (error) {
+      notice.value = { visible: true, type: 'warning', message: `配置已保存，但刷新失败: ${error instanceof Error ? error.message : '未知错误'}。请刷新查看实际状态，请勿重复提交` }
+    }
   } catch (error) {
-    notice.value = { visible: true, type: 'error', message: error instanceof Error ? error.message : '保存 OpenCode 配置失败' }
+    const message = error instanceof Error ? error.message : '保存 OpenCode 配置失败'
+    notice.value = { visible: true, type: 'error', message: `${message}。当前编辑已保留` }
   } finally {
     saving.value = false
   }

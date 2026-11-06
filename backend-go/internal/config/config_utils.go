@@ -239,13 +239,11 @@ func IsChannelSchedulable(upstream *UpstreamConfig) bool {
 
 // IsChannelInPromotion 检查渠道是否处于促销期
 func IsChannelInPromotion(upstream *UpstreamConfig) bool {
-	if upstream.PromotionUntil != nil && time.Now().Before(*upstream.PromotionUntil) {
-		return true
+	// 次数用完会同时清除截止时间；时间到期则立即结束，不能被剩余次数续期。
+	if upstream.PromotionUntil != nil {
+		return time.Now().Before(*upstream.PromotionUntil)
 	}
-	if upstream.PromotionCount > 0 {
-		return true
-	}
-	return false
+	return upstream.PromotionCount > 0
 }
 
 func normalizeChannelStatus(status string) (string, error) {
@@ -409,6 +407,11 @@ func applyLifecycleToUpstreams(upstreams []UpstreamConfig, now time.Time, cleanu
 		before := upstream
 		previousPool := channelStatusPool(&before)
 		prepareUpstreamLifecycle(&upstream, now)
+		if upstream.PromotionUntil != nil && !now.Before(*upstream.PromotionUntil) {
+			upstream.PromotionUntil = nil
+			upstream.PromotionCount = 0
+			changed = true
+		}
 		if lifecycleMetadataChanged(before, upstream) {
 			changed = true
 		}

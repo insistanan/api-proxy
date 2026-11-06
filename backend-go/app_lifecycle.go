@@ -4,10 +4,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
-	"os"
+	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/BenedictKing/api-proxy/internal/config"
@@ -17,7 +19,7 @@ import (
 
 // logStartupInfo 输出启动横幅与服务地址信息。
 func (a *app) logStartupInfo() {
-	fmt.Printf("\n[Server-Startup] API代理服务器已启动\n")
+	fmt.Printf("\n[Server-Startup] API代理服务器正在启动\n")
 	fmt.Printf("[Server-Info] 版本: %s\n", Version)
 	if BuildTime != "unknown" {
 		fmt.Printf("[Server-Info] 构建时间: %s\n", BuildTime)
@@ -85,55 +87,85 @@ func (a *app) watchMappingStoreMode() {
 	}
 }
 
-// shutdown 按依赖逆序停止后台组件并关闭持久化存储。
-// 顺序约束：必须先停调度器（数据生产者）再关指标存储，
-// 避免关闭期间后台循环与存储 Close 产生写并发。
-func (a *app) shutdown() {
-	if a.mappingWatchStop != nil {
-		close(a.mappingWatchStop)
-		<-a.mappingWatchDone
-	}
-	sensitive.SetPersistentMissCallback(nil)
-	sensitive.SetPersistentMappingStore(nil)
-	a.channelScheduler.Stop()
+// appCleanup 记录资源的释放责任；清理顺序由实际构造时的登记顺序决定。
+type appCleanup struct {
+	name  string
+	close func() error
+}
 
-	if a.evalService != nil {
-		a.evalService.Stop()
+func (a *app) registerCleanup(name string, closeResource func() error) {
+	a.cleanups = append(a.cleanups, appCleanup{name: name, close: closeResource})
+}
+
+// shutdown 供启动失败和正常关闭共用。每个资源只清理一次；一项失败不阻断其余清理。
+func (a *app) shutdown() error {
+	if a == nil {
+		return nil
+	}
+	a.shutdownOnce.Do(func() {
+		for i := len(a.cleanups) - 1; i >= 0; i-- {
+			cleanup := a.cleanups[i]
+			if err := cleanup.close(); err != nil {
+				a.shutdownErr = errors.Join(a.shutdownErr, fmt.Errorf("关闭%s失败: %w", cleanup.name, err))
+			}
+		}
+	})
+	return a.shutdownErr
+}
+
+// serveUntilStopped 由调用方等待信号和监听结果；监听失败也会返回装配层释放资源。
+func serveUntilStopped(ctx context.Context, srv *http.Server, shutdownTimeout time.Duration) error {
+	// Shutdown 超时后 Close 只取消连接，不等待 handler；存储仍须等请求实际退出再关闭。
+	handler := srv.Handler
+	if handler == nil {
+		handler = http.DefaultServeMux
+	}
+	var requestMu sync.Mutex
+	var requests sync.WaitGroup
+	accepting := true
+	srv.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestMu.Lock()
+		if !accepting {
+			requestMu.Unlock()
+			http.Error(w, "服务器正在关闭", http.StatusServiceUnavailable)
+			return
+		}
+		requests.Add(1)
+		requestMu.Unlock()
+		defer requests.Done()
+		handler.ServeHTTP(w, r)
+	})
+	defer func() {
+		requestMu.Lock()
+		accepting = false
+		requestMu.Unlock()
+		requests.Wait()
+	}()
+	listenResult := make(chan error, 1)
+	go func() { listenResult <- srv.ListenAndServe() }()
+	select {
+	case err := <-listenResult:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return fmt.Errorf("服务器监听失败: %w", err)
+	case <-ctx.Done():
 	}
 
-	if a.metricsStore != nil {
-		if err := a.metricsStore.Close(); err != nil {
-			log.Printf("[Metrics-Shutdown] 警告: 关闭指标存储时发生错误: %v", err)
-		} else {
-			log.Println("[Metrics-Shutdown] 指标存储已安全关闭")
-		}
+	log.Println("[Server-Shutdown] 收到关闭信号，正在优雅关闭服务器...")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		// 超时后关闭连接，触发请求 context 取消；调用方仍须处理关闭错误。
+		closeErr := srv.Close()
+		<-listenResult
+		return errors.Join(fmt.Errorf("服务器优雅关闭失败: %w", err), closeErr)
 	}
-
-	a.conversationRegistry.Stop()
-	a.sessionManager.Stop()
-	if a.assistantService != nil {
-		if err := a.assistantService.Close(); err != nil {
-			log.Printf("[Assistant-Shutdown] 关闭 AI 配置助手存储失败: %v", err)
-		}
+	if err := <-listenResult; err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("服务器监听失败: %w", err)
 	}
-	if err := a.blockedStore.Close(); err != nil {
-		log.Printf("[ContentSafety-Shutdown] 关闭拦截记录存储失败: %v", err)
-	}
-	if a.gateStore != nil {
-		if err := a.gateStore.Close(); err != nil {
-			log.Printf("[Gate-Shutdown] 关闭闸门存储失败: %v", err)
-		}
-	}
-	if a.mappingStore != nil {
-		if err := a.mappingStore.Close(); err != nil {
-			log.Printf("[SensitiveData-Shutdown] 关闭持久映射库失败: %v", err)
-		}
-	}
-	a.cfgManager.Close()
-	a.requestLogStore.Close()
-	if err := a.logStore.Close(); err != nil {
-		fmt.Fprintf(os.Stderr, "[Logger-Shutdown] 关闭日志存储失败: %v\n", err)
-	}
+	log.Println("[Server-Shutdown] 服务器已安全关闭")
+	return nil
 }
 
 func syncUpstreamProfiles(mm *metrics.MetricsManager, pm *metrics.ProfileManager, upstream *config.UpstreamConfig, channelIdx int) {

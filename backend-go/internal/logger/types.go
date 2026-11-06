@@ -3,7 +3,7 @@ package logger
 import "encoding/json"
 
 const (
-	// DefaultDBPath 与 eval.db / conversations.db 一样落在 .config。
+	// DefaultDBPath 与 conversations.db 一样落在 .config。
 	DefaultDBPath = ".config/logs.db"
 
 	// MaxBodyBytes 单条流量正文硬顶（sanitize 之后）。
@@ -13,6 +13,10 @@ const (
 	PhaseUpstreamRequest  = "upstream_request"
 	PhaseUpstreamResponse = "upstream_response"
 	PhaseStreamSynth      = "stream_synth"
+	PhaseRequestStart     = "request_start"
+	PhaseRequestEnd       = "request_end"
+	PhaseUpstreamError    = "upstream_error"
+	PhaseUpstreamHeaders  = "upstream_headers"
 
 	writeQueueSize = 8192
 )
@@ -79,18 +83,39 @@ type SystemLogListOptions struct {
 
 // SystemLogSummary 是一次大模型请求的流量摘要（不含正文）。
 type SystemLogSummary struct {
-	RequestID     string   `json:"requestId"`
-	Timestamp     string   `json:"timestamp"`
-	UnixMilli     int64    `json:"unixMilli"`
-	APIType       string   `json:"apiType,omitempty"`
-	Phases        []string `json:"phases"`
-	MissingPhases []string `json:"missingPhases,omitempty"`
-	StatusCode    int      `json:"statusCode,omitempty"`
-	Stream        bool     `json:"stream"`
-	Truncated     bool     `json:"truncated"`
-	ChannelName   string   `json:"channelName,omitempty"`
-	Model         string   `json:"model,omitempty"`
-	Status        string   `json:"status,omitempty"`
+	RequestID      string   `json:"requestId"`
+	Timestamp      string   `json:"timestamp"`
+	UnixMilli      int64    `json:"unixMilli"`
+	APIType        string   `json:"apiType,omitempty"`
+	Phases         []string `json:"phases"`
+	MissingPhases  []string `json:"missingPhases,omitempty"`
+	StatusCode     int      `json:"statusCode,omitempty"`
+	Stream         bool     `json:"stream"`
+	Truncated      bool     `json:"truncated"`
+	ChannelName    string   `json:"channelName,omitempty"`
+	Model          string   `json:"model,omitempty"`
+	Status         string   `json:"status,omitempty"`
+	ConversationID string   `json:"conversationId,omitempty"`
+	RequestHash    string   `json:"requestHash,omitempty"`
+	Client         string   `json:"client,omitempty"`
+	ErrorType      string   `json:"errorType,omitempty"`
+	ErrorMessage   string   `json:"errorMessage,omitempty"`
+	StartedAt      int64    `json:"startedAt,omitempty"`
+}
+
+// RequestLifecycle 只记录身份和结果，不重复保存请求正文。
+type RequestLifecycle struct {
+	Stream         bool   `json:"stream"`
+	ConversationID string `json:"conversationId,omitempty"`
+	RequestHash    string `json:"requestHash,omitempty"`
+	Client         string `json:"client,omitempty"`
+	BootID         string `json:"bootId,omitempty"`
+	Model          string `json:"model,omitempty"`
+	Status         string `json:"status,omitempty"`
+	StatusCode     int    `json:"statusCode,omitempty"`
+	ErrorType      string `json:"errorType,omitempty"`
+	ErrorMessage   string `json:"errorMessage,omitempty"`
+	StartedAt      int64  `json:"startedAt"`
 }
 
 // SystemLogDetail 是一次请求的流量正文详情。

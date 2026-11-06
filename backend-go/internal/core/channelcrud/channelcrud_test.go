@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/BenedictKing/api-proxy/internal/atomicfile"
 	"github.com/BenedictKing/api-proxy/internal/config"
@@ -16,6 +17,46 @@ import (
 	"github.com/BenedictKing/api-proxy/internal/session"
 	"github.com/gin-gonic/gin"
 )
+
+func TestPromotionInputValidationBeforeWrite(t *testing.T) {
+	for _, input := range []struct {
+		body   string
+		status int
+	}{
+		{`{"duration":-1,"count":1}`, http.StatusBadRequest},
+		{`{"duration":1,"count":-1}`, http.StatusBadRequest},
+		{`{"duration":9223372037,"count":1}`, http.StatusBadRequest},
+		{`{"duration":60,"count":2}`, http.StatusOK},
+		{`{"duration":0,"count":0}`, http.StatusOK},
+	} {
+		t.Run(input.body, func(t *testing.T) {
+			called := false
+			h := New(Ops{SetPromotion: func(_ int, duration time.Duration, count int) error {
+				called = true
+				requireDuration := time.Duration(0)
+				if input.body == `{"duration":60,"count":2}` {
+					requireDuration = time.Minute
+					if count != 2 {
+						t.Fatalf("次数 = %d", count)
+					}
+				}
+				if duration != requireDuration {
+					t.Fatalf("时长 = %v", duration)
+				}
+				return nil
+			}}, nil)
+			rr := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(rr)
+			ctx.Params = gin.Params{{Key: "id", Value: "0"}}
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/0/promotion", strings.NewReader(input.body))
+			ctx.Request.Header.Set("Content-Type", "application/json")
+			h.SetChannelPromotion(ctx)
+			if rr.Code != input.status || called != (input.status == http.StatusOK) {
+				t.Fatalf("状态 = %d, 写入 = %t, 响应 = %s", rr.Code, called, rr.Body.String())
+			}
+		})
+	}
+}
 
 func TestCommittedOperationsFinishSchedulerCleanup(t *testing.T) {
 	cases := []struct {

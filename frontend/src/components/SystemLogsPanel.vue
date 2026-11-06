@@ -2,7 +2,11 @@
   <div class="system-logs-panel">
     <div class="system-toolbar">
       <div class="system-actions">
-        <v-chip size="small" variant="tonal">{{ summaries.length }}/{{ listLimit }}</v-chip>
+        <v-chip size="small" variant="tonal">{{ displayEntries.length }} {{ viewMode === 'conversation' ? '个会话' : '次请求' }} / 最近 {{ listLimit }} 次请求</v-chip>
+        <v-btn-toggle v-model="viewMode" mandatory density="compact" variant="outlined" divided>
+          <v-btn value="conversation" size="small">会话增量</v-btn>
+          <v-btn value="request" size="small">逐次请求</v-btn>
+        </v-btn-toggle>
         <v-btn-toggle v-model="typeFilter" mandatory density="compact" variant="outlined" divided>
           <v-btn v-for="item in typeItems" :key="item.value" :value="item.value" size="small">
             {{ item.title }}
@@ -37,12 +41,12 @@
           <span>暂无系统日志。确认 ENABLE_REQUEST_LOGS / ENABLE_RESPONSE_LOGS 未关闭，且代理已处理过大模型请求。</span>
         </div>
         <button
-          v-for="entry in summaries"
+          v-for="entry in displayEntries"
           :id="`system-log-entry-${entry.requestId}`"
           :key="entry.requestId"
           type="button"
           class="system-list-item"
-          :class="{ selected: entry.requestId === selectedRequestId, 'jump-target': Boolean(highlightRequestId) && entry.requestId === highlightRequestId }"
+          :class="{ selected: entry.requestId === selectedRequestId || (viewMode === 'conversation' && entry.groupKey === selectedGroup?.key), 'jump-target': Boolean(highlightRequestId) && entry.requestId === highlightRequestId }"
           @click="emit('select', entry.requestId)"
         >
           <div class="system-list-row">
@@ -52,11 +56,13 @@
             </v-chip>
           </div>
           <div class="system-list-meta">
+            <v-chip size="x-small" :color="logStatus(entry).color" variant="tonal">{{ logStatus(entry).label }}</v-chip>
             <span v-if="entry.statusCode">{{ entry.statusCode }}</span>
             <span v-if="entry.stream">stream</span>
-            <span v-if="entry.truncated" class="text-warning">截断</span>
-            <span v-if="entry.missingPhases?.length" class="text-error">缺段</span>
+            <span v-if="entry.truncated" class="text-warning" title="日志正文上限为 1 MiB，请求结果由结束状态判断">日志截断</span>
+            <span v-if="viewMode === 'conversation'">{{ entry.requestCount }} 次请求</span>
           </div>
+          <div v-if="entry.client" class="system-list-channel">{{ clientLabel(entry.client) }}</div>
           <div v-if="entry.channelName || entry.model" class="system-list-channel">
             {{ entry.channelName || '--' }}
             <span v-if="entry.model"> · {{ entry.model }}</span>
@@ -70,6 +76,13 @@
         </div>
         <div v-else-if="detailError" class="system-empty text-error">{{ detailError }}</div>
         <div v-else-if="!detail" class="system-empty">从左侧选择一次请求，查看原请求、发给上游与上游返回。</div>
+        <ConversationLogTimeline
+          v-else-if="viewMode === 'conversation' && selectedGroup"
+          :group-key="selectedGroup.key"
+          :requests="selectedGroup.requests"
+          :seed="detail"
+          @inspect="inspectRequest"
+        />
         <div v-else class="system-detail">
           <div v-if="highlightRequestId" class="detail-jump-bar">
             <span class="text-caption text-medium-emphasis">从请求日志跳转，当前展示该请求的完整流量详情</span>
@@ -109,6 +122,7 @@
               </div>
             </div>
             <div class="detail-chips">
+              <v-chip size="small" :color="logStatus(detail.summary).color" variant="tonal">{{ logStatus(detail.summary).label }}</v-chip>
               <v-btn
                 v-if="parentRequestId"
                 size="small"
@@ -135,6 +149,10 @@
               </v-btn>
             </div>
           </div>
+
+          <v-alert v-if="detail.summary.errorMessage" type="info" variant="tonal" density="compact" class="mb-3">
+            {{ detail.summary.errorMessage }}
+          </v-alert>
           <div v-if="detail.summary.channelName || detail.summary.model" class="detail-route">
             {{ detail.summary.channelName || '渠道未知' }}
             <span v-if="detail.summary.model"> · {{ detail.summary.model }}</span>
@@ -186,6 +204,9 @@
               </v-chip>
             </v-chip-group>
           </div>
+          <v-alert v-if="currentAttempt?.error" type="warning" variant="tonal" density="compact" class="mb-3">
+            本次上游尝试未收到响应：{{ currentAttempt.error.body }}
+          </v-alert>
 
           <section v-for="section in visibleSections" :key="section.key" class="phase-section">
             <div class="phase-header">
@@ -196,7 +217,7 @@
                   <span v-if="section.log.url" class="phase-url" :title="section.log.url">{{ section.log.url }}</span>
                   <span v-if="section.log.statusCode">{{ section.log.statusCode }}</span>
                   <span>{{ formatBytes(section.log) }}</span>
-                  <span v-if="section.log.truncated" class="text-warning">truncated</span>
+                  <span v-if="section.log.truncated" class="text-warning">日志正文已截断（1 MiB 上限）</span>
                 </div>
                 <div v-else class="phase-meta text-medium-emphasis">无记录</div>
               </div>
@@ -233,6 +254,7 @@
                 :wrap="wrapEnabled[section.key]"
                 :url="section.log.url || ''"
                 :method="section.log.method || 'POST'"
+                :replayable="section.key !== 'response'"
               />
             </template>
           </section>
@@ -272,20 +294,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import JsonBodyPane from '@/components/JsonBodyPane.vue'
 import PromptBodyDialog from '@/components/PromptBodyDialog.vue'
 import SessionInspector from '@/components/SessionInspector.vue'
+import ConversationLogTimeline from '@/components/ConversationLogTimeline.vue'
+import { getLogAttempts, groupLogConversations, logStatus } from '@/utils/logConversation'
 import { api, type LogAPIType, type SystemLogDetail, type SystemLogSummary, type TrafficLog } from '@/services/api'
 
 type TypeFilter = LogAPIType | ''
-
-interface UpstreamAttempt {
-  key: string
-  label: string
-  request?: TrafficLog
-  response?: TrafficLog
-}
 
 interface PhaseSection {
   key: string
@@ -335,6 +352,7 @@ const typeColorMap: Record<LogAPIType, string> = {
 }
 
 const typeFilter = ref<TypeFilter>('')
+const viewMode = ref<'conversation' | 'request'>(props.highlightRequestId ? 'request' : 'conversation')
 const listLoading = ref(false)
 const listError = ref('')
 const summaries = ref<SystemLogSummary[]>([])
@@ -348,39 +366,32 @@ const detailBodyDialog = ref(false)
 const copiedKey = ref('')
 const headerVisible = reactive<Record<string, boolean>>({})
 const wrapEnabled = reactive<Record<string, boolean>>({})
+let listRevision = 0
+let detailRevision = 0
+let disposed = false
+let refreshTimer: ReturnType<typeof setTimeout> | undefined
 
 const selectedRequestId = computed(() => props.requestId || '')
+const conversationGroups = computed(() => groupLogConversations(summaries.value))
+const selectedGroup = computed(() => conversationGroups.value.find(group => group.requests.some(entry => entry.requestId === selectedRequestId.value)))
+const displayEntries = computed(() => viewMode.value === 'conversation'
+  ? conversationGroups.value.map(group => ({ ...group.latest, groupKey: group.key, requestCount: group.requests.length }))
+  : summaries.value.map(entry => ({ ...entry, groupKey: '', requestCount: 1 })))
+
+const clientLabel = (client: string) => {
+  const name = client.toLowerCase()
+  if (name.includes('opencode')) return 'OpenCode'
+  if (name.includes('claude-cli')) return 'Claude Code'
+  if (name.includes('codex')) return 'Codex'
+  return client
+}
+
+const inspectRequest = (requestId: string) => { viewMode.value = 'request'; emit('select', requestId) }
 
 const trafficLogs = computed(() => detail.value?.trafficLogs || [])
 const parentRequestId = computed(() => detail.value?.requestLogs?.find(entry => entry.parentRequestId)?.parentRequestId || '')
 
-const attempts = computed((): UpstreamAttempt[] => {
-  const requests = trafficLogs.value.filter(entry => entry.phase === 'upstream_request')
-  const responses = trafficLogs.value.filter(entry => entry.phase === 'upstream_response')
-  const hasAttemptIds = [...requests, ...responses].some(entry => Boolean(entry.attemptId))
-  if (hasAttemptIds) {
-    const grouped = new Map<string, UpstreamAttempt>()
-    const remember = (entry: TrafficLog, field: 'request' | 'response') => {
-      const key = entry.attemptId || `row-${entry.id || entry.timestamp}`
-      const current = grouped.get(key) || { key, label: key.slice(0, 8) }
-      current[field] = entry
-      grouped.set(key, current)
-    }
-    requests.forEach(entry => remember(entry, 'request'))
-    responses.forEach(entry => remember(entry, 'response'))
-    return Array.from(grouped.values()).map((attempt, index) => ({
-      ...attempt,
-      label: `尝试 ${index + 1}`
-    }))
-  }
-  const count = Math.max(requests.length, responses.length)
-  return Array.from({ length: count }, (_, index) => ({
-    key: `attempt-${index + 1}`,
-    label: `尝试 ${index + 1}`,
-    request: requests[index],
-    response: responses[index]
-  }))
-})
+const attempts = computed(() => getLogAttempts(trafficLogs.value))
 
 const currentAttempt = computed(() => {
   if (attempts.value.length === 0) return undefined
@@ -465,38 +476,47 @@ const copyBody = async (log: TrafficLog | undefined, key: string) => {
 }
 
 const loadList = async () => {
+  const revision = ++listRevision
   listLoading.value = true
   listError.value = ''
   try {
     const response = await api.getSystemLogs({
       type: typeFilter.value,
-      limit: 100
+      limit: 200
     })
+    if (revision !== listRevision) return
     summaries.value = response.logs || []
     listLimit.value = response.limit || 100
   } catch (err) {
+    if (revision !== listRevision) return
     listError.value = err instanceof Error ? err.message : '加载系统日志失败'
   } finally {
-    listLoading.value = false
+    if (revision === listRevision) listLoading.value = false
   }
 }
 
 const loadDetail = async (requestId: string) => {
+  const revision = ++detailRevision
   if (!requestId) {
     detail.value = null
+    detailLoading.value = false
+    detailError.value = ''
     return
   }
   detailLoading.value = true
   detailError.value = ''
   try {
-    detail.value = await api.getSystemLog(requestId)
+    const response = await api.getSystemLog(requestId)
+    if (revision !== detailRevision) return
+    detail.value = response
     selectedAttemptIndex.value = Math.max((attempts.value.length || 1) - 1, 0)
     synthExpanded.value = false
   } catch (err) {
+    if (revision !== detailRevision) return
     detail.value = null
     detailError.value = err instanceof Error ? err.message : '加载系统日志详情失败'
   } finally {
-    detailLoading.value = false
+    if (revision === detailRevision) detailLoading.value = false
   }
 }
 
@@ -506,6 +526,24 @@ const reloadAll = async () => {
     await loadDetail(selectedRequestId.value)
   }
 }
+
+// 仅日志页可见时刷新只读摘要；后台标签页暂停查询，离开页面立即停止。
+const scheduleRefresh = () => {
+  if (disposed) return
+  const active = summaries.value.some(entry => entry.status === 'processing' || entry.status === 'retrying')
+  refreshTimer = setTimeout(async () => {
+    try {
+      if (!document.hidden && !listLoading.value && !detailLoading.value) await reloadAll()
+    } finally { scheduleRefresh() }
+  }, active ? 5000 : 15000)
+}
+
+onBeforeUnmount(() => {
+  disposed = true
+  listRevision++
+  detailRevision++
+  if (refreshTimer !== undefined) clearTimeout(refreshTimer)
+})
 
 // scrollToEntry 把列表滚动到指定 requestId 条目；条目不在当前列表时给出提示。
 const scrollToEntry = async (requestId: string) => {
@@ -532,6 +570,7 @@ watch(
   () => props.highlightRequestId,
   requestId => {
     if (requestId) {
+      viewMode.value = 'request'
       scrollToEntry(requestId)
     }
   }
@@ -562,6 +601,7 @@ onMounted(async () => {
   if (props.highlightRequestId) {
     scrollToEntry(props.highlightRequestId)
   }
+  scheduleRefresh()
 })
 </script>
 

@@ -14,6 +14,7 @@ type ChannelInfo struct {
 	Priority int
 	Status   string
 	Score    float64 // 动态分数（基于失败率），分数越高优先级越高
+	Promoted bool    // 促销仅临时调整所在分组的顺序，健康检查与熔断准入照常执行
 }
 
 // calculateChannelScore 计算渠道分数（基于失败率）
@@ -128,6 +129,7 @@ func (s *ChannelScheduler) getActiveChannelsByPool(kind ChannelKind, poolIDs []s
 			Priority: priority,
 			Status:   status,
 			Score:    score,
+			Promoted: config.IsChannelInPromotion(&upstream),
 		}
 		if len(requestedPools) == 0 {
 			channelsByPool[""] = append(channelsByPool[""], channel)
@@ -138,9 +140,11 @@ func (s *ChannelScheduler) getActiveChannelsByPool(kind ChannelKind, poolIDs []s
 
 	for poolID := range channelsByPool {
 		channels := channelsByPool[poolID]
-		// 配置优先级和配置索引共同决定故障转移顺序。动态分数只用于展示，
-		// 不能改变用户拖拽后确定的首选渠道。
+		// 健康促销渠道临时优先，其余按配置优先级和索引排列；动态分数只用于展示。
 		sort.Slice(channels, func(i, j int) bool {
+			if channels[i].Promoted != channels[j].Promoted {
+				return channels[i].Promoted
+			}
 			if channels[i].Priority != channels[j].Priority {
 				return channels[i].Priority < channels[j].Priority
 			}

@@ -1,9 +1,9 @@
 // Package llmgate 为代理内部功能（危险命令 AI 闸门、AI 配置助手）提供
 // "选一个大模型渠道并发一段提示词" 的通用调用能力。
 //
-// 与 visionlayer（图片理解旁路）和 eval.Sender（评测原生发送）同形但不同域：
-// 三者都做"代理自己发起上游请求"，但 vision 耦合图片语义与 VisionCapable
-// 过滤，eval 耦合探针/评分闭环；llmgate 只关心文本提示词的进出与渠道健康，
+// 与 visionlayer（图片理解旁路）同形但不同域：
+// 两者都做"代理自己发起上游请求"，但 vision 耦合图片语义与 VisionCapable
+// 过滤；llmgate 只关心文本提示词的进出与渠道健康，
 // 不引入任何业务判断。上游失败重试判定复用 utils.ClassifyUpstreamStatus +
 // 响应体谓词（两层判断，唯一出处），不自行只看状态码。
 package llmgate

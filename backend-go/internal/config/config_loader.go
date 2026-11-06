@@ -49,6 +49,7 @@ func NewConfigManager(configFile string) (*ConfigManager, error) {
 	}
 
 	// 启动定期清理
+	cm.workers.Add(2)
 	go cm.cleanupExpiredFailures()
 	go cm.startChannelLifecycleWorker()
 
@@ -743,13 +744,16 @@ func (cm *ConfigManager) startWatcher() error {
 		return err
 	}
 
+	cm.workers.Add(1)
 	go cm.watchLoop()
 	return nil
 }
 
 // watchLoop 是 watcher 事件主循环：事件合并（防抖）后重载目标文件。
 func (cm *ConfigManager) watchLoop() {
+	defer cm.workers.Done()
 	var debounce *time.Timer
+	var debounceC <-chan time.Time
 	defer func() {
 		if debounce != nil {
 			debounce.Stop()
@@ -760,6 +764,13 @@ func (cm *ConfigManager) watchLoop() {
 		select {
 		case <-cm.stopChan:
 			return
+		case <-debounceC:
+			debounceC = nil
+			// 防抖重载归 watcher 自己执行，Close 能等待它完成，不遗留 AfterFunc 回调。
+			log.Printf("[Config-Watcher] 检测到配置文件变化，重载配置...")
+			if err := cm.reloadFromDisk(); err != nil {
+				log.Printf("[Config-Watcher] 警告: 配置重载失败: %v", err)
+			}
 		case event, ok := <-cm.watcher.Events:
 			if !ok {
 				return
@@ -772,15 +783,12 @@ func (cm *ConfigManager) watchLoop() {
 				continue
 			}
 			// 合并短时间事件：重置防抖定时器。
-			if debounce != nil {
-				debounce.Stop()
+			if debounce == nil {
+				debounce = time.NewTimer(reloadDebounce)
+			} else {
+				debounce.Reset(reloadDebounce)
 			}
-			debounce = time.AfterFunc(reloadDebounce, func() {
-				log.Printf("[Config-Watcher] 检测到配置文件变化，重载配置...")
-				if err := cm.reloadFromDisk(); err != nil {
-					log.Printf("[Config-Watcher] 警告: 配置重载失败: %v", err)
-				}
-			})
+			debounceC = debounce.C
 		case err, ok := <-cm.watcher.Errors:
 			if !ok {
 				return
@@ -793,7 +801,6 @@ func (cm *ConfigManager) watchLoop() {
 // Close 关闭 ConfigManager 并释放资源（幂等，可安全多次调用）。
 // watcher 与生命周期工作先于下游资源退出。
 func (cm *ConfigManager) Close() error {
-	var closeErr error
 	cm.closeOnce.Do(func() {
 		// 通知所有 goroutine 停止
 		if cm.stopChan != nil {
@@ -802,8 +809,9 @@ func (cm *ConfigManager) Close() error {
 
 		// 关闭文件监听器
 		if cm.watcher != nil {
-			closeErr = cm.watcher.Close()
+			cm.closeErr = cm.watcher.Close()
 		}
+		cm.workers.Wait()
 	})
-	return closeErr
+	return cm.closeErr
 }

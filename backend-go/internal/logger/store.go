@@ -2,7 +2,9 @@ package logger
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -65,12 +67,14 @@ type Store struct {
 	db        *sql.DB
 	readDB    *sql.DB
 	dbPath    string
+	bootID    string
 	mu        sync.Mutex
 	queue     chan queuedWrite
 	done      chan struct{}
 	closeOnce sync.Once
 	wg        sync.WaitGroup
 	readOnly  bool
+	bodyRefs  bool
 	closeErr  error
 
 	queueMu        sync.Mutex
@@ -82,10 +86,10 @@ type Store struct {
 	diagnosticMu   sync.Mutex
 	lastDiagnostic time.Time
 
-	// cleanupBatch / cleanupCeiling 按 app、traffic、request 记住删得动的批量。
+	// cleanupBatch / cleanupCeiling 按 app、traffic、request、body 记住删得动的批量。
 	// ceiling 是上次超时的批量，本进程内不再涨回去。只在持有 s.mu 时访问。
-	cleanupBatch   [3]int
-	cleanupCeiling [3]int
+	cleanupBatch   [4]int
+	cleanupCeiling [4]int
 }
 
 func logDatabaseURI(path string) (string, error) {
@@ -153,6 +157,11 @@ func initLogSchema(db *sql.DB) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_traffic_logs_unix ON traffic_logs(unix_milli, id)`,
 		`CREATE INDEX IF NOT EXISTS idx_traffic_logs_request ON traffic_logs(request_id, unix_milli, id)`,
+		`CREATE TABLE IF NOT EXISTS traffic_bodies (body_hash TEXT PRIMARY KEY, body TEXT NOT NULL, created_at INTEGER NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS traffic_body_refs (traffic_id INTEGER PRIMARY KEY, body_hash TEXT NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS idx_traffic_body_refs_hash ON traffic_body_refs(body_hash)`,
+		`CREATE TRIGGER IF NOT EXISTS delete_traffic_body_ref AFTER DELETE ON traffic_logs
+			BEGIN DELETE FROM traffic_body_refs WHERE traffic_id = OLD.id; END`,
 		`CREATE TABLE IF NOT EXISTS request_logs (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			unix_milli INTEGER NOT NULL,
@@ -203,6 +212,8 @@ func Open(path string) (*Store, error) {
 		db:           db,
 		readDB:       readDB,
 		dbPath:       path,
+		bootID:       NewRequestID(),
+		bodyRefs:     true,
 		queue:        make(chan queuedWrite, writeQueueSize),
 		done:         make(chan struct{}),
 		spaceReady:   make(chan struct{}),
@@ -242,6 +253,12 @@ func OpenReadOnly(path string) (*Store, error) {
 		dbPath:   path,
 		readOnly: true,
 	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'traffic_body_refs'`).Scan(&count); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("读取日志正文存储结构失败: %w", err)
+	}
+	store.bodyRefs = count > 0
 	return store, nil
 }
 
@@ -250,6 +267,14 @@ func (s *Store) Path() string {
 		return ""
 	}
 	return s.dbPath
+}
+
+// BootID 用于识别上次进程遗留且没有收尾的请求。
+func (s *Store) BootID() string {
+	if s == nil {
+		return ""
+	}
+	return s.bootID
 }
 
 // enqueue 对条数和字节数同时施加背压；已接收的日志不因队列拥堵被丢弃。
@@ -498,6 +523,7 @@ func (s *Store) applyBatchLocked(batch []queuedWrite) error {
 func applyLogWrite(ctx context.Context, tx *sql.Tx, statements map[writeKind]*sql.Stmt, item queuedWrite) error {
 	var query string
 	var args []any
+	var bodyHash string
 	switch item.kind {
 	case writeFlush:
 		return nil
@@ -505,6 +531,13 @@ func applyLogWrite(ctx context.Context, tx *sql.Tx, statements map[writeKind]*sq
 		query = `INSERT INTO app_logs (unix_milli, timestamp, tag, message) VALUES (?, ?, ?, ?)`
 		args = []any{item.app.UnixMilli, item.app.Timestamp, item.app.Tag, item.app.Message}
 	case writeTraffic:
+		storedBody := item.traffic.Body
+		// 小型元数据保持内联；大型正文按内容寻址，轮次间不建立依赖链。
+		if len(storedBody) >= 4096 && item.traffic.Phase != PhaseRequestStart && item.traffic.Phase != PhaseRequestEnd {
+			digest := sha256.Sum256([]byte(storedBody))
+			bodyHash = hex.EncodeToString(digest[:])
+			storedBody = ""
+		}
 		streamValue := 0
 		if item.traffic.Stream {
 			streamValue = 1
@@ -520,7 +553,7 @@ func applyLogWrite(ctx context.Context, tx *sql.Tx, statements map[writeKind]*sq
 		args = []any{
 			item.traffic.UnixMilli, item.traffic.Timestamp, item.traffic.RequestID, item.traffic.AttemptID,
 			item.traffic.Phase, item.traffic.APIType, item.traffic.Method, item.traffic.URL,
-			item.traffic.StatusCode, streamValue, item.traffic.HeadersJSON, item.traffic.Body,
+			item.traffic.StatusCode, streamValue, item.traffic.HeadersJSON, storedBody,
 			truncatedValue, item.traffic.OriginalBytes,
 		}
 	case writeRequest:
@@ -538,8 +571,21 @@ func applyLogWrite(ctx context.Context, tx *sql.Tx, statements map[writeKind]*sq
 		}
 		statements[item.kind] = statement
 	}
-	if _, err := statement.ExecContext(ctx, args...); err != nil {
+	result, err := statement.ExecContext(ctx, args...)
+	if err != nil {
 		return fmt.Errorf("写入日志类型 %d 失败: %w", item.kind, err)
+	}
+	if bodyHash != "" {
+		id, err := result.LastInsertId()
+		if err != nil {
+			return fmt.Errorf("读取流量日志 ID 失败: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO traffic_bodies (body_hash, body, created_at) VALUES (?, ?, ?) ON CONFLICT(body_hash) DO NOTHING`, bodyHash, item.traffic.Body, item.traffic.UnixMilli); err != nil {
+			return fmt.Errorf("写入去重正文失败: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO traffic_body_refs (traffic_id, body_hash) VALUES (?, ?)`, id, bodyHash); err != nil {
+			return fmt.Errorf("写入正文引用失败: %w", err)
+		}
 	}
 	return nil
 }
@@ -579,6 +625,7 @@ func (s *Store) cleanupExpired() (bool, error) {
 		{`DELETE FROM app_logs WHERE id IN (SELECT id FROM app_logs WHERE unix_milli < ? ORDER BY unix_milli, id LIMIT ?)`, cleanupBatchSize},
 		{`DELETE FROM traffic_logs WHERE id IN (SELECT id FROM traffic_logs WHERE unix_milli < ? ORDER BY unix_milli, id LIMIT ?)`, cleanupShrinkBatch},
 		{`DELETE FROM request_logs WHERE id IN (SELECT id FROM request_logs WHERE unix_milli < ? ORDER BY unix_milli, id LIMIT ?)`, cleanupShrinkBatch},
+		{`DELETE FROM traffic_bodies WHERE body_hash IN (SELECT b.body_hash FROM traffic_bodies b WHERE b.created_at < ? AND NOT EXISTS (SELECT 1 FROM traffic_body_refs r WHERE r.body_hash = b.body_hash) LIMIT ?)`, cleanupShrinkBatch},
 	}
 	more := false
 	for i, target := range targets {
@@ -739,15 +786,13 @@ func (s *Store) QueryTrafficLogs(ctx context.Context, opts QueryOptions) ([]Traf
 	if s == nil {
 		return nil, nil
 	}
-	query := `SELECT id, unix_milli, timestamp, request_id, attempt_id, phase, api_type, method, url,
-		status_code, stream, headers_json, body, truncated, original_bytes
-		FROM traffic_logs WHERE unix_milli >= ? AND unix_milli <= ?`
+	query := s.trafficSelect() + ` WHERE t.unix_milli >= ? AND t.unix_milli <= ?`
 	args := []any{opts.From, opts.To}
 	if opts.RequestID != "" {
-		query += ` AND request_id = ?`
+		query += ` AND t.request_id = ?`
 		args = append(args, opts.RequestID)
 	}
-	query += ` ORDER BY unix_milli ASC, id ASC`
+	query += ` ORDER BY t.unix_milli ASC, t.id ASC`
 	if opts.Limit > 0 {
 		query += ` LIMIT ?`
 		args = append(args, opts.Limit)

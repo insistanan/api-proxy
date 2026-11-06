@@ -4,7 +4,6 @@
 export * from './channel'
 export * from './client-config'
 export * from './conversation'
-export * from './eval'
 export * from './logs'
 export * from './metrics'
 export * from './model'

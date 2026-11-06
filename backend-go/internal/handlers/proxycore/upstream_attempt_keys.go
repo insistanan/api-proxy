@@ -7,6 +7,7 @@ package proxycore
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/BenedictKing/api-proxy/internal/config"
 	"github.com/BenedictKing/api-proxy/internal/handlers/hooks"
+	"github.com/BenedictKing/api-proxy/internal/logger"
 	"github.com/BenedictKing/api-proxy/internal/mediasanitizer"
 	"github.com/BenedictKing/api-proxy/internal/proxy"
 	"github.com/BenedictKing/api-proxy/internal/ratelimit"
@@ -35,6 +37,8 @@ type upstreamAttemptPreflight struct {
 // 很小；正常非流式响应通常也在该上限内（HandleSuccess 本就全量读）；超过
 // 上限的巨型响应按读失败处理，走 failover 让其他候选接手。
 const maxEnvelopeSniffBytes = 10 * 1024 * 1024
+
+var errRateLimitQueueTimeout = errors.New("上游仍处于限流冷却，排队等待已达到上限")
 
 // Images 成功响应可能包含很大的 base64 JSON；只缓冲足以识别常见错误信封的前缀。
 const maxImagesEnvelopeSniffBytes = 64 * 1024
@@ -151,6 +155,9 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 		retryState := newCandidateRetryState(len(upstream.APIKeys))
 
 		for attempt := 0; attempt < retryState.MaxRetries(); attempt++ {
+			if err := c.Request.Context().Err(); err != nil {
+				return newUpstreamAttemptResult(true, "", 0, nil, nil, err).withHealth(channelHealthNeutral)
+			}
 			RestoreRequestBody(c, requestBody)
 			ResetRequestLogFirstToken(c)
 			attemptStart := time.Now()
@@ -177,6 +184,12 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 			upstreamCopy := a.prepareCandidateUpstream(currentBaseURL, capabilities)
 
 			req, prepareStage, err := a.buildPreparedAttemptRequest(upstreamCopy, apiKey)
+			if err != nil && c.Request.Context().Err() != nil {
+				if req != nil && req.Body != nil {
+					_ = req.Body.Close()
+				}
+				return newUpstreamAttemptResult(true, "", 0, nil, nil, c.Request.Context().Err()).withHealth(channelHealthNeutral)
+			}
 			if err != nil && prepareStage == "build_request" {
 				failoverState.lastError = err
 				retryState.MarkKeyFailed(apiKey)
@@ -185,7 +198,12 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 				continue
 			}
 			if err != nil {
-				_ = req.Body.Close()
+				if req != nil && req.Body != nil {
+					_ = req.Body.Close()
+				}
+				if c.Request.Context().Err() != nil {
+					return newUpstreamAttemptResult(true, "", 0, nil, nil, c.Request.Context().Err()).withHealth(channelHealthNeutral)
+				}
 				if prepareStage == "content_safety" {
 					status := handleContentSafetyPreparationError(c, apiType, err)
 					attemptStatus := "failed"
@@ -213,6 +231,11 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 			// 请求准备成功后再启动请求画像和活跃度观测。
 			lifecycle := a.startAttemptLifecycle(currentBaseURL, apiKey)
 			finishRetryContentSafety := func(preparationErr error) {
+				if isClientSideError(preparationErr) {
+					lifecycle.finalizeClientCancelled()
+					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "cancelled", 0, false, attemptStart, "client_cancelled", preparationErr.Error(), false, isStream, nil)
+					return
+				}
 				status := handleContentSafetyPreparationError(c, apiType, preparationErr)
 				lifecycle.finalizeNeutral()
 				attemptStatus := "failed"
@@ -223,7 +246,26 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 			}
 
 			// 429 平滑排队：若当前 BaseURL 处于瞬时冷却期，在 context 允许范围内轻量排队
-			ratelimit.GetDefaultLimiter().WaitOrAcquire(c.Request.Context(), currentBaseURL, 0, 0, 0, 2*time.Second)
+			_, acquired := ratelimit.GetDefaultLimiter().WaitOrAcquire(c.Request.Context(), currentBaseURL, 0, 0, 0, 2*time.Second)
+			if err := c.Request.Context().Err(); err != nil {
+				if req.Body != nil {
+					_ = req.Body.Close()
+				}
+				lifecycle.finalizeClientCancelled()
+				recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "cancelled", 0, false, attemptStart, "client_cancelled", err.Error(), false, isStream, nil)
+				return newUpstreamAttemptResult(true, "", 0, nil, nil, err).withHealth(channelHealthNeutral)
+			}
+			if !acquired {
+				if req.Body != nil {
+					_ = req.Body.Close()
+				}
+				lifecycle.finalizeNeutral()
+				failoverState.lastError = errRateLimitQueueTimeout
+				failoverState.markNeutralTermination()
+				recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", 0, false, attemptStart, "rate_limit_queue", errRateLimitQueueTimeout.Error(), true, isStream, nil)
+				log.Printf("[%s-RateLimit-Queue] requestId=%s 排队未获准，跳过当前冷却中的 BaseURL", apiType, requestLogID)
+				break
+			}
 
 			req = AttachRequestLogID(c, req)
 			resp, err := SendRequest(req, upstream, envCfg, isStream, apiType, proxyURL, a.Permit, a.RequestTimeout)
@@ -554,6 +596,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 					continue
 				}
 				if sniffComplete && utils.IsUpstreamErrorEnvelope(sniff) {
+					_ = resp.Body.Close()
 					failoverState.lastError = fmt.Errorf("上游 2xx 响应携带错误信封")
 					failoverState.lastFailoverError = &FailoverError{Status: resp.StatusCode, Body: sniff}
 					retryState.MarkKeyFailed(apiKey)
@@ -568,6 +611,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 				}
 				// 非命中：body 原样放回，HandleSuccess 正常消费。
 				if sniffComplete {
+					_ = resp.Body.Close()
 					resp.Body = io.NopCloser(bytes.NewReader(sniff))
 				}
 			}
@@ -689,6 +733,11 @@ func (a UpstreamAttempt) buildPreparedAttemptRequest(
 	upstreamCopy *config.UpstreamConfig,
 	apiKey string,
 ) (*http.Request, string, error) {
+	if err := a.Context.Request.Context().Err(); err != nil {
+		return nil, "client_cancelled", err
+	}
+	// 身份在构建前分配，正文、响应和结果使用同一个尝试 ID。
+	a.Context.Request = a.Context.Request.WithContext(logger.ContextWithAttemptID(a.Context.Request.Context(), nextAttemptLogID("attempt")))
 	req, err := a.BuildRequest(a.Context, upstreamCopy, apiKey)
 	if err != nil {
 		return nil, "build_request", err
@@ -785,6 +834,11 @@ func applyCompatibilityRetryResult(
 	finishRetryContentSafety func(error),
 ) (*http.Response, []byte, bool, *UpstreamAttemptResult) {
 	if retryResult.Err != nil {
+		if isClientSideError(retryResult.Err) {
+			finishRetryContentSafety(retryResult.Err)
+			abort := newUpstreamAttemptResult(true, "", 0, nil, nil, retryResult.Err).withHealth(channelHealthNeutral)
+			return resp, respBodyBytes, retrySucceeded, &abort
+		}
 		if retryResult.PreparationStage == "content_safety" {
 			finishRetryContentSafety(retryResult.Err)
 			abort := newUpstreamAttemptResult(true, "", 0, nil, nil, retryResult.Err)

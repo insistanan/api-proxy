@@ -37,7 +37,11 @@ func AttachRequestLogID(c *gin.Context, req *http.Request) *http.Request {
 	if requestID == "" {
 		return req
 	}
-	return req.WithContext(logger.ContextWithRequestID(req.Context(), requestID))
+	ctx := logger.ContextWithRequestID(req.Context(), requestID)
+	if c != nil && c.Request != nil {
+		ctx = logger.ContextWithAttemptID(ctx, logger.AttemptIDFromContext(c.Request.Context()))
+	}
+	return req.WithContext(ctx)
 }
 
 func RequestLogID(c *gin.Context) string {

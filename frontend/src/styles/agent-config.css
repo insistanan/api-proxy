@@ -5,6 +5,13 @@
   padding-bottom: 40px;
 }
 
+.agent-config-editor {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
 .agent-config-header {
   /* 冻结在顶部：top 偏移避开 v-app-bar（桌面 64px / 移动 56px） */
   position: sticky;

@@ -12,6 +12,19 @@ import (
 )
 
 type requestIDContextKey struct{}
+type attemptIDContextKey struct{}
+
+func ContextWithAttemptID(ctx context.Context, attemptID string) context.Context {
+	return context.WithValue(ctx, attemptIDContextKey{}, attemptID)
+}
+
+func AttemptIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	id, _ := ctx.Value(attemptIDContextKey{}).(string)
+	return id
+}
 
 func NewRequestID() string {
 	return uuid.NewString()
@@ -51,6 +64,7 @@ func RecordStreamSynth(ctx context.Context, apiType string, body string) {
 	}
 	RecordTraffic(TrafficLog{
 		RequestID: RequestIDFromContext(ctx),
+		AttemptID: AttemptIDFromContext(ctx),
 		Phase:     PhaseStreamSynth,
 		APIType:   apiType,
 		Body:      body,

@@ -4,13 +4,27 @@
 // （R3）在此统一消费：提示刷新实际状态、不自动重试。
 import { useChannelStore } from '@/stores/channel'
 import { useDialogStore } from '@/stores/dialog'
-import { ApiError, type Channel } from '@/services/api'
+import { ApiError, type ApiTab, type Channel } from '@/services/api'
 
 type ToastFn = (message: string, type: 'success' | 'error' | 'warning' | 'info') => void
 
 export function useChannelActions(notify: ToastFn) {
   const channelStore = useChannelStore()
   const dialogStore = useDialogStore()
+  const reportError = (error: unknown, onAuthError?: (error: unknown) => void) => {
+    if (onAuthError) onAuthError(error)
+    else notify(error instanceof Error ? error.message : '渠道操作失败', 'error')
+  }
+
+  // 写操作已提交，刷新失败只能影响显示，不能被包装成写入失败诱导重试。
+  const refreshAfterMutation = async (tab: ApiTab, onAuthError?: (error: unknown) => void) => {
+    try {
+      await channelStore.refreshChannels(tab)
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) onAuthError?.(error)
+      notify(`变更已写入，但刷新渠道失败: ${error instanceof Error ? error.message : '未知错误'}。请刷新查看实际状态`, 'warning')
+    }
+  }
 
   const refreshChannels = async (onAuthError: (error: unknown) => void): Promise<void> => {
     try {
@@ -25,24 +39,31 @@ export function useChannelActions(notify: ToastFn) {
     options?: { isQuickAdd?: boolean },
     onAuthError?: (error: unknown) => void
   ): Promise<void> => {
+    if (channelStore.isSavingChannel || channelStore.isDeletingChannel) return
+    const tab = dialogStore.channelType
+    const editingIndex = dialogStore.editingChannel?.index ?? null
+    channelStore.isSavingChannel = true
     try {
-      const result = await channelStore.saveChannel(channel, dialogStore.editingChannel?.index ?? null, options)
+      const result = await channelStore.saveChannel(channel, editingIndex, options, tab)
       notify(result.message, 'success')
       if (result.quickAddMessage) {
         notify(result.quickAddMessage, 'info')
       }
+      if (result.warning) notify(result.warning, 'warning')
       dialogStore.closeAddChannelModal()
-      await refreshChannels(onAuthError ?? (() => {}))
+      await refreshAfterMutation(tab, onAuthError)
     } catch (error) {
       // 配置已过提交点（文件已写入，收尾失败）：不得自动重试，
       // 提示用户刷新查看实际状态（R3 committed 语义）。
       if (error instanceof ApiError && error.committed) {
         notify(`${error.message}（变更已写入，请刷新查看实际状态，请勿重复提交）`, 'warning')
         dialogStore.closeAddChannelModal()
-        await refreshChannels(onAuthError ?? (() => {}))
+        await refreshAfterMutation(tab, onAuthError)
         return
       }
-      onAuthError?.(error)
+      reportError(error, onAuthError)
+    } finally {
+      channelStore.isSavingChannel = false
     }
   }
 
@@ -50,17 +71,24 @@ export function useChannelActions(notify: ToastFn) {
     channelId: number,
     onAuthError?: (error: unknown) => void
   ): Promise<void> => {
+    if (channelStore.isSavingChannel || channelStore.isDeletingChannel) return
+    const tab = channelStore.activeTab
     if (!confirm('确定要删除这个渠道吗？')) return
 
+    channelStore.isDeletingChannel = true
     try {
-      const result = await channelStore.deleteChannel(channelId)
+      const result = await channelStore.deleteChannel(channelId, tab)
       notify(result.message, 'success')
+      await refreshAfterMutation(tab, onAuthError)
     } catch (error) {
       if (error instanceof ApiError && error.committed) {
         notify(`${error.message}（删除已写入，请刷新查看实际状态，请勿重复提交）`, 'warning')
+        await refreshAfterMutation(tab, onAuthError)
         return
       }
-      onAuthError?.(error)
+      reportError(error, onAuthError)
+    } finally {
+      channelStore.isDeletingChannel = false
     }
   }
 

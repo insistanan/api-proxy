@@ -130,6 +130,60 @@ export function deduplicateBaseUrls(input: { baseUrl: string; baseUrls: string[]
   return result
 }
 
+// 保留 combobox 的字符串和选项对象两种取值形式，清空选项时写回空字符串。
+function modelValueString(value: unknown): string {
+  if (!value) return ''
+  if (typeof value === 'string') return value
+  if (typeof value === 'object' && 'value' in value) {
+    return typeof value.value === 'string' ? value.value : ''
+  }
+  return ''
+}
+
+/** 组装保存请求：表单显示与网络编排不再各自维护一套字段转换。 */
+export function buildChannelPayload(
+  form: ChannelFormState,
+  channelType: string,
+  isEditing: boolean,
+  imagesExtraParams?: Record<string, string>
+): Omit<Channel, 'id' | 'index' | 'latency'> {
+  const isImages = channelType === 'images'
+  const isChat = channelType === 'chat'
+  const urls = deduplicateBaseUrls(form)
+  const mapping = isChat ? {} : cloneModelMapping(form.modelMapping)
+  const channel: Omit<Channel, 'id' | 'index' | 'latency'> = {
+    name: form.name.trim(),
+    serviceType: form.serviceType as Channel['serviceType'],
+    responsesModel: isImages && form.serviceType === 'responses' ? form.responsesModel.trim() : '',
+    baseUrl: urls[0] || '',
+    website: form.website.trim(), // 空字符串用于清除已有值。
+    insecureSkipVerify: form.insecureSkipVerify,
+    proxyMode: form.proxyMode,
+    proxyUrl: form.proxyMode === 'custom' ? form.proxyUrl.trim() : '',
+    lowQuality: isImages ? false : form.lowQuality,
+    visionCapable: isImages ? false : form.visionCapable,
+    poolId: form.poolId,
+    excludeFromConversation: isImages ? false : form.excludeFromConversation,
+    visionLayerEnabled: isImages ? false : form.visionLayerEnabled,
+    visionLayerChannelId: isImages ? '' : form.visionLayerChannelId || undefined,
+    visionLayerModel: isImages ? '' : form.visionLayerModel.trim(),
+    temporary: form.temporary,
+    injectDummyThoughtSignature: isImages ? false : form.injectDummyThoughtSignature,
+    stripThoughtSignature: isImages ? false : form.stripThoughtSignature,
+    disablePromptCacheKey: isImages ? false : form.disablePromptCacheKey,
+    description: form.description.trim(),
+    apiKeys: form.apiKeys.filter(key => key.trim()),
+    modelMapping: mapping,
+    modelMappingChannels: isChat ? {} : cloneModelMappingChannels(mapping, form.modelMappingChannels),
+    defaultModel: isChat ? modelValueString(form.defaultModel).trim() : '',
+    ...(isImages ? { imagesForceNonStream: form.imagesForceNonStream } : {}),
+    ...(imagesExtraParams ? { imagesExtraParams } : {})
+  }
+  if (urls.length > 1) channel.baseUrls = urls
+  if (isEditing) channel.status = form.status
+  return channel
+}
+
 /** 持久化渠道状态集合（表单可写回的值）。 */
 const PERSISTABLE_STATUSES: readonly ChannelStatus[] = ['active', 'suspended', 'disabled', 'deprecated', 'deleted']
 
@@ -181,5 +235,8 @@ export function useChannelEditor(channelType: MaybeRefOrGetter<string>) {
     form.imagesForceNonStream = currentChannelType === 'images' && !!channel.imagesForceNonStream
   }
 
-  return { form, resetForm, loadChannelData }
+  const buildPayload = (isEditing: boolean, imagesExtraParams?: Record<string, string>) =>
+    buildChannelPayload(form, toValue(channelType), isEditing, imagesExtraParams)
+
+  return { form, resetForm, loadChannelData, buildPayload }
 }

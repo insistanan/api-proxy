@@ -82,7 +82,9 @@ type MetricsManager struct {
 	failureThreshold    float64                // 失败率阈值
 	circuitRecoveryTime time.Duration          // 熔断恢复时间
 	stopCh              chan struct{}          // 用于停止清理 goroutine
-	nextRequestID       uint64                 // 单进程递增请求ID（用于 pendingHistoryIdx）
+	doneCh              chan struct{}
+	stopOnce            sync.Once
+	nextRequestID       uint64 // 单进程递增请求ID（用于 pendingHistoryIdx）
 
 	// 持久化存储（可选）
 	store   PersistenceStore

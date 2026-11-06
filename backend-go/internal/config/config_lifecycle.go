@@ -38,6 +38,7 @@ func (cm *ConfigManager) TidyProblemChannels(kind string) error {
 }
 
 func (cm *ConfigManager) startChannelLifecycleWorker() {
+	defer cm.workers.Done()
 	ticker := time.NewTicker(channelLifecycleTick)
 	defer ticker.Stop()
 

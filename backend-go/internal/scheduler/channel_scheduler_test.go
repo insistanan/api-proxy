@@ -69,19 +69,13 @@ func createTestScheduler(t *testing.T, cfg config.Config) (*ChannelScheduler, fu
 	scheduler := NewChannelScheduler(cfgManager, messagesMetrics, responsesMetrics, geminiMetrics, chatMetrics, imagesMetrics, traceAffinity, urlManager)
 
 	return scheduler, func() {
-		messagesMetrics.Stop()
-		responsesMetrics.Stop()
-		geminiMetrics.Stop()
-		chatMetrics.Stop()
-		imagesMetrics.Stop()
+		scheduler.Stop()
 		cleanup()
 	}
 }
 
-// TestPromotedChannelDoesNotRewriteConfigOrder 锁定 864841f 后的调度契约：
-// 促销不改写故障转移顺序（docs/capabilities.md 渠道选择行）。
-// 健康渠道按配置优先级选择；促销渠道不健康时同样被健康过滤跳过。
-func TestPromotedChannelDoesNotRewriteConfigOrder(t *testing.T) {
+// 促销只临时优先，不健康时仍被过滤。
+func TestUnhealthyPromotedChannelIsSkipped(t *testing.T) {
 	// 设置促销截止时间为 5 分钟后
 	promotionUntil := time.Now().Add(5 * time.Minute)
 
@@ -120,7 +114,7 @@ func TestPromotedChannelDoesNotRewriteConfigOrder(t *testing.T) {
 		t.Fatal("促销渠道应该被标记为不健康")
 	}
 
-	// 选择渠道 - 按配置优先级选择第一个渠道，促销不参与排序
+	// 不健康的促销渠道不能抢占健康的普通渠道。
 	result, err := scheduler.SelectChannel(context.Background(), "test-user", make(map[int]bool), ChannelKindMessages, "")
 	if err != nil {
 		t.Fatalf("选择渠道失败: %v", err)
@@ -139,9 +133,8 @@ func TestPromotedChannelDoesNotRewriteConfigOrder(t *testing.T) {
 	}
 }
 
-// TestSelectChannel_ConfigOrderPrecedesPromotionAndAffinity 锁定 864841f 后的调度契约：
-// 配置顺序优先，促销与 Trace 亲和都不改写故障转移顺序。
-func TestSelectChannel_ConfigOrderPrecedesPromotionAndAffinity(t *testing.T) {
+// 健康促销临时优先于配置顺序与 Trace 亲和。
+func TestSelectChannel_HealthyPromotionPrecedesConfigOrderAndAffinity(t *testing.T) {
 	promotionUntil := time.Now().Add(5 * time.Minute)
 	cfg := config.Config{
 		Upstream: []config.UpstreamConfig{
@@ -175,12 +168,12 @@ func TestSelectChannel_ConfigOrderPrecedesPromotionAndAffinity(t *testing.T) {
 	}
 	defer scheduler.ReleaseChannelReservation(result.Kind, result.ChannelIndex)
 
-	if result.ChannelIndex != 0 || result.Reason != "priority_order" {
-		t.Fatalf("配置顺序应优先于促销与亲和，got index=%d reason=%s", result.ChannelIndex, result.Reason)
+	if result.ChannelIndex != 1 || result.Reason != "promotion" {
+		t.Fatalf("健康促销应临时优先，got index=%d reason=%s", result.ChannelIndex, result.Reason)
 	}
 }
 
-func TestSelectChannel_ConfigOrderPrecedesPromotion(t *testing.T) {
+func TestSelectChannel_ConversationOverridePrecedesPromotion(t *testing.T) {
 	promotionUntil := time.Now().Add(5 * time.Minute)
 	cfg := config.Config{
 		Upstream: []config.UpstreamConfig{
@@ -322,7 +315,7 @@ func TestMatchedGroupPrecedesFallbackGroupAndFallsBackAfterFailure(t *testing.T)
 	if err != nil {
 		t.Fatalf("首次选择渠道失败: %v", err)
 	}
-	if first.ChannelIndex != 1 || first.Reason != "priority_order" {
+	if first.ChannelIndex != 1 || first.Reason != "promotion" {
 		t.Fatalf("首次应选择命中分组渠道，got index=%d reason=%s", first.ChannelIndex, first.Reason)
 	}
 	scheduler.ReleaseChannelReservation(first.Kind, first.ChannelIndex)
@@ -332,7 +325,7 @@ func TestMatchedGroupPrecedesFallbackGroupAndFallsBackAfterFailure(t *testing.T)
 		t.Fatalf("命中分组渠道失败后的兜底选择失败: %v", err)
 	}
 	defer scheduler.ReleaseChannelReservation(second.Kind, second.ChannelIndex)
-	if second.ChannelIndex != 0 || second.Reason != "priority_order" {
+	if second.ChannelIndex != 0 || second.Reason != "promotion" {
 		t.Fatalf("命中分组失败后应进入兜底分组，got index=%d reason=%s", second.ChannelIndex, second.Reason)
 	}
 }
@@ -648,9 +641,8 @@ func TestSelectChannel_ProtocolIsolation(t *testing.T) {
 	scheduler.ReleaseChannelReservation(resp2.Kind, resp2.ChannelIndex)
 }
 
-// TestSelectChannel_AdaptiveRespectsFailoverPriority
-// 验证：带模型画像的自适应评分也不能越过配置优先级。
-func TestSelectChannel_AdaptiveRespectsFailoverPriority(t *testing.T) {
+// 性能画像仅观测：评分和负载差异不能改变配置优先级。
+func TestSelectChannel_ProfilesDoNotReorderChannels(t *testing.T) {
 	cfg := config.Config{
 		Upstream: []config.UpstreamConfig{
 			{
@@ -673,34 +665,25 @@ func TestSelectChannel_AdaptiveRespectsFailoverPriority(t *testing.T) {
 	scheduler, cleanup := createTestScheduler(t, cfg)
 	defer cleanup()
 
-	// 预热两边画像，避免一边无画像导致评分差过大
-	if scheduler.profileManager != nil {
-		for _, item := range []struct {
-			baseURL string
-			key     string
-			idx     int
-		}{
-			{"https://a.example.com", "key-a", 0},
-			{"https://b.example.com", "key-b", 1},
-		} {
-			for i := 0; i < 3; i++ {
-				requestID := uint64(item.idx*100 + i + 1)
-				scheduler.profileManager.StartRequest(item.baseURL, []string{item.key}, "claude-sonnet-4", item.idx, requestID)
-				scheduler.profileManager.EndRequest(item.baseURL, []string{item.key}, "claude-sonnet-4", item.idx, requestID, true, 100)
-			}
-		}
-	}
+	pm := metrics.NewProfileManager()
+	// 固定测试画像，关闭定时评分后再写入，避免后台更新干扰断言。
+	pm.Stop()
+	scheduler.SetProfileManager(pm)
+	slow := pm.GetOrCreateProfile("https://a.example.com", []string{"key-a"}, "claude-sonnet-4", 0)
+	slow.HealthScore, slow.AvgTTFB, slow.ActiveRequests = 10, 4500, 100
+	fast := pm.GetOrCreateProfile("https://b.example.com", []string{"key-b"}, "claude-sonnet-4", 1)
+	fast.HealthScore, fast.AvgTTFB, fast.ActiveRequests = 100, 100, 0
 
-	first, err := scheduler.SelectChannel(context.Background(), "adaptive-user-1", make(map[int]bool), ChannelKindMessages, "claude-sonnet-4")
+	first, err := scheduler.SelectChannel(context.Background(), "profile-user-1", make(map[int]bool), ChannelKindMessages, "claude-sonnet-4")
 	if err != nil {
-		t.Fatalf("adaptive 第一次选渠失败: %v", err)
+		t.Fatalf("第一次选渠失败: %v", err)
 	}
-	second, err := scheduler.SelectChannel(context.Background(), "adaptive-user-2", make(map[int]bool), ChannelKindMessages, "claude-sonnet-4")
+	second, err := scheduler.SelectChannel(context.Background(), "profile-user-2", make(map[int]bool), ChannelKindMessages, "claude-sonnet-4")
 	if err != nil {
-		t.Fatalf("adaptive 第二次选渠失败: %v", err)
+		t.Fatalf("第二次选渠失败: %v", err)
 	}
-	if first.ChannelIndex != second.ChannelIndex {
-		t.Fatalf("adaptive 路径越过了严格优先级: first=%d second=%d (reasons: %s, %s)",
+	if first.ChannelIndex != 0 || second.ChannelIndex != 0 {
+		t.Fatalf("性能画像改变了配置优先级: first=%d second=%d (reasons: %s, %s)",
 			first.ChannelIndex, second.ChannelIndex, first.Reason, second.Reason)
 	}
 	scheduler.ReleaseChannelReservation(first.Kind, first.ChannelIndex)
@@ -708,7 +691,7 @@ func TestSelectChannel_AdaptiveRespectsFailoverPriority(t *testing.T) {
 }
 
 // TestChannelScheduler_StopIdempotent 验证：聚合 Stop 幂等，重复调用不 panic
-// （下属组件的 Stop 是裸 close(channel)，幂等由调度器的 sync.Once 保证）。
+// 聚合层与下属组件都支持重复停止，并等待后台任务退出。
 func TestChannelScheduler_StopIdempotent(t *testing.T) {
 	s, cleanup := createTestScheduler(t, config.Config{})
 	defer cleanup()

@@ -383,7 +383,8 @@
     <AddChannelModal
       v-model:show="dialogStore.showAddChannelModal"
       :channel="dialogStore.editingChannel"
-      :channel-type="channelStore.activeTab"
+      :channel-type="dialogStore.channelType"
+      :saving="channelStore.isSavingChannel || channelStore.isDeletingChannel"
       @save="handleSaveChannel"
     />
 
@@ -429,14 +430,10 @@ import { useSystemStore } from './stores/system'
 import { useToast } from './composables/useToast'
 import AddChannelModal from './components/AddChannelModal.vue'
 import GlobalStatsChart from './components/GlobalStatsChart.vue'
-import { useAppTheme } from './composables/useTheme'
 import { useCountUp } from './composables/useCountUp'
 
 // Vuetify主题
 const theme = useTheme()
-
-// 应用主题系统
-const { init: initTheme } = useAppTheme()
 
 // 认证 Store
 const authStore = useAuthStore()
@@ -463,8 +460,7 @@ const isGptPage = computed(() => route.name === 'gpt')
 const isPiAgentPage = computed(() => route.name === 'pi-agent')
 const isDshPage = computed(() => route.name === 'dsh')
 const isSettingsPage = computed(() => route.name === 'settings')
-const isEvalPage = computed(() => route.name === 'eval')
-const isStandalonePage = computed(() => isConversationPage.value || isLogsPage.value || isBlockedLogsPage.value || isSkillsPage.value || isEvalPage.value || isOpenCodePage.value || isClaudeCodePage.value || isGptPage.value || isPiAgentPage.value || isDshPage.value || isSettingsPage.value)
+const isStandalonePage = computed(() => isConversationPage.value || isLogsPage.value || isBlockedLogsPage.value || isSkillsPage.value || isOpenCodePage.value || isClaudeCodePage.value || isGptPage.value || isPiAgentPage.value || isDshPage.value || isSettingsPage.value)
 
 const navGroups = [
   {
@@ -485,8 +481,7 @@ const navGroups = [
       { key: 'conversations', label: '对话', to: '/conversations' },
       { key: 'logs', label: '日志', to: '/logs' },
       { key: 'blocked-logs', label: '拦截', to: '/blocked-logs' },
-      { key: 'skills', label: 'Skills', to: '/skills' },
-      { key: 'eval', label: '评测', to: '/eval' }
+      { key: 'skills', label: 'Skills', to: '/skills' }
     ]
   },
   {
@@ -529,9 +524,6 @@ const topNavActive = computed(() => {
   }
   if (isSkillsPage.value) {
     return 'skills'
-  }
-  if (isEvalPage.value) {
-    return 'eval'
   }
   if (isOpenCodePage.value) {
     return 'opencode'
@@ -693,11 +685,11 @@ const handleSaveChannel = (channel: Omit<Channel, 'id' | 'index' | 'latency'>, o
 const handleDeleteChannel = (channelId: number) => deleteChannel(channelId, handleAuthError)
 
 const editChannel = (channel: Channel) => {
-  dialogStore.openEditChannelModal(channel)
+  dialogStore.openEditChannelModal(channel, channelStore.activeTab)
 }
 
 const openAddChannelModal = () => {
-  dialogStore.openAddChannelModal()
+  dialogStore.openAddChannelModal(channelStore.activeTab)
 }
 
 // 版本检查
@@ -792,9 +784,6 @@ onBeforeUnmount(() => {
 
 // 初始化
 onMounted(async () => {
-  // 初始化玻璃拟态主题
-  initTheme()
-
   // 加载保存的暗色模式偏好（从 PreferencesStore 读取，已自动从 localStorage 恢复）
   setDarkMode(preferencesStore.darkModePreference)
 

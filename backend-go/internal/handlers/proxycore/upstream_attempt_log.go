@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/BenedictKing/api-proxy/internal/config"
+	"github.com/BenedictKing/api-proxy/internal/logger"
 	"github.com/BenedictKing/api-proxy/internal/metrics"
 	"github.com/BenedictKing/api-proxy/internal/scheduler"
 	"github.com/BenedictKing/api-proxy/internal/types"
@@ -97,6 +98,12 @@ func recordAttemptLog(
 	isStream bool,
 	usage *types.Usage,
 ) {
+	if state := requestLifecycle(c); state != nil {
+		state.Status = status
+		state.StatusCode = statusCode
+		state.ErrorType = errorType
+		state.ErrorMessage = truncateLogMessage(errorMessage, 500)
+	}
 	if logCtx.LogStore == nil && logCtx.RequestLogStore == nil {
 		return
 	}
@@ -112,7 +119,13 @@ func recordAttemptLog(
 		transform = logCtx.Model + " -> " + resolvedModel
 	}
 	timestamp := time.Now().Format(time.RFC3339Nano)
-	attemptID := nextAttemptLogID("attempt")
+	attemptID := ""
+	if c != nil && c.Request != nil {
+		attemptID = logger.AttemptIDFromContext(c.Request.Context())
+	}
+	if attemptID == "" {
+		attemptID = nextAttemptLogID("attempt")
+	}
 	durationMs := time.Since(start).Milliseconds()
 	firstTokenMs := requestLogFirstTokenMs(c, start)
 	errorMessage = truncateLogMessage(errorMessage, 500)
