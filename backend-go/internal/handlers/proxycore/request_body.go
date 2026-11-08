@@ -79,10 +79,13 @@ func LogOriginalRequest(c *gin.Context, bodyBytes []byte, envCfg *config.EnvConf
 
 	requestID := BindRequestLogID(c)
 	log.Printf("[Request-Receive] requestId=%s 收到%s请求: %s %s", requestID, apiType, c.Request.Method, c.Request.URL.Path)
+	preparedBody, originalBytes, truncated := logger.PrepareBody(bodyBytes)
 
 	if envCfg.ShouldLog("debug") {
 		var formattedBody string
-		if envCfg.RawLogOutput {
+		if len(bodyBytes) > logger.MaxBodyBytes {
+			formattedBody = preparedBody
+		} else if envCfg.RawLogOutput {
 			formattedBody = utils.FormatJSONBytesRaw(bodyBytes)
 		} else {
 			formattedBody = utils.FormatJSONBytesForLog(bodyBytes, 500)
@@ -114,6 +117,5 @@ func LogOriginalRequest(c *gin.Context, bodyBytes []byte, envCfg *config.EnvConf
 		Method:      c.Request.Method,
 		URL:         c.Request.URL.Path,
 		HeadersJSON: string(headersJSON),
-		Body:        string(bodyBytes),
-	})
+	}.WithPreparedBody(preparedBody, originalBytes, truncated))
 }

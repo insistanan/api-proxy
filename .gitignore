@@ -251,6 +251,10 @@ backend-go/cmd/
 docs/claude-code-investigation-*.md
 .ace-tool/
 
+# 本地代码检索索引与浏览器调试产物
+/.oce-client/
+/.playwright-mcp/
+
 # Pi 工具 - agent 产物目录，非项目代码
 .pi/
 .pi-web/

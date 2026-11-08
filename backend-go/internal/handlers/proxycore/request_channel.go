@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/BenedictKing/api-proxy/internal/config"
 	"github.com/BenedictKing/api-proxy/internal/metrics"
 	"github.com/BenedictKing/api-proxy/internal/scheduler"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 )
 
 // IsQuickTestRequest 检查请求是否来自快捷测试（通过请求头或 metadata.purpose 判断）。
@@ -26,31 +28,58 @@ func IsQuickTestRequest(c *gin.Context, bodyBytes []byte) bool {
 		return false
 	}
 
-	decoder := json.NewDecoder(bytes.NewReader(bodyBytes))
-	decoder.UseNumber()
-
-	var payload map[string]interface{}
-	if err := decoder.Decode(&payload); err != nil {
+	metadata, err := extractRequestMetadata(bodyBytes)
+	if err != nil {
 		return false
 	}
 
-	rawMetadata, exists := payload["metadata"]
-	if !exists || rawMetadata == nil {
+	var purpose string
+	if err := json.Unmarshal(metadata.Purpose, &purpose); err != nil {
 		return false
 	}
+	return strings.ToLower(strings.TrimSpace(purpose)) == "quick_test"
+}
 
-	metadata, ok := rawMetadata.(map[string]interface{})
-	if !ok {
-		return false
+// requestMetadata 只保存路由所需的字段；RawMessage 保留原始数字精度和字段类型。
+type requestMetadata struct {
+	Purpose      json.RawMessage
+	ChannelIndex json.RawMessage
+}
+
+func extractRequestMetadata(bodyBytes []byte) (requestMetadata, error) {
+	if !json.Valid(bodyBytes) {
+		return requestMetadata{}, nil // 非法 JSON 由协议解析阶段报错。
 	}
-
-	if purpose, ok := metadata["purpose"].(string); ok {
-		if strings.ToLower(strings.TrimSpace(purpose)) == "quick_test" {
-			return true
+	if trimmed := bytes.TrimSpace(bodyBytes); len(trimmed) == 0 || trimmed[0] != '{' {
+		return requestMetadata{}, nil
+	}
+	// 只收集根字段名，不复制文本和 base64；字段名保持大小写敏感。
+	metadataCount := 0
+	gjson.GetBytes(bodyBytes, "@keys").ForEach(func(_, key gjson.Result) bool {
+		if key.String() == "metadata" {
+			metadataCount++
 		}
+		return true
+	})
+	if metadataCount == 0 {
+		return requestMetadata{}, nil
 	}
-
-	return false
+	var rawMetadata []byte
+	if metadataCount == 1 {
+		rawMetadata = []byte(gjson.GetBytes(bodyBytes, "metadata").Raw)
+	} else {
+		// gjson 路径查询取第一个匹配；仅重复根字段时使用 RawMessage 保留最后值语义。
+		var payload map[string]json.RawMessage
+		if err := json.Unmarshal(bodyBytes, &payload); err != nil {
+			return requestMetadata{}, fmt.Errorf("解析请求元数据失败: %w", err)
+		}
+		rawMetadata = payload["metadata"]
+	}
+	var metadata map[string]json.RawMessage
+	if err := json.Unmarshal(rawMetadata, &metadata); err != nil {
+		return requestMetadata{}, fmt.Errorf("metadata 必须是对象")
+	}
+	return requestMetadata{Purpose: metadata["purpose"], ChannelIndex: metadata["channel_index"]}, nil
 }
 
 // AreAllKeysSuspended 检查渠道的所有 Key 是否都处于熔断状态
@@ -75,35 +104,16 @@ func ExtractRequestedChannelIndex(bodyBytes []byte) (int, bool, error) {
 		return 0, false, nil
 	}
 
-	decoder := json.NewDecoder(bytes.NewReader(bodyBytes))
-	decoder.UseNumber()
-
-	var payload map[string]interface{}
-	if err := decoder.Decode(&payload); err != nil {
+	metadata, err := extractRequestMetadata(bodyBytes)
+	if err != nil {
+		return 0, false, err
+	}
+	rawChannelIndex := bytes.TrimSpace(metadata.ChannelIndex)
+	if len(rawChannelIndex) == 0 || bytes.Equal(rawChannelIndex, []byte("null")) {
 		return 0, false, nil
 	}
 
-	rawMetadata, exists := payload["metadata"]
-	if !exists || rawMetadata == nil {
-		return 0, false, nil
-	}
-
-	metadata, ok := rawMetadata.(map[string]interface{})
-	if !ok {
-		return 0, false, fmt.Errorf("metadata 必须是对象")
-	}
-
-	rawChannelIndex, exists := metadata["channel_index"]
-	if !exists || rawChannelIndex == nil {
-		return 0, false, nil
-	}
-
-	number, ok := rawChannelIndex.(json.Number)
-	if !ok {
-		return 0, true, fmt.Errorf("metadata.channel_index 必须是整数")
-	}
-
-	channelIndex, err := number.Int64()
+	channelIndex, err := strconv.ParseInt(string(rawChannelIndex), 10, 64)
 	if err != nil {
 		return 0, true, fmt.Errorf("metadata.channel_index 必须是整数")
 	}

@@ -895,7 +895,7 @@ func normalizeTrafficLog(entry TrafficLog) TrafficLog {
 	if entry.Timestamp == "" {
 		entry.Timestamp = now.UTC().Format(time.RFC3339Nano)
 	}
-	if entry.Body != "" {
+	if entry.Body != "" && !entry.bodyPrepared {
 		prepared, originalBytes, truncated := PrepareBody([]byte(entry.Body))
 		entry.Body = prepared
 		if entry.OriginalBytes == 0 {

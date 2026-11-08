@@ -19,11 +19,23 @@ func omittedImagePlaceholder(mediaType string, payload string) string {
 	return fmt.Sprintf("[omitted image; media_type=%s; bytes=%d]", mediaType, len(payload))
 }
 
-// PrepareBody 把图片 data URL / 内嵌 base64 换成占位符，再按 1MB 硬顶截断。
+// OmittedBody 为超大日志正文生成明确的省略说明；非正数表示原始长度未知。
+func OmittedBody(originalBytes int) string {
+	if originalBytes <= 0 {
+		return fmt.Sprintf("[正文已省略：原始大小未知，超过 %d 字节日志上限]", MaxBodyBytes)
+	}
+	return fmt.Sprintf("[正文已省略：原始大小 %d 字节，超过 %d 字节日志上限]", originalBytes, MaxBodyBytes)
+}
+
+// PrepareBody 先限制解析输入，再替换图片和敏感占位符，最后限制输出大小。
+// 大于 1MiB 的原始正文只记录省略说明，避免日志处理分配完整的媒体对象树。
 func PrepareBody(raw []byte) (body string, originalBytes int, truncated bool) {
 	originalBytes = len(raw)
 	if originalBytes == 0 {
 		return "", 0, false
+	}
+	if originalBytes > MaxBodyBytes {
+		return OmittedBody(originalBytes), originalBytes, true
 	}
 	sanitized := stripImages([]byte(utils.RedactSensitivePlaceholdersForLog(string(raw))))
 	if len(sanitized) <= MaxBodyBytes {

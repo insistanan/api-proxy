@@ -85,8 +85,27 @@ func TestPrepareBodyTruncatesOverCap(t *testing.T) {
 	if !truncated {
 		t.Fatal("expected truncation")
 	}
-	if len(body) != MaxBodyBytes {
-		t.Fatalf("len(body)=%d, want %d", len(body), MaxBodyBytes)
+	if len(body) > MaxBodyBytes || !strings.Contains(body, "正文已省略") {
+		t.Fatalf("超大正文应返回有界的省略说明: %s", body)
+	}
+}
+
+func TestPrepareBodyOmitsLargeMediaWithoutLeakingContent(t *testing.T) {
+	raw := []byte(`{"text":"MASKED_SECRET_7K4M2P7QAB2CD_PRESERVE_EXACTLY","inlineData":{"mimeType":"image/png","data":"` + strings.Repeat("A", 2*MaxBodyBytes) + `"}}`)
+	body, originalBytes, truncated := PrepareBody(raw)
+	if originalBytes != len(raw) || !truncated {
+		t.Fatalf("原始长度或省略标记错误: originalBytes=%d, truncated=%v", originalBytes, truncated)
+	}
+	if !strings.Contains(body, "正文已省略") || strings.Contains(body, "7K4M2P7QAB2CD") || strings.Contains(body, strings.Repeat("A", 64)) {
+		t.Fatalf("省略说明泄露了原始正文: %s", body)
+	}
+}
+
+func TestNormalizeTrafficLogPreservesPreparedBodyMetadata(t *testing.T) {
+	prepared := TrafficLog{}.WithPreparedBody(OmittedBody(0), 0, true)
+	normalized := normalizeTrafficLog(prepared)
+	if normalized.Body != prepared.Body || normalized.OriginalBytes != 0 || !normalized.Truncated {
+		t.Fatalf("未知原始长度被替换成省略说明长度: %+v", normalized)
 	}
 }
 

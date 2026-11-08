@@ -1,6 +1,8 @@
 package proxycore
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"io"
@@ -14,6 +16,7 @@ import (
 	"github.com/BenedictKing/api-proxy/internal/metrics"
 	"github.com/BenedictKing/api-proxy/internal/scheduler"
 	"github.com/BenedictKing/api-proxy/internal/types"
+	"github.com/BenedictKing/api-proxy/internal/utils"
 	"github.com/gin-gonic/gin"
 )
 
@@ -120,6 +123,69 @@ func newAttemptTestContext(ctx context.Context) *gin.Context {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/", nil).WithContext(ctx)
 	return c
+}
+
+type countedResponseBody struct {
+	io.Reader
+	readBytes int
+	closed    bool
+}
+
+func (body *countedResponseBody) Read(p []byte) (int, error) {
+	n, err := body.Reader.Read(p)
+	body.readBytes += n
+	return n, err
+}
+
+func (body *countedResponseBody) Close() error {
+	body.closed = true
+	return nil
+}
+
+func TestReadUpstreamErrorBodyLimitsAndCloses(t *testing.T) {
+	gzipBody := func(text string) string {
+		var compressed bytes.Buffer
+		writer := gzip.NewWriter(&compressed)
+		if _, err := io.WriteString(writer, text); err != nil {
+			t.Fatal(err)
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return compressed.String()
+	}
+	for _, test := range []struct {
+		name     string
+		body     string
+		encoding string
+		wantLen  int
+		wantErr  bool
+		tooLarge bool
+	}{
+		{"普通错误", `{"error":"failed"}`, "", len(`{"error":"failed"}`), false, false},
+		{"正好达到读取上限", strings.Repeat("A", maxEnvelopeSniffBytes), "", maxEnvelopeSniffBytes, false, false},
+		{"线上正文超限", strings.Repeat("A", maxEnvelopeSniffBytes+4096), "", 0, true, false},
+		{"压缩错误", gzipBody(`{"error":"failed"}`), "gzip", len(`{"error":"failed"}`), false, false},
+		{"解压后超限", gzipBody(strings.Repeat("A", maxEnvelopeSniffBytes+1)), "gzip", 0, true, true},
+		{"损坏的压缩正文", "invalid gzip", "gzip", 0, true, false},
+		{"不支持的压缩编码", "encoded", "unknown", 0, true, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			reader := &countedResponseBody{Reader: strings.NewReader(test.body)}
+			resp := &http.Response{Header: make(http.Header), Body: reader}
+			resp.Header.Set("Content-Encoding", test.encoding)
+			got, err := readUpstreamErrorBody(resp)
+			if (err != nil) != test.wantErr || len(got) != test.wantLen {
+				t.Fatalf("读取结果长度=%d, err=%v，预期长度=%d, 错误=%v", len(got), err, test.wantLen, test.wantErr)
+			}
+			if test.tooLarge && !errors.Is(err, utils.ErrDecompressedBodyTooLarge) {
+				t.Fatalf("解压超限错误未保留: %v", err)
+			}
+			if !reader.closed || reader.readBytes > maxEnvelopeSniffBytes+1 {
+				t.Fatalf("未关闭或继续排空超限正文: closed=%v, readBytes=%d", reader.closed, reader.readBytes)
+			}
+		})
+	}
 }
 
 // truncatedBodyHandler 写出声明长度与实际不符的 400 响应：客户端

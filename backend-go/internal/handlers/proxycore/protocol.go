@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"time"
@@ -144,11 +143,10 @@ func RunProxyRequest(
 		handleContentSafetyPreparationError(c, spec.LogName, err)
 		return
 	}
-	bodyBytes, err = io.ReadAll(c.Request.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取脱敏请求体失败", "code": "CONTENT_SAFETY_HOOK_ERROR"})
-		return
+	if preparedBody, ok := hooks.PreparedRequestBody(c.Request); ok {
+		bodyBytes = preparedBody
 	}
+	// 未启用请求前 Hook 时正文没有被改写，复用入口已读入的字节。
 	RestoreRequestBody(c, bodyBytes)
 	for index := range prompts {
 		prompts[index], err = hooks.MaskAttachedText(c, prompts[index])

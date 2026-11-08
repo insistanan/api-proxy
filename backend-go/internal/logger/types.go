@@ -6,7 +6,7 @@ const (
 	// DefaultDBPath 与 conversations.db 一样落在 .config。
 	DefaultDBPath = ".config/logs.db"
 
-	// MaxBodyBytes 单条流量正文硬顶（sanitize 之后）。
+	// MaxBodyBytes 日志正文的解析输入与最终输出上限。
 	MaxBodyBytes = 1 << 20
 
 	PhaseClientRequest    = "client_request"
@@ -53,6 +53,17 @@ type TrafficLog struct {
 	Body          string `json:"body,omitempty"`
 	Truncated     bool   `json:"truncated,omitempty"`
 	OriginalBytes int    `json:"originalBytes,omitempty"`
+	bodyPrepared  bool
+}
+
+// WithPreparedBody 绑定 PrepareBody 或 OmittedBody 的结果，避免入队前重复清洗。
+// 原始长度未知时保留 0，不把省略说明的长度当成正文长度。
+func (entry TrafficLog) WithPreparedBody(body string, originalBytes int, truncated bool) TrafficLog {
+	entry.Body = body
+	entry.OriginalBytes = originalBytes
+	entry.Truncated = truncated
+	entry.bodyPrepared = true
+	return entry
 }
 
 // RequestLogRecord 是 Web 请求日志页的元数据行（payload 为完整 JSON）。

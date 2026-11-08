@@ -2,6 +2,7 @@ package utils
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"unicode"
 
@@ -100,6 +101,166 @@ func analyzeMessagesRequest(bodyBytes []byte) (int, bool) {
 	}
 
 	return total, opaque
+}
+
+// EstimateGeminiRequestTokens 从 Gemini 原生请求体估算输入 token。
+// 支持直接输入和 generateContentRequest 包装；请求格式错误时显式返回错误。
+// inlineData、fileData 走定额，工具参数和返回值按 JSON 内容计数。
+func EstimateGeminiRequestTokens(bodyBytes []byte) (int, error) {
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(bodyBytes, &envelope); err != nil {
+		return 0, fmt.Errorf("解析 Gemini 计数请求失败: %w", err)
+	}
+	if envelope == nil {
+		return 0, fmt.Errorf("Gemini 计数请求必须是 JSON 对象")
+	}
+	// 与原生接口一致：包装请求存在时使用其中的输入，不重复统计顶层 contents。
+	if wrapped, ok := envelope["generateContentRequest"]; ok {
+		bodyBytes = wrapped
+	}
+
+	// 用现有协议类型验证已知字段，但估算保留原始 JSON，避免工具 Schema 清洗
+	// 或协议类型未声明的新字段改变计数内容。
+	var validated *types.GeminiRequest
+	if err := json.Unmarshal(bodyBytes, &validated); err != nil {
+		return 0, fmt.Errorf("Gemini 计数请求字段格式错误: %w", err)
+	}
+	if validated == nil {
+		return 0, fmt.Errorf("Gemini 计数输入必须是 JSON 对象")
+	}
+	if validated.Contents == nil && validated.SystemInstruction == nil && validated.Tools == nil {
+		return 0, fmt.Errorf("Gemini 计数请求必须包含 contents、systemInstruction 或 tools")
+	}
+
+	var req map[string]interface{}
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
+		return 0, fmt.Errorf("解析 Gemini 计数输入失败: %w", err)
+	}
+
+	total := 0
+
+	if system, ok := req["systemInstruction"]; ok && system != nil {
+		tokens, err := estimateGeminiContentTokens(system)
+		if err != nil {
+			return 0, fmt.Errorf("systemInstruction 格式错误: %w", err)
+		}
+		total += tokens
+	}
+
+	if contents, ok := req["contents"].([]interface{}); ok {
+		for i, content := range contents {
+			tokens, err := estimateGeminiContentTokens(content)
+			if err != nil {
+				return 0, fmt.Errorf("contents[%d] 格式错误: %w", i, err)
+			}
+			total += 4
+			total += tokens
+		}
+	}
+
+	if tools, ok := req["tools"].([]interface{}); ok {
+		for i, tool := range tools {
+			if obj, ok := tool.(map[string]interface{}); !ok || len(obj) == 0 {
+				return 0, fmt.Errorf("tools[%d] 必须是非空 JSON 对象", i)
+			}
+		}
+		tokens, err := estimateGeminiToolsTokens(tools)
+		if err != nil {
+			return 0, err
+		}
+		total += tokens
+	}
+
+	return total, nil
+}
+
+// estimateGeminiContentTokens 保留媒体定额，仅将函数参数和返回值按完整 JSON 计数。
+// 通用 estimateValue 会忽略数字、布尔值及对象字段名，不适合这些工具数据。
+func estimateGeminiContentTokens(value interface{}) (int, error) {
+	content, ok := value.(map[string]interface{})
+	if !ok || content == nil {
+		return 0, fmt.Errorf("内容必须是 JSON 对象")
+	}
+	parts, ok := content["parts"].([]interface{})
+	if !ok || len(parts) == 0 {
+		return 0, fmt.Errorf("parts 必须是非空数组")
+	}
+	total, _ := estimateObjectIgnoring(content, "parts")
+	for i, value := range parts {
+		part, ok := value.(map[string]interface{})
+		if !ok || len(part) == 0 {
+			return 0, fmt.Errorf("parts[%d] 必须是非空 JSON 对象", i)
+		}
+		// 保留 part 包装，让通用估算识别 inlineData/fileData 的媒体定额。
+		// 函数数据在后续按完整 JSON 单独计数，先从这一分支排除，避免重复。
+		nonFunctionFields := make(map[string]interface{}, len(part))
+		for key, value := range part {
+			if key != "functionCall" && key != "functionResponse" {
+				nonFunctionFields[key] = value
+			}
+		}
+		tokens, _ := estimateObject(nonFunctionFields)
+		total += tokens
+		for _, field := range []struct {
+			name    string
+			payload string
+		}{
+			{"functionCall", "args"},
+			{"functionResponse", "response"},
+		} {
+			function, exists := part[field.name]
+			if !exists {
+				continue
+			}
+			obj, ok := function.(map[string]interface{})
+			if !ok || obj == nil {
+				return 0, fmt.Errorf("parts[%d].%s 必须是 JSON 对象", i, field.name)
+			}
+			if name, ok := obj["name"].(string); !ok || strings.TrimSpace(name) == "" {
+				return 0, fmt.Errorf("parts[%d].%s.name 必须是非空字符串", i, field.name)
+			}
+			tokens, _ := estimateObjectIgnoring(obj, field.payload)
+			total += tokens
+			if payload, exists := obj[field.payload]; exists {
+				if obj, ok := payload.(map[string]interface{}); !ok || obj == nil {
+					return 0, fmt.Errorf("parts[%d].%s.%s 必须是 JSON 对象", i, field.name, field.payload)
+				}
+				data, err := json.Marshal(payload)
+				if err != nil {
+					return 0, fmt.Errorf("序列化 parts[%d].%s.%s 失败: %w", i, field.name, field.payload, err)
+				}
+				total += EstimateTokens(string(data))
+			}
+		}
+	}
+	return total, nil
+}
+
+// estimateGeminiToolsTokens 估算 Gemini tools（形如 [{functionDeclarations:[...]}]）。
+// 工具声明是可读的 JSON Schema，按序列化长度估算；每个声明再兜底 150 token，
+// 与 Messages 的 tools 下限口径一致。
+func estimateGeminiToolsTokens(tools []interface{}) (int, error) {
+	declarations := 0
+	for _, tool := range tools {
+		if m, ok := tool.(map[string]interface{}); ok {
+			if fds, ok := m["functionDeclarations"].([]interface{}); ok {
+				declarations += len(fds)
+			}
+		}
+	}
+	if declarations == 0 {
+		declarations = len(tools)
+	}
+
+	data, err := json.Marshal(tools)
+	if err != nil {
+		return 0, fmt.Errorf("序列化 Gemini 工具声明失败: %w", err)
+	}
+	estimated := EstimateTokens(string(data))
+	if minimum := declarations * 150; estimated < minimum {
+		return minimum, nil
+	}
+	return estimated, nil
 }
 
 func analyzeResponsesRequest(bodyBytes []byte) (int, bool) {

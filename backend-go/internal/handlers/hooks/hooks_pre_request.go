@@ -167,6 +167,7 @@ type attachedPreRequestCache struct {
 
 type checkedPreRequestBody struct {
 	*bytes.Reader
+	body        []byte
 	owner       *attachedHookPipeline
 	protocol    string
 	contentType string
@@ -174,6 +175,19 @@ type checkedPreRequestBody struct {
 }
 
 func (b *checkedPreRequestBody) Close() error { return nil }
+
+// PreparedRequestBody 返回当前请求尚未消费的 Hook 处理结果，只读借用原字节。
+// 只检查请求自身的正文包装，不读取共享结果缓存，避免拿到其他上游尝试的正文。
+func PreparedRequestBody(req *http.Request) ([]byte, bool) {
+	if req == nil {
+		return nil, false
+	}
+	body, ok := req.Body.(*checkedPreRequestBody)
+	if !ok || body.owner == nil || body.Len() != body.size || body.contentType != req.Header.Get("Content-Type") {
+		return nil, false
+	}
+	return body.body, true
+}
 
 func (a *attachedHookPipeline) preparePreRequest() (bool, error) {
 	a.preRequestMu.Lock()
@@ -343,7 +357,7 @@ func runAttachedPreRequestHooks(ctx context.Context, c requestContextGetter, req
 
 func markCheckedPreRequestBody(req *http.Request, owner *attachedHookPipeline, protocol string, body []byte) {
 	if req.Body != nil {
-		req.Body = &checkedPreRequestBody{Reader: bytes.NewReader(body), owner: owner, protocol: protocol, contentType: req.Header.Get("Content-Type"), size: len(body)}
+		req.Body = &checkedPreRequestBody{Reader: bytes.NewReader(body), body: body, owner: owner, protocol: protocol, contentType: req.Header.Get("Content-Type"), size: len(body)}
 	}
 }
 

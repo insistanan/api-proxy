@@ -310,6 +310,14 @@ func TestContentSafetyPipelineReplacesRequestBodyAndHonorsSettings(t *testing.T)
 	if err := runAttachedPreRequestHooks(context.Background(), c, req, "channel"); err != nil {
 		t.Fatalf("请求前 Hook 执行失败: %v", err)
 	}
+	prepared, ok := PreparedRequestBody(req)
+	if !ok || !strings.Contains(string(prepared), "MASKED_PHONE_") || strings.Contains(string(prepared), "13800138000") {
+		t.Fatalf("未复用处理后的脱敏正文: %s", prepared)
+	}
+	again, ok := PreparedRequestBody(req)
+	if !ok || &again[0] != &prepared[0] {
+		t.Fatal("处理后的正文不应被再次复制")
+	}
 	body, err := io.ReadAll(req.Body)
 	if err != nil {
 		t.Fatalf("读取替换后的请求体失败: %v", err)
@@ -319,6 +327,12 @@ func TestContentSafetyPipelineReplacesRequestBodyAndHonorsSettings(t *testing.T)
 	}
 	if req.ContentLength != int64(len(body)) {
 		t.Fatalf("ContentLength = %d，实际长度 = %d", req.ContentLength, len(body))
+	}
+	if !bytes.Equal(body, prepared) {
+		t.Fatal("借用正文与实际转发内容不一致")
+	}
+	if _, ok := PreparedRequestBody(req); ok {
+		t.Fatal("已消费的正文不能再作为完整处理结果复用")
 	}
 
 	settings.ContentSafety.SensitiveInfo.Enabled = false
@@ -360,6 +374,9 @@ func TestDisabledContentSafetyPreservesRequestBytesAndMetadata(t *testing.T) {
 	if err := runAttachedPreRequestHooks(context.Background(), c, req, "channel"); err != nil {
 		t.Fatalf("默认关闭时请求前 Hook 不应报错: %v", err)
 	}
+	if _, ok := PreparedRequestBody(req); ok {
+		t.Fatal("未启用 Hook 时不应声明存在处理后的正文")
+	}
 	body, err := io.ReadAll(req.Body)
 	if err != nil {
 		t.Fatalf("读取请求体失败: %v", err)
@@ -369,6 +386,21 @@ func TestDisabledContentSafetyPreservesRequestBytesAndMetadata(t *testing.T) {
 	}
 	if req.ContentLength != originalLength || (req.GetBody == nil) != (originalGetBody == nil) {
 		t.Fatalf("默认关闭时请求元数据被改变: ContentLength=%d GetBodyNil=%v", req.ContentLength, req.GetBody == nil)
+	}
+}
+
+func TestPreparedRequestBodyUsesCurrentRequestInsteadOfCache(t *testing.T) {
+	owner := &attachedHookPipeline{preRequestCache: &attachedPreRequestCache{output: []byte("旧上游正文")}}
+	current := []byte("当前请求正文")
+	req := httptest.NewRequest("POST", "/", bytes.NewReader(current))
+	markCheckedPreRequestBody(req, owner, "messages", current)
+	got, ok := PreparedRequestBody(req)
+	if !ok || !bytes.Equal(got, current) {
+		t.Fatalf("错误地复用了其他上游尝试的缓存: %s", got)
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	if _, ok := PreparedRequestBody(req); ok {
+		t.Fatal("正文元数据发生变化后不应复用处理结果")
 	}
 }
 

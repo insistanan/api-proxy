@@ -249,6 +249,123 @@ func TestEstimateRequestTokens(t *testing.T) {
 	}
 }
 
+func TestEstimateGeminiRequestTokensSupportsWrappedRequest(t *testing.T) {
+	direct := `{"contents":[{"parts":[{"text":"hello world"}]}],"systemInstruction":{"parts":[{"text":"请用中文回答"}]},"tools":[{"functionDeclarations":[{"name":"search"},{"name":"calculate"}]}]}`
+	want, err := EstimateGeminiRequestTokens([]byte(direct))
+	if err != nil {
+		t.Fatalf("直接请求估算失败: %v", err)
+	}
+	if want < 300 {
+		t.Fatalf("两个工具声明未计入: tokens = %d", want)
+	}
+	for _, body := range []string{
+		`{"generateContentRequest":` + direct + `}`,
+		`{"contents":[{"parts":[{"text":"不应重复计入"}]}],"generateContentRequest":` + direct + `}`,
+	} {
+		got, err := EstimateGeminiRequestTokens([]byte(body))
+		if err != nil {
+			t.Fatalf("包装请求估算失败: %v", err)
+		}
+		if got != want {
+			t.Fatalf("包装请求计数 = %d，直接请求计数 = %d", got, want)
+		}
+	}
+	got, err := EstimateGeminiRequestTokens([]byte(`{"contents":[]}`))
+	if err != nil || got != 0 {
+		t.Fatalf("空内容数组应可计数: tokens = %d, err = %v", got, err)
+	}
+}
+
+func TestEstimateGeminiRequestTokensRejectsInvalidStructure(t *testing.T) {
+	for _, body := range []string{
+		``, `null`, `[]`, `{}`, `{"contents":`,
+		`{"contents":null}`, `{"contents":"hello"}`, `{"contents":[null]}`,
+		`{"contents":[{"parts":[]}]}`, `{"contents":[{"parts":{}}]}`,
+		`{"contents":[{"parts":[null]}]}`, `{"contents":[{"parts":[{}]}]}`,
+		`{"contents":[{"parts":[{"text":123}]}]}`,
+		`{"contents":[{"parts":[{"functionCall":{"args":[]}}]}]}`,
+		`{"contents":[{"parts":[{"functionResponse":{"response":true}}]}]}`,
+		`{"contents":[{"parts":[{"functionCall":null}]}]}`,
+		`{"contents":[{"parts":[{"functionCall":{}}]}]}`,
+		`{"contents":[{"parts":[{"functionCall":{"name":"search","args":null}}]}]}`,
+		`{"contents":[{"parts":[{"functionResponse":{"name":"search","response":null}}]}]}`,
+		`{"systemInstruction":{"parts":"hello"}}`, `{"tools":"hello"}`, `{"tools":[null]}`,
+		`{"tools":[{"functionDeclarations":"hello"}]}`,
+		`{"generateContentRequest":null}`, `{"generateContentRequest":[]}`,
+		`{"generateContentRequest":{"contents":"hello"}}`,
+	} {
+		if got, err := EstimateGeminiRequestTokens([]byte(body)); err == nil {
+			t.Errorf("请求 %q 未被拒绝，错误地返回 tokens = %d", body, got)
+		}
+	}
+}
+
+func TestEstimateGeminiRequestTokensCountsToolJSON(t *testing.T) {
+	for _, function := range []struct {
+		name    string
+		payload string
+	}{
+		{"functionCall", "args"},
+		{"functionResponse", "response"},
+	} {
+		for _, payload := range []string{
+			`{"values":[` + strings.Repeat("12345,", 1023) + `12345]}`,
+			`{"values":[` + strings.Repeat("true,", 1023) + `false]}`,
+			`{"` + strings.Repeat("long_field_name", 256) + `":null}`,
+		} {
+			body := `{"contents":[{"parts":[{"` + function.name + `":{"name":"calculate","` + function.payload + `":` + payload + `}}]}]}`
+			got, err := EstimateGeminiRequestTokens([]byte(body))
+			if err != nil {
+				t.Fatalf("工具 JSON 估算失败: %v", err)
+			}
+			if got < 1000 {
+				t.Errorf("%s.%s 的数字、布尔值或字段名未完整计入: tokens = %d", function.name, function.payload, got)
+			}
+		}
+	}
+}
+
+func TestEstimateGeminiRequestTokensPreservesToolSchema(t *testing.T) {
+	// 现有 Gemini 类型会清洗 $defs；计数必须保留客户端实际提供的 Schema。
+	body := `{"contents":[],"tools":[{"functionDeclarations":[{"name":"search","parameters":{"type":"object","$defs":{"detail":{"description":"` + strings.Repeat("schema detail ", 1024) + `"}}}}]}]}`
+	got, err := EstimateGeminiRequestTokens([]byte(body))
+	if err != nil {
+		t.Fatalf("工具 Schema 估算失败: %v", err)
+	}
+	if got < 3000 {
+		t.Fatalf("工具 Schema 被清洗或只计入固定下限: tokens = %d", got)
+	}
+}
+
+func TestEstimateGeminiRequestTokensSkipsOpaqueMediaPayload(t *testing.T) {
+	for _, media := range []struct {
+		prefix string
+		suffix string
+		quota  int
+	}{
+		{`{"inlineData":{"mimeType":"image/png","data":"`, `"}}`, estimatedImageTokens},
+		{`{"inlineData":{"mimeType":"application/pdf","data":"`, `"}}`, estimatedFileTokens},
+		{`{"fileData":{"mimeType":"application/pdf","fileUri":"`, `"}}`, estimatedFileTokens},
+		{`{"functionResponse":{"name":"look","response":{"ok":true},"parts":[{"inlineData":{"mimeType":"image/png","data":"`, `"}}]}}`, estimatedImageTokens},
+	} {
+		var previous int
+		for _, size := range []int{1024, 1024 * 1024} {
+			body := `{"contents":[{"parts":[` + media.prefix + strings.Repeat("A", size) + media.suffix + `]}]}`
+			got, err := EstimateGeminiRequestTokens([]byte(body))
+			if err != nil {
+				t.Fatalf("媒体请求估算失败: %v", err)
+			}
+			if got < media.quota || got > media.quota+50 {
+				t.Fatalf("媒体未按定额计数: tokens = %d, quota = %d", got, media.quota)
+			}
+			if previous != 0 && got != previous {
+				t.Fatalf("媒体载荷增长改变了计数: small = %d, large = %d", previous, got)
+			}
+			previous = got
+		}
+	}
+}
+
 func TestEstimateRequestTokensSkipsOpaqueMediaPayload(t *testing.T) {
 	pdfData := strings.Repeat("A", 1024*1024)
 	imageData := strings.Repeat("B", 200000)

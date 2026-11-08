@@ -16,6 +16,7 @@ import (
 	"github.com/BenedictKing/api-proxy/internal/converters"
 	"github.com/BenedictKing/api-proxy/internal/handlers/hooks"
 	"github.com/BenedictKing/api-proxy/internal/handlers/proxycore"
+	"github.com/BenedictKing/api-proxy/internal/middleware"
 	"github.com/BenedictKing/api-proxy/internal/scheduler"
 	"github.com/BenedictKing/api-proxy/internal/types"
 	"github.com/BenedictKing/api-proxy/internal/utils"
@@ -38,51 +39,46 @@ func Handler(
 		LogName:      "Gemini",
 		HookPipeline: contentSafetyPipeline,
 		ParseRequest: func(c *gin.Context, body []byte) (string, bool, []string, bool) {
+			model, action := parseModelAction(c.Param("modelAction"))
+			if model == "" {
+				writeGeminiError(c, 400, "Model name is required in URL path", "INVALID_ARGUMENT")
+				return "", false, nil, false
+			}
+			// 只代理对话方法。历史实现在这里丢弃 action 并无条件改写为 generateContent，
+			// 导致 :embedContent / :predictLongRunning 等请求被当成对话请求发往上游，
+			// 上游按对话语义解析后返回难以追溯的错误。未支持的方法必须显式拒绝。
+			switch action {
+			case actionGenerateContent, actionStreamGenerateContent:
+			case "":
+				writeGeminiError(c, 400, "Model action is required in URL path, expected /v1beta/models/{model}:{action}", "INVALID_ARGUMENT")
+				return "", false, nil, false
+			default:
+				writeGeminiError(c, 400, fmt.Sprintf("Gemini method \":%s\" is not supported by this proxy; supported: :%s, :%s, :%s",
+					action, actionGenerateContent, actionStreamGenerateContent, actionCountTokens), "INVALID_ARGUMENT")
+				return "", false, nil, false
+			}
 			var geminiReq types.GeminiRequest
 			if len(body) > 0 {
 				if err := json.Unmarshal(body, &geminiReq); err != nil {
-					c.JSON(400, types.GeminiError{
-						Error: types.GeminiErrorDetail{
-							Code:    400,
-							Message: fmt.Sprintf("Invalid request body: %v", err),
-							Status:  "INVALID_ARGUMENT",
-						},
-					})
+					writeGeminiError(c, 400, fmt.Sprintf("Invalid request body: %v", err), "INVALID_ARGUMENT")
 					return "", false, nil, false
 				}
 			}
 			c.Set("__gemini_req", &geminiReq)
-			modelAction := c.Param("modelAction")
-			modelAction = strings.TrimPrefix(modelAction, "/")
-			model := extractModelName(modelAction)
-			if model == "" {
-				c.JSON(400, types.GeminiError{
-					Error: types.GeminiErrorDetail{
-						Code:    400,
-						Message: "Model name is required in URL path",
-						Status:  "INVALID_ARGUMENT",
-					},
-				})
-				return "", false, nil, false
-			}
-			isStream := strings.Contains(c.Request.URL.Path, "streamGenerateContent")
+			isStream := action == actionStreamGenerateContent
 			prompts := proxycore.ExtractPromptsFromGemini(geminiReq.Contents)
 			return model, isStream, prompts, true
 		},
 		PreRoute: nil,
 		BuildUpstreamRequest: func(c *gin.Context, up *config.UpstreamConfig, apiKey string, body []byte) (*http.Request, error) {
 			geminiReq := c.MustGet("__gemini_req").(*types.GeminiRequest)
-			modelAction := strings.TrimPrefix(c.Param("modelAction"), "/")
-			model := extractModelName(modelAction)
-			isStream := strings.Contains(c.Request.URL.Path, "streamGenerateContent")
-			return buildProviderRequest(c, up, up.GetEffectiveBaseURL(), apiKey, geminiReq, model, isStream)
+			model, action := parseModelAction(c.Param("modelAction"))
+			return buildProviderRequest(c, up, up.GetEffectiveBaseURL(), apiKey, geminiReq, model, action)
 		},
 		HandleSuccess: func(c *gin.Context, resp *http.Response, up *config.UpstreamConfig, apiKey string, body []byte, startTime time.Time) (*types.Usage, error) {
 			geminiReq := c.MustGet("__gemini_req").(*types.GeminiRequest)
-			modelAction := strings.TrimPrefix(c.Param("modelAction"), "/")
-			model := extractModelName(modelAction)
-			isStream := strings.Contains(c.Request.URL.Path, "streamGenerateContent")
-			return handleSuccess(c, resp, up.ServiceType, envCfg, startTime, geminiReq, model, isStream)
+			model, action := parseModelAction(c.Param("modelAction"))
+			return handleSuccess(c, resp, up.ServiceType, envCfg, startTime, geminiReq, model, action == actionStreamGenerateContent)
 		},
 		HandleAllFailed: func(c *gin.Context, failoverErr *proxycore.FailoverError, lastError error) {
 			if failoverErr != nil {
@@ -134,22 +130,71 @@ func Handler(
 		},
 	}
 	return func(c *gin.Context) {
+		// :countTokens 是纯计量方法，不需要上游渠道；与 Messages 的 count_tokens 一样
+		// 在本地估算，避免占用渠道配额、熔断计数和会话观测。
+		if _, action := parseModelAction(c.Param("modelAction")); action == actionCountTokens {
+			handleCountTokens(c, envCfg)
+			return
+		}
 		proxycore.RunProxyRequest(c, envCfg, cfgManager, channelScheduler, spec)
 	}
 }
 
-// extractModelName 从 URL 参数提取模型名称
-// 输入: "gemini-2.0-flash:generateContent" 或 "gemini-2.0-flash"
-// 输出: "gemini-2.0-flash"
-func extractModelName(param string) string {
-	if param == "" {
-		return ""
+// handleCountTokens 本地处理 :countTokens，返回 Gemini 原生响应体形状 {"totalTokens": N}。
+func handleCountTokens(c *gin.Context, envCfg *config.EnvConfig) {
+	middleware.ProxyAuthMiddleware(envCfg)(c)
+	if c.IsAborted() {
+		return
 	}
-	// 移除 :generateContent 或 :streamGenerateContent 后缀
+
+	bodyBytes, err := proxycore.ReadRequestBody(c, envCfg.MaxRequestBodySize)
+	if err != nil {
+		// ReadRequestBody 已写出错误响应
+		return
+	}
+
+	if model, _ := parseModelAction(c.Param("modelAction")); model == "" {
+		writeGeminiError(c, 400, "Model name is required in URL path", "INVALID_ARGUMENT")
+		return
+	}
+	totalTokens, err := utils.EstimateGeminiRequestTokens(bodyBytes)
+	if err != nil {
+		writeGeminiError(c, http.StatusBadRequest, fmt.Sprintf("Invalid request body: %v", err), "INVALID_ARGUMENT")
+		return
+	}
+	if envCfg.EnableResponseLogs {
+		log.Printf("[Gemini-Token] CountTokens本地估算: %d", totalTokens)
+	}
+	c.JSON(http.StatusOK, gin.H{"totalTokens": totalTokens})
+}
+
+// writeGeminiError 按 Gemini 错误信封格式返回错误，避免各分支重复五段结构。
+func writeGeminiError(c *gin.Context, status int, message string, statusText string) {
+	c.JSON(status, types.GeminiError{
+		Error: types.GeminiErrorDetail{
+			Code:    status,
+			Message: message,
+			Status:  statusText,
+		},
+	})
+}
+
+// Gemini 模型方法名。本项目只代理对话类方法，countTokens 在本地估算。
+const (
+	actionGenerateContent       = "generateContent"
+	actionStreamGenerateContent = "streamGenerateContent"
+	actionCountTokens           = "countTokens"
+)
+
+// parseModelAction 拆分 URL 参数中的模型名与方法名。
+// 输入: "/gemini-2.0-flash:generateContent" → ("gemini-2.0-flash", "generateContent")
+// 输入: "/gemini-2.0-flash" → ("gemini-2.0-flash", "")
+func parseModelAction(param string) (model string, action string) {
+	param = strings.TrimPrefix(param, "/")
 	if idx := strings.Index(param, ":"); idx > 0 {
-		return param[:idx]
+		return param[:idx], param[idx+1:]
 	}
-	return param
+	return param, ""
 }
 
 // handleMultiChannel 处理多渠道 Gemini 请求
@@ -186,7 +231,9 @@ func cloneGeminiRequest(req *types.GeminiRequest) *types.GeminiRequest {
 	return clone
 }
 
-// buildProviderRequest 构建上游请求
+// buildProviderRequest 构建上游请求。
+// action 必须是 ParseRequest 已放行的对话方法（generateContent / streamGenerateContent），
+// 直接用于上游 URL，不再由流式标记反推，避免再次出现「静默改写方法」的问题。
 func buildProviderRequest(
 	c *gin.Context,
 	upstream *config.UpstreamConfig,
@@ -194,7 +241,7 @@ func buildProviderRequest(
 	apiKey string,
 	geminiReq *types.GeminiRequest,
 	model string,
-	isStream bool,
+	action string,
 ) (*http.Request, error) {
 	// 应用模型映射
 	mappedModel := config.ResolveUpstreamModel(model, upstream)
@@ -203,38 +250,9 @@ func buildProviderRequest(
 	var url string
 	var err error
 
+	isStream := action == actionStreamGenerateContent
+
 	switch upstream.ServiceType {
-	case "gemini":
-		// Gemini 上游：根据配置处理 thought_signature 字段
-		reqToUse := geminiReq
-
-		// 优先处理 StripThoughtSignature（移除字段）
-		if upstream.StripThoughtSignature {
-			reqCopy := cloneGeminiRequest(geminiReq)
-			stripThoughtSignature(reqCopy)
-			reqToUse = reqCopy
-		} else if upstream.InjectDummyThoughtSignature {
-			// 给空签名注入 dummy 值（兼容 x666.me 等要求必须有该字段的 API）
-			reqCopy := cloneGeminiRequest(geminiReq)
-			ensureThoughtSignatures(reqCopy)
-			reqToUse = reqCopy
-		}
-		// else: 默认直接透传，不做任何修改
-
-		requestBody, err = json.Marshal(reqToUse)
-		if err != nil {
-			return nil, err
-		}
-
-		action := "generateContent"
-		if isStream {
-			action = "streamGenerateContent"
-		}
-		url = fmt.Sprintf("%s/v1beta/models/%s:%s", strings.TrimRight(baseURL, "/"), mappedModel, action)
-		if isStream {
-			url += "?alt=sse"
-		}
-
 	case "claude":
 		// Claude 上游：需要转换
 		claudeReq, err := converters.GeminiToClaudeRequest(geminiReq, mappedModel)
@@ -262,7 +280,7 @@ func buildProviderRequest(
 		url = fmt.Sprintf("%s/v1/chat/completions", strings.TrimRight(baseURL, "/"))
 
 	default:
-		// 默认当作 Gemini 处理，根据配置处理 thought_signature 字段
+		// Gemini 上游（含未显式声明 ServiceType 的渠道）：按配置处理 thought_signature 后透传。
 		reqToUse := geminiReq
 
 		// 优先处理 StripThoughtSignature（移除字段）
@@ -282,10 +300,7 @@ func buildProviderRequest(
 		if err != nil {
 			return nil, err
 		}
-		action := "generateContent"
-		if isStream {
-			action = "streamGenerateContent"
-		}
+
 		url = fmt.Sprintf("%s/v1beta/models/%s:%s", strings.TrimRight(baseURL, "/"), mappedModel, action)
 		if isStream {
 			url += "?alt=sse"

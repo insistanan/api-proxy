@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/BenedictKing/api-proxy/internal/config"
@@ -245,7 +246,167 @@ func TestStripThoughtSignature(t *testing.T) {
 	}
 }
 
-// TestBuildProviderRequest_StripThoughtSignature 测试 buildProviderRequest 中的 StripThoughtSignature 配置
+// TestParseModelAction 验证 URL 参数被拆成模型名与方法名，方法名不再被丢弃
+func TestParseModelAction(t *testing.T) {
+	tests := []struct {
+		param  string
+		model  string
+		action string
+	}{
+		{"/gemini-2.0-flash:generateContent", "gemini-2.0-flash", "generateContent"},
+		{"/gemini-2.0-flash:streamGenerateContent", "gemini-2.0-flash", "streamGenerateContent"},
+		{"/gemini-2.0-flash:countTokens", "gemini-2.0-flash", "countTokens"},
+		{"/gemini-2.0-flash", "gemini-2.0-flash", ""},
+		{"", "", ""},
+	}
+
+	for _, tt := range tests {
+		model, action := parseModelAction(tt.param)
+		if model != tt.model || action != tt.action {
+			t.Errorf("parseModelAction(%q) = (%q, %q), want (%q, %q)", tt.param, model, action, tt.model, tt.action)
+		}
+	}
+}
+
+// TestHandler_ActionDispatch 验证 /v1beta/models/*modelAction 按方法分发：
+// 未代理的方法显式拒绝（不再静默改写成 generateContent），countTokens 本地估算。
+func TestHandler_ActionDispatch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	envCfg := &config.EnvConfig{
+		ProxyAccessKey:     "secret-key",
+		MaxRequestBodySize: 1024 * 1024,
+	}
+	r := gin.New()
+	r.POST("/v1beta/models/*modelAction", Handler(envCfg, nil, nil))
+
+	doRequest := func(path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader([]byte(body)))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("x-api-key", "secret-key")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
+
+	t.Run("未支持的方法返回明确的 Gemini 错误", func(t *testing.T) {
+		w := doRequest("/v1beta/models/gemini-2.0-flash:embedContent", `{"contents":[]}`)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want %d", w.Code, http.StatusBadRequest)
+		}
+		var geminiErr types.GeminiError
+		if err := json.Unmarshal(w.Body.Bytes(), &geminiErr); err != nil {
+			t.Fatalf("响应不是 Gemini 错误信封: %v, body=%s", err, w.Body.String())
+		}
+		if geminiErr.Error.Status != "INVALID_ARGUMENT" {
+			t.Errorf("status = %q, want INVALID_ARGUMENT", geminiErr.Error.Status)
+		}
+		if geminiErr.Error.Code != http.StatusBadRequest {
+			t.Errorf("code = %d, want %d", geminiErr.Error.Code, http.StatusBadRequest)
+		}
+		if !strings.Contains(geminiErr.Error.Message, "embedContent") {
+			t.Errorf("错误消息应回显请求的方法名，实际: %s", geminiErr.Error.Message)
+		}
+	})
+
+	t.Run("缺少方法名返回错误", func(t *testing.T) {
+		w := doRequest("/v1beta/models/gemini-2.0-flash", `{"contents":[]}`)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want %d", w.Code, http.StatusBadRequest)
+		}
+	})
+
+	t.Run("countTokens 本地估算且不访问上游", func(t *testing.T) {
+		w := doRequest("/v1beta/models/gemini-2.0-flash:countTokens",
+			`{"contents":[{"parts":[{"text":"hello world"}]}]}`)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d, body=%s", w.Code, http.StatusOK, w.Body.String())
+		}
+		var resp struct {
+			TotalTokens int `json:"totalTokens"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("解析响应失败: %v, body=%s", err, w.Body.String())
+		}
+		if resp.TotalTokens <= 0 {
+			t.Errorf("totalTokens = %d, want > 0", resp.TotalTokens)
+		}
+	})
+
+	t.Run("countTokens 也需要代理访问密钥", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.0-flash:countTokens", bytes.NewReader([]byte(`{}`)))
+		req.Header.Set("x-goog-api-key", "any-gemini-key")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+		}
+	})
+
+	t.Run("countTokens 支持完整生成请求", func(t *testing.T) {
+		w := doRequest("/v1beta/models/gemini-2.0-flash:countTokens",
+			`{"generateContentRequest":{"contents":[{"parts":[{"text":"hello world"}]}],"systemInstruction":{"parts":[{"text":"请用中文回答"}]},"tools":[{"functionDeclarations":[{"name":"search","parameters":{"type":"object"}}]}]}}`)
+		if w.Code != http.StatusOK {
+			t.Fatalf("状态码 = %d，预期 200，响应 = %s", w.Code, w.Body.String())
+		}
+		var resp struct {
+			TotalTokens int `json:"totalTokens"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("解析响应失败: %v", err)
+		}
+		if resp.TotalTokens < 150 {
+			t.Fatalf("完整请求的工具声明未计入: totalTokens = %d", resp.TotalTokens)
+		}
+	})
+
+	t.Run("countTokens 拒绝错误的请求结构", func(t *testing.T) {
+		for _, body := range []string{
+			``, `null`, `{}`, `{"contents":"hello"}`,
+			`{"contents":[null]}`, `{"contents":[{"parts":"hello"}]}`,
+			`{"contents":[{"parts":[null]}]}`, `{"contents":[{"parts":[{"text":123}]}]}`,
+			`{"generateContentRequest":null}`, `{"generateContentRequest":"hello"}`,
+			`{"generateContentRequest":{"contents":"hello"}}`,
+		} {
+			w := doRequest("/v1beta/models/gemini-2.0-flash:countTokens", body)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("请求 %q 的状态码 = %d，预期 400，响应 = %s", body, w.Code, w.Body.String())
+			}
+			var geminiErr types.GeminiError
+			if err := json.Unmarshal(w.Body.Bytes(), &geminiErr); err != nil {
+				t.Fatalf("解析错误响应失败: %v", err)
+			}
+			if geminiErr.Error.Code != http.StatusBadRequest || geminiErr.Error.Status != "INVALID_ARGUMENT" || geminiErr.Error.Message == "" {
+				t.Fatalf("请求 %q 未返回明确的 Gemini 错误: %+v", body, geminiErr.Error)
+			}
+		}
+	})
+}
+
+// TestBuildProviderRequest_UsesParsedAction 验证上游 URL 使用真实方法名，而不是由流式标记反推
+func TestBuildProviderRequest_UsesParsedAction(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/test", nil)
+
+	upstream := &config.UpstreamConfig{BaseURL: "https://test.example.com", ServiceType: "gemini"}
+
+	for _, action := range []string{actionGenerateContent, actionStreamGenerateContent} {
+		req, err := buildProviderRequest(c, upstream, upstream.BaseURL, "test-key", &types.GeminiRequest{}, "gemini-2.0-flash", action)
+		if err != nil {
+			t.Fatalf("buildProviderRequest(%s) failed: %v", action, err)
+		}
+		want := "https://test.example.com/v1beta/models/gemini-2.0-flash:" + action
+		if action == actionStreamGenerateContent {
+			want += "?alt=sse"
+		}
+		if req.URL.String() != want {
+			t.Errorf("url = %q, want %q", req.URL.String(), want)
+		}
+	}
+}
+
 func TestBuildProviderRequest_StripThoughtSignature(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -321,7 +482,7 @@ func TestBuildProviderRequest_StripThoughtSignature(t *testing.T) {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
 			c.Request = httptest.NewRequest(http.MethodPost, "/test", nil)
 
-			req, err := buildProviderRequest(c, upstream, upstream.BaseURL, "test-key", geminiReq, "gemini-2.0-flash", false)
+			req, err := buildProviderRequest(c, upstream, upstream.BaseURL, "test-key", geminiReq, "gemini-2.0-flash", actionGenerateContent)
 			if err != nil {
 				t.Fatalf("buildProviderRequest failed: %v", err)
 			}
@@ -389,7 +550,7 @@ func TestBuildProviderRequest_InjectDummyThoughtSignature_PreservesThoughtSignat
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/test", nil)
 
-	req, err := buildProviderRequest(c, upstream, upstream.BaseURL, "test-key", &geminiReq, "gemini-2.0-flash", false)
+	req, err := buildProviderRequest(c, upstream, upstream.BaseURL, "test-key", &geminiReq, "gemini-2.0-flash", actionGenerateContent)
 	if err != nil {
 		t.Fatalf("buildProviderRequest failed: %v", err)
 	}

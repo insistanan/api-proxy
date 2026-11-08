@@ -62,6 +62,21 @@ func readBodyWithLimit(body io.Reader, limit int64) ([]byte, error) {
 	return limited, nil
 }
 
+// readUpstreamErrorBody 对线上读取和解压后的错误正文应用同一上限。
+// 超限或读取失败立即关闭响应，不排空异常正文，也不把截断内容用于错误分类。
+func readUpstreamErrorBody(resp *http.Response) ([]byte, error) {
+	defer resp.Body.Close()
+	body, err := readBodyWithLimit(resp.Body, maxEnvelopeSniffBytes)
+	if err != nil {
+		return nil, err
+	}
+	body, _, err = utils.DecompressBodyWithLimit(utils.GetContentEncoding(resp.Header), body, maxEnvelopeSniffBytes)
+	if err != nil {
+		return nil, fmt.Errorf("解压上游错误响应体失败: %w", err)
+	}
+	return body, nil
+}
+
 // readImagesErrorEnvelopePrefix 只缓冲有限前缀。超过预算时立即恢复完整响应流，
 // 让 Images 适配器继续处理大块 base64，而不在共享错误信封检查阶段整包缓存。
 func readImagesErrorEnvelopePrefix(resp *http.Response) ([]byte, bool, error) {
@@ -318,8 +333,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 			}
 
 			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-				respBodyBytes, readErr := io.ReadAll(resp.Body)
-				resp.Body.Close()
+				respBodyBytes, readErr := readUpstreamErrorBody(resp)
 				if readErr != nil {
 					// 响应体读取中断：连接已不可靠，按渠道网络故障处理，
 					// 不把截断 body 用于错误分类或回给客户端。
@@ -334,7 +348,6 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 					log.Printf("[%s-Key] 警告: 读取上游错误响应体失败 (状态: %d)，尝试下一个密钥: %v", apiType, resp.StatusCode, readErr)
 					continue
 				}
-				respBodyBytes = utils.DecompressGzipIfNeeded(resp, respBodyBytes)
 				retrySucceeded := false
 
 				if IsUpstreamModelCapacityError(respBodyBytes) {
@@ -820,13 +833,11 @@ func (a UpstreamAttempt) retrySameCandidateRequest(
 		return compatibilityRetryResult{Response: resp, Succeeded: true}
 	}
 
-	body, readErr := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	body, readErr := readUpstreamErrorBody(resp)
 	if readErr != nil {
 		// 读取中断：响应不完整，按网络故障处理，不返回截断 body。
 		return compatibilityRetryResult{PreparationStage: "read_body", Err: fmt.Errorf("读取重试响应体失败: %w", readErr)}
 	}
-	body = utils.DecompressGzipIfNeeded(resp, body)
 	return compatibilityRetryResult{Response: resp, Body: body}
 }
 

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/BenedictKing/api-proxy/internal/config"
+	"github.com/BenedictKing/api-proxy/internal/handlers/hooks"
 	"github.com/BenedictKing/api-proxy/internal/httpclient"
 	"github.com/BenedictKing/api-proxy/internal/logger"
 	"github.com/BenedictKing/api-proxy/internal/scheduler"
@@ -133,39 +134,80 @@ func logRequestDetails(req *http.Request, envCfg *config.EnvConfig, apiType stri
 	}
 
 	if req.Body != nil {
-		bodyBytes, err := io.ReadAll(req.Body)
-		if err != nil {
-			_ = req.Body.Close()
-			return fmt.Errorf("读取上游请求正文失败: %w", err)
-		}
-		if err == nil {
-			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-			if envCfg.ShouldLog("debug") {
-				var formattedBody string
-				if envCfg.RawLogOutput {
-					formattedBody = utils.FormatJSONBytesRaw(bodyBytes)
-				} else {
-					formattedBody = utils.FormatJSONBytesForLog(bodyBytes, 500)
+		var (
+			bodyBytes     []byte
+			preparedBody  string
+			originalBytes int
+			truncated     bool
+		)
+		if req.ContentLength > logger.MaxBodyBytes {
+			// 长度已知的超大正文无需读取；日志不消费实际转发的 reader。
+			originalBytes = int(req.ContentLength)
+			preparedBody = logger.OmittedBody(originalBytes)
+			truncated = true
+		} else if prepared, ok := hooks.PreparedRequestBody(req); ok {
+			bodyBytes = prepared
+			preparedBody, originalBytes, truncated = logger.PrepareBody(bodyBytes)
+		} else {
+			reader := req.Body
+			if req.GetBody != nil {
+				copyReader, err := req.GetBody()
+				if err != nil {
+					_ = req.Body.Close()
+					return fmt.Errorf("获取上游请求日志正文失败: %w", err)
 				}
-				log.Printf("[%s-Request-Body] 实际请求体:\n%s", apiType, formattedBody)
+				if copyReader == nil {
+					_ = req.Body.Close()
+					return fmt.Errorf("获取上游请求日志正文失败: GetBody 返回空 reader")
+				}
+				reader = copyReader
 			}
-			requestID := logger.RequestIDFromContext(req.Context())
-			urlText := ""
-			if req.URL != nil {
-				urlText = req.URL.String()
+			var err error
+			bodyBytes, err = io.ReadAll(io.LimitReader(reader, logger.MaxBodyBytes+1))
+			if req.GetBody != nil {
+				_ = reader.Close()
+			} else {
+				// 未提供 GetBody 时回放已消费的前缀，随后继续读原正文；关闭责任不变。
+				req.Body = &prefixReadCloser{Reader: io.MultiReader(bytes.NewReader(bodyBytes), reader), Closer: reader}
 			}
-			logger.RecordTraffic(logger.TrafficLog{
-				RequestID:   requestID,
-				AttemptID:   logger.AttemptIDFromContext(req.Context()),
-				Stream:      isStream,
-				Phase:       logger.PhaseUpstreamRequest,
-				APIType:     apiType,
-				Method:      req.Method,
-				URL:         urlText,
-				HeadersJSON: string(reqHeadersJSON),
-				Body:        string(bodyBytes),
-			})
+			if err != nil {
+				_ = req.Body.Close()
+				return fmt.Errorf("读取上游请求正文失败: %w", err)
+			}
+			if len(bodyBytes) > logger.MaxBodyBytes {
+				// 只读取了前缀，不能把其长度冒充原始正文大小。
+				preparedBody = logger.OmittedBody(0)
+				truncated = true
+			} else {
+				preparedBody, originalBytes, truncated = logger.PrepareBody(bodyBytes)
+			}
 		}
+		if envCfg.ShouldLog("debug") {
+			var formattedBody string
+			if truncated {
+				formattedBody = preparedBody
+			} else if envCfg.RawLogOutput {
+				formattedBody = utils.FormatJSONBytesRaw(bodyBytes)
+			} else {
+				formattedBody = utils.FormatJSONBytesForLog(bodyBytes, 500)
+			}
+			log.Printf("[%s-Request-Body] 实际请求体:\n%s", apiType, formattedBody)
+		}
+		requestID := logger.RequestIDFromContext(req.Context())
+		urlText := ""
+		if req.URL != nil {
+			urlText = req.URL.String()
+		}
+		logger.RecordTraffic(logger.TrafficLog{
+			RequestID:   requestID,
+			AttemptID:   logger.AttemptIDFromContext(req.Context()),
+			Stream:      isStream,
+			Phase:       logger.PhaseUpstreamRequest,
+			APIType:     apiType,
+			Method:      req.Method,
+			URL:         urlText,
+			HeadersJSON: string(reqHeadersJSON),
+		}.WithPreparedBody(preparedBody, originalBytes, truncated))
 	}
 	return nil
 }
