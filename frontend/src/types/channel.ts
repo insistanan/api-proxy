@@ -55,6 +55,7 @@ export interface Channel {
   serviceType: 'openai' | 'gemini' | 'claude' | 'responses' | 'chat'
   baseUrl: string
   baseUrls?: string[] // 多 BaseURL 支持（failover 模式）
+  useFullUrl?: boolean // 使用完整请求地址，不自动追加版本号和接口路径
   apiKeys: string[]
   description?: string
   website?: string

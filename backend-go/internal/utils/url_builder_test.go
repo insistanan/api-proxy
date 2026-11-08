@@ -2,6 +2,26 @@ package utils
 
 import "testing"
 
+// 完整地址模式不得追加端点、版本号或流式查询参数。
+func TestBuildUpstreamURLFullAddress(t *testing.T) {
+	for _, address := range []string{
+		"https://api.example.com/images/generations",
+		"https://api.example.com/custom/render/",
+		"https://api.example.com/render?size=1024%20px&mode=fast",
+		"https://api.example.com/v2/images/generations",
+		"https://api.example.com/custom:streamGenerateContent?alt=sse",
+	} {
+		for _, endpoint := range []string{"/images/generations", "/responses", "/models/m:streamGenerateContent?alt=sse"} {
+			if got := BuildUpstreamURL(address, "/v1", endpoint, true); got != address {
+				t.Errorf("完整请求地址被改写: %q，期望 %q", got, address)
+			}
+		}
+	}
+	if got := BuildUpstreamURL("https://api.example.com", "/v1", "/images/generations", false); got != "https://api.example.com/v1/images/generations" {
+		t.Errorf("自动补全模式地址错误: %q", got)
+	}
+}
+
 // TestBuildUpstreamURL 覆盖"#"后缀与版本前缀约定的全部分支与边界。
 func TestBuildUpstreamURL(t *testing.T) {
 	tests := []struct {

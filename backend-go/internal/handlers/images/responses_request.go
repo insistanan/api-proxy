@@ -35,7 +35,7 @@ func buildImagesResponsesRequest(c *gin.Context, upstream *config.UpstreamConfig
 		return nil, fmt.Errorf("编码 Responses 图片请求失败: %w", err)
 	}
 	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost,
-		buildOpenAIEndpointURL(upstream.GetEffectiveBaseURL(), "/responses"), bytes.NewReader(encoded))
+		buildOpenAIEndpointURL(upstream.GetEffectiveBaseURL(), "/responses", upstream.UseFullURL), bytes.NewReader(encoded))
 	if err != nil {
 		return nil, &config.ConfigError{Message: fmt.Sprintf("创建 Responses 图片请求失败: %s", err)}
 	}

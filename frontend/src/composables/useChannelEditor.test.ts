@@ -5,6 +5,38 @@ import { buildChannelPayload, defaultChannelForm, useChannelEditor } from './use
 import type { Channel } from '@/services/api'
 
 describe('渠道草稿与提交', () => {
+  it('新建和旧渠道默认自动补全，完整地址设置可保存、载入和清除', () => {
+    const editor = useChannelEditor('images')
+    const channel: Channel = {
+      name: '完整地址渠道', serviceType: 'openai', index: 0,
+      baseUrl: 'https://images.example/render/?size=1024%20px', apiKeys: ['fixture-key'], useFullUrl: true
+    }
+    expect(editor.form.useFullUrl).toBe(false)
+    editor.loadChannelData(channel)
+    expect(editor.buildPayload(true)).toMatchObject({ useFullUrl: true, baseUrl: channel.baseUrl })
+    editor.form.useFullUrl = false
+    expect(editor.buildPayload(true).useFullUrl).toBe(false)
+    expect(channel.useFullUrl).toBe(true)
+    editor.loadChannelData({ ...channel, useFullUrl: undefined })
+    expect(editor.form.useFullUrl).toBe(false)
+    editor.loadChannelData(channel)
+    editor.resetForm()
+    expect(editor.form.useFullUrl).toBe(false)
+  })
+
+  it('完整地址模式保留末尾斜杠、查询参数和多地址的路径差异', () => {
+    const form = defaultChannelForm('images')
+    Object.assign(form, {
+      useFullUrl: true,
+      baseUrls: [' https://images.example/render/ ', 'https://images.example/render',
+        'https://images.example/render/', 'https://backup.example/generate?mode=fast&size=1024%20px']
+    })
+    expect(buildChannelPayload(form, 'images', true).baseUrls).toEqual([
+      'https://images.example/render/', 'https://images.example/render',
+      'https://backup.example/generate?mode=fast&size=1024%20px'
+    ])
+  })
+
   it('编辑和取消都不修改原渠道的数组、映射和自定义参数', () => {
     const channel: Channel = {
       name: '原渠道', serviceType: 'openai', index: 0, baseUrl: 'https://a.example',

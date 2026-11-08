@@ -84,7 +84,7 @@ func (p *GeminiProvider) BuildRequest(input RequestInput, upstream *config.Upstr
 	if upstream != nil {
 		baseURL = upstream.GetEffectiveBaseURL()
 	}
-	url := buildGeminiGenerateContentURL(baseURL, model, claudeReq.Stream)
+	url := buildGeminiGenerateContentURL(baseURL, model, claudeReq.Stream, upstream != nil && upstream.UseFullURL)
 
 	req, err := http.NewRequestWithContext(input.Ctx, http.MethodPost, url, bytes.NewReader(reqBodyBytes))
 	if err != nil {
@@ -116,7 +116,7 @@ func (p *GeminiProvider) BuildRequest(input RequestInput, upstream *config.Upstr
 	return &RequestOutcome{Request: req, OriginalBody: originalBodyBytes}, nil
 }
 
-func buildGeminiGenerateContentURL(baseURL string, model string, stream bool) string {
+func buildGeminiGenerateContentURL(baseURL string, model string, stream bool, useFullURL ...bool) string {
 	modelPath := strings.TrimPrefix(strings.TrimSpace(model), "/")
 	if !strings.HasPrefix(modelPath, "models/") && !strings.HasPrefix(modelPath, "tunedModels/") {
 		modelPath = "models/" + modelPath
@@ -128,7 +128,7 @@ func buildGeminiGenerateContentURL(baseURL string, model string, stream bool) st
 	}
 
 	// "#"后缀与版本前缀约定见 utils.BuildUpstreamURL；Gemini 默认版本段为 /v1beta
-	return utils.BuildUpstreamURL(baseURL, "/v1beta", fmt.Sprintf("/%s:%s", modelPath, action))
+	return utils.BuildUpstreamURL(baseURL, "/v1beta", fmt.Sprintf("/%s:%s", modelPath, action), useFullURL...)
 }
 
 func buildGeminiShadowProviderID(upstream *config.UpstreamConfig) string {

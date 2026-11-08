@@ -22,8 +22,12 @@ func HasVersionSuffix(baseURL string) bool {
 //  3. baseURL 已含版本号段（如 /v1、/v2、/v1beta）→ 直接拼接 endpoint；
 //  4. 否则在 endpoint 前插入 defaultVersionPrefix（如 "/v1"、"/v1beta"）。
 //
-// endpoint 会被规整为以单个 "/" 开头。
-func BuildUpstreamURL(baseURL, defaultVersionPrefix, endpoint string) string {
+// endpoint 会被规整为以单个 "/" 开头。useFullURL 为 true 时直接使用
+// baseURL，不规整路径、不追加版本号、接口路径或流式查询参数。
+func BuildUpstreamURL(baseURL, defaultVersionPrefix, endpoint string, useFullURL ...bool) string {
+	if len(useFullURL) > 0 && useFullURL[0] {
+		return baseURL
+	}
 	skipVersionPrefix := strings.HasSuffix(baseURL, "#")
 	if skipVersionPrefix {
 		baseURL = strings.TrimSuffix(baseURL, "#")

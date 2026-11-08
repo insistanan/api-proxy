@@ -109,7 +109,7 @@ func (p *MessagesResponsesProvider) BuildRequest(input RequestInput, upstream *c
 		return nil, fmt.Errorf("序列化Responses请求体失败: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(input.Ctx, http.MethodPost, utils.BuildUpstreamURL(upstream.GetEffectiveBaseURL(), "/v1", "/responses"), bytes.NewReader(reqBodyBytes))
+	req, err := http.NewRequestWithContext(input.Ctx, http.MethodPost, utils.BuildUpstreamURL(upstream.GetEffectiveBaseURL(), "/v1", "/responses", upstream.UseFullURL), bytes.NewReader(reqBodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("创建Responses请求失败: %w", err)
 	}

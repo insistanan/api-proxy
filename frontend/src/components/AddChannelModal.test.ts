@@ -37,6 +37,34 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals() })
 
 describe('渠道表单提交入口', () => {
+  it('关闭自动补全后预览和详细表单提交均使用完整请求地址', async () => {
+    const { state, emit } = await setupForm()
+    const url = 'https://images.example/custom/render/?mode=fast'
+    ;(state.autoCompleteUrl as Ref<boolean>).value = false
+    ;(state.form as ChannelFormState).baseUrl = url
+    expect((state.form as ChannelFormState).useFullUrl).toBe(true)
+    expect((state.formExpectedRequestUrls as Ref<Array<{ expectedUrl: string }>>).value)
+      .toEqual([{ baseUrl: url, expectedUrl: url }])
+    expect((state.getExpectedRequestUrl as (url: string) => string)(url)).toBe(url)
+    await submit(state)
+    expect(emit).toHaveBeenCalledWith('save', expect.objectContaining({ useFullUrl: true, baseUrl: url }))
+  })
+
+  it('快速添加关闭自动补全后保留完整路径，重新开启后恢复默认预览', async () => {
+    const { state, emit } = await setupForm()
+    const url = 'https://images.example/images/generations/?mode=fast&size=1024%20px'
+    ;(state.autoCompleteUrl as Ref<boolean>).value = false
+    ;(state.quickInput as Ref<string>).value = `${url}\nsk-test-key`
+    ;(state.parseQuickInput as () => void)()
+    expect((state.detectedBaseUrl as Ref<string>).value).toBe(url)
+    ;(state.handleQuickSubmit as () => void)()
+    expect(emit).toHaveBeenCalledWith('save', expect.objectContaining({ useFullUrl: true, baseUrl: url }), { isQuickAdd: true })
+    ;(state.autoCompleteUrl as Ref<boolean>).value = true
+    ;(state.form as ChannelFormState).serviceType = 'openai'
+    expect((state.getExpectedRequestUrl as (url: string) => string)('https://images.example'))
+      .toBe('https://images.example/v1/images/generations')
+  })
+
   it('合法表单只提交编译和清理后的 payload', async () => {
     const { state, emit, validate } = await setupForm()
     await submit(state)

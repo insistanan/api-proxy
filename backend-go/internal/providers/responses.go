@@ -235,6 +235,7 @@ func removeResponsesPreviousResponseID(bodyBytes []byte) ([]byte, error) {
 
 // buildTargetURL 根据上游类型构建目标 URL
 // 智能拼接逻辑：
+// 完整地址模式直接使用配置值；自动补全模式遵循以下规则：
 // 1. 如果 baseURL 以 # 结尾，跳过自动添加 /v1
 // 2. 如果 baseURL 已包含版本号后缀（如 /v1, /v2, /v8, /v1beta），直接拼接端点路径
 // 3. 如果 baseURL 不包含版本号后缀，自动添加 /v1 再拼接端点路径
@@ -264,7 +265,7 @@ func (p *ResponsesProvider) buildTargetURLWithModel(upstream *config.UpstreamCon
 	}
 
 	// "#"后缀与版本前缀约定见 utils.BuildUpstreamURL
-	return utils.BuildUpstreamURL(upstream.BaseURL, "/v1", endpoint)
+	return utils.BuildUpstreamURL(upstream.GetEffectiveBaseURL(), "/v1", endpoint, upstream.UseFullURL)
 }
 
 // ConvertToClaudeResponse 将上游响应转换为 Responses 格式（实际上不再需要 Claude 格式）

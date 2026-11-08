@@ -95,7 +95,7 @@ func (p *ClaudeProvider) BuildRequest(input RequestInput, upstream *config.Upstr
 
 	// 构建目标URL（"#"后缀与版本前缀约定见 utils.BuildUpstreamURL）
 	endpoint := strings.TrimPrefix(input.Path, "/v1")
-	targetURL := utils.BuildUpstreamURL(upstream.GetEffectiveBaseURL(), "/v1", endpoint)
+	targetURL := utils.BuildUpstreamURL(upstream.GetEffectiveBaseURL(), "/v1", endpoint, upstream.UseFullURL)
 
 	if input.RawQuery != "" {
 		targetURL += "?" + input.RawQuery

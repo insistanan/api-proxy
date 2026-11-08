@@ -43,8 +43,8 @@ func deduplicateStrings(items []string) []string {
 	return result
 }
 
-// deduplicateBaseURLs 去重 BaseURLs，忽略末尾 / 和 # 差异
-func deduplicateBaseURLs(urls []string) []string {
+// deduplicateBaseURLs 去重 BaseURLs；完整请求地址按原文比较，保留末尾路径差异。
+func deduplicateBaseURLs(urls []string, useFullURL ...bool) []string {
 	if len(urls) <= 1 {
 		return urls
 	}
@@ -52,6 +52,9 @@ func deduplicateBaseURLs(urls []string) []string {
 	result := make([]string, 0, len(urls))
 	for _, url := range urls {
 		normalized := strings.TrimRight(url, "/#")
+		if len(useFullURL) > 0 && useFullURL[0] {
+			normalized = url
+		}
 		if _, exists := seen[normalized]; !exists {
 			seen[normalized] = struct{}{}
 			result = append(result, url)

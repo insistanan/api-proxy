@@ -1,10 +1,57 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+// 完整地址开关支持部分更新、管理 API 回显和 JSON 配置往返。
+func TestUpstreamUseFullURLUpdatesAndSerialization(t *testing.T) {
+	var upstream UpstreamConfig
+	if err := json.Unmarshal([]byte(`{"baseUrl":"https://images.example/render/","serviceType":"openai","apiKeys":["fixture-key"]}`), &upstream); err != nil {
+		t.Fatal(err)
+	}
+	if upstream.UseFullURL {
+		t.Fatal("旧配置应默认自动补全")
+	}
+	for _, rawUpdate := range []string{`{"useFullUrl":true}`, `{"name":"改名"}`, `{"useFullUrl":false}`} {
+		var update UpstreamUpdate
+		if err := json.Unmarshal([]byte(rawUpdate), &update); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := applyCommonUpdates(&upstream, 0, update, "test"); err != nil {
+			t.Fatal(err)
+		}
+		want := rawUpdate != `{"useFullUrl":false}`
+		if upstream.UseFullURL != want || ChannelToDTO(&upstream, 0)["useFullUrl"] != want {
+			t.Fatalf("完整地址设置未保留: 更新=%s，配置=%v", rawUpdate, upstream.UseFullURL)
+		}
+		encoded, err := json.Marshal(upstream)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var restored UpstreamConfig
+		if err := json.Unmarshal(encoded, &restored); err != nil {
+			t.Fatal(err)
+		}
+		if restored.UseFullURL != want || restored.BaseURL != upstream.BaseURL {
+			t.Fatal("JSON 配置往返改变了完整地址设置")
+		}
+		if upstream.Clone().UseFullURL != want {
+			t.Fatal("故障转移使用的配置副本丢失了完整地址设置")
+		}
+	}
+}
+
+func TestFullURLDeduplicationPreservesTrailingSlash(t *testing.T) {
+	urls := []string{"https://images.example/render/", "https://images.example/render", "https://images.example/render/"}
+	got := deduplicateBaseURLs(urls, true)
+	if len(got) != 2 || got[0] != urls[0] || got[1] != urls[1] {
+		t.Fatalf("完整地址的末尾路径差异被丢弃: %v", got)
+	}
+}
 
 // TestUpdateUpstream_BaseURLConsistency 测试更新 baseUrl 时的一致性
 // 覆盖场景：

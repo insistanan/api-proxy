@@ -87,7 +87,21 @@
                     {{ detectedBaseUrls.length > 0 ? 'mdi-check-circle' : 'mdi-alert-circle' }}
                   </v-icon>
                   <div class="flex-grow-1">
-                    <div class="text-body-2 font-weight-medium">Base URL</div>
+                    <div class="d-flex align-center justify-space-between flex-wrap ga-2">
+                      <span class="text-body-2 font-weight-medium">{{ form.useFullUrl ? '完整请求地址' : 'Base URL' }}</span>
+                      <v-switch
+                        v-model="autoCompleteUrl"
+                        :label="autoCompleteUrlLabel"
+                        color="primary"
+                        density="compact"
+                        inset
+                        hide-details
+                        class="flex-grow-0"
+                      />
+                    </div>
+                    <div v-if="form.useFullUrl" class="text-caption text-medium-emphasis">
+                      请填写完整请求地址；不会追加版本号或接口路径。
+                    </div>
                     <div v-if="detectedBaseUrls.length === 0" class="text-caption text-error">
                       请输入一个有效的 URL (https://...)
                     </div>
@@ -236,10 +250,22 @@
 
             <!-- 基础URL -->
             <v-col cols="12">
+              <div class="d-flex align-center justify-space-between flex-wrap ga-2 mb-2">
+                <span class="text-body-2 font-weight-medium">请求地址</span>
+                <v-switch
+                  v-model="autoCompleteUrl"
+                  :label="autoCompleteUrlLabel"
+                  color="primary"
+                  density="compact"
+                  inset
+                  hide-details
+                  class="flex-grow-0"
+                />
+              </div>
               <v-textarea
                 v-model="baseUrlsText"
-                label="基础URL *"
-                placeholder="每行一个 URL，支持多个 BaseURL&#10;例如：&#10;https://api.openai.com/v1&#10;https://api2.openai.com/v1"
+                :label="form.useFullUrl ? '完整请求地址 *' : '基础URL *'"
+                :placeholder="form.useFullUrl ? '每行一个完整请求地址，包含接口路径和所需查询参数' : '每行一个 URL，支持多个 BaseURL\n例如：\nhttps://api.openai.com/v1\nhttps://api2.openai.com/v1'"
                 prepend-inner-icon="mdi-web"
                 variant="outlined"
                 density="comfortable"
@@ -250,6 +276,9 @@
                 :error-messages="errors.baseUrl"
                 hide-details="auto"
               />
+              <div v-if="form.useFullUrl" class="text-caption text-medium-emphasis mt-2">
+                自动补全已关闭，请自行填写完整请求地址；不会追加版本号或接口路径。
+              </div>
               <!-- 固定高度的提示区域，防止布局跳动；有错误时不显示 -->
               <div v-show="formExpectedRequestUrls.length > 0 && !baseUrlHasError" class="base-url-hint">
                 <div v-for="(item, index) in formExpectedRequestUrls" :key="index" class="expected-request-item">
@@ -962,7 +991,7 @@ const toggleMode = () => {
 
 // 解析快速输入内容
 const parseQuickInput = () => {
-  const result = parseQuickInputUtil(quickInput.value)
+  const result = parseQuickInputUtil(quickInput.value, { useFullUrl: form.useFullUrl })
   detectedBaseUrl.value = result.detectedBaseUrl
   detectedBaseUrls.value = result.detectedBaseUrls
   detectedApiKeys.value = result.detectedApiKeys
@@ -1066,6 +1095,7 @@ const generatedChannelName = computed(() => {
 // 生成单个 URL 的预期请求地址
 const getExpectedRequestUrl = (inputBaseUrl: string): string => {
   if (!inputBaseUrl) return ''
+  if (form.useFullUrl) return inputBaseUrl.trim()
   if (props.channelType === 'images') {
     return imagesExpectedRequestUrl(inputBaseUrl, form.serviceType)
   }
@@ -1136,6 +1166,12 @@ const formExpectedRequestUrls = computed(() => {
 
   if (urls.length === 0) return []
 
+  if (form.useFullUrl) {
+    return urls
+      .filter(url => url && isValidUrl(url))
+      .map(baseUrl => ({ baseUrl, expectedUrl: baseUrl.trim() }))
+  }
+
   if (props.channelType === 'images') {
     return urls
       .filter(url => url && isValidUrl(url.replace(/#$/, '')))
@@ -1200,6 +1236,7 @@ const handleQuickSubmit = () => {
     ...(props.channelType === 'images' ? buildImagesOutputSettings(form) : {}),
     baseUrl: detectedBaseUrl.value,
     baseUrls: detectedBaseUrls.value,
+    useFullUrl: form.useFullUrl,
     apiKeys: detectedApiKeys.value,
     modelMapping: {},
     defaultModel: '',
@@ -1336,6 +1373,20 @@ const targetModelPlaceholder = computed(() => {
 
 // 表单草域草稿经 useChannelEditor（R5，方案 8.1）：草稿独立于 store，取消不落盘。
 const { form, resetForm: resetFormDraft, loadChannelData: loadChannelDataDraft, buildPayload } = useChannelEditor(() => props.channelType)
+
+// 开关以“自动补全”表达，配置只记录是否使用完整地址，旧渠道默认保持开启。
+const autoCompleteUrl = computed({
+  get: () => !form.useFullUrl,
+  set: (enabled: boolean) => { form.useFullUrl = !enabled }
+})
+const autoCompleteUrlLabel = computed(() => {
+  const serviceType = form.serviceType || detectedServiceType.value || getDefaultServiceTypeValue()
+  return `自动补全 ${serviceType === 'gemini' ? '/v1beta' : '/v1'} 及接口路径`
+})
+
+watch(() => form.useFullUrl, () => {
+  if (!isEditing.value && isQuickMode.value) parseQuickInput()
+})
 
 const imagesExtraParamsError = ref('')
 const imagesOutputError = ref('')

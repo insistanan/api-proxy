@@ -90,7 +90,7 @@ func buildImagesUpstreamRequest(c *gin.Context, upstream *config.UpstreamConfig,
 		return nil, &proxycore.RequestValidationError{Err: err}
 	}
 
-	url := buildOpenAIEndpointURL(upstream.GetEffectiveBaseURL(), endpoint)
+	url := buildOpenAIEndpointURL(upstream.GetEffectiveBaseURL(), endpoint, upstream.UseFullURL)
 	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, url, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, &config.ConfigError{Message: fmt.Sprintf("创建 Images 请求失败: %s", err)}
@@ -104,8 +104,8 @@ func buildImagesUpstreamRequest(c *gin.Context, upstream *config.UpstreamConfig,
 	return req, nil
 }
 
-func buildOpenAIEndpointURL(baseURL string, endpoint string) string {
-	return utils.BuildUpstreamURL(baseURL, "/v1", endpoint)
+func buildOpenAIEndpointURL(baseURL string, endpoint string, useFullURL ...bool) string {
+	return utils.BuildUpstreamURL(baseURL, "/v1", endpoint, useFullURL...)
 }
 
 func handleImagesSuccess(c *gin.Context, resp *http.Response, envCfg *config.EnvConfig, startTime time.Time, endpoint string, requestedStream, forceNonStream bool) (*types.Usage, error) {

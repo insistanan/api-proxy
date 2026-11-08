@@ -71,8 +71,9 @@ export function channelServiceLabel(channelType: string, serviceType: Channel['s
   return channelType === 'images' ? imagesProtocolLabel(serviceType) : serviceType
 }
 
-export function imagesExpectedRequestUrl(rawUrl: string, serviceType: string): string {
+export function imagesExpectedRequestUrl(rawUrl: string, serviceType: string, useFullUrl = false): string {
   if (!isImagesServiceType(serviceType)) return ''
+  if (useFullUrl) return rawUrl.trim()
   let baseUrl = rawUrl.trim()
   const skipVersion = baseUrl.endsWith('#')
   baseUrl = baseUrl.replace(/[#/]+$/, '')

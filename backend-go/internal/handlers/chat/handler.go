@@ -197,7 +197,7 @@ func buildChatUpstreamRequest(c *gin.Context, upstream *config.UpstreamConfig, a
 		return nil, err
 	}
 
-	url := buildChatCompletionsURL(upstream.GetEffectiveBaseURL())
+	url := buildChatCompletionsURL(upstream.GetEffectiveBaseURL(), upstream.UseFullURL)
 	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, url, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("创建 Chat 请求失败: %w", err)
@@ -295,8 +295,8 @@ func ensureChatStreamUsageOptions(payload map[string]interface{}) {
 	}
 }
 
-func buildChatCompletionsURL(baseURL string) string {
-	return utils.BuildUpstreamURL(baseURL, "/v1", "/chat/completions")
+func buildChatCompletionsURL(baseURL string, useFullURL ...bool) string {
+	return utils.BuildUpstreamURL(baseURL, "/v1", "/chat/completions", useFullURL...)
 }
 
 func handleSuccess(c *gin.Context, resp *http.Response, envCfg *config.EnvConfig, startTime time.Time, isStream bool, originalBody []byte) (*types.Usage, error) {
@@ -356,7 +356,7 @@ func buildChatDirectRequest(c *gin.Context, upstream *config.UpstreamConfig, api
 	if err != nil {
 		return nil, err
 	}
-	url := buildChatCompletionsURL(upstream.GetEffectiveBaseURL())
+	url := buildChatCompletionsURL(upstream.GetEffectiveBaseURL(), upstream.UseFullURL)
 	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, url, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("创建 Chat 请求失败: %w", err)

@@ -292,6 +292,9 @@ func buildProviderRequest(
 		}
 	}
 
+	if upstream.UseFullURL {
+		url = baseURL
+	}
 	req, err := http.NewRequestWithContext(c.Request.Context(), "POST", url, bytes.NewReader(requestBody))
 	if err != nil {
 		return nil, err

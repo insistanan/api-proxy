@@ -106,7 +106,7 @@ func (p *OpenAIProvider) BuildRequest(input RequestInput, upstream *config.Upstr
 	}
 
 	// 构建URL（"#"后缀与版本前缀约定见 utils.BuildUpstreamURL）
-	url := utils.BuildUpstreamURL(upstream.GetEffectiveBaseURL(), "/v1", "/chat/completions")
+	url := utils.BuildUpstreamURL(upstream.GetEffectiveBaseURL(), "/v1", "/chat/completions", upstream.UseFullURL)
 
 	req, err := http.NewRequestWithContext(input.Ctx, http.MethodPost, url, bytes.NewReader(reqBodyBytes))
 	if err != nil {

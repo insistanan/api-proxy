@@ -15,6 +15,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// 覆盖两种图片上游协议，确保实际请求与完整地址预览一致。
+func TestImagesRequestUsesFullURLForBothProtocols(t *testing.T) {
+	for _, serviceType := range []string{"openai", "responses"} {
+		t.Run(serviceType, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+			c.Request.Header.Set("Content-Type", "application/json")
+			address := "https://upstream.example.com/custom/render/?mode=fast&size=1024%20px"
+			upstream := &config.UpstreamConfig{
+				BaseURL: address, UseFullURL: true, ServiceType: serviceType, ResponsesModel: "gpt-4.1",
+			}
+			req, err := buildImagesUpstreamRequest(c, upstream, "fixture-key", "/images/generations", []byte(`{"model":"gpt-image-1","prompt":"画一只猫"}`))
+			require.NoError(t, err)
+			require.Equal(t, address, req.URL.String())
+			require.Equal(t, "Bearer fixture-key", req.Header.Get("Authorization"))
+			require.NoError(t, req.Body.Close())
+			finishResponsesLifecycle(c)
+		})
+	}
+}
+
 func TestImagesResponsesRequestSeparatesMainAndImageModels(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)

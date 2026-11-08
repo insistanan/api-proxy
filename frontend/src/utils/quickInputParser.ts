@@ -229,7 +229,8 @@ const MAX_BASE_URLS = 10
  * 3. 多 Base URL：所有符合 HTTP 链接格式的都作为 baseUrl（最多 10 个）
  */
 export const parseQuickInput = (
-  input: string
+  input: string,
+  options: { useFullUrl?: boolean } = {}
 ): {
   detectedBaseUrl: string
   detectedBaseUrls: string[]
@@ -242,7 +243,10 @@ export const parseQuickInput = (
   const detectedApiKeys: string[] = []
   const detectedChannelName = extractChannelName(input)
 
-  const tokens = extractTokens(input)
+  // 完整地址中的等号和 %20 属于 URL 内容，不能按普通配置分隔符拆开。
+  const tokens = options.useFullUrl
+    ? input.match(/https?:\/\/[^\s"'“”‘’，,；;]+|[^\s,;，；：="“”'‘’]+/g) || []
+    : extractTokens(input)
 
   for (const token of tokens) {
     if (isValidUrl(token)) {
@@ -254,10 +258,12 @@ export const parseQuickInput = (
       const endsWithHash = token.endsWith('#')
       let url = endsWithHash ? token.slice(0, -1) : token
       url = url.replace(/\/$/, '')
-      const fullUrl = endsWithHash ? url + '#' : url
+      const fullUrl = options.useFullUrl ? token : endsWithHash ? url + '#' : url
 
       // 检测协议并清理 URL（移除端点路径）
-      const { serviceType, cleanedUrl } = detectServiceTypeAndCleanUrl(fullUrl)
+      const detected = detectServiceTypeAndCleanUrl(fullUrl)
+      const serviceType = detected.serviceType
+      const cleanedUrl = options.useFullUrl ? fullUrl : detected.cleanedUrl
 
       // 避免重复
       if (!detectedBaseUrls.includes(cleanedUrl)) {

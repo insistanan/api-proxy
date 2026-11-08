@@ -153,7 +153,7 @@ func prepareNewUpstream(upstream *UpstreamConfig) {
 	}
 	prepareUpstreamLifecycle(upstream, time.Now())
 	upstream.APIKeys = deduplicateStrings(upstream.APIKeys)
-	upstream.BaseURLs = deduplicateBaseURLs(upstream.BaseURLs)
+	upstream.BaseURLs = deduplicateBaseURLs(upstream.BaseURLs, upstream.UseFullURL)
 	upstream.ModelMapping = normalizeModelMapping(upstream.ModelMapping)
 	upstream.ModelMappingChannels = normalizeModelMappingChannels(upstream.ModelMappingChannels, upstream.ModelMapping)
 	normalizeUpstreamProxyConfig(upstream)
@@ -342,8 +342,11 @@ func applyCommonUpdates(upstream *UpstreamConfig, index int, updates UpstreamUpd
 			upstream.BaseURLs = nil
 		}
 	}
+	if updates.UseFullURL != nil {
+		upstream.UseFullURL = *updates.UseFullURL
+	}
 	if updates.BaseURLs != nil {
-		upstream.BaseURLs = deduplicateBaseURLs(updates.BaseURLs)
+		upstream.BaseURLs = deduplicateBaseURLs(updates.BaseURLs, upstream.UseFullURL)
 	}
 	if updates.ServiceType != nil {
 		upstream.ServiceType = *updates.ServiceType

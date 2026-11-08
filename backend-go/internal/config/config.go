@@ -21,7 +21,8 @@ type UpstreamConfig struct {
 	ID                 string              `json:"id,omitempty"`     // 稳定渠道标识，避免数组位置变化影响关联状态
 	PoolID             string              `json:"poolId,omitempty"` // 所属渠道分组；空值迁移到兜底分组
 	BaseURL            string              `json:"baseUrl"`
-	BaseURLs           []string            `json:"baseUrls,omitempty"` // 多 BaseURL 支持（failover 模式）
+	BaseURLs           []string            `json:"baseUrls,omitempty"`   // 多 BaseURL 支持（failover 模式）
+	UseFullURL         bool                `json:"useFullUrl,omitempty"` // 使用完整请求地址，不自动追加版本号和接口路径
 	APIKeys            []string            `json:"apiKeys"`
 	HistoricalAPIKeys  []string            `json:"historicalApiKeys,omitempty"` // 历史 API Key（用于统计聚合，换 Key 后保留旧 Key 的统计数据）
 	ServiceType        string              `json:"serviceType"`                 // gemini, openai, claude
@@ -122,6 +123,7 @@ type UpstreamUpdate struct {
 	ServiceType        *string             `json:"serviceType"`
 	BaseURL            *string             `json:"baseUrl"`
 	BaseURLs           []string            `json:"baseUrls"`
+	UseFullURL         *bool               `json:"useFullUrl"`
 	APIKeys            []string            `json:"apiKeys"`
 	Description        *string             `json:"description"`
 	Website            *string             `json:"website"`

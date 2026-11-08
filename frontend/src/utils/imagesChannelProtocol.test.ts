@@ -44,6 +44,19 @@ describe('Images 渠道协议管理', () => {
     expect(result.detectedServiceType).toBe('openai')
   })
 
+  it('完整地址模式的预览不追加路径，快速添加保留端点和查询参数', () => {
+    const url = 'https://api.example.com/images/generations/?size=1024%20px&mode=fast'
+    expect(imagesExpectedRequestUrl(url, 'openai', true)).toBe(url)
+    expect(imagesExpectedRequestUrl(url, 'responses', true)).toBe(url)
+    const result = parseQuickInput(`name: 图片渠道\nBASE_URL="${url}"\nsk-test-key`, { useFullUrl: true })
+    expect(result.detectedBaseUrl).toBe(url)
+    expect(result.detectedServiceType).toBe('openai')
+    expect(result.detectedApiKeys).toEqual(['sk-test-key'])
+    expect(result.detectedChannelName).toBe('图片渠道')
+    expect(parseQuickInput('https://api.example.com/render/', { useFullUrl: true }).detectedBaseUrl)
+      .toBe('https://api.example.com/render/')
+  })
+
   it('GIF 参数校验区分协议，并允许留空继承', () => {
     const form = defaultChannelForm('images')
     form.imagesOutputFormat = 'gif'

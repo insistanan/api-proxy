@@ -15,6 +15,7 @@ export type ChannelFormState = {
   status: ChannelStatus
   baseUrl: string
   baseUrls: string[]
+  useFullUrl: boolean
   website: string
   insecureSkipVerify: boolean
   proxyMode: 'inherit' | 'direct' | 'custom'
@@ -52,6 +53,7 @@ export function defaultChannelForm(channelType: string): ChannelFormState {
     status: 'active',
     baseUrl: '',
     baseUrls: [],
+    useFullUrl: false,
     website: '',
     insecureSkipVerify: false,
     proxyMode: 'inherit',
@@ -122,15 +124,15 @@ export function cloneModelMappingChannels(
   return cloned
 }
 
-/** BaseURL 集合：去重（忽略末尾 / 与 # 差异），过滤空值。 */
-export function deduplicateBaseUrls(input: { baseUrl: string; baseUrls: string[] }): string[] {
+/** BaseURL 集合：自动补全模式规整末尾；完整地址模式保留路径和查询参数。 */
+export function deduplicateBaseUrls(input: { baseUrl: string; baseUrls: string[]; useFullUrl?: boolean }): string[] {
   const seen = new Set<string>()
   const raw = input.baseUrls.length > 0 ? input.baseUrls : [input.baseUrl]
   const result: string[] = []
   for (const url of raw) {
-    const trimmed = url.trim().replace(/[#/]+$/, '')
+    const trimmed = input.useFullUrl ? url.trim() : url.trim().replace(/[#/]+$/, '')
     if (!trimmed) continue
-    const normalized = trimmed.replace(/[#/]+$/, '')
+    const normalized = trimmed
     if (seen.has(normalized)) continue
     seen.add(normalized)
     result.push(trimmed)
@@ -173,6 +175,7 @@ export function buildChannelPayload(
     serviceType: form.serviceType as Channel['serviceType'],
     responsesModel: isImages && form.serviceType === 'responses' ? form.responsesModel.trim() : '',
     baseUrl: urls[0] || '',
+    useFullUrl: form.useFullUrl,
     website: form.website.trim(), // 空字符串用于清除已有值。
     insecureSkipVerify: form.insecureSkipVerify,
     proxyMode: form.proxyMode,
@@ -228,6 +231,7 @@ export function useChannelEditor(channelType: MaybeRefOrGetter<string>) {
     form.status = isPersistableStatus(channel.status) ? channel.status : 'active'
     form.baseUrl = channel.baseUrl
     form.baseUrls = [...(channel.baseUrls || [])]
+    form.useFullUrl = !!channel.useFullUrl
     form.website = channel.website || ''
     form.insecureSkipVerify = !!channel.insecureSkipVerify
     form.proxyMode = channel.proxyMode || 'inherit'

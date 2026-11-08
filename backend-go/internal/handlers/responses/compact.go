@@ -522,6 +522,9 @@ func writeCompactContentSafetyError(c *gin.Context, err error) {
 
 // buildCompactURL 构建 compact 端点 URL
 func buildCompactURL(upstream *config.UpstreamConfig) string {
+	if upstream.UseFullURL {
+		return upstream.GetEffectiveBaseURL()
+	}
 	baseURL := strings.TrimSuffix(upstream.BaseURL, "/")
 	versionPattern := regexp.MustCompile(`/v\d+[a-z]*$`)
 	if versionPattern.MatchString(baseURL) {

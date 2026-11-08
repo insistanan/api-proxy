@@ -17,6 +17,7 @@ func ChannelToDTO(up *UpstreamConfig, index int) map[string]interface{} {
 		"serviceType":                 up.ServiceType,
 		"baseUrl":                     up.BaseURL,
 		"baseUrls":                    up.BaseURLs,
+		"useFullUrl":                  up.UseFullURL,
 		"apiKeys":                     up.APIKeys,
 		"description":                 up.Description,
 		"website":                     up.Website,
