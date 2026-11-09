@@ -34,6 +34,7 @@ func NewConfigManager(configFile string) (*ConfigManager, error) {
 		keyRecoveryTime: keyRecoveryTime,
 		maxFailureCount: maxFailureCount,
 		stopChan:        make(chan struct{}),
+		settingsChanged: make(chan struct{}, 1),
 	}
 
 	// 加载配置
@@ -111,6 +112,10 @@ func (cm *ConfigManager) prepareCandidate(data []byte) (Config, bool, error) {
 	}
 
 	needSaveDefaults := applyConfigDefaultsTo(&candidate, data)
+	needManagedMigration, err := migrateManagedSettings(&candidate, data)
+	if err != nil {
+		return Config{}, false, fmt.Errorf("迁移全局设置失败: %w", err)
+	}
 	needMigration := migrateOldFormatIn(&candidate)
 	if needMigration {
 		cm.migrated = true
@@ -131,7 +136,7 @@ func (cm *ConfigManager) prepareCandidate(data []byte) (Config, bool, error) {
 	// 自检：没有配置 key 的渠道自动暂停
 	needKeyCheck := validateChannelKeysIn(&candidate)
 
-	return candidate, needSaveDefaults || needMigration || needNormalization || needKeyCheck, nil
+	return candidate, needSaveDefaults || needManagedMigration || needMigration || needNormalization || needKeyCheck, nil
 }
 
 // reloadFromDisk 热重载（watcher 触发）：在临时候选中解码与校验，
@@ -203,9 +208,15 @@ func (cm *ConfigManager) createDefaultConfig() error {
 		CodexDisguiseEnabled:      false,
 		Settings: SettingsConfig{
 			ContentSafety: DefaultContentSafetyConfig(),
+			Disguise: DisguiseSettings{
+				AutoUpdateFromRegistry: true,
+			},
 		},
 	}
 
+	if _, err := migrateManagedSettings(&defaultConfig, []byte(`{}`)); err != nil {
+		return fmt.Errorf("迁移旧环境配置失败: %w", err)
+	}
 	if err := os.MkdirAll(filepath.Dir(cm.configFile), 0755); err != nil {
 		return err
 	}

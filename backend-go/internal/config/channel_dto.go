@@ -9,6 +9,10 @@ package config
 //
 // 新增渠道字段时**只改这里**。
 func ChannelToDTO(up *UpstreamConfig, index int) map[string]interface{} {
+	reasoningOutputMode := up.ReasoningOutputMode
+	if reasoningOutputMode == "" {
+		reasoningOutputMode = "preserve"
+	}
 	return map[string]interface{}{
 		"maxConcurrency":              up.MaxConcurrency,
 		"effectiveConcurrency":        up.EffectiveConcurrency,
@@ -46,6 +50,9 @@ func ChannelToDTO(up *UpstreamConfig, index int) map[string]interface{} {
 		"excludeFromConversation":     up.ExcludeFromConversation,
 		"disablePromptCacheInjection": up.DisablePromptCacheInjection,
 		"disablePromptCacheKey":       up.DisablePromptCacheKey,
+		"reasoningOutputMode":         reasoningOutputMode,
+		"parseEmbeddedReasoning":      up.ParseEmbeddedReasoning,
+		"requireReasoningContent":     up.RequireReasoningContent,
 		"visionLayerEnabled":          up.VisionLayerEnabled,
 		"visionLayerChannelId":        up.VisionLayerChannelID,
 		"visionLayerModel":            up.VisionLayerModel,

@@ -5,10 +5,14 @@ import (
 	"strings"
 
 	"github.com/insistanan/api-proxy/internal/types"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 // ExtractResponsesReasoningText 从 Responses reasoning item 的 summary/content 抽出文本。
 func ExtractResponsesReasoningText(item types.ResponsesItem) string {
+	if original := ExtractResponsesOriginalReasoningText(item); original != "" {
+		return original
+	}
 	parts := make([]string, 0)
 	if item.Summary != nil {
 		switch summary := item.Summary.(type) {
@@ -49,6 +53,20 @@ func ExtractResponsesReasoningText(item types.ResponsesItem) string {
 		}
 	}
 	return strings.TrimSpace(strings.Join(parts, "\n"))
+}
+
+// ExtractResponsesOriginalReasoningText 仅提取有明确类型的原始推理，保留全部空白。
+// 展示摘要和不透明 encrypted_content 不能作为 Chat 推理历史的原文。
+func ExtractResponsesOriginalReasoningText(item types.ResponsesItem) string {
+	var original strings.Builder
+	for _, block := range utils.NormalizeContentBlocks(item.Content) {
+		if block["type"] == "reasoning_text" {
+			if text, ok := block["text"].(string); ok {
+				original.WriteString(text)
+			}
+		}
+	}
+	return original.String()
 }
 
 // mergeClaudeHistoryMessagesDedup avoids double history when client input already contains
@@ -389,19 +407,17 @@ func semanticJSON(value interface{}) string {
 }
 
 // responsesItemToOpenAIMessageWithOptions converts a Responses item to Chat message.
-// includeHistoryThinking materializes type=reasoning as assistant text; default false skips it.
-func responsesItemToOpenAIMessageWithOptions(item types.ResponsesItem, includeHistoryThinking bool) map[string]interface{} {
+// 原始推理单独映射为 reasoning_content，摘要不进入 Chat 历史正文。
+func responsesItemToOpenAIMessageWithOptions(item types.ResponsesItem, _ bool) map[string]interface{} {
 	if item.Type == "reasoning" {
-		if !includeHistoryThinking {
-			return nil
-		}
-		text := ExtractResponsesReasoningText(item)
+		text := ExtractResponsesOriginalReasoningText(item)
 		if text == "" {
 			return nil
 		}
 		return map[string]interface{}{
-			"role":    "assistant",
-			"content": "[thinking]\n" + text,
+			"role":              "assistant",
+			"content":           nil,
+			"reasoning_content": text,
 		}
 	}
 	// Reuse default conversion for non-reasoning items.

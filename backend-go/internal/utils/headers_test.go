@@ -259,9 +259,28 @@ func TestEnsureCompatibleUserAgent(t *testing.T) {
 	}
 }
 
-func TestDisguiseVersionFromEnv(t *testing.T) {
+func TestDisguiseVersion(t *testing.T) {
+	// 每个子用例恢复完整状态，latest 缓存也必须清理，支持重复和乱序执行。
+	setVersions := func(t *testing.T, claude, codex, latestClaude, latestCodex string) {
+		t.Helper()
+		disguiseMu.Lock()
+		oldClaude, oldCodex := customClaudeCodeVersion, customCodexVersion
+		oldLatestClaude, oldLatestCodex := latestNpmClaudeCodeVersion, latestNpmCodexVersion
+		oldAuto := disguiseAutoUpdate
+		customClaudeCodeVersion, customCodexVersion = strings.TrimSpace(claude), strings.TrimSpace(codex)
+		latestNpmClaudeCodeVersion, latestNpmCodexVersion = latestClaude, latestCodex
+		disguiseAutoUpdate = true
+		disguiseMu.Unlock()
+		t.Cleanup(func() {
+			disguiseMu.Lock()
+			defer disguiseMu.Unlock()
+			customClaudeCodeVersion, customCodexVersion = oldClaude, oldCodex
+			latestNpmClaudeCodeVersion, latestNpmCodexVersion = oldLatestClaude, oldLatestCodex
+			disguiseAutoUpdate = oldAuto
+		})
+	}
 	t.Run("Codex旧版本头与UA同步更新并保留会话追踪", func(t *testing.T) {
-		t.Setenv(envKeyCodexDisguiseVersion, "8.8.8")
+		setVersions(t, "", "8.8.8", "", "")
 		headers := http.Header{}
 		headers.Set("User-Agent", "codex_cli_rs/0.133.0 old-client")
 		headers.Set("version", "0.133.0")
@@ -288,7 +307,8 @@ func TestDisguiseVersionFromEnv(t *testing.T) {
 		}
 	})
 
-	t.Run("未设置环境变量时返回默认值", func(t *testing.T) {
+	t.Run("未设置时返回默认值", func(t *testing.T) {
+		setVersions(t, "", "", "", "")
 		if got := claudeCodeDisguiseVersion(); got != defaultClaudeCodeDisguiseVersion {
 			t.Fatalf("claudeCodeDisguiseVersion() = %q, want %q", got, defaultClaudeCodeDisguiseVersion)
 		}
@@ -297,9 +317,8 @@ func TestDisguiseVersionFromEnv(t *testing.T) {
 		}
 	})
 
-	t.Run("环境变量覆盖伪装版本", func(t *testing.T) {
-		t.Setenv(envKeyClaudeCodeDisguiseVersion, "9.9.9")
-		t.Setenv(envKeyCodexDisguiseVersion, "8.8.8")
+	t.Run("自定义版本覆盖伪装版本", func(t *testing.T) {
+		setVersions(t, "9.9.9", "8.8.8", "", "")
 
 		claudeHeaders := http.Header{}
 		ApplyClaudeCodeDisguise(claudeHeaders, false)
@@ -317,19 +336,19 @@ func TestDisguiseVersionFromEnv(t *testing.T) {
 		}
 	})
 
-	t.Run("空白环境变量回退默认值", func(t *testing.T) {
-		t.Setenv(envKeyClaudeCodeDisguiseVersion, "   ")
-		t.Setenv(envKeyCodexDisguiseVersion, "")
-		if got := claudeCodeDisguiseVersion(); got != defaultClaudeCodeDisguiseVersion {
-			t.Fatalf("claudeCodeDisguiseVersion() = %q, want %q", got, defaultClaudeCodeDisguiseVersion)
+	t.Run("空白自定义版本回退默认值或最新值", func(t *testing.T) {
+		setVersions(t, "   ", "", "2.5.0", "")
+
+		if got := claudeCodeDisguiseVersion(); got != "2.5.0" {
+			t.Fatalf("claudeCodeDisguiseVersion() = %q, want %q", got, "2.5.0")
 		}
 		if got := codexDisguiseVersion(); got != defaultCodexDisguiseVersion {
 			t.Fatalf("codexDisguiseVersion() = %q, want %q", got, defaultCodexDisguiseVersion)
 		}
 	})
 
-	t.Run("请求体计费块使用环境变量版本", func(t *testing.T) {
-		t.Setenv(envKeyClaudeCodeDisguiseVersion, "9.9.9")
+	t.Run("请求体计费块使用自定义版本", func(t *testing.T) {
+		setVersions(t, "9.9.9", "", "", "")
 		body := []byte(`{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"hello world from test"}]}`)
 		updated := ApplyClaudeCodeBodyDisguise(body, "session-1")
 		var payload map[string]interface{}
@@ -342,9 +361,47 @@ func TestDisguiseVersionFromEnv(t *testing.T) {
 		}
 		text, _ := systemBlocks[0].(map[string]interface{})["text"].(string)
 		if !strings.Contains(text, "cc_version=9.9.9.") {
-			t.Fatalf("计费块应包含环境变量版本: %q", text)
+			t.Fatalf("计费块应包含自定义版本: %q", text)
 		}
 	})
+
+	t.Run("关闭自动跟随后忽略缓存并保留自定义值", func(t *testing.T) {
+		setVersions(t, "", "", "9.1.1", "8.1.1")
+		SetDisguiseSettings("", "", false)
+		claude, codex, latestClaude, latestCodex := GetEffectiveDisguiseVersions()
+		if claude != defaultClaudeCodeDisguiseVersion || codex != defaultCodexDisguiseVersion || latestClaude != "9.1.1" || latestCodex != "8.1.1" {
+			t.Fatal("关闭自动跟随应保留观测缓存，但使用内置默认版本")
+		}
+		SetDisguiseSettings("7.1.1", "6.1.1", false)
+		SetDisguiseLatestVersions("9.2.2", "8.2.2")
+		claude, codex, _, _ = GetEffectiveDisguiseVersions()
+		if claude != "7.1.1" || codex != "6.1.1" {
+			t.Fatal("后台缓存刷新不能覆盖新保存的自定义版本")
+		}
+	})
+
+	t.Run("旧env不覆盖已发布的设置", func(t *testing.T) {
+		setVersions(t, "7.1.1", "6.1.1", "", "")
+		t.Setenv("CLAUDE_CODE_DISGUISE_VERSION", "1.0.0")
+		t.Setenv("CODEX_DISGUISE_VERSION", "1.0.0")
+		claude, codex, _, _ := GetEffectiveDisguiseVersions()
+		if claude != "7.1.1" || codex != "6.1.1" {
+			t.Fatal("旧 env 不应覆盖持久化设置")
+		}
+	})
+}
+
+func TestValidateDisguiseVersion(t *testing.T) {
+	for _, version := range []string{"", "2.1.238", "0.150.1-beta.1", "1.2.3+build.4"} {
+		if err := ValidateDisguiseVersion(version); err != nil {
+			t.Fatalf("合法版本 %q 被拒绝: %v", version, err)
+		}
+	}
+	for _, version := range []string{"1.2.3\nInjected: value", "1.2.3\x00", "latest", "v1.2.3", "1.2"} {
+		if err := ValidateDisguiseVersion(version); err == nil {
+			t.Fatalf("非法版本 %q 应被拒绝", version)
+		}
+	}
 }
 
 func TestForwardResponseHeadersExSkipsUpstreamCORS(t *testing.T) {

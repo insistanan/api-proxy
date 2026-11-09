@@ -57,8 +57,8 @@ func (cm *ConfigManager) MarkPromptCacheKeyUnsupported(channelType, upstreamID s
 }
 
 // MarkReasoningContentRequired 记录渠道会拒绝缺少 reasoning_content 的 assistant 历史。
-// 该能力只在收到上游明确的字段校验错误后启用；后续 Messages 请求会在转换阶段补齐
-// 已被客户端隐藏或删除的历史推理字段，避免每轮都先收到一次 400。
+// 该能力只在收到上游明确的字段校验错误后启用；后续 Messages/Responses 请求
+// 在转换阶段校验原始推理，无法恢复时明确拒绝，不能用占位思考续接。
 func (cm *ConfigManager) MarkReasoningContentRequired(channelType, upstreamID string) error {
 	if strings.TrimSpace(upstreamID) == "" {
 		return fmt.Errorf("无法记录推理字段能力：渠道 ID 为空")
@@ -86,7 +86,7 @@ func (cm *ConfigManager) MarkReasoningContentRequired(channelType, upstreamID st
 		if err := cm.saveConfigLocked(candidate); err != nil {
 			return fmt.Errorf("保存渠道推理字段能力失败: %w", err)
 		}
-		log.Printf("[Config-ChannelCapability] 渠道 %s (%s) 要求补全 reasoning_content，已自动启用兼容模式", upstreams[index].Name, upstreamID)
+		log.Printf("[Config-ChannelCapability] 渠道 %s (%s) 要求原始 reasoning_content，已自动启用严格历史校验", upstreams[index].Name, upstreamID)
 		return nil
 	}
 
@@ -492,6 +492,15 @@ func applyCommonUpdates(upstream *UpstreamConfig, index int, updates UpstreamUpd
 	}
 	if updates.RequireReasoningContent != nil {
 		upstream.RequireReasoningContent = *updates.RequireReasoningContent
+	}
+	if updates.ReasoningOutputMode != nil {
+		upstream.ReasoningOutputMode = *updates.ReasoningOutputMode
+	}
+	if updates.ParseEmbeddedReasoning != nil {
+		upstream.ParseEmbeddedReasoning = *updates.ParseEmbeddedReasoning
+	}
+	if err := ValidateReasoningOptions(upstream); err != nil {
+		return false, err
 	}
 	if updates.EnablePreviousResponseID != nil {
 		upstream.EnablePreviousResponseID = *updates.EnablePreviousResponseID

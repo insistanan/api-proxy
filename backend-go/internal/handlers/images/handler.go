@@ -110,11 +110,11 @@ func buildOpenAIEndpointURL(baseURL string, endpoint string, useFullURL ...bool)
 
 func handleImagesSuccess(c *gin.Context, resp *http.Response, envCfg *config.EnvConfig, startTime time.Time, endpoint string, requestedStream, forceNonStream bool) (*types.Usage, error) {
 	if forceNonStream && requestedStream && !streams.IsEventStreamResponse(resp) {
-		if envCfg.EnableResponseLogs {
+		if envCfg.Current().EnableResponseLogs {
 			log.Printf("[Images-Stream] Images 强制非流式结果转为 completed: %dms, 状态: %d", time.Since(startTime).Milliseconds(), resp.StatusCode)
 		}
 		err := writeImagesJSONAsCompletedStream(c, resp, envCfg, endpoint)
-		if envCfg.EnableResponseLogs {
+		if envCfg.Current().EnableResponseLogs {
 			log.Printf("[Images-Stream] Images 强制非流式 completed 转发完成: %dms", time.Since(startTime).Milliseconds())
 		}
 		return nil, err
@@ -123,7 +123,7 @@ func handleImagesSuccess(c *gin.Context, resp *http.Response, envCfg *config.Env
 	defer resp.Body.Close()
 
 	isStream := requestedStream || streams.IsEventStreamResponse(resp)
-	if envCfg.EnableResponseLogs {
+	if envCfg.Current().EnableResponseLogs {
 		responseTime := time.Since(startTime).Milliseconds()
 		if isStream {
 			log.Printf("[Images-Stream] Images 流式响应开始: %dms, 状态: %d", responseTime, resp.StatusCode)
@@ -133,7 +133,7 @@ func handleImagesSuccess(c *gin.Context, resp *http.Response, envCfg *config.Env
 	}
 
 	err := streams.ForwardUpstreamResponseBody(c, resp, "application/json", isStream)
-	if envCfg.EnableResponseLogs {
+	if envCfg.Current().EnableResponseLogs {
 		responseTime := time.Since(startTime).Milliseconds()
 		if isStream {
 			log.Printf("[Images-Stream] Images 流式响应完成: %dms", responseTime)

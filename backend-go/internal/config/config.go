@@ -72,13 +72,15 @@ type UpstreamConfig struct {
 	TemporaryUntil          *time.Time `json:"temporaryUntil,omitempty"`          // 临时渠道到期时间
 	DeprecatedAt            *time.Time `json:"deprecatedAt,omitempty"`            // 移入弃用池时间
 	// Gemini 特定配置
-	InjectDummyThoughtSignature bool `json:"injectDummyThoughtSignature,omitempty"` // 给空 thought_signature 注入 dummy 值（兼容 x666.me 等要求必须有该字段的 API）
-	StripThoughtSignature       bool `json:"stripThoughtSignature,omitempty"`       // 移除 thought_signature 字段（兼容旧版 Gemini API）
-	IncludeHistoryThinking      bool `json:"includeHistoryThinking,omitempty"`      // 是否将历史 reasoning/thinking 回灌上游
-	DisablePromptCacheInjection bool `json:"disablePromptCacheInjection,omitempty"` // 是否禁用 Claude Prompt Cache 自动断点注入
-	DisablePromptCacheKey       bool `json:"disablePromptCacheKey,omitempty"`       // 是否禁用兼容上游的 prompt_cache_key
-	RequireReasoningContent     bool `json:"requireReasoningContent,omitempty"`     // 严格渠道要求所有缺失的 assistant reasoning_content 使用兼容续接值
-	EnablePreviousResponseID    bool `json:"enablePreviousResponseID,omitempty"`    // Messages->Responses 是否启用 previous_response_id 链
+	InjectDummyThoughtSignature bool   `json:"injectDummyThoughtSignature,omitempty"` // 给空 thought_signature 注入 dummy 值（兼容 x666.me 等要求必须有该字段的 API）
+	StripThoughtSignature       bool   `json:"stripThoughtSignature,omitempty"`       // 移除 thought_signature 字段（兼容旧版 Gemini API）
+	IncludeHistoryThinking      bool   `json:"includeHistoryThinking,omitempty"`      // 是否将历史 reasoning/thinking 回灌上游
+	DisablePromptCacheInjection bool   `json:"disablePromptCacheInjection,omitempty"` // 是否禁用 Claude Prompt Cache 自动断点注入
+	DisablePromptCacheKey       bool   `json:"disablePromptCacheKey,omitempty"`       // 是否禁用兼容上游的 prompt_cache_key
+	RequireReasoningContent     bool   `json:"requireReasoningContent,omitempty"`     // 严格渠道要求 assistant 历史携带可恢复的原始推理
+	ReasoningOutputMode         string `json:"reasoningOutputMode,omitempty"`         // Messages→Chat：空值/preserve 保留思考，hide 显式隐藏
+	ParseEmbeddedReasoning      bool   `json:"parseEmbeddedReasoning,omitempty"`      // Messages→Chat：显式解析正文中的 <think>/<thinking> 标签
+	EnablePreviousResponseID    bool   `json:"enablePreviousResponseID,omitempty"`    // Messages->Responses 是否启用 previous_response_id 链
 }
 
 // UnmarshalJSON 兼容旧配置中 modelMapping 的一对一字符串格式：
@@ -121,10 +123,26 @@ func (u *UpstreamConfig) UnmarshalJSON(data []byte) error {
 	}
 
 	*u = UpstreamConfig(alias)
+	if err := ValidateReasoningOptions(u); err != nil {
+		return err
+	}
 	if modelMapping != nil {
 		u.ModelMapping = modelMapping
 	}
 	return nil
+}
+
+// ValidateReasoningOptions 拒绝未知思考输出模式；空值明确等价于 preserve。
+func ValidateReasoningOptions(upstream *UpstreamConfig) error {
+	if upstream == nil {
+		return nil
+	}
+	switch upstream.ReasoningOutputMode {
+	case "", "preserve", "hide":
+		return nil
+	default:
+		return &ConfigError{Message: "reasoningOutputMode 必须是 preserve 或 hide"}
+	}
 }
 
 // UpstreamUpdate 用于部分更新 UpstreamConfig
@@ -171,13 +189,15 @@ type UpstreamUpdate struct {
 	TemporaryUntil          *time.Time `json:"temporaryUntil"`
 	DeprecatedAt            *time.Time `json:"deprecatedAt"`
 	// Gemini 特定配置
-	InjectDummyThoughtSignature *bool `json:"injectDummyThoughtSignature"`
-	StripThoughtSignature       *bool `json:"stripThoughtSignature"`
-	IncludeHistoryThinking      *bool `json:"includeHistoryThinking"`
-	DisablePromptCacheInjection *bool `json:"disablePromptCacheInjection"`
-	DisablePromptCacheKey       *bool `json:"disablePromptCacheKey"`
-	RequireReasoningContent     *bool `json:"requireReasoningContent"`
-	EnablePreviousResponseID    *bool `json:"enablePreviousResponseID"`
+	InjectDummyThoughtSignature *bool   `json:"injectDummyThoughtSignature"`
+	StripThoughtSignature       *bool   `json:"stripThoughtSignature"`
+	IncludeHistoryThinking      *bool   `json:"includeHistoryThinking"`
+	DisablePromptCacheInjection *bool   `json:"disablePromptCacheInjection"`
+	DisablePromptCacheKey       *bool   `json:"disablePromptCacheKey"`
+	RequireReasoningContent     *bool   `json:"requireReasoningContent"`
+	ReasoningOutputMode         *string `json:"reasoningOutputMode"`
+	ParseEmbeddedReasoning      *bool   `json:"parseEmbeddedReasoning"`
+	EnablePreviousResponseID    *bool   `json:"enablePreviousResponseID"`
 }
 
 func (u *UpstreamUpdate) UnmarshalJSON(data []byte) error {
@@ -259,6 +279,10 @@ type SettingsConfig struct {
 	Network       NetworkSettings     `json:"network"`
 	ContentSafety ContentSafetyConfig `json:"contentSafety"`
 	Integration   IntegrationSettings `json:"integration"`
+	// Disguise 客户端伪装版本与自动同步设置。
+	Disguise DisguiseSettings `json:"disguise"`
+	// Gateway 请求、日志和存储策略；路径和持久化开关在重启后生效。
+	Gateway GatewaySettings `json:"gateway"`
 	// Assistant AI 配置助手的模型路由设置。
 	Assistant AssistantSettings `json:"assistant"`
 	// Prompts 通用提示词版本库：集中维护一份可下发到各智能体客户端
@@ -309,6 +333,16 @@ type IntegrationSettings struct {
 	// CCSwitchPath CC Switch 可执行文件路径；为空表示未配置，
 	// 渠道菜单的"导入到 CCS"退化为"复制 CCS 链接"。
 	CCSwitchPath string `json:"ccSwitchPath"`
+}
+
+// DisguiseSettings 客户端伪装版本设置。
+type DisguiseSettings struct {
+	// ClaudeCodeVersion 自定义 Claude Code 伪装版本号，为空表示跟随最新或内置默认值。
+	ClaudeCodeVersion string `json:"claudeCodeVersion"`
+	// CodexVersion 自定义 Codex CLI 伪装版本号，为空表示跟随最新或内置默认值。
+	CodexVersion string `json:"codexVersion"`
+	// AutoUpdateFromRegistry 是否定时从 npm registry 自动同步最新版本（默认 true）。
+	AutoUpdateFromRegistry bool `json:"autoUpdateFromRegistry"`
 }
 
 // NetworkSettings 网络相关设置。
@@ -559,6 +593,7 @@ type ConfigManager struct {
 	config          Config
 	configFile      string
 	watcher         *fsnotify.Watcher
+	settingsChanged chan struct{}
 	failedKeysCache map[string]*FailedKey
 	keyRecoveryTime time.Duration
 	maxFailureCount int

@@ -202,7 +202,7 @@ func newContentSafetyTestRouter(t *testing.T) (*gin.Engine, *config.ConfigManage
 	settings.DangerousCmd.EnabledRules = []string{config.DangerousCmdRuleDestructive}
 	configFile := filepath.Join(t.TempDir(), "config.json")
 	configBytes, err := json.Marshal(config.Config{
-		Settings: config.SettingsConfig{ContentSafety: settings},
+		Settings: config.SettingsConfig{ContentSafety: settings, Gateway: config.DefaultGatewaySettings()},
 		Upstream: []config.UpstreamConfig{{
 			Name: "content-safety-e2e", ServiceType: "claude", BaseURL: upstream.URL,
 			APIKeys:        []string{"upstream-test-key"},

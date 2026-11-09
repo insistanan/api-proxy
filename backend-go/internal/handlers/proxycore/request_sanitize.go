@@ -11,7 +11,7 @@ import (
 // RemoveEmptySignatures 移除请求体中 messages[*].content[*].signature 的空值
 // 用于预防 Claude API 返回 400 错误
 // 仅处理已知路径：messages 数组中各消息的 content 数组中的 signature 字段
-// enableLog: 是否输出日志（由 envCfg.EnableRequestLogs 控制）
+// enableLog: 是否输出日志（由 envCfg.Current().EnableRequestLogs 控制）
 // apiType: 接口类型（Messages/Responses/Gemini），用于日志标签前缀
 func RemoveEmptySignatures(bodyBytes []byte, enableLog bool, apiType string) ([]byte, bool) {
 	decoder := json.NewDecoder(bytes.NewReader(bodyBytes))

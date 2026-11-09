@@ -2,10 +2,8 @@
 //
 // 从 openai.go 的 HandleStreamResponseCtx 巨型闭包重构为独立 struct，行为契约：
 //   - 懒发送 message_start（首个带 model 的 chunk 时发出）。
-//   - reasoning_content / reasoning / thinking 字段与 <think> 嵌入标签只登记
-//     代理内部缓存（reasoning_content_cache），绝不转换为客户端可见的 thinking
-//     block（d70d8be 决策：Cursor 会把内部推理回灌为客户端可见历史）。
-//   - 文本增量经 splitEmbeddedReasoningDelta 拆出嵌入推理后聚合 flush。
+//   - reasoning_content / reasoning / thinking 默认映射为独立 thinking block；
+//     d70d8be 的隐藏决策改为显式 hide 配置，正文标签仅在渠道开启解析时拆分。
 //   - 工具调用按上游 index 聚合，延迟 start（id/name 未齐先缓存 arguments）。
 //   - finish_reason 只关闭块并记 pendingStopReason（去重），message_delta 延迟
 //     到流尾（[DONE] / scanner 结束）统一发送——保证其后到达的 usage chunk
@@ -32,15 +30,22 @@ type chatToClaudeStreamState struct {
 	nextBlockIndex int
 
 	// 文本块状态
-	textBlockStarted bool
-	textBlockIndex   int
-	textDeltaBuffer  strings.Builder
+	textBlockStarted       bool
+	textBlockIndex         int
+	textDeltaBuffer        strings.Builder
+	thinkingBlockStarted   bool
+	thinkingBlockIndex     int
+	hideReasoning          bool
+	parseEmbeddedReasoning bool
+	reasoningScope         string
+	hasDedicatedReasoning  bool
+	hasEmbeddedReasoning   bool
 
 	// reasoning / 正文累积（缓存用；assistantTextBuffer 刻意不复用
 	// textDeltaBuffer，后者在 closeTextBlock 时会 Reset）
-	reasoningDeltaBuffer  strings.Builder
-	assistantTextBuffer   strings.Builder
-	embeddedReasoningMode bool
+	reasoningDeltaBuffer strings.Builder
+	assistantTextBuffer  strings.Builder
+	embeddedReasoning    embeddedReasoningParser
 
 	// 工具调用聚合：上游 index → 累加器
 	toolCallAccumulator map[int]*ToolCallAccumulator
@@ -138,35 +143,38 @@ func (s *chatToClaudeStreamState) ProcessLine(line string) []string {
 		delta = nil
 	}
 
-	// reasoning 只登记缓存，不发给客户端（含 reasoning 别名兼容）。
+	// 推理与正文独立输出，兼容 reasoning / thinking 别名。
 	if reasoningContent := extractOpenAIReasoningContent(delta); reasoningContent != "" {
-		s.reasoningDeltaBuffer.WriteString(reasoningContent)
+		if s.hasEmbeddedReasoning {
+			s.streamFailed = true
+			s.streamError = fmt.Errorf("上游在嵌入思考之后又返回独立推理字段，无法保证原始推理历史一致")
+			return nil
+		}
+		s.hasDedicatedReasoning = true
+		out = append(out, s.acceptReasoning(reasoningContent)...)
 	}
 
 	// 文本内容
 	if content, ok := delta["content"].(string); ok && content != "" {
-		visibleContent, embeddedReasoning := splitEmbeddedReasoningDelta(content, &s.embeddedReasoningMode)
-		if embeddedReasoning != "" {
-			s.reasoningDeltaBuffer.WriteString(embeddedReasoning)
+		parts := []reasoningTextPart{{text: content}}
+		if s.parseEmbeddedReasoning {
+			parts = s.embeddedReasoning.feed(content)
 		}
-		if visibleContent != "" {
-			s.assistantTextBuffer.WriteString(visibleContent)
-			if !s.textBlockStarted {
-				s.textBlockIndex = s.nextBlockIndex
-				s.nextBlockIndex++
-				s.textBlockStarted = true
-				out = append(out, s.emitTextBlockStart())
-			}
-			s.textDeltaBuffer.WriteString(visibleContent)
-			if shouldFlushOpenAITextDelta(s.textDeltaBuffer.String(), visibleContent) {
-				out = append(out, s.flushTextDelta()...)
-			}
-		}
+		out = append(out, s.acceptContentParts(parts)...)
 	}
 
 	// 工具调用。空 tool_calls: [] 不能关闭文本块（部分上游在文本 delta 中携带），
 	// 否则 Claude Code 会把连续文本拆成多个 content block。
 	if toolCalls, ok := delta["tool_calls"].([]interface{}); ok && len(toolCalls) > 0 {
+		// 工具调用是正文边界，标签尾部必须先定稿，不能延迟到工具块之后。
+		tail, err := s.embeddedReasoning.finish()
+		if err != nil {
+			s.streamFailed = true
+			s.streamError = err
+			return nil
+		}
+		out = append(out, s.acceptContentParts(tail)...)
+		out = append(out, s.closeThinkingBlock()...)
 		out = append(out, s.closeTextBlock()...)
 		for _, tc := range toolCalls {
 			toolCall, ok := tc.(map[string]interface{})
@@ -210,6 +218,14 @@ func (s *chatToClaudeStreamState) ProcessLine(line string) []string {
 	// finish_reason：只关闭块 + 记 stopReason（首个生效），message_delta 延迟到流尾。
 	// 不再因 tool_use 提前结束流——其后可能还有 usage chunk。
 	if finishReason, ok := choice["finish_reason"].(string); ok && finishReason != "" && finishReason != "none" && finishReason != "null" {
+		tail, err := s.embeddedReasoning.finish()
+		if err != nil {
+			s.streamFailed = true
+			s.streamError = err
+			return nil
+		}
+		out = append(out, s.acceptContentParts(tail)...)
+		out = append(out, s.closeThinkingBlock()...)
 		out = append(out, s.closeTextBlock()...)
 		out = append(out, s.closeAllToolCalls()...)
 		if s.pendingStopReason == "" {
@@ -230,6 +246,13 @@ func (s *chatToClaudeStreamState) Finish() []string {
 	if s.messageStopEmitted {
 		return nil
 	}
+	tail, err := s.embeddedReasoning.finish()
+	if err != nil {
+		s.streamFailed = true
+		s.streamError = err
+		return nil
+	}
+	out := s.acceptContentParts(tail)
 	s.messageStopEmitted = true
 
 	// 缓存本轮完整 assistant 消息。工具调用回合通常没有文本，仍需用其
@@ -239,10 +262,11 @@ func (s *chatToClaudeStreamState) Finish() []string {
 			Role:      "assistant",
 			Content:   s.assistantTextBuffer.String(),
 			ToolCalls: snapshotChatAssistantToolCalls(s.assistantToolCalls),
-		}, s.reasoningDeltaBuffer.String())
+		}, s.reasoningDeltaBuffer.String(), s.reasoningScope)
 	}
 
-	out := s.closeTextBlock()
+	out = append(out, s.closeTextBlock()...)
+	out = append(out, s.closeThinkingBlock()...)
 	out = append(out, s.closeAllToolCalls()...)
 	if s.messageStartEmitted {
 		if s.pendingStopReason == "" {
@@ -254,6 +278,64 @@ func (s *chatToClaudeStreamState) Finish() []string {
 	}
 	out = append(out, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
 	return out
+}
+
+func (s *chatToClaudeStreamState) acceptContentParts(parts []reasoningTextPart) []string {
+	var out []string
+	for _, part := range parts {
+		if part.thinking {
+			if s.hasDedicatedReasoning {
+				continue
+			}
+			s.hasEmbeddedReasoning = true
+			out = append(out, s.acceptReasoning(part.text)...)
+			continue
+		}
+		out = append(out, s.closeThinkingBlock()...)
+		s.assistantTextBuffer.WriteString(part.text)
+		if !s.textBlockStarted {
+			s.textBlockIndex = s.nextBlockIndex
+			s.nextBlockIndex++
+			s.textBlockStarted = true
+			out = append(out, s.emitTextBlockStart())
+		}
+		s.textDeltaBuffer.WriteString(part.text)
+		if shouldFlushOpenAITextDelta(s.textDeltaBuffer.String(), part.text) {
+			out = append(out, s.flushTextDelta()...)
+		}
+	}
+	return out
+}
+
+func (s *chatToClaudeStreamState) acceptReasoning(text string) []string {
+	s.reasoningDeltaBuffer.WriteString(text)
+	if s.hideReasoning || text == "" {
+		return nil
+	}
+	out := s.closeTextBlock()
+	if !s.thinkingBlockStarted {
+		s.thinkingBlockIndex = s.nextBlockIndex
+		s.nextBlockIndex++
+		s.thinkingBlockStarted = true
+		payload, _ := json.Marshal(map[string]interface{}{
+			"type": "content_block_start", "index": s.thinkingBlockIndex,
+			"content_block": map[string]string{"type": "thinking", "thinking": ""},
+		})
+		out = append(out, fmt.Sprintf("event: content_block_start\ndata: %s\n\n", payload))
+	}
+	payload, _ := json.Marshal(map[string]interface{}{
+		"type": "content_block_delta", "index": s.thinkingBlockIndex,
+		"delta": map[string]string{"type": "thinking_delta", "thinking": text},
+	})
+	return append(out, fmt.Sprintf("event: content_block_delta\ndata: %s\n\n", payload))
+}
+
+func (s *chatToClaudeStreamState) closeThinkingBlock() []string {
+	if !s.thinkingBlockStarted {
+		return nil
+	}
+	s.thinkingBlockStarted = false
+	return []string{emitChatContentBlockStop(s.thinkingBlockIndex)}
 }
 
 // Failed 报告本次流是否以错误告终（上游 error 事件）。

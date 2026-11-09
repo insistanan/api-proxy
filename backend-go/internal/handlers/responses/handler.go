@@ -130,7 +130,7 @@ func handleSuccess(
 		return nil, err
 	}
 
-	decompressedBytes, wasDecoded, decompressErr := utils.DecompressResponseBodyIfNeeded(resp, bodyBytes, envCfg.MaxRequestBodySize)
+	decompressedBytes, wasDecoded, decompressErr := utils.DecompressResponseBodyIfNeeded(resp, bodyBytes, envCfg.Current().MaxRequestBodySize)
 	if decompressErr != nil && errors.Is(decompressErr, utils.ErrDecompressedBodyTooLarge) {
 		log.Printf("[Responses-Response] 错误: 解压响应体超过大小限制: %v", decompressErr)
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Decompressed response body too large"})
@@ -142,7 +142,7 @@ func handleSuccess(
 		resp.Header.Del("Content-Encoding")
 	}
 
-	if envCfg.EnableResponseLogs {
+	if envCfg.Current().EnableResponseLogs {
 		responseTime := time.Since(startTime).Milliseconds()
 		log.Printf("[Responses-Timing] Responses 响应完成: %dms, 状态: %d", responseTime, resp.StatusCode)
 		proxycore.LogResponseDetails(resp, bodyBytes, envCfg, "Responses")
@@ -197,7 +197,7 @@ func handleSuccess(
 		clientUsage := responsesResp.Usage
 		correctUnderreportedInputTokensInResponse(responsesResp, &clientUsage, usageRequestJSON, envCfg)
 		responsesResp.Usage = clientUsage
-		normalizeContextDetailsInputTokensInResponse(responsesResp, &responsesResp.Usage, envCfg.EnableResponseLogs)
+		normalizeContextDetailsInputTokensInResponse(responsesResp, &responsesResp.Usage, envCfg.Current().EnableResponseLogs)
 	}
 	responseBody, err := utils.MarshalJSONNoEscape(responsesResp)
 	if err != nil {
@@ -302,7 +302,7 @@ func handleResponsesImagePassthrough(
 	requestedStream bool,
 ) (*types.Usage, error) {
 	isStream := requestedStream || streams.IsEventStreamResponse(resp)
-	if envCfg.EnableResponseLogs {
+	if envCfg.Current().EnableResponseLogs {
 		responseTime := time.Since(startTime).Milliseconds()
 		if isStream {
 			log.Printf("[Responses-Image-Stream] 原生生图流式响应开始: %dms, 状态: %d", responseTime, resp.StatusCode)
@@ -312,7 +312,7 @@ func handleResponsesImagePassthrough(
 	}
 
 	err := streams.ForwardUpstreamResponseBody(c, resp, "application/json", isStream)
-	if envCfg.EnableResponseLogs {
+	if envCfg.Current().EnableResponseLogs {
 		responseTime := time.Since(startTime).Milliseconds()
 		log.Printf("[Responses-Image] 原生生图响应转发完成: %dms", responseTime)
 	}

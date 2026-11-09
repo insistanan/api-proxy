@@ -328,6 +328,23 @@ func TestContentPolicyEscapeRetryOnResponsesChannel(t *testing.T) {
 // result 避免结构体字面量在 if 条件中触发的 vet 语义歧义。
 func result(r UpstreamAttemptResult) UpstreamAttemptResult { return r }
 
+func TestCompatibilityRetry_MissingReasoningReturnsClientError(t *testing.T) {
+	historyErr := &types.ReasoningHistoryError{Message: "原始 reasoning_content 无法恢复"}
+	response := &http.Response{StatusCode: http.StatusBadRequest}
+	var reported error
+	_, _, succeeded, aborted := applyCompatibilityRetryResult(
+		compatibilityRetryResult{PreparationStage: "build_request", Err: historyErr},
+		response, []byte(`{"error":"reasoning_content required"}`), false,
+		"Messages", compatRetryLogs{}, func(err error) { reported = err },
+	)
+	if !errors.Is(reported, historyErr) || aborted == nil || !aborted.Handled || succeeded {
+		t.Fatalf("无法恢复原文应向客户端报错并终止重试：reported=%v aborted=%+v succeeded=%v", reported, aborted, succeeded)
+	}
+	if aborted.Health != channelHealthNeutral || !errors.Is(aborted.LastError, historyErr) {
+		t.Fatalf("历史缺失不能记为上游故障：%+v", aborted)
+	}
+}
+
 // TestQuotaFailureDeprioritizesKeyAfterSuccess 锚点：quota 相关失败在本次请求内
 // 记为待降级候选，任一 key 成功后统一执行降级回调。
 func TestQuotaFailureDeprioritizesKeyAfterSuccess(t *testing.T) {

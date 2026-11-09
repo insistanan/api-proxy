@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 // EffectiveConcurrencyLimit 以 Key 下标展示组合，不额外暴露凭据或其摘要。
@@ -81,7 +82,23 @@ func (cm *ConfigManager) publishConfigLocked(candidate Config) {
 		}
 	}
 	cm.admission.Reconcile(rules)
+	previousDisguise := cm.config.Settings.Disguise
 	cm.config = candidate
+	gateway := candidate.Settings.Gateway
+	activeGatewaySettings.Store(&gateway)
+	disguise := candidate.Settings.Disguise
+	utils.SetDisguiseSettings(disguise.ClaudeCodeVersion, disguise.CodexVersion, disguise.AutoUpdateFromRegistry)
+	if disguise != previousDisguise {
+		select {
+		case cm.settingsChanged <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// SettingsChanged 合并配置发布事件，后台任务读取最新快照，不积压旧设置。
+func (cm *ConfigManager) SettingsChanged() <-chan struct{} {
+	return cm.settingsChanged
 }
 
 // UpstreamRequestContext 必须使用本次实际 URL、上游协议和 Key，不能使用入口协议。

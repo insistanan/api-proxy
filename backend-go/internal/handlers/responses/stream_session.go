@@ -14,7 +14,7 @@ import (
 // SSE 中的正文 delta、工具参数 delta、reasoning summary delta 和
 // response.completed.output 是不同层次的数据，不能共用一个字符串缓冲区。
 // 这个收集器的输出会进入代理自己的 session；reasoning 保持为 reasoning item，
-// 默认转换器会跳过它，只有显式 IncludeHistoryThinking 时才会回灌。
+// Chat 转换会回传明确的 reasoning_text 原文，summary 保持为展示摘要。
 type responsesStreamSessionCollector struct {
 	text      strings.Builder
 	reasoning strings.Builder

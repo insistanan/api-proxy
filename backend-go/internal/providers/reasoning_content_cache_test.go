@@ -2,6 +2,7 @@ package providers
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -15,21 +16,21 @@ func TestReasoningContentCache_PutGet(t *testing.T) {
 	clearReasoningContentCacheForTest()
 	defer clearReasoningContentCacheForTest()
 
-	storeReasoning("hello world", "think step by step")
-	if got := lookupReasoning("hello world"); got != "think step by step" {
+	storeReasoning("hello world", "think step by step", reasoningTestScope)
+	if got := lookupReasoning("hello world", reasoningTestScope); got != "think step by step" {
 		t.Fatalf("lookupReasoning() = %q, want %q", got, "think step by step")
 	}
-	if got := lookupReasoning("another message"); got != "" {
+	if got := lookupReasoning("another message", reasoningTestScope); got != "" {
 		t.Fatalf("lookupReasoning(unknown) = %q, want empty", got)
 	}
 
 	// 空值不保存、不查询
-	storeReasoning("", "should not store")
-	storeReasoning("should not store", "")
-	if got := lookupReasoning(""); got != "" {
+	storeReasoning("", "should not store", reasoningTestScope)
+	storeReasoning("should not store", "", reasoningTestScope)
+	if got := lookupReasoning("", reasoningTestScope); got != "" {
 		t.Fatalf("lookupReasoning(empty) = %q, want empty", got)
 	}
-	if got := lookupReasoning("should not store"); got != "" {
+	if got := lookupReasoning("should not store", reasoningTestScope); got != "" {
 		t.Fatalf("lookupReasoning(empty reasoning) = %q, want empty", got)
 	}
 }
@@ -68,7 +69,7 @@ func TestReasoningContentRoundTrip_NonStream(t *testing.T) {
 			}}]
 		}`),
 	}
-	claudeResp, err := (&OpenAIProvider{}).ConvertToClaudeResponse(providerResp)
+	claudeResp, err := newReasoningTestProvider().ConvertToClaudeResponse(providerResp)
 	if err != nil {
 		t.Fatalf("ConvertToClaudeResponse() err = %v", err)
 	}
@@ -77,7 +78,7 @@ func TestReasoningContentRoundTrip_NonStream(t *testing.T) {
 	}
 
 	// 2. 下一轮客户端回传历史，assistant 消息只剩 text（明文 thinking 已丢失）
-	c := newGinContext(http.MethodPost, "/v1/messages", []byte(`{
+	c := newReasoningContext(http.MethodPost, "/v1/messages", []byte(`{
 		"model":"reasoning-model",
 		"messages":[
 			{"role":"user","content":"inspect now"},
@@ -123,7 +124,7 @@ func TestReasoningContentRoundTrip_Stream(t *testing.T) {
 		``,
 	}, "\n")
 
-	p := &OpenAIProvider{}
+	p := newReasoningTestProvider()
 	eventChan, errChan, err := p.HandleStreamResponse(io.NopCloser(strings.NewReader(body)))
 	if err != nil {
 		t.Fatalf("HandleStreamResponse() err = %v", err)
@@ -139,7 +140,7 @@ func TestReasoningContentRoundTrip_Stream(t *testing.T) {
 	}
 
 	// 2. 下一轮补回（assistant 历史丢失明文 thinking）
-	c := newGinContext(http.MethodPost, "/v1/messages", []byte(`{
+	c := newReasoningContext(http.MethodPost, "/v1/messages", []byte(`{
 		"model":"reasoning-model",
 		"messages":[
 			{"role":"user","content":"go"},
@@ -174,9 +175,9 @@ func TestConvertMessage_PrefersExplicitThinkingOverCache(t *testing.T) {
 	defer clearReasoningContentCacheForTest()
 
 	// 缓存里预置一条会命中同文本的 reasoning
-	storeReasoning("I will inspect the files.", "cached reasoning")
+	storeReasoning("I will inspect the files.", "cached reasoning", reasoningTestScope)
 
-	c := newGinContext(http.MethodPost, "/v1/messages", []byte(`{
+	c := newReasoningContext(http.MethodPost, "/v1/messages", []byte(`{
 		"model":"reasoning-model",
 		"messages":[{"role":"assistant","content":[
 			{"type":"thinking","thinking":"explicit reasoning"},
@@ -201,15 +202,15 @@ func TestConvertMessage_PrefersExplicitThinkingOverCache(t *testing.T) {
 	}
 }
 
-// TestConvertMessage_UsesCompatibilityFallbackForUnrecoverableToolCall 确认工具调用
-// 不会误用纯文本缓存；原始推理不可恢复时改为注入稳定的兼容续接值。
-func TestConvertMessage_UsesCompatibilityFallbackForUnrecoverableToolCall(t *testing.T) {
+// TestConvertMessage_OmitsUnavailableReasoningForOptionalToolCall 确认工具调用
+// 不会误用纯文本缓存；非严格渠道缺少原文时省略字段，不生成占位思考。
+func TestConvertMessage_OmitsUnavailableReasoningForOptionalToolCall(t *testing.T) {
 	clearReasoningContentCacheForTest()
 	defer clearReasoningContentCacheForTest()
 
-	storeReasoning("I will inspect the files.", "cached reasoning")
+	storeReasoning("I will inspect the files.", "cached reasoning", reasoningTestScope)
 
-	c := newGinContext(http.MethodPost, "/v1/messages", []byte(`{
+	c := newReasoningContext(http.MethodPost, "/v1/messages", []byte(`{
 		"model":"reasoning-model",
 		"messages":[{"role":"assistant","content":[
 			{"type":"tool_use","id":"call_1","name":"lookup","input":{}}
@@ -228,34 +229,27 @@ func TestConvertMessage_UsesCompatibilityFallbackForUnrecoverableToolCall(t *tes
 	if len(got.Messages) != 1 {
 		t.Fatalf("messages = %#v", got.Messages)
 	}
-	if got.Messages[0].ReasoningContent != missingReasoningContentFallback {
-		t.Fatalf("reasoning_content = %q, want compatibility fallback", got.Messages[0].ReasoningContent)
+	if got.Messages[0].ReasoningContent != "" {
+		t.Fatalf("reasoning_content = %q, 非严格渠道应省略缺失推理", got.Messages[0].ReasoningContent)
 	}
 }
 
-func TestConvertMessage_ForceReasoningContentForAssistantTextHistory(t *testing.T) {
+func TestConvertMessage_RejectsUnavailableRequiredReasoning(t *testing.T) {
 	clearReasoningContentCacheForTest()
 	defer clearReasoningContentCacheForTest()
-
-	c := newGinContext(http.MethodPost, "/v1/messages", []byte(`{
+	c := newReasoningContext(http.MethodPost, "/v1/messages", []byte(`{
 		"model":"reasoning-model",
 		"messages":[{"role":"assistant","content":"historical answer"}]
 	}`), nil)
 	req, _, err := (&OpenAIProvider{}).ConvertToProviderRequest(c, &config.UpstreamConfig{
-		BaseURL:                 "https://api.example.com",
-		ServiceType:             "openai",
-		RequireReasoningContent: true,
+		BaseURL: "https://api.example.com", ServiceType: "openai", RequireReasoningContent: true,
 	}, "sk-test")
-	if err != nil {
-		t.Fatalf("ConvertToProviderRequest() err = %v", err)
+	if err == nil || req != nil || !strings.Contains(err.Error(), "原始 reasoning_content 无法恢复") {
+		t.Fatalf("严格渠道缺少原文应报错，req=%v err=%v", req, err)
 	}
-
-	var got types.OpenAIRequest
-	if err := json.NewDecoder(req.Body).Decode(&got); err != nil {
-		t.Fatalf("decode request body: %v", err)
-	}
-	if len(got.Messages) != 1 || got.Messages[0].ReasoningContent != missingReasoningContentFallback {
-		t.Fatalf("messages = %#v", got.Messages)
+	var historyErr *types.ReasoningHistoryError
+	if !errors.As(err, &historyErr) || !historyErr.ClientRequestError() {
+		t.Fatalf("缺失历史应返回请求错误，避免轮换密钥重试：%v", err)
 	}
 }
 
@@ -274,12 +268,12 @@ func TestReasoningContentRoundTrip_NonStreamToolCall(t *testing.T) {
 			}}]
 		}`),
 	}
-	if _, err := (&OpenAIProvider{}).ConvertToClaudeResponse(providerResp); err != nil {
+	if _, err := newReasoningTestProvider().ConvertToClaudeResponse(providerResp); err != nil {
 		t.Fatalf("ConvertToClaudeResponse() err = %v", err)
 	}
 
 	// Claude Code 会将部分历史 thinking 回传为 redacted_thinking。
-	c := newGinContext(http.MethodPost, "/v1/messages", []byte(`{
+	c := newReasoningContext(http.MethodPost, "/v1/messages", []byte(`{
 		"model":"reasoning-model",
 		"messages":[
 			{"role":"assistant","content":[
@@ -319,7 +313,7 @@ func TestReasoningContentRoundTrip_StreamToolCall(t *testing.T) {
 		``,
 	}, "\n")
 
-	eventChan, errChan, err := (&OpenAIProvider{}).HandleStreamResponse(io.NopCloser(strings.NewReader(body)))
+	eventChan, errChan, err := newReasoningTestProvider().HandleStreamResponse(io.NopCloser(strings.NewReader(body)))
 	if err != nil {
 		t.Fatalf("HandleStreamResponse() err = %v", err)
 	}
@@ -333,7 +327,7 @@ func TestReasoningContentRoundTrip_StreamToolCall(t *testing.T) {
 	default:
 	}
 
-	c := newGinContext(http.MethodPost, "/v1/messages", []byte(`{
+	c := newReasoningContext(http.MethodPost, "/v1/messages", []byte(`{
 		"model":"reasoning-model",
 		"messages":[{"role":"assistant","content":[
 			{"type":"redacted_thinking"},
@@ -367,7 +361,7 @@ func TestReasoningContentCache_FallsBackToToolCallIDAfterCompaction(t *testing.T
 				Arguments: `{"path":"very-long-original-path.md"}`,
 			},
 		}},
-	}, "original reasoning")
+	}, "original reasoning", reasoningTestScope)
 
 	got := lookupReasoningForAssistantMessage(types.OpenAIMessage{
 		Role: "assistant",
@@ -378,13 +372,13 @@ func TestReasoningContentCache_FallsBackToToolCallIDAfterCompaction(t *testing.T
 				Arguments: `{"path":"compacted-path.md"}`,
 			},
 		}},
-	})
+	}, reasoningTestScope)
 	if got != "original reasoning" {
 		t.Fatalf("lookupReasoningForAssistantMessage() = %q, want original reasoning", got)
 	}
 }
 
-func TestCacheClaudeResponseReasoning_CrossProviderToolCall(t *testing.T) {
+func TestCacheClaudeResponseReasoning_ScopedToolCall(t *testing.T) {
 	clearReasoningContentCacheForTest()
 	defer clearReasoningContentCacheForTest()
 
@@ -394,9 +388,9 @@ func TestCacheClaudeResponseReasoning_CrossProviderToolCall(t *testing.T) {
 			{Type: "thinking", Thinking: "reasoning from another provider"},
 			{Type: "tool_use", ID: "call_cross_provider", Name: "Read", Input: map[string]interface{}{"path": "README.md"}},
 		},
-	})
+	}, reasoningTestScope)
 
-	c := newGinContext(http.MethodPost, "/v1/messages", []byte(`{
+	c := newReasoningContext(http.MethodPost, "/v1/messages", []byte(`{
 		"model":"reasoning-model",
 		"messages":[{"role":"assistant","content":[
 			{"type":"redacted_thinking"},

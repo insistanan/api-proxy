@@ -160,7 +160,11 @@ func runLogsShow(args []string) error {
 func openLogsStore(explicitPath string) (*logger.Store, error) {
 	path := strings.TrimSpace(explicitPath)
 	if path == "" {
-		path = strings.TrimSpace(config.NewEnvConfig().LogDBPath)
+		settings, err := config.ReadGatewaySettings(".config/config.json")
+		if err != nil {
+			return nil, fmt.Errorf("读取日志数据库配置失败: %w", err)
+		}
+		path = strings.TrimSpace(settings.LogDBPath)
 	}
 	if path == "" {
 		path = logger.DefaultDBPath

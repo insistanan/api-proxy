@@ -73,6 +73,9 @@ func validateUpstreamProxyConfig(upstream *UpstreamConfig) error {
 	if upstream == nil {
 		return proxyConfigErrorf("渠道配置不能为空")
 	}
+	if err := ValidateReasoningOptions(upstream); err != nil {
+		return err
+	}
 	switch normalizeProxyMode(upstream.ProxyMode) {
 	case ProxyModeInherit, ProxyModeDirect:
 		return nil
@@ -129,6 +132,14 @@ func (cm *ConfigManager) GetSettings() SettingsConfig {
 
 // UpdateSettings 原子更新可由管理界面维护的全部全局设置。
 func (cm *ConfigManager) UpdateSettings(settings SettingsConfig) error {
+	if err := ValidateGatewaySettings(settings.Gateway); err != nil {
+		return err
+	}
+	settings.Disguise.ClaudeCodeVersion = strings.TrimSpace(settings.Disguise.ClaudeCodeVersion)
+	settings.Disguise.CodexVersion = strings.TrimSpace(settings.Disguise.CodexVersion)
+	if err := ValidateDisguiseSettings(settings.Disguise); err != nil {
+		return err
+	}
 	settings.Network.UpstreamProxyURL = strings.TrimSpace(settings.Network.UpstreamProxyURL)
 	if err := ValidateProxyURL(settings.Network.UpstreamProxyURL); err != nil {
 		return err

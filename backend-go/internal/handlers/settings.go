@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 // GetSettings 获取可由管理界面维护的全局设置。
@@ -23,6 +24,8 @@ func UpdateSettings(cfgManager *config.ConfigManager) gin.HandlerFunc {
 			Network       *config.NetworkSettings     `json:"network"`
 			ContentSafety *config.ContentSafetyConfig `json:"contentSafety"`
 			Integration   *config.IntegrationSettings `json:"integration"`
+			Disguise      *config.DisguiseSettings    `json:"disguise"`
+			Gateway       *config.GatewaySettings     `json:"gateway"`
 			Assistant     *config.AssistantSettings   `json:"assistant"`
 			Prompts       *config.PromptSettings      `json:"prompts"`
 		}
@@ -30,7 +33,7 @@ func UpdateSettings(cfgManager *config.ConfigManager) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的设置参数"})
 			return
 		}
-		if req.Network == nil && req.ContentSafety == nil && req.Integration == nil && req.Assistant == nil && req.Prompts == nil {
+		if req.Network == nil && req.ContentSafety == nil && req.Integration == nil && req.Disguise == nil && req.Gateway == nil && req.Assistant == nil && req.Prompts == nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "至少需要提交一个设置分类"})
 			return
 		}
@@ -54,6 +57,22 @@ func UpdateSettings(cfgManager *config.ConfigManager) gin.HandlerFunc {
 		if req.Integration != nil {
 			req.Integration.CCSwitchPath = strings.TrimSpace(req.Integration.CCSwitchPath)
 			settings.Integration = *req.Integration
+		}
+		if req.Disguise != nil {
+			req.Disguise.ClaudeCodeVersion = strings.TrimSpace(req.Disguise.ClaudeCodeVersion)
+			req.Disguise.CodexVersion = strings.TrimSpace(req.Disguise.CodexVersion)
+			settings.Disguise = *req.Disguise
+			if err := config.ValidateDisguiseSettings(settings.Disguise); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+		}
+		if req.Gateway != nil {
+			if err := config.ValidateGatewaySettings(*req.Gateway); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			settings.Gateway = *req.Gateway
 		}
 		if req.Assistant != nil {
 			req.Assistant.Model = strings.TrimSpace(req.Assistant.Model)
@@ -119,13 +138,35 @@ func SetFuzzyMode(cfgManager *config.ConfigManager) gin.HandlerFunc {
 	}
 }
 
-// GetClientDisguise 获取 Messages 与 Responses 的客户端伪装状态。
-func GetClientDisguise(cfgManager *config.ConfigManager) gin.HandlerFunc {
+// GetClientDisguise 获取 Messages 与 Responses 的客户端伪装状态及生效版本。
+func GetClientDisguise(cfgManager *config.ConfigManager, syncer *DisguiseSyncer) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if syncer == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "版本同步任务未初始化"})
+			return
+		}
+		effClaude, effCodex, latClaude, latCodex := utils.GetEffectiveDisguiseVersions()
+		status := syncer.Status()
 		c.JSON(http.StatusOK, gin.H{
 			"claudeCodeDisguiseEnabled": cfgManager.GetClaudeCodeDisguiseEnabled(),
 			"codexDisguiseEnabled":      cfgManager.GetCodexDisguiseEnabled(),
+			"effectiveClaudeVersion":    effClaude,
+			"effectiveCodexVersion":     effCodex,
+			"latestClaudeVersion":       latClaude,
+			"latestCodexVersion":        latCodex,
+			"sync":                      status,
 		})
+	}
+}
+
+// RefreshClientDisguise 排队查询并立即返回，不将保存设置挂在外部网络上。
+func RefreshClientDisguise(syncer *DisguiseSyncer) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if syncer == nil || !syncer.RequestSync() {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "版本同步任务未运行或正在停止"})
+			return
+		}
+		c.JSON(http.StatusAccepted, gin.H{"queued": true})
 	}
 }
 

@@ -105,7 +105,7 @@ func TestOpenAIProviderHandleStreamResponse_HidesReasoningFromClientStream(t *te
 		``,
 	}, "\n")
 
-	p := &OpenAIProvider{}
+	p := &OpenAIProvider{hideReasoning: true}
 	eventChan, errChan, err := p.HandleStreamResponse(io.NopCloser(strings.NewReader(body)))
 	if err != nil {
 		t.Fatalf("HandleStreamResponse() err = %v", err)
@@ -141,7 +141,7 @@ func TestOpenAIProviderHandleStreamResponse_HidesEmbeddedThinkingFromClientStrea
 		``,
 	}, "\n\n")
 
-	eventChan, _, err := (&OpenAIProvider{}).HandleStreamResponse(io.NopCloser(strings.NewReader(body)))
+	eventChan, _, err := (&OpenAIProvider{hideReasoning: true, parseEmbeddedReasoning: true}).HandleStreamResponse(io.NopCloser(strings.NewReader(body)))
 	if err != nil {
 		t.Fatalf("HandleStreamResponse() err = %v", err)
 	}

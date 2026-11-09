@@ -73,7 +73,7 @@ func RestoreRequestBody(c *gin.Context, bodyBytes []byte) {
 
 // LogOriginalRequest 记录原始请求信息
 func LogOriginalRequest(c *gin.Context, bodyBytes []byte, envCfg *config.EnvConfig, apiType string) {
-	if !envCfg.EnableRequestLogs {
+	if !envCfg.Current().EnableRequestLogs {
 		return
 	}
 

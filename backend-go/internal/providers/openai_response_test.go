@@ -21,7 +21,7 @@ func TestOpenAIProviderConvertToClaudeResponse_HidesReasoningContent(t *testing.
 		}`),
 	}
 
-	got, err := (&OpenAIProvider{}).ConvertToClaudeResponse(providerResp)
+	got, err := (&OpenAIProvider{hideReasoning: true}).ConvertToClaudeResponse(providerResp)
 	if err != nil {
 		t.Fatalf("ConvertToClaudeResponse() err = %v", err)
 	}
@@ -37,7 +37,7 @@ func TestOpenAIProviderConvertToClaudeResponse_HidesEmbeddedThinkingTags(t *test
 		}}]
 	}`)}
 
-	got, err := (&OpenAIProvider{}).ConvertToClaudeResponse(providerResp)
+	got, err := (&OpenAIProvider{hideReasoning: true, parseEmbeddedReasoning: true}).ConvertToClaudeResponse(providerResp)
 	if err != nil {
 		t.Fatalf("ConvertToClaudeResponse() err = %v", err)
 	}

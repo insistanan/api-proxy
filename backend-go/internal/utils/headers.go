@@ -1,10 +1,12 @@
 package utils
 
 import (
+	"fmt"
 	"net/http"
-	"os"
+	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -28,7 +30,7 @@ const (
 	// 前面，响应持久化也必须替换旧历史而不是按普通轮次合并。
 	ContextKeyResponsesHistoryBoundary = "responses-history-boundary"
 
-	// 伪装版本默认值：与真实客户端版本对齐；可被环境变量覆盖（见下方版本函数）。
+	// 伪装版本默认值：与真实客户端版本对齐。
 	defaultClaudeCodeDisguiseVersion = "2.1.238"
 	defaultCodexDisguiseVersion      = "0.150.1"
 
@@ -37,33 +39,84 @@ const (
 	claudeDisguiseSDKRuntimeVersion = "v24.3.0"
 )
 
-const (
-	envKeyClaudeCodeDisguiseVersion = "CLAUDE_CODE_DISGUISE_VERSION"
-	envKeyCodexDisguiseVersion      = "CODEX_DISGUISE_VERSION"
+var (
+	disguiseMu                 sync.RWMutex
+	customClaudeCodeVersion    string
+	customCodexVersion         string
+	latestNpmClaudeCodeVersion string
+	latestNpmCodexVersion      string
+	disguiseAutoUpdate         bool
 )
 
+var disguiseVersionPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$`)
+
+// ValidateDisguiseVersion 拒绝不能安全写入请求头的版本，空值表示未指定。
+func ValidateDisguiseVersion(version string) error {
+	if version != "" && (len(version) > 64 || !disguiseVersionPattern.MatchString(version)) {
+		return fmt.Errorf("伪装版本必须为版本号，例如 2.1.238 或 0.150.1-beta.1")
+	}
+	return nil
+}
+
+// SetDisguiseSettings 只发布本地设置，后台查询不得写回自定义版本。
+func SetDisguiseSettings(claudeVer, codexVer string, autoUpdate bool) {
+	disguiseMu.Lock()
+	defer disguiseMu.Unlock()
+	customClaudeCodeVersion = strings.TrimSpace(claudeVer)
+	customCodexVersion = strings.TrimSpace(codexVer)
+	disguiseAutoUpdate = autoUpdate
+}
+
+// SetDisguiseLatestVersions 仅更新查询成功的缓存；失败保留上次成功值。
+func SetDisguiseLatestVersions(latestClaude, latestCodex string) {
+	disguiseMu.Lock()
+	defer disguiseMu.Unlock()
+	if strings.TrimSpace(latestClaude) != "" {
+		latestNpmClaudeCodeVersion = strings.TrimSpace(latestClaude)
+	}
+	if strings.TrimSpace(latestCodex) != "" {
+		latestNpmCodexVersion = strings.TrimSpace(latestCodex)
+	}
+}
+
+// GetEffectiveDisguiseVersions 返回当前生效的伪装版本号以及检测到的最新版本号。
+func GetEffectiveDisguiseVersions() (effectiveClaude, effectiveCodex, latestClaude, latestCodex string) {
+	disguiseMu.RLock()
+	defer disguiseMu.RUnlock()
+
+	effectiveClaude = customClaudeCodeVersion
+	if effectiveClaude == "" {
+		if disguiseAutoUpdate && latestNpmClaudeCodeVersion != "" {
+			effectiveClaude = latestNpmClaudeCodeVersion
+		} else {
+			effectiveClaude = defaultClaudeCodeDisguiseVersion
+		}
+	}
+
+	effectiveCodex = customCodexVersion
+	if effectiveCodex == "" {
+		if disguiseAutoUpdate && latestNpmCodexVersion != "" {
+			effectiveCodex = latestNpmCodexVersion
+		} else {
+			effectiveCodex = defaultCodexDisguiseVersion
+		}
+	}
+
+	return effectiveClaude, effectiveCodex, latestNpmClaudeCodeVersion, latestNpmCodexVersion
+}
+
 // claudeCodeDisguiseVersion 返回 Claude Code 伪装版本号：
-// 优先取环境变量 CLAUDE_CODE_DISGUISE_VERSION（.env 支持，重启生效），
-// 未设置或为空白时使用内置默认值。影响 User-Agent、请求体计费块
-// cc_version 与会话指纹（utils/claude_disguise.go）。
+// 优先取自定义版本，开启自动跟随时才取 npm 最新版本，最后使用内置默认值。
 func claudeCodeDisguiseVersion() string {
-	return disguiseVersionFromEnv(envKeyClaudeCodeDisguiseVersion, defaultClaudeCodeDisguiseVersion)
+	effClaude, _, _, _ := GetEffectiveDisguiseVersions()
+	return effClaude
 }
 
 // codexDisguiseVersion 返回 Codex CLI 伪装版本号：
-// 优先取环境变量 CODEX_DISGUISE_VERSION（.env 支持，重启生效），
-// 未设置或为空白时使用内置默认值。影响 User-Agent 与 version 头。
+// 优先取自定义版本，开启自动跟随时才取 npm 最新版本，最后使用内置默认值。
 func codexDisguiseVersion() string {
-	return disguiseVersionFromEnv(envKeyCodexDisguiseVersion, defaultCodexDisguiseVersion)
-}
-
-// disguiseVersionFromEnv 每次实时读取环境变量：不缓存，避免包初始化早于
-// main 的 config.LoadDotEnv 导致 .env 未加载；开销相对每次上游请求可忽略。
-func disguiseVersionFromEnv(envKey, fallback string) string {
-	if value := strings.TrimSpace(os.Getenv(envKey)); value != "" {
-		return value
-	}
-	return fallback
+	_, effCodex, _, _ := GetEffectiveDisguiseVersions()
+	return effCodex
 }
 
 // PrepareUpstreamHeaders 准备上游请求头（统一头部处理逻辑）
@@ -216,12 +269,13 @@ func ForwardResponseHeadersEx(upstreamHeaders http.Header, clientWriter http.Res
 // 开启伪装时无条件用统一 User-Agent 覆盖，避免 Cursor 等客户端自带的旧版本
 // UA（如 codex_cli_rs/0.133.0）被透传，导致上游按 UA 版本号误判"需要更新客户端"。
 func ApplyCodexDisguise(headers http.Header, stream bool) {
-	headers.Set("User-Agent", codexUserAgent())
+	version := codexDisguiseVersion()
+	headers.Set("User-Agent", codexUserAgentForVersion(version))
 	if headers.Get("originator") == "" {
 		headers.Set("originator", "codex_cli_rs")
 	}
 	// 与覆盖后的 User-Agent 使用同一版本，避免旧客户端的 version 头残留。
-	headers.Set("version", codexDisguiseVersion())
+	headers.Set("version", version)
 
 	if headers.Get("session_id") == "" {
 		headers.Set("session_id", fallbackDisguiseSessionID)
@@ -315,14 +369,14 @@ func ApplyClaudeCodeDisguise(headers http.Header, stream bool) {
 	}
 }
 
-func codexUserAgent() string {
+func codexUserAgentForVersion(version string) string {
 	switch runtime.GOOS {
 	case "darwin":
-		return "codex_cli_rs/" + codexDisguiseVersion() + " (Mac OS; " + runtime.GOARCH + ") " + codexTargetTriple()
+		return "codex_cli_rs/" + version + " (Mac OS; " + runtime.GOARCH + ") " + codexTargetTriple()
 	case "windows":
-		return "codex_cli_rs/" + codexDisguiseVersion() + " (Windows; " + runtime.GOARCH + ") " + codexTargetTriple()
+		return "codex_cli_rs/" + version + " (Windows; " + runtime.GOARCH + ") " + codexTargetTriple()
 	default:
-		return "codex_cli_rs/" + codexDisguiseVersion() + " (Linux; " + runtime.GOARCH + ") " + codexTargetTriple()
+		return "codex_cli_rs/" + version + " (Linux; " + runtime.GOARCH + ") " + codexTargetTriple()
 	}
 }
 

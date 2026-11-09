@@ -131,6 +131,9 @@ func TestOpenAIModelsPreservesFamilyPoolKinds(t *testing.T) {
 
 func newTestConfigManager(t *testing.T, cfg config.Config) *config.ConfigManager {
 	t.Helper()
+	if cfg.Settings.Gateway == (config.GatewaySettings{}) {
+		cfg.Settings.Gateway = config.DefaultGatewaySettings()
+	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")
 	raw, err := json.Marshal(cfg)

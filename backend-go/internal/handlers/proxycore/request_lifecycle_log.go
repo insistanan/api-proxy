@@ -38,7 +38,7 @@ func requestLifecycle(c *gin.Context) *logger.RequestLifecycle {
 }
 
 func recordRequestLifecycle(c *gin.Context, env *config.EnvConfig, apiType, phase string, state *logger.RequestLifecycle) {
-	if !env.EnableRequestLogs && !env.EnableResponseLogs {
+	if !env.Current().EnableRequestLogs && !env.Current().EnableResponseLogs {
 		return
 	}
 	payload, err := json.Marshal(state)

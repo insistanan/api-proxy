@@ -370,6 +370,7 @@ func openAIChatMessageToResponsesItems(message map[string]interface{}, toolConte
 					"text": reasoning,
 				},
 			},
+			Content: []map[string]interface{}{{"type": "reasoning_text", "text": reasoning}},
 		})
 	}
 

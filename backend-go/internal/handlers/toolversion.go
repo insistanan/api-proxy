@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 // CLI 工具版本检测：为客户端配置页（GPT / Claude Code / OpenCode / pi / DSH）提供
@@ -274,14 +275,24 @@ func probeLocalToolVersion(ctx context.Context, tool string) (string, string) {
 	return version, ""
 }
 
+// FetchNpmLatestVersion 查询 npm registry dist-tags 端点的 latest。
+// 导出供后台自动同步伪装版本等模块调用。
+func FetchNpmLatestVersion(ctx context.Context, pkg string) (string, string) {
+	return fetchNpmLatestVersion(ctx, pkg)
+}
+
 // fetchNpmLatestVersion 查询 npm registry dist-tags 端点的 latest。
 // `/-/package/{name}/dist-tags` 端点要求包名是单一路径段：scoped 包的 `/`
 // 必须转义为 %2F（npm CLI 同样用 encodeURIComponent 编码；字面量斜杠会被
 // registry 解析为多余路径段而 404）。url.PathEscape 恰好只转义 `/`，
 // `@` 保持原样，registry 两种形式都接受。
 func fetchNpmLatestVersion(ctx context.Context, pkg string) (string, string) {
+	return fetchNpmLatestVersionUsing(ctx, pkg, toolVersionHTTPGet)
+}
+
+func fetchNpmLatestVersionUsing(ctx context.Context, pkg string, get func(context.Context, string) ([]byte, int, error)) (string, string) {
 	url := fmt.Sprintf("https://registry.npmjs.org/-/package/%s/dist-tags", url.PathEscape(pkg))
-	body, status, err := toolVersionHTTPGet(ctx, url)
+	body, status, err := get(ctx, url)
 	if err != nil {
 		return "", fmt.Sprintf("查询 npm registry 失败: %v", err)
 	}
@@ -295,6 +306,9 @@ func fetchNpmLatestVersion(ctx context.Context, pkg string) (string, string) {
 	latest, ok := distTags["latest"]
 	if !ok || strings.TrimSpace(latest) == "" {
 		return "", "npm dist-tags 中缺少 latest"
+	}
+	if err := utils.ValidateDisguiseVersion(strings.TrimSpace(latest)); err != nil {
+		return "", fmt.Sprintf("npm latest 版本无效: %v", err)
 	}
 	return strings.TrimSpace(latest), ""
 }

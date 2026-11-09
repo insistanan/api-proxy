@@ -56,7 +56,7 @@ func GetManager() *ClientManager {
 // GetStandardClient 获取标准客户端（有超时，用于普通请求）
 // 注意：启用自动压缩让Go处理gzip，配合请求头清理确保正确解压
 func (cm *ClientManager) GetStandardClient(timeout time.Duration, insecure bool, proxyURL string) (*http.Client, error) {
-	envConfig := config.NewEnvConfig()
+	envConfig := config.NewRuntimeEnvConfig()
 	responseHeaderTimeout := time.Duration(envConfig.ResponseHeaderTimeout) * time.Second
 	proxyURL = strings.TrimSpace(proxyURL)
 
@@ -128,7 +128,7 @@ func (cm *ClientManager) GetStandardClientForUpstream(timeout time.Duration, cfg
 // 防止"连接建立但永不响应"的上游占住 handler；响应体读取本身不受限，
 // 避免思考模型长静默期被整体超时误杀。流中挂起由 IdleTimeoutReader 检测（见 STREAM_IDLE_TIMEOUT）。
 func (cm *ClientManager) GetStreamClient(insecure bool, proxyURL string) (*http.Client, error) {
-	envConfig := config.NewEnvConfig()
+	envConfig := config.NewRuntimeEnvConfig()
 	proxyURL = strings.TrimSpace(proxyURL)
 
 	key := fmt.Sprintf("stream-%t-%d-%s", insecure, envConfig.ResponseHeaderTimeout, proxyKey(proxyURL))

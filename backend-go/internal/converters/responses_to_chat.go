@@ -150,7 +150,7 @@ func ConvertResponsesToOpenAIChatRequest(modelName string, inputRawJSON []byte, 
 }
 
 // ConvertResponsesToOpenAIChatRequestWithOptions converts Responses JSON to Chat Completions.
-// includeHistoryThinking materializes type=reasoning items as assistant text; default false skips them.
+// reasoning_text 原文总是映射为 reasoning_content；历史摘要不再转成正文。
 func ConvertResponsesToOpenAIChatRequestWithOptions(modelName string, inputRawJSON []byte, stream bool, includeHistoryThinking bool) []byte {
 	// 基础 Chat Completions 模板
 	out := `{"model":"","messages":[],"stream":false}`
@@ -368,19 +368,28 @@ func convertInputArrayToMessages(input gjson.Result, out string) string {
 }
 
 // convertInputArrayToMessagesWithOptions converts Responses input items.
-// reasoning items are skipped by default; when includeHistoryThinking is true they become assistant text.
-func convertInputArrayToMessagesWithOptions(input gjson.Result, out string, includeHistoryThinking bool) string {
+// 原始 reasoning_text 关联到同一 assistant 回合；summary 只用于展示，不冒充原文。
+// includeHistoryThinking 的旧正文回灌选项不再用于 Chat 推理历史。
+func convertInputArrayToMessagesWithOptions(input gjson.Result, out string, _ bool) string {
+	var assistant map[string]interface{}
+	var pendingReasoning strings.Builder
 	pendingToolCalls := make([]interface{}, 0)
-	flushPendingToolCalls := func() {
-		if len(pendingToolCalls) == 0 {
+	flushAssistant := func() {
+		if assistant == nil && pendingReasoning.Len() == 0 && len(pendingToolCalls) == 0 {
 			return
 		}
-		assistantMessage := map[string]interface{}{
-			"role":       "assistant",
-			"content":    nil,
-			"tool_calls": pendingToolCalls,
+		if assistant == nil {
+			assistant = map[string]interface{}{"role": "assistant", "content": nil}
 		}
-		out, _ = sjson.Set(out, "messages.-1", assistantMessage)
+		if pendingReasoning.Len() > 0 {
+			assistant["reasoning_content"] = pendingReasoning.String()
+		}
+		if len(pendingToolCalls) > 0 {
+			assistant["tool_calls"] = pendingToolCalls
+		}
+		out, _ = sjson.Set(out, "messages.-1", assistant)
+		assistant = nil
+		pendingReasoning.Reset()
 		pendingToolCalls = nil
 	}
 
@@ -394,64 +403,48 @@ func convertInputArrayToMessagesWithOptions(input gjson.Result, out string, incl
 
 		switch itemType {
 		case "message":
-			flushPendingToolCalls()
-			out = convertMessageItem(item, out)
+			if normalizeResponsesMessageRole(item.Get("role").String()) == "assistant" {
+				if assistant != nil {
+					flushAssistant()
+				}
+				converted := convertMessageItem(item, `{"messages":[]}`)
+				assistant, _ = gjson.Get(converted, "messages.0").Value().(map[string]interface{})
+			} else {
+				flushAssistant()
+				out = convertMessageItem(item, out)
+			}
 
 		case "function_call", "custom_tool_call", "tool_search_call":
 			pendingToolCalls = append(pendingToolCalls, convertFunctionCallItem(item))
 
 		case "function_call_output", "custom_tool_call_output", "tool_search_output":
-			flushPendingToolCalls()
+			flushAssistant()
 			out = convertFunctionCallOutputItem(item, out)
 		case "reasoning":
-			flushPendingToolCalls()
-			if includeHistoryThinking {
-				out = convertReasoningItemToAssistantMessage(item, out)
+			if assistant != nil || len(pendingToolCalls) > 0 {
+				flushAssistant()
 			}
+			pendingReasoning.WriteString(extractOriginalResponsesReasoning(item))
 		default:
-			flushPendingToolCalls()
+			flushAssistant()
 		}
 
 		return true
 	})
 
-	flushPendingToolCalls()
+	flushAssistant()
 	return out
 }
 
-// convertReasoningItemToAssistantMessage materializes a reasoning item as assistant-visible text.
-func convertReasoningItemToAssistantMessage(item gjson.Result, out string) string {
-	textParts := make([]string, 0)
-	if summary := item.Get("summary"); summary.Exists() && summary.IsArray() {
-		summary.ForEach(func(_, summaryItem gjson.Result) bool {
-			if text := strings.TrimSpace(summaryItem.Get("text").String()); text != "" {
-				textParts = append(textParts, text)
-			}
-			return true
-		})
-	}
-	if content := item.Get("content"); content.Exists() {
-		if content.Type == gjson.String {
-			if text := strings.TrimSpace(content.String()); text != "" {
-				textParts = append(textParts, text)
-			}
-		} else if content.IsArray() {
-			content.ForEach(func(_, contentItem gjson.Result) bool {
-				if text := strings.TrimSpace(contentItem.Get("text").String()); text != "" {
-					textParts = append(textParts, text)
-				}
-				return true
-			})
+func extractOriginalResponsesReasoning(item gjson.Result) string {
+	var original strings.Builder
+	item.Get("content").ForEach(func(_, part gjson.Result) bool {
+		if part.Get("type").String() == "reasoning_text" {
+			original.WriteString(part.Get("text").String())
 		}
-	}
-	joined := strings.TrimSpace(strings.Join(textParts, "\n"))
-	if joined == "" {
-		return out
-	}
-	message := `{"role":"assistant","content":""}`
-	message, _ = sjson.Set(message, "content", "[thinking]\n"+joined)
-	out, _ = sjson.SetRaw(out, "messages.-1", message)
-	return out
+		return true
+	})
+	return original.String()
 }
 
 // convertMessageItem 转换 message 类型的 item

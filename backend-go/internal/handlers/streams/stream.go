@@ -56,8 +56,9 @@ type Context struct {
 	MessageStartInputTokens int
 	// 兜底注入
 	SeenMessageStart bool // 是否已收到 message_start 事件
-	// 最终转换为 Claude SSE 后的工具调用；用于跨协议回放 reasoning_content。
-	ToolCalls map[int]*StreamToolCall
+	// 最终转换为 Claude SSE 后的工具调用；用于限定来源的历史思考恢复。
+	ToolCalls      map[int]*StreamToolCall
+	ReasoningScope string // 会话、渠道及模型限定的推理缓存范围
 }
 
 type StreamToolCall struct {
@@ -81,7 +82,7 @@ type CollectedUsageData struct {
 // NewStreamContext 创建流处理上下文
 func NewStreamContext(envCfg *config.EnvConfig) *Context {
 	ctx := &Context{
-		LoggingEnabled:    envCfg.EnableResponseLogs,
+		LoggingEnabled:    envCfg.Current().EnableResponseLogs,
 		ContentBlockTypes: make(map[int]string),
 		ToolCalls:         make(map[int]*StreamToolCall),
 	}
@@ -253,6 +254,7 @@ func HandleStreamResponse(
 	flusher.Flush()
 
 	ctx := NewStreamContext(envCfg)
+	ctx.ReasoningScope = providers.ReasoningCacheScope(c.GetString(utils.ContextKeyConversationUserID), upstream, requestModel)
 	ctx.RequestModel = requestModel
 	ctx.LowQuality = upstream.LowQuality
 	seedSynthesizerFromRequest(ctx, requestBody)
@@ -423,16 +425,16 @@ func ProcessStreamEvent(
 	var hasUsage, needInputPatch, needOutputPatch bool
 	var usageData CollectedUsageData
 	if hasEventData {
-		hasUsage, needInputPatch, needOutputPatch, usageData = CheckEventUsageStatusFromData(eventData, envCfg.EnableResponseLogs && envCfg.ShouldLog("debug"))
+		hasUsage, needInputPatch, needOutputPatch, usageData = CheckEventUsageStatusFromData(eventData, envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug"))
 	} else {
-		hasUsage, needInputPatch, needOutputPatch, usageData = CheckEventUsageStatus(event, envCfg.EnableResponseLogs && envCfg.ShouldLog("debug"))
+		hasUsage, needInputPatch, needOutputPatch, usageData = CheckEventUsageStatus(event, envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug"))
 	}
 	needPatch := needInputPatch || needOutputPatch
 	if hasUsage {
 		if !ctx.HasUsage {
 			ctx.HasUsage = true
 			ctx.NeedTokenPatch = needPatch || ctx.LowQuality
-			if envCfg.EnableResponseLogs && envCfg.ShouldLog("debug") && needPatch && !IsMessageDeltaEvent(event) {
+			if envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug") && needPatch && !IsMessageDeltaEvent(event) {
 				log.Printf("[Messages-Stream-Token] 检测到虚假值, 延迟到流结束修补")
 			}
 		}
@@ -467,7 +469,7 @@ func ProcessStreamEvent(
 	// 在 message_stop 前注入 usage（上游完全没有 usage 的情况）
 	if !ctx.HasUsage && !ctx.ClientGone && IsMessageStopEvent(event) {
 		usageEvent := BuildUsageEvent(requestBody, ctx.OutputTextBuffer.String())
-		if envCfg.EnableResponseLogs && envCfg.ShouldLog("debug") {
+		if envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug") {
 			log.Printf("[Messages-Stream-Token] 上游无usage, 注入本地估算事件")
 		}
 		proxycore.MarkRequestLogFirstToken(c)
@@ -483,7 +485,7 @@ func ProcessStreamEvent(
 	if !ctx.SeenMessageStart && !IsMessageStartEvent(event) {
 		if IsContentBlockStartEvent(event) || IsMessageDeltaEvent(event) || IsMessageStopEvent(event) {
 			syntheticStart := BuildMessageStartEvent(ctx.RequestModel)
-			if envCfg.EnableResponseLogs && envCfg.ShouldLog("debug") {
+			if envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug") {
 				log.Printf("[Messages-Stream-Patch] 上游缺少 message_start，自动注入")
 			}
 			proxycore.MarkRequestLogFirstToken(c)
@@ -498,7 +500,7 @@ func ProcessStreamEvent(
 
 	// 处理 message_start 事件：补全空 id 和检查 model 一致性（可选）
 	if IsMessageStartEvent(event) && ctx.RequestModel != "" {
-		eventToSend = PatchMessageStartEvent(eventToSend, ctx.RequestModel, envCfg.RewriteResponseModel, envCfg.EnableResponseLogs && envCfg.ShouldLog("debug"))
+		eventToSend = PatchMessageStartEvent(eventToSend, ctx.RequestModel, envCfg.RewriteResponseModel, envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug"))
 	}
 
 	eventHasUsage := hasUsage
@@ -521,10 +523,10 @@ func ProcessStreamEvent(
 
 			// 修补事件，包括推断的 cache_read_input_tokens
 			if hasEventData {
-				PatchTokensInEventDataWithCache(eventData, inputTokens, outputTokens, 0 /* no cache to client */, false, envCfg.EnableResponseLogs && envCfg.ShouldLog("debug"), ctx.LowQuality)
+				PatchTokensInEventDataWithCache(eventData, inputTokens, outputTokens, 0 /* no cache to client */, false, envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug"), ctx.LowQuality)
 				eventToSend = ReplaceSSEData(eventToSend, eventData)
 			} else {
-				eventToSend = PatchTokensInEventWithCache(eventToSend, inputTokens, outputTokens, 0 /* no cache to client */, false, envCfg.EnableResponseLogs && envCfg.ShouldLog("debug"), ctx.LowQuality)
+				eventToSend = PatchTokensInEventWithCache(eventToSend, inputTokens, outputTokens, 0 /* no cache to client */, false, envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug"), ctx.LowQuality)
 			}
 			ctx.NeedTokenPatch = false
 		}
@@ -542,7 +544,7 @@ func ProcessStreamEvent(
 	// 「全量估算塞给客户端」的无条件覆盖；本校正只在数量级级错报（≥2 倍）时介入，
 	// 两种风险同时挡住。实测数据与外部佐证见 utils/usage_sanity.go。
 	if eventHasUsage {
-		if corrected, ok := sanityCheckMessageStreamInputTokens(eventToSend, requestBody, envCfg.EnableResponseLogs); ok {
+		if corrected, ok := sanityCheckMessageStreamInputTokens(eventToSend, requestBody, envCfg.Current().EnableResponseLogs); ok {
 			eventToSend = corrected
 		}
 	}

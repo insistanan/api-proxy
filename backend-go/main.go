@@ -59,6 +59,7 @@ type app struct {
 	skillsAPI             *handlers.SkillsAPI
 	assistantService      *assistant.Service
 	assistantAPI          *handlers.AssistantAPI
+	disguiseSyncer        *handlers.DisguiseSyncer
 	engine                *gin.Engine
 	cleanups              []appCleanup
 	shutdownOnce          sync.Once
@@ -80,21 +81,24 @@ func newApp() (_ *app, err error) {
 	// 初始化配置管理器
 	a.envCfg = config.NewEnvConfig()
 
-	// 初始化日志系统（必须在其他初始化之前）
+	// 先加载并迁移设置，日志路径和指标保留期必须在存储初始化前确定。
+	a.cfgManager, err = config.NewConfigManager(".config/config.json")
+	if err != nil {
+		return nil, fmt.Errorf("初始化配置管理器失败: %w", err)
+	}
+	a.envCfg = a.envCfg.WithSettings(a.cfgManager)
+
+	// 初始化日志系统；清理仍按配置生产者 → 日志存储的顺序执行。
 	a.logStore, err = logger.Setup(&logger.Config{
 		DBPath:  a.envCfg.LogDBPath,
 		Console: a.envCfg.LogToConsole,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("初始化日志系统失败: %w", err)
+		return nil, errors.Join(fmt.Errorf("初始化日志系统失败: %w", err), a.cfgManager.Close())
 	}
 	a.registerCleanup("日志存储", a.logStore.Close)
 	a.requestLogStore = metrics.NewRequestLogStore(a.logStore)
 
-	a.cfgManager, err = config.NewConfigManager(".config/config.json")
-	if err != nil {
-		return nil, fmt.Errorf("初始化配置管理器失败: %w", err)
-	}
 	a.registerCleanup("配置管理器", a.cfgManager.Close)
 
 	a.blockedStore, err = sensitive.NewBlockedStore(".config/blocked-logs.db")
@@ -130,6 +134,9 @@ func newApp() (_ *app, err error) {
 		a.metricsStore, err = metrics.NewSQLiteStore(&metrics.SQLiteStoreConfig{
 			DBPath:        ".config/metrics.db",
 			RetentionDays: a.envCfg.MetricsRetentionDays,
+			RetentionDaysProvider: func() int {
+				return a.cfgManager.GetGatewaySettings().MetricsRetentionDays
+			},
 		})
 		if err != nil {
 			return nil, fmt.Errorf("初始化指标持久化存储失败: %w", err)
@@ -348,6 +355,11 @@ func newApp() (_ *app, err error) {
 	}
 
 	// Web 管理界面 API 路由（管理鉴权在路由组上显式绑定）
+	a.disguiseSyncer = handlers.StartDisguiseAutoSync(a.cfgManager)
+	a.registerCleanup("伪装版本自动同步", func() error {
+		a.disguiseSyncer.Stop()
+		return nil
+	})
 	apiGroup := r.Group("/api", middleware.AdminAuthMiddleware(a.envCfg))
 	a.setupAdminAPI(apiGroup)
 
@@ -387,6 +399,7 @@ func newApp() (_ *app, err error) {
 		<-a.mappingWatchDone
 		return nil
 	})
+
 	return a, nil
 }
 

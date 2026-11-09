@@ -107,7 +107,7 @@ func patchResponsesUsage(resp *types.ResponsesResponse, requestBody []byte, envC
 		resp.Usage.InputTokens = estimatedInput
 		resp.Usage.OutputTokens = estimatedOutput
 		resp.Usage.TotalTokens = estimatedInput + estimatedOutput
-		if envCfg.EnableResponseLogs {
+		if envCfg.Current().EnableResponseLogs {
 			log.Printf("[Responses-Token] 上游无Usage, 本地估算: input=%d, output=%d", estimatedInput, estimatedOutput)
 		}
 		return
@@ -136,7 +136,7 @@ func patchResponsesUsage(resp *types.ResponsesResponse, requestBody []byte, envC
 		resp.Usage.TotalTokens = resp.Usage.InputTokens + resp.Usage.OutputTokens
 	}
 
-	if envCfg.EnableResponseLogs {
+	if envCfg.Current().EnableResponseLogs {
 		if patched {
 			log.Printf("[Responses-Token] 虚假值修补: InputTokens=%d->%d, OutputTokens=%d->%d",
 				originalInput, resp.Usage.InputTokens, originalOutput, resp.Usage.OutputTokens)
@@ -445,7 +445,7 @@ func injectResponsesUsageToCompletedEventWithTokens(event string, requestBody []
 	inputTokens, _ := estimateResponsesInputForClient(requestBody)
 	totalTokens := inputTokens + outputTokens
 
-	debugLog := envCfg.EnableResponseLogs && envCfg.ShouldLog("debug")
+	debugLog := envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug")
 
 	// 调试日志：记录估算开始
 	if debugLog {
@@ -645,7 +645,7 @@ func patchResponsesCompletedEventUsageWithTokens(event string, requestBody []byt
 					usage["total_tokens"] = collected.TotalTokens
 				}
 
-				if envCfg.EnableResponseLogs && envCfg.ShouldLog("debug") && patched {
+				if envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug") && patched {
 					log.Printf("[Responses-Stream-Token] 虚假值修补: InputTokens=%d->%d, OutputTokens=%d->%d",
 						originalInput, collected.InputTokens, originalOutput, collected.OutputTokens)
 				}
@@ -894,7 +894,7 @@ func correctUnderreportedInputTokensInCompletedEvent(event string, requestBody [
 		}
 		usage["input_tokens"] = corrected
 		usage["total_tokens"] = corrected + outputTokens
-		if envCfg != nil && envCfg.EnableResponseLogs {
+		if envCfg != nil && envCfg.Current().EnableResponseLogs {
 			log.Printf("[Responses-Stream-Token] 上游 input_tokens 错报校正: %d -> %d（本地估算，仅改下发值）",
 				upstreamInput, corrected)
 		}
@@ -923,7 +923,7 @@ func correctUnderreportedInputTokensInResponse(resp *types.ResponsesResponse, cl
 	if !need {
 		return
 	}
-	if envCfg != nil && envCfg.EnableResponseLogs {
+	if envCfg != nil && envCfg.Current().EnableResponseLogs {
 		log.Printf("[Responses-Token] 上游 input_tokens 错报校正: %d -> %d（本地估算，仅改下发值）",
 			resp.Usage.InputTokens, corrected)
 	}

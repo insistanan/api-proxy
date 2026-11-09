@@ -102,5 +102,5 @@ func (ctx *Context) cacheClaudeReasoning() {
 			Input: input,
 		})
 	}
-	providers.CacheClaudeResponseReasoning(&types.ClaudeResponse{Role: "assistant", Content: content})
+	providers.CacheClaudeResponseReasoning(&types.ClaudeResponse{Role: "assistant", Content: content}, ctx.ReasoningScope)
 }

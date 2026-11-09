@@ -10,8 +10,9 @@ import (
 // CORSMiddleware CORS 中间件
 func CORSMiddleware(envCfg *config.EnvConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		current := envCfg.Current()
 		// 如果未启用 CORS，直接跳过
-		if !envCfg.EnableCORS {
+		if !current.EnableCORS {
 			c.Next()
 			return
 		}
@@ -25,13 +26,13 @@ func CORSMiddleware(envCfg *config.EnvConfig) gin.HandlerFunc {
 			}
 		} else {
 			// 生产环境使用配置的源
-			c.Header("Access-Control-Allow-Origin", envCfg.CORSOrigin)
+			c.Header("Access-Control-Allow-Origin", current.CORSOrigin)
 		}
 
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, x-api-key, x-goog-api-key")
 		// 仅在非 * 时设置 credentials，避免浏览器拒绝 credentials + * 组合
-		if envCfg.CORSOrigin != "*" {
+		if current.CORSOrigin != "*" {
 			c.Header("Access-Control-Allow-Credentials", "true")
 		}
 

@@ -55,7 +55,7 @@ Go 后端：api-proxy 代理网关核心。跨模块的架构图、请求流转�
 
 两层，均支持热更新语义：
 
-- **环境变量 / .env**（`internal/config/env.go:54-100` 完整清单）：`PORT`（3000）、`ENABLE_WEB_UI`、`PROXY_ACCESS_KEY`（访问密钥）、`LOG_LEVEL`、`ENABLE_REQUEST_LOGS`/`ENABLE_RESPONSE_LOGS`、`CIRCUIT_*`（6 项熔断参数，均带 clamp）、`METRICS_*`、`REQUEST_TIMEOUT` 等。.env 加载顺序：可执行文件同目录 → cwd，不覆盖已有环境变量。
+- **环境变量 / .env**（精简为 6 项核心启动配置）：`PORT`（默认 3000）、`ENV`（默认 production）、`PROXY_ACCESS_KEY`（访问密钥）、`ENABLE_WEB_UI`（默认 true）、`LOG_LEVEL`（默认 info）、`LOG_TO_CONSOLE`（默认 false）。请求/响应日志、超时、请求体限制、指标保留期、CORS、日志路径和指标持久化开关在 `settings.gateway` 中维护；首次升级仅为缺失字段迁移旧 env 值，后续以持久化设置为准。日志路径和指标持久化开关重启生效，其余策略支持热更新。客户端伪装版本在 `settings.disguise` 维护，配置发布立即应用，npm 查询独立在后台执行。.env 加载顺序：可执行文件同目录 → cwd，不覆盖已有环境变量。
 - **config.json**（`internal/config/config_loader.go`）：五组渠道（upstream/responsesUpstream/geminiUpstream/chatUpstream/imagesUpstream）+ settings；fsnotify + 100ms debounce + sha256 摘要比较，原子写（经 `internal/atomicfile`），热重载只发布完整候选快照。
 
 ## 数据存储

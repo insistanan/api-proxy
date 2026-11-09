@@ -23,6 +23,7 @@ func TestGetDashboard_IncludesStripThoughtSignature(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	cfg := config.Config{
+		Settings: config.SettingsConfig{Gateway: config.DefaultGatewaySettings()},
 		GeminiUpstream: []config.UpstreamConfig{
 			{
 				Name:                  "gemini-test",

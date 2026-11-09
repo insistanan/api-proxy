@@ -12,8 +12,10 @@
       <nav class="settings-nav" aria-label="设置分类">
         <v-list v-model:selected="selectedSections" nav mandatory density="compact" bg-color="transparent">
           <v-list-item value="network" color="primary" prepend-icon="mdi-web" title="网络" />
+          <v-list-item value="gateway" color="primary" prepend-icon="mdi-text" title="请求与日志" />
           <v-list-item value="content-safety" color="primary" prepend-icon="mdi-shield-alert" title="内容安全" />
           <v-list-item value="integration" color="primary" prepend-icon="mdi-swap-horizontal" title="集成" />
+          <v-list-item value="disguise" color="primary" prepend-icon="mdi-incognito" title="伪装" />
           <v-list-item value="assistant" color="primary" prepend-icon="mdi-robot" title="AI 助手" />
           <v-list-item value="prompts" color="primary" prepend-icon="mdi-text" title="通用提示词" />
         </v-list>
@@ -64,6 +66,89 @@
             <div class="settings-actions">
               <v-btn type="submit" color="primary" prepend-icon="mdi-content-save" :loading="saving" :disabled="!networkDirty">
                 保存网络设置
+              </v-btn>
+            </div>
+          </v-form>
+        </section>
+
+        <section v-else-if="activeSection === 'gateway'" aria-labelledby="gateway-settings-title">
+          <div class="section-heading">
+            <h2 id="gateway-settings-title" class="text-h6 font-weight-bold">请求与日志</h2>
+          </div>
+          <v-form v-if="gateway" ref="gatewayFormRef" @submit.prevent="saveGatewaySettings">
+            <div class="setting-row">
+              <div class="setting-copy">
+                <div class="text-body-1 font-weight-medium">记录请求正文</div>
+                <div class="text-body-2 text-medium-emphasis">用于排查请求问题；关闭后不再记录新的请求正文。</div>
+              </div>
+              <v-switch v-model="gateway.enableRequestLogs" inset hide-details color="primary" aria-label="记录请求正文" />
+            </div>
+            <div class="setting-row">
+              <div class="setting-copy">
+                <div class="text-body-1 font-weight-medium">记录响应正文</div>
+                <div class="text-body-2 text-medium-emphasis">用于排查上游响应；关闭后不再记录新的响应正文。</div>
+              </div>
+              <v-switch v-model="gateway.enableResponseLogs" inset hide-details color="primary" aria-label="记录响应正文" />
+            </div>
+            <v-text-field
+              v-model.number="gateway.metricsRetentionDays"
+              label="指标保留天数"
+              type="number"
+              min="3"
+              max="30"
+              :rules="[integerRangeRule(3, 30)]"
+              hint="缩短保留期会在下一次清理时删除更早的指标记录。"
+              persistent-hint
+              variant="outlined"
+              density="comfortable"
+              class="mt-4"
+            />
+            <v-expansion-panels variant="accordion" class="mt-5">
+              <v-expansion-panel title="高级部署设置">
+                <v-expansion-panel-text>
+                  <v-row>
+                    <v-col v-for="field in gatewayNumberFields" :key="field.key" cols="12" md="6">
+                      <v-text-field
+                        v-model.number="gateway[field.key]"
+                        :label="field.label"
+                        type="number"
+                        :min="field.min"
+                        :max="field.max"
+                        :rules="[integerRangeRule(field.min, field.max)]"
+                        variant="outlined"
+                        density="comfortable"
+                      />
+                    </v-col>
+                  </v-row>
+                  <v-switch v-model="gateway.enableCORS" label="允许跨域访问" color="primary" inset />
+                  <v-text-field
+                    v-model="gateway.corsOrigin"
+                    label="允许的跨域来源"
+                    hint="填写 * 或完整来源，例如 https://example.com"
+                    :rules="[nonEmptyHeaderRule]"
+                    variant="outlined"
+                    density="comfortable"
+                  />
+                  <v-divider class="my-4" />
+                  <p class="text-body-2 text-medium-emphasis mb-3">以下两项在重启后生效。更换日志路径不会搬迁旧日志。</p>
+                  <v-switch v-model="gateway.metricsPersistenceEnabled" label="持久化指标" color="primary" inset />
+                  <v-text-field
+                    v-model="gateway.logDBPath"
+                    label="日志数据库路径"
+                    :rules="[nonEmptyHeaderRule]"
+                    variant="outlined"
+                    density="comfortable"
+                    spellcheck="false"
+                  />
+                </v-expansion-panel-text>
+              </v-expansion-panel>
+            </v-expansion-panels>
+            <v-alert v-if="gatewayNotice" :type="gatewayNotice.type" variant="tonal" density="compact" class="mt-5">
+              {{ gatewayNotice.message }}
+            </v-alert>
+            <div class="settings-actions">
+              <v-btn type="submit" color="primary" prepend-icon="mdi-content-save" :loading="saving" :disabled="!gatewayDirty">
+                保存请求与日志设置
               </v-btn>
             </div>
           </v-form>
@@ -120,6 +205,125 @@
                 :disabled="!integrationDirty"
               >
                 保存集成设置
+              </v-btn>
+            </div>
+          </v-form>
+        </section>
+
+        <section v-else-if="activeSection === 'disguise'" aria-labelledby="disguise-settings-title">
+          <div class="section-heading">
+            <div>
+              <h2 id="disguise-settings-title" class="text-h6 font-weight-bold">客户端伪装</h2>
+            </div>
+          </div>
+
+          <v-form ref="disguiseFormRef" @submit.prevent="saveDisguiseSettings">
+            <div class="setting-row">
+              <div class="setting-copy">
+                <div class="text-body-1 font-weight-medium">自动跟随官方最新版本</div>
+                <div class="text-body-2 text-medium-emphasis">开启后，若未指定自定义版本，代理将定时从 npm 获取官方发布的最新版本自动伪装</div>
+              </div>
+              <v-switch v-model="disguiseAutoUpdate" color="primary" inset hide-details aria-label="自动跟随官方最新版本" />
+            </div>
+
+            <v-divider class="my-4" />
+
+            <div class="disguise-section">
+              <div class="text-subtitle-1 font-weight-bold mb-2">Claude Code 伪装</div>
+              <div class="text-body-2 text-medium-emphasis mb-4">
+                当前生效版本：<code>{{ disguiseInfo?.effectiveClaudeVersion ?? '尚未读取' }}</code>
+                <span v-if="disguiseInfo?.latestClaudeVersion" class="ml-3">
+                  (npm 最新: <code>{{ disguiseInfo.latestClaudeVersion }}</code>)
+                </span>
+              </div>
+              <div class="d-flex align-center gap-3">
+                <v-text-field
+                  v-model="disguiseClaudeVersion"
+                  label="Claude Code 伪装版本号"
+                  :placeholder="disguiseAutoUpdate ? '留空则自动跟随最新版本' : '留空则使用内置默认版本'"
+                  prepend-inner-icon="mdi-tag"
+                  variant="outlined"
+                  density="comfortable"
+                  autocomplete="off"
+                  spellcheck="false"
+                  :rules="[disguiseVersionRule]"
+                />
+                <v-btn
+                  v-if="disguiseInfo?.latestClaudeVersion"
+                  variant="tonal"
+                  color="primary"
+                  @click="disguiseClaudeVersion = disguiseInfo.latestClaudeVersion"
+                >
+                  填入最新版本
+                </v-btn>
+              </div>
+            </div>
+
+            <v-divider class="my-4" />
+
+            <div class="disguise-section">
+              <div class="text-subtitle-1 font-weight-bold mb-2">Codex / GPT 伪装</div>
+              <div class="text-body-2 text-medium-emphasis mb-4">
+                当前生效版本：<code>{{ disguiseInfo?.effectiveCodexVersion ?? '尚未读取' }}</code>
+                <span v-if="disguiseInfo?.latestCodexVersion" class="ml-3">
+                  (npm 最新: <code>{{ disguiseInfo.latestCodexVersion }}</code>)
+                </span>
+              </div>
+              <div class="d-flex align-center gap-3">
+                <v-text-field
+                  v-model="disguiseCodexVersion"
+                  label="Codex 伪装版本号"
+                  :placeholder="disguiseAutoUpdate ? '留空则自动跟随最新版本' : '留空则使用内置默认版本'"
+                  prepend-inner-icon="mdi-tag"
+                  variant="outlined"
+                  density="comfortable"
+                  autocomplete="off"
+                  spellcheck="false"
+                  :rules="[disguiseVersionRule]"
+                />
+                <v-btn
+                  v-if="disguiseInfo?.latestCodexVersion"
+                  variant="tonal"
+                  color="primary"
+                  @click="disguiseCodexVersion = disguiseInfo.latestCodexVersion"
+                >
+                  填入最新版本
+                </v-btn>
+              </div>
+            </div>
+
+            <div class="mt-4">
+              <v-btn variant="tonal" :loading="disguiseChecking || disguiseInfo?.sync.syncing" @click="refreshDisguiseVersions">
+                检查最新版本
+              </v-btn>
+              <div class="text-body-2 text-medium-emphasis mt-2">
+                Claude Code 上次查询成功：{{ formatSyncTime(disguiseInfo?.sync.claudeLastSuccessAt) }}
+                <br />
+                Codex 上次查询成功：{{ formatSyncTime(disguiseInfo?.sync.codexLastSuccessAt) }}
+              </div>
+            </div>
+            <v-alert v-if="disguiseStatusError" type="error" variant="tonal" density="compact" class="mt-4">
+              {{ disguiseStatusError }}
+            </v-alert>
+            <v-alert v-if="disguiseInfo?.sync.claudeError || disguiseInfo?.sync.codexError" type="warning" variant="tonal" density="compact" class="mt-4">
+              <div v-if="disguiseInfo?.sync.claudeError">Claude Code：{{ disguiseInfo.sync.claudeError }}</div>
+              <div v-if="disguiseInfo?.sync.codexError">Codex：{{ disguiseInfo.sync.codexError }}</div>
+              查询失败时保留上次成功结果。
+            </v-alert>
+
+            <v-alert v-if="disguiseNotice" :type="disguiseNotice.type" variant="tonal" density="compact" class="mt-5">
+              {{ disguiseNotice.message }}
+            </v-alert>
+
+            <div class="settings-actions">
+              <v-btn
+                type="submit"
+                color="primary"
+                prepend-icon="mdi-content-save"
+                :loading="saving"
+                :disabled="!disguiseDirty"
+              >
+                保存伪装设置
               </v-btn>
             </div>
           </v-form>
@@ -700,19 +904,21 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   api,
   type AssistantStatusResponse,
+  type ClientDisguiseStatus,
   type ContentSafetySettings,
   type CredentialRule,
   type CustomRuleItem,
   type DangerousCommandRule,
+  type GatewaySettings,
   type PromptEntry,
   type SensitiveInfoRule
 } from '@/services/api'
 
-type SettingsSection = 'network' | 'content-safety' | 'integration' | 'assistant' | 'prompts'
+type SettingsSection = 'network' | 'gateway' | 'content-safety' | 'integration' | 'disguise' | 'assistant' | 'prompts'
 type Notice = { type: 'success' | 'error'; message: string } | null
 type SensitiveWordToggle =
   | 'pornographyEnabled'
@@ -1041,6 +1247,144 @@ const saveAssistantSettings = async () => {
 
 const integrationDirty = computed(() => ccSwitchPath.value.trim() !== savedCcSwitchPath.value)
 
+// ===== 请求、日志与存储策略 =====
+const gatewayFormRef = ref()
+const gateway = ref<GatewaySettings | null>(null)
+const savedGateway = ref('')
+const gatewayNotice = ref<Notice>(null)
+const gatewayDirty = computed(() => gateway.value !== null && JSON.stringify(gateway.value) !== savedGateway.value)
+const gatewayNumberFields: Array<{
+  key: 'requestTimeout' | 'responseHeaderTimeout' | 'streamIdleTimeout' | 'maxRequestBodySizeMB'
+  label: string
+  min: number
+  max: number
+}> = [
+  { key: 'requestTimeout', label: '普通请求超时（毫秒）', min: 1, max: 86400000 },
+  { key: 'responseHeaderTimeout', label: '等待响应头超时（秒）', min: 30, max: 300 },
+  { key: 'streamIdleTimeout', label: '流式空闲超时（秒）', min: 30, max: 3600 },
+  { key: 'maxRequestBodySizeMB', label: '请求体最大大小（MB）', min: 1, max: 1024 }
+]
+const integerRangeRule = (min: number, max: number) => (value: unknown) => {
+  const number = Number(value)
+  return value !== '' && value !== null && Number.isInteger(number) && number >= min && number <= max || `请输入 ${min} 至 ${max} 之间的整数`
+}
+const nonEmptyHeaderRule = (value: string) => !!value.trim() && !value.includes('\r') && !value.includes('\n') && !value.includes('\0') || '不能为空或包含控制字符'
+
+const saveGatewaySettings = async () => {
+  const current = gateway.value
+  if (!current) {
+    gatewayNotice.value = { type: 'error', message: '请求与日志设置尚未加载' }
+    return
+  }
+  const { valid } = await gatewayFormRef.value.validate()
+  if (!valid) return
+  saving.value = true
+  gatewayNotice.value = null
+  try {
+    const settings = await api.updateSettings({ gateway: { ...current } })
+    if (!settings.gateway) throw new Error('服务端未返回请求与日志设置，请刷新确认保存状态')
+    gateway.value = settings.gateway
+    savedGateway.value = JSON.stringify(settings.gateway)
+    gatewayNotice.value = { type: 'success', message: '设置已保存；日志路径和指标持久化开关在重启后生效' }
+  } catch (error) {
+    gatewayNotice.value = { type: 'error', message: error instanceof Error ? error.message : '保存请求与日志设置失败' }
+  } finally {
+    saving.value = false
+  }
+}
+
+// ===== 客户端伪装设置 =====
+const disguiseFormRef = ref()
+const disguiseClaudeVersion = ref('')
+const disguiseCodexVersion = ref('')
+const disguiseAutoUpdate = ref(true)
+const savedDisguiseClaudeVersion = ref('')
+const savedDisguiseCodexVersion = ref('')
+const savedDisguiseAutoUpdate = ref(true)
+const disguiseNotice = ref<Notice>(null)
+const disguiseInfo = ref<ClientDisguiseStatus | null>(null)
+const disguiseStatusError = ref('')
+const disguiseChecking = ref(false)
+const disguiseVersionRule = (value: string) => {
+  const version = value.trim()
+  return !version || (version.length <= 64 && /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$/.test(version)) || '请输入版本号，例如 2.1.238 或 0.150.1-beta.1'
+}
+const formatSyncTime = (timestamp?: number) => timestamp ? new Date(timestamp).toLocaleString('zh-CN') : '尚未成功查询'
+
+const disguiseDirty = computed(() =>
+  disguiseClaudeVersion.value.trim() !== savedDisguiseClaudeVersion.value ||
+  disguiseCodexVersion.value.trim() !== savedDisguiseCodexVersion.value ||
+  disguiseAutoUpdate.value !== savedDisguiseAutoUpdate.value
+)
+
+const loadDisguiseStatus = async () => {
+  try {
+    disguiseInfo.value = await api.getClientDisguise()
+    disguiseStatusError.value = ''
+  } catch (error) {
+    disguiseInfo.value = null
+    disguiseStatusError.value = error instanceof Error ? error.message : '读取伪装状态失败'
+  }
+}
+
+const refreshDisguiseVersions = async () => {
+  disguiseChecking.value = true
+  disguiseStatusError.value = ''
+  try {
+    await api.refreshClientDisguise()
+    disguiseNotice.value = { type: 'success', message: '版本查询已排队，结果会自动刷新' }
+    await loadDisguiseStatus()
+  } catch (error) {
+    disguiseStatusError.value = error instanceof Error ? error.message : '请求版本查询失败'
+  } finally {
+    disguiseChecking.value = false
+  }
+}
+
+// 仅在伪装设置页刷新后台状态，离开页面时释放定时器。
+let disguisePollTimer: ReturnType<typeof setInterval> | undefined
+watch(activeSection, section => {
+  if (disguisePollTimer) clearInterval(disguisePollTimer)
+  disguisePollTimer = undefined
+  if (section === 'disguise') {
+    void loadDisguiseStatus()
+    disguisePollTimer = setInterval(() => { void loadDisguiseStatus() }, 5000)
+  }
+}, { immediate: true })
+onUnmounted(() => {
+  if (disguisePollTimer) clearInterval(disguisePollTimer)
+})
+
+const saveDisguiseSettings = async () => {
+  const { valid } = await disguiseFormRef.value.validate()
+  if (!valid) return
+  disguiseNotice.value = null
+  saving.value = true
+  try {
+    const settings = await api.updateSettings({
+      disguise: {
+        claudeCodeVersion: disguiseClaudeVersion.value.trim(),
+        codexVersion: disguiseCodexVersion.value.trim(),
+        autoUpdateFromRegistry: disguiseAutoUpdate.value
+      }
+    })
+    if (!settings.disguise) throw new Error('服务端未返回伪装设置，请刷新确认保存状态')
+    const saved = settings.disguise
+    savedDisguiseClaudeVersion.value = saved.claudeCodeVersion
+    savedDisguiseCodexVersion.value = saved.codexVersion
+    savedDisguiseAutoUpdate.value = saved.autoUpdateFromRegistry
+    disguiseClaudeVersion.value = savedDisguiseClaudeVersion.value
+    disguiseCodexVersion.value = savedDisguiseCodexVersion.value
+    disguiseAutoUpdate.value = savedDisguiseAutoUpdate.value
+    disguiseNotice.value = { type: 'success', message: '客户端伪装设置已保存' }
+    await loadDisguiseStatus()
+  } catch (error) {
+    disguiseNotice.value = { type: 'error', message: error instanceof Error ? error.message : '保存伪装设置失败' }
+  } finally {
+    saving.value = false
+  }
+}
+
 // ===== 通用提示词（版本库：各智能体配置页"一键配置提示词"的数据源） =====
 
 const promptEntries = ref<PromptEntry[]>([])
@@ -1154,6 +1498,9 @@ const loadSettings = async () => {
   loadError.value = ''
   try {
     const settings = await api.getSettings()
+    if (!settings.gateway) throw new Error('服务端未返回请求与日志设置，请确认后端版本')
+    gateway.value = settings.gateway
+    savedGateway.value = JSON.stringify(settings.gateway)
     const current = settings.network?.upstreamProxyUrl?.trim() || ''
     const enabled = settings.network?.upstreamProxyEnabled ?? false
     savedProxyUrl.value = current
@@ -1171,6 +1518,16 @@ const loadSettings = async () => {
     const savedChannel = settings.assistant?.channelId ?? ''
     savedAssistantChannel.value = savedChannel
     assistantChannel.value = savedChannel
+    // 伪装设置
+    if (!settings.disguise) throw new Error('服务端未返回伪装设置，请确认后端版本')
+    const savedDisguise = settings.disguise
+    savedDisguiseClaudeVersion.value = savedDisguise.claudeCodeVersion
+    savedDisguiseCodexVersion.value = savedDisguise.codexVersion
+    savedDisguiseAutoUpdate.value = savedDisguise.autoUpdateFromRegistry
+    disguiseClaudeVersion.value = savedDisguiseClaudeVersion.value
+    disguiseCodexVersion.value = savedDisguiseCodexVersion.value
+    disguiseAutoUpdate.value = savedDisguiseAutoUpdate.value
+    await loadDisguiseStatus()
     // 通用提示词版本库（兼容旧配置：prompts 缺失时按空版本库处理）
     promptEntries.value = settings.prompts?.entries ?? []
     promptActiveVersion.value = settings.prompts?.activeVersion ?? ''

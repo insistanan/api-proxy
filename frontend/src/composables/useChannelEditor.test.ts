@@ -5,6 +5,31 @@ import { buildChannelPayload, defaultChannelForm, useChannelEditor } from './use
 import type { Channel } from '@/services/api'
 
 describe('渠道草稿与提交', () => {
+  it('思考输出默认保留，编辑和重置不会串改渠道配置', () => {
+    const editor = useChannelEditor('messages')
+    const channel: Channel = {
+      name: '推理渠道', serviceType: 'openai', baseUrl: '', apiKeys: [], index: 0,
+      reasoningOutputMode: 'hide', parseEmbeddedReasoning: true, requireReasoningContent: true
+    }
+    expect(editor.form.reasoningOutputMode).toBe('preserve')
+    editor.loadChannelData(channel)
+    expect(editor.buildPayload(true)).toMatchObject({
+      reasoningOutputMode: 'hide', parseEmbeddedReasoning: true
+    })
+    // 后端自动识别的严格能力不属于编辑草稿，保存时省略，避免覆盖服务端新结果。
+    expect(editor.buildPayload(true)).not.toHaveProperty('requireReasoningContent')
+    expect(channel.requireReasoningContent).toBe(true)
+    editor.form.reasoningOutputMode = 'preserve'
+    editor.form.parseEmbeddedReasoning = false
+    expect(channel.reasoningOutputMode).toBe('hide')
+    expect(editor.buildPayload(true)).toMatchObject({ reasoningOutputMode: 'preserve', parseEmbeddedReasoning: false })
+    editor.resetForm()
+    expect(editor.buildPayload(false)).toMatchObject({
+      reasoningOutputMode: 'preserve', parseEmbeddedReasoning: false
+    })
+    expect(editor.buildPayload(false)).not.toHaveProperty('requireReasoningContent')
+  })
+
   it('新建和旧渠道默认自动补全，完整地址设置可保存、载入和清除', () => {
     const editor = useChannelEditor('images')
     const channel: Channel = {

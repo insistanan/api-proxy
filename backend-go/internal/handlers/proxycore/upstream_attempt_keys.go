@@ -432,11 +432,11 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 
 				// 部分 DeepSeek 兼容渠道会在 thinking 模式下要求每条 assistant
 				// 历史都带 reasoning_content。Cursor 等客户端可能已将该字段
-				// 隐藏；首次收到明确 400 后，用同一渠道立即强制补齐并重试，
-				// 同时持久化能力，避免之后的每轮请求都先失败一次。
-				if !retrySucceeded && kind == scheduler.ChannelKindMessages && upstreamCopy.ServiceType == "openai" && !upstreamCopy.RequireReasoningContent &&
+				// 隐藏；首次收到明确 400 后，记录严格能力并重建同渠道请求。
+				// 只有原文可恢复时才重试；缺失原文时返回请求错误。
+				if !retrySucceeded && (kind == scheduler.ChannelKindMessages || kind == scheduler.ChannelKindResponses) && upstreamCopy.ServiceType == "openai" && !upstreamCopy.RequireReasoningContent &&
 					IsReasoningContentRequired(resp.StatusCode, respBodyBytes) {
-					log.Printf("[%s-ChannelCapability] 渠道 %s 要求完整 reasoning_content，补齐后使用同一 key 重试一次", apiType, upstream.Name)
+					log.Printf("[%s-ChannelCapability] 渠道 %s 要求完整 reasoning_content，校验原文后准备同 key 重试", apiType, upstream.Name)
 					capabilities.requireReasoningContent = true
 					upstreamCopy.RequireReasoningContent = true
 					if err := cfgManager.MarkReasoningContentRequired(string(kind), upstream.ID); err != nil {

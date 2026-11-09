@@ -167,6 +167,13 @@ type ClaudeResponse struct {
 	Usage      *Usage          `json:"usage,omitempty"`
 }
 
+// ReasoningHistoryError 表示历史中必需的原始推理无法恢复。
+// 接入编排的请求错误契约，返回明确的 400，避免无效重试及上游健康惩罚。
+type ReasoningHistoryError struct{ Message string }
+
+func (e *ReasoningHistoryError) Error() string            { return e.Message }
+func (e *ReasoningHistoryError) ClientRequestError() bool { return true }
+
 // OpenAIRequest OpenAI 请求结构
 type OpenAIRequest struct {
 	Model               string          `json:"model"`

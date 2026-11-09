@@ -23,9 +23,10 @@ type SQLiteStore struct {
 	bufferMu    sync.Mutex
 
 	// 配置
-	batchSize     int           // 批量写入阈值（记录数）
-	flushInterval time.Duration // 定时刷新间隔
-	retentionDays int           // 数据保留天数
+	batchSize             int           // 批量写入阈值（记录数）
+	flushInterval         time.Duration // 定时刷新间隔
+	retentionDays         int           // 数据保留天数
+	retentionDaysProvider func() int    // 可选热更新来源，构造后不修改函数本身
 
 	// 控制
 	stopCh       chan struct{}
@@ -39,8 +40,9 @@ type SQLiteStore struct {
 
 // SQLiteStoreConfig SQLite 存储配置
 type SQLiteStoreConfig struct {
-	DBPath        string // 数据库文件路径
-	RetentionDays int    // 数据保留天数（3-30）
+	DBPath                string // 数据库文件路径
+	RetentionDays         int    // 数据保留天数（3-30）
+	RetentionDaysProvider func() int
 }
 
 // 硬编码的内部配置
@@ -91,13 +93,14 @@ func NewSQLiteStore(cfg *SQLiteStoreConfig) (*SQLiteStore, error) {
 	}
 
 	store := &SQLiteStore{
-		db:            db,
-		dbPath:        cfg.DBPath,
-		writeBuffer:   make([]PersistentRecord, 0, defaultBatchSize),
-		batchSize:     defaultBatchSize,
-		flushInterval: defaultFlushInterval,
-		retentionDays: cfg.RetentionDays,
-		stopCh:        make(chan struct{}),
+		db:                    db,
+		dbPath:                cfg.DBPath,
+		writeBuffer:           make([]PersistentRecord, 0, defaultBatchSize),
+		batchSize:             defaultBatchSize,
+		flushInterval:         defaultFlushInterval,
+		retentionDays:         cfg.RetentionDays,
+		retentionDaysProvider: cfg.RetentionDaysProvider,
+		stopCh:                make(chan struct{}),
 	}
 
 	// 启动后台任务
@@ -384,12 +387,20 @@ func (s *SQLiteStore) cleanupLoop() {
 
 // doCleanup 执行清理
 func (s *SQLiteStore) doCleanup() {
-	cutoff := time.Now().AddDate(0, 0, -s.retentionDays)
+	retentionDays := s.retentionDays
+	if s.retentionDaysProvider != nil {
+		retentionDays = s.retentionDaysProvider()
+	}
+	if retentionDays < 3 || retentionDays > 30 {
+		log.Printf("[SQLite-Cleanup] 指标保留期无效: %d，取消本次清理", retentionDays)
+		return
+	}
+	cutoff := time.Now().AddDate(0, 0, -retentionDays)
 	deleted, err := s.CleanupOldRecords(cutoff)
 	if err != nil {
 		log.Printf("[SQLite-Cleanup] 警告: 清理过期指标记录失败: %v", err)
 	} else if deleted > 0 {
-		log.Printf("[SQLite-Cleanup] 已清理 %d 条过期指标记录（超过 %d 天）", deleted, s.retentionDays)
+		log.Printf("[SQLite-Cleanup] 已清理 %d 条过期指标记录（超过 %d 天）", deleted, retentionDays)
 	}
 }
 

@@ -20,6 +20,7 @@ import (
 	"github.com/insistanan/api-proxy/internal/config"
 	"github.com/insistanan/api-proxy/internal/session"
 	"github.com/insistanan/api-proxy/internal/types"
+	"github.com/insistanan/api-proxy/internal/utils"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -191,7 +192,7 @@ func assertRequestBodyReplay(t *testing.T, req *http.Request) []byte {
 }
 
 func TestResponsesProviderBuildRequest_CodexDisguiseBodyIsReplayable(t *testing.T) {
-	t.Setenv("CODEX_DISGUISE_VERSION", "8.8.8")
+	_, codexVersion, _, _ := utils.GetEffectiveDisguiseVersions()
 	body := `{"model":"gpt-5","input":"你好","stream":true,"prompt_cache_key":"old-key","prompt_cache_retention":"24h"}`
 	for _, disguise := range []bool{false, true} {
 		name := "关闭伪装"
@@ -221,8 +222,8 @@ func TestResponsesProviderBuildRequest_CodexDisguiseBodyIsReplayable(t *testing.
 			require.False(t, gjson.GetBytes(finalBody, "prompt_cache_retention").Exists())
 			if disguise {
 				require.Equal(t, "session-test", outcome.Request.Header.Get("session_id"))
-				require.True(t, strings.HasPrefix(outcome.Request.Header.Get("User-Agent"), "codex_cli_rs/8.8.8 "))
-				require.Equal(t, "8.8.8", outcome.Request.Header.Get("version"))
+				require.True(t, strings.HasPrefix(outcome.Request.Header.Get("User-Agent"), "codex_cli_rs/"+codexVersion+" "))
+				require.Equal(t, codexVersion, outcome.Request.Header.Get("version"))
 			} else {
 				require.Equal(t, "api-proxy", outcome.Request.Header.Get("User-Agent"))
 				require.Empty(t, outcome.Request.Header.Get("version"))

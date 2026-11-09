@@ -72,7 +72,7 @@ func handleStreamSuccess(
 		return nil, fmt.Errorf("Gemini 流式上游 serviceType %q 不支持", upstreamType)
 	}
 
-	if envCfg.EnableResponseLogs {
+	if envCfg.Current().EnableResponseLogs {
 		responseTime := time.Since(startTime).Milliseconds()
 		log.Printf("[Gemini-Stream-Timing] 流式响应完成: %dms", responseTime)
 	}

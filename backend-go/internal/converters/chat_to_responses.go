@@ -520,6 +520,8 @@ func (st *chatToResponsesState) closeReasoningBlock(nextSeq func() int) []string
 	itemDone, _ = sjson.Set(itemDone, "output_index", st.ReasoningIndex)
 	itemDone, _ = sjson.Set(itemDone, "item.id", st.ReasoningItemID)
 	itemDone, _ = sjson.Set(itemDone, "item.summary", []interface{}{map[string]interface{}{"type": "summary_text", "text": full}})
+	// 保存原始推理与展示摘要的区别，客户端或本地会话重放时只回传 reasoning_text。
+	itemDone, _ = sjson.Set(itemDone, "item.content", []interface{}{map[string]interface{}{"type": "reasoning_text", "text": full}})
 	out = append(out, emitResponsesEvent("response.output_item.done", itemDone))
 
 	st.ReasoningActive = false
@@ -747,6 +749,7 @@ func (st *chatToResponsesState) generateCompletedEvents(originalRequestRawJSON [
 				"type": "summary_text",
 				"text": st.ReasoningBuf.String(),
 			}},
+			"content": []interface{}{map[string]interface{}{"type": "reasoning_text", "text": st.ReasoningBuf.String()}},
 		}
 		outputs = append(outputs, r)
 	}
@@ -1032,6 +1035,7 @@ func ConvertOpenAIChatToResponsesNonStream(_ context.Context, _ string, original
 				"type": "summary_text",
 				"text": reasoningBuf.String(),
 			}},
+			"content": []interface{}{map[string]interface{}{"type": "reasoning_text", "text": reasoningBuf.String()}},
 		}
 		// 在开头插入
 		outputs = append([]interface{}{r}, outputs...)

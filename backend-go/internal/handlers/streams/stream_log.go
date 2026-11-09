@@ -18,7 +18,7 @@ import (
 
 // logStreamCompletion 记录流完成日志
 func logStreamCompletion(c *gin.Context, ctx *Context, envCfg *config.EnvConfig, startTime time.Time) *types.Usage {
-	if envCfg.EnableResponseLogs {
+	if envCfg.Current().EnableResponseLogs {
 		log.Printf("[Messages-Stream] 流式响应完成: %dms", time.Since(startTime).Milliseconds())
 	}
 
@@ -32,12 +32,12 @@ func logStreamCompletion(c *gin.Context, ctx *Context, envCfg *config.EnvConfig,
 			ctx.EventCount, ctx.ContentBlockCount, blockTypeSummary)
 	}
 
-	if envCfg.EnableResponseLogs {
+	if envCfg.Current().EnableResponseLogs {
 		logSynthesizedContent(c, ctx, envCfg.ShouldLog("debug"))
 	}
 
 	// 推断隐式缓存读取
-	inferImplicitCacheRead(ctx, envCfg.EnableResponseLogs && envCfg.ShouldLog("debug"))
+	inferImplicitCacheRead(ctx, envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug"))
 
 	// 指标使用上游原始快照。CollectedUsage 可能已经包含客户端补全或隐式缓存推断，
 	// 只能用于客户端事件处理，不能污染计费、熔断和性能画像。
@@ -64,7 +64,7 @@ func logStreamCompletion(c *gin.Context, ctx *Context, envCfg *config.EnvConfig,
 
 // logPartialResponse 记录部分响应日志
 func logPartialResponse(c *gin.Context, ctx *Context, envCfg *config.EnvConfig) {
-	if envCfg.EnableResponseLogs {
+	if envCfg.Current().EnableResponseLogs {
 		logSynthesizedContent(c, ctx, envCfg.ShouldLog("debug"))
 	}
 }

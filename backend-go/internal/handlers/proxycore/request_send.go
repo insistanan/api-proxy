@@ -41,11 +41,11 @@ func SendRequest(req *http.Request, upstream *config.UpstreamConfig, envCfg *con
 	if logger.AttemptIDFromContext(req.Context()) == "" {
 		req = req.WithContext(logger.ContextWithAttemptID(req.Context(), logger.NewRequestID()))
 	}
-	if upstream.InsecureSkipVerify && envCfg.EnableRequestLogs {
+	if upstream.InsecureSkipVerify && envCfg.Current().EnableRequestLogs {
 		log.Printf("[%s-Request-TLS] 警告: 正在跳过对 %s 的TLS证书验证", apiType, req.URL.String())
 	}
 
-	if envCfg.EnableRequestLogs {
+	if envCfg.Current().EnableRequestLogs {
 		log.Printf("[%s-Request] requestId=%s attemptId=%s %s %s", apiType, logger.RequestIDFromContext(req.Context()), logger.AttemptIDFromContext(req.Context()), req.Method, req.URL.String())
 		if err := logRequestDetails(req, envCfg, apiType, isStream); err != nil {
 			return nil, err
@@ -53,9 +53,9 @@ func SendRequest(req *http.Request, upstream *config.UpstreamConfig, envCfg *con
 	}
 
 	if requestTimeout <= 0 {
-		requestTimeout = time.Duration(envCfg.RequestTimeout) * time.Millisecond
+		requestTimeout = time.Duration(envCfg.Current().RequestTimeout) * time.Millisecond
 	}
-	streamIdleTimeout := time.Duration(envCfg.StreamIdleTimeout) * time.Second
+	streamIdleTimeout := time.Duration(envCfg.Current().StreamIdleTimeout) * time.Second
 	if isStream && requestTimeout > streamIdleTimeout {
 		// 生图流式请求使用同一套请求超时策略，避免 partial_images 间隔超过
 		// 默认 5 分钟时被空闲 reader 提前中止。
@@ -70,7 +70,7 @@ func SendRequest(req *http.Request, upstream *config.UpstreamConfig, envCfg *con
 		StreamLabel:        apiType,
 	})
 	if err != nil {
-		if envCfg.EnableResponseLogs {
+		if envCfg.Current().EnableResponseLogs {
 			logger.RecordTraffic(logger.TrafficLog{
 				RequestID: logger.RequestIDFromContext(req.Context()), AttemptID: logger.AttemptIDFromContext(req.Context()),
 				Phase: logger.PhaseUpstreamError, APIType: apiType, Method: req.Method, URL: req.URL.String(), Body: err.Error(), Stream: isStream,
@@ -85,7 +85,7 @@ func SendRequest(req *http.Request, upstream *config.UpstreamConfig, envCfg *con
 		return nil, err
 	}
 
-	if envCfg.EnableResponseLogs && resp != nil && resp.Body != nil {
+	if envCfg.Current().EnableResponseLogs && resp != nil && resp.Body != nil {
 		requestID := logger.RequestIDFromContext(req.Context())
 		if requestID == "" {
 			requestID = logger.NewRequestID()

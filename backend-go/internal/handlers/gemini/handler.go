@@ -147,7 +147,7 @@ func handleCountTokens(c *gin.Context, envCfg *config.EnvConfig) {
 		return
 	}
 
-	bodyBytes, err := proxycore.ReadRequestBody(c, envCfg.MaxRequestBodySize)
+	bodyBytes, err := proxycore.ReadRequestBody(c, envCfg.Current().MaxRequestBodySize)
 	if err != nil {
 		// ReadRequestBody 已写出错误响应
 		return
@@ -162,7 +162,7 @@ func handleCountTokens(c *gin.Context, envCfg *config.EnvConfig) {
 		writeGeminiError(c, http.StatusBadRequest, fmt.Sprintf("Invalid request body: %v", err), "INVALID_ARGUMENT")
 		return
 	}
-	if envCfg.EnableResponseLogs {
+	if envCfg.Current().EnableResponseLogs {
 		log.Printf("[Gemini-Token] CountTokens本地估算: %d", totalTokens)
 	}
 	c.JSON(http.StatusOK, gin.H{"totalTokens": totalTokens})
@@ -368,7 +368,7 @@ func handleSuccess(
 		return nil, err
 	}
 
-	decompressedBytes, wasDecoded, decompressErr := utils.DecompressResponseBodyIfNeeded(resp, bodyBytes, envCfg.MaxRequestBodySize)
+	decompressedBytes, wasDecoded, decompressErr := utils.DecompressResponseBodyIfNeeded(resp, bodyBytes, envCfg.Current().MaxRequestBodySize)
 	if decompressErr != nil && errors.Is(decompressErr, utils.ErrDecompressedBodyTooLarge) {
 		log.Printf("[Gemini-Response] 错误: 解压响应体超过大小限制: %v", decompressErr)
 		c.JSON(http.StatusBadGateway, types.GeminiError{
@@ -386,7 +386,7 @@ func handleSuccess(
 		resp.Header.Del("Content-Encoding")
 	}
 
-	if envCfg.EnableResponseLogs {
+	if envCfg.Current().EnableResponseLogs {
 		responseTime := time.Since(startTime).Milliseconds()
 		log.Printf("[Gemini-Timing] 响应完成: %dms, 状态: %d", responseTime, resp.StatusCode)
 	}

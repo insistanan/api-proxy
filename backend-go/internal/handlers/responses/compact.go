@@ -57,7 +57,7 @@ func CompactHandler(
 		c.Request = c.Request.WithContext(upstreamcontrol.WithScope(c.Request.Context()))
 
 		// 读取请求体
-		maxBodySize := envCfg.MaxRequestBodySize
+		maxBodySize := envCfg.Current().MaxRequestBodySize
 		bodyBytes, err := proxycore.ReadRequestBody(c, maxBodySize)
 		if err != nil {
 			return

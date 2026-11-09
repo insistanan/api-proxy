@@ -96,7 +96,7 @@ func RunProxyRequest(
 	c.Request = c.Request.WithContext(upstreamcontrol.WithScope(c.Request.Context()))
 
 	// 2. 读取请求体
-	bodyBytes, err := ReadRequestBody(c, envCfg.MaxRequestBodySize)
+	bodyBytes, err := ReadRequestBody(c, envCfg.Current().MaxRequestBodySize)
 	if err != nil {
 		return
 	}

@@ -137,14 +137,14 @@ func handleStreamSuccess(
 	channelScheduler *scheduler.ChannelScheduler,
 	conversationID string,
 ) (*types.Usage, error) {
-	if envCfg.EnableResponseLogs {
+	if envCfg.Current().EnableResponseLogs {
 		responseTime := time.Since(startTime).Milliseconds()
 		log.Printf("[Responses-Stream] Responses 流式响应开始: %dms, 状态: %d", responseTime, resp.StatusCode)
 	}
 
 	var synthesizer *utils.StreamSynthesizer
 	var logBuffer bytes.Buffer
-	streamLoggingEnabled := envCfg.EnableResponseLogs
+	streamLoggingEnabled := envCfg.Current().EnableResponseLogs
 
 	if streamLoggingEnabled {
 		synthesizer = utils.NewStreamSynthesizer(upstreamType)
@@ -297,12 +297,12 @@ func handleStreamSuccess(
 				return nil, eventErr
 			}
 			// 检测并收集 usage
-			detected, needPatch, usageData := checkResponsesEventUsage(event, envCfg.EnableResponseLogs && envCfg.ShouldLog("debug"))
+			detected, needPatch, usageData := checkResponsesEventUsage(event, envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug"))
 			if detected {
 				if !hasUsage {
 					hasUsage = true
 					needTokenPatch = needPatch
-					if envCfg.EnableResponseLogs && envCfg.ShouldLog("debug") && needPatch {
+					if envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug") && needPatch {
 						log.Printf("[Responses-Stream-Token] 检测到虚假值, 延迟到流结束修补")
 					}
 				}
@@ -330,7 +330,7 @@ func handleStreamSuccess(
 					collectedUsage.InputTokens = injectedInput
 					collectedUsage.OutputTokens = injectedOutput
 					collectedUsage.TotalTokens = injectedInput + injectedOutput
-					if envCfg.EnableResponseLogs && envCfg.ShouldLog("debug") {
+					if envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug") {
 						log.Printf("[Responses-Stream-Token] 上游无usage, 注入本地估算: input=%d, output=%d", injectedInput, injectedOutput)
 					}
 				} else if needTokenPatch {
@@ -353,7 +353,7 @@ func handleStreamSuccess(
 					// 明确提供 context_details.input_tokens，最后优先使用该当前上下文值。
 					eventToSend = normalizeContextDetailsInputTokensInCompletedEvent(
 						eventToSend,
-						envCfg.EnableResponseLogs,
+						envCfg.Current().EnableResponseLogs,
 					)
 				}
 			}
@@ -408,7 +408,7 @@ func handleStreamSuccess(
 						log.Printf("[Responses-Stream] 检测到空响应 (model at capacity)，buffered=%d, written=%v",
 							len(bufferedEvents), c.Writer.Written())
 						// 不写入任何数据，返回 error 让上层 failover
-						if envCfg.EnableResponseLogs {
+						if envCfg.Current().EnableResponseLogs {
 							logBuffer.WriteString(eventToSend)
 						}
 						// 跳出循环，返回 ErrEmptyStreamResponse
@@ -481,7 +481,7 @@ func handleStreamSuccess(
 		return nil, err
 	}
 
-	if envCfg.EnableResponseLogs {
+	if envCfg.Current().EnableResponseLogs {
 		responseTime := time.Since(startTime).Milliseconds()
 		log.Printf("[Responses-Stream] Responses 流式响应完成: %dms", responseTime)
 

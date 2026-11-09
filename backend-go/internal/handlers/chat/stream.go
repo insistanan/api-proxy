@@ -21,7 +21,7 @@ func handleStreamSuccess(c *gin.Context, resp *http.Response, envCfg *config.Env
 	stopVeto := hooks.BindAttachedStreamVeto(c, resp.Body)
 	defer stopVeto()
 	defer utils.BindStreamBody(c.Request.Context(), resp.Body)()
-	if envCfg.EnableResponseLogs {
+	if envCfg.Current().EnableResponseLogs {
 		responseTime := time.Since(startTime).Milliseconds()
 		log.Printf("[Chat-Stream] Chat 流式响应开始: %dms, 状态: %d", responseTime, resp.StatusCode)
 	}

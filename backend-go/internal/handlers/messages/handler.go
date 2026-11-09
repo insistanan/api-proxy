@@ -40,7 +40,7 @@ func Handler(
 		LogName:      "Messages",
 		HookPipeline: contentSafetyPipeline,
 		ParseRequest: func(c *gin.Context, body []byte) (string, bool, []string, bool) {
-			body, _ = proxycore.RemoveEmptySignatures(body, envCfg.EnableRequestLogs, "Messages")
+			body, _ = proxycore.RemoveEmptySignatures(body, envCfg.Current().EnableRequestLogs, "Messages")
 			c.Set(utils.ContextKeyClaudeCodeDisguise, cfgManager.GetClaudeCodeDisguiseEnabled())
 			var claudeReq types.ClaudeRequest
 			if len(body) > 0 {
@@ -103,7 +103,7 @@ func handleNormalResponse(
 		return nil, err
 	}
 
-	decompressedBytes, wasDecoded, decompressErr := utils.DecompressResponseBodyIfNeeded(resp, bodyBytes, envCfg.MaxRequestBodySize)
+	decompressedBytes, wasDecoded, decompressErr := utils.DecompressResponseBodyIfNeeded(resp, bodyBytes, envCfg.Current().MaxRequestBodySize)
 	if decompressErr != nil && errors.Is(decompressErr, utils.ErrDecompressedBodyTooLarge) {
 		log.Printf("[Messages-Response] 错误: 解压响应体超过大小限制: %v", decompressErr)
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Decompressed response body too large"})
@@ -115,7 +115,7 @@ func handleNormalResponse(
 		resp.Header.Del("Content-Encoding")
 	}
 
-	if envCfg.EnableResponseLogs {
+	if envCfg.Current().EnableResponseLogs {
 		responseTime := time.Since(startTime).Milliseconds()
 		log.Printf("[Messages-Timing] 响应完成: %dms, 状态: %d", responseTime, resp.StatusCode)
 		proxycore.LogResponseDetails(resp, bodyBytes, envCfg, "Messages")
@@ -132,9 +132,14 @@ func handleNormalResponse(
 	if err != nil {
 		return nil, fmt.Errorf("转换上游响应失败: %w", err)
 	}
-	// 将所有协议返回的 thinking 统一登记。下一轮即使故障转移到要求
-	// reasoning_content 的 Chat 渠道，也能回放该 assistant 工具调用回合。
-	providers.CacheClaudeResponseReasoning(claudeResp)
+	// 思考缓存限定同一会话、渠道和模型；跨渠道续接依赖客户端回传原文。
+	var cacheRequest types.ClaudeRequest
+	if err := json.Unmarshal(requestBody, &cacheRequest); err != nil {
+		return nil, fmt.Errorf("解析思考缓存来源失败: %w", err)
+	}
+	providers.CacheClaudeResponseReasoning(claudeResp, providers.ReasoningCacheScope(
+		c.GetString(utils.ContextKeyConversationUserID), upstream, cacheRequest.Model,
+	))
 
 	// Token 补全逻辑
 	// 先保存上游 usage 快照；客户端副本后续会做错报校正，不能反向
@@ -153,7 +158,7 @@ func handleNormalResponse(
 			OutputTokens: estimatedOutput,
 		}
 		usageRewrite.injectUsage = true
-		if envCfg.EnableResponseLogs {
+		if envCfg.Current().EnableResponseLogs {
 			log.Printf("[Messages-Token] 上游无Usage, 本地估算: input=%d, output=%d", estimatedInput, estimatedOutput)
 		}
 	} else {
@@ -178,7 +183,7 @@ func handleNormalResponse(
 			patched = true
 			usageRewrite.patchOutput = true
 		}
-		if envCfg.EnableResponseLogs {
+		if envCfg.Current().EnableResponseLogs {
 			if patched {
 				log.Printf("[Messages-Token] 虚假值补全: InputTokens=%d->%d, OutputTokens=%d->%d",
 					originalInput, claudeResp.Usage.InputTokens, originalOutput, claudeResp.Usage.OutputTokens)
@@ -204,7 +209,7 @@ func handleNormalResponse(
 		case <-responded:
 			// 响应已写出，正常结束
 		default:
-			if envCfg.EnableResponseLogs {
+			if envCfg.Current().EnableResponseLogs {
 				responseTime := time.Since(startTime).Milliseconds()
 				log.Printf("[Messages-Timing] 响应中断: %dms, 状态: %d", responseTime, statusCode)
 			}
@@ -229,7 +234,7 @@ func handleNormalResponse(
 			claudeResp.Usage.CacheCreation5mInputTokens,
 			claudeResp.Usage.CacheCreation1hInputTokens,
 		); need {
-			if envCfg.EnableResponseLogs {
+			if envCfg.Current().EnableResponseLogs {
 				log.Printf("[Messages-Token] 上游 usage 错报校正: input_tokens=%d->%d, clear_cache=%v（本地估算，仅改下发值）",
 					claudeResp.Usage.InputTokens, correction.InputTokens, correction.ClearCache)
 			}
@@ -271,7 +276,7 @@ func handleNormalResponse(
 	c.Data(http.StatusOK, "application/json", clientBody)
 	close(responded) // 响应已写出，解除断连监听 goroutine 的等待条件
 
-	if envCfg.EnableResponseLogs {
+	if envCfg.Current().EnableResponseLogs {
 		responseTime := time.Since(startTime).Milliseconds()
 		log.Printf("[Messages-Timing] 响应发送完成: %dms, 状态: %d", responseTime, resp.StatusCode)
 	}
@@ -288,7 +293,7 @@ func CountTokensHandler(envCfg *config.EnvConfig, cfgManager *config.ConfigManag
 		}
 
 		// 使用统一的请求体读取函数，应用大小限制
-		bodyBytes, err := proxycore.ReadRequestBody(c, envCfg.MaxRequestBodySize)
+		bodyBytes, err := proxycore.ReadRequestBody(c, envCfg.Current().MaxRequestBodySize)
 		if err != nil {
 			// ReadRequestBody 已经返回了错误响应
 			return
@@ -311,7 +316,7 @@ func CountTokensHandler(envCfg *config.EnvConfig, cfgManager *config.ConfigManag
 			"input_tokens": inputTokens,
 		})
 
-		if envCfg.EnableResponseLogs {
+		if envCfg.Current().EnableResponseLogs {
 			log.Printf("[Messages-Token] CountTokens本地估算: model=%s, input_tokens=%d", req.Model, inputTokens)
 		}
 	}

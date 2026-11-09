@@ -51,7 +51,7 @@ func NewAttemptBuilder(
 		AllowModelFailover: cfgManager.GetFuzzyModeEnabled(),
 		RequestBody:        requestBody,
 		IsStream:           isStream,
-		RequestTimeout:     time.Duration(envCfg.RequestTimeout) * time.Millisecond,
+		RequestTimeout:     time.Duration(envCfg.Current().RequestTimeout) * time.Millisecond,
 		LogContext: AttemptLogContext{
 			ChannelIndex:    channelIndex,
 			Model:           requestedModel,

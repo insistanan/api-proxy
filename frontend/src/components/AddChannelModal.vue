@@ -810,6 +810,39 @@
                       <v-switch v-model="form.disablePromptCacheKey" inset color="secondary" hide-details />
                     </div>
                   </template>
+                  <v-expansion-panels
+                    v-if="props.channelType === 'messages' && form.serviceType === 'openai'"
+                    v-model="reasoningCompatibilityPanel"
+                    variant="accordion"
+                    class="mt-4"
+                  >
+                    <v-expansion-panel
+                      value="reasoning"
+                      :title="form.reasoningOutputMode === 'hide' || form.parseEmbeddedReasoning ? '高级兼容设置（已启用）' : '高级兼容设置'"
+                    >
+                      <v-expansion-panel-text>
+                        <p class="text-body-2 text-medium-emphasis mb-3">默认保留上游思考，正文保持原样。</p>
+                        <v-switch
+                          v-model="form.reasoningOutputMode"
+                          true-value="hide"
+                          false-value="preserve"
+                          label="隐藏思考"
+                          :hint="form.reasoningOutputMode === 'hide' ? '隐藏后客户端无法保存思考；缓存失效时，严格上游可能无法续接历史。' : undefined"
+                          :persistent-hint="form.reasoningOutputMode === 'hide'"
+                          inset
+                          color="secondary"
+                        />
+                        <v-switch
+                          v-model="form.parseEmbeddedReasoning"
+                          label="解析正文中的思考标签"
+                          hint="仅用于上游通过 <think> 或 <thinking> 标签返回思考的情况。"
+                          persistent-hint
+                          inset
+                          color="secondary"
+                        />
+                      </v-expansion-panel-text>
+                    </v-expansion-panel>
+                  </v-expansion-panels>
                 </v-card-text>
               </v-card>
             </v-col>
@@ -928,6 +961,9 @@ const theme = useTheme()
 
 // 表单引用
 const formRef = ref()
+
+// 高级兼容设置默认折叠，每次载入渠道或重置草稿时收起。
+const reasoningCompatibilityPanel = ref<string>()
 
 // 模式切换: 快速添加 vs 详细表单
 const isQuickMode = ref(true)
@@ -1262,6 +1298,7 @@ const addApiKey = () => {
 // resetForm：草稿重置 + 组件内 UI 状态（错误提示、模型缓存、快速添加输入）清理。
 const resetForm = () => {
   resetFormDraft()
+  reasoningCompatibilityPanel.value = undefined
   newApiKey.value = ''
   baseUrlsText.value = ''
   originalKeyMap.value.clear()
@@ -1289,6 +1326,7 @@ const resetForm = () => {
 // loadChannelData：载入编辑目标 + 组件内 UI 状态同步（baseUrl 预览、模型缓存重置）。
 const loadChannelData = (channel: Channel) => {
   loadChannelDataDraft(channel)
+  reasoningCompatibilityPanel.value = undefined
   if (channel.baseUrls && channel.baseUrls.length > 0) {
     baseUrlsText.value = channel.baseUrls.join('\n')
   } else {

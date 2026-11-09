@@ -11,7 +11,7 @@ import (
 )
 
 func LogResponseDetails(resp *http.Response, body []byte, envCfg *config.EnvConfig, apiType string) {
-	if !envCfg.EnableResponseLogs || !envCfg.ShouldLog("debug") {
+	if !envCfg.Current().EnableResponseLogs || !envCfg.ShouldLog("debug") {
 		return
 	}
 	log.Printf("[%s-Response] 响应头:\n%s", apiType, logger.MaskedHeaderJSON(resp.Header))

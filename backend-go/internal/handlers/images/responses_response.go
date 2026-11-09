@@ -64,7 +64,7 @@ func handleImagesResponsesSuccess(c *gin.Context, resp *http.Response, envCfg *c
 		return nil, fmt.Errorf("解压 Responses 图片响应失败: %w", err)
 	}
 	defer utils.BindStreamBody(lifecycle.ctx, reader)()
-	if envCfg.MaxRequestBodySize <= 0 {
+	if envCfg.Current().MaxRequestBodySize <= 0 {
 		return nil, fmt.Errorf("Responses 图片响应大小限制必须为正数")
 	}
 	buffered := bufio.NewReaderSize(reader, 32*1024)
@@ -81,7 +81,7 @@ func handleImagesResponsesSuccess(c *gin.Context, resp *http.Response, envCfg *c
 			}
 			if prefix[0] != ' ' && prefix[0] != '\n' && prefix[0] != '\r' && prefix[0] != '\t' {
 				if prefix[0] != '{' && prefix[0] != '[' {
-					return convertResponsesImageStream(c, buffered, resp.Header, endpoint, requestedStream, envCfg.MaxRequestBodySize)
+					return convertResponsesImageStream(c, buffered, resp.Header, endpoint, requestedStream, envCfg.Current().MaxRequestBodySize)
 				}
 				break
 			}
@@ -90,7 +90,7 @@ func handleImagesResponsesSuccess(c *gin.Context, resp *http.Response, envCfg *c
 			}
 		}
 	}
-	body, err := utils.ReadWithOutputLimit(buffered, envCfg.MaxRequestBodySize)
+	body, err := utils.ReadWithOutputLimit(buffered, envCfg.Current().MaxRequestBodySize)
 	if cause := context.Cause(lifecycle.ctx); cause != nil {
 		return nil, fmt.Errorf("读取 Responses 图片响应中止: %w", cause)
 	}
@@ -151,10 +151,10 @@ func writeImagesJSONAsCompletedStream(c *gin.Context, resp *http.Response, envCf
 		return fmt.Errorf("解压 Images 响应失败: %w", err)
 	}
 	defer reader.Close()
-	if envCfg == nil || envCfg.MaxRequestBodySize <= 0 {
+	if envCfg == nil || envCfg.Current().MaxRequestBodySize <= 0 {
 		return fmt.Errorf("Images 响应大小限制必须为正数")
 	}
-	body, err := utils.ReadWithOutputLimit(reader, envCfg.MaxRequestBodySize)
+	body, err := utils.ReadWithOutputLimit(reader, envCfg.Current().MaxRequestBodySize)
 	if err != nil {
 		return fmt.Errorf("读取 Images 响应失败: %w", err)
 	}

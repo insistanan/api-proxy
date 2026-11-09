@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -19,7 +20,11 @@ import (
 )
 
 // OpenAIProvider OpenAI 提供商
-type OpenAIProvider struct{}
+type OpenAIProvider struct {
+	hideReasoning          bool
+	parseEmbeddedReasoning bool
+	reasoningScope         string
+}
 
 // ConvertToProviderRequest 转换为 OpenAI 请求。
 // R4-a：解析 gin 后委托显式实现 BuildRequest（薄壳）。
@@ -32,11 +37,12 @@ func (p *OpenAIProvider) ConvertToProviderRequest(c *gin.Context, upstream *conf
 	c.Request.Body = io.NopCloser(bytes.NewReader(originalBodyBytes))
 
 	outcome, err := p.BuildRequest(RequestInput{
-		Ctx:    c.Request.Context(),
-		Method: http.MethodPost,
-		Path:   "/v1/chat/completions",
-		Header: c.Request.Header,
-		Body:   originalBodyBytes,
+		Ctx:            c.Request.Context(),
+		Method:         http.MethodPost,
+		Path:           "/v1/chat/completions",
+		Header:         c.Request.Header,
+		Body:           originalBodyBytes,
+		ConversationID: c.GetString(utils.ContextKeyConversationUserID),
 	}, upstream, apiKey)
 	if err != nil {
 		return nil, originalBodyBytes, err
@@ -47,10 +53,20 @@ func (p *OpenAIProvider) ConvertToProviderRequest(c *gin.Context, upstream *conf
 // BuildRequest 以显式输入构造 OpenAI Chat 请求（R4-a 主实现，不依赖 gin）。
 func (p *OpenAIProvider) BuildRequest(input RequestInput, upstream *config.UpstreamConfig, apiKey string) (*RequestOutcome, error) {
 	originalBodyBytes := input.Body
+	if err := config.ValidateReasoningOptions(upstream); err != nil {
+		return nil, err
+	}
+	p.hideReasoning = upstream != nil && upstream.ReasoningOutputMode == "hide"
+	p.parseEmbeddedReasoning = upstream != nil && upstream.ParseEmbeddedReasoning
 
 	var claudeReq types.ClaudeRequest
 	if err := json.Unmarshal(originalBodyBytes, &claudeReq); err != nil {
 		return nil, fmt.Errorf("解析Claude请求体失败: %w", err)
+	}
+	p.reasoningScope = ReasoningCacheScope(input.ConversationID, upstream, claudeReq.Model)
+	messages, err := p.convertMessages(&claudeReq, upstream != nil && upstream.RequireReasoningContent)
+	if err != nil {
+		return nil, err
 	}
 
 	// Chat 推理模型要求将 reasoning_content 原样随 assistant 历史消息回传。
@@ -58,7 +74,7 @@ func (p *OpenAIProvider) BuildRequest(input RequestInput, upstream *config.Upstr
 
 	openaiReq := &types.OpenAIRequest{
 		Model:       config.ResolveUpstreamModel(claudeReq.Model, upstream),
-		Messages:    p.convertMessages(&claudeReq, upstream != nil && upstream.RequireReasoningContent),
+		Messages:    messages,
 		Stream:      claudeReq.Stream,
 		Temperature: claudeReq.Temperature,
 	}
@@ -140,7 +156,7 @@ func (p *OpenAIProvider) BuildRequest(input RequestInput, upstream *config.Upstr
 }
 
 // convertMessages 转换消息
-func (p *OpenAIProvider) convertMessages(claudeReq *types.ClaudeRequest, forceReasoningContent bool) []types.OpenAIMessage {
+func (p *OpenAIProvider) convertMessages(claudeReq *types.ClaudeRequest, forceReasoningContent bool) ([]types.OpenAIMessage, error) {
 	messages := []types.OpenAIMessage{}
 
 	// 添加系统消息
@@ -154,16 +170,31 @@ func (p *OpenAIProvider) convertMessages(claudeReq *types.ClaudeRequest, forceRe
 		}
 	}
 
-	for _, msg := range claudeReq.Messages {
-		openaiMsg := p.convertMessage(msg, forceReasoningContent)
+	for index, msg := range claudeReq.Messages {
+		openaiMsg := p.convertMessage(msg)
+		requiresOriginal := forceReasoningContent
+		for _, block := range utils.NormalizeContentBlocks(msg.Content) {
+			if block["type"] == "redacted_thinking" {
+				requiresOriginal = true
+			}
+		}
+		if normalizeRole(msg.Role) == "assistant" && requiresOriginal && len(openaiMsg) == 0 {
+			return nil, &types.ReasoningHistoryError{Message: fmt.Sprintf("assistant 历史消息 %d 的原始 reasoning_content 无法恢复；请回传原始 thinking 或开启新会话", index+1)}
+		}
+		for _, converted := range openaiMsg {
+			if converted.Role == "assistant" && requiresOriginal && converted.ReasoningContent == "" {
+				log.Printf("[Reasoning-History] 必需的原始推理无法恢复，拒绝构造上游请求")
+				return nil, &types.ReasoningHistoryError{Message: fmt.Sprintf("assistant 历史消息 %d 的原始 reasoning_content 无法恢复；请回传原始 thinking 或开启新会话", index+1)}
+			}
+		}
 		messages = append(messages, openaiMsg...)
 	}
 
-	return messages
+	return messages, nil
 }
 
 // convertMessage 转换单个消息
-func (p *OpenAIProvider) convertMessage(msg types.ClaudeMessage, forceReasoningContent bool) []types.OpenAIMessage {
+func (p *OpenAIProvider) convertMessage(msg types.ClaudeMessage) []types.OpenAIMessage {
 	messages := []types.OpenAIMessage{}
 
 	// 如果是字符串内容
@@ -173,8 +204,8 @@ func (p *OpenAIProvider) convertMessage(msg types.ClaudeMessage, forceReasoningC
 				Role:    normalizeRole(msg.Role),
 				Content: str,
 			}
-			if openaiMsg.Role == "assistant" && forceReasoningContent {
-				openaiMsg.ReasoningContent = reasoningContentForAssistantMessage(openaiMsg, true)
+			if openaiMsg.Role == "assistant" {
+				openaiMsg.ReasoningContent = reasoningContentForAssistantMessage(openaiMsg, p.reasoningScope)
 			}
 			messages = append(messages, openaiMsg)
 		}
@@ -191,7 +222,6 @@ func (p *OpenAIProvider) convertMessage(msg types.ClaudeMessage, forceReasoningC
 	toolCalls := []types.OpenAIToolCall{}
 	multimodalContents := []map[string]interface{}{}
 	hasVisionContent := false
-	hasRedactedThinking := false
 	flushAssistantOrUserMessage := func() {
 		if len(textContents) == 0 && len(reasoningContents) == 0 && len(toolCalls) == 0 && len(multimodalContents) == 0 {
 			return
@@ -218,13 +248,9 @@ func (p *OpenAIProvider) convertMessage(msg types.ClaudeMessage, forceReasoningC
 		if len(toolCalls) > 0 {
 			openaiMsg.ToolCalls = toolCalls
 		}
-		// 客户端回传历史时可能把明文 thinking 转成 redacted_thinking 或直接丢弃，
-		// 导致本消息没有任何明文 reasoning。用完整 assistant 消息（文本 + 工具调用）
-		// 从缓存补回，满足 Chat 推理模型（如 DeepSeek）对原样回传的校验。若旧会话
-		// 重启后缓存已不存在，则工具调用历史至少携带兼容续接值，避免严格渠道因
-		// reasoning_content 缺失直接拒绝请求。
+		// 明文优先；只从当前会话与来源缓存恢复原文，不生成占位推理。
 		if role == "assistant" && len(reasoningContents) == 0 {
-			if reasoning := reasoningContentForAssistantMessage(openaiMsg, forceReasoningContent || hasRedactedThinking); reasoning != "" {
+			if reasoning := reasoningContentForAssistantMessage(openaiMsg, p.reasoningScope); reasoning != "" {
 				reasoningContents = append(reasoningContents, reasoning)
 			}
 		}
@@ -238,7 +264,6 @@ func (p *OpenAIProvider) convertMessage(msg types.ClaudeMessage, forceReasoningC
 		toolCalls = nil
 		multimodalContents = nil
 		hasVisionContent = false
-		hasRedactedThinking = false
 	}
 
 	for _, content := range contents {
@@ -252,9 +277,7 @@ func (p *OpenAIProvider) convertMessage(msg types.ClaudeMessage, forceReasoningC
 				}
 			}
 		case "redacted_thinking":
-			// 记录该历史回合确实产生过推理；缓存失效时仍需补齐严格 Chat
-			// 渠道所要求的 reasoning_content 字段。
-			hasRedactedThinking = normalizeRole(msg.Role) == "assistant"
+			// 不透明推理无法转成明文；由 convertMessages 校验是否可恢复。
 		case "text":
 			if text, ok := content["text"].(string); ok {
 				textContents = append(textContents, text)
@@ -446,27 +469,36 @@ func (p *OpenAIProvider) ConvertToClaudeResponse(providerResp *types.ProviderRes
 		visibleContent := ""
 		thinkingContent := ""
 		if content, ok := msg.Content.(string); ok {
+			visibleContent = content
 			var embeddedReasoning string
-			visibleContent, embeddedReasoning = splitEmbeddedReasoning(content)
-			thinkingContent = msg.ReasoningContent + embeddedReasoning
+			if p.parseEmbeddedReasoning {
+				var err error
+				visibleContent, embeddedReasoning, err = splitEmbeddedReasoning(content)
+				if err != nil {
+					return nil, err
+				}
+			}
+			thinkingContent = msg.ReasoningContent
+			if thinkingContent == "" {
+				thinkingContent = embeddedReasoning
+			}
 		} else {
 			thinkingContent = msg.ReasoningContent
 		}
 
-		// 剥离 content 中与 reasoning_content 重复的前缀：部分上游在 content
-		// 中原样重复了 reasoning_content 的内容，需要去除以避免正文出现两份。
-		if thinkingContent != "" && visibleContent != "" {
-			visibleContent = stripReasoningPrefixFromContent(visibleContent, thinkingContent)
-		}
+		// 正文与推理属于独立字段，不能仅凭相同内容或前缀推断正文是重复推理。
 
-		// 缓存 reasoning_content，供客户端回传历史时补回（Chat 推理模型要求）。
-		// Chat 推理模型会要求下一轮回传 reasoning_content。只在代理内部缓存，
-		// 不向 Messages 客户端发送 thinking：Cursor 会把它写入本地历史并在每轮重发，
-		// 既泄漏思考过程，也会快速占满上下文。
+		// d70d8be 的隐藏行为改为显式 hide 模式；默认独立保留思考，不污染正文。
 		if thinkingContent != "" {
 			cacheMessage := msg
 			cacheMessage.Content = visibleContent
-			storeReasoningForAssistantMessage(cacheMessage, thinkingContent)
+			storeReasoningForAssistantMessage(cacheMessage, thinkingContent, p.reasoningScope)
+			if !p.hideReasoning {
+				claudeResp.Content = append(claudeResp.Content, types.ClaudeContent{
+					Type:     "thinking",
+					Thinking: thinkingContent,
+				})
+			}
 		}
 
 		// 添加文本内容
@@ -540,6 +572,9 @@ func (p *OpenAIProvider) HandleStreamResponseCtx(ctx context.Context, body io.Re
 		fail := pump.fail
 
 		state := newChatToClaudeStreamState()
+		state.hideReasoning = p.hideReasoning
+		state.parseEmbeddedReasoning = p.parseEmbeddedReasoning
+		state.reasoningScope = p.reasoningScope
 		scanner := pump.newScanner(body)
 
 		for scanner.Scan() {
@@ -569,6 +604,9 @@ func (p *OpenAIProvider) HandleStreamResponseCtx(ctx context.Context, body io.Re
 			if !send(event) {
 				return
 			}
+		}
+		if state.Failed() {
+			fail(state.streamError)
 		}
 	}()
 
@@ -1030,104 +1068,24 @@ func extractOpenAIReasoningContent(fields map[string]interface{}) string {
 	return ""
 }
 
-// splitEmbeddedReasoning 隐藏部分 Chat 网关把推理直接塞进 content 的常见标签格式。
-// 没有标签时原样返回，避免误伤普通回答文本。
-func splitEmbeddedReasoning(content string) (visible, reasoning string) {
+// splitEmbeddedReasoning 解析渠道明确使用的嵌入思考格式；未闭合时显式报错。
+func splitEmbeddedReasoning(content string) (visible, reasoning string, err error) {
 	visibleBuilder := strings.Builder{}
 	reasoningBuilder := strings.Builder{}
-	reasoningMode := false
-	visible, reasoning = splitEmbeddedReasoningDelta(content, &reasoningMode)
-	visibleBuilder.WriteString(visible)
-	reasoningBuilder.WriteString(reasoning)
-	return visibleBuilder.String(), reasoningBuilder.String()
-}
-
-// stripReasoningPrefixFromContent 从 content 中剥离与 reasoning 重复的前缀。
-// 部分上游在 content 中原样重复了 reasoning_content 的内容，导致正文出现两份
-// 完全相同的思考文本。此函数检查 content 是否以 reasoning 的内容开头，
-// 若是则去除重复前缀，返回剩余正文。
-func stripReasoningPrefixFromContent(content string, reasoning string) string {
-	if reasoning == "" || content == "" {
-		return content
+	parser := embeddedReasoningParser{}
+	parts := parser.feed(content)
+	tail, err := parser.finish()
+	if err != nil {
+		return "", "", err
 	}
-	// 完全匹配：content 就是 reasoning 的原样副本
-	if content == reasoning {
-		return ""
-	}
-	// 前缀匹配：content 以 reasoning 开头，后面是正文
-	if strings.HasPrefix(content, reasoning) {
-		remaining := strings.TrimPrefix(content, reasoning)
-		// 去除可能的前导空白/换行
-		return strings.TrimLeft(remaining, "\r\n")
-	}
-	// 反向前缀匹配：reasoning 以 content 开头（reasoning 更长），
-	// 说明 content 只是 reasoning 的一部分，无独立正文
-	if strings.HasPrefix(reasoning, content) {
-		return ""
-	}
-	return content
-}
-
-func splitEmbeddedReasoningDelta(content string, reasoningMode *bool) (visible, reasoning string) {
-	if content == "" {
-		return "", ""
-	}
-	if reasoningMode == nil {
-		return content, ""
-	}
-
-	lower := strings.ToLower(content)
-	visibleBuilder := strings.Builder{}
-	reasoningBuilder := strings.Builder{}
-	for len(content) > 0 {
-		if *reasoningMode {
-			closeIndex, closeLength := findEmbeddedReasoningClose(lower)
-			if closeIndex < 0 {
-				reasoningBuilder.WriteString(content)
-				break
-			}
-			reasoningBuilder.WriteString(content[:closeIndex])
-			content = content[closeIndex+closeLength:]
-			lower = lower[closeIndex+closeLength:]
-			*reasoningMode = false
-			continue
+	for _, part := range append(parts, tail...) {
+		if part.thinking {
+			reasoningBuilder.WriteString(part.text)
+		} else {
+			visibleBuilder.WriteString(part.text)
 		}
-
-		openIndex, openLength := findEmbeddedReasoningOpen(lower)
-		if openIndex < 0 {
-			visibleBuilder.WriteString(content)
-			break
-		}
-		visibleBuilder.WriteString(content[:openIndex])
-		content = content[openIndex+openLength:]
-		lower = lower[openIndex+openLength:]
-		*reasoningMode = true
 	}
-	return visibleBuilder.String(), reasoningBuilder.String()
-}
-
-func findEmbeddedReasoningOpen(value string) (int, int) {
-	thinkIndex := strings.Index(value, "<think>")
-	thinkingIndex := strings.Index(value, "<thinking>")
-	if thinkIndex < 0 {
-		return thinkingIndex, len("<thinking>")
-	}
-	if thinkingIndex < 0 || thinkIndex < thinkingIndex {
-		return thinkIndex, len("<think>")
-	}
-	return thinkingIndex, len("<thinking>")
-}
-
-func findEmbeddedReasoningClose(value string) (int, int) {
-	thinkIndex := strings.Index(value, "</think>")
-	thinkingIndex := strings.Index(value, "</thinking>")
-	if thinkIndex < 0 {
-		return thinkingIndex, len("</thinking>")
-	}
-	if thinkingIndex < 0 || thinkIndex < thinkingIndex {
-		return thinkIndex, len("</think>")
-	}
-	return thinkingIndex, len("</thinking>")
+	return visibleBuilder.String(), reasoningBuilder.String(), nil
 }
 
 func populateOpenAIReasoningContent(response *types.OpenAIResponse, body []byte) {

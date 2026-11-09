@@ -420,8 +420,7 @@ func convertResponsesRequestToOpenAIChat(model string, bodyBytes []byte, stream 
 		return nil, fmt.Errorf("Responses compaction item 只能由 Responses 原生上游处理，无法转换为 OpenAI Chat")
 	}
 
-	// IncludeHistoryThinking controls whether type=reasoning items become visible assistant text.
-	// Default false: skip history reasoning (Chat has no native reasoning field for history).
+	// 原始 reasoning_text 会关联到 assistant.reasoning_content；摘要不冒充原文。
 	includeHistoryThinking := upstream != nil && upstream.IncludeHistoryThinking
 	conversionBody := bodyBytes
 	var mergedItems []types.ResponsesItem
@@ -448,6 +447,20 @@ func convertResponsesRequestToOpenAIChat(model string, bodyBytes []byte, stream 
 
 	if _, ok := chatReq["messages"].([]interface{}); !ok {
 		return nil, fmt.Errorf("OpenAI Chat 转换结果缺少 messages")
+	}
+	if upstream != nil && upstream.RequireReasoningContent {
+		for index, raw := range chatReq["messages"].([]interface{}) {
+			message, ok := raw.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("Chat 历史消息 %d 不是对象", index+1)
+			}
+			if message["role"] == "assistant" {
+				reasoning, _ := message["reasoning_content"].(string)
+				if reasoning == "" {
+					return nil, &types.ReasoningHistoryError{Message: fmt.Sprintf("assistant 历史消息 %d 缺少原始 reasoning_content，Responses 摘要或加密推理不能替代原文；请回传原始推理或开启新会话", index+1)}
+				}
+			}
+		}
 	}
 
 	// session input 已在 Responses item 层合并；这里仅补齐从历史 tool_search_output

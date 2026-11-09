@@ -122,7 +122,7 @@ func (c *Caller) Call(ctx context.Context, channelID string, prompt Prompt) (res
 			}
 		}
 	}()
-	if c.EnvConfig != nil && c.EnvConfig.EnableRequestLogs && trace.APIType != "cmd_gate" {
+	if c.EnvConfig != nil && c.EnvConfig.Current().EnableRequestLogs && trace.APIType != "cmd_gate" {
 		body, bodyErr := buildClaudeRequestBody(prompt.Model, prompt)
 		if bodyErr != nil {
 			return nil, bodyErr
@@ -404,7 +404,7 @@ func (c *Caller) sendRequest(
 	retried bool,
 ) (*CallResult, error) {
 	timeout := c.timeoutDuration()
-	if c.EnvConfig != nil && c.EnvConfig.EnableRequestLogs && trace.APIType != "cmd_gate" {
+	if c.EnvConfig != nil && c.EnvConfig.Current().EnableRequestLogs && trace.APIType != "cmd_gate" {
 		body, readErr := io.ReadAll(request.Body)
 		_ = request.Body.Close()
 		if readErr != nil {
@@ -446,7 +446,7 @@ func (c *Caller) sendRequest(
 	}
 	body, readErr := readBoundedResponse(response)
 	_ = response.Body.Close()
-	if readErr == nil && c.EnvConfig != nil && c.EnvConfig.EnableResponseLogs && trace.APIType != "cmd_gate" {
+	if readErr == nil && c.EnvConfig != nil && c.EnvConfig.Current().EnableResponseLogs && trace.APIType != "cmd_gate" {
 		logger.RecordTraffic(logger.TrafficLog{
 			RequestID:   trace.RequestID,
 			AttemptID:   attemptID,

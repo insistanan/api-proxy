@@ -22,6 +22,7 @@ import type {
   ChannelStatus,
   ChannelsResponse,
   ClaudeCodeSettings,
+  ClientDisguiseStatus,
   CodexSettings,
   ConversationEntry,
   ConversationKind,
@@ -657,11 +658,12 @@ class ApiService {
   }
 
   // 获取 Messages / Responses 客户端伪装状态
-  async getClientDisguise(): Promise<{
-    claudeCodeDisguiseEnabled: boolean
-    codexDisguiseEnabled: boolean
-  }> {
+  async getClientDisguise(): Promise<ClientDisguiseStatus> {
     return this.request('/settings/client-disguise')
+  }
+
+  async refreshClientDisguise(): Promise<{ queued: boolean }> {
+    return this.request('/settings/client-disguise/sync', { method: 'POST' })
   }
 
   // 设置指定协议的客户端伪装状态

@@ -4,9 +4,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"log"
 	"strings"
 	"sync"
 
+	"github.com/insistanan/api-proxy/internal/config"
 	"github.com/insistanan/api-proxy/internal/types"
 )
 
@@ -17,11 +19,8 @@ import (
 // （"The reasoning_content in the thinking mode must be passed back to the API."，
 // Claude 兼容网关则报 "The content[].thinking in the thinking mode must be passed back..."）。
 //
-// 代理不把上游 reasoning_content 暴露给 Messages 客户端；客户端历史中没有明文
-// thinking 时，messages→chat 转换仍需要从缓存回填 reasoning_content。
-// 该缓存把每条 assistant 响应的（消息指纹 → reasoning_content）暂存，
-// 在下一轮转换 assistant 历史消息缺失明文 thinking 时自动补回。缓存对所有
-// 上游协议共用，使故障转移到严格 Chat 渠道时仍可回放前一渠道的 thinking。
+// 默认由客户端保存并回传原文。缓存仅辅助恢复丢失的历史，并严格限定会话、
+// 渠道和模型来源；没有会话标识时禁止使用全局文本匹配。
 type reasoningContentCache struct {
 	mu        sync.RWMutex
 	entries   map[string]string
@@ -38,14 +37,24 @@ var reasoningCache = newReasoningContentCache(2048)
 
 const maxReasoningCacheBytes = 32 * 1024 * 1024
 
-// missingReasoningContentFallback 用于历史工具调用的最后一道兼容兜底。
-//
-// Claude Code 会把部分历史 thinking 变为 redacted_thinking；若代理刚重启、缓存已
-// 淘汰，或上一渠道根本未返回可读推理，则原始 reasoning_content 已无法恢复。部分
-// DeepSeek 兼容 Chat 渠道会仅因带 tool_calls 的 assistant 历史缺少该字段而拒绝整次
-// 请求。此值不伪造原始推理，只为维持 Chat 消息协议的字段连续性；正常情况下始终
-// 优先使用上游返回并缓存的原始 reasoning_content。
-const missingReasoningContentFallback = "Historical tool-call reasoning was redacted during protocol conversion."
+// ReasoningCacheScope 生成不含凭据的来源范围；缺少会话时不启用缓存。
+func ReasoningCacheScope(conversationID string, upstream *config.UpstreamConfig, model string) string {
+	if strings.TrimSpace(conversationID) == "" || upstream == nil {
+		return ""
+	}
+	payload, _ := json.Marshal([]string{
+		conversationID, upstream.ID, upstream.ServiceType,
+		config.ResolveUpstreamModel(model, upstream), upstream.GetEffectiveBaseURL(),
+	})
+	return reasoningFingerprint(string(payload))
+}
+
+func scopedReasoningKey(scope, key string) string {
+	if scope == "" || key == "" {
+		return ""
+	}
+	return scope + ":" + key
+}
 
 func newReasoningContentCache(max int) *reasoningContentCache {
 	if max <= 0 {
@@ -64,33 +73,53 @@ func (c *reasoningContentCache) put(key, value string) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if len(key)+len(value) > c.maxBytes {
-		return
-	}
 	if old, exists := c.entries[key]; exists {
 		c.usedBytes -= len(key) + len(old)
+		if old != value {
+			// 同一范围重复正文也可能对应不同推理，标记歧义后不再猜测。
+			value = ""
+			if old != "" {
+				log.Printf("[Reasoning-Cache] 消息关联存在歧义，已禁用该缓存键")
+			}
+		}
 	} else {
+		if len(key)+len(value) > c.maxBytes {
+			log.Printf("[Reasoning-Cache] 单条推理超过缓存容量，未登记")
+			return
+		}
 		c.order = append(c.order, key)
 	}
 	c.entries[key] = value
 	c.usedBytes += len(key) + len(value)
+	evicted := 0
 	for len(c.order) > c.max || c.usedBytes > c.maxBytes {
 		oldest := c.order[0]
 		c.order = c.order[1:]
 		if old, exists := c.entries[oldest]; exists {
 			c.usedBytes -= len(oldest) + len(old)
 			delete(c.entries, oldest)
+			evicted++
 		}
+	}
+	if evicted > 0 {
+		log.Printf("[Reasoning-Cache] 容量淘汰 %d 项", evicted)
 	}
 }
 
 func (c *reasoningContentCache) get(key string) string {
+	value, _ := c.lookup(key)
+	return value
+}
+
+// lookup 区分未命中和已标记歧义；歧义键不能再通过工具 ID 猜测恢复。
+func (c *reasoningContentCache) lookup(key string) (string, bool) {
 	if c == nil || key == "" {
-		return ""
+		return "", false
 	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.entries[key]
+	value, exists := c.entries[key]
+	return value, exists
 }
 
 // reset 仅供测试清理全局状态。
@@ -114,20 +143,20 @@ func reasoningFingerprint(text string) string {
 
 // storeReasoning 保存一条 assistant 文本与其 reasoning_content 的映射。
 // reasoning 为空或文本为空时不保存（无法作为回传键）。
-func storeReasoning(text, reasoning string) {
+func storeReasoning(text, reasoning string, scopes ...string) {
 	if strings.TrimSpace(text) == "" || reasoning == "" {
 		return
 	}
-	reasoningCache.put(reasoningFingerprint(text), reasoning)
+	storeReasoningForAssistantMessage(types.OpenAIMessage{Role: "assistant", Content: text}, reasoning, scopes...)
 }
 
 // lookupReasoning 查询指定 assistant 文本对应的 reasoning_content。
 // 仅用于客户端回传历史时缺失明文 thinking 的兜底补回。
-func lookupReasoning(text string) string {
+func lookupReasoning(text string, scopes ...string) string {
 	if strings.TrimSpace(text) == "" {
 		return ""
 	}
-	return reasoningCache.get(reasoningFingerprint(text))
+	return lookupReasoningForAssistantMessage(types.OpenAIMessage{Role: "assistant", Content: text}, scopes...)
 }
 
 // reasoningToolCallIdentity 是用于关联同一条 assistant 工具调用消息的稳定表示。
@@ -191,62 +220,60 @@ func reasoningToolCallFingerprint(id string) string {
 // storeReasoningForAssistantMessage 保存完整助手消息与 reasoning_content 的关联。
 // 工具调用消息没有文本也必须缓存，否则 Claude Code 回传 redacted_thinking 后无法
 // 满足上游对 reasoning_content 原样回传的要求。
-func storeReasoningForAssistantMessage(message types.OpenAIMessage, reasoning string) {
-	if reasoning == "" {
+func storeReasoningForAssistantMessage(message types.OpenAIMessage, reasoning string, scopes ...string) {
+	if reasoning == "" || len(scopes) == 0 || scopes[0] == "" {
 		return
 	}
 	if key := reasoningMessageFingerprint(message); key != "" {
-		reasoningCache.put(key, reasoning)
+		reasoningCache.put(scopedReasoningKey(scopes[0], key), reasoning)
 	}
 	// Claude Code 在上下文压缩后可能裁剪 tool_use.input，但通常保留工具调用 ID。
 	// 因此以 ID 额外保存受控回退键；工具调用 ID 为单轮响应生成，碰撞风险极低。
 	for _, toolCall := range message.ToolCalls {
 		if key := reasoningToolCallFingerprint(toolCall.ID); key != "" {
-			reasoningCache.put(key, reasoning)
+			reasoningCache.put(scopedReasoningKey(scopes[0], key), reasoning)
 		}
 	}
 }
 
 // lookupReasoningForAssistantMessage 查询完整助手消息对应的 reasoning_content。
-// 无工具调用时兼容旧版纯文本缓存；有工具调用时绝不退化为文本匹配，以防将不同的
-// 工具调用错误地关联到同一份 reasoning_content。
-func lookupReasoningForAssistantMessage(message types.OpenAIMessage) string {
+// 只匹配同一来源范围，禁止退回未隔离的全局文本缓存。
+func lookupReasoningForAssistantMessage(message types.OpenAIMessage, scopes ...string) string {
+	if len(scopes) == 0 || scopes[0] == "" {
+		return ""
+	}
 	if key := reasoningMessageFingerprint(message); key != "" {
-		if reasoning := reasoningCache.get(key); reasoning != "" {
+		if reasoning, exists := reasoningCache.lookup(scopedReasoningKey(scopes[0], key)); exists {
 			return reasoning
 		}
 	}
+	var recovered string
 	for _, toolCall := range message.ToolCalls {
 		if key := reasoningToolCallFingerprint(toolCall.ID); key != "" {
-			if reasoning := reasoningCache.get(key); reasoning != "" {
-				return reasoning
+			if reasoning, exists := reasoningCache.lookup(scopedReasoningKey(scopes[0], key)); exists {
+				if reasoning == "" {
+					return ""
+				}
+				if recovered != "" && recovered != reasoning {
+					return ""
+				}
+				recovered = reasoning
 			}
 		}
 	}
-	if len(message.ToolCalls) == 0 {
-		return lookupReasoning(extractOpenAIMessageText(message))
-	}
-	return ""
+	return recovered
 }
 
 // reasoningContentForAssistantMessage 返回应随 assistant 历史消息回传的推理内容。
-// 有原始 thinking 或缓存命中时直接使用原值；带工具调用、已见 redacted_thinking，
-// 或渠道已确认严格校验时，原值永久不可恢复则返回兼容占位，避免 400。
-func reasoningContentForAssistantMessage(message types.OpenAIMessage, force bool) string {
-	if reasoning := lookupReasoningForAssistantMessage(message); reasoning != "" {
-		return reasoning
-	}
-	if force || len(message.ToolCalls) > 0 {
-		return missingReasoningContentFallback
-	}
-	return ""
+// 仅返回缓存中的原文，必需历史缺失由请求构造层显式报错。
+func reasoningContentForAssistantMessage(message types.OpenAIMessage, scope string) string {
+	return lookupReasoningForAssistantMessage(message, scope)
 }
 
-// CacheClaudeResponseReasoning 将任意上游转换后的 Claude 响应登记到 Chat
-// reasoning 缓存。这样当故障转移从 Claude/Gemini/Responses 到要求
-// reasoning_content 的 Chat 渠道时，仍可保留上一轮的思考上下文。
-func CacheClaudeResponseReasoning(response *types.ClaudeResponse) {
-	if response == nil || response.Role != "assistant" {
+// CacheClaudeResponseReasoning 在入口已知会话和来源时登记缓存。
+// 旧调用没有来源范围时不缓存；跨渠道续接依赖客户端回传原文。
+func CacheClaudeResponseReasoning(response *types.ClaudeResponse, scopes ...string) {
+	if response == nil || response.Role != "assistant" || len(scopes) == 0 || scopes[0] == "" {
 		return
 	}
 
@@ -279,7 +306,7 @@ func CacheClaudeResponseReasoning(response *types.ClaudeResponse) {
 		Role:      "assistant",
 		Content:   text.String(),
 		ToolCalls: toolCalls,
-	}, reasoning.String())
+	}, reasoning.String(), scopes[0])
 }
 
 // clearReasoningContentCacheForTest 清空全局缓存，仅供测试使用。

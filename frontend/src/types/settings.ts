@@ -10,6 +10,8 @@ export interface AppSettings {
     /** CC Switch 可执行文件路径；空串表示未配置 */
     ccSwitchPath: string
   }
+  disguise: DisguiseSettings
+  gateway: GatewaySettings
   assistant: {
     /** 助手模型 ID（渠道分组的匹配词）；空串表示自动（走各协议兜底分组） */
     model: string
@@ -38,6 +40,48 @@ export interface PromptEntry {
   content: string
   /** 后端保存时刷新的毫秒时间戳 */
   updatedAt: number
+}
+
+/** 客户端伪装版本设置 */
+export interface DisguiseSettings {
+  /** 自定义 Claude Code 伪装版本号，为空表示跟随最新或内置默认值 */
+  claudeCodeVersion: string
+  /** 自定义 Codex CLI 伪装版本号，为空表示跟随最新或内置默认值 */
+  codexVersion: string
+  /** 是否定时从 npm registry 自动同步最新版本（默认 true） */
+  autoUpdateFromRegistry: boolean
+}
+
+/** 请求、日志与存储策略；路径和持久化开关在重启后生效 */
+export interface GatewaySettings {
+  enableRequestLogs: boolean
+  enableResponseLogs: boolean
+  requestTimeout: number
+  responseHeaderTimeout: number
+  streamIdleTimeout: number
+  maxRequestBodySizeMB: number
+  metricsRetentionDays: number
+  metricsPersistenceEnabled: boolean
+  logDBPath: string
+  enableCORS: boolean
+  corsOrigin: string
+}
+
+export interface ClientDisguiseStatus {
+  claudeCodeDisguiseEnabled: boolean
+  codexDisguiseEnabled: boolean
+  effectiveClaudeVersion: string
+  effectiveCodexVersion: string
+  latestClaudeVersion: string
+  latestCodexVersion: string
+  sync: {
+    syncing: boolean
+    lastAttemptAt: number
+    claudeLastSuccessAt: number
+    codexLastSuccessAt: number
+    claudeError: string
+    codexError: string
+  }
 }
 
 export interface ContentSafetySettings {

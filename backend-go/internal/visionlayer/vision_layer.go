@@ -388,7 +388,7 @@ func describeImagesOnChannel(
 				continue
 			}
 
-			timeout := time.Duration(envCfg.RequestTimeout) * time.Millisecond
+			timeout := time.Duration(envCfg.Current().RequestTimeout) * time.Millisecond
 			channelScheduler.RecordRequestStart(baseURL, apiKey, selection.ChannelIndex, kind)
 			metricsRequestID := channelScheduler.RecordRequestConnected(baseURL, apiKey, visionModel, selection.ChannelIndex, kind)
 			response, requestErr := httpclient.SendForUpstream(request, timeout, cfgManager, upstreamCopy, apiKey)

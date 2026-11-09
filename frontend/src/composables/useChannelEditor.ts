@@ -33,6 +33,8 @@ export type ChannelFormState = {
   injectDummyThoughtSignature: boolean
   stripThoughtSignature: boolean
   disablePromptCacheKey: boolean
+  reasoningOutputMode: 'preserve' | 'hide'
+  parseEmbeddedReasoning: boolean
   description: string
   apiKeys: string[]
   modelMapping: Record<string, string[]>
@@ -73,6 +75,8 @@ export function defaultChannelForm(channelType: string): ChannelFormState {
     injectDummyThoughtSignature: false,
     stripThoughtSignature: false,
     disablePromptCacheKey: false,
+    reasoningOutputMode: 'preserve',
+    parseEmbeddedReasoning: false,
     description: '',
     apiKeys: [],
     modelMapping: {},
@@ -197,6 +201,8 @@ export function buildChannelPayload(
     injectDummyThoughtSignature: isImages ? false : form.injectDummyThoughtSignature,
     stripThoughtSignature: isImages ? false : form.stripThoughtSignature,
     disablePromptCacheKey: isImages ? false : form.disablePromptCacheKey,
+    reasoningOutputMode: form.reasoningOutputMode,
+    parseEmbeddedReasoning: form.parseEmbeddedReasoning,
     description: form.description.trim(),
     apiKeys: form.apiKeys.filter(key => key.trim()),
     modelMapping: mapping,
@@ -255,6 +261,8 @@ export function useChannelEditor(channelType: MaybeRefOrGetter<string>) {
     form.injectDummyThoughtSignature = !!channel.injectDummyThoughtSignature
     form.stripThoughtSignature = !!channel.stripThoughtSignature
     form.disablePromptCacheKey = !!channel.disablePromptCacheKey
+    form.reasoningOutputMode = channel.reasoningOutputMode || 'preserve'
+    form.parseEmbeddedReasoning = !!channel.parseEmbeddedReasoning
     form.description = channel.description || ''
     form.apiKeys = [...channel.apiKeys]
     form.modelMapping = cloneModelMapping(channel.modelMapping)

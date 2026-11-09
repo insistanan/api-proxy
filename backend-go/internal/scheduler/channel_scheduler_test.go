@@ -19,6 +19,9 @@ import (
 // createTestConfigManager 创建测试用配置管理器
 func createTestConfigManager(t *testing.T, cfg config.Config) (*config.ConfigManager, func()) {
 	t.Helper()
+	if cfg.Settings.Gateway == (config.GatewaySettings{}) {
+		cfg.Settings.Gateway = config.DefaultGatewaySettings()
+	}
 
 	// 结构体测试配置没有经过 JSON 默认值解析，写盘前显式补齐共享并发上限。
 	for _, list := range [][]config.UpstreamConfig{cfg.Upstream, cfg.ResponsesUpstream, cfg.GeminiUpstream, cfg.ChatUpstream, cfg.ImagesUpstream} {
