@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 	"strings"
 
-	"github.com/BenedictKing/api-proxy/internal/types"
+	"github.com/insistanan/api-proxy/internal/types"
 )
 
 func extractUserText(value interface{}) string {

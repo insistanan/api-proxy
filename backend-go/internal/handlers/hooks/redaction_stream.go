@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/BenedictKing/api-proxy/internal/sensitive"
-	"github.com/BenedictKing/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/sensitive"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 // Replacer 可并发复用，避免每个 SSE 字段都重建替换表。

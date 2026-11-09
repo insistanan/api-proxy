@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/config"
 )
 
 // ChannelInfo 渠道信息（用于排序）

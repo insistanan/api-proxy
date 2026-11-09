@@ -15,8 +15,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/BenedictKing/api-proxy/internal/atomicfile"
-	"github.com/BenedictKing/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/atomicfile"
+	"github.com/insistanan/api-proxy/internal/utils"
 	"gopkg.in/yaml.v3"
 )
 

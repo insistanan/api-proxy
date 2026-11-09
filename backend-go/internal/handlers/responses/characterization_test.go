@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/types"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/types"
 )
 
 func TestIsResponsesImageGenerationRequest(t *testing.T) {

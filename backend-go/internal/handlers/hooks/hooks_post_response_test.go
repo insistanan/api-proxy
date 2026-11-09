@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/sensitive"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/sensitive"
 )
 
 // newPostResponseHookForTest 按给定内容安全设置组装响应方向安全 Hook。

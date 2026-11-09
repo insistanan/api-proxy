@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/sensitive"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/sensitive"
 )
 
 // newAllowlistTestSnapshot 组装带 allowlist / customRules 的检测器快照。

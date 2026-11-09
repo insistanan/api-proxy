@@ -4,11 +4,11 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/BenedictKing/api-proxy/internal/circuit"
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/modelcatalog"
-	"github.com/BenedictKing/api-proxy/internal/scheduler"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/circuit"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/modelcatalog"
+	"github.com/insistanan/api-proxy/internal/scheduler"
 )
 
 // MappingTargetChannelDTO 模型映射"目标渠道"下拉的候选项。

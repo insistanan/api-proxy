@@ -5,9 +5,9 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/types"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/types"
 )
 
 // Provider 提供商接口

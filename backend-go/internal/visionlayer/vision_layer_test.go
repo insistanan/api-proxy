@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/scheduler"
-	"github.com/BenedictKing/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/scheduler"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 func TestPrepareRequestSkipsImagesProtocolImageToImage(t *testing.T) {

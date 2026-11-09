@@ -12,15 +12,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/converters"
-	"github.com/BenedictKing/api-proxy/internal/handlers/hooks"
-	"github.com/BenedictKing/api-proxy/internal/handlers/proxycore"
-	"github.com/BenedictKing/api-proxy/internal/middleware"
-	"github.com/BenedictKing/api-proxy/internal/scheduler"
-	"github.com/BenedictKing/api-proxy/internal/types"
-	"github.com/BenedictKing/api-proxy/internal/utils"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/converters"
+	"github.com/insistanan/api-proxy/internal/handlers/hooks"
+	"github.com/insistanan/api-proxy/internal/handlers/proxycore"
+	"github.com/insistanan/api-proxy/internal/middleware"
+	"github.com/insistanan/api-proxy/internal/scheduler"
+	"github.com/insistanan/api-proxy/internal/types"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 // Handler Gemini API 代理处理器

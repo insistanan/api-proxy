@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/metrics"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/metrics"
 	"github.com/stretchr/testify/require"
 )
 

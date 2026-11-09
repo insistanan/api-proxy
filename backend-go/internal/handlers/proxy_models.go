@@ -3,9 +3,9 @@ package handlers
 import (
 	"net/http"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/modelcatalog"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/modelcatalog"
 )
 
 // ProxyModelsHandler 返回本代理自身暴露的模型列表（即 /v1/models 的内容），

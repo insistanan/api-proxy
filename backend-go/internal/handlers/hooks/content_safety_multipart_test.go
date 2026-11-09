@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/utils"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 // buildImagesEditForm 构造 /v1/images/edits 形态的表单：prompt 文本字段 + 图片文件部件。

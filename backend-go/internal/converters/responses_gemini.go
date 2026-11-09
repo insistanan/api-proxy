@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/BenedictKing/api-proxy/internal/types"
-	"github.com/BenedictKing/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/types"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 func ConvertResponsesToGeminiRequest(model string, sess *types.Session, req *types.ResponsesRequest) ([]byte, error) {

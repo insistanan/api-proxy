@@ -3,7 +3,7 @@ package sensitive
 import (
 	"sync/atomic"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/config"
 )
 
 // WordMatch 描述一次敏感词命中。Start 和 End 是原始 UTF-8 字符串的字节偏移，End 不包含在命中范围内。

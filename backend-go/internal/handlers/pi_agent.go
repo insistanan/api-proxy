@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/piagent"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/piagent"
 )
 
 // PiAgentAPI 聚合 pi-agent 配置管理的互斥锁与配置存储，

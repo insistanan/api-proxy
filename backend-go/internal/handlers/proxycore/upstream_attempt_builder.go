@@ -10,10 +10,10 @@ package proxycore
 import (
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/scheduler"
-	"github.com/BenedictKing/api-proxy/internal/urlhealth"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/scheduler"
+	"github.com/insistanan/api-proxy/internal/urlhealth"
 )
 
 // AttemptBuilder 以链式 setter 收敛 UpstreamAttempt 的构造。

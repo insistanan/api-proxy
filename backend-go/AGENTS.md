@@ -4,7 +4,7 @@ Go 后端：api-proxy 代理网关核心。跨模块的架构图、请求流转�
 
 ## 技术栈
 
-- Go 1.25（`go.mod`），module `github.com/BenedictKing/api-proxy`，`CGO_ENABLED=0` 纯静态构建
+- Go 1.25（`go.mod`），module `github.com/insistanan/api-proxy`，`CGO_ENABLED=0` 纯静态构建
 - Web 框架：gin v1.10.0；**SSE 流式全部手写**（`utils/sse.go`、`handlers/streams`），无 websocket 库
 - 数据库：modernc.org/sqlite（纯 Go SQLite），`database/sql` 原生 SQL，**无 ORM、无 migration 框架**（建表靠 `CREATE TABLE IF NOT EXISTS`）
 - 其他直接依赖：tidwall/gjson + sjson（JSON 操作）、fsnotify（配置热重载）、godotenv、go-toml、klauspost/compress + andybalholm/brotli（响应解压）、stretchr/testify（测试）

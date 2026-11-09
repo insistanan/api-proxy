@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/config"
 )
 
 // WebAuthMiddleware Web 访问控制中间件。

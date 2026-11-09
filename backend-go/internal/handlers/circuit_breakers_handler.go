@@ -4,8 +4,8 @@ package handlers
 import (
 	"net/http"
 
-	"github.com/BenedictKing/api-proxy/internal/scheduler"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/scheduler"
 )
 
 // GetCircuitBreakers 返回全部渠道熔断器快照。

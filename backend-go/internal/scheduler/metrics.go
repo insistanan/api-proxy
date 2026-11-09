@@ -3,9 +3,9 @@ package scheduler
 import (
 	"log"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/types"
-	"github.com/BenedictKing/api-proxy/internal/urlhealth"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/types"
+	"github.com/insistanan/api-proxy/internal/urlhealth"
 )
 
 // RecordSuccess 记录渠道成功（使用 baseURL + apiKey + channelIndex）

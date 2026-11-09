@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/BenedictKing/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 // FilterPrivateParams 递归过滤 JSON 请求体中所有以下划线 `_` 开头的内部私有字段，

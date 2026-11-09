@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/llmgate"
-	"github.com/BenedictKing/api-proxy/internal/metrics"
-	"github.com/BenedictKing/api-proxy/internal/scheduler"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/llmgate"
+	"github.com/insistanan/api-proxy/internal/metrics"
+	"github.com/insistanan/api-proxy/internal/scheduler"
 )
 
 // newAssistantTestEnv 组装可运行的助手服务：临时配置 + 可编程模型上游。

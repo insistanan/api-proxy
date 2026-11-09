@@ -9,7 +9,7 @@ import (
 	"log"
 	"strings"
 
-	"github.com/BenedictKing/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 // PatchTokensInEventWithCache 修补事件中的 token 字段。

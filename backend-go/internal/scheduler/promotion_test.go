@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/circuit"
-	"github.com/BenedictKing/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/circuit"
+	"github.com/insistanan/api-proxy/internal/config"
 	"github.com/stretchr/testify/require"
 )
 

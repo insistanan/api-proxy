@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/config"
 )
 
 func GetChannelPools(cfgManager *config.ConfigManager, kind string) gin.HandlerFunc {

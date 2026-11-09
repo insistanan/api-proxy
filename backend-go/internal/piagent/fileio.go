@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/atomicfile"
+	"github.com/insistanan/api-proxy/internal/atomicfile"
 )
 
 // ErrLocked 表示 pi-agent（proper-lockfile）正持有目标文件锁。

@@ -14,8 +14,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/scheduler"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/scheduler"
 )
 
 // 渠道挑选顺序：messages → responses → chat → gemini。

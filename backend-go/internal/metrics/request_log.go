@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/logger"
+	"github.com/insistanan/api-proxy/internal/logger"
 )
 
 const defaultRequestLogLimit = 50

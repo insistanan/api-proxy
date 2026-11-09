@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/BenedictKing/api-proxy/internal/types"
+	"github.com/insistanan/api-proxy/internal/types"
 )
 
 // ExtractResponsesReasoningText 从 Responses reasoning item 的 summary/content 抽出文本。

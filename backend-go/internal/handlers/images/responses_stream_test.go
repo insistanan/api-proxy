@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/types"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/types"
 	"github.com/stretchr/testify/require"
 )
 

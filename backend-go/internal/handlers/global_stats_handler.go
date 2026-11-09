@@ -3,8 +3,8 @@ package handlers
 import (
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/metrics"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/metrics"
 )
 
 // GetGlobalStatsHistory 获取全局统计历史数据

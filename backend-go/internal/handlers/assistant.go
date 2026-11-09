@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/BenedictKing/api-proxy/internal/assistant"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/assistant"
 )
 
 // AssistantAPI 包装 AI 配置助手的管理端路由。

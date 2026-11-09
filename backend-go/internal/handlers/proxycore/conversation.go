@@ -3,9 +3,9 @@ package proxycore
 import (
 	"log"
 
-	"github.com/BenedictKing/api-proxy/internal/conversation"
-	"github.com/BenedictKing/api-proxy/internal/scheduler"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/conversation"
+	"github.com/insistanan/api-proxy/internal/scheduler"
 )
 
 // ExtractConversationID 从请求中提取明确的对话标识。

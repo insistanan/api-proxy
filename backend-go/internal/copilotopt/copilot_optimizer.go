@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/BenedictKing/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 // SubagentMarker 是 Claude Code 子代理请求中的标识符。

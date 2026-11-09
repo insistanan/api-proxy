@@ -4,11 +4,11 @@ package messages
 import (
 	"net/http"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/middleware"
-	"github.com/BenedictKing/api-proxy/internal/modelcatalog"
-	"github.com/BenedictKing/api-proxy/internal/scheduler"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/middleware"
+	"github.com/insistanan/api-proxy/internal/modelcatalog"
+	"github.com/insistanan/api-proxy/internal/scheduler"
 )
 
 // ModelsHandler 处理 /v1/models 请求。

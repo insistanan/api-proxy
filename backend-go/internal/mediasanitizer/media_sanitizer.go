@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/BenedictKing/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 // UnsupportedImageMarker 是图片被降级为纯文本时的占位提示符。

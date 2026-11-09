@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/logger"
-	"github.com/BenedictKing/api-proxy/internal/metrics"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/logger"
+	"github.com/insistanan/api-proxy/internal/metrics"
 )
 
 func GetRequestLogs(store *metrics.RequestLogStore) gin.HandlerFunc {

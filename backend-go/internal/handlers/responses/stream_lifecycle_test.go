@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/converters"
-	"github.com/BenedictKing/api-proxy/internal/session"
-	"github.com/BenedictKing/api-proxy/internal/types"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/converters"
+	"github.com/insistanan/api-proxy/internal/session"
+	"github.com/insistanan/api-proxy/internal/types"
 	"github.com/stretchr/testify/require"
 )
 

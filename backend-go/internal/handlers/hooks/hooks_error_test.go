@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/BenedictKing/api-proxy/internal/sensitive"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/sensitive"
 )
 
 func TestWriteAttachedContentSafetyErrorUsesProtocolJSONShape(t *testing.T) {

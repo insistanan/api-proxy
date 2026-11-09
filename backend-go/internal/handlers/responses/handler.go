@@ -10,17 +10,17 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/converters"
-	"github.com/BenedictKing/api-proxy/internal/handlers/hooks"
-	"github.com/BenedictKing/api-proxy/internal/handlers/proxycore"
-	"github.com/BenedictKing/api-proxy/internal/handlers/streams"
-	"github.com/BenedictKing/api-proxy/internal/providers"
-	"github.com/BenedictKing/api-proxy/internal/scheduler"
-	"github.com/BenedictKing/api-proxy/internal/session"
-	"github.com/BenedictKing/api-proxy/internal/types"
-	"github.com/BenedictKing/api-proxy/internal/utils"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/converters"
+	"github.com/insistanan/api-proxy/internal/handlers/hooks"
+	"github.com/insistanan/api-proxy/internal/handlers/proxycore"
+	"github.com/insistanan/api-proxy/internal/handlers/streams"
+	"github.com/insistanan/api-proxy/internal/providers"
+	"github.com/insistanan/api-proxy/internal/scheduler"
+	"github.com/insistanan/api-proxy/internal/session"
+	"github.com/insistanan/api-proxy/internal/types"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 // ErrEmptyStreamResponse 表示上游返回 HTTP 200，但没有产出任何 output。

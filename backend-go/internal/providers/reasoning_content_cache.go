@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/BenedictKing/api-proxy/internal/types"
+	"github.com/insistanan/api-proxy/internal/types"
 )
 
 // reasoningContentCache 保存 "assistant 消息指纹 → reasoning_content" 的进程内缓存。

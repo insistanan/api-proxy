@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/config"
 )
 
 // pickDialogTimeout 文件选择对话框等待上限。

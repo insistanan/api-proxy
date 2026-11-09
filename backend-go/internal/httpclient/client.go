@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/config"
 )
 
 // ipv4Dialer 保留原有拨号器名称以兼容现有测试和调用点。

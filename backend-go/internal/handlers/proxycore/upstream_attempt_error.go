@@ -5,9 +5,9 @@
 package proxycore
 
 import (
-	"github.com/BenedictKing/api-proxy/internal/handlers/hooks"
-	"github.com/BenedictKing/api-proxy/internal/providers"
-	"github.com/BenedictKing/api-proxy/internal/proxy"
+	"github.com/insistanan/api-proxy/internal/handlers/hooks"
+	"github.com/insistanan/api-proxy/internal/providers"
+	"github.com/insistanan/api-proxy/internal/proxy"
 
 	"errors"
 	"net/http"

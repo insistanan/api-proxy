@@ -7,10 +7,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/metrics"
-	"github.com/BenedictKing/api-proxy/internal/scheduler"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/metrics"
+	"github.com/insistanan/api-proxy/internal/scheduler"
 	"github.com/tidwall/gjson"
 )
 

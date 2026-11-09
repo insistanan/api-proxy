@@ -5,10 +5,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/core/channelcrud"
-	"github.com/BenedictKing/api-proxy/internal/httpclient"
-	"github.com/BenedictKing/api-proxy/internal/scheduler"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/core/channelcrud"
+	"github.com/insistanan/api-proxy/internal/httpclient"
+	"github.com/insistanan/api-proxy/internal/scheduler"
 )
 
 // Crud 返回本协议专用的渠道管理 handler 集合。

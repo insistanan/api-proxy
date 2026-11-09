@@ -9,9 +9,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/logger"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/logger"
 )
 
 const requestLifecycleKey = "__request_log_lifecycle"

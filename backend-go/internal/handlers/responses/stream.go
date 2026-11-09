@@ -13,16 +13,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/converters"
-	"github.com/BenedictKing/api-proxy/internal/handlers/hooks"
-	"github.com/BenedictKing/api-proxy/internal/handlers/proxycore"
-	"github.com/BenedictKing/api-proxy/internal/logger"
-	"github.com/BenedictKing/api-proxy/internal/scheduler"
-	"github.com/BenedictKing/api-proxy/internal/session"
-	"github.com/BenedictKing/api-proxy/internal/types"
-	"github.com/BenedictKing/api-proxy/internal/utils"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/converters"
+	"github.com/insistanan/api-proxy/internal/handlers/hooks"
+	"github.com/insistanan/api-proxy/internal/handlers/proxycore"
+	"github.com/insistanan/api-proxy/internal/logger"
+	"github.com/insistanan/api-proxy/internal/scheduler"
+	"github.com/insistanan/api-proxy/internal/session"
+	"github.com/insistanan/api-proxy/internal/types"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 // hasResponsesContent 判断 SSE 事件是否包含实际 output。兼容只在

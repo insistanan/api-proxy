@@ -9,9 +9,9 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/httpclient"
-	"github.com/BenedictKing/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/httpclient"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 const (

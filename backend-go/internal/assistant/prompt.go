@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/config"
 )
 
 // 配置知识手册 + 当前配置摘要 + 行动协议，拼装为系统提示词。

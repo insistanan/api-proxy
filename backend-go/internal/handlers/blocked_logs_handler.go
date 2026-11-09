@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/conversation"
-	"github.com/BenedictKing/api-proxy/internal/sensitive"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/conversation"
+	"github.com/insistanan/api-proxy/internal/sensitive"
 )
 
 // activeConversationWindow 「活跃会话」筛选的判定窗口：

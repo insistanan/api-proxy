@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/atomicfile"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/atomicfile"
 	"gopkg.in/yaml.v3"
 )
 

@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/BenedictKing/api-proxy/internal/handlers/hooks"
-	"github.com/BenedictKing/api-proxy/internal/sensitive"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/handlers/hooks"
+	"github.com/insistanan/api-proxy/internal/sensitive"
 )
 
 // GetGatePending 返回当前等待用户决定的危险命令待确认列表。

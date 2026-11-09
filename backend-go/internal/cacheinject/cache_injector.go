@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 
-	"github.com/BenedictKing/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 // MaxCacheBreakpoints 是 Anthropic / Bedrock Prompt Caching 允许的最大断点数。

@@ -11,8 +11,8 @@ import (
 	"log"
 	"strings"
 
-	"github.com/BenedictKing/api-proxy/internal/utils"
 	"github.com/google/uuid"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 // ParseSSEEventData 解析单个 SSE 事件的第一段 JSON data。

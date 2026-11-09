@@ -7,8 +7,8 @@ import (
 	"encoding/json"
 	"sort"
 
-	"github.com/BenedictKing/api-proxy/internal/providers"
-	"github.com/BenedictKing/api-proxy/internal/types"
+	"github.com/insistanan/api-proxy/internal/providers"
+	"github.com/insistanan/api-proxy/internal/types"
 )
 
 func (ctx *Context) captureReasoningContext(data map[string]interface{}) {

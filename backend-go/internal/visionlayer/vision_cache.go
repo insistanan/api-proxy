@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/scheduler"
+	"github.com/insistanan/api-proxy/internal/scheduler"
 )
 
 func buildImageCacheKey(fingerprint string, kind scheduler.ChannelKind, model string) string {

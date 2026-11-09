@@ -1,4 +1,4 @@
-module github.com/BenedictKing/api-proxy
+module github.com/insistanan/api-proxy
 
 go 1.25
 

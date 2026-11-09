@@ -3,8 +3,8 @@ package handlers
 import (
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/config"
 )
 
 // HealthCheck 健康检查处理器

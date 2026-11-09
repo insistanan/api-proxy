@@ -4,12 +4,12 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/conversation"
-	"github.com/BenedictKing/api-proxy/internal/scheduler"
-	"github.com/BenedictKing/api-proxy/internal/session"
-	"github.com/BenedictKing/api-proxy/internal/visionlayer"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/conversation"
+	"github.com/insistanan/api-proxy/internal/scheduler"
+	"github.com/insistanan/api-proxy/internal/session"
+	"github.com/insistanan/api-proxy/internal/visionlayer"
 )
 
 type routeOverrideRequest struct {

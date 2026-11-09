@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/utils"
 
 	"github.com/fsnotify/fsnotify"
 )

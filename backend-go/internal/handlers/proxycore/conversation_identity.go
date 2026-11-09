@@ -8,9 +8,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/BenedictKing/api-proxy/internal/conversation"
-	"github.com/BenedictKing/api-proxy/internal/utils"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/conversation"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 // ResolveConversationIdentity 只把语义明确的 conversation/thread/composer 标识

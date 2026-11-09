@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/BenedictKing/api-proxy/internal/logger"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/logger"
 )
 
 func GetSystemLogs(store *logger.Store) gin.HandlerFunc {

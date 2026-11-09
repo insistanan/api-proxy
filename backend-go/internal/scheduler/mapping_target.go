@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/config"
 )
 
 // SelectMappedChannel 为模型映射中显式指定的目标渠道取得许可（按稳定渠道 ID 定位）。

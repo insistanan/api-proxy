@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/circuit"
-	"github.com/BenedictKing/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/circuit"
+	"github.com/insistanan/api-proxy/internal/config"
 )
 
 // newPermitTestEnv 构造启用熔断的单渠道测试环境。

@@ -13,7 +13,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/BenedictKing/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 // CandidateRetryState 收拢单个候选（BaseURL×Key）生命周期的 Key 失败与

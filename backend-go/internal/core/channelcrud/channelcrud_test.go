@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/atomicfile"
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/metrics"
-	"github.com/BenedictKing/api-proxy/internal/scheduler"
-	"github.com/BenedictKing/api-proxy/internal/session"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/atomicfile"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/metrics"
+	"github.com/insistanan/api-proxy/internal/scheduler"
+	"github.com/insistanan/api-proxy/internal/session"
 )
 
 func TestPromotionInputValidationBeforeWrite(t *testing.T) {

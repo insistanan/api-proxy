@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/skills"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/skills"
 )
 
 const (

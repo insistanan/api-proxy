@@ -10,10 +10,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/handlers/proxycore"
-	"github.com/BenedictKing/api-proxy/internal/utils"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/handlers/proxycore"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 // buildImagesResponsesRequest 将 Images 的图片模型和生成参数放进 image_generation

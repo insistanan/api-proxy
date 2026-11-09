@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/config"
 )
 
 // 行动协议：模型在回复中嵌入 ```assistant-action 代码块，块内是一个 JSON 对象。

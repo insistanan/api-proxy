@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/BenedictKing/api-proxy/internal/types"
+	"github.com/insistanan/api-proxy/internal/types"
 )
 
 func TestConvertResponsesPassthroughRequest_ModelMappingPreservesBody(t *testing.T) {

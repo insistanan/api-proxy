@@ -9,9 +9,9 @@ import (
 	"context"
 	"log"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/scheduler"
-	"github.com/BenedictKing/api-proxy/internal/urlhealth"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/scheduler"
+	"github.com/insistanan/api-proxy/internal/urlhealth"
 )
 
 // TryWithModelMappingFailover 按模型映射执行上游故障转移。

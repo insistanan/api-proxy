@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/atomicfile"
+	"github.com/insistanan/api-proxy/internal/atomicfile"
 )
 
 // waitForConfig 等待配置文件达到期望状态（重载是异步防抖的）。

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 // AddedUpstream 记录新增渠道的稳定标识和当前位置。

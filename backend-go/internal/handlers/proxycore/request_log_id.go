@@ -4,9 +4,9 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/BenedictKing/api-proxy/internal/logger"
-	"github.com/BenedictKing/api-proxy/internal/utils"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/logger"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 func BindRequestLogID(c *gin.Context) string {

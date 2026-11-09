@@ -3,16 +3,16 @@
 package main
 
 import (
-	"github.com/BenedictKing/api-proxy/internal/core/channelcrud"
-	"github.com/BenedictKing/api-proxy/internal/handlers"
-	"github.com/BenedictKing/api-proxy/internal/handlers/chat"
-	"github.com/BenedictKing/api-proxy/internal/handlers/gemini"
-	"github.com/BenedictKing/api-proxy/internal/handlers/images"
-	"github.com/BenedictKing/api-proxy/internal/handlers/messages"
-	"github.com/BenedictKing/api-proxy/internal/handlers/responses"
-	"github.com/BenedictKing/api-proxy/internal/metrics"
-	"github.com/BenedictKing/api-proxy/internal/scheduler"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/core/channelcrud"
+	"github.com/insistanan/api-proxy/internal/handlers"
+	"github.com/insistanan/api-proxy/internal/handlers/chat"
+	"github.com/insistanan/api-proxy/internal/handlers/gemini"
+	"github.com/insistanan/api-proxy/internal/handlers/images"
+	"github.com/insistanan/api-proxy/internal/handlers/messages"
+	"github.com/insistanan/api-proxy/internal/handlers/responses"
+	"github.com/insistanan/api-proxy/internal/metrics"
+	"github.com/insistanan/api-proxy/internal/scheduler"
 )
 
 // setupAdminAPI 注册 Web 管理界面 API 路由（/api 组）。

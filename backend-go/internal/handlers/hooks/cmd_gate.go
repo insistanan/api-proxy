@@ -11,11 +11,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/llmgate"
-	"github.com/BenedictKing/api-proxy/internal/logger"
-	"github.com/BenedictKing/api-proxy/internal/sensitive"
-	"github.com/BenedictKing/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/llmgate"
+	"github.com/insistanan/api-proxy/internal/logger"
+	"github.com/insistanan/api-proxy/internal/sensitive"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 // CmdGate 危险命令 AI 闸门：命中危险命令后不直接拦截，而是

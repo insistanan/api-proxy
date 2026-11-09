@@ -6,9 +6,9 @@ package proxycore
 import (
 	"net/http"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/proxy"
-	"github.com/BenedictKing/api-proxy/internal/types"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/proxy"
+	"github.com/insistanan/api-proxy/internal/types"
 )
 
 // candidateRetryState 委托 internal/proxy（R4-b：与 HTTP 框架无关的候选

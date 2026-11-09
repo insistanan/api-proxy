@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/BenedictKing/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 var dataURLPattern = regexp.MustCompile(`data:[^,\s]+;base64,[A-Za-z0-9+/=]+`)

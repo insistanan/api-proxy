@@ -15,9 +15,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/sensitive"
-	"github.com/BenedictKing/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/sensitive"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 // ContentSafetyError 是请求前内容安全 Hook 的可识别错误。

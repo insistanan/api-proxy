@@ -10,7 +10,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/config"
 )
 
 // RequestInput 一次协议转换的显式请求输入。

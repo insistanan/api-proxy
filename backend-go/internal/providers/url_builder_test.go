@@ -3,8 +3,8 @@ package providers
 import (
 	"testing"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 // "#"后缀与版本前缀约定的行为锚点测试。单一出处是 utils.BuildUpstreamURL；

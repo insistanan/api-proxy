@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/BenedictKing/api-proxy/internal/utils"
 	"github.com/google/uuid"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 type requestIDContextKey struct{}

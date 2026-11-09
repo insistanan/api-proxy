@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/BenedictKing/api-proxy/internal/sensitive"
-	"github.com/BenedictKing/api-proxy/internal/utils"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/sensitive"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 func TestRestoreAttachedSSEEventAcrossChunksAndFlushesIncompletePrefix(t *testing.T) {

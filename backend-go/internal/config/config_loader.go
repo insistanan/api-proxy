@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/atomicfile"
 	"github.com/fsnotify/fsnotify"
+	"github.com/insistanan/api-proxy/internal/atomicfile"
 )
 
 const (

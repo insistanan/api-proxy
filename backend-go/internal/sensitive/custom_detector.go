@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/config"
 )
 
 // CustomMatch 描述一次自定义规则命中。Original 只用于当前请求内完成替换，

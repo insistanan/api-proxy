@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/skills"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/skills"
 )
 
 // SkillsAPI 聚合 skills 管理的互斥锁，由 main.go 构造并注入路由，

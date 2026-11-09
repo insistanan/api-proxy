@@ -4,7 +4,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 // GetKeyMetrics 获取单个 Key 的指标

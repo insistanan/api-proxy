@@ -21,9 +21,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/atomicfile"
-	"github.com/BenedictKing/api-proxy/internal/piagent"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/atomicfile"
+	"github.com/insistanan/api-proxy/internal/piagent"
 )
 
 // agentPromptContentMaxBytes 单次提交的提示词内容上限（1 MiB），

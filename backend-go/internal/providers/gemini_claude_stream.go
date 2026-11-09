@@ -20,9 +20,9 @@ import (
 	"log"
 	"strings"
 
-	"github.com/BenedictKing/api-proxy/internal/types"
-	"github.com/BenedictKing/api-proxy/internal/utils"
 	"github.com/google/uuid"
+	"github.com/insistanan/api-proxy/internal/types"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 // parseGeminiSSEDataLine 提取一行 SSE 的 data JSON 载荷；非 data 行返回 false。

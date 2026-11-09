@@ -9,7 +9,7 @@ import (
 	"mime/multipart"
 	"strings"
 
-	"github.com/BenedictKing/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/utils"
 )
 
 // imagesIntegerParameter 保留 JSON 数字语义，拒绝小数与溢出，不截断参数值。

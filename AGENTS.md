@@ -9,7 +9,7 @@
 - 内容安全：敏感数据检测、可逆脱敏、危险命令 AI 闸门
 - Go 后端 + Vue 3 前端，前端产物 `go:embed` 嵌入，单二进制单端口（默认 3000）一体化部署
 
-单 Go module：`github.com/BenedictKing/api-proxy`（Go 1.25），无 go workspace。
+单 Go module：`github.com/insistanan/api-proxy`（Go 1.25），无 go workspace。
 
 ## 仓库结构
 

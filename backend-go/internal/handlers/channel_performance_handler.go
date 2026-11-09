@@ -4,8 +4,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/BenedictKing/api-proxy/internal/metrics"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/metrics"
 )
 
 // channelPerformanceReport 是性能观测接口的展示数据，不参与渠道调度。

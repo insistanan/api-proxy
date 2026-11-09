@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/BenedictKing/api-proxy/internal/config"
-	"github.com/BenedictKing/api-proxy/internal/modelcatalog"
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/modelcatalog"
 )
 
 // DiscoverUpstreamModels 通过服务端网络栈获取指定渠道的模型列表。
