@@ -16,6 +16,7 @@ import (
 	"github.com/insistanan/api-proxy/internal/middleware"
 	"github.com/insistanan/api-proxy/internal/scheduler"
 	"github.com/insistanan/api-proxy/internal/types"
+	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
 	"github.com/insistanan/api-proxy/internal/urlhealth"
 	"github.com/insistanan/api-proxy/internal/utils"
 )
@@ -92,6 +93,7 @@ func RunProxyRequest(
 	}
 
 	startTime := time.Now()
+	c.Request = c.Request.WithContext(upstreamcontrol.WithScope(c.Request.Context()))
 
 	// 2. 读取请求体
 	bodyBytes, err := ReadRequestBody(c, envCfg.MaxRequestBodySize)
@@ -212,7 +214,7 @@ func RunProxyRequest(
 	}
 
 	// 8. 多渠道/单渠道分派
-	if channelScheduler.IsMultiChannelModeForModel(spec.Kind, model) {
+	if cfgManager.GetFuzzyModeEnabled() && channelScheduler.IsMultiChannelModeForModel(spec.Kind, model) {
 		handleMultiChannelProxy(c, envCfg, cfgManager, channelScheduler, spec, bodyBytes, model, stream, conversationID, startTime)
 	} else {
 		handleSingleChannelProxy(c, envCfg, cfgManager, channelScheduler, spec, bodyBytes, model, stream, conversationID, nil, 0, startTime)
@@ -378,6 +380,9 @@ func handleSingleChannelProxy(
 	attempt := buildProtocolAttempt(c, envCfg, cfgManager, channelScheduler, spec, bodyBytes, model, stream, conversationID, upstream, channelIndex, startTime, urlResults, spec.Kind, nil, nil, false)
 	attempt.Permit = singlePermit
 	result := attempt.TryWithModelMappingFailover()
+	if !result.Handled && upstreamcontrol.IsLocalError(result.LastError) {
+		result = localAdmissionResult(c, result.LastError, false)
+	}
 	if result.Handled {
 		if result.SuccessKey != "" {
 			MarkConversationSuccess(channelScheduler, conversationID, spec.Kind, channelIndex, upstream.Name)
@@ -477,6 +482,10 @@ func handleMultiChannelProxy(
 			}
 		},
 		func(ctx *gin.Context, failoverErr *FailoverError, lastError error) {
+			if upstreamcontrol.IsLocalError(lastError) {
+				localAdmissionResult(ctx, lastError, false)
+				return
+			}
 			MarkConversationFailure(channelScheduler, conversationID, spec.Kind, lastError)
 			if spec.HandleAllFailed != nil {
 				spec.HandleAllFailed(ctx, failoverErr, lastError)

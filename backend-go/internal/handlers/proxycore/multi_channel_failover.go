@@ -70,9 +70,10 @@ func HandleMultiChannelFailover(
 	var lastFailoverError *FailoverError
 
 	maxChannelAttempts := channelScheduler.GetActiveChannelCountForModel(kind, requestedModel)
-	// 渠道故障转移始终按配置顺序执行。Fuzzy 模式只影响错误分类和最终错误
-	// 格式，不应再决定是否尝试下一个渠道，否则普通模式下第一个渠道故障
-	// 会直接把请求结束掉。
+	// 只有 fuzzy 多渠道允许跨渠道；其他调用入口也不得绕过此边界。
+	if !fuzzyMode && maxChannelAttempts > 1 {
+		maxChannelAttempts = 1
+	}
 
 	for channelAttempt := 0; channelAttempt < maxChannelAttempts; channelAttempt++ {
 		// 检查客户端是否已断开连接
@@ -173,17 +174,22 @@ func HandleMultiChannelFailover(
 
 		if result.AbortFailover {
 			// 显式映射目标不可用且未启用 Fuzzy：不转入下一渠道，直接按该错误结束。
-			log.Printf("[%s-Error] 渠道 [%d] 的映射目标不可用且未启用 Fuzzy 模式，终止渠道故障转移", apiType, channelIndex)
+			log.Printf("[%s-Error] 渠道 [%d] 要求终止渠道故障转移: %v", apiType, channelIndex, result.LastError)
 			handleAllFailed(c, result.FailoverError, result.LastError)
 			return
+		}
+		if result.LastError != nil {
+			lastError = result.LastError
 		}
 
 		if result.FailoverError != nil {
 			lastFailoverError = result.FailoverError
-			if upstream != nil {
-				lastError = fmt.Errorf("渠道 [%d] %s 失败", channelIndex, upstream.Name)
-			} else {
-				lastError = fmt.Errorf("渠道 [%d] 失败", channelIndex)
+			if result.LastError == nil {
+				if upstream != nil {
+					lastError = fmt.Errorf("渠道 [%d] %s 失败", channelIndex, upstream.Name)
+				} else {
+					lastError = fmt.Errorf("渠道 [%d] 失败", channelIndex)
+				}
 			}
 		}
 

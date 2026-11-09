@@ -10,6 +10,8 @@ import { imagesGIFDefaults } from '@/utils/imagesChannelProtocol'
 
 /** 表单草稿：AddChannelModal 的唯一可编辑状态本体。 */
 export type ChannelFormState = {
+  maxConcurrency: number | string | null
+  clientIdentityMode: 'inherit' | 'api' | 'compatibility'
   name: string
   serviceType: 'openai' | 'gemini' | 'claude' | 'responses' | 'chat' | ''
   status: ChannelStatus
@@ -48,6 +50,8 @@ export type ChannelFormState = {
 /** 新渠道的默认草稿。responses 协议默认启用图片理解（历史行为）。 */
 export function defaultChannelForm(channelType: string): ChannelFormState {
   return {
+    maxConcurrency: 5,
+    clientIdentityMode: 'inherit',
     name: '',
     serviceType: channelType === 'images' ? 'openai' : '',
     status: 'active',
@@ -171,6 +175,8 @@ export function buildChannelPayload(
   const urls = deduplicateBaseUrls(form)
   const mapping = isChat ? {} : cloneModelMapping(form.modelMapping)
   const channel: Omit<Channel, 'id' | 'index' | 'latency'> = {
+    maxConcurrency: Number(form.maxConcurrency),
+    clientIdentityMode: form.clientIdentityMode,
     name: form.name.trim(),
     serviceType: form.serviceType as Channel['serviceType'],
     responsesModel: isImages && form.serviceType === 'responses' ? form.responsesModel.trim() : '',
@@ -223,6 +229,8 @@ export function useChannelEditor(channelType: MaybeRefOrGetter<string>) {
 
   /** 载入编辑目标（草稿复制自服务端数据，未保存前不影响 store）。 */
   const loadChannelData = (channel: Channel): void => {
+    form.maxConcurrency = channel.maxConcurrency ?? 5
+    form.clientIdentityMode = channel.clientIdentityMode || 'inherit'
     const currentChannelType = toValue(channelType)
     form.name = channel.name
     form.serviceType = channel.serviceType

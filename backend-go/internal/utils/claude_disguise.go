@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-
-	"github.com/google/uuid"
 )
 
 const (
@@ -85,7 +83,7 @@ func ApplyClaudeCodeBodyDisguise(bodyBytes []byte, sessionID string) []byte {
 	}
 
 	if sessionID == "" {
-		sessionID = uuid.NewString()
+		sessionID = fallbackDisguiseSessionID
 	}
 
 	ensureClaudeCodeBillingSystemBlock(requestPayload)

@@ -557,13 +557,13 @@ func handleStreamSuccess(
 						// 上游请求同时移除了 previous_response_id，也不能把压缩前
 						// 的完整 input 通过 ReplaceSessionAfterBoundary 原样保存。
 						commitErr = sessionManager.CommitTurn(sess.ID, turnItems, sessionTokens,
-							utils.DetectImageContent(originalRequestJSON), streamResponseID)
+							utils.DetectImageContent(originalRequestJSON), streamResponseID, responseUpstreamOwner(resp))
 					} else if c.GetBool(utils.ContextKeyResponsesHistoryBoundary) {
 						commitErr = sessionManager.ReplaceSessionAfterBoundary(sess.ID, turnItems,
-							utils.DetectImageContent(originalRequestJSON), streamResponseID)
+							utils.DetectImageContent(originalRequestJSON), streamResponseID, responseUpstreamOwner(resp))
 					} else {
 						commitErr = sessionManager.CommitTurn(sess.ID, turnItems, sessionTokens,
-							utils.DetectImageContent(originalRequestJSON), streamResponseID)
+							utils.DetectImageContent(originalRequestJSON), streamResponseID, responseUpstreamOwner(resp))
 					}
 					if err := commitErr; err != nil {
 						log.Printf("[Session] 持久化 Responses 流式会话轮次失败: %v", err)

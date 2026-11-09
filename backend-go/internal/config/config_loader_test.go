@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/insistanan/api-proxy/internal/atomicfile"
+	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
 )
 
 // waitForConfig 等待配置文件达到期望状态（重载是异步防抖的）。
@@ -52,6 +53,7 @@ func TestWatcherSurvivesAtomicReplacements(t *testing.T) {
 		cfg := cm.GetConfig()
 		cfg.Upstream = append(cfg.Upstream, UpstreamConfig{
 			Name: name, BaseURL: "https://b.example.com", APIKeys: []string{"k1"},
+			MaxConcurrency: upstreamcontrol.DefaultConcurrency,
 		})
 		data, _ := json.MarshalIndent(cfg, "", "  ")
 		tmp := filepath.Join(dir, ".external-write.tmp")
@@ -108,6 +110,7 @@ func TestWatcherSurvivesBriefDeleteAndRecreate(t *testing.T) {
 	cfg := cm.GetConfig()
 	cfg.Upstream = append(cfg.Upstream, UpstreamConfig{
 		Name: "ch-restored", BaseURL: "https://r.example.com", APIKeys: []string{"k1"},
+		MaxConcurrency: upstreamcontrol.DefaultConcurrency,
 	})
 	data, _ := json.MarshalIndent(cfg, "", "  ")
 	if err := os.WriteFile(configFile, data, 0o600); err != nil {

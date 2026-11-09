@@ -4,63 +4,10 @@ import (
 	"testing"
 
 	"github.com/insistanan/api-proxy/internal/config"
-	"github.com/insistanan/api-proxy/internal/utils"
 )
 
-// "#"后缀与版本前缀约定的行为锚点测试。单一出处是 utils.BuildUpstreamURL；
-// 本文件用各 provider 的真实构建函数（而非旧逻辑的本地模拟副本）验证约定，
-// 另在 utils 包内测试通用入口本身。
-
-func TestOpenAIURL_SkipVersionWithHash(t *testing.T) {
-	tests := []struct {
-		name    string
-		baseURL string
-		want    string
-	}{
-		{"normal", "https://api.openai.com", "https://api.openai.com/v1/chat/completions"},
-		{"with_v1", "https://api.openai.com/v1", "https://api.openai.com/v1/chat/completions"},
-		{"hash_skip", "https://api.example.com#", "https://api.example.com/chat/completions"},
-		{"hash_with_slash", "https://api.example.com/#", "https://api.example.com/chat/completions"},
-		{"trailing_slash", "https://api.example.com/", "https://api.example.com/v1/chat/completions"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := utils.BuildUpstreamURL(tt.baseURL, "/v1", "/chat/completions")
-			if got != tt.want {
-				t.Errorf("BuildUpstreamURL(%q, /v1, /chat/completions) = %q, want %q", tt.baseURL, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestClaudeURL_SkipVersionWithHash(t *testing.T) {
-	tests := []struct {
-		name        string
-		baseURL     string
-		requestPath string
-		want        string
-	}{
-		{"normal", "https://api.anthropic.com", "/v1/messages", "https://api.anthropic.com/v1/messages"},
-		{"with_v1", "https://api.anthropic.com/v1", "/v1/messages", "https://api.anthropic.com/v1/messages"},
-		{"hash_skip", "https://api.example.com#", "/v1/messages", "https://api.example.com/messages"},
-		{"hash_with_slash", "https://api.example.com/#", "/v1/messages", "https://api.example.com/messages"},
-		{"trailing_slash", "https://api.example.com/", "/v1/messages", "https://api.example.com/v1/messages"},
-		{"count_tokens", "https://api.example.com#", "/v1/messages/count_tokens", "https://api.example.com/messages/count_tokens"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// ClaudeProvider 的 URL 构建内联在 ConvertToProviderRequest 中
-			//（endpoint = TrimPrefix(path, "/v1")），此处等价复现该规整后测通用入口。
-			endpoint := tt.requestPath[len("/v1"):]
-			got := utils.BuildUpstreamURL(tt.baseURL, "/v1", endpoint)
-			if got != tt.want {
-				t.Errorf("BuildUpstreamURL(%q, /v1, %q) = %q, want %q", tt.baseURL, endpoint, got, tt.want)
-			}
-		})
-	}
-}
+// "#"后缀与版本前缀的通用边界由 utils/url_builder_test.go 验证；
+// 此处仅保留调用真实 Provider 构建函数的测试。
 
 func TestBuildTargetURL_SkipVersionWithHash(t *testing.T) {
 	p := &ResponsesProvider{}
@@ -102,32 +49,6 @@ func TestBuildTargetURL_SkipVersionWithHash(t *testing.T) {
 			got := p.buildTargetURL(upstream)
 			if got != tt.want {
 				t.Errorf("buildTargetURL() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-// TestMessagesResponsesURL_SkipVersionWithHash 验证 Messages→Responses 上游 URL
-// 构建与 utils.BuildUpstreamURL 约定一致（原私有 buildResponsesURL 已收敛，见治理记录）。
-func TestMessagesResponsesURL_SkipVersionWithHash(t *testing.T) {
-	tests := []struct {
-		name    string
-		baseURL string
-		want    string
-	}{
-		{"normal", "https://api.example.com", "https://api.example.com/v1/responses"},
-		{"with_v1", "https://api.example.com/v1", "https://api.example.com/v1/responses"},
-		{"with_v1beta", "https://api.example.com/v1beta", "https://api.example.com/v1beta/responses"},
-		{"hash_skip", "https://api.example.com#", "https://api.example.com/responses"},
-		{"hash_with_slash", "https://api.example.com/#", "https://api.example.com/responses"},
-		{"trailing_slash", "https://api.example.com/", "https://api.example.com/v1/responses"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := utils.BuildUpstreamURL(tt.baseURL, "/v1", "/responses")
-			if got != tt.want {
-				t.Errorf("BuildUpstreamURL(%q, /v1, /responses) = %q, want %q", tt.baseURL, got, tt.want)
 			}
 		})
 	}

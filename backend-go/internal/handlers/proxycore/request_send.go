@@ -31,6 +31,7 @@ func ShouldForceIdentityEncoding(req *http.Request, isStream bool) bool {
 // permit: 可选的选渠许可句柄（R2-b）。仅在"客户端创建失败、请求从未发出"
 // 这类本地错误时由本函数中性归还；请求已发出的健康结果由调用方收尾。
 func SendRequest(req *http.Request, upstream *config.UpstreamConfig, envCfg *config.EnvConfig, isStream bool, apiType string, proxyURL string, permit *scheduler.ChannelPermit, requestTimeout time.Duration) (*http.Response, error) {
+	httpclient.PrepareInferenceHeaders(req, isStream)
 	if err := req.Context().Err(); err != nil {
 		if req.Body != nil {
 			_ = req.Body.Close()

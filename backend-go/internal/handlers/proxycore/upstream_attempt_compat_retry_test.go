@@ -119,7 +119,7 @@ func (rs *recordingServer) headerAt(i int) http.Header {
 
 func runAttempt(h *compatRetryHarness, t *testing.T, upstream *config.UpstreamConfig, requestBody []byte, buildRequest func(*gin.Context, *config.UpstreamConfig, string) (*http.Request, error), handleSuccess func(*gin.Context, *http.Response, *config.UpstreamConfig, string) (*types.Usage, error)) UpstreamAttemptResult {
 	t.Helper()
-	return (UpstreamAttempt{
+	return runConfiguredAttempt(t, UpstreamAttempt{
 		Context:          newAttemptTestContext(context.Background()),
 		EnvConfig:        &config.EnvConfig{LogLevel: "error"},
 		ConfigManager:    h.cfgManager,
@@ -132,7 +132,7 @@ func runAttempt(h *compatRetryHarness, t *testing.T, upstream *config.UpstreamCo
 		NextAPIKey:       rotatingKeySelector,
 		BuildRequest:     buildRequest,
 		HandleSuccess:    handleSuccess,
-	}).TryWithModelMappingFailover()
+	})
 }
 
 func successRecorder(successKeys *[]string) func(*gin.Context, *http.Response, *config.UpstreamConfig, string) (*types.Usage, error) {
@@ -279,7 +279,7 @@ func TestContentPolicyEscapeRetryOnResponsesChannel(t *testing.T) {
 	}
 	var successKeys []string
 
-	attempt := (UpstreamAttempt{
+	attempt := runConfiguredAttempt(t, UpstreamAttempt{
 		Context:          newAttemptTestContext(context.Background()),
 		EnvConfig:        &config.EnvConfig{LogLevel: "error"},
 		ConfigManager:    h.cfgManager,
@@ -302,9 +302,9 @@ func TestContentPolicyEscapeRetryOnResponsesChannel(t *testing.T) {
 			return req, nil
 		},
 		HandleSuccess: successRecorder(&successKeys),
-	}).TryWithModelMappingFailover()
+	})
 
-	if !result(attempt).Handled || attempt.SuccessKey != "key-a" {
+	if !attempt.Handled || attempt.SuccessKey != "key-a" {
 		t.Fatalf("Handled=%v SuccessKey=%q, want 转义重试后成功", attempt.Handled, attempt.SuccessKey)
 	}
 	if n := rs.requestCount(); n != 2 {
@@ -347,7 +347,7 @@ func TestQuotaFailureDeprioritizesKeyAfterSuccess(t *testing.T) {
 	var successKeys []string
 	var deprioritized []string
 
-	result := (UpstreamAttempt{
+	result := runConfiguredAttempt(t, UpstreamAttempt{
 		Context:          newAttemptTestContext(context.Background()),
 		EnvConfig:        &config.EnvConfig{LogLevel: "error"},
 		ConfigManager:    h.cfgManager,
@@ -370,7 +370,7 @@ func TestQuotaFailureDeprioritizesKeyAfterSuccess(t *testing.T) {
 			deprioritized = append(deprioritized, apiKey)
 		},
 		HandleSuccess: successRecorder(&successKeys),
-	}).TryWithModelMappingFailover()
+	})
 
 	if !result.Handled || result.SuccessKey != "key-b" {
 		t.Fatalf("Handled=%v SuccessKey=%q, want key-b 成功", result.Handled, result.SuccessKey)

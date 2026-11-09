@@ -22,6 +22,7 @@ import (
 
 // healthAttemptEnv 装配 UpstreamAttempt 所需的最小环境。
 type healthAttemptEnv struct {
+	t                *testing.T
 	cfgManager       *config.ConfigManager
 	metricsManager   *metrics.MetricsManager
 	channelScheduler *scheduler.ChannelScheduler
@@ -42,6 +43,7 @@ func newHealthAttemptEnv(t *testing.T) *healthAttemptEnv {
 	t.Cleanup(channelScheduler.Stop)
 
 	return &healthAttemptEnv{
+		t:                t,
 		cfgManager:       cfgManager,
 		metricsManager:   metricsManager,
 		channelScheduler: channelScheduler,
@@ -54,6 +56,7 @@ func newHealthAttempt(env *healthAttemptEnv, serverURL string, keys []string) Up
 		BaseURL: serverURL,
 		APIKeys: keys,
 	}
+	registerHealthUpstream(env.t, env.cfgManager, upstream)
 	return UpstreamAttempt{
 		Context:          newAttemptTestContext(context.Background()),
 		EnvConfig:        &config.EnvConfig{LogLevel: "error"},

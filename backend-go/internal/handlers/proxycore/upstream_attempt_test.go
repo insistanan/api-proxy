@@ -40,7 +40,7 @@ func TestUpstreamAttemptDisablesModelFailoverAfterFirstMapping(t *testing.T) {
 	stopErr := errors.New("stop after observing mapped model")
 	var resolvedModels []string
 
-	result := (UpstreamAttempt{
+	result := runConfiguredAttempt(t, UpstreamAttempt{
 		Context:            newAttemptTestContext(context.Background()),
 		EnvConfig:          &config.EnvConfig{LogLevel: "error"},
 		ConfigManager:      cfgManager,
@@ -59,7 +59,7 @@ func TestUpstreamAttemptDisablesModelFailoverAfterFirstMapping(t *testing.T) {
 		HandleSuccess: func(*gin.Context, *http.Response, *config.UpstreamConfig, string) (*types.Usage, error) {
 			return nil, errors.New("unexpected success handler")
 		},
-	}).TryWithModelMappingFailover()
+	})
 
 	if result.Handled {
 		t.Fatalf("Handled = true, want false")
@@ -76,7 +76,7 @@ func TestUpstreamAttemptStopsModelFailoverOnContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	result := (UpstreamAttempt{
+	result := runConfiguredAttempt(t, UpstreamAttempt{
 		Context: newAttemptTestContext(ctx),
 		Upstream: &config.UpstreamConfig{
 			ModelMapping: map[string][]string{
@@ -85,7 +85,7 @@ func TestUpstreamAttemptStopsModelFailoverOnContextCancel(t *testing.T) {
 		},
 		RequestedModel:     "requested-model",
 		AllowModelFailover: true,
-	}).TryWithModelMappingFailover()
+	})
 
 	if !result.Handled {
 		t.Fatalf("Handled = false, want true")
@@ -233,7 +233,7 @@ func TestUpstreamAttemptReadBodyErrorFailsOverToNextKey(t *testing.T) {
 	}
 	var successKeys []string
 
-	result := (UpstreamAttempt{
+	result := runConfiguredAttempt(t, UpstreamAttempt{
 		Context:          newAttemptTestContext(context.Background()),
 		EnvConfig:        &config.EnvConfig{LogLevel: "error"},
 		ConfigManager:    cfgManager,
@@ -267,7 +267,7 @@ func TestUpstreamAttemptReadBodyErrorFailsOverToNextKey(t *testing.T) {
 			successKeys = append(successKeys, apiKey)
 			return &types.Usage{}, nil
 		},
-	}).TryWithModelMappingFailover()
+	})
 
 	if !result.Handled {
 		t.Fatalf("Handled = false, want true（第二个 key 应成功）")
@@ -311,7 +311,7 @@ func TestUpstreamAttempt2xxErrorEnvelopeFailsOverToNextKey(t *testing.T) {
 	}
 	handleSuccessCalls := 0
 
-	result := (UpstreamAttempt{
+	result := runConfiguredAttempt(t, UpstreamAttempt{
 		Context:          newAttemptTestContext(context.Background()),
 		EnvConfig:        &config.EnvConfig{LogLevel: "error"},
 		ConfigManager:    cfgManager,
@@ -342,7 +342,7 @@ func TestUpstreamAttempt2xxErrorEnvelopeFailsOverToNextKey(t *testing.T) {
 			defer resp.Body.Close()
 			return &types.Usage{}, nil
 		},
-	}).TryWithModelMappingFailover()
+	})
 
 	// 全部 Key 都被信封判失败：Handled=false（可 failover 到其他渠道），且
 	// HandleSuccess 从未被调用（错误没有被当成功消费）。
@@ -384,7 +384,7 @@ func TestUpstreamAttempt2xxNormalJSONPassesThrough(t *testing.T) {
 	}
 	var receivedBody string
 
-	result := (UpstreamAttempt{
+	result := runConfiguredAttempt(t, UpstreamAttempt{
 		Context:          newAttemptTestContext(context.Background()),
 		EnvConfig:        &config.EnvConfig{LogLevel: "error"},
 		ConfigManager:    cfgManager,
@@ -416,7 +416,7 @@ func TestUpstreamAttempt2xxNormalJSONPassesThrough(t *testing.T) {
 			receivedBody = string(body)
 			return &types.Usage{}, nil
 		},
-	}).TryWithModelMappingFailover()
+	})
 
 	if !result.Handled || result.SuccessKey != "key-a" {
 		t.Fatalf("正常响应应成功: Handled=%v SuccessKey=%q", result.Handled, result.SuccessKey)
@@ -482,7 +482,7 @@ func TestUpstreamAttemptThinkingBudgetRectifierRetriesSuccessfully(t *testing.T)
 	}
 
 	initialBody := `{"model":"claude-3-7-sonnet-20250219","thinking":{"type":"enabled","budget_tokens":500},"max_tokens":1000}`
-	result := (UpstreamAttempt{
+	result := runConfiguredAttempt(t, UpstreamAttempt{
 		Context:          newAttemptTestContext(context.Background()),
 		EnvConfig:        &config.EnvConfig{LogLevel: "error"},
 		ConfigManager:    cfgManager,
@@ -505,7 +505,7 @@ func TestUpstreamAttemptThinkingBudgetRectifierRetriesSuccessfully(t *testing.T)
 			defer resp.Body.Close()
 			return &types.Usage{}, nil
 		},
-	}).TryWithModelMappingFailover()
+	})
 
 	if !result.Handled || result.SuccessKey != "key-a" {
 		t.Fatalf("Budget 整流就地重试期望成功，实际: Handled=%v LastError=%v", result.Handled, result.LastError)
@@ -554,7 +554,7 @@ func TestUpstreamAttemptThinkingSignatureRectifierRetriesSuccessfully(t *testing
 	}
 
 	initialBody := `{"model":"claude-3-7-sonnet-20250219","messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"text","signature":"bad_signature"},{"type":"text","text":"hi"}]}]}`
-	result := (UpstreamAttempt{
+	result := runConfiguredAttempt(t, UpstreamAttempt{
 		Context:          newAttemptTestContext(context.Background()),
 		EnvConfig:        &config.EnvConfig{LogLevel: "error"},
 		ConfigManager:    cfgManager,
@@ -577,7 +577,7 @@ func TestUpstreamAttemptThinkingSignatureRectifierRetriesSuccessfully(t *testing
 			defer resp.Body.Close()
 			return &types.Usage{}, nil
 		},
-	}).TryWithModelMappingFailover()
+	})
 
 	if !result.Handled || result.SuccessKey != "key-a" {
 		t.Fatalf("Signature 整流就地重试期望成功，实际: Handled=%v LastError=%v", result.Handled, result.LastError)
@@ -633,7 +633,7 @@ func TestUpstreamAttemptMediaSanitizerRetriesSuccessfully(t *testing.T) {
 	}
 
 	initialBody := `{"model":"deepseek-chat","messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","data":"xyz"}},{"type":"text","text":"hi"}]}]}`
-	result := (UpstreamAttempt{
+	result := runConfiguredAttempt(t, UpstreamAttempt{
 		Context:          newAttemptTestContext(context.Background()),
 		EnvConfig:        &config.EnvConfig{LogLevel: "error"},
 		ConfigManager:    cfgManager,
@@ -656,7 +656,7 @@ func TestUpstreamAttemptMediaSanitizerRetriesSuccessfully(t *testing.T) {
 			defer resp.Body.Close()
 			return &types.Usage{}, nil
 		},
-	}).TryWithModelMappingFailover()
+	})
 
 	if !result.Handled || result.SuccessKey != "key-a" {
 		t.Fatalf("Media 降级就地重试期望成功，实际: Handled=%v LastError=%v", result.Handled, result.LastError)

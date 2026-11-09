@@ -110,11 +110,23 @@ func (p *ResponsesProvider) BuildRequest(input RequestInput, upstream *config.Up
 				return outcome, fmt.Errorf("获取 Responses 透传会话失败: %w", err)
 			}
 		}
+		owner := upstream.RequestIdentity(apiKey).Fingerprint()
+		restoredBody, restored, restoreErr := restoreNativeResponseHistory(p.SessionManager, sess, &effectiveRequest, effectiveBody, owner)
+		if restoreErr != nil {
+			return outcome, restoreErr
+		}
+		if restored {
+			effectiveBody = restoredBody
+			outcome.PreviousIDDropped = true
+			// 仅切换服务端链，本地历史继续合并；不能用客户端后缀替换完整会话。
+			sess = nil
+		}
 		reqBody, err = converters.ConvertResponsesRequestToUpstream(upstream.ServiceType, model, effectiveBody, isStream, sess, &effectiveRequest, upstream)
 		if err != nil {
 			return outcome, err
 		}
 		if upstream.ServiceType == converters.ResponsesUpstreamResponses &&
+			!restored &&
 			strings.TrimSpace(responsesReq.PreviousResponseID) != "" &&
 			gjson.GetBytes(reqBody, "previous_response_id").String() == "" {
 			outcome.PreviousIDDropped = true
@@ -193,7 +205,10 @@ func (p *ResponsesProvider) BuildRequest(input RequestInput, upstream *config.Up
 	// 使用统一的头部处理逻辑，保留客户端的大部分 headers
 	req.Header = utils.PrepareUpstreamHeadersFromHeader(input.Header, req.URL.Host)
 
-	if input.CodexDisguise {
+	compatibility := upstream.UseClientCompatibility(input.CodexDisguise) && upstream.ServiceType == "responses"
+	utils.PrepareTargetIdentity(req.Header, upstream.ServiceType, compatibility)
+	if compatibility {
+		utils.SeedDisguiseSession(req.Header, input.ConversationID, "responses")
 		utils.ApplyCodexDisguise(req.Header, isStream)
 	}
 

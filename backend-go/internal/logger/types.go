@@ -9,14 +9,15 @@ const (
 	// MaxBodyBytes 日志正文的解析输入与最终输出上限。
 	MaxBodyBytes = 1 << 20
 
-	PhaseClientRequest    = "client_request"
-	PhaseUpstreamRequest  = "upstream_request"
-	PhaseUpstreamResponse = "upstream_response"
-	PhaseStreamSynth      = "stream_synth"
-	PhaseRequestStart     = "request_start"
-	PhaseRequestEnd       = "request_end"
-	PhaseUpstreamError    = "upstream_error"
-	PhaseUpstreamHeaders  = "upstream_headers"
+	PhaseClientRequest     = "client_request"
+	PhaseUpstreamRequest   = "upstream_request"
+	PhaseUpstreamResponse  = "upstream_response"
+	PhaseStreamSynth       = "stream_synth"
+	PhaseRequestStart      = "request_start"
+	PhaseRequestEnd        = "request_end"
+	PhaseUpstreamError     = "upstream_error"
+	PhaseUpstreamHeaders   = "upstream_headers"
+	PhaseUpstreamAdmission = "upstream_admission"
 
 	writeQueueSize = 8192
 )

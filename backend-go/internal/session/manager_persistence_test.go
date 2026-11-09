@@ -18,14 +18,8 @@ func TestPersistentSessionManagerRestoresPreviousResponseChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateSession() error = %v", err)
 	}
-	if err := manager.AppendMessage(session.ID, types.ResponsesItem{Type: "message", Role: "user", Content: "hello"}, 12); err != nil {
-		t.Fatalf("AppendMessage() error = %v", err)
-	}
-	if err := manager.UpdateLastResponseID(session.ID, "resp_123"); err != nil {
-		t.Fatalf("UpdateLastResponseID() error = %v", err)
-	}
-	if err := manager.RecordResponseMapping("resp_123", session.ID); err != nil {
-		t.Fatalf("RecordResponseMapping() error = %v", err)
+	if err := manager.CommitTurn(session.ID, []types.ResponsesItem{{Type: "message", Role: "user", Content: "hello"}}, 12, false, "resp_123", "fixture-owner"); err != nil {
+		t.Fatalf("CommitTurn() error = %v", err)
 	}
 	manager.Stop()
 
@@ -46,6 +40,9 @@ func TestPersistentSessionManagerRestoresPreviousResponseChain(t *testing.T) {
 	}
 	if continued.ConversationID != "conv_123" {
 		t.Fatalf("ConversationID = %q", continued.ConversationID)
+	}
+	if owner, known, err := restored.ResponseOwner("resp_123"); err != nil || !known || owner != "fixture-owner" {
+		t.Fatalf("重启后凭据归属 = (%q, %v, %v)", owner, known, err)
 	}
 }
 
@@ -93,6 +90,9 @@ func TestPersistentSessionManagerRecoversUnknownPreviousResponseID(t *testing.T)
 	}
 	if recovered.LastResponseID != "resp_from_old_version" {
 		t.Fatalf("LastResponseID = %q", recovered.LastResponseID)
+	}
+	if _, known, err := manager.ResponseOwner("resp_from_old_version"); err != nil || known {
+		t.Fatalf("旧记录不能被当成已知凭据归属: known=%v err=%v", known, err)
 	}
 	if mapped, err := manager.GetSessionByResponseID("resp_from_old_version"); err != nil || mapped.ID != recovered.ID {
 		t.Fatalf("recovered mapping = (%#v, %v)", mapped, err)

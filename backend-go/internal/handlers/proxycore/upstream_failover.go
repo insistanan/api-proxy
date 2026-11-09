@@ -11,11 +11,15 @@ import (
 
 	"github.com/insistanan/api-proxy/internal/config"
 	"github.com/insistanan/api-proxy/internal/scheduler"
+	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
 	"github.com/insistanan/api-proxy/internal/urlhealth"
 )
 
 // TryWithModelMappingFailover 按模型映射执行上游故障转移。
 func (a UpstreamAttempt) TryWithModelMappingFailover() UpstreamAttemptResult {
+	if a.Context != nil && a.Context.Request != nil {
+		a.Context.Request = a.Context.Request.WithContext(upstreamcontrol.WithScope(a.Context.Request.Context()))
+	}
 	return a.tryWithModelMappingFailover()
 }
 
@@ -112,6 +116,10 @@ func (a UpstreamAttempt) tryWithModelMappingFailover() UpstreamAttemptResult {
 			}
 		}
 
+		// 本地容量不足必须穿透模型层，避免换模型后再次等待同一组合。
+		if upstreamcontrol.IsLocalError(result.LastError) || result.AbortFailover {
+			return result.withHealth(channelHealthNeutral)
+		}
 		// 未处理（failover 错误），保存错误信息并尝试下一个候选
 		if result.FailoverError != nil {
 			lastFailoverError = result.FailoverError

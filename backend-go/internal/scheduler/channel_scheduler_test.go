@@ -12,12 +12,22 @@ import (
 	"github.com/insistanan/api-proxy/internal/conversation"
 	"github.com/insistanan/api-proxy/internal/metrics"
 	"github.com/insistanan/api-proxy/internal/session"
+	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
 	"github.com/insistanan/api-proxy/internal/urlhealth"
 )
 
 // createTestConfigManager 创建测试用配置管理器
 func createTestConfigManager(t *testing.T, cfg config.Config) (*config.ConfigManager, func()) {
 	t.Helper()
+
+	// 结构体测试配置没有经过 JSON 默认值解析，写盘前显式补齐共享并发上限。
+	for _, list := range [][]config.UpstreamConfig{cfg.Upstream, cfg.ResponsesUpstream, cfg.GeminiUpstream, cfg.ChatUpstream, cfg.ImagesUpstream} {
+		for index := range list {
+			if list[index].MaxConcurrency == 0 {
+				list[index].MaxConcurrency = upstreamcontrol.DefaultConcurrency
+			}
+		}
+	}
 
 	// 创建临时目录
 	tmpDir, err := os.MkdirTemp("", "scheduler-test-*")

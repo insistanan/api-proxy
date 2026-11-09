@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
 )
 
 // 不启动 watcher 或后台维护，确保失败后观察到的状态仅来自被测写操作。
@@ -22,8 +24,8 @@ func newTransactionTestManager(t *testing.T, kind string) *ConfigManager {
 	*cs.loadBalance = "failover"
 	*cs.pools = []ChannelPool{defaultChannelPool(), {ID: "empty", Name: "空分组", ModelMatcher: "empty", Priority: 1}}
 	*cs.upstreams = []UpstreamConfig{
-		{ID: "first", PoolID: DefaultChannelPoolID, Name: "first", BaseURL: "https://first.example.com", APIKeys: []string{"k1", "k2"}, ServiceType: "openai", Status: ChannelStatusActive, Priority: 1},
-		{ID: "second", PoolID: DefaultChannelPoolID, Name: "second", BaseURL: "https://second.example.com", APIKeys: []string{"k3"}, ServiceType: "openai", Status: ChannelStatusActive, Priority: 2},
+		{ID: "first", PoolID: DefaultChannelPoolID, Name: "first", BaseURL: "https://first.example.com", APIKeys: []string{"k1", "k2"}, ServiceType: "openai", Status: ChannelStatusActive, Priority: 1, MaxConcurrency: upstreamcontrol.DefaultConcurrency},
+		{ID: "second", PoolID: DefaultChannelPoolID, Name: "second", BaseURL: "https://second.example.com", APIKeys: []string{"k3"}, ServiceType: "openai", Status: ChannelStatusActive, Priority: 2, MaxConcurrency: upstreamcontrol.DefaultConcurrency},
 	}
 	cm := &ConfigManager{
 		config: cfg, configFile: filepath.Join(t.TempDir(), "config.json"),

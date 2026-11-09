@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
 	"github.com/insistanan/api-proxy/internal/utils"
 )
 
@@ -142,6 +143,9 @@ func bestUpstreamIndex(upstreams []UpstreamConfig, activeOnly bool) int {
 
 // prepareNewUpstream 准备新增渠道的公共字段
 func prepareNewUpstream(upstream *UpstreamConfig) {
+	if upstream.MaxConcurrency == 0 {
+		upstream.MaxConcurrency = upstreamcontrol.DefaultConcurrency
+	}
 	if strings.TrimSpace(upstream.ID) == "" {
 		upstream.ID = newUpstreamID()
 	}
@@ -324,6 +328,19 @@ func cloneUpstreamList(upstreams []UpstreamConfig) []UpstreamConfig {
 // applyCommonUpdates 应用通用的 UpstreamUpdate 字段到上游配置
 // 返回 shouldResetMetrics 标识是否需要重置指标
 func applyCommonUpdates(upstream *UpstreamConfig, index int, updates UpstreamUpdate, label string) (bool, error) {
+	if updates.MaxConcurrency != nil {
+		if *updates.MaxConcurrency < 1 {
+			return false, fmt.Errorf("最大并发必须是正整数")
+		}
+		upstream.MaxConcurrency = *updates.MaxConcurrency
+	}
+	if updates.ClientIdentityMode != nil {
+		mode := strings.TrimSpace(*updates.ClientIdentityMode)
+		if mode != "" && mode != "inherit" && mode != "api" && mode != "compatibility" {
+			return false, fmt.Errorf("客户端身份模式无效")
+		}
+		upstream.ClientIdentityMode = mode
+	}
 	if updates.VisionCapable != nil && *updates.VisionCapable &&
 		updates.VisionLayerEnabled != nil && *updates.VisionLayerEnabled {
 		return false, fmt.Errorf("渠道不能同时标记为支持图片理解并启用图片理解层")

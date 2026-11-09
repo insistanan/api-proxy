@@ -4,6 +4,7 @@ package responses
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -17,8 +18,10 @@ import (
 	"github.com/insistanan/api-proxy/internal/handlers/hooks"
 	"github.com/insistanan/api-proxy/internal/handlers/proxycore"
 	"github.com/insistanan/api-proxy/internal/middleware"
+	"github.com/insistanan/api-proxy/internal/providers"
 	"github.com/insistanan/api-proxy/internal/scheduler"
 	"github.com/insistanan/api-proxy/internal/session"
+	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
 	"github.com/insistanan/api-proxy/internal/utils"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -30,6 +33,7 @@ type compactError struct {
 	body            []byte
 	shouldFailover  bool
 	responseWritten bool
+	localAdmission  bool // 本地排队、预算或配置删除，不标记 Key/渠道失败
 }
 
 // CompactHandler Responses API compact 端点处理器
@@ -49,6 +53,7 @@ func CompactHandler(
 			return
 		}
 		c.Set(utils.ContextKeyCodexDisguise, cfgManager.GetCodexDisguiseEnabled())
+		c.Request = c.Request.WithContext(upstreamcontrol.WithScope(c.Request.Context()))
 
 		// 读取请求体
 		maxBodySize := envCfg.MaxRequestBodySize
@@ -78,7 +83,7 @@ func CompactHandler(
 		}
 
 		// 检查是否为多渠道模式
-		isMultiChannel := channelScheduler.IsMultiChannelModeForModel(scheduler.ChannelKindResponses, model)
+		isMultiChannel := cfgManager.GetFuzzyModeEnabled() && channelScheduler.IsMultiChannelModeForModel(scheduler.ChannelKindResponses, model)
 
 		if isMultiChannel {
 			handleMultiChannelCompact(c, envCfg, cfgManager, sessionManager, channelScheduler, bodyBytes, conversationID, model)
@@ -130,6 +135,10 @@ func handleSingleChannelCompact(
 				return
 			}
 			lastErr = compactErr
+			if compactErr.localAdmission {
+				writeCompactResponseBody(c, compactErr.status, compactErr.body)
+				return
+			}
 			if compactErr.shouldFailover {
 				failedKeys[apiKey] = true
 				cfgManager.MarkKeyAsFailed(apiKey, "Responses")
@@ -199,9 +208,11 @@ func handleMultiChannelCompact(
 			if selection.Permit == nil {
 				return
 			}
-			if healthSuccess {
+			if c.Request.Context().Err() != nil {
+				selection.Permit.RecordHealthNeutral()
+			} else if healthSuccess {
 				selection.Permit.RecordHealthSuccess()
-			} else if compactErr != nil && compactErr.shouldFailover {
+			} else if compactErr != nil && compactErr.shouldFailover && !compactErr.localAdmission {
 				selection.Permit.RecordHealthFailure()
 			} else {
 				selection.Permit.RecordHealthNeutral()
@@ -233,6 +244,10 @@ func handleMultiChannelCompact(
 				return
 			}
 			lastErr = compactErr
+			if !compactErr.shouldFailover {
+				writeCompactResponseBody(c, compactErr.status, compactErr.body)
+				return
+			}
 		}
 	}
 
@@ -312,18 +327,22 @@ func tryCompactChannelWithAllKeys(
 
 		if compactErr != nil {
 			if compactErr.responseWritten {
-				return true, "", nil
+				return false, "", compactErr
 			}
 			lastErr = compactErr
+			if compactErr.localAdmission {
+				return false, "", compactErr
+			}
 			if compactErr.shouldFailover {
 				failedKeys[apiKey] = true
 				cfgManager.MarkKeyAsFailed(apiKey, "Responses")
 				channelScheduler.RecordFailure(upstream.BaseURL, apiKey, channelIndex, scheduler.ChannelKindResponses)
 				continue
 			}
-			// 非故障转移错误，返回但标记渠道成功（请求已处理）
+			// 本地或不可重试错误已经写回，渠道按中性结束。
 			writeCompactResponseBody(c, compactErr.status, compactErr.body)
-			return true, "", nil
+			compactErr.responseWritten = true
+			return false, "", compactErr
 		}
 	}
 
@@ -358,6 +377,18 @@ func tryCompactWithKey(
 			shouldFailover: false,
 		}
 	}
+	sessionRequestBody := bodyBytes
+	preparedBody, historyErr := providers.PrepareNativeResponseHistory(sessionManager, conversationID, bodyBytes, upstream.RequestIdentity(apiKey).Fingerprint())
+	if historyErr != nil {
+		status := http.StatusInternalServerError
+		var clientErr *providers.ResponseHistoryError
+		if errors.As(historyErr, &clientErr) {
+			status = http.StatusBadRequest
+		}
+		payload, _ := json.Marshal(gin.H{"error": historyErr.Error()})
+		return false, &compactError{status: status, body: payload}
+	}
+	bodyBytes = preparedBody
 	if upstream != nil && upstream.DisablePromptCacheKey {
 		var payload map[string]interface{}
 		if json.Unmarshal(bodyBytes, &payload) == nil {
@@ -375,7 +406,10 @@ func tryCompactWithKey(
 	}
 
 	req.Header = utils.PrepareUpstreamHeaders(c, req.URL.Host)
-	if c.GetBool(utils.ContextKeyCodexDisguise) {
+	compatibility := cfgManager.ClientCompatibilityEnabled(upstream)
+	utils.PrepareTargetIdentity(req.Header, "responses", compatibility)
+	if compatibility {
+		utils.SeedDisguiseSession(req.Header, conversationID, "responses")
 		utils.ApplyCodexDisguise(req.Header, false)
 	}
 	req.Header.Del("authorization")
@@ -393,13 +427,24 @@ func tryCompactWithKey(
 		_ = req.Body.Close()
 		return false, &compactError{status: 500, body: []byte(`{"error":"上游代理配置无效"}`), shouldFailover: false}
 	}
+	req = req.WithContext(cfgManager.UpstreamRequestContext(req.Context(), upstream, apiKey))
 	resp, err := proxycore.SendRequest(req, upstream, envCfg, false, "Responses", proxyURL, nil, 0)
 	if err != nil {
+		if c.Request.Context().Err() != nil {
+			return false, &compactError{responseWritten: true}
+		}
+		if upstreamcontrol.IsLocalError(err) {
+			body, _ := json.Marshal(gin.H{"error": err.Error(), "code": "LOCAL_CAPACITY"})
+			return false, &compactError{status: http.StatusServiceUnavailable, body: body, localAdmission: true, shouldFailover: cfgManager.GetFuzzyModeEnabled() && !errors.Is(err, upstreamcontrol.ErrBudget)}
+		}
 		return false, &compactError{status: 502, body: []byte(`{"error":"上游请求失败"}`), shouldFailover: true}
 	}
 	defer resp.Body.Close()
 
 	respBody, readErr := io.ReadAll(resp.Body)
+	if c.Request.Context().Err() != nil {
+		return false, &compactError{responseWritten: true}
+	}
 	if readErr != nil {
 		// 读取中断：响应不完整，按上游网络故障转移处理，不回写截断 body。
 		log.Printf("[Compact-Key] 警告: 读取上游响应体失败 (状态: %d): %v", resp.StatusCode, readErr)
@@ -410,7 +455,7 @@ func tryCompactWithKey(
 	// 判断是否需要故障转移
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		shouldFailover, _ := proxycore.ShouldRetryWithNextKey(resp.StatusCode, respBody, cfgManager.GetFuzzyModeEnabled(), "Responses")
-		return false, &compactError{status: resp.StatusCode, body: respBody, shouldFailover: shouldFailover}
+		return false, &compactError{status: resp.StatusCode, body: respBody, shouldFailover: shouldFailover, localAdmission: resp.StatusCode == http.StatusTooManyRequests}
 	}
 
 	// 成功
@@ -420,7 +465,7 @@ func tryCompactWithKey(
 		return false, &compactError{responseWritten: true}
 	}
 	compactResponseID := extractCompactResponseID(respBody)
-	if err := commitCompactSession(sessionManager, bodyBytes, respBody, conversationID); err != nil {
+	if err := commitCompactSession(sessionManager, sessionRequestBody, respBody, conversationID, responseUpstreamOwner(resp)); err != nil {
 		// 上游 compact 已成功，但代理本地的历史边界没有落盘时，不能
 		// 继续返回成功并清理旧链；否则下一轮可能拿着新 response ID
 		// 进入一个空 session，静默丢失压缩后的上下文。
@@ -479,7 +524,7 @@ func extractCompactResponseID(body []byte) string {
 // commitCompactSession 用 compact 结果替换代理本地旧历史。compact 请求的
 // input 通常是客户端重放的完整 transcript，绝不能再把它当作普通一轮追加，
 // 否则压缩成功后本地 session 仍会保留完整旧上下文。
-func commitCompactSession(sessionManager *session.SessionManager, requestBody, responseBody []byte, conversationID string) error {
+func commitCompactSession(sessionManager *session.SessionManager, requestBody, responseBody []byte, conversationID string, owner ...string) error {
 	if sessionManager == nil {
 		return nil
 	}
@@ -505,9 +550,9 @@ func commitCompactSession(sessionManager *session.SessionManager, requestBody, r
 		return fmt.Errorf("解析 compact session item 失败: %w", err)
 	}
 	if previousResponseID == "" {
-		return sessionManager.ReplaceConversationSessionAfterCompact(conversationID, responseID, items)
+		return sessionManager.ReplaceConversationSessionAfterCompact(conversationID, responseID, items, owner...)
 	}
-	return sessionManager.ReplaceSessionAfterCompact(previousResponseID, responseID, items)
+	return sessionManager.ReplaceSessionAfterCompact(previousResponseID, responseID, items, owner...)
 }
 
 func writeCompactContentSafetyError(c *gin.Context, err error) {

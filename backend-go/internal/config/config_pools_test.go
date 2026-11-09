@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
 )
 
 func TestSelectChannelPoolUsesLongestMatcher(t *testing.T) {
@@ -108,10 +110,10 @@ func TestSaveChannelPoolLayoutMovesAndReordersChannels(t *testing.T) {
 				defaultChannelPool(),
 			},
 			Upstream: []UpstreamConfig{
-				{ID: "a", Name: "A", PoolID: DefaultChannelPoolID, Status: ChannelStatusActive, Priority: 1},
-				{ID: "b", Name: "B", PoolID: DefaultChannelPoolID, Status: ChannelStatusActive, Priority: 2},
-				{ID: "c", Name: "C", PoolID: "gpt", Status: ChannelStatusSuspended, Priority: 1},
-				{ID: "disabled", Name: "Disabled", PoolID: "gpt", Status: ChannelStatusDisabled, Priority: 2},
+				{ID: "a", Name: "A", PoolID: DefaultChannelPoolID, Status: ChannelStatusActive, Priority: 1, MaxConcurrency: upstreamcontrol.DefaultConcurrency},
+				{ID: "b", Name: "B", PoolID: DefaultChannelPoolID, Status: ChannelStatusActive, Priority: 2, MaxConcurrency: upstreamcontrol.DefaultConcurrency},
+				{ID: "c", Name: "C", PoolID: "gpt", Status: ChannelStatusSuspended, Priority: 1, MaxConcurrency: upstreamcontrol.DefaultConcurrency},
+				{ID: "disabled", Name: "Disabled", PoolID: "gpt", Status: ChannelStatusDisabled, Priority: 2, MaxConcurrency: upstreamcontrol.DefaultConcurrency},
 			},
 		},
 	}

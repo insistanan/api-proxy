@@ -23,6 +23,7 @@ type Session = types.Session
 type SessionManager struct {
 	sessions        map[string]*Session // sessionID → Session
 	responseMapping map[string]string   // responseID → sessionID
+	responseOwners  map[string]string   // responseID → 上游组合摘要，与轮次原子提交
 	mu              sync.RWMutex
 
 	// 清理配置
@@ -53,6 +54,7 @@ func newSessionManager(maxAge time.Duration, maxMessages int, maxTokens int, sto
 	return &SessionManager{
 		sessions:          make(map[string]*Session),
 		responseMapping:   make(map[string]string),
+		responseOwners:    make(map[string]string),
 		maxAge:            maxAge,
 		maxMessages:       maxMessages,
 		maxTokens:         maxTokens,
@@ -203,13 +205,13 @@ func (sm *SessionManager) createSessionLocked(previousResponseID string, convers
 	}
 	if err := sm.persistSessionLocked(session); err != nil {
 		delete(sm.sessions, session.ID)
-		delete(sm.responseMapping, previousResponseID)
+		sm.forgetResponseMappingLocked(previousResponseID)
 		return nil, err
 	}
 	if previousResponseID != "" && sm.store != nil {
 		if err := sm.store.upsertMapping(previousResponseID, session.ID); err != nil {
 			delete(sm.sessions, session.ID)
-			delete(sm.responseMapping, previousResponseID)
+			sm.forgetResponseMappingLocked(previousResponseID)
 			if cleanupErr := sm.store.deleteSession(session.ID); cleanupErr != nil {
 				return nil, fmt.Errorf("保存 response ID 映射失败: %v；清理未完成会话失败: %w", err, cleanupErr)
 			}
@@ -287,7 +289,7 @@ func (sm *SessionManager) removeCachedSessionLocked(sessionID string) {
 	delete(sm.sessions, sessionID)
 	for responseID, mappedID := range sm.responseMapping {
 		if mappedID == sessionID {
-			delete(sm.responseMapping, responseID)
+			sm.forgetResponseMappingLocked(responseID)
 		}
 	}
 }
@@ -305,7 +307,7 @@ func (sm *SessionManager) RecordResponseMapping(responseID, sessionID string) er
 	sm.responseMapping[responseID] = sessionID
 	if sm.store != nil {
 		if err := sm.store.upsertMapping(responseID, sessionID); err != nil {
-			delete(sm.responseMapping, responseID)
+			sm.forgetResponseMappingLocked(responseID)
 			return err
 		}
 	}
@@ -427,7 +429,7 @@ func (sm *SessionManager) AppendMessage(sessionID string, item types.ResponsesIt
 
 // CommitTurn 一次性持久化一轮请求，避免输入、输出、response ID 分别把完整
 // messages_json 重写多次。它还确保会话正文和 response 映射在同一事务中提交。
-func (sm *SessionManager) CommitTurn(sessionID string, items []types.ResponsesItem, tokensUsed int, hasVision bool, responseID string) error {
+func (sm *SessionManager) CommitTurn(sessionID string, items []types.ResponsesItem, tokensUsed int, hasVision bool, responseID string, owner ...string) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	session, exists := sm.sessions[sessionID]
@@ -484,20 +486,21 @@ func (sm *SessionManager) CommitTurn(sessionID string, items []types.ResponsesIt
 		if compactionRoot {
 			for mappedResponseID, mappedSessionID := range sm.responseMapping {
 				if mappedSessionID == session.ID && mappedResponseID != responseID {
-					delete(sm.responseMapping, mappedResponseID)
+					sm.forgetResponseMappingLocked(mappedResponseID)
 				}
 			}
 		}
 		if responseID != "" {
 			sm.responseMapping[responseID] = sessionID
 		}
+		sm.rememberResponseOwnerLocked(responseID, owner)
 		return nil
 	}
 	var persistErr error
 	if compactionRoot {
-		persistErr = sm.store.replaceSessionAndMapping(session, previousResponseID, responseID)
+		persistErr = sm.store.replaceSessionAndMapping(session, previousResponseID, responseID, owner...)
 	} else {
-		persistErr = sm.store.upsertSessionAndMapping(session, responseID)
+		persistErr = sm.store.upsertSessionAndMapping(session, responseID, owner...)
 	}
 	if persistErr != nil {
 		session.Messages = previousMessages
@@ -510,13 +513,14 @@ func (sm *SessionManager) CommitTurn(sessionID string, items []types.ResponsesIt
 	if compactionRoot {
 		for mappedResponseID, mappedSessionID := range sm.responseMapping {
 			if mappedSessionID == session.ID && mappedResponseID != responseID {
-				delete(sm.responseMapping, mappedResponseID)
+				sm.forgetResponseMappingLocked(mappedResponseID)
 			}
 		}
 	}
 	if responseID != "" {
 		sm.responseMapping[responseID] = sessionID
 	}
+	sm.rememberResponseOwnerLocked(responseID, owner)
 	return nil
 }
 
@@ -524,7 +528,7 @@ func (sm *SessionManager) CommitTurn(sessionID string, items []types.ResponsesIt
 // 把当前客户端历史视为新的本地边界。它与 compaction 使用同一套原子映射
 // 清理，避免“上游已去掉 previous_response_id，但本地仍把完整历史追加到
 // 旧 session”造成下一轮代理再次发送重复上下文。
-func (sm *SessionManager) ReplaceSessionAfterBoundary(sessionID string, items []types.ResponsesItem, hasVision bool, responseID string) error {
+func (sm *SessionManager) ReplaceSessionAfterBoundary(sessionID string, items []types.ResponsesItem, hasVision bool, responseID string, owner ...string) error {
 	if sm == nil {
 		return nil
 	}
@@ -553,7 +557,7 @@ func (sm *SessionManager) ReplaceSessionAfterBoundary(sessionID string, items []
 		}
 	}
 	if sm.store != nil {
-		if err := sm.store.replaceSessionAndMapping(session, previousResponseID, responseID); err != nil {
+		if err := sm.store.replaceSessionAndMapping(session, previousResponseID, responseID, owner...); err != nil {
 			session.Messages = previousMessages
 			session.TotalTokens = previousTokens
 			session.LastResponseID = previousResponseID
@@ -564,12 +568,13 @@ func (sm *SessionManager) ReplaceSessionAfterBoundary(sessionID string, items []
 	}
 	for mappedResponseID, mappedSessionID := range sm.responseMapping {
 		if mappedSessionID == session.ID && mappedResponseID != responseID {
-			delete(sm.responseMapping, mappedResponseID)
+			sm.forgetResponseMappingLocked(mappedResponseID)
 		}
 	}
 	if responseID != "" {
 		sm.responseMapping[responseID] = session.ID
 	}
+	sm.rememberResponseOwnerLocked(responseID, owner)
 	return nil
 }
 
@@ -578,7 +583,7 @@ func (sm *SessionManager) ReplaceSessionAfterBoundary(sessionID string, items []
 // 否则上游虽然压缩成功，代理在下一次协议转换时仍会发送压缩前的全部消息。
 // 找不到旧 response_id 时返回错误：compact 成功后必须建立新的本地历史边界，
 // 否则下一轮可能以新 response_id 创建空 session，静默丢失压缩后的上下文。
-func (sm *SessionManager) ReplaceSessionAfterCompact(previousResponseID, responseID string, items []types.ResponsesItem) error {
+func (sm *SessionManager) ReplaceSessionAfterCompact(previousResponseID, responseID string, items []types.ResponsesItem, owner ...string) error {
 	if sm == nil {
 		return nil
 	}
@@ -634,7 +639,7 @@ func (sm *SessionManager) ReplaceSessionAfterCompact(previousResponseID, respons
 	}
 
 	if sm.store != nil {
-		if err := sm.store.replaceSessionAndMapping(current, previousResponseID, responseID); err != nil {
+		if err := sm.store.replaceSessionAndMapping(current, previousResponseID, responseID, owner...); err != nil {
 			current.Messages = previousMessages
 			current.TotalTokens = previousTokens
 			current.LastResponseID = previousResponse
@@ -642,7 +647,7 @@ func (sm *SessionManager) ReplaceSessionAfterCompact(previousResponseID, respons
 			current.HasVisionContent = previousVision
 			for mappedResponseID, mappedSessionID := range sm.responseMapping {
 				if mappedSessionID == current.ID {
-					delete(sm.responseMapping, mappedResponseID)
+					sm.forgetResponseMappingLocked(mappedResponseID)
 				}
 			}
 			for mappedResponseID, mappedSessionID := range previousMappings {
@@ -653,10 +658,11 @@ func (sm *SessionManager) ReplaceSessionAfterCompact(previousResponseID, respons
 	}
 	for mappedResponseID, mappedSessionID := range sm.responseMapping {
 		if mappedSessionID == current.ID && mappedResponseID != responseID {
-			delete(sm.responseMapping, mappedResponseID)
+			sm.forgetResponseMappingLocked(mappedResponseID)
 		}
 	}
 	sm.responseMapping[responseID] = current.ID
+	sm.rememberResponseOwnerLocked(responseID, owner)
 	log.Printf("[Session-Compact] 会话 %s 已由 %s 压缩为 %s（保留 %d 个 item）",
 		current.ID, previousResponseID, responseID, len(current.Messages))
 	return nil
@@ -665,7 +671,7 @@ func (sm *SessionManager) ReplaceSessionAfterCompact(previousResponseID, respons
 // ReplaceConversationSessionAfterCompact 在 compact 请求没有携带
 // previous_response_id 时，按已经绑定的代理 conversation 找到当前 session
 // 并建立新的压缩边界。不能因为缺少外部 response ID 就跳过本地状态替换。
-func (sm *SessionManager) ReplaceConversationSessionAfterCompact(conversationID, responseID string, items []types.ResponsesItem) error {
+func (sm *SessionManager) ReplaceConversationSessionAfterCompact(conversationID, responseID string, items []types.ResponsesItem, owner ...string) error {
 	conversationID = strings.TrimSpace(conversationID)
 	if conversationID == "" {
 		return fmt.Errorf("compact 缺少可用于恢复会话的 conversation ID")
@@ -674,7 +680,7 @@ func (sm *SessionManager) ReplaceConversationSessionAfterCompact(conversationID,
 	if err != nil {
 		return err
 	}
-	return sm.ReplaceSessionAfterBoundary(current.ID, items, false, responseID)
+	return sm.ReplaceSessionAfterBoundary(current.ID, items, false, responseID, owner...)
 }
 
 // MarkSessionHasVisionContent 显式标记会话历史含图
@@ -752,7 +758,7 @@ func (sm *SessionManager) DeleteConversation(conversationID string) error {
 	}
 	for responseID, sessionID := range sm.responseMapping {
 		if _, ok := sessionIDs[sessionID]; ok {
-			delete(sm.responseMapping, responseID)
+			sm.forgetResponseMappingLocked(responseID)
 		}
 	}
 	if len(sessionIDs) > 0 {
@@ -775,6 +781,7 @@ func (sm *SessionManager) DeleteAll() error {
 	}
 	sm.sessions = make(map[string]*Session)
 	sm.responseMapping = make(map[string]string)
+	sm.responseOwners = make(map[string]string)
 	return nil
 }
 
@@ -839,7 +846,7 @@ func (sm *SessionManager) cleanup() {
 	// 清理孤立的 responseID 映射
 	for responseID, sessionID := range sm.responseMapping {
 		if _, exists := sm.sessions[sessionID]; !exists {
-			delete(sm.responseMapping, responseID)
+			sm.forgetResponseMappingLocked(responseID)
 			removedMappings++
 		}
 	}

@@ -21,6 +21,7 @@ import (
 	"github.com/insistanan/api-proxy/internal/scheduler"
 	"github.com/insistanan/api-proxy/internal/sensitive"
 	"github.com/insistanan/api-proxy/internal/session"
+	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
 	"github.com/insistanan/api-proxy/internal/urlhealth"
 )
 
@@ -204,7 +205,8 @@ func newContentSafetyTestRouter(t *testing.T) (*gin.Engine, *config.ConfigManage
 		Settings: config.SettingsConfig{ContentSafety: settings},
 		Upstream: []config.UpstreamConfig{{
 			Name: "content-safety-e2e", ServiceType: "claude", BaseURL: upstream.URL,
-			APIKeys: []string{"upstream-test-key"},
+			APIKeys:        []string{"upstream-test-key"},
+			MaxConcurrency: upstreamcontrol.DefaultConcurrency,
 		}},
 		LoadBalance: "failover",
 	})

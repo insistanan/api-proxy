@@ -10,6 +10,9 @@ package config
 // 新增渠道字段时**只改这里**。
 func ChannelToDTO(up *UpstreamConfig, index int) map[string]interface{} {
 	return map[string]interface{}{
+		"maxConcurrency":              up.MaxConcurrency,
+		"effectiveConcurrency":        up.EffectiveConcurrency,
+		"clientIdentityMode":          up.ClientIdentityMode,
 		"id":                          up.ID,
 		"poolId":                      up.PoolID,
 		"index":                       index,

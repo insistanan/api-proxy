@@ -482,12 +482,19 @@ func TestCallClaudeUpstream(t *testing.T) {
 	if result.RequestID != "review-1" || result.Model != "test-model" || result.ChannelName != "claude-primary" {
 		t.Fatalf("应返回实际复核调用信息: %+v", result)
 	}
-	logStore.Flush()
+	if err := logStore.Flush(); err != nil {
+		t.Fatalf("刷新复核日志失败: %v", err)
+	}
 	// cmd_gate 类调用不写流量正文（防闸门复核刷屏，见 a7da115）：
-	// 请求元数据仍完整记录（下方 QueryRequestLogs 断言）。
+	// 允许记录准入结果，请求元数据仍完整记录（下方 QueryRequestLogs 断言）。
 	traffic, err := logStore.QueryTrafficByRequestID(context.Background(), "review-1")
-	if err != nil || len(traffic) != 0 {
-		t.Fatalf("cmd_gate 调用不应记录流量正文: %+v err=%v", traffic, err)
+	if err != nil {
+		t.Fatalf("读取复核准入日志失败: %v", err)
+	}
+	for _, entry := range traffic {
+		if entry.Phase != logger.PhaseUpstreamAdmission {
+			t.Fatalf("cmd_gate 调用不应记录请求或响应正文: %+v", entry)
+		}
 	}
 	payloads, err := logStore.QueryRequestLogs(context.Background(), logger.QueryOptions{RequestID: "review-1"})
 	if err != nil || len(payloads) != 1 {
@@ -501,24 +508,37 @@ func TestCallClaudeUpstream(t *testing.T) {
 		t.Fatalf("复核日志应关联原请求与原会话: %+v", recorded)
 	}
 	// 非 cmd_gate 的内部调用（如助手）开启正文日志时记录
-	// 提交内容、上游请求和响应三条流量。
+	// 提交内容、上游请求和响应；准入元数据独立于正文日志开关。
 	if _, err := caller.Call(context.Background(), "", Prompt{
 		Messages: []PromptMessage{{Role: "user", Content: "assistant ping"}},
 		Metadata: CallMetadata{RequestID: "review-body", ParentRequestID: "request-2"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	logStore.Flush()
-	traffic, err = logStore.QueryTrafficByRequestID(context.Background(), "review-body")
-	if err != nil || len(traffic) != 3 {
-		t.Fatalf("非 cmd_gate 调用应持久化提交内容、上游请求和响应: %+v err=%v", traffic, err)
+	if err := logStore.Flush(); err != nil {
+		t.Fatalf("刷新助手日志失败: %v", err)
 	}
+	traffic, err = logStore.QueryTrafficByRequestID(context.Background(), "review-body")
+	if err != nil {
+		t.Fatalf("读取助手正文日志失败: %v", err)
+	}
+	bodyTraffic := make(map[string]logger.TrafficLog)
 	for _, entry := range traffic {
 		if entry.APIType == "cmd_gate" || strings.Contains(entry.HeadersJSON, "sk-test") {
 			t.Fatalf("调用分类应正确且请求头密钥必须脱敏: %+v", entry)
 		}
+		if entry.Phase == logger.PhaseUpstreamAdmission {
+			continue
+		}
+		if _, duplicate := bodyTraffic[entry.Phase]; duplicate {
+			t.Fatalf("同一调用的正文阶段不应重复记录: %+v", entry)
+		}
+		bodyTraffic[entry.Phase] = entry
 	}
-	if traffic[1].AttemptID == "" || traffic[1].AttemptID != traffic[2].AttemptID {
+	if len(bodyTraffic) != 3 || bodyTraffic[logger.PhaseClientRequest].Body == "" || bodyTraffic[logger.PhaseUpstreamRequest].Body == "" || bodyTraffic[logger.PhaseUpstreamResponse].Body == "" {
+		t.Fatalf("非 cmd_gate 调用应持久化提交内容、上游请求和响应: %+v", traffic)
+	}
+	if bodyTraffic[logger.PhaseUpstreamRequest].AttemptID == "" || bodyTraffic[logger.PhaseUpstreamRequest].AttemptID != bodyTraffic[logger.PhaseUpstreamResponse].AttemptID {
 		t.Fatal("上游请求和响应必须属于同一次尝试")
 	}
 	envCfg.EnableRequestLogs = false
@@ -529,10 +549,17 @@ func TestCallClaudeUpstream(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	logStore.Flush()
+	if err := logStore.Flush(); err != nil {
+		t.Fatalf("刷新关闭正文后的日志失败: %v", err)
+	}
 	traffic, err = logStore.QueryTrafficByRequestID(context.Background(), "review-no-body")
-	if err != nil || len(traffic) != 0 {
-		t.Fatalf("关闭正文日志后不应继续记录正文: %+v err=%v", traffic, err)
+	if err != nil {
+		t.Fatalf("读取关闭正文后的日志失败: %v", err)
+	}
+	for _, entry := range traffic {
+		if entry.Phase != logger.PhaseUpstreamAdmission {
+			t.Fatalf("关闭正文日志后不应继续记录请求或响应正文: %+v", entry)
+		}
 	}
 	payloads, err = logStore.QueryRequestLogs(context.Background(), logger.QueryOptions{RequestID: "review-no-body"})
 	if err != nil || len(payloads) != 1 {

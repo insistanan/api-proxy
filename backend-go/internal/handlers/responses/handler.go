@@ -236,13 +236,13 @@ func handleSuccess(
 				// ReplaceSessionAfterBoundary，压缩前的完整历史会被再次写回本地
 				// session，下一轮转换仍会迅速恢复到旧上下文长度。
 				commitErr = sessionManager.CommitTurn(sess.ID, turnItems, sessionTokens,
-					utils.DetectImageContent(originalRequestJSON), responsesResp.ID)
+					utils.DetectImageContent(originalRequestJSON), responsesResp.ID, responseUpstreamOwner(resp))
 			} else if c.GetBool(utils.ContextKeyResponsesHistoryBoundary) {
 				commitErr = sessionManager.ReplaceSessionAfterBoundary(sess.ID, turnItems,
-					utils.DetectImageContent(originalRequestJSON), responsesResp.ID)
+					utils.DetectImageContent(originalRequestJSON), responsesResp.ID, responseUpstreamOwner(resp))
 			} else {
 				commitErr = sessionManager.CommitTurn(sess.ID, turnItems, sessionTokens,
-					utils.DetectImageContent(originalRequestJSON), responsesResp.ID)
+					utils.DetectImageContent(originalRequestJSON), responsesResp.ID, responseUpstreamOwner(resp))
 			}
 			if err := commitErr; err != nil {
 				return nil, fmt.Errorf("持久化 Responses 会话轮次失败: %w", err)

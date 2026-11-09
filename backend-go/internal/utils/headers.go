@@ -74,14 +74,22 @@ func PrepareUpstreamHeaders(c *gin.Context, targetHost string) http.Header {
 
 // PrepareUpstreamHeadersFromHeader 以显式请求头准备上游请求头
 // （R4-a：providers 的显式输入构造路径不经 gin context）。
-// 未知请求头原样克隆，包括 x-claude-code-* 和客户端自己的 anthropic-beta。
-// 只删除代理头、真实 IP 头和 Accept-Encoding。
+// 未知业务头保留，浏览器凭据、逐跳头、代理控制头和来源信息在此统一清除。
 func PrepareUpstreamHeadersFromHeader(source http.Header, targetHost string) http.Header {
 	var headers http.Header
 	if source != nil {
 		headers = source.Clone()
 	} else {
 		headers = make(http.Header)
+	}
+	// Connection 可以点名额外的逐跳头，必须先解析再删除自身。
+	for _, value := range headers.Values("Connection") {
+		for _, name := range strings.Split(value, ",") {
+			headers.Del(strings.TrimSpace(name))
+		}
+	}
+	for _, name := range []string{"Cookie", "Origin", "Referer", "Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization", "TE", "Trailer", "Transfer-Encoding", "Upgrade", "X-Proxy-Purpose", "X-Channel-Index", "X-Target-Channel", "Content-Length"} {
+		headers.Del(name)
 	}
 
 	// 设置正确的Host头部
@@ -216,17 +224,17 @@ func ApplyCodexDisguise(headers http.Header, stream bool) {
 	headers.Set("version", codexDisguiseVersion())
 
 	if headers.Get("session_id") == "" {
-		headers.Set("session_id", uuid.NewString())
+		headers.Set("session_id", fallbackDisguiseSessionID)
 	}
 
 	// X-Codex-Installation-Id: 客户端安装 ID（如果没有则生成一个）
 	if headers.Get("X-Codex-Installation-Id") == "" {
-		headers.Set("X-Codex-Installation-Id", uuid.NewString())
+		headers.Set("X-Codex-Installation-Id", disguiseInstallationID)
 	}
 
 	// X-Codex-Window-Id: 编辑器窗口 ID（如果没有则使用默认值）
 	if headers.Get("X-Codex-Window-Id") == "" {
-		headers.Set("X-Codex-Window-Id", uuid.NewString())
+		headers.Set("X-Codex-Window-Id", disguiseInstallationID)
 	}
 
 	// X-Request-Id: 请求追踪 ID（如果没有则生成）
@@ -262,7 +270,7 @@ func ApplyClaudeCodeDisguise(headers http.Header, stream bool) {
 
 	// X-Claude-Code-Session-Id: 会话 ID（如果没有则生成）
 	if headers.Get("X-Claude-Code-Session-Id") == "" {
-		headers.Set("X-Claude-Code-Session-Id", uuid.NewString())
+		headers.Set("X-Claude-Code-Session-Id", fallbackDisguiseSessionID)
 	}
 
 	// 真实 Claude Code 请求可能缺少部分可选字段，仅补缺失值。

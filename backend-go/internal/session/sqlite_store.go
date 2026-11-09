@@ -57,6 +57,9 @@ func (s *sqliteStore) initSchema() error {
 	)`); err != nil {
 		return err
 	}
+	if err := s.ensureColumn("response_session_mappings", "upstream_identity", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS response_session_access (
 		session_id TEXT PRIMARY KEY,
 		last_access_at INTEGER NOT NULL
@@ -158,7 +161,7 @@ func (s *sqliteStore) upsertSession(session *Session) error {
 	return s.upsertSessionAndMapping(session, "")
 }
 
-func (s *sqliteStore) upsertSessionAndMapping(session *Session, responseID string) error {
+func (s *sqliteStore) upsertSessionAndMapping(session *Session, responseID string, owner ...string) error {
 	messages, err := json.Marshal(session.Messages)
 	if err != nil {
 		return err
@@ -183,8 +186,8 @@ func (s *sqliteStore) upsertSessionAndMapping(session *Session, responseID strin
 		return err
 	}
 	if responseID != "" {
-		if _, err = tx.Exec(`INSERT INTO response_session_mappings (response_id, session_id) VALUES (?, ?)
-			ON CONFLICT(response_id) DO UPDATE SET session_id = excluded.session_id`, responseID, session.ID); err != nil {
+		if _, err = tx.Exec(`INSERT INTO response_session_mappings (response_id, session_id, upstream_identity) VALUES (?, ?, ?)
+			ON CONFLICT(response_id) DO UPDATE SET session_id = excluded.session_id, upstream_identity = excluded.upstream_identity`, responseID, session.ID, responseOwnerValue(owner)); err != nil {
 			return err
 		}
 	}
@@ -198,7 +201,7 @@ func (s *sqliteStore) upsertSessionAndMapping(session *Session, responseID strin
 // replaceSessionAndMapping 原子替换 compact 前后的 response ID 映射。
 // 如果旧映射继续存在，客户端重放旧 response ID 时可能重新进入压缩前的
 // 服务端链，破坏 compact 后的上下文边界。
-func (s *sqliteStore) replaceSessionAndMapping(session *Session, previousResponseID, responseID string) error {
+func (s *sqliteStore) replaceSessionAndMapping(session *Session, previousResponseID, responseID string, owner ...string) error {
 	if session == nil {
 		return fmt.Errorf("会话不能为空")
 	}
@@ -232,8 +235,8 @@ func (s *sqliteStore) replaceSessionAndMapping(session *Session, previousRespons
 		return err
 	}
 	if responseID != "" {
-		if _, err = tx.Exec(`INSERT INTO response_session_mappings (response_id, session_id) VALUES (?, ?)
-			ON CONFLICT(response_id) DO UPDATE SET session_id = excluded.session_id`, responseID, session.ID); err != nil {
+		if _, err = tx.Exec(`INSERT INTO response_session_mappings (response_id, session_id, upstream_identity) VALUES (?, ?, ?)
+			ON CONFLICT(response_id) DO UPDATE SET session_id = excluded.session_id, upstream_identity = excluded.upstream_identity`, responseID, session.ID, responseOwnerValue(owner)); err != nil {
 			return err
 		}
 	}

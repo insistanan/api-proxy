@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
 	"github.com/insistanan/api-proxy/internal/utils"
 
 	"github.com/fsnotify/fsnotify"
@@ -18,6 +19,12 @@ import (
 
 // UpstreamConfig 上游配置
 type UpstreamConfig struct {
+	// 共享准入的派生字段不写入配置文件。
+	MaxConcurrency       int                         `json:"maxConcurrency"`               // URL、协议、Key 相同的配置共享最小上限
+	EffectiveConcurrency []EffectiveConcurrencyLimit `json:"-"`                            // 仅管理接口输出
+	ClientIdentityMode   string                      `json:"clientIdentityMode,omitempty"` // inherit、api、compatibility
+	upstreamProtocol     string                      // 实际上游协议，Images 的 openai 与 Chat 区分
+
 	ID                 string              `json:"id,omitempty"`     // 稳定渠道标识，避免数组位置变化影响关联状态
 	PoolID             string              `json:"poolId,omitempty"` // 所属渠道分组；空值迁移到兜底分组
 	BaseURL            string              `json:"baseUrl"`
@@ -105,8 +112,12 @@ func (u *UpstreamConfig) UnmarshalJSON(data []byte) error {
 	}
 
 	var alias upstreamConfigAlias
+	alias.MaxConcurrency = upstreamcontrol.DefaultConcurrency
 	if err := json.Unmarshal(withoutModelMapping, &alias); err != nil {
 		return err
+	}
+	if alias.MaxConcurrency < 1 && alias.Status != ChannelStatusDeleted {
+		return fmt.Errorf("maxConcurrency 必须是正整数")
 	}
 
 	*u = UpstreamConfig(alias)
@@ -118,6 +129,8 @@ func (u *UpstreamConfig) UnmarshalJSON(data []byte) error {
 
 // UpstreamUpdate 用于部分更新 UpstreamConfig
 type UpstreamUpdate struct {
+	MaxConcurrency     *int                `json:"maxConcurrency"`
+	ClientIdentityMode *string             `json:"clientIdentityMode"`
 	Name               *string             `json:"name"`
 	PoolID             *string             `json:"poolId"`
 	ServiceType        *string             `json:"serviceType"`
@@ -541,6 +554,7 @@ type FailedKey struct {
 
 // ConfigManager 配置管理器
 type ConfigManager struct {
+	admission       *upstreamcontrol.Controller
 	mu              sync.RWMutex
 	config          Config
 	configFile      string

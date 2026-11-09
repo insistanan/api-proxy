@@ -5,18 +5,20 @@
 package providers
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/session"
 	"github.com/insistanan/api-proxy/internal/types"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -217,13 +219,14 @@ func TestResponsesProviderBuildRequest_CodexDisguiseBodyIsReplayable(t *testing.
 			require.Equal(t, "mapped-model", gjson.GetBytes(finalBody, "model").String())
 			require.False(t, gjson.GetBytes(finalBody, "prompt_cache_key").Exists())
 			require.False(t, gjson.GetBytes(finalBody, "prompt_cache_retention").Exists())
-			require.Equal(t, "session-test", outcome.Request.Header.Get("session_id"))
 			if disguise {
+				require.Equal(t, "session-test", outcome.Request.Header.Get("session_id"))
 				require.True(t, strings.HasPrefix(outcome.Request.Header.Get("User-Agent"), "codex_cli_rs/8.8.8 "))
 				require.Equal(t, "8.8.8", outcome.Request.Header.Get("version"))
 			} else {
-				require.Equal(t, headers.Get("User-Agent"), outcome.Request.Header.Get("User-Agent"))
-				require.Equal(t, "0.133.0", outcome.Request.Header.Get("version"))
+				require.Equal(t, "api-proxy", outcome.Request.Header.Get("User-Agent"))
+				require.Empty(t, outcome.Request.Header.Get("version"))
+				require.Empty(t, outcome.Request.Header.Get("session_id"))
 			}
 			require.Equal(t, "0.133.0", headers.Get("version"), "不能修改客户端请求头")
 		})
@@ -308,14 +311,37 @@ func TestBuildUpstreamRequestRejectsNilProvider(t *testing.T) {
 	}
 }
 
-// 确保样本体可被解析为 ClaudeRequest（守卫测试自身）。
-func TestSampleBodyParses(t *testing.T) {
-	var req types.ClaudeRequest
-	if err := json.Unmarshal([]byte(sampleClaudeBody), &req); err != nil {
-		t.Fatalf("样本体解析失败: %v", err)
-	}
-	if req.Model == "" || len(req.Messages) == 0 {
-		t.Fatal("样本体缺字段")
-	}
-	_ = bytes.MinRead
+// 已知归属可复用链；换 Key 恢复完整历史；未知归属且没有历史时必须显式拒绝。
+func TestNativeResponseHistoryCredentialOwnership(t *testing.T) {
+	manager, err := session.NewPersistentSessionManager(filepath.Join(t.TempDir(), "responses.db"), time.Hour, 0, 0)
+	require.NoError(t, err)
+	t.Cleanup(manager.Stop)
+	sess, err := manager.GetOrCreateSessionForConversation("", "conv-owner")
+	require.NoError(t, err)
+	upstream := &config.UpstreamConfig{BaseURL: "https://example.com/", ServiceType: "responses"}
+	owner := upstream.RequestIdentity("first-key").Fingerprint()
+	require.NoError(t, manager.CommitTurn(sess.ID, []types.ResponsesItem{
+		{Type: "text", Content: "第一轮问题"},
+		{Type: "message", Role: "assistant", Content: "第一轮回答"},
+	}, 10, false, "resp-owned", owner))
+	body := []byte(`{"model":"m","previous_response_id":"resp-owned","input":"第二轮问题"}`)
+
+	// 末尾斜杠规范化必须与发送端一致，否则同一 Key 会被误判为换凭据。
+	upstream.BaseURL = "https://example.com"
+	kept, err := PrepareNativeResponseHistory(manager, "conv-owner", body, upstream.RequestIdentity("first-key").Fingerprint())
+	require.NoError(t, err)
+	require.JSONEq(t, string(body), string(kept))
+
+	restored, err := PrepareNativeResponseHistory(manager, "conv-owner", body, upstream.RequestIdentity("second-key").Fingerprint())
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(restored, "previous_response_id").Exists())
+	require.Len(t, gjson.GetBytes(restored, "input").Array(), 3)
+	require.Equal(t, "message", gjson.GetBytes(restored, "input.0.type").String())
+	require.Equal(t, "user", gjson.GetBytes(restored, "input.0.role").String())
+	require.Contains(t, string(restored), "第一轮回答")
+
+	_, err = PrepareNativeResponseHistory(manager, "", []byte(`{"previous_response_id":"unknown-id","input":"后缀"}`), owner)
+	var historyErr *ResponseHistoryError
+	require.ErrorAs(t, err, &historyErr)
+	require.True(t, historyErr.ClientRequestError())
 }

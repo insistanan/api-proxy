@@ -49,6 +49,9 @@ export interface ChannelMetrics {
 }
 
 export interface Channel {
+  maxConcurrency?: number // 每个 URL、实际协议、Key 组合的配置并发，默认 5
+  effectiveConcurrency?: { baseUrl: string; protocol: string; keyIndex: number; maxConcurrency: number }[]
+  clientIdentityMode?: 'inherit' | 'api' | 'compatibility'
   id?: string
   poolId?: string
   name: string

@@ -287,6 +287,43 @@
               </div>
             </v-col>
 
+            <v-col cols="12" md="6">
+              <v-text-field
+                v-model="form.maxConcurrency"
+                label="最大并发 *"
+                type="number"
+                min="1"
+                step="1"
+                variant="outlined"
+                density="comfortable"
+                :rules="[(value: unknown) => Number.isSafeInteger(Number(value)) && Number(value) > 0 || '请输入正整数']"
+                hint="默认 5；相同 URL、上游协议和 Key 共享最小上限。最多排队 3 个，等待 10 秒。"
+                persistent-hint
+              />
+            </v-col>
+            <v-col cols="12" md="6">
+              <v-select
+                v-model="form.clientIdentityMode"
+                label="客户端身份"
+                :items="[
+                  { title: '继承全局设置', value: 'inherit' },
+                  { title: '普通 API', value: 'api' },
+                  { title: '中转兼容模式', value: 'compatibility' }
+                ]"
+                variant="outlined"
+                density="comfortable"
+                hint="普通 API 不补造官方客户端身份；严格要求客户端身份的中转可选择兼容模式。"
+                persistent-hint
+              />
+            </v-col>
+            <v-col v-if="props.channel?.effectiveConcurrency?.length" cols="12">
+              <div class="text-caption text-medium-emphasis mb-1">当前已保存配置的最终生效值（保存修改后重新计算）：</div>
+              <div v-for="limit in props.channel.effectiveConcurrency" :key="`${limit.baseUrl}:${limit.protocol}:${limit.keyIndex}`" class="text-caption">
+                {{ limit.baseUrl }} · {{ limit.protocol }} · Key {{ limit.keyIndex + 1 }}：{{ limit.maxConcurrency }} 并发
+              </div>
+              <div class="text-caption text-medium-emphasis mt-1">队列满或等待超时，仅在 fuzzy 多渠道模式下转到下一渠道；单渠道直接返回错误。</div>
+            </v-col>
+
             <!-- 官网/控制台（可选） -->
             <v-col cols="12">
               <v-text-field
@@ -1230,6 +1267,8 @@ const handleQuickSubmit = () => {
   if (!isQuickFormValid.value) return
 
   const channelData = {
+    maxConcurrency: 5,
+    clientIdentityMode: 'inherit' as const,
     name: generatedChannelName.value,
     serviceType: props.channelType === 'images' ? form.serviceType as Channel['serviceType'] : detectedServiceType.value || getDefaultServiceTypeValue(),
     responsesModel: props.channelType === 'images' && form.serviceType === 'responses' ? form.responsesModel.trim() : '',
@@ -1668,6 +1707,7 @@ const subtitleClasses = computed(() => {
 
 const isFormValid = computed(() => {
   return (
+    Number.isSafeInteger(Number(form.maxConcurrency)) && Number(form.maxConcurrency) > 0 &&
     form.name.trim() && form.serviceType && form.baseUrl.trim() && isValidUrl(form.baseUrl) && form.apiKeys.length > 0 && isImagesProtocolValid.value &&
     (!form.visionLayerEnabled || form.visionLayerChannelId) &&
     (form.proxyMode !== 'custom' || rules.proxyUrl(form.proxyUrl) === true)

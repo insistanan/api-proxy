@@ -420,6 +420,9 @@ func TestRunProxyRequestSingleChannelEndToEnd(t *testing.T) {
 
 func TestRunProxyRequestMultiChannelEndToEnd(t *testing.T) {
 	env := newRunProxyTestEnv(t)
+	if err := env.cfgManager.SetFuzzyModeEnabled(true); err != nil {
+		t.Fatal(err)
+	}
 	server := newRecordingUpstreamServer(t, nil)
 	addTestUpstream(t, env, "ch-0", server.URL(), "key-a")
 	addTestUpstream(t, env, "ch-1", server.URL(), "key-b")

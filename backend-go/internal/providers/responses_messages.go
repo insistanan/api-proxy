@@ -19,6 +19,7 @@ import (
 	"github.com/insistanan/api-proxy/internal/converters"
 	"github.com/insistanan/api-proxy/internal/session"
 	"github.com/insistanan/api-proxy/internal/types"
+	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
 	"github.com/insistanan/api-proxy/internal/utils"
 	"github.com/tidwall/gjson"
 )
@@ -31,6 +32,7 @@ type MessagesResponsesProvider struct {
 	upstream       *config.UpstreamConfig
 	resolvedModel  string
 	enableChain    bool
+	chainIdentity  upstreamcontrol.Identity
 }
 
 type claudeResponsesRequest struct {
@@ -71,6 +73,7 @@ func (p *MessagesResponsesProvider) ConvertToProviderRequest(c *gin.Context, ups
 		Body:           originalBodyBytes,
 		Query:          func(key string) string { return c.Query(key) },
 		ConversationID: conversationID,
+		CodexDisguise:  c.GetBool(utils.ContextKeyCodexDisguise),
 	}, upstream, apiKey)
 	if err != nil {
 		return nil, originalBodyBytes, err
@@ -100,7 +103,8 @@ func (p *MessagesResponsesProvider) BuildRequest(input RequestInput, upstream *c
 	p.upstream = upstream
 	p.resolvedModel = config.ResolveUpstreamModel(claudeReq.Model, upstream)
 	p.enableChain = upstream != nil && upstream.EnablePreviousResponseID && conversationID != ""
-	responsesReq, err := claudeRequestToResponsesRequest(&claudeReq, upstream, conversationID)
+	p.chainIdentity = upstream.RequestIdentity(apiKey)
+	responsesReq, err := claudeRequestToResponsesRequest(&claudeReq, upstream, conversationID, p.chainIdentity)
 	if err != nil {
 		return nil, err
 	}
@@ -114,6 +118,12 @@ func (p *MessagesResponsesProvider) BuildRequest(input RequestInput, upstream *c
 		return nil, fmt.Errorf("创建Responses请求失败: %w", err)
 	}
 	req.Header = utils.PrepareUpstreamHeadersFromHeader(input.Header, req.URL.Host)
+	compatibility := upstream.UseClientCompatibility(input.CodexDisguise)
+	utils.PrepareTargetIdentity(req.Header, "responses", compatibility)
+	if compatibility {
+		utils.SeedDisguiseSession(req.Header, conversationID, "responses")
+		utils.ApplyCodexDisguise(req.Header, claudeReq.Stream)
+	}
 	utils.SetAuthenticationHeader(req.Header, apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
@@ -126,7 +136,7 @@ func (p *MessagesResponsesProvider) ConvertToClaudeResponse(providerResp *types.
 		return nil, err
 	}
 	if p != nil && p.enableChain && p.claudeReq != nil {
-		rememberResponsesChainFromBody(p.conversationID, p.claudeReq, p.upstream, p.resolvedModel, providerResp.Body)
+		rememberResponsesChainFromBody(p.conversationID, p.claudeReq, p.upstream, p.resolvedModel, providerResp.Body, p.chainIdentity)
 	}
 	return responsesResponseToClaude(&responsesResp), nil
 }
@@ -144,6 +154,7 @@ func (p *MessagesResponsesProvider) HandleStreamResponseCtx(ctx context.Context,
 	upstream := p.upstream
 	resolvedModel := p.resolvedModel
 	enableChain := p.enableChain
+	chainIdentity := p.chainIdentity
 
 	go func() {
 		defer close(eventChan)
@@ -198,14 +209,14 @@ func (p *MessagesResponsesProvider) HandleStreamResponseCtx(ctx context.Context,
 		state.cacheReasoning()
 		if enableChain && state.completed && claudeReq != nil && state.upstreamResponseID != "" {
 			rememberResponsesChain(conversationID, claudeReq, upstream, resolvedModel,
-				state.upstreamResponseID, state.outputFingerprint())
+				state.upstreamResponseID, state.outputFingerprint(), chainIdentity)
 		}
 	}()
 
 	return eventChan, errChan, nil
 }
 
-func claudeRequestToResponsesRequest(claudeReq *types.ClaudeRequest, upstream *config.UpstreamConfig, conversationID string) (*claudeResponsesRequest, error) {
+func claudeRequestToResponsesRequest(claudeReq *types.ClaudeRequest, upstream *config.UpstreamConfig, conversationID string, identity ...upstreamcontrol.Identity) (*claudeResponsesRequest, error) {
 	model := config.ResolveUpstreamModel(claudeReq.Model, upstream)
 	req := &claudeResponsesRequest{
 		Model:  model,
@@ -253,7 +264,7 @@ func claudeRequestToResponsesRequest(claudeReq *types.ClaudeRequest, upstream *c
 	// previous_response_id 链式上下文（可选）：仅发送“新增 messages 后缀”，减少重复传输。
 	// 注意：官方仍对链上历史 input 计费；失败时由上层全量重试或清链。
 	if upstream != nil && upstream.EnablePreviousResponseID && conversationID != "" {
-		applyPreviousResponseIDChain(req, claudeReq, upstream, conversationID, model)
+		applyPreviousResponseIDChain(req, claudeReq, upstream, conversationID, model, identity...)
 	}
 	return req, nil
 }
@@ -1462,12 +1473,18 @@ func applyPreviousResponseIDChain(
 	upstream *config.UpstreamConfig,
 	conversationID string,
 	model string,
+	identity ...upstreamcontrol.Identity,
 ) {
 	if req == nil || claudeReq == nil || conversationID == "" {
 		return
 	}
 	state, ok := session.DefaultResponseChainManager().Get(conversationID)
 	if !ok || state.ResponseID == "" {
+		return
+	}
+	if len(identity) > 0 && state.UpstreamIdentity != identity[0] {
+		// Messages 输入携带当前完整历史；换 URL/协议/Key 后清链并发送全量。
+		session.DefaultResponseChainManager().Clear(conversationID)
 		return
 	}
 
@@ -1568,7 +1585,7 @@ func applyPreviousResponseIDChain(
 	req.PreviousResponseID = state.ResponseID
 }
 
-func rememberResponsesChainFromBody(conversationID string, claudeReq *types.ClaudeRequest, upstream *config.UpstreamConfig, model string, body []byte) {
+func rememberResponsesChainFromBody(conversationID string, claudeReq *types.ClaudeRequest, upstream *config.UpstreamConfig, model string, body []byte, identity ...upstreamcontrol.Identity) {
 	if conversationID == "" || len(body) == 0 || claudeReq == nil {
 		return
 	}
@@ -1589,11 +1606,11 @@ func rememberResponsesChainFromBody(conversationID string, claudeReq *types.Clau
 		return
 	}
 	rememberResponsesChain(conversationID, claudeReq, upstream, model, responseID,
-		responsesAssistantOutputFingerprint(response.Output))
+		responsesAssistantOutputFingerprint(response.Output), identity...)
 }
 
 // rememberResponsesChain 将上游 response id 与当前 messages 指纹写入会话链。
-func rememberResponsesChain(conversationID string, claudeReq *types.ClaudeRequest, upstream *config.UpstreamConfig, model string, responseID, outputFingerprint string) {
+func rememberResponsesChain(conversationID string, claudeReq *types.ClaudeRequest, upstream *config.UpstreamConfig, model string, responseID, outputFingerprint string, identity ...upstreamcontrol.Identity) {
 	if conversationID == "" || responseID == "" || claudeReq == nil {
 		return
 	}
@@ -1610,7 +1627,12 @@ func rememberResponsesChain(conversationID string, claudeReq *types.ClaudeReques
 		session.DefaultResponseChainManager().Clear(conversationID)
 		return
 	}
+	owner := upstreamcontrol.Identity{}
+	if len(identity) > 0 {
+		owner = identity[0]
+	}
 	session.DefaultResponseChainManager().Set(conversationID, session.ResponseChainState{
+		UpstreamIdentity:   owner,
 		ResponseID:         responseID,
 		MessageCount:       len(claudeReq.Messages),
 		OutputFingerprint:  outputFingerprint,

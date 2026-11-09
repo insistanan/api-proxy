@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/handlers/hooks"
+	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
 )
 
 // FailoverError 封装故障转移错误信息
@@ -19,6 +20,10 @@ type FailoverError struct {
 // lastError: 最后一个错误
 // apiType: API 类型（用于错误消息）
 func HandleAllChannelsFailed(c *gin.Context, fuzzyMode bool, lastFailoverError *FailoverError, lastError error, apiType string) {
+	if upstreamcontrol.IsLocalError(lastError) {
+		localAdmissionResult(c, lastError, false)
+		return
+	}
 	// Fuzzy 模式下返回通用错误，不透传上游详情
 	if fuzzyMode {
 		c.JSON(503, gin.H{
@@ -62,6 +67,10 @@ func HandleAllChannelsFailed(c *gin.Context, fuzzyMode bool, lastFailoverError *
 
 // HandleAllKeysFailed 处理所有密钥都失败的情况（单渠道模式）
 func HandleAllKeysFailed(c *gin.Context, fuzzyMode bool, lastFailoverError *FailoverError, lastError error, apiType string) {
+	if upstreamcontrol.IsLocalError(lastError) {
+		localAdmissionResult(c, lastError, false)
+		return
+	}
 	// Fuzzy 模式下返回通用错误
 	if fuzzyMode {
 		c.JSON(503, gin.H{

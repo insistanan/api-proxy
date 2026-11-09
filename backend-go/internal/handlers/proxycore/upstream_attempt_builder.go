@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/config"
 	"github.com/insistanan/api-proxy/internal/scheduler"
+	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
 	"github.com/insistanan/api-proxy/internal/urlhealth"
 )
 
@@ -36,6 +37,7 @@ func NewAttemptBuilder(
 	channelIndex int,
 	conversationID string,
 ) *AttemptBuilder {
+	c.Request = c.Request.WithContext(upstreamcontrol.WithScope(c.Request.Context()))
 	return &AttemptBuilder{attempt: UpstreamAttempt{
 		Context:            c,
 		EnvConfig:          envCfg,

@@ -94,7 +94,7 @@ func (cm *ConfigManager) loadConfig() error {
 			log.Printf("[Config-Migration] 配置迁移完成")
 		}
 	} else {
-		cm.config = candidate
+		cm.publishConfigLocked(candidate)
 		cm.persistedDigest = configDigest(data)
 	}
 
@@ -117,6 +117,9 @@ func (cm *ConfigManager) prepareCandidate(data []byte) (Config, bool, error) {
 		log.Printf("[Config-Migration] 检测到旧格式配置，正在迁移到新格式...")
 	}
 	needNormalization := normalizeChannelListsIn(&candidate)
+	if err := validateConcurrency(&candidate); err != nil {
+		return Config{}, false, err
+	}
 
 	if err := validateProxyConfigOf(&candidate); err != nil {
 		return Config{}, false, err
@@ -168,7 +171,7 @@ func (cm *ConfigManager) reloadFromDisk() error {
 			return err
 		}
 	} else {
-		cm.config = candidate
+		cm.publishConfigLocked(candidate)
 		cm.persistedDigest = digest
 	}
 	log.Printf("[Config-Watcher] 配置已重载")
@@ -612,6 +615,9 @@ func validateProxyConfigOf(candidate *Config) error {
 //   - 提交点后失败（目录同步等）：文件已是新内容，快照同样发布，
 //     返回 *atomicfile.CommittedError（调用方不得按未提交重试）。
 func (cm *ConfigManager) saveConfigLocked(config Config) error {
+	if err := validateConcurrency(&config); err != nil {
+		return err
+	}
 	// 清理已废弃字段，确保不会被序列化到 JSON
 	config.CurrentUpstream = 0
 	config.CurrentResponsesUpstream = 0
@@ -634,7 +640,7 @@ func (cm *ConfigManager) saveConfigLocked(config Config) error {
 		if atomicfile.IsCommitted(err) {
 			// 文件已是新内容：发布快照保持内存与磁盘一致，
 			// 错误带"已提交"标记返回，调用方不得伪装未提交。
-			cm.config = config
+			cm.publishConfigLocked(config)
 			cm.persistedDigest = configDigest(data)
 			return err
 		}
@@ -643,7 +649,7 @@ func (cm *ConfigManager) saveConfigLocked(config Config) error {
 	}
 
 	// 提交成功：发布新快照并记录摘要（watcher 重载去重用）。
-	cm.config = config
+	cm.publishConfigLocked(config)
 	cm.persistedDigest = configDigest(data)
 	return nil
 }

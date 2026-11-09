@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
 	"github.com/insistanan/api-proxy/internal/utils"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -42,18 +43,24 @@ func TestTryCompactWithKey_AppliesCodexDisguise(t *testing.T) {
 			cfgManager, err := config.NewConfigManager(filepath.Join(t.TempDir(), "config.json"))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, cfgManager.Close()) })
+			require.NoError(t, cfgManager.SetClientDisguiseEnabled("responses", enabled))
+			require.NoError(t, cfgManager.AddResponsesUpstream(config.UpstreamConfig{
+				Name:                  "compact-test",
+				BaseURL:               server.URL,
+				APIKeys:               []string{"sk-test"},
+				ServiceType:           "responses",
+				DisablePromptCacheKey: true,
+			}))
+			upstream := cfgManager.GetConfig().ResponsesUpstream[0]
 			body := `{"model":"gpt-5","input":"你好","prompt_cache_key":"old-key","prompt_cache_retention":"24h"}`
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", strings.NewReader(body))
+			c.Request = c.Request.WithContext(upstreamcontrol.WithScope(c.Request.Context()))
 			c.Request.Header.Set("User-Agent", "codex_cli_rs/0.133.0 old-client")
 			c.Request.Header.Set("version", "0.133.0")
 			c.Request.Header.Set("session_id", "session-test")
 			c.Set(utils.ContextKeyCodexDisguise, enabled)
-			success, compactErr := tryCompactWithKey(c, &config.UpstreamConfig{
-				BaseURL:               server.URL,
-				ServiceType:           "responses",
-				DisablePromptCacheKey: true,
-			}, "sk-test", []byte(body), &config.EnvConfig{RequestTimeout: 5000}, cfgManager, nil, nil, "")
+			success, compactErr := tryCompactWithKey(c, &upstream, "sk-test", []byte(body), &config.EnvConfig{RequestTimeout: 5000}, cfgManager, nil, nil, "")
 			require.Nil(t, compactErr)
 			require.True(t, success)
 			got := <-received
@@ -62,14 +69,15 @@ func TestTryCompactWithKey_AppliesCodexDisguise(t *testing.T) {
 			require.Equal(t, int64(len(got.body)), got.length)
 			require.False(t, gjson.GetBytes(got.body, "prompt_cache_key").Exists())
 			require.False(t, gjson.GetBytes(got.body, "prompt_cache_retention").Exists())
-			require.Equal(t, "session-test", got.header.Get("session_id"))
 			require.Equal(t, "Bearer sk-test", got.header.Get("Authorization"))
 			if enabled {
+				require.Equal(t, "session-test", got.header.Get("session_id"))
 				require.True(t, strings.HasPrefix(got.header.Get("User-Agent"), "codex_cli_rs/8.8.8 "))
 				require.Equal(t, "8.8.8", got.header.Get("version"))
 			} else {
-				require.Equal(t, c.Request.Header.Get("User-Agent"), got.header.Get("User-Agent"))
-				require.Equal(t, "0.133.0", got.header.Get("version"))
+				require.Equal(t, "api-proxy", got.header.Get("User-Agent"))
+				require.Empty(t, got.header.Get("version"))
+				require.Empty(t, got.header.Get("session_id"))
 			}
 			require.Equal(t, "0.133.0", c.Request.Header.Get("version"))
 		})

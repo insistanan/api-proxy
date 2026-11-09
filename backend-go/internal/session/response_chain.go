@@ -3,14 +3,17 @@ package session
 import (
 	"sync"
 	"time"
+
+	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
 )
 
 // ResponseChainState 记录 Messages→Responses 链式上下文状态。
 // 注意：OpenAI 官方文档明确 previous_response_id 链上的历史 input 仍会计费；
 // 本能力主要用于减少重复传输与提升上游缓存亲和，不是“免费上下文”。
 type ResponseChainState struct {
-	ResponseID   string
-	MessageCount int
+	UpstreamIdentity upstreamcontrol.Identity
+	ResponseID       string
+	MessageCount     int
 	// OutputFingerprint 是上一条 Responses response 的可见 assistant output
 	// 指纹。Messages 客户端下一轮通常会重放该 assistant 消息；携带
 	// previous_response_id 时必须把这段已存在于服务端链中的消息从后缀中移除。

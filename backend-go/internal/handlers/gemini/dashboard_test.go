@@ -15,6 +15,7 @@ import (
 	"github.com/insistanan/api-proxy/internal/metrics"
 	"github.com/insistanan/api-proxy/internal/scheduler"
 	"github.com/insistanan/api-proxy/internal/session"
+	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
 	"github.com/insistanan/api-proxy/internal/urlhealth"
 )
 
@@ -29,6 +30,7 @@ func TestGetDashboard_IncludesStripThoughtSignature(t *testing.T) {
 				BaseURL:               "https://example.com",
 				APIKeys:               []string{"test-key"},
 				StripThoughtSignature: true,
+				MaxConcurrency:        upstreamcontrol.DefaultConcurrency,
 			},
 		},
 		GeminiLoadBalance: "round-robin",

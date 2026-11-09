@@ -3,6 +3,7 @@ package llmgate
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"github.com/insistanan/api-proxy/internal/scheduler"
 	"github.com/insistanan/api-proxy/internal/sensitive"
 	"github.com/insistanan/api-proxy/internal/types"
+	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
 	"github.com/insistanan/api-proxy/internal/utils"
 )
 
@@ -139,7 +141,7 @@ func (c *Caller) Call(ctx context.Context, channelID string, prompt Prompt) (res
 	if timeout <= 0 {
 		timeout = DefaultTimeoutSecs
 	}
-	callCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+	callCtx, cancel := context.WithTimeout(upstreamcontrol.WithScope(ctx), time.Duration(timeout)*time.Second)
 	defer cancel()
 
 	// channelID 显式指定代表用户意图：不换渠道，选不中即失败。
@@ -170,6 +172,9 @@ func (c *Caller) Call(ctx context.Context, channelID string, prompt Prompt) (res
 		}
 		lastErr = callErr
 		if callCtx.Err() != nil {
+			return nil, callErr
+		}
+		if !c.CfgManager.GetFuzzyModeEnabled() || errors.Is(callErr, upstreamcontrol.ErrBudget) {
 			return nil, callErr
 		}
 		if failed[selection.Kind] == nil {
@@ -228,8 +233,10 @@ func (c *Caller) callOnChannel(ctx context.Context, selection *SelectedChannel, 
 		if selection == nil || selection.Permit == nil {
 			return
 		}
+		var rateLimitErr *gateAttemptError
+		rateLimited := asGateAttemptError(err, &rateLimitErr) && rateLimitErr.StatusCode == http.StatusTooManyRequests
 		switch {
-		case ctx.Err() != nil:
+		case ctx.Err() != nil || upstreamcontrol.IsLocalError(err) || rateLimited:
 			// 整体超时/取消：不计入渠道健康度（与主链路客户端取消口径一致）。
 			selection.Permit.RecordHealthNeutral()
 		case err != nil:
@@ -251,6 +258,11 @@ func (c *Caller) callOnChannel(ctx context.Context, selection *SelectedChannel, 
 	}
 	// 模型已解析：清空映射，防止 Provider 再次重定向（与 visionlayer 同约定）。
 	gateUpstream := upstream.Clone()
+	if c.CfgManager.ClientCompatibilityEnabled(upstream) {
+		gateUpstream.ClientIdentityMode = "compatibility"
+	} else {
+		gateUpstream.ClientIdentityMode = "api"
+	}
 	gateUpstream.DefaultModel = model
 	gateUpstream.ModelMapping = nil
 
@@ -295,11 +307,14 @@ func (c *Caller) callOnChannel(ctx context.Context, selection *SelectedChannel, 
 				}
 				continue
 			}
-			result, attemptErr := c.sendRequest(provider, selection, upstream, trace, attemptID, model, baseURL, apiKey, request, attemptStart, attempt > 0)
+			result, attemptErr := c.sendRequest(provider, selection, upstreamCopy, trace, attemptID, model, baseURL, apiKey, request, attemptStart, attempt > 0)
 			if attemptErr == nil {
 				return result, nil
 			}
 			lastErr = attemptErr
+			if upstreamcontrol.IsLocalError(attemptErr) {
+				return nil, attemptErr
+			}
 			failedKeys[apiKey] = true
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
@@ -389,12 +404,6 @@ func (c *Caller) sendRequest(
 	retried bool,
 ) (*CallResult, error) {
 	timeout := c.timeoutDuration()
-	client, clientErr := httpclient.GetManager().GetStandardClientForUpstream(timeout, c.CfgManager, upstream)
-	if clientErr != nil {
-		_ = request.Body.Close()
-		c.recordAttempt(selection, upstream, trace, attemptID, model, baseURL, apiKey, "failed", 0, false, attemptStart, "http_client", clientErr.Error(), retried, nil)
-		return nil, &gateAttemptError{Err: clientErr, message: redactCallText(clientErr.Error(), apiKey)}
-	}
 	if c.EnvConfig != nil && c.EnvConfig.EnableRequestLogs && trace.APIType != "cmd_gate" {
 		body, readErr := io.ReadAll(request.Body)
 		_ = request.Body.Close()
@@ -416,8 +425,14 @@ func (c *Caller) sendRequest(
 	}
 	c.ChannelScheduler.RecordRequestStart(baseURL, apiKey, selection.ChannelIndex, selection.Kind)
 	metricsRequestID := c.ChannelScheduler.RecordRequestConnected(baseURL, apiKey, model, selection.ChannelIndex, selection.Kind)
-	response, requestErr := client.Do(request)
+	request = request.WithContext(logger.ContextWithAttemptID(logger.ContextWithRequestID(request.Context(), trace.RequestID), attemptID))
+	response, requestErr := httpclient.SendForUpstream(request, timeout, c.CfgManager, upstream, apiKey)
 	if requestErr != nil {
+		if upstreamcontrol.IsLocalError(requestErr) {
+			c.recordFinalizeNeutral(baseURL, apiKey, selection, metricsRequestID)
+			c.recordAttempt(selection, upstream, trace, attemptID, model, baseURL, apiKey, "failed", http.StatusServiceUnavailable, false, attemptStart, "local_admission", requestErr.Error(), retried, nil)
+			return nil, requestErr
+		}
 		if request.Context().Err() != nil {
 			c.recordFinalizeNeutral(baseURL, apiKey, selection, metricsRequestID)
 			c.recordAttempt(selection, upstream, trace, attemptID, model, baseURL, apiKey, "cancelled", 0, false, attemptStart, "cancelled", request.Context().Err().Error(), retried, nil)
@@ -455,8 +470,12 @@ func (c *Caller) sendRequest(
 		return nil, err
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		c.recordFinalizeFailure(baseURL, apiKey, selection, metricsRequestID)
-		c.ChannelScheduler.MarkURLFailure(selection.Kind, selection.ChannelIndex, baseURL)
+		if response.StatusCode == http.StatusTooManyRequests {
+			c.recordFinalizeNeutral(baseURL, apiKey, selection, metricsRequestID)
+		} else {
+			c.recordFinalizeFailure(baseURL, apiKey, selection, metricsRequestID)
+			c.ChannelScheduler.MarkURLFailure(selection.Kind, selection.ChannelIndex, baseURL)
+		}
 		err := &gateAttemptError{
 			StatusCode: response.StatusCode,
 			Body:       body,

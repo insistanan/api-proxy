@@ -67,6 +67,7 @@ func (p *ClaudeProvider) ConvertToProviderRequest(c *gin.Context, upstream *conf
 		RawQuery:           c.Request.URL.RawQuery,
 		Header:             c.Request.Header,
 		Body:               bodyBytes,
+		ConversationID:     c.GetString(utils.ContextKeyConversationUserID),
 		ClaudeCodeDisguise: c.GetBool(utils.ContextKeyClaudeCodeDisguise),
 	}, upstream, apiKey)
 	if err != nil {
@@ -110,7 +111,10 @@ func (p *ClaudeProvider) BuildRequest(input RequestInput, upstream *config.Upstr
 	// 使用统一的头部处理逻辑
 	req.Header = utils.PrepareUpstreamHeadersFromHeader(input.Header, req.URL.Host)
 
-	if input.ClaudeCodeDisguise {
+	compatibility := upstream.UseClientCompatibility(input.ClaudeCodeDisguise)
+	utils.PrepareTargetIdentity(req.Header, "claude", compatibility)
+	if compatibility {
+		utils.SeedDisguiseSession(req.Header, input.ConversationID, "claude")
 		var streamRequest struct {
 			Stream bool `json:"stream"`
 		}

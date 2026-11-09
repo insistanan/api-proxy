@@ -79,6 +79,20 @@ func TestPrepareUpstreamHeaders(t *testing.T) {
 				"Custom-Header": true,
 			},
 		},
+		{
+			name: "移除浏览器凭据、内部控制头和 Connection 点名的逐跳头",
+			headers: map[string]string{
+				"Cookie": "fixture=session", "Origin": "https://client.example", "Referer": "https://client.example/page",
+				"Connection": "X-Hop-Only, keep-alive", "X-Hop-Only": "private", "Keep-Alive": "timeout=5",
+				"X-Proxy-Purpose": "quick_test", "Content-Length": "999", "X-Business-Trace": "preserve",
+			},
+			targetHost: "upstream.example", wantHost: "upstream.example",
+			shouldExist: map[string]bool{
+				"Cookie": false, "Origin": false, "Referer": false, "Connection": false,
+				"X-Hop-Only": false, "Keep-Alive": false, "X-Proxy-Purpose": false, "Content-Length": false,
+				"X-Business-Trace": true,
+			},
+		},
 	}
 
 	for _, tt := range tests {

@@ -134,6 +134,7 @@ func (p *OpenAIProvider) BuildRequest(input RequestInput, upstream *config.Upstr
 	req.Header.Del("X-App")
 
 	utils.SetAuthenticationHeader(req.Header, apiKey)
+	utils.PrepareTargetIdentity(req.Header, "openai", false)
 
 	return &RequestOutcome{Request: req, OriginalBody: originalBodyBytes}, nil
 }

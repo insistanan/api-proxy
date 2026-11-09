@@ -21,10 +21,10 @@ import (
 	"github.com/insistanan/api-proxy/internal/logger"
 	"github.com/insistanan/api-proxy/internal/mediasanitizer"
 	"github.com/insistanan/api-proxy/internal/proxy"
-	"github.com/insistanan/api-proxy/internal/ratelimit"
 	"github.com/insistanan/api-proxy/internal/rectifier"
 	"github.com/insistanan/api-proxy/internal/scheduler"
 	"github.com/insistanan/api-proxy/internal/types"
+	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
 	"github.com/insistanan/api-proxy/internal/utils"
 	"github.com/insistanan/api-proxy/internal/visionlayer"
 )
@@ -37,8 +37,6 @@ type upstreamAttemptPreflight struct {
 // 很小；正常非流式响应通常也在该上限内（HandleSuccess 本就全量读）；超过
 // 上限的巨型响应按读失败处理，走 failover 让其他候选接手。
 const maxEnvelopeSniffBytes = 10 * 1024 * 1024
-
-var errRateLimitQueueTimeout = errors.New("上游仍处于限流冷却，排队等待已达到上限")
 
 // Images 成功响应可能包含很大的 base64 JSON；只缓冲足以识别常见错误信封的前缀。
 const maxImagesEnvelopeSniffBytes = 64 * 1024
@@ -214,7 +212,8 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 			if err != nil && prepareStage == "build_request" {
 				var requestErr *RequestValidationError
 				var configErr *config.ConfigError
-				if errors.As(err, &requestErr) || errors.As(err, &configErr) {
+				var clientErr interface{ ClientRequestError() bool }
+				if errors.As(err, &requestErr) || errors.As(err, &configErr) || (errors.As(err, &clientErr) && clientErr.ClientRequestError()) {
 					if req != nil && req.Body != nil {
 						_ = req.Body.Close()
 					}
@@ -236,6 +235,9 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 				if req != nil && req.Body != nil {
 					_ = req.Body.Close()
 				}
+				if upstreamcontrol.IsLocalError(err) {
+					return localAdmissionResult(c, err, cfgManager.GetFuzzyModeEnabled() && channelScheduler.GetActiveChannelCountForModel(kind, logCtx.Model) > 1)
+				}
 				if c.Request.Context().Err() != nil {
 					return newUpstreamAttemptResult(true, "", 0, nil, nil, c.Request.Context().Err()).withHealth(channelHealthNeutral)
 				}
@@ -255,7 +257,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 					"code":  code,
 				}
 				recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", status, false, attemptStart, "vision_layer", err.Error(), true, isStream, nil)
-				if channelScheduler.GetActiveChannelCountForModel(kind, logCtx.Model) > 1 {
+				if cfgManager.GetFuzzyModeEnabled() && channelScheduler.GetActiveChannelCountForModel(kind, logCtx.Model) > 1 {
 					body, _ := json.Marshal(payload)
 					// 视觉层本地失败：中性结束，交给外层换渠道。
 					return newUpstreamAttemptResult(false, "", 0, &FailoverError{Status: status, Body: body}, nil, err).withHealth(channelHealthNeutral)
@@ -266,6 +268,18 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 			// 请求准备成功后再启动请求画像和活跃度观测。
 			lifecycle := a.startAttemptLifecycle(currentBaseURL, apiKey)
 			finishRetryContentSafety := func(preparationErr error) {
+				var clientErr interface{ ClientRequestError() bool }
+				if errors.As(preparationErr, &clientErr) && clientErr.ClientRequestError() {
+					lifecycle.finalizeNeutral()
+					c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": preparationErr.Error(), "type": "invalid_request_error"}})
+					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", http.StatusBadRequest, false, attemptStart, "invalid_request_error", preparationErr.Error(), false, isStream, nil)
+					return
+				}
+				if upstreamcontrol.IsLocalError(preparationErr) {
+					lifecycle.finalizeNeutral()
+					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", http.StatusServiceUnavailable, false, attemptStart, "local_admission", preparationErr.Error(), cfgManager.GetFuzzyModeEnabled(), isStream, nil)
+					return
+				}
 				if isClientSideError(preparationErr) {
 					lifecycle.finalizeClientCancelled()
 					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "cancelled", 0, false, attemptStart, "client_cancelled", preparationErr.Error(), false, isStream, nil)
@@ -280,31 +294,15 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 				recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, attemptStatus, status, false, attemptStart, "content_safety", preparationErr.Error(), false, isStream, nil)
 			}
 
-			// 429 平滑排队：若当前 BaseURL 处于瞬时冷却期，在 context 允许范围内轻量排队
-			_, acquired := ratelimit.GetDefaultLimiter().WaitOrAcquire(c.Request.Context(), currentBaseURL, 0, 0, 0, 2*time.Second)
-			if err := c.Request.Context().Err(); err != nil {
-				if req.Body != nil {
-					_ = req.Body.Close()
-				}
-				lifecycle.finalizeClientCancelled()
-				recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "cancelled", 0, false, attemptStart, "client_cancelled", err.Error(), false, isStream, nil)
-				return newUpstreamAttemptResult(true, "", 0, nil, nil, err).withHealth(channelHealthNeutral)
-			}
-			if !acquired {
-				if req.Body != nil {
-					_ = req.Body.Close()
-				}
-				lifecycle.finalizeNeutral()
-				failoverState.lastError = errRateLimitQueueTimeout
-				failoverState.markNeutralTermination()
-				recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", 0, false, attemptStart, "rate_limit_queue", errRateLimitQueueTimeout.Error(), true, isStream, nil)
-				log.Printf("[%s-RateLimit-Queue] requestId=%s 排队未获准，跳过当前冷却中的 BaseURL", apiType, requestLogID)
-				break
-			}
-
 			req = AttachRequestLogID(c, req)
-			resp, err := SendRequest(req, upstream, envCfg, isStream, apiType, proxyURL, a.Permit, a.RequestTimeout)
+			req = req.WithContext(cfgManager.UpstreamRequestContext(req.Context(), upstreamCopy, apiKey))
+			resp, err := SendRequest(req, upstreamCopy, envCfg, isStream, apiType, proxyURL, a.Permit, a.RequestTimeout)
 			if err != nil {
+				if upstreamcontrol.IsLocalError(err) {
+					lifecycle.finalizeNeutral()
+					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", http.StatusServiceUnavailable, false, attemptStart, "local_admission", err.Error(), cfgManager.GetFuzzyModeEnabled(), isStream, nil)
+					return localAdmissionResult(c, err, cfgManager.GetFuzzyModeEnabled() && channelScheduler.GetActiveChannelCountForModel(kind, logCtx.Model) > 1)
+				}
 				failoverState.lastError = err
 				// 区分客户端取消和真实渠道故障（统一口径）
 				if isClientSideError(err) {
@@ -334,6 +332,11 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 
 			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 				respBodyBytes, readErr := readUpstreamErrorBody(resp)
+				if cancelErr := c.Request.Context().Err(); cancelErr != nil {
+					lifecycle.finalizeClientCancelled()
+					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "cancelled", resp.StatusCode, false, attemptStart, "client_cancelled", cancelErr.Error(), false, isStream, nil)
+					return newUpstreamAttemptResult(true, "", 0, nil, nil, cancelErr).withHealth(channelHealthNeutral)
+				}
 				if readErr != nil {
 					// 响应体读取中断：连接已不可靠，按渠道网络故障处理，
 					// 不把截断 body 用于错误分类或回给客户端。
@@ -369,25 +372,18 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 					continue
 				}
 
-				// 处理 429 速率限制（Rate Limit / TPM / RPM 瞬时冲顶）：
-				// 记录短暂冷却，并在同一候选上进行轻量毫秒级退避排队重试 1 次，避免瞬时并发将所有 key 击穿。
+				// 429 的组合冷却已由发送出口按 Retry-After 登记；重试重新进入 FIFO。
 				if resp.StatusCode == http.StatusTooManyRequests && !utils.IsNonRetryableUpstreamErrorBody(respBodyBytes) {
-					ratelimit.GetDefaultLimiter().Record429(currentBaseURL, 600*time.Millisecond)
 					candidate := currentBaseURL + "\x00" + apiKey
 					if retryState.CanRetryCandidate(candidate, c.Request.Context()) {
 						retryCount := retryState.RecordCandidateRetry(candidate)
-						log.Printf("[%s-RateLimit] 渠道 %s 遭遇速率限制 (429)，排队退避 500ms 后原位重试 (%d/1)", apiType, upstream.Name, retryCount)
-						select {
-						case <-c.Request.Context().Done():
-							lifecycle.finalizeClientCancelled()
-							recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "cancelled", 0, false, attemptStart, "client_cancelled", c.Request.Context().Err().Error(), false, isStream, nil)
-							// 退避排队中客户端取消：中性结束，立即停止。
-							return newUpstreamAttemptResult(true, "", 0, nil, nil, c.Request.Context().Err()).withHealth(channelHealthNeutral)
-						case <-time.After(500 * time.Millisecond):
-						}
+						log.Printf("[%s-RateLimit] 渠道 %s 收到 429，释放名额后按 Retry-After 重新排队 (%d/1)", apiType, upstream.Name, retryCount)
+						lifecycle.finalizeNeutral()
 						RestoreRequestBody(c, requestBody)
 						continue
 					}
+					lifecycle.finalizeNeutral()
+					return newUpstreamAttemptResult(false, "", 0, &FailoverError{Status: resp.StatusCode, Body: respBodyBytes}, nil, fmt.Errorf("上游限流冷却中")).withHealth(channelHealthNeutral)
 				}
 
 				// 兼容部分严格的 OpenAI 协议网关：首次明确拒绝 prompt_cache_key 时，
@@ -617,6 +613,11 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 					// 响应体读取中断/超上限：连接已不可靠或响应异常巨大，按网络故障处理。
 					// body 不会被 HandleSuccess 接手，必须显式关闭，否则连接不归还连接池。
 					resp.Body.Close()
+					if cancelErr := c.Request.Context().Err(); cancelErr != nil {
+						lifecycle.finalizeClientCancelled()
+						recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "cancelled", resp.StatusCode, false, attemptStart, "client_cancelled", cancelErr.Error(), false, isStream, nil)
+						return newUpstreamAttemptResult(true, "", 0, nil, nil, cancelErr).withHealth(channelHealthNeutral)
+					}
 					failoverState.lastError = readErr
 					retryState.MarkKeyFailed(apiKey)
 					cfgManager.MarkKeyAsFailed(apiKey, apiType)
@@ -650,6 +651,13 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 			}
 
 			usage, err = a.HandleSuccess(c, resp, upstreamCopy, apiKey)
+			// 回调结束即交还响应所有权；失败重试前也必须释放共享名额。
+			_ = resp.Body.Close()
+			if cancelErr := c.Request.Context().Err(); cancelErr != nil {
+				lifecycle.finalizeClientCancelled()
+				recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "cancelled", resp.StatusCode, false, attemptStart, "client_cancelled", cancelErr.Error(), false, isStream, usage)
+				return newUpstreamAttemptResult(true, "", 0, nil, usage, cancelErr).withHealth(channelHealthNeutral)
+			}
 			if err != nil {
 				failoverState.lastError = err
 				decision := classifyResponseProcessingError(err, c.Writer.Written())
@@ -778,6 +786,8 @@ func (a UpstreamAttempt) buildPreparedAttemptRequest(
 		}
 		return nil, "build_request", err
 	}
+	// 最终上游请求必须继承入站取消和共享预算，避免构建器意外使用 Background。
+	req = req.WithContext(a.Context.Request.Context())
 	prepareStage, err := prepareRequestForUpstream(
 		a.Context,
 		a.EnvConfig,
@@ -802,6 +812,12 @@ func (a UpstreamAttempt) prepareCandidateUpstream(
 ) *config.UpstreamConfig {
 	upstreamCopy := a.Upstream.Clone()
 	upstreamCopy.BaseURL = baseURL
+	// 在构建正文前固定本候选的身份模式，避免全局热更新使正文与发送头不一致。
+	if a.ConfigManager.ClientCompatibilityEnabled(a.Upstream) {
+		upstreamCopy.ClientIdentityMode = "compatibility"
+	} else {
+		upstreamCopy.ClientIdentityMode = "api"
+	}
 	upstreamCopy.DisablePromptCacheKey = capabilities.disablePromptCacheKey
 	upstreamCopy.RequireReasoningContent = capabilities.requireReasoningContent
 	recordConversationAttempt(a.ChannelScheduler, a.Kind, a.Upstream, a.LogContext, a.IsStream)
@@ -825,6 +841,7 @@ func (a UpstreamAttempt) retrySameCandidateRequest(
 	}
 
 	req = AttachRequestLogID(a.Context, req)
+	req = req.WithContext(a.ConfigManager.UpstreamRequestContext(req.Context(), upstreamCopy, apiKey))
 	resp, err := SendRequest(req, upstreamCopy, a.EnvConfig, a.IsStream, a.APIType, proxyURL, a.Permit, a.RequestTimeout)
 	if err != nil {
 		return compatibilityRetryResult{PreparationStage: "send_request", Err: err}
@@ -868,6 +885,20 @@ func applyCompatibilityRetryResult(
 	finishRetryContentSafety func(error),
 ) (*http.Response, []byte, bool, *UpstreamAttemptResult) {
 	if retryResult.Err != nil {
+		var clientErr interface{ ClientRequestError() bool }
+		if errors.As(retryResult.Err, &clientErr) && clientErr.ClientRequestError() {
+			finishRetryContentSafety(retryResult.Err)
+			abort := newUpstreamAttemptResult(true, "", 0, nil, nil, retryResult.Err).withHealth(channelHealthNeutral)
+			return resp, respBodyBytes, retrySucceeded, &abort
+		}
+		if upstreamcontrol.IsLocalError(retryResult.Err) {
+			finishRetryContentSafety(retryResult.Err)
+			abort := newUpstreamAttemptResult(false, "", 0, nil, nil, retryResult.Err).withHealth(channelHealthNeutral)
+			if errors.Is(retryResult.Err, upstreamcontrol.ErrBudget) {
+				abort = abort.withAbortFailover()
+			}
+			return resp, respBodyBytes, retrySucceeded, &abort
+		}
 		if isClientSideError(retryResult.Err) {
 			finishRetryContentSafety(retryResult.Err)
 			abort := newUpstreamAttemptResult(true, "", 0, nil, nil, retryResult.Err).withHealth(channelHealthNeutral)
