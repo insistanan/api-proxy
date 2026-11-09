@@ -183,6 +183,9 @@ func (p *ResponsesProvider) BuildRequest(input RequestInput, upstream *config.Up
 			}
 			sess = nil
 		}
+		if err := validateResponseHistoryBoundary(sess, effectiveRequest.PreviousResponseID); err != nil {
+			return outcome, err
+		}
 
 		// 模型重定向
 		effectiveRequest.Model = config.ResolveUpstreamModel(effectiveRequest.Model, upstream)

@@ -144,7 +144,7 @@ func (sm *SessionManager) GetOrCreateSessionForConversation(previousResponseID s
 			// response ID 是否属于该会话，创建空 session 会让原生上游把
 			// 完整 input 与旧服务端链叠加，也会让非原生转换静默丢历史。
 			// 必须显式失败，让客户端重新建立可恢复的会话边界。
-			return nil, fmt.Errorf("previous_response_id %s 未找到可恢复的本地会话", previousResponseID)
+			return nil, &HistoryError{Message: fmt.Sprintf("previous_response_id %s 未找到可恢复的本地会话；请发送完整对话重新建立会话", previousResponseID)}
 		}
 		// 仅保留无 conversation 绑定的旧内部调用兼容路径；这类调用无法
 		// 做跨会话归属校验，生产请求不应走到这里。

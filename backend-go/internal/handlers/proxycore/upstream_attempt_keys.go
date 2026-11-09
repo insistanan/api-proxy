@@ -183,7 +183,10 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 
 			apiKey, err := a.NextAPIKey(upstream, retryState.FailedKeys())
 			if err != nil {
-				failoverState.lastError = err
+				// 候选选取耗尽不能覆盖明确的本地容量错误。
+				if !upstreamcontrol.IsLocalError(failoverState.lastError) {
+					failoverState.lastError = err
+				}
 				break // 当前 BaseURL 没有可用 Key，尝试下一个 BaseURL
 			}
 
@@ -208,6 +211,16 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 					_ = req.Body.Close()
 				}
 				return newUpstreamAttemptResult(true, "", 0, nil, nil, c.Request.Context().Err()).withHealth(channelHealthNeutral)
+			}
+			if upstreamcontrol.IsLocalError(err) {
+				if req != nil && req.Body != nil {
+					_ = req.Body.Close()
+				}
+				recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", http.StatusServiceUnavailable, false, attemptStart, "local_admission", err.Error(), !errors.Is(err, upstreamcontrol.ErrBudget), isStream, nil)
+				if skipLocalAdmissionCandidate(err, &failoverState, retryState, apiKey) {
+					continue
+				}
+				return localAdmissionResult(c, err, false)
 			}
 			if err != nil && prepareStage == "build_request" {
 				var requestErr *RequestValidationError
@@ -234,9 +247,6 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 			if err != nil {
 				if req != nil && req.Body != nil {
 					_ = req.Body.Close()
-				}
-				if upstreamcontrol.IsLocalError(err) {
-					return localAdmissionResult(c, err, cfgManager.GetFuzzyModeEnabled() && channelScheduler.GetActiveChannelCountForModel(kind, logCtx.Model) > 1)
 				}
 				if c.Request.Context().Err() != nil {
 					return newUpstreamAttemptResult(true, "", 0, nil, nil, c.Request.Context().Err()).withHealth(channelHealthNeutral)
@@ -277,7 +287,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 				}
 				if upstreamcontrol.IsLocalError(preparationErr) {
 					lifecycle.finalizeNeutral()
-					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", http.StatusServiceUnavailable, false, attemptStart, "local_admission", preparationErr.Error(), cfgManager.GetFuzzyModeEnabled(), isStream, nil)
+					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", http.StatusServiceUnavailable, false, attemptStart, "local_admission", preparationErr.Error(), !errors.Is(preparationErr, upstreamcontrol.ErrBudget), isStream, nil)
 					return
 				}
 				if isClientSideError(preparationErr) {
@@ -300,8 +310,11 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 			if err != nil {
 				if upstreamcontrol.IsLocalError(err) {
 					lifecycle.finalizeNeutral()
-					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", http.StatusServiceUnavailable, false, attemptStart, "local_admission", err.Error(), cfgManager.GetFuzzyModeEnabled(), isStream, nil)
-					return localAdmissionResult(c, err, cfgManager.GetFuzzyModeEnabled() && channelScheduler.GetActiveChannelCountForModel(kind, logCtx.Model) > 1)
+					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", http.StatusServiceUnavailable, false, attemptStart, "local_admission", err.Error(), !errors.Is(err, upstreamcontrol.ErrBudget), isStream, nil)
+					if skipLocalAdmissionCandidate(err, &failoverState, retryState, apiKey) {
+						continue
+					}
+					return localAdmissionResult(c, err, false)
 				}
 				failoverState.lastError = err
 				// 区分客户端取消和真实渠道故障（统一口径）
@@ -383,7 +396,11 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 						continue
 					}
 					lifecycle.finalizeNeutral()
-					return newUpstreamAttemptResult(false, "", 0, &FailoverError{Status: resp.StatusCode, Body: respBodyBytes}, nil, fmt.Errorf("上游限流冷却中")).withHealth(channelHealthNeutral)
+					failoverState.lastError = fmt.Errorf("上游限流冷却中")
+					failoverState.lastFailoverError = &FailoverError{Status: resp.StatusCode, Body: respBodyBytes}
+					failoverState.markNeutralTermination()
+					retryState.MarkKeyFailed(apiKey)
+					continue
 				}
 
 				// 兼容部分严格的 OpenAI 协议网关：首次明确拒绝 prompt_cache_key 时，
@@ -406,6 +423,9 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 						prepareAction: "准备无 prompt_cache_key 请求失败",
 					}, finishRetryContentSafety)
 					if aborted != nil {
+						if skipLocalAdmissionCandidate(aborted.LastError, &failoverState, retryState, apiKey) {
+							continue
+						}
 						return *aborted
 					}
 				}
@@ -433,6 +453,9 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 						prepareAction: "准备 reasoning_content 兼容请求失败",
 					}, finishRetryContentSafety)
 					if aborted != nil {
+						if skipLocalAdmissionCandidate(aborted.LastError, &failoverState, retryState, apiKey) {
+							continue
+						}
 						return *aborted
 					}
 				}
@@ -456,6 +479,9 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 							successAction: "等价 JSON 转义重试成功",
 						}, finishRetryContentSafety)
 						if aborted != nil {
+							if skipLocalAdmissionCandidate(aborted.LastError, &failoverState, retryState, apiKey) {
+								continue
+							}
 							return *aborted
 						}
 						RestoreRequestBody(c, requestBody)
@@ -480,6 +506,9 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 							successAction: "Thinking 签名整流重试成功",
 						}, finishRetryContentSafety)
 						if aborted != nil {
+							if skipLocalAdmissionCandidate(aborted.LastError, &failoverState, retryState, apiKey) {
+								continue
+							}
 							return *aborted
 						}
 						RestoreRequestBody(c, requestBody)
@@ -504,6 +533,9 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 							successAction: "Thinking Budget 整流重试成功",
 						}, finishRetryContentSafety)
 						if aborted != nil {
+							if skipLocalAdmissionCandidate(aborted.LastError, &failoverState, retryState, apiKey) {
+								continue
+							}
 							return *aborted
 						}
 						RestoreRequestBody(c, requestBody)
@@ -528,6 +560,9 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 							successAction: "图片降级重试成功",
 						}, finishRetryContentSafety)
 						if aborted != nil {
+							if skipLocalAdmissionCandidate(aborted.LastError, &failoverState, retryState, apiKey) {
+								continue
+							}
 							return *aborted
 						}
 						RestoreRequestBody(c, requestBody)
@@ -764,6 +799,9 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 		}
 	}
 
+	if upstreamcontrol.IsLocalError(failoverState.lastError) {
+		return localAdmissionResult(c, failoverState.lastError, cfgManager.GetFuzzyModeEnabled() && channelScheduler.GetActiveChannelCountForModel(kind, logCtx.Model) > 1)
+	}
 	// 候选耗尽的最终健康结果（R2-a）：发生过明确中性结束原因（容量、审核
 	// 兼容重试失败）时按中性记账；否则为可重试真实故障耗尽候选。
 	if failoverState.neutralTermination {
@@ -876,7 +914,7 @@ type compatRetryLogs struct {
 //   - 其余阶段失败：仅记日志，沿用原响应继续走失败分类；
 //   - 重试成功：回传新响应并标记 retrySucceeded。
 //
-// abort 非 nil 时主循环必须立即返回该结果。
+// abort 非 nil 时终止当前尝试；局部准入错误仍可尝试同渠道其他组合。
 func applyCompatibilityRetryResult(
 	retryResult compatibilityRetryResult,
 	resp *http.Response,

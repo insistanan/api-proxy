@@ -302,6 +302,23 @@
               />
             </v-col>
 
+            <v-col v-if="props.channel?.effectiveConcurrency?.length" cols="12">
+              <details class="text-body-2">
+                <summary class="text-primary" style="cursor: pointer">已保存配置的生效并发</summary>
+                <div class="text-caption text-medium-emphasis mt-2">
+                  相同地址、上游协议和 Key 共用最小并发上限；保存修改后重新计算。
+                </div>
+                <div
+                  v-for="limit in props.channel.effectiveConcurrency"
+                  :key="`${limit.baseUrl}:${limit.protocol}:${limit.keyIndex}`"
+                  class="text-body-2 mt-1"
+                  style="overflow-wrap: anywhere"
+                >
+                  {{ limit.baseUrl }} · {{ limit.protocol }} · Key {{ limit.keyIndex + 1 }}：{{ limit.maxConcurrency }} 并发
+                </div>
+              </details>
+            </v-col>
+
             <!-- 官网/控制台（可选） -->
             <v-col cols="12">
               <v-text-field

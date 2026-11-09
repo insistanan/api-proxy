@@ -34,6 +34,7 @@ type compactError struct {
 	shouldFailover  bool
 	responseWritten bool
 	localAdmission  bool // 本地排队、预算或配置删除，不标记 Key/渠道失败
+	budgetExhausted bool // 全请求预算耗尽，不能继续轮换 Key 或渠道
 }
 
 // CompactHandler Responses API compact 端点处理器
@@ -136,8 +137,12 @@ func handleSingleChannelCompact(
 			}
 			lastErr = compactErr
 			if compactErr.localAdmission {
-				writeCompactResponseBody(c, compactErr.status, compactErr.body)
-				return
+				if compactErr.budgetExhausted {
+					writeCompactResponseBody(c, compactErr.status, compactErr.body)
+					return
+				}
+				failedKeys[apiKey] = true
+				continue
 			}
 			if compactErr.shouldFailover {
 				failedKeys[apiKey] = true
@@ -331,7 +336,11 @@ func tryCompactChannelWithAllKeys(
 			}
 			lastErr = compactErr
 			if compactErr.localAdmission {
-				return false, "", compactErr
+				if compactErr.budgetExhausted {
+					return false, "", compactErr
+				}
+				failedKeys[apiKey] = true
+				continue
 			}
 			if compactErr.shouldFailover {
 				failedKeys[apiKey] = true
@@ -381,8 +390,8 @@ func tryCompactWithKey(
 	preparedBody, historyErr := providers.PrepareNativeResponseHistory(sessionManager, conversationID, bodyBytes, upstream.RequestIdentity(apiKey).Fingerprint())
 	if historyErr != nil {
 		status := http.StatusInternalServerError
-		var clientErr *providers.ResponseHistoryError
-		if errors.As(historyErr, &clientErr) {
+		var clientErr interface{ ClientRequestError() bool }
+		if errors.As(historyErr, &clientErr) && clientErr.ClientRequestError() {
 			status = http.StatusBadRequest
 		}
 		payload, _ := json.Marshal(gin.H{"error": historyErr.Error()})
@@ -435,7 +444,8 @@ func tryCompactWithKey(
 		}
 		if upstreamcontrol.IsLocalError(err) {
 			body, _ := json.Marshal(gin.H{"error": err.Error(), "code": "LOCAL_CAPACITY"})
-			return false, &compactError{status: http.StatusServiceUnavailable, body: body, localAdmission: true, shouldFailover: cfgManager.GetFuzzyModeEnabled() && !errors.Is(err, upstreamcontrol.ErrBudget)}
+			budgetExhausted := errors.Is(err, upstreamcontrol.ErrBudget)
+			return false, &compactError{status: http.StatusServiceUnavailable, body: body, localAdmission: true, budgetExhausted: budgetExhausted, shouldFailover: cfgManager.GetFuzzyModeEnabled() && !budgetExhausted}
 		}
 		return false, &compactError{status: 502, body: []byte(`{"error":"上游请求失败"}`), shouldFailover: true}
 	}

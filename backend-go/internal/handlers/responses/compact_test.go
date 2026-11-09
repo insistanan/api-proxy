@@ -7,14 +7,31 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/session"
 	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
 	"github.com/insistanan/api-proxy/internal/utils"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
+
+func TestCompactMissingHistoryReturnsClientError(t *testing.T) {
+	manager, err := session.NewPersistentSessionManager(filepath.Join(t.TempDir(), "responses.db"), time.Hour, 0, 0)
+	require.NoError(t, err)
+	t.Cleanup(manager.Stop)
+	body := []byte(`{"previous_response_id":"missing","input":"后缀"}`)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", strings.NewReader(string(body)))
+	upstream := &config.UpstreamConfig{BaseURL: "https://example.invalid", ServiceType: "responses"}
+	success, compactErr := tryCompactWithKey(c, upstream, "key", body, &config.EnvConfig{}, nil, manager, nil, "conv-history")
+	require.False(t, success)
+	require.NotNil(t, compactErr)
+	require.Equal(t, http.StatusBadRequest, compactErr.status)
+	require.False(t, compactErr.shouldFailover)
+}
 
 func TestTryCompactWithKey_AppliesCodexDisguise(t *testing.T) {
 	gin.SetMode(gin.TestMode)

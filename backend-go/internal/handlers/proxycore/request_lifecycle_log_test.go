@@ -73,35 +73,98 @@ func TestSingleModelCancelledAttemptDoesNotSelectKey(t *testing.T) {
 	require.Zero(t, selected)
 }
 
-func TestCoolingBaseURLDoesNotSendOrRotateKeys(t *testing.T) {
-	h := newCompatRetryHarness(t)
-	var sent atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { sent.Add(1); w.WriteHeader(200) }))
-	defer server.Close()
-	upstream := &config.UpstreamConfig{BaseURL: server.URL, APIKeys: []string{"one", "two"}}
-	registerHealthUpstream(t, h.cfgManager, upstream)
-	bound := h.cfgManager.UpstreamRequestContext(upstreamcontrol.WithScope(context.Background()), upstream, "one")
-	candidate, ok := upstreamcontrol.CandidateFromContext(bound)
-	require.True(t, ok)
-	candidate.Controller.CoolDown(candidate.Identity, time.Now().Add(20*time.Second))
-	selected := 0
-	result := runConfiguredAttempt(t, UpstreamAttempt{
-		Context: newAttemptTestContext(context.Background()), EnvConfig: &config.EnvConfig{LogLevel: "error"},
-		ConfigManager: h.cfgManager, MetricsManager: h.metricsManager, ChannelScheduler: h.channelScheduler,
-		Kind: scheduler.ChannelKindMessages, APIType: "Messages", Upstream: upstream,
-		URLResults: BuildDefaultURLResults(upstream.GetAllBaseURLs()), RequestBody: []byte(`{}`),
-		NextAPIKey: func(*config.UpstreamConfig, map[string]bool) (string, error) { selected++; return "one", nil },
-		BuildRequest: func(c *gin.Context, up *config.UpstreamConfig, _ string) (*http.Request, error) {
-			return http.NewRequestWithContext(c.Request.Context(), http.MethodPost, up.BaseURL, strings.NewReader(`{}`))
-		},
-		HandleSuccess: func(*gin.Context, *http.Response, *config.UpstreamConfig, string) (*types.Usage, error) {
-			return nil, errors.New("不应发送请求")
-		},
-	})
-	require.ErrorIs(t, result.LastError, upstreamcontrol.ErrQueueTimeout)
-	require.Equal(t, channelHealthNeutral, result.Health)
-	require.Equal(t, 1, selected)
-	require.Zero(t, sent.Load())
+func TestUnavailableCombinationRotatesWithinChannel(t *testing.T) {
+	for _, mode := range []string{"其他Key", "其他URL", "全部不可用", "预算耗尽"} {
+		t.Run(mode, func(t *testing.T) {
+			h := newCompatRetryHarness(t)
+			var sent atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				sent.Add(1)
+				_, _ = io.WriteString(w, `{"ok":true}`)
+			}))
+			defer server.Close()
+			upstream := &config.UpstreamConfig{BaseURL: server.URL, APIKeys: []string{"one", "two"}, ServiceType: "claude"}
+			if mode == "其他URL" {
+				upstream.BaseURLs = []string{"https://unavailable.invalid", server.URL}
+				upstream.APIKeys = []string{"one"}
+			}
+			registerHealthUpstream(t, h.cfgManager, upstream)
+			scope := upstreamcontrol.WithScope(context.Background())
+			bound := h.cfgManager.UpstreamRequestContext(scope, upstream, "one")
+			candidate, ok := upstreamcontrol.CandidateFromContext(bound)
+			require.True(t, ok)
+			available := upstream.Clone()
+			available.BaseURL = server.URL
+			available.BaseURLs = nil
+			key := "two"
+			if mode == "其他URL" {
+				key = "one"
+			}
+			rules := map[upstreamcontrol.Identity]int{available.RequestIdentity(key): 1}
+			if mode == "全部不可用" {
+				rules = map[upstreamcontrol.Identity]int{}
+			}
+			candidate.Controller.Reconcile(rules)
+			if mode == "预算耗尽" {
+				budgetCtx := h.cfgManager.UpstreamRequestContext(scope, available, key)
+				for range upstreamcontrol.MaxAttempts {
+					lease, _, _, err := upstreamcontrol.AcquireRequest(budgetCtx)
+					require.NoError(t, err)
+					lease.Release()
+				}
+			}
+			selected := 0
+			ctx := newAttemptTestContext(scope)
+			result := (UpstreamAttempt{
+				Context: ctx, EnvConfig: &config.EnvConfig{LogLevel: "error"},
+				ConfigManager: h.cfgManager, MetricsManager: h.metricsManager, ChannelScheduler: h.channelScheduler,
+				Kind: scheduler.ChannelKindMessages, APIType: "Messages", Upstream: upstream,
+				URLResults: BuildDefaultURLResults(upstream.GetAllBaseURLs()), RequestBody: []byte(`{}`),
+				NextAPIKey: func(up *config.UpstreamConfig, failed map[string]bool) (string, error) {
+					selected++
+					return rotatingKeySelector(up, failed)
+				},
+				BuildRequest: func(c *gin.Context, up *config.UpstreamConfig, key string) (*http.Request, error) {
+					req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, up.GetEffectiveBaseURL(), strings.NewReader(`{}`))
+					if err == nil {
+						req.Header.Set("X-Api-Key", key)
+					}
+					return req, err
+				},
+				HandleSuccess: func(c *gin.Context, resp *http.Response, _ *config.UpstreamConfig, _ string) (*types.Usage, error) {
+					defer resp.Body.Close()
+					_, err := io.Copy(io.Discard, resp.Body)
+					if err == nil {
+						c.Status(http.StatusOK)
+					}
+					return nil, err
+				},
+			}).TryWithModelMappingFailover()
+			if mode == "全部不可用" || mode == "预算耗尽" {
+				want := upstreamcontrol.ErrRemoved
+				if mode == "预算耗尽" {
+					want = upstreamcontrol.ErrBudget
+					require.Equal(t, 1, selected)
+				}
+				require.ErrorIs(t, result.LastError, want)
+				require.True(t, result.Handled)
+				require.Equal(t, channelHealthNeutral, result.Health)
+				require.Equal(t, http.StatusServiceUnavailable, ctx.Writer.Status())
+				require.Zero(t, sent.Load())
+			} else {
+				require.NoError(t, result.LastError)
+				require.Equal(t, key, result.SuccessKey)
+				require.Equal(t, int32(1), sent.Load())
+			}
+			for _, url := range upstream.GetAllBaseURLs() {
+				for _, key := range upstream.APIKeys {
+					if stats := h.metricsManager.GetKeyMetrics(url, key, 0); stats != nil {
+						require.Zero(t, stats.FailureCount)
+					}
+				}
+			}
+		})
+	}
 }
 
 func TestCompatibilityRetryCancellationStopsFurtherRequests(t *testing.T) {

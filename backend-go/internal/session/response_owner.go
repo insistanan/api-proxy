@@ -5,6 +5,12 @@ import (
 	"fmt"
 )
 
+// HistoryError 表示客户端引用的历史不可恢复，不属于上游渠道故障。
+type HistoryError struct{ Message string }
+
+func (e *HistoryError) Error() string            { return e.Message }
+func (e *HistoryError) ClientRequestError() bool { return true }
+
 // ResponseOwner 按 response ID 查询生成它的凭据组合；旧记录无归属时不得复用链。
 func (sm *SessionManager) ResponseOwner(responseID string) (string, bool, error) {
 	sm.mu.RLock()

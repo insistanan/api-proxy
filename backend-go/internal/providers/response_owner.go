@@ -14,6 +14,14 @@ type ResponseHistoryError struct{ Message string }
 func (e *ResponseHistoryError) Error() string            { return e.Message }
 func (e *ResponseHistoryError) ClientRequestError() bool { return true }
 
+// 本地只存会话最新正文，无法按旧 response ID 截断，也不能把旧分支追加到最新会话。
+func validateResponseHistoryBoundary(sess *session.Session, previousID string) error {
+	if previousID != "" && sess != nil && len(sess.Messages) > 0 && sess.LastResponseID != previousID {
+		return &ResponseHistoryError{Message: "previous_response_id 不是本地最新历史边界，无法准确恢复该分支；请发送完整对话重新建立会话"}
+	}
+	return nil
+}
+
 // PrepareNativeResponseHistory 供原生 Responses 的辅助端点复用凭据归属检查。
 func PrepareNativeResponseHistory(manager *session.SessionManager, conversationID string, body []byte, owner string) ([]byte, error) {
 	var req types.ResponsesRequest
@@ -40,6 +48,9 @@ func restoreNativeResponseHistory(manager *session.SessionManager, sess *session
 	}
 	if manager == nil {
 		return nil, false, &ResponseHistoryError{Message: "携带 previous_response_id 的请求缺少本地会话管理器，无法核实凭据归属"}
+	}
+	if err := validateResponseHistoryBoundary(sess, previousID); err != nil {
+		return nil, false, err
 	}
 	previousOwner, known, err := manager.ResponseOwner(previousID)
 	if err != nil {
