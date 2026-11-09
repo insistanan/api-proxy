@@ -653,7 +653,9 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 			usage, err = a.HandleSuccess(c, resp, upstreamCopy, apiKey)
 			// 回调结束即交还响应所有权；失败重试前也必须释放共享名额。
 			_ = resp.Body.Close()
-			if cancelErr := c.Request.Context().Err(); cancelErr != nil {
+			// HandleSuccess 成功返回代表协议响应已交付。客户端随后结束 SSE 或
+			// 关闭连接，不应覆盖本轮成功；交付前的取消仍由响应处理器返回错误。
+			if cancelErr := c.Request.Context().Err(); err != nil && cancelErr != nil {
 				lifecycle.finalizeClientCancelled()
 				recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "cancelled", resp.StatusCode, false, attemptStart, "client_cancelled", cancelErr.Error(), false, isStream, usage)
 				return newUpstreamAttemptResult(true, "", 0, nil, usage, cancelErr).withHealth(channelHealthNeutral)

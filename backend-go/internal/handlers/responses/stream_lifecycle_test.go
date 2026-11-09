@@ -96,8 +96,9 @@ func TestResponsesConvertedStreamUsageTail(t *testing.T) {
 
 type responsesLifecycleWriter struct {
 	gin.ResponseWriter
-	cancel context.CancelFunc
-	fail   error
+	cancel       context.CancelFunc
+	cancelOnType string
+	fail         error
 }
 
 func (w *responsesLifecycleWriter) Write(data []byte) (int, error) {
@@ -105,7 +106,11 @@ func (w *responsesLifecycleWriter) Write(data []byte) (int, error) {
 		return 0, w.fail
 	}
 	n, err := w.ResponseWriter.Write(data)
-	if strings.Contains(string(data), `"type":"response.output_item.done"`) {
+	cancelOnType := w.cancelOnType
+	if cancelOnType == "" {
+		cancelOnType = "response.output_item.done"
+	}
+	if strings.Contains(string(data), `"type":"`+cancelOnType+`"`) {
 		w.cancel()
 	}
 	return n, err
@@ -138,4 +143,26 @@ func TestResponsesToolDeliveryCancellationAndWriteFailure(t *testing.T) {
 	c.Writer = &responsesLifecycleWriter{ResponseWriter: c.Writer, fail: writeErr}
 	_, err := runResponsesLifecycleStream(t, c, converters.ResponsesUpstreamResponses, io.NopCloser(strings.NewReader("data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n")))
 	require.ErrorIs(t, err, writeErr)
+}
+
+func TestResponsesCancellationAtDeliveryBoundary(t *testing.T) {
+	for _, eventType := range []string{"response.output_text.delta", "response.completed"} {
+		t.Run(eventType, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(ctx)
+			c.Writer = &responsesLifecycleWriter{ResponseWriter: c.Writer, cancel: cancel, cancelOnType: eventType}
+			sse := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n" +
+				"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"r1\",\"output\":[],\"usage\":{\"input_tokens\":10,\"output_tokens\":8}}}\n\n"
+			usage, err := runResponsesLifecycleStream(t, c, converters.ResponsesUpstreamResponses, io.NopCloser(strings.NewReader(sse)))
+			if eventType == "response.completed" {
+				require.NoError(t, err)
+				require.Equal(t, 8, usage.OutputTokens)
+			} else {
+				require.ErrorIs(t, err, context.Canceled)
+			}
+		})
+	}
 }

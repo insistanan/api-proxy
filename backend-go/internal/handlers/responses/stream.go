@@ -212,6 +212,11 @@ func handleStreamSuccess(
 		if clientGone {
 			return false
 		}
+		if err := c.Request.Context().Err(); err != nil {
+			clientGone = true
+			streamWriteErr = err
+			return false
+		}
 		startStream()
 		proxycore.MarkRequestLogFirstToken(c)
 		if _, err := c.Writer.Write([]byte(event)); err != nil {
@@ -441,7 +446,9 @@ func handleStreamSuccess(
 
 	contextErr := c.Request.Context().Err()
 	toolCallCompletedCancellation := toolCallDelivered && errors.Is(contextErr, context.Canceled)
-	if contextErr != nil && !toolCallCompletedCancellation {
+	// 已成功写出终止事件后，客户端关闭 SSE 属于正常收尾；仍未交付的
+	// 流以及写出失败继续按取消或传输错误处理，不能仅凭 HTTP 200 判成功。
+	if contextErr != nil && !streamCompleted && !toolCallCompletedCancellation {
 		return nil, contextErr
 	}
 	if streamWriteErr != nil && !toolCallCompletedCancellation {
@@ -456,7 +463,7 @@ func handleStreamSuccess(
 		log.Printf("[Responses-Stream] 流结束仍无内容，判定为空响应 (buffered=%d)", len(bufferedEvents))
 		return nil, proxycore.NewRetrySameCandidateError(ErrEmptyStreamResponse)
 	}
-	if !toolCallCompletedCancellation {
+	if !streamCompleted && !toolCallCompletedCancellation {
 		if err := utils.CheckStreamCompletion(c.Request.Context(), streamCompleted, streamReadErr); err != nil {
 			return nil, err
 		}

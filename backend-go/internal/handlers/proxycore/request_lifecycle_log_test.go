@@ -195,3 +195,68 @@ func TestCompletedLifecycleSurvivesLateClientDisconnect(t *testing.T) {
 	require.Equal(t, "completed", state.Status)
 	require.NoError(t, store.Flush())
 }
+
+type cancelOnCloseBody struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b *cancelOnCloseBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.cancel()
+	return err
+}
+
+func TestDeliveredResponseSurvivesLateClientDisconnect(t *testing.T) {
+	for _, cancelOnClose := range []bool{false, true} {
+		name := "交付后取消"
+		if cancelOnClose {
+			name = "关闭上游响应时取消"
+		}
+		t.Run(name, func(t *testing.T) {
+			store := setupLifecycleLogStore(t)
+			h := newCompatRetryHarness(t)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\"}\n\n")
+			}))
+			defer server.Close()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			c := newAttemptTestContext(ctx)
+			BindRequestLogID(c)
+			state := newRequestLifecycle(c, []byte(`{}`), time.Now())
+			env := &config.EnvConfig{LogLevel: "error", EnableRequestLogs: true}
+			upstream := &config.UpstreamConfig{BaseURL: server.URL, APIKeys: []string{"key"}, ServiceType: "responses"}
+			result := runConfiguredAttempt(t, UpstreamAttempt{
+				Context: c, EnvConfig: env, ConfigManager: h.cfgManager,
+				MetricsManager: h.metricsManager, ChannelScheduler: h.channelScheduler,
+				Kind: scheduler.ChannelKindMessages, APIType: "Messages", Upstream: upstream,
+				URLResults: BuildDefaultURLResults(upstream.GetAllBaseURLs()), NextAPIKey: rotatingKeySelector,
+				BuildRequest: func(c *gin.Context, up *config.UpstreamConfig, _ string) (*http.Request, error) {
+					return http.NewRequestWithContext(c.Request.Context(), http.MethodPost, up.BaseURL, strings.NewReader(`{}`))
+				},
+				HandleSuccess: func(c *gin.Context, response *http.Response, _ *config.UpstreamConfig, _ string) (*types.Usage, error) {
+					body, err := io.ReadAll(response.Body)
+					require.NoError(t, err)
+					_, err = c.Writer.Write(body)
+					require.NoError(t, err)
+					if cancelOnClose {
+						response.Body = &cancelOnCloseBody{ReadCloser: response.Body, cancel: cancel}
+					} else {
+						cancel()
+					}
+					return &types.Usage{InputTokens: 10, OutputTokens: 8}, nil
+				},
+			})
+			require.NoError(t, result.LastError)
+			require.Equal(t, "key", result.SuccessKey)
+			require.Equal(t, channelHealthSuccess, result.Health)
+			require.Equal(t, 8, result.Usage.OutputTokens)
+			finishRequestLifecycle(c, env, "Messages", state)
+			require.Equal(t, "completed", state.Status)
+			require.Empty(t, state.ErrorType)
+			require.NoError(t, store.Flush())
+		})
+	}
+}
