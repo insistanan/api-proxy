@@ -1,816 +1,140 @@
 <template>
   <div class="system-logs-panel">
     <div class="system-toolbar">
-      <div class="system-actions">
-        <v-chip size="small" variant="tonal">{{ displayEntries.length }} {{ viewMode === 'conversation' ? '个会话' : '次请求' }} / 最近 {{ listLimit }} 次请求</v-chip>
-        <v-btn-toggle v-model="viewMode" mandatory density="compact" variant="outlined" divided>
-          <v-btn value="conversation" size="small">会话增量</v-btn>
-          <v-btn value="request" size="small">逐次请求</v-btn>
-        </v-btn-toggle>
-        <v-btn-toggle v-model="typeFilter" mandatory density="compact" variant="outlined" divided>
-          <v-btn v-for="item in typeItems" :key="item.value" :value="item.value" size="small">
-            {{ item.title }}
-          </v-btn>
-        </v-btn-toggle>
-        <v-btn
-          color="primary"
-          variant="tonal"
-          size="small"
-          prepend-icon="mdi-refresh"
-          :loading="listLoading"
-          @click="reloadAll"
-        >
-          刷新
-        </v-btn>
-      </div>
+      <span class="text-medium-emphasis">{{ logs.conversations.length }} 个会话</span>
+      <v-text-field v-model="search" label="搜索当前会话列表" prepend-inner-icon="mdi-magnify" hide-details density="compact" clearable class="search-field" />
+      <v-select v-model="logs.typeFilter" :items="typeItems" label="协议" hide-details density="compact" class="type-field" />
+      <v-btn variant="tonal" prepend-icon="mdi-refresh" :loading="logs.listLoading" @click="logs.refresh()">刷新</v-btn>
     </div>
-
-    <v-alert v-if="listError" type="error" variant="tonal" density="compact" closable @click:close="listError = ''">
-      {{ listError }}
-    </v-alert>
-
+    <v-alert v-if="logs.listError" type="error" variant="tonal" density="compact">{{ logs.listError }}</v-alert>
+    <v-alert v-if="locateError" type="error" variant="tonal" density="compact">{{ locateError }}</v-alert>
     <div class="system-layout">
-      <v-card variant="flat" class="system-list-card">
-        <v-alert v-if="locateWarning" type="warning" variant="tonal" density="compact" class="ma-2 mb-0">
-          {{ locateWarning }}
-        </v-alert>
-        <div v-if="listLoading" class="system-empty">
-          <v-progress-circular indeterminate size="24" width="2" color="primary" />
-        </div>
-        <div v-else-if="summaries.length === 0" class="system-empty">
-          <span>暂无系统日志。确认 ENABLE_REQUEST_LOGS / ENABLE_RESPONSE_LOGS 未关闭，且代理已处理过大模型请求。</span>
-        </div>
-        <button
-          v-for="entry in displayEntries"
-          :id="`system-log-entry-${entry.requestId}`"
-          :key="entry.requestId"
-          type="button"
-          class="system-list-item"
-          :class="{ selected: entry.requestId === selectedRequestId || (viewMode === 'conversation' && entry.groupKey === selectedGroup?.key), 'jump-target': Boolean(highlightRequestId) && entry.requestId === highlightRequestId }"
-          @click="emit('select', entry.requestId)"
-        >
-          <div class="system-list-row">
-            <span class="system-list-time">{{ formatTime(entry.timestamp) }}</span>
-            <v-chip size="x-small" :color="entryColor(entry.apiType)" variant="tonal">
-              {{ entryLabel(entry.apiType) }}
-            </v-chip>
+      <aside class="system-list" aria-label="日志会话列表">
+        <div v-if="!logs.conversations.length" class="system-empty">{{ logs.listLoading ? '正在加载会话…' : '暂无会话日志' }}</div>
+        <button v-for="group in filteredGroups" :key="group.key" type="button" class="conversation-entry" :class="{ selected: group.key === logs.selectedKey }" :aria-pressed="group.key === logs.selectedKey" @click="logs.selectConversation(group)">
+          <div class="entry-heading">
+            <span>{{ group.latest.channelName || clientLabel(group.latest.client) }}</span>
+            <span class="entry-time">{{ timeLabel(group.latest.timestamp) }}</span>
           </div>
-          <div class="system-list-meta">
-            <v-chip size="x-small" :color="logStatus(entry).color" variant="tonal">{{ logStatus(entry).label }}</v-chip>
-            <span v-if="entry.statusCode">{{ entry.statusCode }}</span>
-            <span v-if="entry.stream">stream</span>
-            <span v-if="entry.truncated" class="text-warning" title="日志正文上限为 1 MiB，请求结果由结束状态判断">日志截断</span>
-            <span v-if="viewMode === 'conversation'">{{ entry.requestCount }} 次请求</span>
-          </div>
-          <div v-if="entry.client" class="system-list-channel">{{ clientLabel(entry.client) }}</div>
-          <div v-if="entry.channelName || entry.model" class="system-list-channel">
-            {{ entry.channelName || '--' }}
-            <span v-if="entry.model"> · {{ entry.model }}</span>
+          <div class="entry-model">{{ group.latest.model || entryLabel(group.latest.apiType) }}</div>
+          <div class="entry-meta">
+            <span>{{ group.requestCount }} 次请求</span>
+            <span :class="`text-${logStatus(group.latest).color}`">{{ logStatus(group.latest).label }}</span>
           </div>
         </button>
-      </v-card>
-
-      <v-card variant="flat" class="system-detail-card">
-        <div v-if="detailLoading" class="system-empty">
-          <v-progress-circular indeterminate size="24" width="2" color="primary" />
-        </div>
-        <div v-else-if="detailError" class="system-empty text-error">{{ detailError }}</div>
-        <div v-else-if="!detail" class="system-empty">从左侧选择一次请求，查看原请求、发给上游与上游返回。</div>
-        <ConversationLogTimeline
-          v-else-if="viewMode === 'conversation' && selectedGroup"
-          :group-key="selectedGroup.key"
-          :requests="selectedGroup.requests"
-          :seed="detail"
-          @inspect="inspectRequest"
-        />
-        <div v-else class="system-detail">
-          <div v-if="highlightRequestId" class="detail-jump-bar">
-            <span class="text-caption text-medium-emphasis">从请求日志跳转，当前展示该请求的完整流量详情</span>
-            <v-btn
-              size="small"
-              variant="tonal"
-              color="primary"
-              prepend-icon="mdi-text-box-search-outline"
-              @click="detailBodyDialog = true"
-            >
-              查看正文
-            </v-btn>
-            <v-btn
-              size="small"
-              variant="text"
-              prepend-icon="mdi-arrow-left"
-              @click="emit('back')"
-            >
-              返回请求日志
-            </v-btn>
-          </div>
-          <div class="detail-header">
-            <div class="detail-identity">
-              <div class="detail-time">{{ formatTime(detail.summary.timestamp) }}</div>
-              <div class="detail-id-row">
-                <span class="font-mono detail-id" :title="detail.requestId">{{ detail.requestId }}</span>
-                <v-btn
-                  icon="mdi-content-copy"
-                  size="x-small"
-                  variant="text"
-                  color="primary"
-                  :aria-label="`复制 requestId ${detail.requestId}`"
-                  title="复制 requestId"
-                  @click="copyText(detail.requestId, 'requestId')"
-                />
-                <span v-if="copiedKey === 'requestId'" class="text-caption text-success">已复制</span>
-              </div>
+        <v-btn v-if="logs.nextConversationCursor" block variant="text" :loading="logs.listLoading" @click="logs.loadConversations(true)">加载更多会话</v-btn>
+      </aside>
+      <main class="system-detail">
+        <div v-if="!logs.selectedKey" class="system-empty">选择一个会话，查看每次请求的新增输入和回复。</div>
+        <template v-else>
+          <div class="conversation-heading">
+            <div>
+              <strong>{{ logs.selectedConversation?.latest.model || '会话日志' }}</strong>
+              <div class="text-caption text-medium-emphasis">{{ clientLabel(logs.selectedConversation?.latest.client) }} · {{ entryLabel(logs.selectedConversation?.latest.apiType) }} · {{ logs.selectedConversation?.requestCount }} 次请求</div>
             </div>
-            <div class="detail-chips">
-              <v-chip size="small" :color="logStatus(detail.summary).color" variant="tonal">{{ logStatus(detail.summary).label }}</v-chip>
-              <v-btn
-                v-if="parentRequestId"
-                size="small"
-                variant="tonal"
-                @click="emit('select', parentRequestId)"
-              >
-                查看原请求
-              </v-btn>
-              <v-chip size="small" :color="entryColor(detail.summary.apiType)" variant="tonal">
-                {{ entryLabel(detail.summary.apiType) }}
-              </v-chip>
-              <v-chip v-if="detail.summary.statusCode" size="small" variant="tonal">
-                {{ detail.summary.statusCode }}
-              </v-chip>
-              <v-chip v-if="detail.summary.stream" size="small" variant="tonal">stream</v-chip>
-              <v-btn
-                size="small"
-                variant="tonal"
-                prepend-icon="mdi-refresh"
-                :loading="detailLoading"
-                @click="loadDetail(detail.requestId)"
-              >
-                刷新
-              </v-btn>
-            </div>
+            <v-btn v-if="highlightRequestId" size="small" variant="text" prepend-icon="mdi-arrow-left" @click="emit('back')">返回请求日志</v-btn>
           </div>
-
-          <v-alert v-if="detail.summary.errorMessage" type="info" variant="tonal" density="compact" class="mb-3">
-            {{ detail.summary.errorMessage }}
-          </v-alert>
-          <div v-if="detail.summary.channelName || detail.summary.model" class="detail-route">
-            {{ detail.summary.channelName || '渠道未知' }}
-            <span v-if="detail.summary.model"> · {{ detail.summary.model }}</span>
-            <span v-if="detail.summary.status"> · {{ detail.summary.status }}</span>
-          </div>
-
-          <div class="quick-copy">
-            <v-btn
-              color="primary"
-              variant="flat"
-              prepend-icon="mdi-content-copy"
-              :disabled="!clientLog?.body"
-              @click="copyBody(clientLog, 'quick-client')"
-            >
-              {{ copiedKey === 'quick-client' ? '已复制原请求' : '复制原请求' }}
-            </v-btn>
-            <v-btn
-              color="primary"
-              variant="flat"
-              prepend-icon="mdi-content-copy"
-              :disabled="!currentAttempt?.request?.body"
-              @click="copyBody(currentAttempt?.request, 'quick-upstream')"
-            >
-              {{ copiedKey === 'quick-upstream' ? '已复制发给上游' : '复制发给上游' }}
-            </v-btn>
-            <v-btn
-              color="primary"
-              variant="flat"
-              prepend-icon="mdi-content-copy"
-              :disabled="!currentAttempt?.response?.body"
-              @click="copyBody(currentAttempt?.response, 'quick-response')"
-            >
-              {{ copiedKey === 'quick-response' ? '已复制上游返回' : '复制上游返回' }}
-            </v-btn>
-          </div>
-
-          <div v-if="attempts.length > 1" class="attempt-row">
-            <span class="text-caption text-medium-emphasis">上游尝试</span>
-            <v-chip-group v-model="selectedAttemptIndex" mandatory>
-              <v-chip
-                v-for="(attempt, index) in attempts"
-                :key="attempt.key"
-                :value="index"
-                size="small"
-                filter
-                variant="tonal"
-              >
-                {{ attempt.label }}
-              </v-chip>
-            </v-chip-group>
-          </div>
-          <v-alert v-if="currentAttempt?.error" type="warning" variant="tonal" density="compact" class="mb-3">
-            本次上游尝试未收到响应：{{ currentAttempt.error.body }}
-          </v-alert>
-
-          <section v-for="section in visibleSections" :key="section.key" class="phase-section">
-            <div class="phase-header">
-              <div class="phase-title-block">
-                <div class="phase-title">{{ section.title }}</div>
-                <div v-if="section.log" class="phase-meta">
-                  <span v-if="section.log.method">{{ section.log.method }}</span>
-                  <span v-if="section.log.url" class="phase-url" :title="section.log.url">{{ section.log.url }}</span>
-                  <span v-if="section.log.statusCode">{{ section.log.statusCode }}</span>
-                  <span>{{ formatBytes(section.log) }}</span>
-                  <span v-if="section.log.truncated" class="text-warning">日志正文已截断（1 MiB 上限）</span>
-                </div>
-                <div v-else class="phase-meta text-medium-emphasis">无记录</div>
-              </div>
-              <div v-if="section.log" class="phase-actions">
-                <v-btn
-                  color="primary"
-                  variant="tonal"
-                  size="small"
-                  prepend-icon="mdi-content-copy"
-                  @click="copyBody(section.log, section.key)"
-                >
-                  {{ copiedKey === section.key ? '已复制' : '复制' }}
-                </v-btn>
-                <v-switch
-                  v-model="headerVisible[section.key]"
-                  hide-details
-                  density="compact"
-                  color="primary"
-                  label="显示请求头"
-                />
-                <v-switch
-                  v-model="wrapEnabled[section.key]"
-                  hide-details
-                  density="compact"
-                  color="primary"
-                  label="自动换行"
-                />
-              </div>
-            </div>
-            <template v-if="section.log">
-              <pre v-if="headerVisible[section.key]" class="headers-pre">{{ formatHeaders(section.log.headers) }}</pre>
-              <SessionInspector
-                :body="section.log.body || ''"
-                :wrap="wrapEnabled[section.key]"
-                :url="section.log.url || ''"
-                :method="section.log.method || 'POST'"
-                :replayable="section.key !== 'response'"
-              />
-            </template>
-          </section>
-
-          <section v-if="synthLogs.length" class="phase-section">
-            <div class="phase-header">
-              <button type="button" class="synth-toggle" @click="synthExpanded = !synthExpanded">
-                <v-icon size="18">{{ synthExpanded ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
-                <span class="phase-title">流式合成（观测）</span>
-              </button>
-              <v-btn
-                v-if="synthExpanded && synthLogs[0]"
-                size="small"
-                color="primary"
-                variant="tonal"
-                prepend-icon="mdi-content-copy"
-                @click="copyText(synthLogs.map(item => formatBodyForCopy(item.body || '')).join('\n\n'), 'synth')"
-              >
-                {{ copiedKey === 'synth' ? '已复制' : '复制' }}
-              </v-btn>
-            </div>
-            <div v-if="synthExpanded">
-              <JsonBodyPane
-                v-for="(synthLog, index) in synthLogs"
-                :key="synthLog.id || index"
-                :body="synthLog.body || ''"
-                wrap
-              />
-            </div>
-          </section>
-        </div>
-      </v-card>
+          <v-alert v-if="logs.roundsError" type="error" variant="tonal" density="compact">{{ logs.roundsError }}</v-alert>
+          <v-alert v-if="!logs.selectedConversation?.latest.conversationId" type="info" variant="tonal" density="compact">此请求没有可靠的会话标识，单独保留。</v-alert>
+          <ConversationLogTimeline :group-key="logs.selectedKey" :requests="logs.requests" :highlight-request-id="highlightRequestId || requestId" @inspect="inspectRequest" />
+        </template>
+      </main>
     </div>
-
-    <PromptBodyDialog v-model="detailBodyDialog" :request-id="selectedRequestId" />
+    <v-dialog v-model="detailOpen" max-width="1200" scrollable>
+      <v-card>
+        <v-card-title class="detail-dialog-heading">
+          <span>请求流量详情</span>
+          <v-btn icon="mdi-close" size="small" variant="text" aria-label="关闭请求详情" @click="detailOpen = false" />
+        </v-card-title>
+        <v-card-text><RequestLogDetail :request-id="inspectedRequestId" @locate="locateRelated" /></v-card-text>
+      </v-card>
+    </v-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import JsonBodyPane from '@/components/JsonBodyPane.vue'
-import PromptBodyDialog from '@/components/PromptBodyDialog.vue'
-import SessionInspector from '@/components/SessionInspector.vue'
-import ConversationLogTimeline from '@/components/ConversationLogTimeline.vue'
-import { getLogAttempts, groupLogConversations, logStatus } from '@/utils/logConversation'
-import { api, type LogAPIType, type SystemLogDetail, type SystemLogSummary, type TrafficLog } from '@/services/api'
+// 页面只编排选择、筛选和可见期间的刷新；日志状态由 store 统一持有。
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import ConversationLogTimeline from './ConversationLogTimeline.vue'
+import RequestLogDetail from './RequestLogDetail.vue'
+import { useLogsStore } from '@/stores/logs'
+import { logStatus } from '@/utils/logConversation'
+import type { LogAPIType } from '@/types/logs'
 
-type TypeFilter = LogAPIType | ''
-
-interface PhaseSection {
-  key: string
-  title: string
-  log?: TrafficLog
-}
-
-const props = defineProps<{
-  requestId?: string
-  highlightRequestId?: string
-}>()
-
-const emit = defineEmits<{
-  select: [requestId: string]
-  back: []
-}>()
-
-const typeItems: Array<{ title: string; value: TypeFilter }> = [
-  { title: '全部', value: '' },
-  { title: 'Messages', value: 'messages' },
-  { title: 'Responses', value: 'responses' },
-  { title: 'Gemini', value: 'gemini' },
-  { title: 'Chat', value: 'chat' },
-  { title: 'Images', value: 'images' },
-  { title: '命令 AI 复核', value: 'cmd_gate' },
-  { title: '内部 AI 调用', value: 'llmgate' }
-]
-
-const typeLabelMap: Record<LogAPIType, string> = {
-  messages: 'Messages',
-  responses: 'Responses',
-  gemini: 'Gemini',
-  chat: 'Chat',
-  images: 'Images',
-  cmd_gate: '命令 AI 复核',
-  llmgate: '内部 AI 调用'
-}
-
-const typeColorMap: Record<LogAPIType, string> = {
-  messages: 'primary',
-  responses: 'secondary',
-  gemini: 'success',
-  chat: 'info',
-  images: 'warning',
-  cmd_gate: 'warning',
-  llmgate: 'secondary'
-}
-
-const typeFilter = ref<TypeFilter>('')
-const viewMode = ref<'conversation' | 'request'>(props.highlightRequestId ? 'request' : 'conversation')
-const listLoading = ref(false)
-const listError = ref('')
-const summaries = ref<SystemLogSummary[]>([])
-const listLimit = ref(100)
-const detailLoading = ref(false)
-const detailError = ref('')
-const detail = ref<SystemLogDetail | null>(null)
-const selectedAttemptIndex = ref(0)
-const synthExpanded = ref(false)
-const detailBodyDialog = ref(false)
-const copiedKey = ref('')
-const headerVisible = reactive<Record<string, boolean>>({})
-const wrapEnabled = reactive<Record<string, boolean>>({})
-let listRevision = 0
-let detailRevision = 0
+const props = defineProps<{ requestId?: string; highlightRequestId?: string }>()
+const emit = defineEmits<{ select: [requestId: string]; back: [] }>()
+const logs = useLogsStore()
+const search = ref('')
+const locateError = ref('')
+const detailOpen = ref(false)
+const inspectedRequestId = ref('')
 let disposed = false
-let refreshTimer: ReturnType<typeof setTimeout> | undefined
+let locateRevision = 0
+let timer: ReturnType<typeof setTimeout> | undefined
 
-const selectedRequestId = computed(() => props.requestId || '')
-const conversationGroups = computed(() => groupLogConversations(summaries.value))
-const selectedGroup = computed(() => conversationGroups.value.find(group => group.requests.some(entry => entry.requestId === selectedRequestId.value)))
-const displayEntries = computed(() => viewMode.value === 'conversation'
-  ? conversationGroups.value.map(group => ({ ...group.latest, groupKey: group.key, requestCount: group.requests.length }))
-  : summaries.value.map(entry => ({ ...entry, groupKey: '', requestCount: 1 })))
-
-const clientLabel = (client: string) => {
-  const name = client.toLowerCase()
-  if (name.includes('opencode')) return 'OpenCode'
-  if (name.includes('claude-cli')) return 'Claude Code'
-  if (name.includes('codex')) return 'Codex'
+const typeItems: { title: string; value: LogAPIType | '' }[] = [
+  { title: '全部协议', value: '' }, { title: 'Messages', value: 'messages' },
+  { title: 'Responses', value: 'responses' }, { title: 'Gemini', value: 'gemini' },
+  { title: 'Chat', value: 'chat' }, { title: 'Images', value: 'images' },
+  { title: '命令 AI 复核', value: 'cmd_gate' }, { title: '内部 AI 调用', value: 'llmgate' }
+]
+const entryLabel = (kind?: string) => typeItems.find(item => item.value === kind?.toLowerCase())?.title || kind || '未知协议'
+const clientLabel = (client?: string) => {
+  if (!client) return '未知客户端'
+  if (/codex/i.test(client)) return 'Codex'
+  if (/claude-cli/i.test(client)) return 'Claude Code'
+  if (/opencode/i.test(client)) return 'OpenCode'
   return client
 }
-
-const inspectRequest = (requestId: string) => { viewMode.value = 'request'; emit('select', requestId) }
-
-const trafficLogs = computed(() => detail.value?.trafficLogs || [])
-const parentRequestId = computed(() => detail.value?.requestLogs?.find(entry => entry.parentRequestId)?.parentRequestId || '')
-
-const attempts = computed(() => getLogAttempts(trafficLogs.value))
-
-const currentAttempt = computed(() => {
-  if (attempts.value.length === 0) return undefined
-  const index = Math.min(selectedAttemptIndex.value, attempts.value.length - 1)
-  return attempts.value[index]
+const timeLabel = (timestamp: string) => new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+const filteredGroups = computed(() => {
+  const needle = (search.value || '').trim().toLowerCase()
+  return logs.conversations.filter(group => !needle || [group.latest.model, group.latest.channelName, group.latest.client, group.key].some(value => value?.toLowerCase().includes(needle)))
 })
 
-const synthLogs = computed(() => trafficLogs.value.filter(entry => entry.phase === 'stream_synth'))
-
-const clientLog = computed(() => trafficLogs.value.find(entry => entry.phase === 'client_request'))
-
-const visibleSections = computed((): PhaseSection[] => [
-  {
-    key: 'client',
-    title: detail.value?.summary.apiType === 'cmd_gate' ? '提交给 AI 的复核内容' : '打进代理的原请求',
-    log: trafficLogs.value.find(entry => entry.phase === 'client_request')
-  },
-  {
-    key: 'upstream',
-    title: '代理发给上游的请求',
-    log: currentAttempt.value?.request
-  },
-  {
-    key: 'response',
-    title: '代理收到的上游响应',
-    log: currentAttempt.value?.response
-  }
-])
-
-const entryLabel = (value?: string) => typeLabelMap[(value || '').toLowerCase() as LogAPIType] || value || '未知'
-const entryColor = (value?: string) => typeColorMap[(value || '').toLowerCase() as LogAPIType] || 'secondary'
-
-const formatTime = (value?: string) => {
-  if (!value) return '--'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleString()
+async function locate(id?: string) {
+  const revision = ++locateRevision
+  locateError.value = ''
+  if (!id) return
+  try { await logs.locateRequest(id) }
+  catch (error) { if (revision === locateRevision && !disposed) locateError.value = error instanceof Error ? error.message : '定位请求失败' }
 }
-
-const formatBytes = (log: TrafficLog) => {
-  const bytes = log.originalBytes || log.body?.length || 0
-  if (!bytes) return '0 B'
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
-const formatHeaders = (raw?: string) => {
-  if (!raw) return '无请求头'
-  try {
-    return JSON.stringify(JSON.parse(raw), null, 2)
-  } catch {
-    return raw
-  }
-}
-
-const copyText = async (text: string, key: string) => {
-  try {
-    await navigator.clipboard.writeText(text)
-    copiedKey.value = key
-    window.setTimeout(() => {
-      if (copiedKey.value === key) copiedKey.value = ''
-    }, 1500)
-  } catch {
-    copiedKey.value = ''
-  }
-}
-
-const formatBodyForCopy = (raw: string) => {
-  const trimmed = raw.trim()
-  if (!trimmed) return ''
-  try {
-    return JSON.stringify(JSON.parse(trimmed), null, 2)
-  } catch {
-    return raw
-  }
-}
-
-const copyBody = async (log: TrafficLog | undefined, key: string) => {
-  if (!log?.body) return
-  await copyText(formatBodyForCopy(log.body), key)
-}
-
-const loadList = async () => {
-  const revision = ++listRevision
-  listLoading.value = true
-  listError.value = ''
-  try {
-    const response = await api.getSystemLogs({
-      type: typeFilter.value,
-      limit: 200
-    })
-    if (revision !== listRevision) return
-    summaries.value = response.logs || []
-    listLimit.value = response.limit || 100
-  } catch (err) {
-    if (revision !== listRevision) return
-    listError.value = err instanceof Error ? err.message : '加载系统日志失败'
-  } finally {
-    if (revision === listRevision) listLoading.value = false
-  }
-}
-
-const loadDetail = async (requestId: string) => {
-  const revision = ++detailRevision
-  if (!requestId) {
-    detail.value = null
-    detailLoading.value = false
-    detailError.value = ''
-    return
-  }
-  detailLoading.value = true
-  detailError.value = ''
-  try {
-    const response = await api.getSystemLog(requestId)
-    if (revision !== detailRevision) return
-    detail.value = response
-    selectedAttemptIndex.value = Math.max((attempts.value.length || 1) - 1, 0)
-    synthExpanded.value = false
-  } catch (err) {
-    if (revision !== detailRevision) return
-    detail.value = null
-    detailError.value = err instanceof Error ? err.message : '加载系统日志详情失败'
-  } finally {
-    if (revision === detailRevision) detailLoading.value = false
-  }
-}
-
-const reloadAll = async () => {
-  await loadList()
-  if (selectedRequestId.value) {
-    await loadDetail(selectedRequestId.value)
-  }
-}
-
-// 仅日志页可见时刷新只读摘要；后台标签页暂停查询，离开页面立即停止。
-const scheduleRefresh = () => {
+function inspectRequest(id: string) { inspectedRequestId.value = id; detailOpen.value = true }
+function locateRelated(id: string) { detailOpen.value = false; emit('select', id) }
+function scheduleRefresh() {
   if (disposed) return
-  const active = summaries.value.some(entry => entry.status === 'processing' || entry.status === 'retrying')
-  refreshTimer = setTimeout(async () => {
-    try {
-      if (!document.hidden && !listLoading.value && !detailLoading.value) await reloadAll()
-    } finally { scheduleRefresh() }
-  }, active ? 5000 : 15000)
+  timer = setTimeout(async () => {
+    try { if (!document.hidden && !logs.listLoading && !logs.roundsLoading) await logs.refresh() }
+    finally { scheduleRefresh() }
+  }, logs.active ? 5000 : 15000)
 }
 
-onBeforeUnmount(() => {
-  disposed = true
-  listRevision++
-  detailRevision++
-  if (refreshTimer !== undefined) clearTimeout(refreshTimer)
-})
-
-// scrollToEntry 把列表滚动到指定 requestId 条目；条目不在当前列表时给出提示。
-const scrollToEntry = async (requestId: string) => {
-  if (!requestId) return
-  await nextTick()
-  const element = document.getElementById(`system-log-entry-${requestId}`)
-  if (!element) {
-    locateWarning.value = '该请求不在当前列表（可能已被更新日志挤出或筛选不匹配），下方仍展示其详情。'
-    return
-  }
-  locateWarning.value = ''
-  element.scrollIntoView({ block: 'center', behavior: 'smooth' })
-}
-
-const locateWarning = ref('')
-
-watch(summaries, () => {
-  if (props.highlightRequestId) {
-    scrollToEntry(props.highlightRequestId)
-  }
-})
-
-watch(
-  () => props.highlightRequestId,
-  requestId => {
-    if (requestId) {
-      viewMode.value = 'request'
-      scrollToEntry(requestId)
-    }
-  }
-)
-
-watch(typeFilter, () => {
-  loadList()
-})
-
-watch(
-  () => props.requestId,
-  requestId => {
-    loadDetail(requestId || '')
-  }
-)
-
-watch(attempts, value => {
-  if (selectedAttemptIndex.value > value.length - 1) {
-    selectedAttemptIndex.value = Math.max(value.length - 1, 0)
-  }
-})
-
-onMounted(async () => {
-  await loadList()
-  if (selectedRequestId.value) {
-    await loadDetail(selectedRequestId.value)
-  }
-  if (props.highlightRequestId) {
-    scrollToEntry(props.highlightRequestId)
-  }
-  scheduleRefresh()
-})
+watch(() => props.requestId, id => { void locate(id) })
+watch(() => logs.typeFilter, () => { logs.reset(); void logs.loadConversations() })
+onMounted(async () => { await logs.loadConversations(); if (!disposed) await locate(props.requestId); scheduleRefresh() })
+onBeforeUnmount(() => { disposed = true; locateRevision++; if (timer) clearTimeout(timer); logs.reset() })
 </script>
 
 <style scoped>
-.system-logs-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  height: 100%;
-  min-height: 0;
-}
-
-.system-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 16px;
-}
-
-.system-actions,
-.detail-chips,
-.detail-id-row,
-.phase-header,
-.phase-actions,
-.attempt-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.system-actions {
-  justify-content: flex-end;
-}
-
-.system-layout {
-  display: grid;
-  grid-template-columns: 360px minmax(0, 1fr);
-  gap: 16px;
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.system-list-card,
-.system-detail-card {
-  min-height: 0;
-  border: 2px solid rgb(var(--v-theme-on-surface));
-  border-radius: 0;
-  box-shadow: 5px 5px 0 0 rgb(var(--v-theme-on-surface));
-  overflow: auto;
-}
-
-.system-empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 220px;
-  padding: 24px;
-  text-align: center;
-  color: rgba(var(--v-theme-on-surface), 0.62);
-}
-
-.system-list-item {
-  display: block;
-  width: 100%;
-  padding: 12px 14px;
-  border: 0;
-  border-bottom: 1px solid rgba(var(--v-theme-on-surface), 0.12);
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-}
-
-.system-list-item.selected,
-.system-list-item:hover {
-  background: rgba(var(--v-theme-primary), 0.08);
-}
-
-.system-list-item.jump-target {
-  border: 2px solid rgb(var(--v-theme-warning));
-  animation: jump-target-pulse 0.9s ease-in-out 3;
-}
-
-@keyframes jump-target-pulse {
-  0%,
-  100% {
-    background: transparent;
-  }
-  50% {
-    background: rgba(var(--v-theme-warning), 0.28);
-  }
-}
-
-.detail-jump-bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  padding: 8px 12px;
-  border: 1px dashed rgba(var(--v-theme-warning), 0.6);
-  background: rgba(var(--v-theme-warning), 0.08);
-}
-
-.system-list-row,
-.system-list-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.system-list-time,
-.system-list-meta,
-.system-list-channel,
-.phase-meta,
-.detail-time,
-.detail-route {
-  font-size: 12px;
-  color: rgba(var(--v-theme-on-surface), 0.72);
-}
-
-.system-list-channel,
-.detail-route {
-  margin-top: 4px;
-}
-
-.system-detail {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding: 16px;
-}
-
-.quick-copy {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.detail-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.detail-id {
-  font-size: 13px;
-  overflow-wrap: anywhere;
-}
-
-.phase-section {
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.18);
-}
-
-.phase-header {
-  justify-content: space-between;
-  padding: 10px 12px;
-  background: rgba(var(--v-theme-primary), 0.08);
-}
-
-.phase-title {
-  font-weight: 700;
-  font-size: 14px;
-}
-
-.phase-url {
-  max-width: 420px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.headers-pre {
-  margin: 0;
-  padding: 10px 12px;
-  border-bottom: 1px solid rgba(var(--v-theme-on-surface), 0.12);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
-  white-space: pre-wrap;
-  overflow: auto;
-  max-height: 180px;
-}
-
-.synth-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-  padding: 0;
-  color: inherit;
-}
-
-.font-mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
-
-@media (max-width: 1100px) {
-  .system-layout {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(160px, 34%) minmax(0, 1fr);
-  }
-
-  .system-toolbar {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-}
+.system-logs-panel { display: flex; flex-direction: column; gap: 16px; height: 100%; min-height: 0; }
+.system-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.search-field { flex: 1; min-width: 200px; }
+.type-field { flex: 0 1 180px; min-width: 150px; }
+.system-layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 20px; flex: 1; min-height: 0; }
+.system-list, .system-detail { overflow: auto; min-height: 0; }
+.system-list { border-right: 1px solid rgba(var(--v-theme-on-surface), 0.12); padding-right: 12px; }
+.conversation-entry { display: block; width: 100%; text-align: left; color: rgb(var(--v-theme-on-surface)); padding: 14px 12px; margin-bottom: 4px; border-radius: 8px; background: transparent; border: 0; cursor: pointer; }
+.conversation-entry:hover { background: rgba(var(--v-theme-primary), 0.05); }
+.conversation-entry.selected { background: rgba(var(--v-theme-primary), 0.12); }
+.conversation-entry:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: -2px; }
+.entry-heading, .entry-meta { display: flex; justify-content: space-between; gap: 12px; }
+.entry-heading > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.entry-time, .entry-meta { font-size: 12px; }
+.entry-time { flex-shrink: 0; }
+.entry-model { margin: 6px 0 10px; overflow-wrap: anywhere; }
+.entry-time, .entry-model, .entry-meta { color: rgba(var(--v-theme-on-surface), 0.75); }
+.conversation-heading, .detail-dialog-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding-bottom: 16px; }
+.system-empty { padding: 32px 16px; color: rgba(var(--v-theme-on-surface), 0.75); text-align: center; }
+@media (max-width: 800px) { .system-layout { grid-template-columns: 210px minmax(0, 1fr); gap: 12px; } }
+@media (max-width: 600px) { .system-layout { display: flex; flex-direction: column; overflow: auto; } .system-list { flex-shrink: 0; max-height: 240px; border-right: 0; border-bottom: 1px solid rgba(var(--v-theme-on-surface), 0.12); } .system-detail { flex-shrink: 0; overflow: visible; } }
 </style>

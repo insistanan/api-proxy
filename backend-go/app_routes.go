@@ -20,6 +20,8 @@ func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
 	apiGroup.GET("/request-logs", handlers.GetRequestLogs(a.requestLogStore))
 	apiGroup.GET("/system-logs", handlers.GetSystemLogs(a.logStore))
 	apiGroup.GET("/system-logs/:requestId", handlers.GetSystemLog(a.logStore))
+	apiGroup.GET("/log-conversations", handlers.GetLogConversations(a.logStore))
+	apiGroup.GET("/log-conversation-requests", handlers.GetLogConversationRequests(a.logStore))
 	// 会话注册表直接注入（R4-b：scheduler 退出服务定位器角色，
 	// 装配层持有实例并显式传参）。
 	apiGroup.GET("/blocked-logs", handlers.GetBlockedLogs(a.blockedStore, a.conversationRegistry))

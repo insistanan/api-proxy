@@ -36,6 +36,8 @@ import type {
   GlobalStatsHistoryResponse,
   LogAPIType,
   LogDatesResponse,
+  LogConversationsResponse,
+  LogConversationRequestsResponse,
   MetricsHistoryResponse,
   MappingTargetChannelsResponse,
   ModelsResponse,
@@ -401,6 +403,22 @@ class ApiService {
 
   async getSystemLog(requestId: string): Promise<SystemLogDetail> {
     return this.request(`/system-logs/${encodeURIComponent(requestId)}`)
+  }
+
+  async getLogConversations(params: { type?: LogAPIType | ''; cursor?: string; limit?: number } = {}): Promise<LogConversationsResponse> {
+    const search = new URLSearchParams()
+    if (params.type) search.set('type', params.type)
+    if (params.cursor) search.set('cursor', params.cursor)
+    if (params.limit) search.set('limit', String(params.limit))
+    return this.request(`/log-conversations?${search}`)
+  }
+
+  async getLogConversationRequests(params: { key: string; before?: string; anchor?: string; limit?: number }): Promise<LogConversationRequestsResponse> {
+    const search = new URLSearchParams({ key: params.key })
+    if (params.before) search.set('before', params.before)
+    if (params.anchor) search.set('anchor', params.anchor)
+    if (params.limit) search.set('limit', String(params.limit))
+    return this.request(`/log-conversation-requests?${search}`)
   }
 
   async getBlockedLogs(params: BlockedLogFilters = {}): Promise<BlockedLogsResponse> {

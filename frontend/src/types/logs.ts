@@ -99,6 +99,22 @@ export interface SystemLogsResponse {
   limit: number
 }
 
+export interface LogConversationSummary {
+  key: string
+  latest: SystemLogSummary
+  requestCount: number
+}
+
+export interface LogConversationsResponse {
+  conversations: LogConversationSummary[]
+  nextCursor?: string
+}
+
+export interface LogConversationRequestsResponse {
+  logs: SystemLogSummary[]
+  nextCursor?: string
+}
+
 export interface SystemLogDetail {
   requestId: string
   summary: SystemLogSummary

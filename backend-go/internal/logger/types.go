@@ -10,6 +10,7 @@ const (
 	MaxBodyBytes = 1 << 20
 
 	PhaseClientRequest     = "client_request"
+	PhaseClientInput       = "client_input"
 	PhaseUpstreamRequest   = "upstream_request"
 	PhaseUpstreamResponse  = "upstream_response"
 	PhaseStreamSynth       = "stream_synth"

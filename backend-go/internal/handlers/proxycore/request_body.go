@@ -118,4 +118,14 @@ func LogOriginalRequest(c *gin.Context, bodyBytes []byte, envCfg *config.EnvConf
 		URL:         c.Request.URL.Path,
 		HeadersJSON: string(headersJSON),
 	}.WithPreparedBody(preparedBody, originalBytes, truncated))
+	if truncated && len(bodyBytes) > logger.MaxBodyBytes {
+		structuredBody, err := logger.PrepareStructuredRequest(bodyBytes)
+		if err != nil {
+			log.Printf("[Request-Log] requestId=%s 提取结构化输入失败: %v", requestID, err)
+			return
+		}
+		logger.RecordTraffic(logger.TrafficLog{
+			RequestID: requestID, Phase: logger.PhaseClientInput, APIType: apiType,
+		}.WithPreparedBody(structuredBody, originalBytes, false))
+	}
 }

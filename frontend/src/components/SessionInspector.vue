@@ -1,10 +1,10 @@
 <template>
   <div class="session-inspector">
-    <div class="inspector-toolbar mb-2">
+    <div v-if="!compact" class="inspector-toolbar mb-2">
       <div class="d-flex align-center ga-2">
         <v-btn-toggle v-model="viewMode" mandatory density="compact" variant="outlined" divided>
-          <v-btn value="structured" size="small" prepend-icon="mdi-brain">
-            结构化 ({{ itemsCount }})
+          <v-btn value="structured" size="small">
+            对话内容
           </v-btn>
           <v-btn value="raw" size="small" prepend-icon="mdi-code-json">
             原始 JSON
@@ -34,8 +34,13 @@
       </div>
     </div>
 
+    <v-alert v-if="copyError" type="error" variant="tonal" density="compact" class="mb-2">{{ copyError }}</v-alert>
+    <div v-if="viewMode === 'structured' && needsExpansion" class="pa-4 text-medium-emphasis">
+      结构化正文较大，展开后再解析与渲染。
+      <v-btn size="small" variant="text" @click="structuredExpanded = true">展开内容</v-btn>
+    </div>
     <!-- 结构化卡片视图 -->
-    <div v-if="viewMode === 'structured' && parsedItems.length > 0" class="inspector-content">
+    <div v-else-if="viewMode === 'structured' && parsedItems.length > 0" class="inspector-content">
       <div v-for="(item, index) in parsedItems" :key="index" class="message-card mb-3" :class="item.role">
         <div class="message-card-header d-flex align-center justify-space-between px-3 py-1">
           <div class="d-flex align-center ga-2">
@@ -63,7 +68,8 @@
 
           <!-- 文本正文 -->
           <div v-if="item.text" class="message-text mb-2">
-            <pre class="text-pre">{{ item.text }}</pre>
+            <details v-if="historyInput && item.role === 'assistant'" :open="expandedBlocks.has(`history-${index}`)" @toggle="toggleBlock(`history-${index}`, $event)"><summary>客户端携带的历史回复</summary><pre v-if="expandedBlocks.has(`history-${index}`)" class="text-pre">{{ item.text }}</pre></details>
+            <pre v-else class="text-pre">{{ item.text }}</pre>
           </div>
 
           <!-- 工具调用 (Tool Calls / Use) -->
@@ -76,7 +82,7 @@
                 </div>
                 <span v-if="call.id" class="text-caption font-mono text-medium-emphasis">{{ call.id }}</span>
               </div>
-              <pre class="tool-args-pre text-caption">{{ formatArgs(call.args) }}</pre>
+              <details :open="expandedBlocks.has(`args-${index}-${cIdx}`)" @toggle="toggleBlock(`args-${index}-${cIdx}`, $event)"><summary>工具参数</summary><pre v-if="expandedBlocks.has(`args-${index}-${cIdx}`)" class="tool-args-pre text-caption">{{ formatArgs(call.args) }}</pre></details>
             </div>
           </div>
 
@@ -92,7 +98,7 @@
                 </div>
                 <span v-if="res.toolUseId" class="text-caption font-mono text-medium-emphasis">{{ res.toolUseId }}</span>
               </div>
-              <pre class="tool-result-pre text-caption">{{ res.content }}</pre>
+              <details :open="expandedBlocks.has(`result-${index}-${rIdx}`)" @toggle="toggleBlock(`result-${index}-${rIdx}`, $event)"><summary>查看工具结果</summary><pre v-if="expandedBlocks.has(`result-${index}-${rIdx}`)" class="tool-result-pre text-caption">{{ res.content }}</pre></details>
             </div>
           </div>
         </div>
@@ -101,7 +107,7 @@
 
     <!-- 无法解析或无结构化消息时退回 JSON -->
     <div v-else-if="viewMode === 'structured'" class="empty-structured pa-4 text-center text-medium-emphasis rounded border">
-      <span>未检测到结构化对话或工具调用，已切换为 JSON 模式查看。</span>
+      <span>{{ parsed.notice }}</span>
       <JsonBodyPane :body="body || ''" :wrap="wrap" class="mt-2 text-left" />
     </div>
 
@@ -111,7 +117,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+// 协议解析由纯函数负责；大正文与工具细节展开后才解析或挂载。
+import { computed, ref, watch } from 'vue'
+import { parseSessionBody } from '@/utils/sessionPresentation'
 import JsonBodyPane from './JsonBodyPane.vue'
 
 const props = withDefaults(
@@ -121,157 +129,41 @@ const props = withDefaults(
     url?: string
     method?: string
     replayable?: boolean
+    compact?: boolean
+    historyInput?: boolean
   }>(),
   {
     body: '',
     wrap: true,
     url: '',
     method: 'POST',
-    replayable: true
+    replayable: true,
+    compact: false,
+    historyInput: false
   }
 )
 
 const viewMode = ref<'structured' | 'raw'>('structured')
 const curlCopied = ref(false)
 const rawCopied = ref(false)
+const copyError = ref('')
+const expandedBlocks = ref(new Set<string>())
 
-interface ParsedToolCall {
-  id?: string
-  name: string
-  args: unknown
-}
+const structuredExpanded = ref(false)
+const LARGE_BODY_CHARS = 200 * 1024
+const needsExpansion = computed(() => props.body.length > LARGE_BODY_CHARS && !structuredExpanded.value)
+const parsed = computed(() => viewMode.value === 'raw' || needsExpansion.value ? { items: [], notice: '' } : parseSessionBody(props.body))
+const parsedItems = computed(() => parsed.value.items)
 
-interface ParsedToolResult {
-  toolUseId?: string
-  content: string
-  isError?: boolean
-}
-
-interface ParsedItem {
-  role: string
-  name?: string
-  text?: string
-  thinking?: string
-  toolCalls?: ParsedToolCall[]
-  toolResults?: ParsedToolResult[]
-}
-
-const parsedItems = computed<ParsedItem[]>(() => {
-  if (!props.body) return []
-  try {
-    const data = JSON.parse(props.body)
-    const items: ParsedItem[] = []
-
-    // 1. Anthropic Claude 格式 (messages / content)
-    const claudeMessages = Array.isArray(data.messages) ? data.messages : Array.isArray(data.content) && data.role ? [data] : undefined
-    if (claudeMessages) {
-      for (const m of claudeMessages) {
-        const item: ParsedItem = { role: m.role || 'user' }
-        if (typeof m.content === 'string') {
-          item.text = m.content
-        } else if (Array.isArray(m.content)) {
-          for (const block of m.content) {
-            if (block.type === 'text') {
-              item.text = (item.text ? item.text + '\n' : '') + (block.text || '')
-            } else if (block.type === 'thinking' || block.type === 'redacted_thinking') {
-              item.thinking = (item.thinking ? item.thinking + '\n' : '') + (block.thinking || '[redacted thinking]')
-            } else if (block.type === 'tool_use') {
-              if (!item.toolCalls) item.toolCalls = []
-              item.toolCalls.push({ id: block.id, name: block.name, args: block.input })
-            } else if (block.type === 'tool_result') {
-              if (!item.toolResults) item.toolResults = []
-              const textContent = typeof block.content === 'string' ? block.content : JSON.stringify(block.content, null, 2)
-              item.toolResults.push({ toolUseId: block.tool_use_id, content: textContent, isError: block.is_error })
-            }
-          }
-        }
-        if (Array.isArray(m.tool_calls)) {
-          item.toolCalls = m.tool_calls.map((call: { id?: string; function?: { name?: string; arguments?: unknown } }) => ({ id: call.id, name: call.function?.name || 'function', args: call.function?.arguments }))
-        }
-        if (m.role === 'tool') item.toolResults = [{ toolUseId: m.tool_call_id, content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }]
-        items.push(item)
-      }
-      return items
-    }
-
-    // 2. OpenAI Chat Completions 格式
-    if (Array.isArray(data.choices) && data.choices[0]?.message) {
-      const msg = data.choices[0].message
-      const item: ParsedItem = {
-        role: msg.role || 'assistant',
-        text: msg.content || '',
-        thinking: msg.reasoning_content || ''
-      }
-      if (Array.isArray(msg.tool_calls)) {
-        item.toolCalls = msg.tool_calls.map((tc: { id?: string; function?: { name?: string; arguments?: unknown } }) => ({
-          id: tc.id,
-          name: tc.function?.name || 'function',
-          args: tc.function?.arguments
-        }))
-      }
-      items.push(item)
-      return items
-    }
-
-    // 3. OpenAI Responses 格式 (input 列表)
-    const responseItems = Array.isArray(data.input) ? data.input : Array.isArray(data.output) ? data.output : typeof data.input === 'string' ? [{ type: 'message', role: 'user', content: [{ text: data.input }] }] : undefined
-    if (responseItems) {
-      for (const entry of responseItems) {
-        if (entry.type === 'message' || (!entry.type && entry.role)) {
-          const item: ParsedItem = { role: entry.role || 'user' }
-          if (Array.isArray(entry.content)) {
-            item.text = entry.content.map((c: { text?: string }) => c.text || '').filter(Boolean).join('\n')
-          } else if (typeof entry.content === 'string') {
-            item.text = entry.content
-          }
-          items.push(item)
-        } else if (entry.type === 'function_call') {
-          items.push({
-            role: 'assistant',
-            toolCalls: [{ id: entry.call_id, name: entry.name, args: entry.arguments }]
-          })
-        } else if (entry.type === 'function_call_output') {
-          items.push({
-            role: 'tool',
-            toolResults: [{ toolUseId: entry.call_id, content: entry.output }]
-          })
-        }
-      }
-      return items
-    }
-
-    // 4. Gemini 格式 (contents)
-    if (Array.isArray(data.contents)) {
-      for (const c of data.contents) {
-        const item: ParsedItem = { role: c.role === 'model' ? 'assistant' : 'user' }
-        if (Array.isArray(c.parts)) {
-          for (const p of c.parts) {
-            if (p.thought) {
-              item.thinking = (item.thinking ? item.thinking + '\n' : '') + (p.text || '')
-            } else if (p.text) {
-              item.text = (item.text ? item.text + '\n' : '') + p.text
-            } else if (p.functionCall) {
-              if (!item.toolCalls) item.toolCalls = []
-              item.toolCalls.push({ name: p.functionCall.name, args: p.functionCall.args })
-            } else if (p.functionResponse) {
-              if (!item.toolResults) item.toolResults = []
-              item.toolResults.push({ toolUseId: p.functionResponse.name, content: JSON.stringify(p.functionResponse.response, null, 2) })
-            }
-          }
-        }
-        items.push(item)
-      }
-      return items
-    }
-
-    return []
-  } catch {
-    return []
-  }
-})
-
-const itemsCount = computed(() => parsedItems.value.length)
+watch(() => props.body, () => { structuredExpanded.value = false; expandedBlocks.value = new Set(); copyError.value = '' })
 const canReplay = computed(() => Boolean(props.body && props.body.trim()))
+
+function toggleBlock(key: string, event: Event) {
+  const next = new Set(expandedBlocks.value)
+  if ((event.target as HTMLElement).hasAttribute('open')) next.add(key)
+  else next.delete(key)
+  expandedBlocks.value = next
+}
 
 function roleColor(role: string): string {
   switch (role.toLowerCase()) {
@@ -302,22 +194,24 @@ function formatArgs(args: unknown): string {
 
 async function copyRawBody() {
   if (!props.body) return
-  await navigator.clipboard.writeText(props.body)
-  rawCopied.value = true
-  setTimeout(() => {
-    rawCopied.value = false
-  }, 2000)
+  copyError.value = ''
+  try {
+    await navigator.clipboard.writeText(props.body)
+    rawCopied.value = true
+    setTimeout(() => { rawCopied.value = false }, 2000)
+  } catch (error) { copyError.value = error instanceof Error ? error.message : '复制正文失败' }
 }
 
 async function copyCurlCommand() {
   if (!props.body) return
-  const url = new URL(props.url || '/v1/messages', window.location.origin).href
-  const curl = `curl -X ${props.method || 'POST'} "${url}" \\\n  -H "Content-Type: application/json" \\\n  -d '${props.body.replace(/'/g, "'\\''")}'`
-  await navigator.clipboard.writeText(curl)
-  curlCopied.value = true
-  setTimeout(() => {
-    curlCopied.value = false
-  }, 2000)
+  copyError.value = ''
+  try {
+    const url = new URL(props.url || '/v1/messages', window.location.origin).href
+    const curl = `curl -X ${props.method || 'POST'} "${url}" \\\n  -H "Content-Type: application/json" \\\n  -d '${props.body.replace(/'/g, "'\\''")}'`
+    await navigator.clipboard.writeText(curl)
+    curlCopied.value = true
+    setTimeout(() => { curlCopied.value = false }, 2000)
+  } catch (error) { copyError.value = error instanceof Error ? error.message : '复制 cURL 失败' }
 }
 </script>
 

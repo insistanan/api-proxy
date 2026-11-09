@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SystemLogSummary, TrafficLog } from '@/types/logs'
-import { getLogAttempts, getRequestDelta, groupLogConversations, logStatus } from './logConversation'
+import { getLogAttempts, getRequestDelta, groupLogConversations, logStatus, requestInputLog } from './logConversation'
 
 const traffic = (body: unknown, extra: Partial<TrafficLog> = {}): TrafficLog => ({ requestId: 'request', timestamp: '', phase: 'client_request', body: JSON.stringify(body), ...extra })
 const summary = (requestId: string, conversationId?: string, unixMilli = 1): SystemLogSummary => ({ requestId, conversationId, unixMilli, timestamp: '', apiType: 'messages', phases: [], stream: false, truncated: false })
@@ -65,6 +65,14 @@ describe('请求增量', () => {
     expect(delta.removedTopFields).toEqual(['previous_response_id'])
   })
 
+  it('普通请求的 _log 字段仍按业务配置比较', () => {
+    const first = traffic({ _log: { custom: '旧' }, messages: [user('一')] })
+    const next = traffic({ _log: { custom: '新' }, messages: [user('一')] })
+    const delta = getRequestDelta(first, next)
+    expect(delta.repeated).toBe(false)
+    expect(JSON.parse(delta.top)._log).toEqual({ custom: '新' })
+  })
+
   it('忽略 JSON 对象键序，保留数组顺序与内容变化', () => {
     const first = traffic({ tools: [{ name: 'tool', description: '工具' }], messages: [{ role: 'user', content: '一' }] })
     const next = traffic({ messages: [{ content: '一', role: 'user' }], tools: [{ description: '工具', name: 'tool' }] })
@@ -82,6 +90,36 @@ describe('请求增量', () => {
     const delta = getRequestDelta(undefined, broken)
     expect(delta.body).toBe(broken.body)
     expect(delta.notice).toContain('截断')
+  })
+})
+
+describe('超大请求结构化摘要', () => {
+  const hash = (number: number) => number.toString(16).padStart(64, '0')
+  const snapshot = (offset: number, contents: string[], requestHash: string) => traffic({
+    model: 'test',
+    input: contents.map(user),
+    _log: { messageOffset: offset, originalMessages: offset + contents.length, messageHashes: contents.map((_, index) => hash(offset + index)), topHash: hash(100), requestHash, notice: '原始正文已省略，展示有界摘要' }
+  }, { phase: 'client_input' })
+
+  it('摘要窗口前移时按消息位置和哈希比较新增输入', () => {
+    const previous = snapshot(10, ['十', '十一', '十二'], hash(200))
+    const current = snapshot(11, ['十一', '十二', '十三'], hash(201))
+    const delta = getRequestDelta(previous, current)
+    expect(JSON.parse(delta.body).input).toEqual([user('十三')])
+    expect(delta.notice).toContain('有界摘要')
+    expect(delta.repeated).toBe(false)
+  })
+
+  it('尾部相同但全量请求不同，不能误判成重发', () => {
+    const previous = snapshot(10, ['尾部'], hash(200))
+    const current = snapshot(10, ['尾部'], hash(201))
+    expect(getRequestDelta(previous, current).repeated).toBe(false)
+  })
+
+  it('原始正文省略时优先使用结构化输入记录', () => {
+    const original = traffic({}, { body: '[正文已省略]', truncated: true })
+    const compact = snapshot(10, ['新增'], hash(200))
+    expect(requestInputLog([original, compact])).toBe(compact)
   })
 })
 

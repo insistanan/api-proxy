@@ -64,18 +64,19 @@ type queuedWrite struct {
 
 // Store 是 logs.db 的唯一写入口。服务进程持有一份；CLI 只读打开。
 type Store struct {
-	db        *sql.DB
-	readDB    *sql.DB
-	dbPath    string
-	bootID    string
-	mu        sync.Mutex
-	queue     chan queuedWrite
-	done      chan struct{}
-	closeOnce sync.Once
-	wg        sync.WaitGroup
-	readOnly  bool
-	bodyRefs  bool
-	closeErr  error
+	db           *sql.DB
+	readDB       *sql.DB
+	dbPath       string
+	bootID       string
+	mu           sync.Mutex
+	queue        chan queuedWrite
+	done         chan struct{}
+	closeOnce    sync.Once
+	wg           sync.WaitGroup
+	readOnly     bool
+	bodyRefs     bool
+	requestIndex bool
+	closeErr     error
 
 	queueMu        sync.Mutex
 	queueBytes     int
@@ -179,7 +180,7 @@ func initLogSchema(db *sql.DB) error {
 			return fmt.Errorf("初始化日志表失败: %w", err)
 		}
 	}
-	return nil
+	return initRequestIndex(db)
 }
 
 // Open 打开可写日志库并启动后台写入 / 清理。
@@ -214,6 +215,7 @@ func Open(path string) (*Store, error) {
 		dbPath:       path,
 		bootID:       NewRequestID(),
 		bodyRefs:     true,
+		requestIndex: true,
 		queue:        make(chan queuedWrite, writeQueueSize),
 		done:         make(chan struct{}),
 		spaceReady:   make(chan struct{}),
@@ -259,6 +261,11 @@ func OpenReadOnly(path string) (*Store, error) {
 		return nil, fmt.Errorf("读取日志正文存储结构失败: %w", err)
 	}
 	store.bodyRefs = count > 0
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'log_request_index'`).Scan(&count); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("读取日志摘要索引结构失败: %w", err)
+	}
+	store.requestIndex = count > 0
 	return store, nil
 }
 
@@ -336,12 +343,22 @@ func (s *Store) RecordAppLog(entry AppLog) error {
 }
 
 func (s *Store) RecordTraffic(entry TrafficLog) error {
-	return s.record(queuedWrite{kind: writeTraffic, traffic: normalizeTrafficLog(entry)})
+	entry = normalizeTrafficLog(entry)
+	// 索引依赖生命周期 JSON；非法输入在入队前拒绝，避免永久重试阻塞后续日志。
+	if _, err := parseTrafficLifecycle(entry.Phase, entry.Body); err != nil {
+		s.reportError(err)
+		return err
+	}
+	return s.record(queuedWrite{kind: writeTraffic, traffic: entry})
 }
 
 func (s *Store) RecordRequest(entry RequestLogRecord) error {
 	entry = normalizeRequestRecord(entry)
 	entry.Payload = append([]byte(nil), entry.Payload...)
+	if _, err := parseRequestLogMeta(entry.Payload); err != nil {
+		s.reportError(err)
+		return err
+	}
 	return s.record(queuedWrite{kind: writeRequest, request: entry})
 }
 
@@ -509,9 +526,30 @@ func (s *Store) applyBatchLocked(batch []queuedWrite) error {
 			_ = statement.Close()
 		}
 	}()
+	requestIDs := make(map[string]struct{})
 	for _, item := range batch {
 		if err := applyLogWrite(ctx, tx, statements, item); err != nil {
 			return err
+		}
+		if item.kind == writeTraffic && item.traffic.RequestID != "" {
+			requestIDs[item.traffic.RequestID] = struct{}{}
+		}
+		if item.kind == writeRequest && item.request.RequestID != "" {
+			requestIDs[item.request.RequestID] = struct{}{}
+		}
+	}
+	ids := make([]string, 0, len(requestIDs))
+	for id := range requestIDs {
+		ids = append(ids, id)
+	}
+	if len(ids) > 0 {
+		if err := refreshRequestIndex(ctx, tx, ids); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE log_index_state SET
+			traffic_id = COALESCE((SELECT MAX(id) FROM traffic_logs), 0),
+			request_id = COALESCE((SELECT MAX(id) FROM request_logs), 0) WHERE singleton = 1`); err != nil {
+			return fmt.Errorf("保存日志索引进度失败: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -658,7 +696,13 @@ func (s *Store) cleanupTable(statement string, cutoff int64, table int, initial 
 	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 	defer cancel()
 	started := time.Now()
-	result, err := s.db.ExecContext(ctx, statement, cutoff, batch)
+	var result sql.Result
+	var err error
+	if table == 1 || table == 2 {
+		result, err = s.deleteExpiredIndexedLogs(ctx, dayTables[table], cutoff, batch)
+	} else {
+		result, err = s.db.ExecContext(ctx, statement, cutoff, batch)
+	}
 	timedOut := isCleanupTimeout(err)
 	if err != nil && !timedOut {
 		return false, fmt.Errorf("清理过期日志失败: %w", err)

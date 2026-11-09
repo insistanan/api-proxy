@@ -25,6 +25,7 @@ var requiredSystemLogPhases = []string{
 }
 
 type trafficRowMeta struct {
+	ID         int64
 	RequestID  string
 	UnixMilli  int64
 	Timestamp  string
@@ -52,6 +53,9 @@ type requestLogMeta struct {
 func (s *Store) ListSystemLogSummaries(ctx context.Context, opts SystemLogListOptions) ([]SystemLogSummary, error) {
 	if s == nil {
 		return nil, nil
+	}
+	if s.requestIndex {
+		return s.listIndexedSummaries(ctx, opts)
 	}
 	limit := opts.Limit
 	if limit <= 0 {
@@ -175,6 +179,7 @@ func (s *Store) GetSystemLogDetail(ctx context.Context, requestID string) (*Syst
 		}
 		metas = append(metas, trafficRowMeta{
 			RequestID:  entry.RequestID,
+			ID:         entry.ID,
 			UnixMilli:  entry.UnixMilli,
 			Timestamp:  entry.Timestamp,
 			Phase:      entry.Phase,
@@ -187,7 +192,10 @@ func (s *Store) GetSystemLogDetail(ctx context.Context, requestID string) (*Syst
 	}
 	var latestRequestMeta *requestLogMeta
 	if len(requestLogs) > 0 {
-		latestRequestMeta = parseRequestLogMeta(requestLogs[len(requestLogs)-1])
+		latestRequestMeta, err = parseRequestLogMeta(requestLogs[len(requestLogs)-1])
+		if err != nil {
+			return nil, err
+		}
 	}
 	summary := buildSystemLogSummary(requestID, metas, latestRequestMeta)
 	s.adjustLifecycleStatus(&summary, metas)
@@ -200,12 +208,20 @@ func (s *Store) GetSystemLogDetail(ctx context.Context, requestID string) (*Syst
 }
 
 func (s *Store) loadTrafficRowMeta(ctx context.Context, requestIDs []string) (map[string][]trafficRowMeta, error) {
+	return loadTrafficRowMetaFrom(ctx, s.readDB, requestIDs)
+}
+
+type logQuerier interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func loadTrafficRowMetaFrom(ctx context.Context, db logQuerier, requestIDs []string) (map[string][]trafficRowMeta, error) {
 	placeholders, args := sqlInPlaceholders(requestIDs)
-	query := `SELECT request_id, unix_milli, timestamp, phase, api_type, status_code, stream, truncated,
+	query := `SELECT id, request_id, unix_milli, timestamp, phase, api_type, status_code, stream, truncated,
 		CASE WHEN phase IN ('request_start', 'request_end') THEN body ELSE '' END
 		FROM traffic_logs WHERE request_id IN (` + placeholders + `)
 		ORDER BY unix_milli ASC, id ASC`
-	rows, err := s.readDB.QueryContext(ctx, query, args...)
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("查询系统日志摘要失败: %w", err)
 	}
@@ -217,7 +233,7 @@ func (s *Store) loadTrafficRowMeta(ctx context.Context, requestIDs []string) (ma
 		var streamValue, truncatedValue int
 		var lifecycleBody string
 		if err := rows.Scan(
-			&row.RequestID, &row.UnixMilli, &row.Timestamp, &row.Phase, &row.APIType,
+			&row.ID, &row.RequestID, &row.UnixMilli, &row.Timestamp, &row.Phase, &row.APIType,
 			&row.StatusCode, &streamValue, &truncatedValue, &lifecycleBody,
 		); err != nil {
 			return nil, err
@@ -234,11 +250,15 @@ func (s *Store) loadTrafficRowMeta(ctx context.Context, requestIDs []string) (ma
 }
 
 func (s *Store) loadRequestLogMeta(ctx context.Context, requestIDs []string) (map[string]*requestLogMeta, error) {
+	return loadRequestLogMetaFrom(ctx, s.readDB, requestIDs)
+}
+
+func loadRequestLogMetaFrom(ctx context.Context, db logQuerier, requestIDs []string) (map[string]*requestLogMeta, error) {
 	placeholders, args := sqlInPlaceholders(requestIDs)
 	query := `SELECT request_id, payload_json FROM request_logs
 		WHERE request_id IN (` + placeholders + `)
 		ORDER BY unix_milli DESC, id DESC`
-	rows, err := s.readDB.QueryContext(ctx, query, args...)
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("查询系统日志元数据失败: %w", err)
 	}
@@ -253,20 +273,23 @@ func (s *Store) loadRequestLogMeta(ctx context.Context, requestIDs []string) (ma
 		if _, exists := result[requestID]; exists {
 			continue
 		}
-		result[requestID] = parseRequestLogMeta(json.RawMessage(payload))
+		result[requestID], err = parseRequestLogMeta(json.RawMessage(payload))
+		if err != nil {
+			return nil, err
+		}
 	}
 	return result, rows.Err()
 }
 
-func parseRequestLogMeta(payload json.RawMessage) *requestLogMeta {
+func parseRequestLogMeta(payload json.RawMessage) (*requestLogMeta, error) {
 	if len(payload) == 0 {
-		return nil
+		return nil, nil
 	}
 	var meta requestLogMeta
 	if err := json.Unmarshal(payload, &meta); err != nil {
-		return nil
+		return nil, fmt.Errorf("解析请求日志元数据失败: %w", err)
 	}
-	return &meta
+	return &meta, nil
 }
 
 func buildSystemLogSummary(requestID string, rows []trafficRowMeta, meta *requestLogMeta) SystemLogSummary {
@@ -329,7 +352,9 @@ func buildSystemLogSummary(requestID string, rows []trafficRowMeta, meta *reques
 		}
 	}
 	if started != nil {
-		summary.ConversationID = started.ConversationID
+		if started.ConversationID != "" {
+			summary.ConversationID = started.ConversationID
+		}
 		summary.RequestHash = started.RequestHash
 		summary.Client = started.Client
 		summary.StartedAt = started.StartedAt
@@ -355,6 +380,10 @@ func buildSystemLogSummary(requestID string, rows []trafficRowMeta, meta *reques
 		if summary.Model == "" {
 			summary.Model = ended.Model
 		}
+	}
+	summary.APIType = strings.ToLower(summary.APIType)
+	if summary.StartedAt == 0 && len(rows) > 0 {
+		summary.StartedAt = rows[0].UnixMilli
 	}
 	return summary
 }
@@ -487,8 +516,13 @@ func (s *Store) Purge(ctx context.Context, opts PurgeOptions) (PurgeResult, erro
 	defer tx.Rollback()
 	counters := []*int64{&result.DeletedAppLogs, &result.DeletedTrafficLogs, &result.DeletedRequestLogs}
 	for i, table := range dayTables {
-		outcome, err := tx.ExecContext(ctx,
-			`DELETE FROM `+table+` WHERE unix_milli >= ? AND unix_milli <= ?`, startMilli, endMilli)
+		var outcome sql.Result
+		if !opts.All && i > 0 {
+			outcome, err = deleteIndexedLogRows(ctx, tx, table, `unix_milli >= ? AND unix_milli <= ?`, startMilli, endMilli)
+		} else {
+			outcome, err = tx.ExecContext(ctx,
+				`DELETE FROM `+table+` WHERE unix_milli >= ? AND unix_milli <= ?`, startMilli, endMilli)
+		}
 		if err != nil {
 			return result, fmt.Errorf("清理 %s 失败: %w", table, err)
 		}
