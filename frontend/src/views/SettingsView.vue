@@ -3,7 +3,6 @@
     <header class="settings-header">
       <div>
         <h1 class="text-h5 font-weight-bold">设置</h1>
-        <p class="text-body-2 text-medium-emphasis mt-1 mb-0">管理服务级配置</p>
       </div>
     </header>
 
@@ -31,7 +30,6 @@
           <div class="section-heading">
             <div>
               <h2 id="network-settings-title" class="text-h6 font-weight-bold">网络</h2>
-              <p class="text-body-2 text-medium-emphasis mt-1 mb-0">配置服务访问上游渠道时使用的默认代理</p>
             </div>
           </div>
 
@@ -39,7 +37,6 @@
             <div class="setting-row">
               <div class="setting-copy">
                 <div class="text-body-1 font-weight-medium">全局上游代理</div>
-                <div class="text-body-2 text-medium-emphasis mt-1">未单独指定代理策略的渠道使用此地址</div>
               </div>
               <v-switch v-model="proxyEnabled" color="primary" inset hide-details aria-label="启用全局上游代理" />
             </div>
@@ -56,8 +53,6 @@
                   autocomplete="off"
                   spellcheck="false"
                   :rules="[proxyUrlRule]"
-                  hint="支持 http、https、socks5 和 socks5h"
-                  persistent-hint
                 />
               </div>
             </v-expand-transition>
@@ -78,7 +73,6 @@
           <div class="section-heading">
             <div>
               <h2 id="integration-settings-title" class="text-h6 font-weight-bold">集成</h2>
-              <p class="text-body-2 text-medium-emphasis mt-1 mb-0">与外部工具的联动配置</p>
             </div>
           </div>
 
@@ -86,10 +80,7 @@
             <div class="setting-row">
               <div class="setting-copy">
                 <div class="text-body-1 font-weight-medium">CC Switch 路径</div>
-                <div class="text-body-2 text-medium-emphasis mt-1">
-                  配置后，渠道菜单可将渠道一键导入 CC Switch（支持便携版）；
-                  未配置时渠道菜单仅提供"复制 CCS 链接"
-                </div>
+                <!-- 配置后，渠道菜单可将渠道一键导入 CC Switch（支持便携版）； 未配置时渠道菜单仅提供"复制 CCS 链接" -->
               </div>
             </div>
 
@@ -104,8 +95,6 @@
                 autocomplete="off"
                 spellcheck="false"
                 :rules="[ccSwitchPathRule]"
-                hint="便携版无需安装协议，配置路径后即可一键导入"
-                persistent-hint
               />
               <v-btn
                 color="primary"
@@ -140,7 +129,6 @@
           <div class="section-heading">
             <div>
               <h2 id="assistant-settings-title" class="text-h6 font-weight-bold">AI 配置助手</h2>
-              <p class="text-body-2 text-medium-emphasis mt-1 mb-0">配置助手对话使用的模型路由（渠道分组）</p>
             </div>
           </div>
 
@@ -148,10 +136,7 @@
             <div class="setting-row">
               <div class="setting-copy">
                 <div class="text-body-1 font-weight-medium">模型分组</div>
-                <div class="text-body-2 text-medium-emphasis mt-1">
-                  助手以分组的匹配词作为模型 ID 走主链路编排（分组匹配 → 优先级 → 熔断/健康 → 兜底），
-                  复用渠道编排能力，不单独维护默认模型
-                </div>
+                <!-- 助手以分组的匹配词作为模型 ID 走主链路编排（分组匹配 → 优先级 → 熔断/健康 → 兜底）， 复用渠道编排能力，不单独维护默认模型 -->
               </div>
             </div>
 
@@ -163,8 +148,6 @@
               label="模型分组"
               variant="outlined"
               density="comfortable"
-              hint="留空时自动：按 Messages → Responses → Chat → Gemini 走各协议的兜底分组"
-              persistent-hint
             />
 
             <v-select
@@ -176,8 +159,6 @@
               variant="outlined"
               density="comfortable"
               class="mt-5"
-              hint="留空时自动：按 Messages → Responses → Chat → Gemini 优先级编排；指定后固定使用该渠道，不回退不换渠道"
-              persistent-hint
             >
               <template #selection="{ item }">
                 <span class="v-select__selection-text">
@@ -228,9 +209,7 @@
           <div class="section-heading">
             <div>
               <h2 id="prompts-settings-title" class="text-h6 font-weight-bold">通用提示词</h2>
-              <p class="text-body-2 text-medium-emphasis mt-1 mb-0">
-                集中维护带版本号的全局提示词，可一键写入各智能体客户端的提示词文件
-              </p>
+              <!-- 集中维护带版本号的全局提示词，可一键写入各智能体客户端的提示词文件 -->
             </div>
             <v-chip v-if="promptActiveVersion" size="small" color="success" label>
               <v-icon start size="12">mdi-check-circle</v-icon>
@@ -340,7 +319,6 @@
           <div class="section-heading">
             <div>
               <h2 id="content-safety-settings-title" class="text-h6 font-weight-bold">内容安全</h2>
-              <p class="text-body-2 text-medium-emphasis mt-1 mb-0">管理请求检测、信息掩码和响应拦截策略</p>
             </div>
             <v-btn variant="text" prepend-icon="mdi-format-list-bulleted" to="/blocked-logs">拦截记录</v-btn>
           </div>
@@ -350,7 +328,6 @@
               <div class="setting-row safety-master-row">
                 <div class="setting-copy">
                   <div class="text-body-1 font-weight-medium">敏感数据处置</div>
-                  <div class="text-body-2 text-medium-emphasis mt-1">统一控制个人信息与凭据命中后的处理方式</div>
                 </div>
                 <v-btn-toggle
                   v-model="contentSafety.sensitiveData.mode"
@@ -373,7 +350,6 @@
               <div class="setting-row safety-master-row">
                 <div class="setting-copy">
                   <div class="text-body-1 font-weight-medium">敏感词检测</div>
-                  <div class="text-body-2 text-medium-emphasis mt-1">请求前检查用户输入</div>
                 </div>
                 <v-switch
                   v-model="contentSafety.sensitiveWord.enabled"
@@ -402,7 +378,6 @@
               <div class="setting-row safety-master-row">
                 <div class="setting-copy">
                   <div class="text-body-1 font-weight-medium">个人信息保护</div>
-                  <div class="text-body-2 text-medium-emphasis mt-1">手机号、身份证、邮箱和 IP 地址</div>
                 </div>
                 <v-switch
                   v-model="contentSafety.sensitiveInfo.enabled"
@@ -451,7 +426,6 @@
               <div class="setting-row safety-master-row">
                 <div class="setting-copy">
                   <div class="text-body-1 font-weight-medium">凭据保护</div>
-                  <div class="text-body-2 text-medium-emphasis mt-1">区分用户输入与工具读取结果</div>
                 </div>
                 <v-switch
                   v-model="contentSafety.credential.enabled"
@@ -480,7 +454,6 @@
               <div class="setting-row safety-master-row">
                 <div class="setting-copy">
                   <div class="text-body-1 font-weight-medium">危险命令检测</div>
-                  <div class="text-body-2 text-medium-emphasis mt-1">响应代码块和工具参数</div>
                 </div>
                 <v-switch
                   v-model="contentSafety.dangerousCmd.enabled"
@@ -511,10 +484,7 @@
                         <v-icon size="18" class="mr-1" color="warning">mdi-brain</v-icon>
                         AI 闸门
                       </div>
-                      <div class="text-body-2 text-medium-emphasis mt-1">
-                        命中危险命令后由大模型渠道二次判断：判定危险时挂起请求等待确认（超时拦截），
-                        判定安全时放行并保留否决窗口；判断失败一律拦截
-                      </div>
+                      <!-- 命中危险命令后由大模型渠道二次判断：判定危险时挂起请求等待确认（超时拦截）， 判定安全时放行并保留否决窗口；判断失败一律拦截 -->
                     </div>
                     <v-switch
                       v-model="contentSafety.dangerousCmd.aiGate.enabled"
@@ -533,8 +503,6 @@
                       label="判断渠道"
                       variant="outlined"
                       density="compact"
-                      hint="留空时按 Messages → Responses → Chat → Gemini 自动挑选第一个可用渠道（识图专用渠道不参与）"
-                      persistent-hint
                       class="ai-gate-select"
                     />
                     <v-text-field
@@ -542,11 +510,9 @@
                       type="number"
                       min="3"
                       max="120"
-                      label="等待秒数"
+                      label="放行等待时间（秒）"
                       variant="outlined"
                       density="compact"
-                      hint="判定危险时等待用户放行的窗口，超时即拦截（3-120 秒）"
-                      persistent-hint
                       class="ai-gate-wait"
                     />
                   </div>
@@ -558,9 +524,7 @@
               <div class="setting-row safety-master-row">
                 <div class="setting-copy">
                   <div class="text-body-1 font-weight-medium">白名单</div>
-                  <div class="text-body-2 text-medium-emphasis mt-1">
-                    命中工具名的 tool_result 与 tool_argument 跳过全部检测，并在拦截记录里留审计条目
-                  </div>
+                  <!-- 命中工具名的 tool_result 与 tool_argument 跳过全部检测，并在拦截记录里留审计条目 -->
                 </div>
                 <v-switch
                   v-model="contentSafety.whitelist.enabled"
@@ -582,8 +546,6 @@
                 density="comfortable"
                 hide-details="auto"
                 class="mt-3"
-                hint="回车添加，每个 chip 是一个工具名；匹配区分大小写"
-                persistent-hint
               />
             </div>
 
@@ -594,9 +556,7 @@
                     <v-icon size="18" class="mr-1" color="success">mdi-check-underline-circle</v-icon>
                     放行字面量
                   </div>
-                  <div class="text-body-2 text-medium-emphasis mt-1">
-                    与命中片段完全相等的字符串跳过全部检测维度（整段相等跳过整个字段，子串相等丢弃该命中），出厂含 127.0.0.1 等回环地址
-                  </div>
+                  <!-- 与命中片段完全相等的字符串跳过全部检测维度（整段相等跳过整个字段，子串相等丢弃该命中），出厂含 127.0.0.1 等回环地址 -->
                 </div>
                 <v-switch
                   v-model="contentSafety.allowlist.enabled"
@@ -618,8 +578,6 @@
                 density="comfortable"
                 hide-details="auto"
                 class="mt-3"
-                hint="回车添加；精确匹配（区分大小写），最多 1000 条"
-                persistent-hint
               />
             </div>
 
@@ -630,9 +588,7 @@
                     <v-icon size="18" class="mr-1" color="warning">mdi-regex</v-icon>
                     自定义检测规则
                   </div>
-                  <div class="text-body-2 text-medium-emphasis mt-1">
-                    自定义正则命中后走可逆脱敏（占位符发给模型，回答自动还原）；保护项目代号、内部人名等只有你自己知道的敏感信息。依赖"敏感数据处置 = 可逆脱敏"
-                  </div>
+                  <!-- 自定义正则命中后走可逆脱敏（占位符发给模型，回答自动还原）；保护项目代号、内部人名等只有你自己知道的敏感信息。依赖"敏感数据处置 = 可逆脱敏" -->
                 </div>
                 <v-switch
                   v-model="contentSafety.customRules.enabled"
@@ -659,7 +615,6 @@
                     variant="outlined"
                     hide-details
                     class="custom-rule-type"
-                    hint="大写字母/数字/下划线"
                   />
                   <v-text-field
                     v-model="rule.pattern"
@@ -668,7 +623,6 @@
                     variant="outlined"
                     hide-details
                     class="custom-rule-pattern"
-                    hint="如 project-falcon|internal-[a-z]+"
                   />
                   <v-btn
                     icon
@@ -701,9 +655,7 @@
                     <v-icon size="18" class="mr-1" color="primary">mdi-bell-ring</v-icon>
                     危险命令桌面通知
                   </div>
-                  <div class="text-body-2 text-medium-emphasis mt-1">
-                    危险命令 AI 闸门弹窗时同步发送浏览器系统通知（仅本浏览器生效）
-                  </div>
+                  <!-- 危险命令 AI 闸门弹窗时同步发送浏览器系统通知（仅本浏览器生效） -->
                 </div>
                 <v-switch
                   :model-value="desktopNotifyEnabled"
@@ -821,7 +773,7 @@ const assistantKindLabel = (kind: string) => assistantKindLabels[kind] ?? kind
 
 type GateChannelOption = { title: string; value: string }
 
-const AUTO_GATE_CHANNEL: GateChannelOption = { title: '自动（Messages → Responses → Chat → Gemini）', value: '' }
+const AUTO_GATE_CHANNEL: GateChannelOption = { title: '自动选择', value: '' }
 
 const gateChannelItems = computed<GateChannelOption[]>(() => [
   AUTO_GATE_CHANNEL,
@@ -1014,7 +966,7 @@ const assistantDirty = computed(
 type AssistantChannelOption = { title: string; value: string }
 
 const assistantChannelItems = computed<Array<AssistantChannelOption>>(() => [
-  { title: '自动（Messages → Responses → Chat → Gemini）', value: '' },
+  { title: '自动选择', value: '' },
   ...(assistantStatus.value?.channels || []).map(channel => ({
     title: `${assistantKindLabel(channel.kind)} · ${channel.name}`,
     value: channel.id

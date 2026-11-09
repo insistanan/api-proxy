@@ -1,6 +1,6 @@
 <template>
   <div class="agent-config-page claude-code-page">
-    <AgentConfigHeader title="Claude Code 配置" subtitle="管理当前服务运行用户的 Claude Code 代理和模型映射">
+    <AgentConfigHeader title="Claude Code 配置">
       <template #default>
         <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="loadSettings">刷新</v-btn>
         <v-btn color="primary" prepend-icon="mdi-content-save" :loading="saving" :disabled="loading" @click="saveSettings">保存配置</v-btn>
@@ -35,14 +35,12 @@
                 </div>
                 <div>
                   <v-btn color="primary" variant="tonal" prepend-icon="mdi-link-variant" :loading="connecting" @click="connectToProxy">一键连接本代理（{{ defaultBaseUrl || 'http://localhost:...' }}）</v-btn>
-                  <div class="text-caption text-medium-emphasis mt-2">
-                    Claude Code 固定走 messages 协议，点击后自动填充 Base URL 与访问密钥，模型可一键导入
-                  </div>
+                  <!-- Claude Code 固定走 messages 协议，点击后自动填充 Base URL 与访问密钥，模型可一键导入 -->
                 </div>
               </section>
 
               <v-divider class="my-4" />
-              <v-text-field v-model.trim="baseUrl" label="Anthropic Base URL" variant="outlined" density="comfortable" placeholder="例如 http://127.0.0.1:8080" hint="留空则使用 Claude Code 默认 Anthropic 端点" persistent-hint />
+              <v-text-field v-model.trim="baseUrl" label="Anthropic Base URL" variant="outlined" density="comfortable" placeholder="例如 http://127.0.0.1:8080" />
               <v-radio-group v-model="credentialKind" inline class="mt-2 mb-1" hide-details>
                 <v-radio label="认证令牌" value="authToken" />
                 <v-radio label="API Key" value="apiKey" />
@@ -68,7 +66,6 @@
       <v-card elevation="0" class="settings-card agent-config-panel mt-5">
         <div class="agent-config-panel-header">
           <div>
-            <div class="agent-config-panel-title">默认模型标识</div>
             <div class="agent-config-panel-subtitle">为空时不会写入对应环境变量，Claude Code 将使用自身默认模型。每个模型族可独立勾选 1M 上下文。</div>
           </div>
           <div class="agent-config-panel-actions">

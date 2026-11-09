@@ -1,6 +1,6 @@
 <template>
   <div class="agent-config-page gpt-page">
-    <AgentConfigHeader title="GPT 配置" subtitle="管理当前服务运行用户的 Codex CLI 代理与 API Key">
+    <AgentConfigHeader title="GPT 配置">
       <template #default>
         <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="loadSettings">刷新</v-btn>
         <v-btn color="primary" prepend-icon="mdi-content-save" :loading="saving" :disabled="loading" @click="saveSettings">保存配置</v-btn>

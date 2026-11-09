@@ -1,6 +1,6 @@
 <template>
   <div class="agent-config-page opencode-page">
-    <AgentConfigHeader title="OpenCode 配置" subtitle="管理当前服务运行用户的 OpenCode 模型提供商和默认模型">
+    <AgentConfigHeader title="OpenCode 配置">
       <template #default>
         <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="editorBusy" @click="loadConfig">刷新</v-btn>
         <v-btn color="primary" prepend-icon="mdi-content-save" :loading="saving" :disabled="loading || editorBusy || !config" @click="saveConfig">保存配置</v-btn>
@@ -62,7 +62,7 @@
             <div class="agent-config-panel-header">
               <div>
                 <div class="agent-config-panel-title">{{ selectedProvider.name || '新提供商' }}</div>
-                <div class="agent-config-panel-subtitle">配置会写入 OpenCode 标准 provider 字段</div>
+                <!-- 配置会写入 OpenCode 标准 provider 字段 -->
               </div>
               <div class="agent-config-panel-actions">
                 <v-btn color="error" variant="text" size="small" prepend-icon="mdi-delete" @click="removeProvider(selectedProvider.id)">删除</v-btn>
@@ -87,15 +87,12 @@
                     item-title="title"
                     item-value="value"
                   />
-                  <div class="text-caption text-medium-emphasis mt-1">
-                    选择协议后将自动连接本代理（{{ defaultBaseUrl }}）：协议、Base URL 与密钥自动填充，模型可一键导入
-                  </div>
                 </div>
               </section>
 
               <v-row>
                 <v-col cols="12" sm="6">
-                  <v-text-field v-model.trim="selectedProvider.id" label="提供商标识" variant="outlined" density="comfortable" :disabled="providerIdInUse" hint="例如 deepseek；模型引用将使用 deepseek/模型标识" persistent-hint @update:model-value="selectedProviderId = $event" />
+                  <v-text-field v-model.trim="selectedProvider.id" label="提供商标识" variant="outlined" density="comfortable" :disabled="providerIdInUse" @update:model-value="selectedProviderId = $event" />
                 </v-col>
                 <v-col cols="12" sm="6">
                   <v-text-field v-model.trim="selectedProvider.name" label="显示名称" variant="outlined" density="comfortable" placeholder="例如 DeepSeek" />
@@ -107,7 +104,7 @@
                   <v-text-field v-model.trim="selectedProvider.npm" label="AI SDK 包" variant="outlined" density="comfortable" placeholder="例如 @ai-sdk/provider" />
                 </v-col>
                 <v-col :cols="selectedProvider.protocol === 'custom' ? 12 : 6">
-                  <v-text-field v-model.trim="selectedProvider.baseUrl" label="Base URL" variant="outlined" density="comfortable" placeholder="例如 http://127.0.0.1:8080/v1" hint="填入 API 版本根路径，不要填具体 endpoint" persistent-hint />
+                  <v-text-field v-model.trim="selectedProvider.baseUrl" label="Base URL" variant="outlined" density="comfortable" placeholder="例如 http://127.0.0.1:8080/v1" />
                 </v-col>
                 <v-col cols="12">
                   <v-text-field
@@ -144,7 +141,6 @@
               <div class="d-flex align-center justify-space-between mt-7 mb-3">
                 <div>
                   <div class="text-subtitle-1 font-weight-bold">模型</div>
-                  <div class="text-caption text-medium-emphasis">模型标识必须与上游 API 接收的模型名一致</div>
                 </div>
                 <div class="d-flex ga-2">
                   <v-btn size="small" color="secondary" variant="tonal" prepend-icon="mdi-download" :disabled="!quickPickType" @click="importProxyModelsToProvider">导入本代理模型</v-btn>
@@ -183,7 +179,7 @@
                       </v-col>
                       <v-col cols="12" class="d-flex align-center">
                         <v-switch v-model="model.supportsImage" label="支持图片输入（识图）" color="primary" density="compact" hide-details />
-                        <span class="text-caption text-medium-emphasis ml-3">开启后写入 options.attachment 与 options.modalities；本项目有图片理解层兜底</span>
+                        <!-- 开启后写入 options.attachment 与 options.modalities；本项目有图片理解层兜底 -->
                       </v-col>
                     </v-row>
 
@@ -192,7 +188,7 @@
                       <div class="d-flex align-center justify-space-between mb-2">
                         <div>
                           <div class="text-subtitle-2 font-weight-bold">思考等级 Variants</div>
-                          <div class="text-caption text-medium-emphasis">开启后可在 OpenCode TUI 中按 Ctrl+T 切换思考等级</div>
+                          <!-- 开启后可在 OpenCode TUI 中按 Ctrl+T 切换思考等级 -->
                         </div>
                         <v-switch v-model="model.variantsEnabled" color="primary" density="compact" hide-details />
                       </div>
@@ -222,7 +218,7 @@
             <div>
               <v-icon size="44" color="primary" class="mb-3">mdi-cog</v-icon>
               <div class="text-subtitle-1 font-weight-bold">选择或添加一个提供商</div>
-              <div class="text-body-2 text-medium-emphasis mt-1">在这里配置 OpenCode 使用的协议、密钥和模型。</div>
+              <!-- 在这里配置 OpenCode 使用的协议、密钥和模型。 -->
             </div>
           </v-card>
         </v-col>

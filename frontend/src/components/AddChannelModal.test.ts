@@ -1,5 +1,5 @@
 // 表单提交入口回归：校验失败不保存，Images 参数先编译，再交给编辑器组装。
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createSSRApp, ref, type Ref, type SetupContext } from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import type { ChannelFormState } from '@/composables/useChannelEditor'
@@ -30,27 +30,18 @@ const setupForm = async (saving = false) => {
   return { state, emit, validate }
 }
 
-beforeEach(() => {
-  // SSR 只需满足预览 watcher 的定时器接口，不创建真实定时任务。
-  vi.stubGlobal('window', { setTimeout: vi.fn(() => 1), clearTimeout: vi.fn() })
-})
-afterEach(() => { vi.unstubAllGlobals() })
-
 describe('渠道表单提交入口', () => {
-  it('关闭自动补全后预览和详细表单提交均使用完整请求地址', async () => {
+  it('关闭自动补全后详细表单提交保留完整请求地址', async () => {
     const { state, emit } = await setupForm()
     const url = 'https://images.example/custom/render/?mode=fast'
     ;(state.autoCompleteUrl as Ref<boolean>).value = false
     ;(state.form as ChannelFormState).baseUrl = url
     expect((state.form as ChannelFormState).useFullUrl).toBe(true)
-    expect((state.formExpectedRequestUrls as Ref<Array<{ expectedUrl: string }>>).value)
-      .toEqual([{ baseUrl: url, expectedUrl: url }])
-    expect((state.getExpectedRequestUrl as (url: string) => string)(url)).toBe(url)
     await submit(state)
     expect(emit).toHaveBeenCalledWith('save', expect.objectContaining({ useFullUrl: true, baseUrl: url }))
   })
 
-  it('快速添加关闭自动补全后保留完整路径，重新开启后恢复默认预览', async () => {
+  it('快速添加保留完整地址，重新开启后提交自动补全策略', async () => {
     const { state, emit } = await setupForm()
     const url = 'https://images.example/images/generations/?mode=fast&size=1024%20px'
     ;(state.autoCompleteUrl as Ref<boolean>).value = false
@@ -61,8 +52,8 @@ describe('渠道表单提交入口', () => {
     expect(emit).toHaveBeenCalledWith('save', expect.objectContaining({ useFullUrl: true, baseUrl: url }), { isQuickAdd: true })
     ;(state.autoCompleteUrl as Ref<boolean>).value = true
     ;(state.form as ChannelFormState).serviceType = 'openai'
-    expect((state.getExpectedRequestUrl as (url: string) => string)('https://images.example'))
-      .toBe('https://images.example/v1/images/generations')
+    ;(state.handleQuickSubmit as () => void)()
+    expect(emit).toHaveBeenLastCalledWith('save', expect.objectContaining({ useFullUrl: false }), { isQuickAdd: true })
   })
 
   it('合法表单只提交编译和清理后的 payload', async () => {

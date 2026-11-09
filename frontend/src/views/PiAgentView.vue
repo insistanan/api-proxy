@@ -1,6 +1,6 @@
 <template>
   <div class="agent-config-page piagent-page">
-    <AgentConfigHeader title="pi 配置" subtitle="管理当前服务运行用户的 pi-agent 模型供应商">
+    <AgentConfigHeader title="pi 配置">
       <template #default>
         <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="editorBusy || deleteProviderDialog" @click="loadAll">刷新</v-btn>
         <v-btn color="primary" prepend-icon="mdi-content-save" :loading="savingProvider" :disabled="!selectedProvider || loading || editorBusy || deleteProviderDialog" @click="saveSelectedProvider">保存</v-btn>
@@ -35,7 +35,7 @@
         <div class="agent-config-panel-header">
           <div>
             <div class="agent-config-panel-title">默认模型设置</div>
-            <div class="agent-config-panel-subtitle">写入 pi-agent 的 settings.json，其余字段保持不变</div>
+            <!-- 写入 pi-agent 的 settings.json，其余字段保持不变 -->
           </div>
           <v-btn color="primary" prepend-icon="mdi-content-save" :loading="savingSettings" @click="saveModelSettings">保存设置</v-btn>
         </div>
@@ -86,7 +86,7 @@
             <div class="agent-config-panel-header">
               <div>
                 <div class="agent-config-panel-title">{{ selectedProvider.name || '新供应商' }}</div>
-                <div class="agent-config-panel-subtitle">写入 pi-agent 的 models.json providers 字段</div>
+                <!-- 写入 pi-agent 的 models.json providers 字段 -->
               </div>
               <div class="agent-config-panel-actions">
                 <v-tooltip text="连通性测试"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-test-tube" size="small" variant="text" aria-label="测试供应商连通性" :disabled="!isExistingProvider || discovering" :loading="testing" @click="testProvider" /></template></v-tooltip>
@@ -120,7 +120,7 @@
 
               <v-row>
                 <v-col cols="12" sm="6">
-                  <v-text-field v-model="selectedProvider.id" label="供应商标识" variant="outlined" density="comfortable" :disabled="isExistingProvider" hint="例如 anthropic；模型引用将使用 provider/model" persistent-hint />
+                  <v-text-field v-model="selectedProvider.id" label="供应商标识" variant="outlined" density="comfortable" :disabled="isExistingProvider" />
                 </v-col>
                 <v-col cols="12" sm="6">
                   <v-text-field v-model="selectedProvider.name" label="显示名称" variant="outlined" density="comfortable" placeholder="例如 Anthropic" />
@@ -156,7 +156,6 @@
               <div class="d-flex align-center justify-space-between mt-6 mb-3">
                 <div>
                   <div class="text-subtitle-1 font-weight-bold">模型</div>
-                  <div class="text-caption text-medium-emphasis">模型 ID 必须与上游 API 接收的模型名一致</div>
                 </div>
                 <div class="d-flex ga-2">
                   <v-btn size="small" color="secondary" variant="tonal" prepend-icon="mdi-download" :disabled="!quickPickType" @click="importProxyModelsToProvider">导入本代理模型</v-btn>
@@ -195,7 +194,7 @@
                     <!-- 思考等级映射：常驻展示（不放进折叠面板），仅思考能力启用时显示，与 writer 的 reasoning === true 分支一致 -->
                     <div v-if="model.reasoning === true" class="mt-3 mb-1">
                       <div class="text-body-2 font-weight-medium">思考等级</div>
-                      <div class="text-caption text-medium-emphasis">勾选 = 模型支持该等级；右侧可填上游实际取值，留空即等级名；未勾选 = 不支持（pi 中隐藏）</div>
+                      <!-- 勾选 = 模型支持该等级；右侧可填上游实际取值，留空即等级名；未勾选 = 不支持（pi 中隐藏） -->
                     </div>
                     <v-row v-if="model.reasoning === true">
                       <v-col v-for="tl in thinkingLevelsList" :key="tl.key" cols="6" sm="4" md="3">
@@ -264,7 +263,7 @@
             <div class="empty-providers text-center text-medium-emphasis px-6 py-16">
               <v-icon size="40" class="mb-3">mdi-server-network</v-icon>
               <div class="text-body-1 mb-2">选择一个供应商或创建新的供应商</div>
-              <div class="text-caption">支持 anthropic-messages / openai-completions / openai-responses / google-generative-ai 四种协议</div>
+              <!-- 支持 anthropic-messages / openai-completions / openai-responses / google-generative-ai 四种协议 -->
             </div>
           </v-card>
         </v-col>

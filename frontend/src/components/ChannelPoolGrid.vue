@@ -145,8 +145,6 @@
           :items="matcherOptions"
           variant="outlined"
           density="compact"
-          hint="可选择内置规则或直接输入；具体规则优先于 *，多个具体规则命中时选择最长规则"
-          persistent-hint
           @keyup.enter="savePool"
         />
       </v-card-text>

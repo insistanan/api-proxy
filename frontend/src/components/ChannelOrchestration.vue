@@ -620,9 +620,7 @@
         </v-card-title>
         <v-divider />
         <v-card-text class="pt-4">
-          <p class="text-body-2 text-medium-emphasis mb-4">
-            促销渠道在所属分组内临时优先，仍受健康检查与熔断限制。可同时设置时间和成功请求次数，任一限制达到即结束；两项均为 0 时清除促销。
-          </p>
+          <!-- 促销渠道在所属分组内临时优先，仍受健康检查与熔断限制。可同时设置时间和成功请求次数，任一限制达到即结束；两项均为 0 时清除促销。 -->
           <v-alert v-if="promotionError" type="error" variant="tonal" density="compact" class="mb-4">{{ promotionError }}</v-alert>
           <v-text-field
             v-model.number="promotionDuration"
@@ -630,8 +628,6 @@
             label="促销时长（分钟）"
             type="number"
             :min="0"
-            hint="0 = 不限时长"
-            persistent-hint
             density="compact"
             class="mb-3"
           />
@@ -641,8 +637,6 @@
             label="促销请求次数"
             type="number"
             :min="0"
-            hint="0 = 不限次数，每次成功请求自动减1"
-            persistent-hint
             density="compact"
           />
         </v-card-text>
@@ -681,9 +675,7 @@
             <div v-if="channelLogs.length > 0" class="log-trend-panel">
               <div class="log-trend-header">
                 <div class="text-subtitle-2 font-weight-bold">调用用量趋势</div>
-                <div class="text-caption text-medium-emphasis">
-                  按分钟聚合，展示请求数、Token I/O 和缓存 R/W
-                </div>
+                <!-- 按分钟聚合，展示请求数、Token I/O 和缓存 R/W -->
               </div>
               <apexchart
                 type="line"
@@ -1007,15 +999,12 @@ const copyChannelConfig = async (channel: Channel) => {
   try {
     // 获取第一个密钥
     const firstKey = channel.apiKeys.length > 0 ? channel.apiKeys[0] : ''
-    
     // 构建配置文本
     const configText = `名称: ${channel.name}
 URL: ${channel.baseUrl}
 密钥: ${firstKey}`
-    
     // 复制到剪贴板
     await navigator.clipboard.writeText(configText)
-    
     // 显示已复制状态
     copiedChannelIndex.value = channel.index
     setTimeout(() => {

@@ -3,7 +3,7 @@
     <div class="page-heading mb-5">
       <div>
         <div class="text-h5 font-weight-bold">Skills</div>
-        <div class="text-body-2 text-medium-emphasis mt-1">统一管理本机 Agent Skills，支持本地导入、skills.sh 发现和 Chat 翻译备份</div>
+        <!-- 统一管理本机 Agent Skills，支持本地导入、skills.sh 发现和 Chat 翻译备份 -->
       </div>
       <div class="d-flex flex-wrap ga-2">
         <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="loadSkills">刷新</v-btn>
@@ -83,7 +83,7 @@
     <v-dialog v-model="discoverDialog" max-width="1100" persistent>
       <v-card class="discover-card">
         <div class="d-flex align-center justify-space-between px-5 py-4">
-          <div><div class="text-h6">发现 Skill</div><div class="text-caption text-medium-emphasis">数据来自 skills.sh，安装前会从 GitHub 校验 SKILL.md 和文件清单</div></div>
+          <!-- 发现 Skill 数据来自 skills.sh，安装前会从 GitHub 校验 SKILL.md 和文件清单 -->
           <v-btn icon="mdi-close" variant="text" @click="discoverDialog = false" />
         </div>
         <v-divider />
@@ -147,9 +147,9 @@
         <v-divider />
         <div class="detail-footer px-5 py-4">
           <v-row align="end" class="detail-controls">
-            <v-col cols="12" md="6" lg="3"><v-text-field v-model="skillNote" label="全局备注" variant="outlined" clearable hide-details="auto" hint="所有同名 Skill 共享此备注" persistent-hint @keyup.enter="saveSkillNote"><template #append-inner><v-tooltip text="保存备注" location="top" theme="dark"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-content-save" variant="text" size="small" :loading="savingNote" :disabled="savingNote" @click="saveSkillNote" /></template></v-tooltip></template></v-text-field></v-col>
-            <v-col cols="12" md="6" lg="3"><v-select v-model="translationChannel" :items="chatChannels" item-title="name" item-value="index" label="Chat 渠道（可选）" variant="outlined" clearable hint="留空按正常调度选择渠道" persistent-hint /></v-col>
-            <v-col cols="12" md="6" lg="4"><v-combobox v-model="translationModel" :items="translationModelOptions" item-title="title" item-value="value" label="模型 ID（可选）" variant="outlined" clearable :loading="translationModelsLoading" :error-messages="translationModelsError || undefined" hint="选择渠道后自动获取模型；也可手动输入，留空使用 translate-skill" persistent-hint /></v-col>
+            <v-col cols="12" md="6" lg="3"><v-text-field v-model="skillNote" label="全局备注" variant="outlined" clearable hide-details="auto" @keyup.enter="saveSkillNote"><template #append-inner><v-tooltip text="保存备注" location="top" theme="dark"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-content-save" variant="text" size="small" :loading="savingNote" :disabled="savingNote" @click="saveSkillNote" /></template></v-tooltip></template></v-text-field></v-col>
+            <v-col cols="12" md="6" lg="3"><v-select v-model="translationChannel" :items="chatChannels" item-title="name" item-value="index" label="Chat 渠道（可选）" variant="outlined" clearable /></v-col>
+            <v-col cols="12" md="6" lg="4"><v-combobox v-model="translationModel" :items="translationModelOptions" item-title="title" item-value="value" label="模型 ID（可选）" variant="outlined" clearable :loading="translationModelsLoading" :error-messages="translationModelsError || undefined" /></v-col>
             <v-col cols="12" md="6" lg="2"><div class="detail-actions"><v-tooltip :text="selectedSkill?.readOnly ? '只读来源不可复制' : '复制到其他 Agent'" location="top" theme="dark"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-content-copy" :disabled="!selectedSkill || selectedSkill.readOnly" variant="tonal" @click="openSelectedCopy" /></template></v-tooltip><v-tooltip text="翻译并自动保存" location="top" theme="dark"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-translate" color="primary" :loading="translating" @click="translateSkill" /></template></v-tooltip><v-tooltip text="保存当前译文" location="top" theme="dark"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-content-save" :disabled="!translatedContent || savingBackup" :loading="savingBackup" @click="() => saveBackup()" /></template></v-tooltip></div></v-col>
           </v-row>
         </div>

@@ -26,7 +26,6 @@ describe('Images 输出配置表单', () => {
     if (outputFormat === 'gif') {
       expect(html).toContain('GIF 帧数:9')
       expect(html).toContain('每帧时长（毫秒）:200')
-      expect(html).toContain('对 Responses 渠道同样生效')
     } else {
       expect(html).not.toContain('GIF 帧数')
     }

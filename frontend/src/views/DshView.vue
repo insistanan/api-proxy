@@ -1,6 +1,6 @@
 <template>
   <div class="agent-config-page dsh-page">
-    <AgentConfigHeader title="DSH 配置" subtitle="管理 DeepSeek Harness 的 llm-pi-ai 提供商、模型与默认选择">
+    <AgentConfigHeader title="DSH 配置">
       <template #default>
         <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="loadSettings">刷新</v-btn>
         <v-btn color="primary" prepend-icon="mdi-content-save" :loading="saving" :disabled="loading" @click="saveSettings">保存配置</v-btn>
@@ -25,7 +25,7 @@
         <div class="agent-config-panel-header">
           <div>
             <div class="agent-config-panel-title">默认模型</div>
-            <div class="agent-config-panel-subtitle">写入 settings.yaml 的 agent-default-model 字段；DSH 启动时自动选择该模型</div>
+            <!-- 写入 settings.yaml 的 agent-default-model 字段；DSH 启动时自动选择该模型 -->
           </div>
         </div>
         <v-divider />
@@ -39,8 +39,6 @@
                 density="comfortable"
                 :items="providerKeys"
                 clearable
-                hint="选择已配置的提供商路由"
-                persistent-hint
               />
             </v-col>
             <v-col cols="12" sm="6">
@@ -54,8 +52,6 @@
                 item-value="id"
                 clearable
                 :disabled="!defaultModelProvider"
-                :hint="defaultModelProvider ? '从该提供商的模型列表中选择' : '请先选择提供商'"
-                persistent-hint
               />
             </v-col>
           </v-row>
@@ -101,7 +97,7 @@
             <div class="agent-config-panel-header">
               <div>
                 <div class="agent-config-panel-title">{{ selectedProvider.displayName || selectedProviderKey || '新提供商' }}</div>
-                <div class="agent-config-panel-subtitle">写入 DSH settings.yaml 的 llm-pi-ai.providers 字段</div>
+                <!-- 写入 DSH settings.yaml 的 llm-pi-ai.providers 字段 -->
               </div>
               <div class="agent-config-panel-actions">
                 <v-btn color="error" variant="text" size="small" prepend-icon="mdi-delete" @click="removeProvider(selectedProviderKey)">删除</v-btn>
@@ -126,9 +122,6 @@
                     item-title="title"
                     item-value="value"
                   />
-                  <div class="text-caption text-medium-emphasis mt-1">
-                    选择协议后将自动连接本代理（{{ defaultBaseUrl }}）：协议、Base URL 与当前访问密钥自动填充，模型可一键导入
-                  </div>
                 </div>
               </section>
 
@@ -139,8 +132,6 @@
                     label="路由标识 (route id)"
                     variant="outlined"
                     density="comfortable"
-                    hint="例如 local、deepseek；用作 settings.yaml 中 providers 下的键名"
-                    persistent-hint
                     @blur="commitRouteId"
                     @keyup.enter="commitRouteId"
                   />
@@ -157,8 +148,6 @@
                     :items="apiProtocols"
                     item-title="title"
                     item-value="value"
-                    hint="DSH pi-ai 适配器使用的协议"
-                    persistent-hint
                   />
                 </v-col>
                 <v-col cols="12" sm="6">
@@ -171,8 +160,6 @@
                     variant="outlined"
                     density="comfortable"
                     placeholder="留空自动生成，例如 LOCAL_API_KEY"
-                    hint="这是 DSH 的凭据引用名，不是 API Key 本身；填写下方密钥时会自动生成；不填密钥则可留空并使用提供方原生认证"
-                    persistent-hint
                   />
                 </v-col>
                 <v-col cols="12">
@@ -198,12 +185,7 @@
                       />
                     </template>
                   </v-text-field>
-                  <div class="text-caption text-medium-emphasis mt-1">
-                    明文只在保存请求中提交，不会写入 settings.yaml；未填写引用名时会自动生成；凭据文件：{{ settings?.credentialsPath || 'DSH_HOME/.credentials.yaml' }}
-                  </div>
-                  <div class="text-caption text-medium-emphasis mt-1">
-                    若系统存在同名环境变量，DSH 官方规则会优先使用环境值；通常无需手动设置环境变量。
-                  </div>
+                  <!-- 若系统存在同名环境变量，DSH 官方规则会优先使用环境值；通常无需手动设置环境变量。 -->
                 </v-col>
               </v-row>
 
@@ -211,7 +193,6 @@
               <div class="d-flex align-center justify-space-between mt-7 mb-3">
                 <div>
                   <div class="text-subtitle-1 font-weight-bold">模型</div>
-                  <div class="text-caption text-medium-emphasis">每个模型可独立配置推理等级和输入模态</div>
                 </div>
                 <div class="d-flex ga-2">
                   <v-btn size="small" color="secondary" variant="tonal" prepend-icon="mdi-download" :disabled="!quickPickType" @click="importProxyModelsToProvider">导入本代理模型</v-btn>
@@ -233,7 +214,7 @@
                   <v-expansion-panel-text>
                     <v-row>
                       <v-col cols="12" sm="6">
-                        <v-text-field v-model.trim="model.id" label="模型 ID" variant="outlined" density="comfortable" placeholder="例如 opus、deepseek" hint="DSH 模型选择器显示的 ID" persistent-hint />
+                        <v-text-field v-model.trim="model.id" label="模型 ID" variant="outlined" density="comfortable" placeholder="例如 opus、deepseek" />
                       </v-col>
                       <v-col cols="12" sm="6">
                         <v-text-field v-model.trim="model.name" label="显示名称" variant="outlined" density="comfortable" placeholder="例如 Claude Opus" />
@@ -252,7 +233,6 @@
                       <div class="d-flex align-center justify-space-between mb-2">
                         <div>
                           <div class="text-subtitle-2 font-weight-bold">推理等级 (Reasoning Efforts)</div>
-                          <div class="text-caption text-medium-emphasis">在 DSH 模型选择器中选择模型后可切换思考等级</div>
                         </div>
                         <v-switch v-model="modelReasoningEnabled[model.id || `__${idx}`]" color="primary" density="compact" hide-details :label="modelReasoningEnabled[model.id || `__${idx}`] ? '支持' : '不支持'" />
                       </div>
@@ -278,8 +258,6 @@
                           type="number"
                           min="1"
                           placeholder="例如 131072"
-                          hint="上下文窗口上限（tokens），写入 settings.yaml 的 contextWindow；留空则不限制"
-                          persistent-hint
                         />
                       </v-col>
                       <v-col cols="12" sm="6">
@@ -291,8 +269,6 @@
                           type="number"
                           min="1"
                           placeholder="例如 8192"
-                          hint="单次输出 token 上限，写入 settings.yaml 的 maxTokens；留空则不限制"
-                          persistent-hint
                         />
                       </v-col>
                     </v-row>
@@ -310,7 +286,7 @@
             <div>
               <v-icon size="44" color="primary" class="mb-3">mdi-cog</v-icon>
               <div class="text-subtitle-1 font-weight-bold">选择或添加一个提供商</div>
-              <div class="text-body-2 text-medium-emphasis mt-1">在这里配置 DSH 使用的协议、API Key 和模型。</div>
+              <!-- 在这里配置 DSH 使用的协议、API Key 和模型。 -->
             </div>
           </v-card>
         </v-col>

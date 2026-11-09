@@ -9,8 +9,6 @@
       prepend-inner-icon="mdi-cog"
       variant="outlined"
       density="comfortable"
-      :hint="serviceType === 'responses' ? '内部调用 /v1/responses 生图，对外仍返回 Images API 图片结果。' : '调用上游 /v1/images/generations 或 /v1/images/edits。'"
-      persistent-hint
       @update:model-value="$emit('update:serviceType', $event)"
     />
     <v-combobox
@@ -24,8 +22,6 @@
       :return-object="false"
       :loading="modelsLoading"
       :error-messages="modelsError"
-      hint="这是 /v1/responses 的顶层模型；图片生成工具使用下方固定模型映射。"
-      persistent-hint
       :rules="[validateResponsesModel]"
       variant="outlined"
       density="comfortable"

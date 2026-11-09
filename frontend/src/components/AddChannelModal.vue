@@ -91,7 +91,7 @@
                       <span class="text-body-2 font-weight-medium">{{ form.useFullUrl ? '完整请求地址' : 'Base URL' }}</span>
                       <v-switch
                         v-model="autoCompleteUrl"
-                        :label="autoCompleteUrlLabel"
+                        label="自动补全请求地址"
                         color="primary"
                         density="compact"
                         inset
@@ -99,16 +99,12 @@
                         class="flex-grow-0"
                       />
                     </div>
-                    <div v-if="form.useFullUrl" class="text-caption text-medium-emphasis">
-                      请填写完整请求地址；不会追加版本号或接口路径。
-                    </div>
                     <div v-if="detectedBaseUrls.length === 0" class="text-caption text-error">
                       请输入一个有效的 URL (https://...)
                     </div>
                     <div v-else class="d-flex flex-column ga-2 mt-1">
                       <div v-for="url in detectedBaseUrls" :key="url" class="base-url-item">
                         <div class="text-caption text-success">{{ url }}</div>
-                        <div class="text-caption text-medium-emphasis">预期请求: {{ getExpectedRequestUrl(url) }}</div>
                       </div>
                     </div>
                   </div>
@@ -231,8 +227,6 @@
                 :items="poolOptions"
                 :loading="poolsLoading"
                 :error-messages="poolLoadError"
-                hint="该渠道在所选分组内参与故障转移；兜底分组仅在未匹配或命中分组不可用时使用"
-                persistent-hint
                 variant="outlined"
                 density="comfortable"
               />
@@ -254,7 +248,7 @@
                 <span class="text-body-2 font-weight-medium">请求地址</span>
                 <v-switch
                   v-model="autoCompleteUrl"
-                  :label="autoCompleteUrlLabel"
+                  label="自动补全请求地址"
                   color="primary"
                   density="compact"
                   inset
@@ -276,17 +270,12 @@
                 :error-messages="errors.baseUrl"
                 hide-details="auto"
               />
-              <div v-if="form.useFullUrl" class="text-caption text-medium-emphasis mt-2">
-                自动补全已关闭，请自行填写完整请求地址；不会追加版本号或接口路径。
-              </div>
+              <!-- 自动补全已关闭，请自行填写完整请求地址；不会追加版本号或接口路径。 -->
               <!-- 固定高度的提示区域，防止布局跳动；有错误时不显示 -->
-              <div v-show="formExpectedRequestUrls.length > 0 && !baseUrlHasError" class="base-url-hint">
-                <div v-for="(item, index) in formExpectedRequestUrls" :key="index" class="expected-request-item">
-                  <span class="text-caption text-medium-emphasis"> 预期请求: {{ item.expectedUrl }} </span>
-                </div>
-              </div>
+
             </v-col>
 
+            <!-- 并发按 URL、上游协议和 Key 共享最小上限，默认 5，FIFO 最多排队 3 个、等待 10 秒。 -->
             <v-col cols="12" md="6">
               <v-text-field
                 v-model="form.maxConcurrency"
@@ -297,8 +286,6 @@
                 variant="outlined"
                 density="comfortable"
                 :rules="[(value: unknown) => Number.isSafeInteger(Number(value)) && Number(value) > 0 || '请输入正整数']"
-                hint="默认 5；相同 URL、上游协议和 Key 共享最小上限。最多排队 3 个，等待 10 秒。"
-                persistent-hint
               />
             </v-col>
             <v-col cols="12" md="6">
@@ -312,16 +299,7 @@
                 ]"
                 variant="outlined"
                 density="comfortable"
-                hint="普通 API 不补造官方客户端身份；严格要求客户端身份的中转可选择兼容模式。"
-                persistent-hint
               />
-            </v-col>
-            <v-col v-if="props.channel?.effectiveConcurrency?.length" cols="12">
-              <div class="text-caption text-medium-emphasis mb-1">当前已保存配置的最终生效值（保存修改后重新计算）：</div>
-              <div v-for="limit in props.channel.effectiveConcurrency" :key="`${limit.baseUrl}:${limit.protocol}:${limit.keyIndex}`" class="text-caption">
-                {{ limit.baseUrl }} · {{ limit.protocol }} · Key {{ limit.keyIndex + 1 }}：{{ limit.maxConcurrency }} 并发
-              </div>
-              <div class="text-caption text-medium-emphasis mt-1">队列满或等待超时，仅在 fuzzy 多渠道模式下转到下一渠道；单渠道直接返回错误。</div>
             </v-col>
 
             <!-- 官网/控制台（可选） -->
@@ -348,8 +326,6 @@
                 prepend-inner-icon="mdi-web"
                 variant="outlined"
                 density="comfortable"
-                :hint="proxyModeHint"
-                persistent-hint
               />
             </v-col>
 
@@ -364,8 +340,6 @@
                 autocomplete="off"
                 spellcheck="false"
                 :rules="[rules.proxyUrl]"
-                hint="支持 http、https、socks5 和 socks5h"
-                persistent-hint
               />
             </v-col>
 
@@ -381,11 +355,7 @@
                 </v-card-title>
 
                 <v-card-text class="pt-2">
-                  <div class="text-body-2 text-medium-emphasis mb-4">
-                    设置后，Chat 请求会固定使用该渠道的默认模型；未设置时保留客户端请求中的模型。
-                    <br/>
-                    <span class="text-caption text-primary">点击输入框会自动获取上游支持的模型列表，每个 API Key 的检测状态会显示在密钥列表中</span>
-                  </div>
+                  <!-- 设置后，Chat 请求会固定使用该渠道的默认模型；未设置时保留客户端请求中的模型。 点击输入框会自动获取上游支持的模型列表，每个 API Key 的检测状态会显示在密钥列表中 -->
                   <v-combobox
                     v-model="form.defaultModel"
                     label="默认模型"
@@ -411,7 +381,6 @@
               <ModelMappingEditor
                 v-model="form.modelMapping"
                 v-model:channel-value="form.modelMappingChannels"
-                :hint="modelMappingHint"
                 :source-options="sourceModelOptions"
                 :target-options-by-channel="targetModelOptionsByChannel"
                 :target-channel-options="targetChannelOptions"
@@ -431,12 +400,8 @@
                   <v-icon color="primary">mdi-lightning-bolt</v-icon>
                   <div>
                     <div class="text-body-1 font-weight-medium">强制非流式</div>
-                    <div v-if="isNativeSpecialOutput" class="text-caption text-medium-emphasis">
-                      当前输出格式自动使用非流式生成。客户端要 SSE 时返回一条 completed 事件。
-                    </div>
-                    <div v-else class="text-caption text-medium-emphasis">
-                      发给上游的请求一律使用 stream: false。客户端要 JSON 就返回完整 JSON；要 SSE 时把完整结果包成一条 completed 事件，不含 partial。
-                    </div>
+                    <!-- 当前输出格式自动使用非流式生成。客户端要 SSE 时返回一条 completed 事件。 -->
+                    <!-- 发给上游的请求一律使用 stream: false。客户端要 JSON 就返回完整 JSON；要 SSE 时把完整结果包成一条 completed 事件，不含 partial。 -->
                   </div>
                 </div>
                 <v-switch
@@ -455,22 +420,14 @@
                 <v-card-title class="d-flex align-center justify-space-between pa-4 pb-2">
                   <div class="d-flex align-center ga-2">
                     <v-icon color="primary">mdi-code-json</v-icon>
-                    <span class="text-body-1 font-weight-bold">自定义请求参数 (可选)</span>
+                    <span class="text-body-1 font-weight-bold">自定义请求参数（仅 Images API）</span>
                   </div>
                   <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-plus" @click="addImagesExtraParam">
                     添加
                   </v-btn>
                 </v-card-title>
                 <v-card-text class="pt-2">
-                  <div class="text-body-2 text-medium-emphasis mb-4">
-                    以参数名和参数值追加到上游生图请求。同名字段以这里配置的值为准，覆盖客户端传入的值。
-                    true、false、null、JSON 数字、对象和数组按对应类型发送，其余按字符串发送。要强制字符串，值请写成带引号的 JSON，例如 "false"。
-                    <div class="text-caption mt-1">不能使用 model 和 stream。model 由模型重定向写入；stream 由强制非流式配置覆盖，未开启时跟随客户端请求。</div>
-                    <div class="text-caption mt-1">输出格式和 GIF 帧参数优先使用上方的输出设置；选择 GIF/SVG 时会清除不支持的预览和压缩参数。</div>
-                    <div v-if="form.serviceType === 'responses'" class="text-caption mt-1">
-                      当前是 Responses 渠道：这些参数只会保存，不会注入到 /v1/responses。图片模型仍由上方模型重定向写入 image_generation 工具。
-                    </div>
-                  </div>
+                  <!-- 以参数名和参数值追加到上游生图请求。同名字段以这里配置的值为准，覆盖客户端传入的值。 true、false、null、JSON 数字、对象和数组按对应类型发送，其余按字符串发送。要强制字符串，值请写成带引号的 JSON，例如 "false"。 不能使用 model 和 stream。model 由模型重定向写入；stream 由强制非流式配置覆盖，未开启时跟随客户端请求。 输出格式和 GIF 帧参数优先使用上方的输出设置；选择 GIF/SVG 时会清除不支持的预览和压缩参数。 当前是 Responses 渠道：这些参数只会保存，不会注入到 /v1/responses。图片模型仍由上方模型重定向写入 image_generation 工具。 -->
                   <div v-if="form.imagesExtraParams.length" class="d-flex flex-column ga-3">
                     <div
                       v-for="(row, index) in form.imagesExtraParams"
@@ -509,7 +466,6 @@
                       </v-btn>
                     </div>
                   </div>
-                  <div v-else class="text-caption text-medium-emphasis">还没有自定义参数。点击添加后填写参数名和参数值。</div>
                   <div v-if="imagesExtraParamsError" class="text-error text-caption mt-2">
                     {{ imagesExtraParamsError }}
                   </div>
@@ -720,8 +676,6 @@
               <v-textarea
                 v-model="form.description"
                 label="描述 (可选)"
-                hint="可选的渠道描述..."
-                persistent-hint
                 prepend-inner-icon="mdi-text"
                 variant="outlined"
                 density="comfortable"
@@ -737,9 +691,6 @@
                   <v-icon color="warning">mdi-shield-alert</v-icon>
                   <div>
                     <div class="text-body-1 font-weight-medium">跳过 TLS 证书验证</div>
-                    <div class="text-caption text-medium-emphasis">
-                      仅在自签名或域名不匹配时临时启用，生产环境请关闭
-                    </div>
                   </div>
                 </div>
                 <v-switch v-model="form.insecureSkipVerify" inset color="warning" hide-details />
@@ -753,9 +704,7 @@
                   <v-icon color="info">mdi-speedometer-slow</v-icon>
                   <div>
                     <div class="text-body-1 font-weight-medium">低质量渠道</div>
-                    <div class="text-caption text-medium-emphasis">
-                      启用后强制本地估算 token 数量，偏差超过 5% 时使用本地值
-                    </div>
+                    <!-- 启用后强制本地估算 token 数量，偏差超过 5% 时使用本地值 -->
                   </div>
                 </div>
                 <v-switch v-model="form.lowQuality" inset color="info" hide-details />
@@ -773,9 +722,7 @@
                   <div class="d-flex align-center justify-space-between">
                     <div>
                       <div class="text-body-1 font-weight-medium">本渠道支持图片理解</div>
-                      <div class="text-caption text-medium-emphasis">
-                        启用后，图片会直接发送给当前模型；该渠道也可被其他渠道的图片理解层调用。
-                      </div>
+                      <!-- 启用后，图片会直接发送给当前模型；该渠道也可被其他渠道的图片理解层调用。 -->
                     </div>
                     <v-switch v-model="form.visionCapable" inset color="primary" hide-details />
                   </div>
@@ -785,9 +732,7 @@
                   <div class="d-flex align-center justify-space-between">
                     <div>
                       <div class="text-body-1 font-weight-medium">指定图片理解渠道</div>
-                      <div class="text-caption text-medium-emphasis">
-                        默认自动使用公共图片理解池；启用后优先使用指定渠道，再按公共池和当前分组回退。
-                      </div>
+                      <!-- 默认自动使用公共图片理解池；启用后优先使用指定渠道，再按公共池和当前分组回退。 -->
                     </div>
                     <v-switch v-model="form.visionLayerEnabled" inset color="secondary" hide-details />
                   </div>
@@ -801,8 +746,6 @@
                     :loading="visionChannelsLoading"
                     :disabled="visionChannelOptions.length === 0"
                     placeholder="选择一个支持图片理解的渠道"
-                    hint="该渠道优先处理图片；失败后仍会自动尝试公共池和当前分组。"
-                    persistent-hint
                     prepend-inner-icon="mdi-image-search-outline"
                     variant="outlined"
                     density="comfortable"
@@ -815,8 +758,6 @@
                     class="mt-4"
                     label="图片理解模型（可选）"
                     placeholder="留空则原样透传用户请求的模型名"
-                    hint="仅当需要让图片理解渠道固定使用某个模型时填写。"
-                    persistent-hint
                     prepend-inner-icon="mdi-image-search-outline"
                     variant="outlined"
                     density="comfortable"
@@ -837,9 +778,7 @@
                   <div class="d-flex align-center justify-space-between">
                     <div>
                       <div class="text-body-1 font-weight-medium">不参与对话</div>
-                      <div class="text-caption text-medium-emphasis">
-                        启用后不参与常规对话调度，仍可作为其他渠道的图片理解模型。
-                      </div>
+                      <!-- 启用后不参与常规对话调度，仍可作为其他渠道的图片理解模型。 -->
                     </div>
                     <v-switch v-model="form.excludeFromConversation" inset color="primary" hide-details />
                   </div>
@@ -849,9 +788,7 @@
                     <div class="d-flex align-center justify-space-between">
                       <div>
                         <div class="text-body-1 font-weight-medium">不支持缓存键</div>
-                        <div class="text-caption text-medium-emphasis">
-                          移除 prompt_cache_key，避免严格校验的兼容渠道返回参数不支持错误。
-                        </div>
+                        <!-- 移除 prompt_cache_key，避免严格校验的兼容渠道返回参数不支持错误。 -->
                       </div>
                       <v-switch v-model="form.disablePromptCacheKey" inset color="secondary" hide-details />
                     </div>
@@ -867,9 +804,7 @@
                   <v-icon color="warning">mdi-timer-sand</v-icon>
                   <div>
                     <div class="text-body-1 font-weight-medium">临时渠道</div>
-                    <div class="text-caption text-medium-emphasis">
-                      启用后 24 小时自动移入弃用池，弃用超过 3 天后由后台清理
-                    </div>
+                    <!-- 启用后 24 小时自动移入弃用池，弃用超过 3 天后由后台清理 -->
                   </div>
                 </div>
                 <v-switch v-model="form.temporary" inset color="warning" hide-details />
@@ -883,9 +818,7 @@
                   <v-icon color="secondary">mdi-signature</v-icon>
                   <div>
                     <div class="text-body-1 font-weight-medium">注入 Dummy Thought Signature</div>
-                    <div class="text-caption text-medium-emphasis">
-                      为 functionCall 注入 dummy signature，兼容需要该字段的第三方 API（官方 API 请关闭）
-                    </div>
+                    <!-- 为 functionCall 注入 dummy signature，兼容需要该字段的第三方 API（官方 API 请关闭） -->
                   </div>
                 </div>
                 <v-switch v-model="form.injectDummyThoughtSignature" inset color="secondary" hide-details />
@@ -899,9 +832,7 @@
                   <v-icon color="error">mdi-close-circle</v-icon>
                   <div>
                     <div class="text-body-1 font-weight-medium">移除 Thought Signature</div>
-                    <div class="text-caption text-medium-emphasis">
-                      移除 functionCall 的 thought_signature 字段，兼容不支持该字段的旧版 Gemini API
-                    </div>
+                    <!-- 移除 functionCall 的 thought_signature 字段，兼容不支持该字段的旧版 Gemini API -->
                   </div>
                 </div>
                 <v-switch v-model="form.stripThoughtSignature" inset color="error" hide-details />
@@ -950,7 +881,7 @@ import { api, fetchUpstreamModels, channelApiByType, ApiError } from '../service
 import ModelMappingEditor from './ModelMappingEditor.vue'
 import ImagesChannelProtocolFields from './ImagesChannelProtocolFields.vue'
 import ImagesOutputFields from './ImagesOutputFields.vue'
-import { imagesExpectedRequestUrl, imagesModelOptions, imagesProtocolLabel, isImagesServiceType, validateImagesOutputSettings } from '@/utils/imagesChannelProtocol'
+import { imagesModelOptions, imagesProtocolLabel, isImagesServiceType, validateImagesOutputSettings } from '@/utils/imagesChannelProtocol'
 import {
   isValidApiKey as _isValidApiKey,
   isValidUrl as _isValidQuickInputUrl,
@@ -992,10 +923,6 @@ const detectedBaseUrls = ref<string[]>([])
 const detectedApiKeys = ref<string[]>([])
 const detectedChannelName = ref('')
 const detectedServiceType = ref<'openai' | 'gemini' | 'claude' | 'responses' | 'chat' | null>(null)
-
-// 详细表单预期请求 URL 预览（防止输入时抖动）
-const formBaseUrlPreview = ref('')
-let formBaseUrlPreviewTimer: number | null = null
 
 // 切换模式时，将快速模式检测到的值同步到详细表单，但不清空快速模式输入
 const toggleMode = () => {
@@ -1129,138 +1056,6 @@ const generatedChannelName = computed(() => {
   return `${domain}-${randomSuffix.value}`
 })
 
-// 生成单个 URL 的预期请求地址
-const getExpectedRequestUrl = (inputBaseUrl: string): string => {
-  if (!inputBaseUrl) return ''
-  if (form.useFullUrl) return inputBaseUrl.trim()
-  if (props.channelType === 'images') {
-    return imagesExpectedRequestUrl(inputBaseUrl, form.serviceType)
-  }
-
-  let baseUrl = inputBaseUrl
-  const skipVersion = baseUrl.endsWith('#')
-  if (skipVersion) {
-    baseUrl = baseUrl.slice(0, -1)
-  }
-
-  const hasVersion = /\/v\d+[a-z]*$/.test(baseUrl)
-
-  const serviceType = detectedServiceType.value || getDefaultServiceTypeValue()
-  let endpoint = ''
-  if (props.channelType === 'responses') {
-    if (serviceType === 'responses') {
-      endpoint = '/responses'
-    } else if (serviceType === 'claude') {
-      endpoint = '/messages'
-    } else {
-      endpoint = '/chat/completions'
-    }
-  } else if (props.channelType === 'chat') {
-    endpoint = '/chat/completions'
-  } else {
-    if (serviceType === 'claude') {
-      endpoint = '/messages'
-    } else if (serviceType === 'responses') {
-      endpoint = '/responses'
-    } else if (serviceType === 'gemini') {
-      endpoint = '/models/{model}:generateContent'
-    } else {
-      endpoint = '/chat/completions'
-    }
-  }
-
-  if (hasVersion || skipVersion) {
-    return baseUrl + endpoint
-  }
-  // Gemini 使用 /v1beta，其他使用 /v1
-  const versionPrefix = serviceType === 'gemini' ? '/v1beta' : '/v1'
-  return baseUrl + versionPrefix + endpoint
-}
-
-// 检测 baseUrl 是否有验证错误
-const baseUrlHasError = computed(() => {
-  const value = form.baseUrl
-  if (!value) return true
-  try {
-    new URL(value)
-    return false
-  } catch {
-    return true
-  }
-})
-
-// 详细模式所有 URL 的预期请求（支持多 BaseURL）
-const formExpectedRequestUrls = computed(() => {
-  if (!form.serviceType) return []
-
-  // 收集所有 URL
-  const urls: string[] = []
-  if (form.baseUrls && form.baseUrls.length > 0) {
-    urls.push(...form.baseUrls)
-  } else if (form.baseUrl) {
-    urls.push(form.baseUrl)
-  }
-
-  if (urls.length === 0) return []
-
-  if (form.useFullUrl) {
-    return urls
-      .filter(url => url && isValidUrl(url))
-      .map(baseUrl => ({ baseUrl, expectedUrl: baseUrl.trim() }))
-  }
-
-  if (props.channelType === 'images') {
-    return urls
-      .filter(url => url && isValidUrl(url.replace(/#$/, '')))
-      .map(baseUrl => ({ baseUrl, expectedUrl: imagesExpectedRequestUrl(baseUrl, form.serviceType) }))
-  }
-
-  // 根据 serviceType 确定端点
-  let endpoint = ''
-  if (props.channelType === 'responses') {
-    if (form.serviceType === 'responses') {
-      endpoint = '/responses'
-    } else if (form.serviceType === 'claude') {
-      endpoint = '/messages'
-    } else {
-      endpoint = '/chat/completions'
-    }
-  } else if (props.channelType === 'chat') {
-    endpoint = '/chat/completions'
-  } else {
-    // messages 渠道
-    if (form.serviceType === 'claude') {
-      endpoint = '/messages'
-    } else if (form.serviceType === 'responses') {
-      endpoint = '/responses'
-    } else if (form.serviceType === 'gemini') {
-      endpoint = '/models/{model}:generateContent'
-    } else {
-      endpoint = '/chat/completions'
-    }
-  }
-
-  // 为每个 URL 生成预期请求
-  return urls
-    .filter(url => url && isValidUrl(url.replace(/#$/, '')))
-    .map(rawUrl => {
-      let baseUrl = rawUrl.trim()
-      const skipVersion = baseUrl.endsWith('#')
-      if (skipVersion) {
-        baseUrl = baseUrl.slice(0, -1)
-      }
-      baseUrl = baseUrl.replace(/\/$/, '')
-
-      const hasVersion = /\/v\d+[a-z]*$/.test(baseUrl)
-
-      // Gemini 使用 /v1beta，其他使用 /v1
-      const versionPrefix = form.serviceType === 'gemini' ? '/v1beta' : '/v1'
-      const expectedUrl = hasVersion || skipVersion ? baseUrl + endpoint : baseUrl + versionPrefix + endpoint
-
-      return { baseUrl: rawUrl, expectedUrl }
-    })
-})
-
 // 处理快速添加提交
 const handleQuickSubmit = () => {
   if (props.saving) return
@@ -1375,24 +1170,6 @@ const sourceModelOptions = computed(() => [
   ...allSourceModelOptions.value
 ])
 
-// 模型重定向的示例文本 - 根据渠道类型动态显示
-const modelMappingHint = computed(() => {
-  if (props.channelType === 'images') {
-    return '任意客户端图片模型都会落到右侧上游生图模型。原生 Images 改写请求体的 model；Responses 改写 image_generation 工具里的 model，顶层对话模型仍用上方的 Responses 主模型。选择「*（任意源模型）」后，外面请求什么模型都会使用同一个上游生图模型。'
-  }
-  if (props.channelType === 'gemini') {
-    return '配置模型名称映射，将请求中的模型名重定向到目标模型。使用模糊匹配（如 gemini-flash 可匹配 gemini-2.5-flash 等版本）；选择 "*（任意源模型）" 会将所有模型请求映射到指定目标。'
-  }
-  if (props.channelType === 'responses') {
-    return '配置模型名称映射，将请求中的模型名重定向到目标模型。使用模糊匹配（如 gpt-5.5 可匹配 gpt-5.5-codex 等变体）；选择 "*（任意源模型）" 会将所有模型请求映射到指定目标。'
-  }
-  if (props.channelType === 'chat') {
-    return '配置模型名称映射，将请求中的 Chat 模型名重定向到目标模型；选择 "*（任意源模型）" 会将所有模型请求映射到指定目标。'
-  } else {
-    return '配置模型名称映射，将请求中的模型名重定向到目标模型。使用模糊匹配（如 opus 可匹配 claude-opus-4-5-20251101 等版本）；选择 "*（任意源模型）" 会将所有模型请求映射到指定目标。'
-  }
-})
-
 const targetModelPlaceholder = computed(() => {
   if (props.channelType === 'images') {
     return '例如：sensenova-u1.5-lite'
@@ -1417,10 +1194,6 @@ const { form, resetForm: resetFormDraft, loadChannelData: loadChannelDataDraft, 
 const autoCompleteUrl = computed({
   get: () => !form.useFullUrl,
   set: (enabled: boolean) => { form.useFullUrl = !enabled }
-})
-const autoCompleteUrlLabel = computed(() => {
-  const serviceType = form.serviceType || detectedServiceType.value || getDefaultServiceTypeValue()
-  return `自动补全 ${serviceType === 'gemini' ? '/v1beta' : '/v1'} 及接口路径`
 })
 
 watch(() => form.useFullUrl, () => {
@@ -1505,7 +1278,6 @@ const loadChannelData = (channel: Channel) => {
     baseUrlsText.value = channel.baseUrl || ''
   }
   originalKeyMap.value.clear()
-  formBaseUrlPreview.value = channel.baseUrl
   targetModelOptions.value = []
   fetchingModels.value = false
   fetchModelsError.value = ''
@@ -1539,12 +1311,6 @@ const proxyModeOptions = [
   { title: '强制直连', value: 'direct' },
   { title: '使用独立代理', value: 'custom' }
 ]
-
-const proxyModeHint = computed(() => {
-  if (form.proxyMode === 'direct') return '忽略全局代理，该渠道始终直接连接上游'
-  if (form.proxyMode === 'custom') return '仅该渠道使用下方填写的代理地址'
-  return '跟随设置页面中的全局上游代理；全局未启用时直接连接'
-})
 
 // 多 BaseURL 文本输入（独立变量，保留用户输入的换行）
 const baseUrlsText = ref('')
@@ -2119,19 +1885,6 @@ watch(
   }
 )
 
-watch(
-  () => form.baseUrl,
-  value => {
-    if (formBaseUrlPreviewTimer !== null) {
-      window.clearTimeout(formBaseUrlPreviewTimer)
-    }
-    formBaseUrlPreviewTimer = window.setTimeout(() => {
-      formBaseUrlPreview.value = value
-    }, 200)
-  },
-  { immediate: true }
-)
-
 // ESC键监听
 const handleKeydown = (event: Event) => {
   const keyboardEvent = event as KeyboardEvent
@@ -2146,25 +1899,10 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('keydown', handleKeydown)
-  if (formBaseUrlPreviewTimer !== null) {
-    window.clearTimeout(formBaseUrlPreviewTimer)
-  }
 })
 </script>
 
 <style scoped>
-/* 基础URL下方的提示区域 - 固定高度防止布局跳动 */
-.base-url-hint {
-  min-height: 20px;
-  padding: 4px 12px 8px;
-  line-height: 1.25;
-}
-
-/* 多个预期请求项样式 */
-.expected-request-item + .expected-request-item {
-  margin-top: 2px;
-}
-
 /* 浅色模式下副标题使用白色带透明度 */
 .text-white-subtitle {
   color: rgba(255, 255, 255, 0.85) !important;

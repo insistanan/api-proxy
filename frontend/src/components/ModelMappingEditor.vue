@@ -5,17 +5,9 @@
         <v-icon color="primary">mdi-swap-horizontal</v-icon>
         <span class="text-body-1 font-weight-bold">模型重定向 (可选)</span>
       </div>
-      <v-chip size="small" color="secondary" variant="tonal"> 自动转换模型名称 </v-chip>
     </v-card-title>
 
     <v-card-text class="pt-2">
-      <div class="text-body-2 text-medium-emphasis mb-4">
-        {{ hint }}
-        <div class="text-caption mt-1">目标模型按列表顺序尝试；拖动左侧手柄可调整优先级。</div>
-        <div v-if="allowTargetChannel" class="text-caption mt-1">
-          可为每个目标指定目标渠道（同协议）：命中后改走该渠道的指定模型，不再经过本渠道；未指定则走本渠道。
-        </div>
-      </div>
 
       <!-- 现有映射列表 -->
       <div v-if="Object.keys(modelValue).length" class="mb-4">
@@ -80,7 +72,6 @@
         <v-btn size="small" color="primary" variant="tonal" @click="localSource = '*'">
           使用 * 匹配任意源模型
         </v-btn>
-        <span class="text-caption text-medium-emphasis">选择后，任何请求模型都会映射到右侧目标模型。</span>
       </div>
       <div class="d-flex align-center ga-2">
         <v-select
@@ -200,7 +191,6 @@ const props = defineProps<{
   modelValue: Record<string, string[]>
   /** 源模型 -> 目标模型 -> 目标渠道 ID（未登记即沿用本渠道） */
   channelValue: Record<string, Record<string, string>>
-  hint: string
   sourceOptions: Option[]
   /** 目标模型候选：键为目标渠道 ID，空串表示本渠道 */
   targetOptionsByChannel: Record<string, Option[]>

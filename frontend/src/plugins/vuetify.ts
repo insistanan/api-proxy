@@ -483,25 +483,31 @@ export default createVuetify({
     VTooltip: {
       location: 'top'
     },
+    // 仅在存在校验错误时展开详情，避免空提示区域占用表单空间。
     VTextField: {
       variant: 'outlined',
-      density: 'comfortable'
+      density: 'comfortable',
+      hideDetails: 'auto'
     },
     VTextarea: {
       variant: 'outlined',
-      density: 'comfortable'
+      density: 'comfortable',
+      hideDetails: 'auto'
     },
     VSelect: {
       variant: 'outlined',
-      density: 'comfortable'
+      density: 'comfortable',
+      hideDetails: 'auto'
     },
     VCombobox: {
       variant: 'outlined',
-      density: 'comfortable'
+      density: 'comfortable',
+      hideDetails: 'auto'
     },
     VAutocomplete: {
       variant: 'outlined',
-      density: 'comfortable'
+      density: 'comfortable',
+      hideDetails: 'auto'
     },
     VTable: {
       density: 'comfortable'

@@ -276,7 +276,6 @@
           <v-spacer />
           <v-btn icon="mdi-close" variant="text" size="small" @click="detailDialog = false" />
         </v-card-title>
-        
         <v-card-text class="pt-4 pb-2">
           <!-- ID & Meta -->
           <div class="d-flex flex-wrap align-center justify-space-between mb-4 ga-2">
@@ -403,9 +402,7 @@
               <span class="prompt-section-marker" aria-hidden="true"></span>
               <span>对话提示词历史</span>
             </div>
-            <div class="text-caption text-medium-emphasis mb-2">
-              保存该会话前 3 条不同的真实用户输入；展示与复制均使用完整原文
-            </div>
+            <!-- 保存该会话前 3 条不同的真实用户输入；展示与复制均使用完整原文 -->
 
             <!-- 无提示词 -->
             <div v-if="!selectedConversation || conversationPrompts(selectedConversation).length === 0" class="prompt-empty text-center py-4 rounded text-medium-emphasis text-body-2">
