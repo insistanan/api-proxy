@@ -41,13 +41,15 @@ docker compose up -d
 
 ### 从源码构建
 
-本地构建需要 Go 1.25、Node 20.19+ 或 22.12+，以及 make。先在 `frontend/` 目录执行 `npm ci` 或 `bun install` 安装依赖，再回到根目录执行以下命令。根 Makefile 使用 npm 和 Node；Windows 下未安装 make 时，可以用根目录的 `npm run check` 运行全量门禁。
+本地构建使用 Go 1.26.10、Node 24.16.0，以及 make。先在 `frontend/` 目录执行 `npm ci` 或 Bun 1.4.4 的 `bun install --frozen-lockfile` 安装依赖，再回到根目录执行以下命令。根 Makefile 使用 npm 和 Node；Windows 下未安装 make 时，可以用根目录的 `npm run check` 运行全量门禁。
 
 ```bash
 make build   # 前端构建 → 嵌入 → Go 编译，产物 dist/api-proxy-go
 make dev     # 启动 Vite 前端与 Air 后端热重载
 make check   # 提交前全量门禁
 ```
+
+Wails 桌面构建使用 `npm run build:desktop`，产物位于 `dist/desktop/`，支持三平台的 amd64/arm64。需先安装与 `go.mod` 一致的 Wails v3.1.0 CLI，以及对应平台原生依赖；默认读取程序旁的 `.config/`（macOS 为 `.app` 旁），支持 `--data-dir`。平台要求、检查命令和分发限制见[开发说明](docs/开发说明.md#wails-桌面构建)。
 
 ## 端点一览
 

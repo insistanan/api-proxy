@@ -234,7 +234,11 @@ const syncPoolViews = () => {
       .sort((left, right) => (left.priority || left.index + 1) - (right.priority || right.index + 1))
   }))
 }
-watch([pools, () => props.channels], syncPoolViews, { deep: true })
+// 分组只依赖成员、状态和顺序，延迟、密钥、映射等变化不需要重建整个拖拽列表。
+watch([pools, () => props.channels.map(channel => [
+  channel, channel.id, channel.index, channel.poolId,
+  channel.status, channel.excludeFromConversation, channel.priority
+])], syncPoolViews, { immediate: true })
 
 const conversationPools = computed(() => poolViews.value)
 const poolColumns = computed(() => {
@@ -400,12 +404,11 @@ const deletePool = async () => {
   min-width: 0;
   overflow: hidden;
   container-type: inline-size;
-  transition: transform 0.18s var(--ease-out), box-shadow 0.18s ease, border-color 0.2s ease;
+  transition: box-shadow 0.18s ease, border-color 0.2s ease;
 }
 .pool-card:hover {
   border-color: rgba(var(--v-theme-primary), 0.6);
   box-shadow: var(--shadow-2);
-  transform: translateY(-2px);
 }
 
 .pool-card-header {
@@ -504,8 +507,10 @@ const deletePool = async () => {
 .vision-status-toggle :deep(.badge-content) { cursor: pointer; }
 .min-width-0 { min-width: 0; }
 @media (max-width: 1400px) {
-  .pool-grid { display: flex; flex-direction: column; }
+  /* inline-size 容器不提供内容宽度，单列必须拉伸，避免缩放后卡片收缩到零宽。 */
+  .pool-grid { display: flex; flex-direction: column; align-items: stretch; }
   .pool-column { display: contents; }
+  .pool-card { width: 100%; }
 }
 @media (max-width: 900px) {
   .section-header, .vision-pool-header { align-items: flex-start; flex-direction: column; }

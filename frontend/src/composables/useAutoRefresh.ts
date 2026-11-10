@@ -33,7 +33,7 @@ export function useAutoRefresh(
     stop()
     timer = setInterval(() => {
       // 跳过并发：前一次刷新未结束时不再触发，避免 stale 覆盖
-      if (!isBusy.value) {
+      if (!isBusy.value && (typeof document === 'undefined' || !document.hidden)) {
         void refresh()
       }
     }, interval)

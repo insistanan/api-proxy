@@ -124,37 +124,6 @@
   border: 2px dashed rgba(var(--v-theme-primary), 0.45);
 }
 
-/* SVG 活跃度波形背景 */
-.activity-chart-bg {
-  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-  pointer-events: none; z-index: 0; opacity: 0.2; overflow: hidden;
-  border-radius: inherit;
-  transition: opacity 0.2s ease;
-}
-.channel-row:hover .activity-chart-bg { opacity: 0.34; }
-
-/* 柱子生长 — 从底部竖起（首次渲染播放一次） */
-.activity-bar {
-  transition: none;
-  transform-box: fill-box;
-  transform-origin: center bottom;
-  animation: bar-rise 0.5s var(--ease-out) both;
-}
-
-/* 分档动效：健康档静止，越差抖得越急 —— 余光扫过就能发现故障段 */
-.activity-bar-warn {
-  animation: bar-rise 0.5s var(--ease-out) both, spark-blink 2.4s ease-in-out infinite;
-}
-.activity-bar-bad {
-  animation: bar-rise 0.5s var(--ease-out) both, spark-blink 1.05s ease-in-out infinite;
-}
-
-/* 最新柱保持高亮，标记当前窗口 */
-.activity-bar-latest {
-  filter: brightness(1.45) saturate(1.2);
-  animation: bar-rise 0.5s var(--ease-out) both;
-}
-
 .channel-chart-wrapper { margin: 4px 0 8px 0; }
 
 .drag-handle {
@@ -179,10 +148,13 @@
 }
 
 .channel-name {
-  display: flex; align-items: center; overflow: hidden; gap: 4px;
+  display: flex; align-items: center; overflow: hidden; gap: 4px; min-width: 0;
 }
 .channel-name .expand-icon { flex-shrink: 0; margin-left: auto; }
-.channel-name .font-weight-medium { font-size: 0.9rem; flex-shrink: 0; }
+.channel-name .font-weight-medium {
+  font-size: 0.9rem; min-width: 0; flex-shrink: 1;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 .channel-name-link { cursor: pointer; transition: color 0.15s ease; }
 .channel-name-link:hover, .channel-name-link:focus { color: rgb(var(--v-theme-primary)); }
@@ -353,6 +325,10 @@
 .mmb-fill.cache-mmb-fill.high::after,
 .mmb-fill.cache-mmb-fill.medium::after,
 .mmb-fill.cache-mmb-fill.low::after { display: block; animation-duration: 3.6s; }
+/* 常态保留指标颜色和刷新反馈，持续装饰动画只在当前交互的渠道运行。 */
+.channel-row:not(:hover) .mmb-fill,
+.channel-row:not(:hover) .mmb-fill::before,
+.channel-row:not(:hover) .mmb-fill::after { animation: none; }
 .mmb-value.cache-mmb-value.high { color: rgb(var(--v-theme-success)); }
 .mmb-value.cache-mmb-value.medium { color: rgb(var(--v-theme-info)); }
 .mmb-value.cache-mmb-value.low { color: rgb(var(--v-theme-warning)); }
@@ -465,8 +441,44 @@
   .channel-row { padding: 8px 8px; }
   .channel-row-meta { margin-left: 44px; }
 }
+
+/* 双列时也按分组卡片的实际宽度换行，避免只看窗口宽度把九列内容裁掉。 */
+@container (max-width: 850px) {
+  .channel-row-content {
+    grid-template-columns: 24px 24px 80px minmax(0, 1fr) 52px 52px auto;
+    grid-template-areas:
+      'handle priority status name name name actions'
+      '. metrics metrics metrics activity latency keys';
+    gap: 8px 6px;
+  }
+  .drag-handle { grid-area: handle; }
+  .priority-number { grid-area: priority; }
+  .channel-status-toggle { grid-area: status; }
+  .channel-name { grid-area: name; }
+  .channel-actions { grid-area: actions; }
+  .channel-metrics { grid-area: metrics; min-width: 0; }
+  .channel-rpm-tpm { grid-area: activity; }
+  .channel-latency { grid-area: latency; }
+  .channel-keys { grid-area: keys; }
+  .channel-row { padding: 10px 12px; }
+  .channel-row-meta { margin-left: 60px; }
+}
+@container (max-width: 520px) {
+  .channel-row-content {
+    grid-template-columns: 24px 76px minmax(0, 1fr) auto;
+    grid-template-areas:
+      'handle status name actions'
+      'metrics metrics metrics activity';
+  }
+  .priority-number, .channel-latency, .channel-keys { display: none; }
+  .channel-row-meta { margin-left: 0; }
+}
 @media (max-width: 600px) {
-  .channel-row-content { grid-template-columns: 28px 1fr 60px; gap: 8px; }
+  .channel-row-content {
+    grid-template-columns: 76px minmax(0, 1fr) auto;
+    grid-template-areas: 'status name actions';
+    gap: 8px;
+  }
   .channel-row { padding: 10px 12px; }
   .channel-metrics, .channel-latency, .channel-keys, .channel-rpm-tpm { display: none; }
   .priority-number, .drag-handle { display: none; }
@@ -480,10 +492,6 @@
   .channel-row::before,
   .channel-row::after,
   .drag-handle,
-  .activity-bar,
-  .activity-bar-warn,
-  .activity-bar-bad,
-  .activity-bar-latest,
   .mmb-fill,
   .cache-mmb-fill,
   .mmb-fill::before,

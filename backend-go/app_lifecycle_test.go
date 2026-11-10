@@ -36,6 +36,42 @@ func TestHTTPListenFailureReturns(t *testing.T) {
 	require.ErrorContains(t, err, "服务器监听失败")
 }
 
+// listener 异常关闭不能留下等待客户端的 handler，否则调用方无法继续回收存储。
+func TestHTTPListenerFailureCancelsActiveRequest(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	entered := make(chan struct{})
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(entered)
+		<-r.Context().Done()
+	})}
+	t.Cleanup(func() { require.NoError(t, srv.Close()) })
+	stopped := make(chan error, 1)
+	go func() { stopped <- serveListenerUntilStopped(context.Background(), srv, listener, time.Second) }()
+	clientResult := make(chan error, 1)
+	go func() {
+		client := &http.Client{Timeout: 3 * time.Second}
+		resp, requestErr := client.Get("http://" + listener.Addr().String())
+		if resp != nil {
+			requestErr = errors.Join(requestErr, resp.Body.Close())
+		}
+		clientResult <- requestErr
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("请求未开始")
+	}
+	require.NoError(t, listener.Close())
+	select {
+	case serveErr := <-stopped:
+		require.ErrorIs(t, serveErr, net.ErrClosed)
+	case <-time.After(5 * time.Second):
+		t.Fatal("监听失败后活跃请求未退出")
+	}
+	<-clientResult
+}
+
 func TestHTTPShutdownWaitsForRequest(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	entered, release := make(chan struct{}), make(chan struct{})

@@ -62,13 +62,13 @@
 
     <!-- Chart -->
     <div v-else class="chart-area">
-      <apexchart ref="chartRef" type="area" :height="chartHeight" :options="chartOptions" :series="chartSeries" />
+      <apexchart type="area" :height="chartHeight" :options="chartOptions" :series="chartSeries" />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, shallowRef, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useAutoRefresh } from '@/composables/useAutoRefresh'
 import { useTheme } from 'vuetify'
 import VueApexCharts from 'vue3-apexcharts'
@@ -107,13 +107,14 @@ const savedPrefs = loadSavedPreferences(props.apiType)
 const selectedView = ref<ViewMode>(savedPrefs.view)
 const selectedDuration = ref<Duration>(savedPrefs.duration)
 const isLoading = ref(false)
-const historyData = ref<GlobalStatsHistoryResponse | null>(null)
+const isRefreshing = ref(false)
+const historyData = shallowRef<GlobalStatsHistoryResponse | null>(null)
 const showError = ref(false)
 const errorMessage = ref('')
-const chartRef = ref<InstanceType<typeof VueApexCharts> | null>(null)
+let refreshRequestId = 0
 
 const { start: startAutoRefresh, stop: stopAutoRefresh } = useAutoRefresh(
-  () => refreshData(true), isLoading, 2000,
+  () => refreshData(true), isRefreshing, 2000,
 )
 
 const chartHeight = computed(() => props.compact ? 180 : 260)
@@ -207,10 +208,7 @@ const chartOptions = computed<ApexOptions>(() => {
       background: 'transparent',
       fontFamily: 'inherit',
       animations: {
-        enabled: true,
-        speed: 500,
-        animateGradually: { enabled: true, delay: 100 },
-        dynamicAnimation: { enabled: true, speed: 350 }
+        enabled: false
       },
       dropShadow: {
         enabled: true,
@@ -344,42 +342,45 @@ const chartSeries = computed(() => {
 })
 
 const refreshData = async (isAutoRefresh = false) => {
+  const requestId = ++refreshRequestId
+  isRefreshing.value = true
   if (!isAutoRefresh) isLoading.value = true
   errorMessage.value = ''
   try {
     const newData = await channelApiByType(props.apiType).getGlobalStats(selectedDuration.value)
-    const canUpdateInPlace = isAutoRefresh && chartRef.value &&
-      historyData.value?.dataPoints?.length === newData.dataPoints?.length
-    if (canUpdateInPlace) {
-      historyData.value = newData
-      chartRef.value?.updateSeries(chartSeries.value, false)
-    } else {
-      historyData.value = newData
-    }
+    if (requestId !== refreshRequestId) return
+    // vue3-apexcharts 已监听 series，只更新响应式数据，避免再调用 updateSeries 重绘第二次。
+    historyData.value = newData
   } catch (error) {
+    if (requestId !== refreshRequestId) return
     console.error('Failed to fetch global stats:', error)
     errorMessage.value = error instanceof Error ? error.message : '获取全局统计数据失败'
     showError.value = true
     historyData.value = null
   } finally {
-    if (!isAutoRefresh) isLoading.value = false
+    if (requestId === refreshRequestId) {
+      isRefreshing.value = false
+      if (!isAutoRefresh) isLoading.value = false
+    }
   }
 }
 
 watch(selectedDuration, (newVal) => {
   savePreference(props.apiType, 'duration', newVal)
   refreshData()
-})
+}, { flush: 'sync' })
 watch(selectedView, (newVal) => { savePreference(props.apiType, 'viewMode', newVal) })
 watch(() => props.apiType, (newApiType) => {
   const prefs = loadSavedPreferences(newApiType)
+  const oldDuration = selectedDuration.value
   selectedView.value = prefs.view
   selectedDuration.value = prefs.duration
-  refreshData()
+  historyData.value = null
+  if (oldDuration === prefs.duration) void refreshData()
 })
 
 onMounted(() => { refreshData(); startAutoRefresh() })
-onUnmounted(() => { stopAutoRefresh() })
+onUnmounted(() => { ++refreshRequestId; stopAutoRefresh() })
 
 defineExpose({ refreshData, startAutoRefresh, stopAutoRefresh })
 </script>

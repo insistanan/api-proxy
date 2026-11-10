@@ -2,6 +2,8 @@
   "name": "api-proxy",
   "private": true,
   "scripts": {
-    "check": "node scripts/check.mjs"
+    "check": "node scripts/check.mjs",
+    "check:desktop": "node scripts/check-desktop.mjs",
+    "build:desktop": "node scripts/build-desktop.mjs"
   }
 }

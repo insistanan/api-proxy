@@ -34,41 +34,11 @@
               :class="{ 'is-suspended': element.status === 'suspended' }"
               @click="toggleChannelChart(element.index)"
             >
-              <!-- SVG 活跃度波形柱状图背景 -->
-              <svg class="activity-chart-bg" preserveAspectRatio="none" viewBox="0 0 150 100">
-                <!-- 渐变定义（为每个柱子单独定义渐变） -->
-                <defs>
-                  <linearGradient
-                    v-for="(bar, i) in getActivityBars(element.index)"
-                    :id="`gradient-${element.index}-${i}`"
-                    :key="`gradient-${element.index}-${i}`"
-                    x1="0%"
-                    y1="0%"
-                    x2="0%"
-                    y2="100%"
-                  >
-                    <stop offset="0%" :stop-color="bar.color" stop-opacity="0.9" />
-                    <stop offset="100%" :stop-color="bar.color" stop-opacity="0.4" />
-                  </linearGradient>
-                </defs>
-                <!-- 波形柱状图 -->
-                <g v-for="(bar, i) in getActivityBars(element.index)" :key="i">
-                  <rect
-                    :x="bar.x"
-                    :y="bar.y"
-                    :width="bar.width"
-                    :height="bar.height"
-                    :fill="`url(#gradient-${element.index}-${i})`"
-                    :rx="bar.radius"
-                    :ry="bar.radius"
-                    class="activity-bar"
-                    :class="[
-                      `activity-bar-${bar.level}`,
-                      { 'activity-bar-latest': i === getActivityBars(element.index).length - 1 }
-                    ]"
-                  />
-                </g>
-              </svg>
+              <ChannelActivityChart
+                :bars="getActivityBars(element.index)"
+                :channel-id="element.index"
+                :channel-type="channelType"
+              />
 
               <!-- Grid 内容容器 -->
               <div class="channel-row-content">
@@ -451,9 +421,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, shallowRef, computed, watch, onMounted, onUnmounted } from 'vue'
 import { api, ApiError, channelApiByType, type Channel, type ChannelMetrics, type ChannelStatus, type TimeWindowStats, type ChannelRecentActivity } from '../services/api'
 import { useChannelActivity } from '../composables/useChannelActivity'
+import { defineLazyChart } from '@/utils/lazyChart'
 import { channelServiceLabel } from '@/utils/imagesChannelProtocol'
 import {
   getCacheRateLevel,
@@ -472,16 +443,18 @@ import {
 } from '../utils/channelMetricsFormat'
 import CcsImportModal from './CcsImportModal.vue'
 import ChannelStatusBadge from './ChannelStatusBadge.vue'
+import ChannelActivityChart from './ChannelActivityChart.vue'
 import ChannelPoolGrid from './ChannelPoolGrid.vue'
 import ChannelQuickMenu from './ChannelQuickMenu.vue'
 import ChannelMappingBlock from './ChannelMappingBlock.vue'
-import KeyTrendChart from './KeyTrendChart.vue'
 import QuickTestModal from './QuickTestModal.vue'
 import ChannelPromotionDialog from './channel/ChannelPromotionDialog.vue'
 import ChannelLogsDialog from './channel/ChannelLogsDialog.vue'
 import ChannelReservePools from './channel/ChannelReservePools.vue'
 import { useChannelLogs } from '@/composables/useChannelLogs'
 import { useChannelPromotion } from '@/composables/useChannelPromotion'
+
+const KeyTrendChart = defineLazyChart(() => import('./KeyTrendChart.vue'))
 
 const props = defineProps<{
   channels: Channel[]
@@ -518,9 +491,10 @@ const showQuickTestModal = ref(false)
 const quickTestChannel = ref<Channel | null>(null)
 
 // 状态
-const metrics = ref<ChannelMetrics[]>([])
-const recentActivity = ref<ChannelRecentActivity[]>([])
-const schedulerStats = ref<{
+// 指标只接收整份快照，不在组件内修改统计段。
+const metrics = shallowRef<ChannelMetrics[]>([])
+const recentActivity = shallowRef<ChannelRecentActivity[]>([])
+const schedulerStats = shallowRef<{
   multiChannelMode: boolean
   activeChannelCount: number
   traceAffinityCount: number
@@ -543,14 +517,10 @@ const {
 const currentTime = ref(Date.now())
 let latencyCheckTimer: ReturnType<typeof setInterval> | null = null
 
-// 用于触发活跃度视图更新的时间戳（每 2 秒更新）
-const activityUpdateTick = ref(0)
-
 // 活跃度可视化收敛到 useChannelActivity composable（R5，方案 8.1）：
 // 数据本体（recentActivity）本组件持有，柱状/曲线派生计算经 composable。
-const { getActivityBars, getActivityPath, formatRPM, formatTPM, hasActivityData, getChannelActivity } =
-  useChannelActivity(recentActivity, activityUpdateTick)
-let activityUpdateTimer: ReturnType<typeof setInterval> | null = null
+const { getActivityBars, formatRPM, formatTPM, hasActivityData } =
+  useChannelActivity(recentActivity)
 
 // 图表展开状态
 const expandedChannelIndex = ref<number | null>(null)
@@ -659,9 +629,8 @@ watch(() => props.channelType, () => {
 })
 
 // 获取渠道指标
-const getChannelMetrics = (channelIndex: number): ChannelMetrics | undefined => {
-  return metrics.value.find(m => m.channelIndex === channelIndex)
-}
+const metricsByChannel = computed(() => new Map(metrics.value.map(metric => [metric.channelIndex, metric])))
+const getChannelMetrics = (channelIndex: number): ChannelMetrics | undefined => metricsByChannel.value.get(channelIndex)
 
 // 获取分时段统计的辅助方法
 const get15mStats = (channelIndex: number) => {
@@ -772,13 +741,19 @@ const toggleChannelPrimaryStatus = async (channel: Channel) => {
 
 // 判断渠道是否可以删除
 // 规则：当前渠道分组中至少要保留一个 active 状态的渠道
+const activeChannelsByPool = computed(() => {
+  const counts = new Map<string, number>()
+  for (const channel of props.channels) {
+    if (channel.excludeFromConversation || !['active', undefined, ''].includes(channel.status)) continue
+    const poolID = channel.poolId || 'default'
+    counts.set(poolID, (counts.get(poolID) ?? 0) + 1)
+  }
+  return counts
+})
 const canDeleteChannel = (channel: Channel): boolean => {
   // 统计当前 active 状态的渠道数量
   const poolID = channel.poolId || 'default'
-  const activeCount = props.channels.filter(
-    ch => !ch.excludeFromConversation && (ch.poolId || 'default') === poolID &&
-      (ch.status === 'active' || ch.status === undefined || ch.status === '')
-  ).length
+  const activeCount = activeChannelsByPool.value.get(poolID) ?? 0
 
   // 如果要删除的是 active 渠道，且只剩一个 active，则不允许删除
   const isActive = channel.status === 'active' || channel.status === undefined || channel.status === ''
@@ -800,15 +775,11 @@ const handleDeleteChannel = (channel: Channel) => {
 
 // 组件挂载时加载指标并启动延迟过期检查定时器
 onMounted(() => {
-  refreshMetrics()
+  if (!props.dashboardMetrics) void refreshMetrics()
   // 每 30 秒更新一次 currentTime，触发延迟显示的响应式更新
   latencyCheckTimer = setInterval(() => {
-    currentTime.value = Date.now()
+    if (!document.hidden) currentTime.value = Date.now()
   }, 30000)
-  // 每 2 秒更新一次 activityUpdateTick，触发活跃度视图更新
-  activityUpdateTimer = setInterval(() => {
-    activityUpdateTick.value++
-  }, 2000)
 })
 
 // 组件卸载时清理定时器
@@ -816,10 +787,6 @@ onUnmounted(() => {
   if (latencyCheckTimer) {
     clearInterval(latencyCheckTimer)
     latencyCheckTimer = null
-  }
-  if (activityUpdateTimer) {
-    clearInterval(activityUpdateTimer)
-    activityUpdateTimer = null
   }
 })
 

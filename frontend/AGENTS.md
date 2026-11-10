@@ -10,6 +10,7 @@
 - HTTP 使用原生 fetch，统一封装在 `src/services/http.ts` 的 `apiRequest<T>` 中；`api.ts` 保留原有导入入口。
 - 图表 apexcharts + vue3-apexcharts；拖拽 vuedraggable；测试 Vitest
 - 依赖可通过 Bun 或 npm 安装。发布 workflow 使用 `bun.lock`，Docker 构建使用 `package-lock.json`，修改依赖后需要核对两份锁文件。
+- Node 24.16.0 与 Bun 1.4.4 分别由根 `.node-version`、`.bun-version` 固定。Wails 桌面版加载同进程 HTTP 页面，复用现有 fetch、鉴权、SSE 和 localStorage；外链由桌面入口交给系统浏览器，无独立前端副本。
 
 ## 目录结构（src/）
 
@@ -31,6 +32,7 @@
 - `ApiTab` 定义 messages、responses、gemini、chat 和 images 五种协议。channel store 使用 `Record<ApiTab, ...>` 保存分组数据，`channelApi(type)` 按协议返回共用操作方法。新增协议时，需要同步修改 store、API 工厂、路由参数校验和后端端点。
 - 领域服务共用 `apiRequest<T>`，由 HTTP 层注入 `x-api-key` 并统一处理响应。收到 401 时清除认证状态并抛出 `ApiError`，错误携带 status、details、code 和 committed 等信息。`committed` 表示配置已经提交，但后续处理失败；此时不自动重试，提示用户刷新并查看实际状态，处理逻辑见 `useChannelActions.ts`。
 - 需要鉴权的 SSE 通过 fetch 和 `utils/sse.ts` 中的 `readSSEStream` 读取，以便携带访问密钥。
+- Dashboard 与图表历史数据使用 `shallowRef` 保存只读快照，更新必须替换根对象。渠道配置继续保持深层响应式，并复用未变对象；分组监听仅覆盖成员与排序字段。波形由 `ChannelActivityChart` 接收稳定派生数组，图表只通过 series props 更新，不重复调用 `updateSeries`。
 - **dev 代理**（vite.config.ts）：`/api`、`/v1`、`/v1beta`、`/health` 转发到 `VITE_PROXY_TARGET`（默认 http://localhost:3000）；生产环境 baseURL 固定 `/api`（同域，Go 嵌入部署）。
 - 构建分包：manualChunks 拆 charts-vendor / vuetify-vendor / mdi-icons / vue-vendor；路径别名 `@` → src。
 

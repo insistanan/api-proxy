@@ -429,8 +429,10 @@ import { useDialogStore } from './stores/dialog'
 import { useSystemStore } from './stores/system'
 import { useToast } from './composables/useToast'
 import AddChannelModal from './components/AddChannelModal.vue'
-import GlobalStatsChart from './components/GlobalStatsChart.vue'
+import { defineLazyChart } from './utils/lazyChart'
 import { useCountUp } from './composables/useCountUp'
+
+const GlobalStatsChart = defineLazyChart(() => import('./components/GlobalStatsChart.vue'))
 
 // Vuetify主题
 const theme = useTheme()

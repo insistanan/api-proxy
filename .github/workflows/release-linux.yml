@@ -16,40 +16,50 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
+      - name: 校验发布 tag 与 VERSION
+        run: |
+          version=$(tr -d '\r\n' < VERSION)
+          expected_tag="v${version#v}"
+          if [[ "$GITHUB_REF_NAME" != "$expected_tag" ]]; then
+            echo "发布 tag $GITHUB_REF_NAME 与 VERSION $expected_tag 不一致" >&2
+            exit 1
+          fi
+
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: "20.x"
+          node-version-file: .node-version
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
 
       - name: Build Frontend
-        run: bun install && bun run build
+        run: bun install --frozen-lockfile && bun run build
         working-directory: ./frontend
 
       - name: Copy Frontend to Backend
         run: node scripts/copy-frontend.mjs
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: backend-go/go.mod
 
       - name: Build Backend for amd64
         run: |
-          go mod tidy
           go mod download
-          CGO_ENABLED=0 go build -ldflags "-s -w -X main.Version=${{ github.ref_name }} -X main.BuildTime=$(date -u '+%Y-%m-%d_%H:%M:%S') -X main.GitCommit=${{ github.sha }}" -o api-proxy-linux-amd64
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -ldflags "-s -w -X main.Version=${{ github.ref_name }} -X main.BuildTime=$(date -u '+%Y-%m-%d_%H:%M:%S') -X main.GitCommit=${{ github.sha }}" -o api-proxy-linux-amd64
         working-directory: ./backend-go
 
       - name: Build Backend for arm64
         run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "-s -w -X main.Version=${{ github.ref_name }} -X main.BuildTime=$(date -u '+%Y-%m-%d_%H:%M:%S') -X main.GitCommit=${{ github.sha }}" -o api-proxy-linux-arm64
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -mod=readonly -ldflags "-s -w -X main.Version=${{ github.ref_name }} -X main.BuildTime=$(date -u '+%Y-%m-%d_%H:%M:%S') -X main.GitCommit=${{ github.sha }}" -o api-proxy-linux-arm64
         working-directory: ./backend-go
 
       - name: Release

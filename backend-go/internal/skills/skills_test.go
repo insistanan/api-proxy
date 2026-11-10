@@ -7,6 +7,29 @@ import (
 	"testing"
 )
 
+func TestBoundProjectDirectoryIgnoresWorkingDirectory(t *testing.T) {
+	previous := boundProjectDirectory.Load()
+	t.Cleanup(func() { boundProjectDirectory.Store(previous) })
+	project := t.TempDir()
+	if err := BindProjectDirectory(project); err != nil {
+		t.Fatal(err)
+	}
+	location, err := projectRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if location != filepath.Join(project, "skills") {
+		t.Fatalf("项目目录未使用绑定路径: %s", location)
+	}
+	if err := BindProjectDirectory(" "); err == nil {
+		t.Fatal("空项目目录应显式报错")
+	}
+	location, err = projectRoot()
+	if err != nil || location != filepath.Join(project, "skills") {
+		t.Fatalf("失败的绑定改变了有效项目目录: %s, %v", location, err)
+	}
+}
+
 func TestDiscoverClaudePluginSkillLocationsOnlyUsesInstalledPlugins(t *testing.T) {
 	claudeHome := t.TempDir()
 	installedSkillDir := filepath.Join(claudeHome, "plugins", "cache", "official", "installed-plugin", "1.0.0", "skills")

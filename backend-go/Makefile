@@ -4,7 +4,8 @@
 BINARY_NAME=api-proxy-go
 MAIN_PATH=.
 BUILD_DIR=../dist
-AIR_VERSION=v1.52.0
+AIR_VERSION=v1.67.4
+GOLANGCI_VERSION=v2.15.0
 # 支持环境变量覆盖 VERSION（用于 Docker 构建时传入）
 VERSION?=$(shell cat ../VERSION 2>/dev/null || echo "v0.0.0-dev")
 BUILD_TIME=$(shell date '+%Y-%m-%d_%H:%M:%S_%Z')
@@ -40,7 +41,7 @@ help:
 # 安装 Air 工具
 install-air:
 	@echo "$(GREEN)正在安装 Air 热重载工具...$(NC)"
-	@go install github.com/air-verse/air@latest
+	@go install github.com/air-verse/air@$(AIR_VERSION)
 	@echo "$(GREEN)✅ Air 安装完成!$(NC)"
 	@echo "使用方法: make dev"
 
@@ -124,7 +125,7 @@ lint:
 	@echo "$(GREEN)🔍 检查代码...$(NC)"
 	@if ! command -v golangci-lint &> /dev/null; then \
 		echo "$(YELLOW)安装 golangci-lint...$(NC)"; \
-		go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest; \
+		go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION); \
 	fi
 	@golangci-lint run
 
@@ -143,5 +144,5 @@ deps-tree:
 # 安装开发工具
 install-tools: install-air
 	@echo "$(GREEN)🔧 安装开发工具...$(NC)"
-	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	@go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION)
 	@echo "$(GREEN)✅ 所有工具安装完成$(NC)"

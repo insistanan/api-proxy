@@ -1,9 +1,9 @@
-# 阶段 1：准备 Node 22 和 npm，供前端构建及产物复制脚本使用。
+# 阶段 1：准备 Node 24 和 npm，供前端构建及产物复制脚本使用。
 # Node 与 Go 镜像使用相同的 Alpine 版本，避免运行库不兼容。
-FROM node:22-alpine3.22 AS node-runtime
+FROM node:24.16.0-alpine3.23 AS node-runtime
 
 # 阶段 2：在 Go 镜像中完成前后端构建。
-FROM golang:1.25-alpine3.22 AS builder
+FROM golang:1.26.10-alpine3.23 AS builder
 
 # 可用 --build-arg VERSION 覆盖版本号；未指定时由 Makefile 读取 VERSION 文件。
 ARG VERSION
@@ -32,7 +32,7 @@ COPY backend-go/ ./backend-go/
 RUN if [ -n "${VERSION}" ]; then VERSION=${VERSION} make build; else make build; fi
 
 # 阶段 3：运行镜像只保留程序、证书和时区数据。
-FROM alpine:3.22 AS runtime
+FROM alpine:3.23 AS runtime
 
 WORKDIR /app
 

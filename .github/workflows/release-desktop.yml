@@ -1,0 +1,138 @@
+name: Release Desktop Build
+
+permissions:
+  contents: write
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  desktop:
+    name: Desktop ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows/amd64
+            runner: windows-latest
+            artifact: windows-amd64
+          - platform: windows/arm64
+            runner: windows-latest
+            artifact: windows-arm64
+          - platform: darwin/amd64
+            runner: macos-15-intel
+            artifact: darwin-amd64
+          - platform: darwin/arm64
+            runner: macos-15
+            artifact: darwin-arm64
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+            artifact: linux-amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            artifact: linux-arm64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: 校验发布 tag 与 VERSION
+        if: github.ref_type == 'tag'
+        run: |
+          version=$(tr -d '\r\n' < VERSION)
+          expected_tag="v${version#v}"
+          if [[ "$GITHUB_REF_NAME" != "$expected_tag" ]]; then
+            echo "发布 tag $GITHUB_REF_NAME 与 VERSION $expected_tag 不一致" >&2
+            exit 1
+          fi
+
+      - name: 配置 Node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+
+      - name: 配置 Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: 配置 Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: backend-go/go.mod
+          cache-dependency-path: backend-go/go.sum
+
+      - name: 安装 Linux 原生构建依赖
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
+
+      - name: 安装固定版本 Wails CLI
+        working-directory: backend-go
+        run: |
+          wails_version=$(awk '$1 == "github.com/wailsapp/wails/v3" { print $2 }' go.mod | tr -d '\r')
+          test -n "$wails_version"
+          go install "github.com/wailsapp/wails/v3/cmd/wails3@${wails_version}"
+
+      - name: 按锁文件安装前端依赖
+        working-directory: frontend
+        run: bun install --frozen-lockfile
+
+      - name: 服务版全量门禁
+        run: npm run check
+
+      - name: 当前宿主平台桌面标签检查
+        run: npm run check:desktop
+
+      - name: 构建桌面应用
+        env:
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: npm run build:desktop -- --platform "${{ matrix.platform }}"
+
+      - name: 保存构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-proxy-desktop-${{ matrix.artifact }}
+          path: dist/desktop/*
+          if-no-files-found: error
+
+  release:
+    name: 汇总桌面发行资产
+    needs: desktop
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    steps:
+      - name: 下载全部桌面构建产物
+        uses: actions/download-artifact@v4
+        with:
+          pattern: api-proxy-desktop-*
+          path: dist/desktop
+          merge-multiple: true
+
+      # 所有架构构建成功后统一上传，避免六个 job 同时创建或修改同一个发行草稿。
+      - name: 上传至发行草稿
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/desktop/api-proxy-desktop-windows-amd64.exe
+            dist/desktop/api-proxy-desktop-windows-arm64.exe
+            dist/desktop/api-proxy-desktop-darwin-amd64.zip
+            dist/desktop/api-proxy-desktop-darwin-arm64.zip
+            dist/desktop/api-proxy-desktop-linux-amd64.tar.gz
+            dist/desktop/api-proxy-desktop-linux-arm64.tar.gz
+          fail_on_unmatched_files: true
+          draft: true
+          generate_release_notes: true

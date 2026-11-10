@@ -26,6 +26,7 @@ bun.lock text diff
 /scripts/eol.mjs text eol=lf
 /scripts/check.mjs text eol=lf
 /scripts/copy-frontend.mjs text eol=lf
+/scripts/*.mjs text eol=lf
 
 # 明确标记二进制文件
 *.png binary

@@ -4,7 +4,7 @@ GREEN=\033[0;32m
 YELLOW=\033[0;33m
 NC=\033[0m
 
-.PHONY: help dev run build check clean frontend-dev frontend-build embed-frontend
+.PHONY: help dev run build build-desktop check check-desktop clean frontend-dev frontend-build embed-frontend
 
 help:
 	@echo "$(GREEN)API Proxy - 可用命令:$(NC)"
@@ -16,11 +16,13 @@ help:
 	@echo ""
 	@echo "$(YELLOW)构建:$(NC)"
 	@echo "  make build          - 构建前端并编译 Go 后端"
+	@echo "  make build-desktop  - 构建当前平台的 Wails 桌面版"
 	@echo "  make frontend-build - 仅构建前端"
 	@echo "  make clean          - 清理构建文件"
 	@echo ""
 	@echo "$(YELLOW)门禁:$(NC)"
 	@echo "  make check          - 全量门禁（前后端检查与测试）"
+	@echo "  make check-desktop  - 当前平台的桌面标签 vet 与 test"
 
 dev:
 	@echo "$(GREEN)🚀 启动前后端开发模式...$(NC)"
@@ -32,6 +34,12 @@ run: embed-frontend
 
 build: embed-frontend
 	@cd backend-go && $(MAKE) build
+
+build-desktop:
+	@npm run build:desktop
+
+check-desktop:
+	@npm run check:desktop
 
 # 构建前端后，通过 scripts/copy-frontend.mjs 复制到 backend-go/frontend/dist。
 # 复制脚本根据自身位置解析路径，避免因当前工作目录不同而产生嵌套目录。

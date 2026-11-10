@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed, watch } from 'vue'
+import { ref, shallowRef, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, ApiError, channelApiByType, type ApiTab, type Channel, type ChannelsResponse, type ChannelMetrics, type ChannelDashboardResponse } from '@/services/api'
 
@@ -40,14 +40,14 @@ export const useChannelStore = defineStore('channel', () => {
     images: { channels: [], current: -1, loadBalance: 'failover' }
   })
 
-  // Dashboard 数据缓存结构（每个 tab 独立缓存）
+  // Dashboard 是只读响应快照，整体替换；不为大量统计段创建深层响应式代理。
   interface DashboardCache {
     metrics: ChannelMetrics[]
     stats: ChannelDashboardResponse['stats'] | undefined
     recentActivity: ChannelDashboardResponse['recentActivity'] | undefined
   }
 
-  const dashboardCache = ref<Record<ApiTab, DashboardCache>>({
+  const dashboardCache = shallowRef<Record<ApiTab, DashboardCache>>({
     messages: {
       metrics: [],
       stats: undefined,
@@ -128,18 +128,24 @@ export const useChannelStore = defineStore('channel', () => {
     if (!existingChannels) return newChannels
 
     const now = Date.now()
-    return newChannels.map(newCh => {
-      const existingCh = newCh.id ? existingChannels.find(ch => ch.id === newCh.id) : undefined
+    const existingByID = new Map(existingChannels.filter(channel => channel.id).map(channel => [channel.id, channel]))
+    const mergedChannels = newChannels.map(newCh => {
+      const existingCh = newCh.id ? existingByID.get(newCh.id) : undefined
+      let merged = newCh
       // 只有在 5 分钟有效期内才保留本地延迟测试结果
       if (existingCh?.latencyTestTime && (now - existingCh.latencyTestTime) < LATENCY_VALID_DURATION) {
-        return {
+        merged = {
           ...newCh,
           latency: existingCh.latency,
           latencyTestTime: existingCh.latencyTestTime
         }
       }
-      return newCh
+      // 渠道是 JSON 配置；内容未变时复用对象，避免统计刷新触发全部渠道表单和菜单更新。
+      return existingCh && JSON.stringify(merged) === JSON.stringify(existingCh) ? existingCh : merged
     })
+    return mergedChannels.length === existingChannels.length && mergedChannels.every((channel, index) => channel === existingChannels[index])
+      ? existingChannels
+      : mergedChannels
   }
 
   // ===== 操作方法 =====
@@ -155,16 +161,23 @@ export const useChannelStore = defineStore('channel', () => {
       try {
         const dashboard = await api.getChannelDashboard(tab)
 
-        channelsDataMap.value[tab] = {
-          channels: mergeChannelsWithLocalData(dashboard.channels, channelsDataMap.value[tab].channels),
-          current: channelsDataMap.value[tab].current, // 保留当前选中状态
-          loadBalance: dashboard.loadBalance
+        const previous = channelsDataMap.value[tab]
+        const channels = mergeChannelsWithLocalData(dashboard.channels, previous.channels)
+        if (channels !== previous.channels || dashboard.loadBalance !== previous.loadBalance) {
+          channelsDataMap.value[tab] = {
+            channels,
+            current: previous.current, // 保留当前选中状态
+            loadBalance: dashboard.loadBalance
+          }
         }
-        // 更新该 tab 的独立缓存
-        dashboardCache.value[tab] = {
-          metrics: dashboard.metrics,
-          stats: dashboard.stats,
-          recentActivity: dashboard.recentActivity
+        // shallowRef 必须替换根对象；其余协议继续复用各自快照。
+        dashboardCache.value = {
+          ...dashboardCache.value,
+          [tab]: {
+            metrics: dashboard.metrics,
+            stats: dashboard.stats,
+            recentActivity: dashboard.recentActivity
+          }
         }
 
         lastRefreshSuccess.value = true
@@ -301,7 +314,8 @@ export const useChannelStore = defineStore('channel', () => {
     const tick = async () => {
       if (!autoRefreshRunning) return
       try {
-        await refreshChannels()
+        // 看板隐藏到托盘或浏览器后台时暂停刷新，代理和危险命令通知仍独立运行。
+        if (typeof document === 'undefined' || !document.hidden) await refreshChannels()
       } catch (error) {
         console.warn('自动刷新失败:', error)
       } finally {

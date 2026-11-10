@@ -108,10 +108,10 @@
 
 <script setup lang="ts">
 // 日志展示与图表挂载独立于渠道资源池布局。
-import VueApexCharts from 'vue3-apexcharts'
+import { defineLazyChart } from '@/utils/lazyChart'
 import type { useChannelLogs } from '@/composables/useChannelLogs'
 
-const apexchart = VueApexCharts
+const apexchart = defineLazyChart(() => import('vue3-apexcharts'))
 const props = defineProps<{ viewer: ReturnType<typeof useChannelLogs> }>()
 const {
   showLogsDialog, logsChannel, channelLogs, isLoadingLogs, logsError,

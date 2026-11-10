@@ -5,7 +5,7 @@
 import { computed, ref, watch, type Ref } from 'vue'
 import type { ChannelRecentActivity } from '@/services/api'
 
-/** 波形柱的健康档位 — 驱动 CSS 动效强度（越差动得越急）。 */
+/** 波形柱的健康档位，与成功率颜色对应。 */
 export type ActivityLevel = 'idle' | 'ok' | 'warn' | 'bad'
 
 export type ActivityBar = {
@@ -16,6 +16,8 @@ export type ActivityBar = {
   radius: number
   color: string
   level: ActivityLevel
+  gradientKey: string
+  latest: boolean
 }
 
 /** Catmull-Rom 样条转 SVG 贝塞尔路径。 */
@@ -47,12 +49,8 @@ export function catmullRomToPath(points: { x: number; y: number }[]): string {
 
 /**
  * @param recentActivity 父级持有的活跃度数据（每渠道一列）。
- * @param updateTick 父级的时间刻度 ref，触发曲线动画重算。
  */
-export function useChannelActivity(
-  recentActivity: Ref<ChannelRecentActivity[]>,
-  updateTick: Ref<number>
-) {
+export function useChannelActivity(recentActivity: Ref<ChannelRecentActivity[]>) {
   // 活跃度数据 Map 缓存（避免线性查找）
   const activityMap = computed(() => {
     const map = new Map<number, ChannelRecentActivity>()
@@ -67,6 +65,9 @@ export function useChannelActivity(
 
   // 更新历史最大值（只在当前最大值更大时更新，保持历史峰值）
   watch(activityMap, newMap => {
+    for (const channelIndex of maxRequestsHistory.value.keys()) {
+      if (!newMap.has(channelIndex)) maxRequestsHistory.value.delete(channelIndex)
+    }
     for (const [channelIndex, activity] of newMap.entries()) {
       if (!activity.segments || activity.segments.length === 0) continue
 
@@ -77,7 +78,7 @@ export function useChannelActivity(
         maxRequestsHistory.value.set(channelIndex, currentMax)
       }
     }
-  })
+  }, { immediate: true })
 
   // 获取渠道的活跃度数据
   const getChannelActivity = (channelIndex: number): ChannelRecentActivity | undefined => {
@@ -85,15 +86,23 @@ export function useChannelActivity(
   }
 
   // 缓存所有渠道的柱状图数据（避免在模板中重复计算）
-  const activityBarsCache = computed(() => {
+  const activityBarsCache = computed<Map<number, ActivityBar[]>>(previous => {
     const cache = new Map<number, ActivityBar[]>()
-
-    // 使用 updateTick 触发响应式更新
-    const _ = updateTick.value
+    const storeBars = (channelIndex: number, bars: ActivityBar[]) => {
+      const oldBars = previous?.get(channelIndex)
+      const unchanged = oldBars && oldBars.length === bars.length && bars.every((bar, index) => {
+        const old = oldBars[index]
+        return bar.x === old.x && bar.y === old.y && bar.width === old.width && bar.height === old.height &&
+          bar.radius === old.radius && bar.color === old.color && bar.level === old.level &&
+          bar.gradientKey === old.gradientKey && bar.latest === old.latest
+      })
+      // 保留未变化的派生数组，让波形组件跳过与自身无关的指标刷新。
+      cache.set(channelIndex, oldBars && unchanged ? oldBars : bars)
+    }
 
     for (const [channelIndex, activity] of activityMap.value.entries()) {
       if (!activity || !activity.segments || activity.segments.length === 0) {
-        cache.set(channelIndex, [])
+        storeBars(channelIndex, [])
         continue
       }
 
@@ -114,6 +123,8 @@ export function useChannelActivity(
       for (let i = 0; i < numSegments; i++) {
         const segment = segments[i]
         const requests = segment.requestCount
+        // 空段仍通过原始下标保留时间位置，但不生成不可见的 SVG 节点。
+        if (requests === 0) continue
 
         // 计算柱子高度（最小高度 2，避免完全消失）
         const heightPercent = requests / maxRequests
@@ -159,11 +170,13 @@ export function useChannelActivity(
           height,
           radius: Math.min(actualBarWidth / 2, 1.5),
           color,
-          level
+          level,
+          gradientKey: color.replace(/[^0-9]+/g, '-'),
+          latest: i === numSegments - 1
         })
       }
 
-      cache.set(channelIndex, bars)
+      storeBars(channelIndex, bars)
     }
 
     return cache
@@ -178,9 +191,6 @@ export function useChannelActivity(
   const getActivityPath = (channelIndex: number): string => {
     const activity = getChannelActivity(channelIndex)
     if (!activity || !activity.segments || activity.segments.length === 0) return ''
-
-    // 使用 updateTick 触发响应式更新
-    const _ = updateTick.value
 
     const segments = activity.segments
     const numSegments = segments.length // 150（后端已聚合为每 6 秒一段）
