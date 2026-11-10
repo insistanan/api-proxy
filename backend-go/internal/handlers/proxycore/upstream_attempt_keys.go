@@ -1,7 +1,4 @@
-// 本文件是单渠道内"Key/BaseURL 层"故障转移的主循环：按调用方给定的 URLResults 顺序
-// （对话粘性会把偏好 BaseURL 提到最前）遍历 BaseURL，每个 BaseURL 内轮换 Key，处理熔断跳过、
-// 全 Key 熔断时的强制探测、同候选重试、请求准备（内容安全 + 视觉层）失败与成功响应写回。
-// 上层的模型映射循环在 upstream_failover.go，失败该怎么办的分类在 upstream_attempt_error.go。
+// 单渠道 Key/BaseURL 重试编排；候选准备、兼容重试和响应交付按阶段委托。
 package proxycore
 
 import (
@@ -12,122 +9,18 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/config"
 	"github.com/insistanan/api-proxy/internal/handlers/hooks"
-	"github.com/insistanan/api-proxy/internal/logger"
-	"github.com/insistanan/api-proxy/internal/mediasanitizer"
 	"github.com/insistanan/api-proxy/internal/proxy"
-	"github.com/insistanan/api-proxy/internal/rectifier"
 	"github.com/insistanan/api-proxy/internal/scheduler"
 	"github.com/insistanan/api-proxy/internal/types"
 	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
 	"github.com/insistanan/api-proxy/internal/utils"
 	"github.com/insistanan/api-proxy/internal/visionlayer"
 )
-
-type upstreamAttemptPreflight struct {
-	proxyURL string
-}
-
-// maxEnvelopeSniffBytes 是 2xx 错误信封检测的最大读取字节数。错误信封必然
-// 很小；正常非流式响应通常也在该上限内（HandleSuccess 本就全量读）；超过
-// 上限的巨型响应按读失败处理，走 failover 让其他候选接手。
-const maxEnvelopeSniffBytes = 10 * 1024 * 1024
-
-// Images 成功响应可能包含很大的 base64 JSON；只缓冲足以识别常见错误信封的前缀。
-const maxImagesEnvelopeSniffBytes = 64 * 1024
-
-// prefixReadCloser 回放已读取的前缀，同时保留原响应体的关闭责任。
-type prefixReadCloser struct {
-	io.Reader
-	io.Closer
-}
-
-// readBodyWithLimit 读取响应体，超过 limit 返回错误（与静默截断相比，
-// 显式失败能触发 failover 而不是把半个 JSON 交给下游解析）。
-func readBodyWithLimit(body io.Reader, limit int64) ([]byte, error) {
-	limited, err := io.ReadAll(io.LimitReader(body, limit+1))
-	if err != nil {
-		return nil, fmt.Errorf("读取上游响应体失败: %w", err)
-	}
-	if int64(len(limited)) > limit {
-		return nil, fmt.Errorf("上游响应体超过 %d MB 上限", limit/1024/1024)
-	}
-	return limited, nil
-}
-
-// readUpstreamErrorBody 对线上读取和解压后的错误正文应用同一上限。
-// 超限或读取失败立即关闭响应，不排空异常正文，也不把截断内容用于错误分类。
-func readUpstreamErrorBody(resp *http.Response) ([]byte, error) {
-	defer resp.Body.Close()
-	body, err := readBodyWithLimit(resp.Body, maxEnvelopeSniffBytes)
-	if err != nil {
-		return nil, err
-	}
-	body, _, err = utils.DecompressBodyWithLimit(utils.GetContentEncoding(resp.Header), body, maxEnvelopeSniffBytes)
-	if err != nil {
-		return nil, fmt.Errorf("解压上游错误响应体失败: %w", err)
-	}
-	return body, nil
-}
-
-// readImagesErrorEnvelopePrefix 只缓冲有限前缀。超过预算时立即恢复完整响应流，
-// 让 Images 适配器继续处理大块 base64，而不在共享错误信封检查阶段整包缓存。
-func readImagesErrorEnvelopePrefix(resp *http.Response) ([]byte, bool, error) {
-	prefix, err := io.ReadAll(io.LimitReader(resp.Body, maxImagesEnvelopeSniffBytes+1))
-	if int64(len(prefix)) > maxImagesEnvelopeSniffBytes {
-		resp.Body = &prefixReadCloser{Reader: io.MultiReader(bytes.NewReader(prefix), resp.Body), Closer: resp.Body}
-		return nil, false, nil
-	}
-	if err != nil {
-		resp.Body = &prefixReadCloser{Reader: io.MultiReader(bytes.NewReader(prefix), resp.Body), Closer: resp.Body}
-		return nil, false, fmt.Errorf("读取 Images 上游错误信封失败: %w", err)
-	}
-	return prefix, true, nil
-}
-
-// looksLikeJSONResponse 判断上游响应是否声称 JSON 载荷。错误信封只可能是
-// JSON；SSE / 图片 / 其他二进制响应直接跳过检测。
-func looksLikeJSONResponse(resp *http.Response) bool {
-	if resp == nil {
-		return false
-	}
-	contentType := resp.Header.Get("Content-Type")
-	if contentType == "" {
-		return true // 无 Content-Type 时保守检测（body 谓词本身会做 JSON 校验）
-	}
-	mediaType := contentType
-	if idx := strings.Index(contentType, ";"); idx >= 0 {
-		mediaType = contentType[:idx]
-	}
-	mediaType = strings.TrimSpace(strings.ToLower(mediaType))
-	return mediaType == "application/json" || strings.HasSuffix(mediaType, "+json")
-}
-
-func (a UpstreamAttempt) prepareAllKeys() (upstreamAttemptPreflight, bool, error) {
-	if a.Upstream == nil || len(a.Upstream.APIKeys) == 0 {
-		return upstreamAttemptPreflight{}, false, nil
-	}
-	if a.MetricsManager == nil {
-		return upstreamAttemptPreflight{}, false, nil
-	}
-	if a.NextAPIKey == nil || a.BuildRequest == nil || a.HandleSuccess == nil {
-		return upstreamAttemptPreflight{}, false, nil
-	}
-	if len(a.URLResults) == 0 {
-		return upstreamAttemptPreflight{}, false, nil
-	}
-
-	proxyURL, err := a.ConfigManager.ResolveUpstreamProxyURL(a.Upstream)
-	if err != nil {
-		return upstreamAttemptPreflight{}, false, err
-	}
-	return upstreamAttemptPreflight{proxyURL: proxyURL}, true, nil
-}
 
 func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 	c := a.Context
@@ -142,8 +35,6 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 	requestBody := a.RequestBody
 	isStream := a.IsStream
 	logCtx := a.LogContext
-
-	var usage *types.Usage
 
 	preflight, valid, err := a.prepareAllKeys()
 	if err != nil {
@@ -283,35 +174,17 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 			}
 			// 请求准备成功后再启动请求画像和活跃度观测。
 			lifecycle := a.startAttemptLifecycle(currentBaseURL, apiKey)
-			finishRetryContentSafety := func(preparationErr error) {
-				if types.IsUnsupportedProtocol(preparationErr) {
-					lifecycle.finalizeNeutral()
-					return
-				}
-				var clientErr interface{ ClientRequestError() bool }
-				if errors.As(preparationErr, &clientErr) && clientErr.ClientRequestError() {
-					lifecycle.finalizeNeutral()
-					c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": preparationErr.Error(), "type": "invalid_request_error"}})
-					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", http.StatusBadRequest, false, attemptStart, "invalid_request_error", preparationErr.Error(), false, isStream, nil)
-					return
-				}
-				if upstreamcontrol.IsLocalError(preparationErr) {
-					lifecycle.finalizeNeutral()
-					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", http.StatusServiceUnavailable, false, attemptStart, "local_admission", preparationErr.Error(), !errors.Is(preparationErr, upstreamcontrol.ErrBudget), isStream, nil)
-					return
-				}
-				if isClientSideError(preparationErr) {
-					lifecycle.finalizeClientCancelled()
-					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "cancelled", 0, false, attemptStart, "client_cancelled", preparationErr.Error(), false, isStream, nil)
-					return
-				}
-				status := handleContentSafetyPreparationError(c, apiType, preparationErr)
-				lifecycle.finalizeNeutral()
-				attemptStatus := "failed"
-				if status == http.StatusForbidden {
-					attemptStatus = "blocked"
-				}
-				recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, attemptStatus, status, false, attemptStart, "content_safety", preparationErr.Error(), false, isStream, nil)
+			candidateStep := candidateAttempt{
+				attempt:          a,
+				baseURL:          currentBaseURL,
+				apiKey:           apiKey,
+				originalURLIndex: originalIdx,
+				startedAt:        attemptStart,
+				requestLogID:     requestLogID,
+				upstream:         upstreamCopy,
+				lifecycle:        &lifecycle,
+				failover:         &failoverState,
+				retries:          retryState,
 			}
 
 			req = AttachRequestLogID(c, req)
@@ -349,7 +222,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 			}
 
 			// 收到响应头，性能画像记录首字节时间
-			if pm := channelScheduler.GetProfileManager(); pm != nil {
+			if pm := lifecycle.profiles; pm != nil {
 				pm.RecordFirstByte(lifecycle.observation.ProfileRequestID)
 			}
 
@@ -413,170 +286,13 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 					continue
 				}
 
-				// 兼容部分严格的 OpenAI 协议网关：首次明确拒绝 prompt_cache_key 时，
-				// 使用同一渠道、BaseURL 和 API key 移除该字段后重试一次，并记住能力。
-				if !upstreamCopy.DisablePromptCacheKey && IsPromptCacheKeyUnsupported(resp.StatusCode, respBodyBytes) {
-					log.Printf("[%s-ChannelCapability] 渠道 %s 不支持 prompt_cache_key，移除后使用同一 key 重试一次", apiType, upstream.Name)
-					capabilities.disablePromptCacheKey = true
-					upstreamCopy.DisablePromptCacheKey = true
-					if err := cfgManager.MarkPromptCacheKeyUnsupported(string(kind), upstream.ID); err != nil {
-						log.Printf("[%s-ChannelCapability] 持久化 prompt_cache_key 能力失败: %v", apiType, err)
+				var aborted *UpstreamAttemptResult
+				resp, respBodyBytes, retrySucceeded, aborted = candidateStep.retryCompatibility(resp, respBodyBytes, proxyURL, &capabilities)
+				if aborted != nil {
+					if skipLocalAdmissionCandidate(aborted.LastError, &failoverState, retryState, apiKey) {
+						continue
 					}
-
-					RestoreRequestBody(c, requestBody)
-					retryResult := a.retrySameCandidateRequest(upstreamCopy, apiKey, proxyURL)
-					var aborted *UpstreamAttemptResult
-					resp, respBodyBytes, retrySucceeded, aborted = applyCompatibilityRetryResult(retryResult, resp, respBodyBytes, retrySucceeded, apiType, compatRetryLogs{
-						component:     "ChannelCapability",
-						buildAction:   "重建无 prompt_cache_key 请求失败",
-						sendAction:    "无 prompt_cache_key 重试失败",
-						prepareAction: "准备无 prompt_cache_key 请求失败",
-					}, finishRetryContentSafety)
-					if aborted != nil {
-						if skipLocalAdmissionCandidate(aborted.LastError, &failoverState, retryState, apiKey) {
-							continue
-						}
-						return *aborted
-					}
-				}
-
-				// 部分 DeepSeek 兼容渠道会在 thinking 模式下要求每条 assistant
-				// 历史都带 reasoning_content。Cursor 等客户端可能已将该字段
-				// 隐藏；首次收到明确 400 后，记录严格能力并重建同渠道请求。
-				// 只有原文可恢复时才重试；缺失原文时返回请求错误。
-				if !retrySucceeded && (kind == scheduler.ChannelKindMessages || kind == scheduler.ChannelKindResponses) && upstreamCopy.ServiceType == "openai" && !upstreamCopy.RequireReasoningContent &&
-					IsReasoningContentRequired(resp.StatusCode, respBodyBytes) {
-					log.Printf("[%s-ChannelCapability] 渠道 %s 要求完整 reasoning_content，校验原文后准备同 key 重试", apiType, upstream.Name)
-					capabilities.requireReasoningContent = true
-					upstreamCopy.RequireReasoningContent = true
-					if err := cfgManager.MarkReasoningContentRequired(string(kind), upstream.ID); err != nil {
-						log.Printf("[%s-ChannelCapability] 持久化 reasoning_content 能力失败: %v", apiType, err)
-					}
-
-					RestoreRequestBody(c, requestBody)
-					retryResult := a.retrySameCandidateRequest(upstreamCopy, apiKey, proxyURL)
-					var aborted *UpstreamAttemptResult
-					resp, respBodyBytes, retrySucceeded, aborted = applyCompatibilityRetryResult(retryResult, resp, respBodyBytes, retrySucceeded, apiType, compatRetryLogs{
-						component:     "ChannelCapability",
-						buildAction:   "重建 reasoning_content 兼容请求失败",
-						sendAction:    "reasoning_content 兼容重试失败",
-						prepareAction: "准备 reasoning_content 兼容请求失败",
-					}, finishRetryContentSafety)
-					if aborted != nil {
-						if skipLocalAdmissionCandidate(aborted.LastError, &failoverState, retryState, apiKey) {
-							continue
-						}
-						return *aborted
-					}
-				}
-
-				// 某些 Responses 中转会扫描原始 JSON 字节，中文业务文本或历史中的审核错误码
-				// 可能被稳定误判。保持 JSON 解码值不变，改用 Unicode 转义后重试一次。
-				if !retrySucceeded && kind == scheduler.ChannelKindResponses && upstreamCopy.ServiceType == "responses" && utils.IsContentPolicyErrorBody(respBodyBytes) {
-					escapedBody, changed, escapeErr := buildContentPolicyCompatibilityBody(requestBody)
-					if escapeErr != nil {
-						log.Printf("[%s-ContentPolicy] 构建等价 JSON 转义请求失败: %v", apiType, escapeErr)
-					} else if changed {
-						log.Printf("[%s-ContentPolicy] 使用等价 JSON Unicode 转义在同一渠道重试一次", apiType)
-						RestoreRequestBody(c, escapedBody)
-						retryResult := a.retrySameCandidateRequest(upstreamCopy, apiKey, proxyURL)
-						var aborted *UpstreamAttemptResult
-						resp, respBodyBytes, retrySucceeded, aborted = applyCompatibilityRetryResult(retryResult, resp, respBodyBytes, retrySucceeded, apiType, compatRetryLogs{
-							component:     "ContentPolicy",
-							buildAction:   "重建转义请求失败",
-							sendAction:    "转义请求重试失败",
-							prepareAction: "准备转义请求失败",
-							successAction: "等价 JSON 转义重试成功",
-						}, finishRetryContentSafety)
-						if aborted != nil {
-							if skipLocalAdmissionCandidate(aborted.LastError, &failoverState, retryState, apiKey) {
-								continue
-							}
-							return *aborted
-						}
-						RestoreRequestBody(c, requestBody)
-					}
-				}
-
-				// Thinking Signature 整流自愈：当上游报错提示 signature 校验失败或块结构不合规时，
-				// 清理历史消息中的非法 signature 与 thinking 块，并在同一渠道就地重试一次。
-				if !retrySucceeded && rectifier.ShouldRectifyThinkingSignature(respBodyBytes) {
-					rectifiedBody, applied, stats := rectifier.RectifyThinkingSignature(requestBody)
-					if applied {
-						log.Printf("[%s-Rectifier] 触发 Thinking 签名整流重试 (移除了 %d 个 thinking 块, %d 个 redacted_thinking 块, %d 个 signature 字段, topLevelThinkingRemoved=%v)",
-							apiType, stats.RemovedThinkingBlocks, stats.RemovedRedactedThinkingBlocks, stats.RemovedSignatureFields, stats.RemovedTopLevelThinking)
-						RestoreRequestBody(c, rectifiedBody)
-						retryResult := a.retrySameCandidateRequest(upstreamCopy, apiKey, proxyURL)
-						var aborted *UpstreamAttemptResult
-						resp, respBodyBytes, retrySucceeded, aborted = applyCompatibilityRetryResult(retryResult, resp, respBodyBytes, retrySucceeded, apiType, compatRetryLogs{
-							component:     "Rectifier",
-							buildAction:   "重建签名整流请求失败",
-							sendAction:    "签名整流重试失败",
-							prepareAction: "准备签名整流请求失败",
-							successAction: "Thinking 签名整流重试成功",
-						}, finishRetryContentSafety)
-						if aborted != nil {
-							if skipLocalAdmissionCandidate(aborted.LastError, &failoverState, retryState, apiKey) {
-								continue
-							}
-							return *aborted
-						}
-						RestoreRequestBody(c, requestBody)
-					}
-				}
-
-				// Thinking Budget 参数整流自愈：当上游报错提示 budget_tokens 约束失败（如 < 1024 或 max_tokens <= budget_tokens）时，
-				// 自动整流 budget_tokens=32000, max_tokens=64000，并在同一渠道就地重试一次。
-				if !retrySucceeded && rectifier.ShouldRectifyThinkingBudget(respBodyBytes) {
-					rectifiedBody, applied, stats := rectifier.RectifyThinkingBudget(requestBody)
-					if applied {
-						log.Printf("[%s-Rectifier] 触发 Thinking Budget 整流重试 (budget: %d -> %d, max_tokens: %d -> %d)",
-							apiType, stats.PreviousBudgetTokens, stats.NewBudgetTokens, stats.PreviousMaxTokens, stats.NewMaxTokens)
-						RestoreRequestBody(c, rectifiedBody)
-						retryResult := a.retrySameCandidateRequest(upstreamCopy, apiKey, proxyURL)
-						var aborted *UpstreamAttemptResult
-						resp, respBodyBytes, retrySucceeded, aborted = applyCompatibilityRetryResult(retryResult, resp, respBodyBytes, retrySucceeded, apiType, compatRetryLogs{
-							component:     "Rectifier",
-							buildAction:   "重建 Budget 整流请求失败",
-							sendAction:    "Budget 整流重试失败",
-							prepareAction: "准备 Budget 整流请求失败",
-							successAction: "Thinking Budget 整流重试成功",
-						}, finishRetryContentSafety)
-						if aborted != nil {
-							if skipLocalAdmissionCandidate(aborted.LastError, &failoverState, retryState, apiKey) {
-								continue
-							}
-							return *aborted
-						}
-						RestoreRequestBody(c, requestBody)
-					}
-				}
-
-				// 模态拒绝与纯文本降级自愈（参照 cc-switch media_sanitizer）：
-				// 当上游返回 400/415/422/501 且明确表示不支持图片/多模态输入时，
-				// 将请求体内的图片块替换为 "[Unsupported Image]" 纯文本占位符，并在同一渠道就地重试一次。
-				if !retrySucceeded && mediasanitizer.IsUnsupportedImageError(resp.StatusCode, respBodyBytes) {
-					sanitizedBody, modified, count := mediasanitizer.SanitizeImagesWithMarker(requestBody)
-					if modified {
-						log.Printf("[%s-MediaSanitizer] 捕获模型模态拒绝错误，已将 %d 处图片降级为纯文本占位符并在同一渠道重试", apiType, count)
-						RestoreRequestBody(c, sanitizedBody)
-						retryResult := a.retrySameCandidateRequest(upstreamCopy, apiKey, proxyURL)
-						var aborted *UpstreamAttemptResult
-						resp, respBodyBytes, retrySucceeded, aborted = applyCompatibilityRetryResult(retryResult, resp, respBodyBytes, retrySucceeded, apiType, compatRetryLogs{
-							component:     "MediaSanitizer",
-							buildAction:   "重建图片降级请求失败",
-							sendAction:    "图片降级重试失败",
-							prepareAction: "准备图片降级请求失败",
-							successAction: "图片降级重试成功",
-						}, finishRetryContentSafety)
-						if aborted != nil {
-							if skipLocalAdmissionCandidate(aborted.LastError, &failoverState, retryState, apiKey) {
-								continue
-							}
-							return *aborted
-						}
-						RestoreRequestBody(c, requestBody)
-					}
+					return *aborted
 				}
 
 				if !retrySucceeded {
@@ -697,122 +413,11 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 				}
 			}
 
-			usage, err = a.HandleSuccess(c, resp, upstreamCopy, apiKey)
-			// 回调结束即交还响应所有权；失败重试前也必须释放共享名额。
-			_ = resp.Body.Close()
-			// HandleSuccess 成功返回代表协议响应已交付。客户端随后结束 SSE 或
-			// 关闭连接，不应覆盖本轮成功；交付前的取消仍由响应处理器返回错误。
-			if cancelErr := c.Request.Context().Err(); err != nil && cancelErr != nil {
-				lifecycle.finalizeClientCancelled()
-				recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "cancelled", resp.StatusCode, false, attemptStart, "client_cancelled", cancelErr.Error(), false, isStream, usage)
-				return newUpstreamAttemptResult(true, "", 0, nil, usage, cancelErr).withHealth(channelHealthNeutral)
+			result, retry := candidateStep.deliverResponse(resp)
+			if retry {
+				continue
 			}
-			if err != nil {
-				failoverState.lastError = err
-				decision := classifyResponseProcessingError(err, c.Writer.Written())
-				// 本渠道最终健康结果：除"响应已提交后的真实上游中断"按失败
-				// 记账外，取消/内容安全/本地检查错误均为中性（R2-a 表）。
-				health := channelHealthNeutral
-				switch decision.action {
-				case responseProcessingLocalFailure:
-					lifecycle.finalizeNeutral()
-					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", http.StatusInternalServerError, false, attemptStart, "local_response", err.Error(), false, isStream, usage)
-					if !c.Writer.Written() {
-						c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"message": err.Error(), "type": "local_response_error"}})
-					}
-				case responseProcessingClientCancelled:
-					// 客户端取消/断开：计入总请求数但不计入失败
-					lifecycle.finalizeClientCancelled()
-					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "cancelled", resp.StatusCode, false, attemptStart, "client_cancelled", err.Error(), false, isStream, usage)
-					log.Printf("[%s-Cancel] 请求已取消，停止渠道 failover", apiType)
-
-				case responseProcessingContentSafety:
-					lifecycle.finalizeNeutral()
-					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "blocked", http.StatusForbidden, false, attemptStart, "content_safety", decision.safetyErr.Error(), false, isStream, usage)
-					if c.Writer.Written() {
-						if writeErr := hooks.WriteAttachedStreamError(c, decision.safetyErr); writeErr != nil {
-							log.Printf("[%s-ContentSafety] 流错误写出失败: %v", apiType, writeErr)
-						}
-					} else {
-						if writeErr := hooks.WriteAttachedContentSafetyError(c, decision.safetyErr); writeErr != nil {
-							log.Printf("[%s-ContentSafety] 协议错误写出失败: %v", apiType, writeErr)
-							c.JSON(http.StatusInternalServerError, gin.H{"error": writeErr.Error(), "code": "CONTENT_SAFETY_RESPONSE_ERROR"})
-						}
-					}
-
-				case responseProcessingContentSafetyHook:
-					lifecycle.finalizeNeutral()
-					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", http.StatusInternalServerError, false, attemptStart, "content_safety_hook", decision.hookErr.Error(), false, isStream, usage)
-					log.Printf("[%s-ContentSafety] 本地响应检查失败: %v", apiType, decision.hookErr)
-					if c.Writer.Written() {
-						if writeErr := hooks.WriteAttachedStreamHookError(c, decision.hookErr); writeErr != nil {
-							log.Printf("[%s-ContentSafety] 流内部错误写出失败: %v", apiType, writeErr)
-						}
-					} else {
-						c.JSON(http.StatusInternalServerError, gin.H{
-							"error": "内容安全检查失败",
-							"code":  "CONTENT_SAFETY_HOOK_ERROR",
-						})
-					}
-
-				case responseProcessingRetryCandidate:
-					lifecycle.finalizeNeutral()
-					// 容量类错误（上游未产出内容）：中性结束候选。
-					failoverState.markNeutralTermination()
-
-					candidate := currentBaseURL + "\x00" + apiKey
-					canRetry := retryState.CanRetryCandidate(candidate, c.Request.Context())
-					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", resp.StatusCode, false, attemptStart, "model_capacity", err.Error(), canRetry, isStream, usage)
-					if canRetry {
-						retryCount := retryState.RecordCandidateRetry(candidate)
-						log.Printf("[%s-Capacity] 上游未产出内容，使用同一 BaseURL 和 Key 重试 (%d/%d)", apiType, retryCount, proxy.DefaultMaxSameCandidateRetries)
-						continue
-					}
-
-					// 仅在本次请求内排除该 Key，继续其他候选；不写入 Key 熔断和失败率。
-					retryState.MarkKeyFailed(apiKey)
-					failoverState.lastFailoverError = &FailoverError{Status: http.StatusServiceUnavailable, Body: []byte(err.Error())}
-					continue
-
-				case responseProcessingChannelFailure:
-					// 真实渠道故障：计入失败指标
-					failureStatus := resp.StatusCode
-					if failureStatus >= http.StatusOK && failureStatus < http.StatusMultipleChoices {
-						failureStatus = http.StatusBadGateway
-					}
-					cfgManager.MarkKeyAsFailed(apiKey, apiType)
-					lifecycle.finalizeFailed()
-					shouldRetryResponseProcessing := !c.Writer.Written()
-					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", failureStatus, false, attemptStart, "response_processing", err.Error(), shouldRetryResponseProcessing, isStream, usage)
-					log.Printf("[%s-Key] 警告: 响应处理失败: %s", apiType, utils.RedactSensitivePlaceholdersForLog(err.Error()))
-					if shouldRetryResponseProcessing {
-						retryState.MarkKeyFailed(apiKey)
-						if a.MarkURLFailure != nil {
-							a.MarkURLFailure(currentBaseURL)
-						}
-						failoverState.lastFailoverError = &FailoverError{
-							Status: failureStatus,
-							Body:   []byte(err.Error()),
-						}
-						continue
-					}
-					// 响应已提交后的真实上游中断：渠道按失败记账，但不再故障转移。
-					health = channelHealthFailure
-				}
-				return newUpstreamAttemptResult(true, "", 0, nil, usage, err).withHealth(health)
-			}
-
-			if a.MarkURLSuccess != nil {
-				a.MarkURLSuccess(currentBaseURL)
-			}
-
-			lifecycle.finalizeSuccessful(usage)
-			recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "completed", resp.StatusCode, true, attemptStart, "", "", false, isStream, usage)
-			// 记录会话 BaseURL 粘滞，后续请求优先同 URL 以利 prompt cache
-			if channelScheduler != nil && logCtx.ConversationID != "" {
-				channelScheduler.SetPreferredBaseURL(logCtx.ConversationID, currentBaseURL)
-			}
-			return newUpstreamAttemptResult(true, apiKey, originalIdx, nil, usage, nil).withHealth(channelHealthSuccess)
+			return result
 		}
 
 		// 当前 BaseURL 的所有 Key 都失败，记录并尝试下一个 BaseURL
@@ -830,236 +435,4 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 		return newUpstreamAttemptResult(false, "", 0, failoverState.lastFailoverError, nil, failoverState.lastError).withHealth(channelHealthNeutral)
 	}
 	return newUpstreamAttemptResult(false, "", 0, failoverState.lastFailoverError, nil, failoverState.lastError).withHealth(channelHealthFailure)
-}
-
-func (a UpstreamAttempt) buildPreparedAttemptRequest(
-	upstreamCopy *config.UpstreamConfig,
-	apiKey string,
-) (*http.Request, string, error) {
-	if err := a.Context.Request.Context().Err(); err != nil {
-		return nil, "client_cancelled", err
-	}
-	// 身份在构建前分配，正文、响应和结果使用同一个尝试 ID。
-	a.Context.Request = a.Context.Request.WithContext(logger.ContextWithAttemptID(a.Context.Request.Context(), nextAttemptLogID("attempt")))
-	req, err := a.BuildRequest(a.Context, upstreamCopy, apiKey)
-	if err != nil {
-		if req != nil && req.Body != nil {
-			_ = req.Body.Close()
-		}
-		return nil, "build_request", err
-	}
-	// 最终上游请求必须继承入站取消和共享预算，避免构建器意外使用 Background。
-	req = req.WithContext(a.Context.Request.Context())
-	if a.SkipVisionLayer {
-		if err := hooks.ResetAttachedStreamRestoration(a.Context); err != nil {
-			return req, "content_safety", err
-		}
-		if err := hooks.RunAttachedPreRequestHooks(req.Context(), a.Context, req, upstreamCopy.Name,
-			hooks.PayloadProtocolForServiceType(upstreamCopy.ServiceType, a.APIType)); err != nil {
-			return req, "content_safety", err
-		}
-		return req, "", nil
-	}
-	prepareStage, err := prepareRequestForUpstream(
-		a.Context,
-		a.EnvConfig,
-		a.ConfigManager,
-		a.ChannelScheduler,
-		a.Kind,
-		upstreamCopy,
-		a.LogContext.Model,
-		a.LogContext.ConversationID,
-		req,
-		a.APIType,
-	)
-	if err != nil {
-		return req, prepareStage, err
-	}
-	return req, "", nil
-}
-
-func (a UpstreamAttempt) prepareCandidateUpstream(
-	baseURL string,
-	capabilities upstreamCapabilityState,
-) *config.UpstreamConfig {
-	upstreamCopy := a.Upstream.Clone()
-	upstreamCopy.BaseURL = baseURL
-	// 在构建正文前固定本候选的身份模式，避免全局热更新使正文与发送头不一致。
-	if a.ConfigManager.ClientCompatibilityEnabled(a.Upstream) {
-		upstreamCopy.ClientIdentityMode = "compatibility"
-	} else {
-		upstreamCopy.ClientIdentityMode = "api"
-	}
-	upstreamCopy.DisablePromptCacheKey = capabilities.disablePromptCacheKey
-	upstreamCopy.RequireReasoningContent = capabilities.requireReasoningContent
-	recordConversationAttempt(a.ChannelScheduler, a.Kind, a.Upstream, a.LogContext, a.IsStream)
-	return upstreamCopy
-}
-
-func (a UpstreamAttempt) retrySameCandidateRequest(
-	upstreamCopy *config.UpstreamConfig,
-	apiKey string,
-	proxyURL string,
-) compatibilityRetryResult {
-	req, preparationStage, err := a.buildPreparedAttemptRequest(upstreamCopy, apiKey)
-	if err != nil {
-		if preparationStage != "build_request" && req != nil && req.Body != nil {
-			_ = req.Body.Close()
-		}
-		return compatibilityRetryResult{
-			PreparationStage: preparationStage,
-			Err:              err,
-		}
-	}
-
-	req = AttachRequestLogID(a.Context, req)
-	req = req.WithContext(a.ConfigManager.UpstreamRequestContext(req.Context(), upstreamCopy, apiKey))
-	resp, err := SendRequest(req, upstreamCopy, a.EnvConfig, a.IsStream, a.APIType, proxyURL, a.Permit, a.RequestTimeout)
-	if err != nil {
-		return compatibilityRetryResult{PreparationStage: "send_request", Err: err}
-	}
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return compatibilityRetryResult{Response: resp, Succeeded: true}
-	}
-
-	body, readErr := readUpstreamErrorBody(resp)
-	if readErr != nil {
-		// 读取中断：响应不完整，按网络故障处理，不返回截断 body。
-		return compatibilityRetryResult{PreparationStage: "read_body", Err: fmt.Errorf("读取重试响应体失败: %w", readErr)}
-	}
-	return compatibilityRetryResult{Response: resp, Body: body}
-}
-
-// compatRetryLogs 描述同候选兼容性重试各失败阶段的日志文案，
-// 保证收敛后日志逐字与原实现一致。
-type compatRetryLogs struct {
-	component     string // 日志组件名，如 "ChannelCapability"
-	buildAction   string // build_request 阶段失败文案
-	sendAction    string // send_request 阶段失败文案
-	prepareAction string // 其余准备阶段失败文案
-	successAction string // 重试成功文案；为空则不打成功日志
-}
-
-// applyCompatibilityRetryResult 归一化三种同候选兼容性重试
-// （prompt_cache_key / reasoning_content / 内容审核转义）的结果处理：
-//   - content_safety 阶段失败：写协议错误响应并要求主循环终止本次尝试；
-//   - 其余阶段失败：仅记日志，沿用原响应继续走失败分类；
-//   - 重试成功：回传新响应并标记 retrySucceeded。
-//
-// abort 非 nil 时终止当前尝试；局部准入错误仍可尝试同渠道其他组合。
-func applyCompatibilityRetryResult(
-	retryResult compatibilityRetryResult,
-	resp *http.Response,
-	respBodyBytes []byte,
-	retrySucceeded bool,
-	apiType string,
-	logs compatRetryLogs,
-	finishRetryContentSafety func(error),
-) (*http.Response, []byte, bool, *UpstreamAttemptResult) {
-	if retryResult.Err != nil {
-		if types.IsUnsupportedProtocol(retryResult.Err) {
-			finishRetryContentSafety(retryResult.Err)
-			body, _ := json.Marshal(gin.H{"error": gin.H{"message": retryResult.Err.Error(), "type": "unsupported_protocol"}})
-			abort := newUpstreamAttemptResult(false, "", 0, &FailoverError{Status: http.StatusBadRequest, Body: body}, nil, retryResult.Err).withHealth(channelHealthNeutral)
-			return resp, respBodyBytes, retrySucceeded, &abort
-		}
-		var clientErr interface{ ClientRequestError() bool }
-		if errors.As(retryResult.Err, &clientErr) && clientErr.ClientRequestError() {
-			finishRetryContentSafety(retryResult.Err)
-			abort := newUpstreamAttemptResult(true, "", 0, nil, nil, retryResult.Err).withHealth(channelHealthNeutral)
-			return resp, respBodyBytes, retrySucceeded, &abort
-		}
-		if upstreamcontrol.IsLocalError(retryResult.Err) {
-			finishRetryContentSafety(retryResult.Err)
-			abort := newUpstreamAttemptResult(false, "", 0, nil, nil, retryResult.Err).withHealth(channelHealthNeutral)
-			if errors.Is(retryResult.Err, upstreamcontrol.ErrBudget) {
-				abort = abort.withAbortFailover()
-			}
-			return resp, respBodyBytes, retrySucceeded, &abort
-		}
-		if isClientSideError(retryResult.Err) {
-			finishRetryContentSafety(retryResult.Err)
-			abort := newUpstreamAttemptResult(true, "", 0, nil, nil, retryResult.Err).withHealth(channelHealthNeutral)
-			return resp, respBodyBytes, retrySucceeded, &abort
-		}
-		if retryResult.PreparationStage == "content_safety" {
-			finishRetryContentSafety(retryResult.Err)
-			abort := newUpstreamAttemptResult(true, "", 0, nil, nil, retryResult.Err)
-			return resp, respBodyBytes, retrySucceeded, &abort
-		}
-		switch retryResult.PreparationStage {
-		case "build_request":
-			log.Printf("[%s-%s] %s: %v", apiType, logs.component, logs.buildAction, retryResult.Err)
-		case "send_request":
-			log.Printf("[%s-%s] %s: %v", apiType, logs.component, logs.sendAction, retryResult.Err)
-		default:
-			log.Printf("[%s-%s] %s: %v", apiType, logs.component, logs.prepareAction, retryResult.Err)
-		}
-		return resp, respBodyBytes, retrySucceeded, nil
-	}
-
-	resp = retryResult.Response
-	if retryResult.Succeeded {
-		retrySucceeded = true
-		if logs.successAction != "" {
-			log.Printf("[%s-%s] %s", apiType, logs.component, logs.successAction)
-		}
-	} else {
-		respBodyBytes = retryResult.Body
-	}
-	return resp, respBodyBytes, retrySucceeded, nil
-}
-
-func prepareRequestForUpstream(
-	c *gin.Context,
-	envCfg *config.EnvConfig,
-	cfgManager *config.ConfigManager,
-	channelScheduler *scheduler.ChannelScheduler,
-	kind scheduler.ChannelKind,
-	upstream *config.UpstreamConfig,
-	model string,
-	conversationID string,
-	req *http.Request,
-	apiType string,
-) (string, error) {
-	if err := hooks.ResetAttachedStreamRestoration(c); err != nil {
-		return "content_safety", err
-	}
-	payloadProtocol := hooks.PayloadProtocolForServiceType(upstream.ServiceType, apiType)
-	if err := hooks.RunAttachedPreRequestHooks(c.Request.Context(), c, req, upstream.Name, payloadProtocol); err != nil {
-		return "content_safety", err
-	}
-	if err := visionlayer.PrepareRequest(
-		c,
-		envCfg,
-		cfgManager,
-		channelScheduler,
-		kind,
-		upstream,
-		model,
-		conversationID,
-		req,
-	); err != nil {
-		return "vision_layer", err
-	}
-	if err := hooks.RunAttachedPreRequestHooks(c.Request.Context(), c, req, upstream.Name, payloadProtocol); err != nil {
-		return "content_safety", err
-	}
-	return "", nil
-}
-
-func handleContentSafetyPreparationError(c *gin.Context, apiType string, err error) int {
-	if safetyErr := hooks.ContentSafetyErrorFrom(err); safetyErr != nil {
-		if writeErr := hooks.WriteAttachedContentSafetyError(c, safetyErr); writeErr != nil {
-			log.Printf("[%s-ContentSafety] 协议错误写出失败: %v", apiType, writeErr)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": writeErr.Error(), "code": "CONTENT_SAFETY_RESPONSE_ERROR"})
-			return http.StatusInternalServerError
-		}
-		return http.StatusForbidden
-	}
-	c.JSON(http.StatusInternalServerError, gin.H{
-		"error": err.Error(),
-		"code":  "CONTENT_SAFETY_HOOK_ERROR",
-	})
-	return http.StatusInternalServerError
 }

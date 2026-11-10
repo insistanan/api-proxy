@@ -154,14 +154,18 @@ func TestCompactMappedTargetUsesActualURLAndOwner(t *testing.T) {
 	require.NoError(t, cfgManager.SetFuzzyModeEnabled(true))
 	require.NoError(t, cfgManager.AddResponsesUpstream(config.UpstreamConfig{
 		ID: "source", Name: "源渠道", BaseURL: "https://unused.example", APIKeys: []string{"source-key"}, ServiceType: "claude",
-		ModelMapping: map[string][]string{"alias": {"mapped-model"}},
-		ModelMappingChannels: map[string]map[string]string{"alias": {"mapped-model": "target"}},
 	}))
 	require.NoError(t, cfgManager.AddResponsesUpstream(config.UpstreamConfig{
 		ID: "target", Name: "目标渠道", BaseURLs: []string{server.URL + "/bad", server.URL + "/api#"},
 		APIKeys: []string{"target-key"}, ServiceType: "responses", DefaultModel: "不能覆盖显式目标",
 		ModelMapping: map[string][]string{"*": {"不能再次映射"}},
 	}))
+	// 保留源渠道索引，目标渠道存在后再配置跨渠道映射。
+	_, err = cfgManager.UpdateResponsesUpstream(0, config.UpstreamUpdate{
+		ModelMapping:         map[string][]string{"alias": {"mapped-model"}},
+		ModelMappingChannels: map[string]map[string]string{"alias": {"mapped-model": "target"}},
+	})
+	require.NoError(t, err)
 	mm := metrics.NewMetricsManager()
 	t.Cleanup(mm.Stop)
 	sch := scheduler.NewChannelScheduler(cfgManager, nil, mm, nil, nil, nil, nil, nil)

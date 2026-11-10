@@ -426,7 +426,7 @@ func TestCallClaudeUpstream(t *testing.T) {
 	t.Cleanup(upstream.Close)
 
 	cfgManager, sch := newGateTestEnv(t)
-	sch.SetRequestLogStore(metrics.NewRequestLogStore(logStore))
+	requestLogStore := metrics.NewRequestLogStore(logStore)
 	if err := cfgManager.AddUpstream(config.UpstreamConfig{
 		ID:           "messages-1",
 		Name:         "claude-primary",
@@ -440,7 +440,7 @@ func TestCallClaudeUpstream(t *testing.T) {
 	envCfg := config.NewEnvConfig()
 	envCfg.EnableRequestLogs = true
 	envCfg.EnableResponseLogs = true
-	caller := &Caller{EnvConfig: envCfg, CfgManager: cfgManager, ChannelScheduler: sch}
+	caller := &Caller{EnvConfig: envCfg, CfgManager: cfgManager, ChannelScheduler: sch, RequestLogStore: requestLogStore}
 	result, err := caller.Call(context.Background(), "", Prompt{
 		System:   "你是安全审查员",
 		Messages: []PromptMessage{{Role: "user", Content: "命令: rm -rf /tmp/test"}},

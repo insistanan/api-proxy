@@ -7,21 +7,21 @@ Vue 3 管理前端：api-proxy 的 Web 管理界面，构建产物经 `go:embed`
 - Vue 3（^3.5）+ TypeScript 5.9（strict）+ Vite 7 + vue-tsc
 - UI：Vuetify 3（全量组件注册，`@mdi/js` 按需 SVG 图标），SCSS
 - 状态：Pinia 3 + pinia-plugin-persistedstate（localStorage 持久化）；路由 vue-router 4（History 模式，全部懒加载）
-- HTTP：**无 axios**，全部原生 fetch 封装（`src/services/api.ts` 的 `ApiService.request`）
+- HTTP：**无 axios**，全部原生 fetch 封装（`src/services/http.ts` 的 `apiRequest<T>`；`api.ts` 保留兼容门面）
 - 图表 apexcharts + vue3-apexcharts；拖拽 vuedraggable；测试 Vitest
 - 依赖安装：bun.lock 与 package-lock.json 两份锁文件并存（本机用 bun，CI 用 bun install，改动依赖后注意两份锁文件的取舍）
 
-## 目录结构（src/，约 87 个文件）
+## 目录结构（src/）
 
 | 目录 | 职责 |
 |---|---|
 | `views/` | 13 个路由级页面（ChannelsView / SettingsView / EvalView / LogsView 等） |
-| `components/` | 26 个可复用组件（最大 ChannelOrchestration.vue、AddChannelModal.vue） |
-| `composables/` | 12 个组合式函数——**状态本体在 store（唯一来源），composable 只做编排**（"R5/方案 8.1" 收敛原则） |
+| `components/` | 可复用组件；`channel/` 放渠道表单与弹窗，`settings/` 放设置分区 |
+| `composables/` | 组合式编排函数；**共享领域状态以 store 为唯一来源**（"R5/方案 8.1" 收敛原则），页面编辑器持有局部草稿与临时查询状态，不复制 store |
 | `stores/` | 6 个 Pinia store：auth / channel / preferences / dialog / system / assistant |
-| `services/` | `api.ts`（唯一 API 封装层）+ `version.ts`（Release 版本检查，30 分钟缓存） |
+| `services/` | `http.ts` 统一鉴权与解析，领域模块声明业务端点，`api.ts` 组合并保留原导入入口；`version.ts` 检查 Release 版本 |
 | `types/` | 按领域拆分类型（channel / client-config / conversation / logs / metrics / model / security / settings / skill / assistant），`types/index.ts` 统一再导出 |
-| `utils/` | sse.ts（SSE 流读取）/ quickInputParser（唯一有单测的模块）/ ccsDeepLink / platform / uuid 等 |
+| `utils/` | sse.ts（SSE 流读取）/ quickInputParser/ ccsDeepLink / platform / uuid 等 |
 | `plugins/vuetify.ts` | 全量组件注册 + 自定义 SVG iconSet + 双主题（"砚与铜"配色）+ 全局组件默认值 |
 | `router/` | History 模式，`/` 重定向 `/channels/messages`，动态路由 `/channels/:type` |
 
@@ -29,7 +29,7 @@ Vue 3 管理前端：api-proxy 的 Web 管理界面，构建产物经 `go:embed`
 
 - **认证是全局对话框模式，不是路由守卫**：路由 meta 虽带 `requiresAuth: true` 但没有 `beforeEach` 守卫；未认证时 App.vue 弹密钥输入 dialog 挡住整个应用，流程在 `composables/useAuthFlow.ts`（5 次失败锁 5 分钟；仅 401 视为密钥无效，网络错误保留密钥）。
 - **五种协议类型贯穿全栈**（`ApiTab`：messages/responses/gemini/chat/images）：channel store 收敛为 `Record<ApiTab, ...>`、`channelApi(type)` 工厂按类型查表返回统一方法集（一份实现覆盖五种渠道）。**新增协议类型要同时改多处**：store 的 Record、channelApi 工厂、路由参数校验、后端对应端点。
-- **API 层约定**：单例 `ApiService`，自动注入 `x-api-key` 头；401 统一 clearAuth 并抛 `ApiError`（携带 status/details/code/committed——`committed` 表示"配置已原子提交但收尾失败"，此时不自动重试，提示用户刷新，见 useChannelActions.ts）。
+- **API 层约定**：领域服务共用 `apiRequest<T>`，`api` 门面组合所有方法，自动注入 `x-api-key` 头；401 统一 clearAuth 并抛 `ApiError`（携带 status/details/code/committed——`committed` 表示"配置已原子提交但收尾失败"，此时不自动重试，提示用户刷新，见 useChannelActions.ts）。
 - **SSE 需要鉴权**，所以用 fetch + `utils/sse.ts` 的 readSSEStream 而非 EventSource。
 - **dev 代理**（vite.config.ts）：`/api`、`/v1`、`/v1beta`、`/health` 转发到 `VITE_PROXY_TARGET`（默认 http://localhost:3000）；生产环境 baseURL 固定 `/api`（同域，Go 嵌入部署）。
 - 构建分包：manualChunks 拆 charts-vendor / vuetify-vendor / mdi-icons / vue-vendor；路径别名 `@` → src。

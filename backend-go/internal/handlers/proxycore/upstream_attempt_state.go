@@ -7,7 +7,9 @@ import (
 	"net/http"
 
 	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/metrics"
 	"github.com/insistanan/api-proxy/internal/proxy"
+	"github.com/insistanan/api-proxy/internal/scheduler"
 	"github.com/insistanan/api-proxy/internal/types"
 )
 
@@ -33,13 +35,30 @@ type attemptObservation struct {
 	RequestID        uint64
 }
 
+// requestActivityRecorder 是生命周期收尾所需的最小调度能力，不暴露日志和会话存储。
+type requestActivityRecorder interface {
+	RecordRequestEnd(baseURL, apiKey string, channelIndex int, kind scheduler.ChannelKind)
+}
+
+// profileRecorder 是单次尝试所需的画像能力；收尾不再经调度器取回整个画像管理器。
+type profileRecorder interface {
+	RecordFirstByte(requestID uint64)
+	EndRequest(baseURL string, apiKeys []string, model string, channelIndex int, requestID uint64, success bool, outputTokens int64)
+	EndRequestNeutral(baseURL string, apiKeys []string, model string, channelIndex int, requestID uint64)
+}
+
 // attemptLifecycle 绑定单次候选尝试的观测身份和终结责任。
 // 该对象只存在于当前请求的单次尝试范围内，不跨请求保存。
 type attemptLifecycle struct {
-	attempt     UpstreamAttempt
-	baseURL     string
-	apiKey      string
-	observation attemptObservation
+	activity     requestActivityRecorder
+	profiles     profileRecorder
+	metrics      *metrics.MetricsManager
+	kind         scheduler.ChannelKind
+	channelIndex int
+	apiKeys      []string
+	baseURL      string
+	apiKey       string
+	observation  attemptObservation
 }
 
 type upstreamCapabilityState struct {
@@ -97,46 +116,56 @@ func (a UpstreamAttempt) startAttemptObservation(baseURL, apiKey string) attempt
 }
 
 func (a UpstreamAttempt) startAttemptLifecycle(baseURL, apiKey string) attemptLifecycle {
+	// 可选画像先转换为接口，避免 nil 指针进入接口后被误判为已启用。
+	var profiles profileRecorder
+	if manager := a.ChannelScheduler.GetProfileManager(); manager != nil {
+		profiles = manager
+	}
 	return attemptLifecycle{
-		attempt:     a,
-		baseURL:     baseURL,
-		apiKey:      apiKey,
-		observation: a.startAttemptObservation(baseURL, apiKey),
+		activity:     a.ChannelScheduler,
+		profiles:     profiles,
+		metrics:      a.MetricsManager,
+		kind:         a.Kind,
+		channelIndex: a.LogContext.ChannelIndex,
+		apiKeys:      a.Upstream.APIKeys,
+		baseURL:      baseURL,
+		apiKey:       apiKey,
+		observation:  a.startAttemptObservation(baseURL, apiKey),
 	}
 }
 
 func (l attemptLifecycle) finalizeNeutral() {
-	l.attempt.MetricsManager.RecordRequestFinalizeNeutral(l.baseURL, l.apiKey, l.attempt.LogContext.ChannelIndex, l.observation.RequestID)
-	l.attempt.ChannelScheduler.RecordRequestEnd(l.baseURL, l.apiKey, l.attempt.LogContext.ChannelIndex, l.attempt.Kind)
-	if pm := l.attempt.ChannelScheduler.GetProfileManager(); pm != nil {
-		pm.EndRequestNeutral(l.baseURL, l.attempt.Upstream.APIKeys, l.observation.ResolvedModel, l.attempt.LogContext.ChannelIndex, l.observation.ProfileRequestID)
+	l.metrics.RecordRequestFinalizeNeutral(l.baseURL, l.apiKey, l.channelIndex, l.observation.RequestID)
+	l.activity.RecordRequestEnd(l.baseURL, l.apiKey, l.channelIndex, l.kind)
+	if pm := l.profiles; pm != nil {
+		pm.EndRequestNeutral(l.baseURL, l.apiKeys, l.observation.ResolvedModel, l.channelIndex, l.observation.ProfileRequestID)
 	}
 }
 
 func (l attemptLifecycle) finalizeClientCancelled() {
-	l.attempt.MetricsManager.RecordRequestFinalizeClientCancel(l.baseURL, l.apiKey, l.attempt.LogContext.ChannelIndex, l.observation.RequestID)
-	l.attempt.ChannelScheduler.RecordRequestEnd(l.baseURL, l.apiKey, l.attempt.LogContext.ChannelIndex, l.attempt.Kind)
-	if pm := l.attempt.ChannelScheduler.GetProfileManager(); pm != nil {
-		pm.EndRequestNeutral(l.baseURL, l.attempt.Upstream.APIKeys, l.observation.ResolvedModel, l.attempt.LogContext.ChannelIndex, l.observation.ProfileRequestID)
+	l.metrics.RecordRequestFinalizeClientCancel(l.baseURL, l.apiKey, l.channelIndex, l.observation.RequestID)
+	l.activity.RecordRequestEnd(l.baseURL, l.apiKey, l.channelIndex, l.kind)
+	if pm := l.profiles; pm != nil {
+		pm.EndRequestNeutral(l.baseURL, l.apiKeys, l.observation.ResolvedModel, l.channelIndex, l.observation.ProfileRequestID)
 	}
 }
 
 func (l attemptLifecycle) finalizeFailed() {
-	l.attempt.MetricsManager.RecordRequestFinalizeFailure(l.baseURL, l.apiKey, l.attempt.LogContext.ChannelIndex, l.observation.RequestID)
-	l.attempt.ChannelScheduler.RecordRequestEnd(l.baseURL, l.apiKey, l.attempt.LogContext.ChannelIndex, l.attempt.Kind)
-	if pm := l.attempt.ChannelScheduler.GetProfileManager(); pm != nil {
-		pm.EndRequest(l.baseURL, l.attempt.Upstream.APIKeys, l.observation.ResolvedModel, l.attempt.LogContext.ChannelIndex, l.observation.ProfileRequestID, false, 0)
+	l.metrics.RecordRequestFinalizeFailure(l.baseURL, l.apiKey, l.channelIndex, l.observation.RequestID)
+	l.activity.RecordRequestEnd(l.baseURL, l.apiKey, l.channelIndex, l.kind)
+	if pm := l.profiles; pm != nil {
+		pm.EndRequest(l.baseURL, l.apiKeys, l.observation.ResolvedModel, l.channelIndex, l.observation.ProfileRequestID, false, 0)
 	}
 }
 
 func (l attemptLifecycle) finalizeSuccessful(usage *types.Usage) {
-	l.attempt.MetricsManager.RecordRequestFinalizeSuccess(l.baseURL, l.apiKey, l.attempt.LogContext.ChannelIndex, l.observation.RequestID, usage)
-	l.attempt.ChannelScheduler.RecordRequestEnd(l.baseURL, l.apiKey, l.attempt.LogContext.ChannelIndex, l.attempt.Kind)
-	if pm := l.attempt.ChannelScheduler.GetProfileManager(); pm != nil {
+	l.metrics.RecordRequestFinalizeSuccess(l.baseURL, l.apiKey, l.channelIndex, l.observation.RequestID, usage)
+	l.activity.RecordRequestEnd(l.baseURL, l.apiKey, l.channelIndex, l.kind)
+	if pm := l.profiles; pm != nil {
 		var outputTokens int64
 		if usage != nil {
 			outputTokens = int64(usage.OutputTokens)
 		}
-		pm.EndRequest(l.baseURL, l.attempt.Upstream.APIKeys, l.observation.ResolvedModel, l.attempt.LogContext.ChannelIndex, l.observation.ProfileRequestID, true, outputTokens)
+		pm.EndRequest(l.baseURL, l.apiKeys, l.observation.ResolvedModel, l.channelIndex, l.observation.ProfileRequestID, true, outputTokens)
 	}
 }

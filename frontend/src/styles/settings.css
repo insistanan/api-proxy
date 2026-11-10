@@ -1,0 +1,241 @@
+/* 设置页与各设置分区共享的外观规则，由 SFC 保持 scoped 作用域。 */
+.settings-page {
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  min-height: 84px;
+  padding: 8px 4px 20px;
+}
+
+.settings-layout {
+  display: grid;
+  grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
+  gap: 40px;
+  padding-top: 24px;
+}
+
+.ccs-path-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.ccs-path-row .v-btn {
+  margin-top: 4px;
+  flex-shrink: 0;
+}
+
+.settings-nav {
+  border-right: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  padding-right: 20px;
+}
+
+.settings-content {
+  max-width: 760px;
+  min-width: 0;
+  padding: 4px 0 48px;
+}
+
+.section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 32px;
+  min-height: 72px;
+  padding: 16px 0;
+  border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+}
+
+.setting-copy {
+  min-width: 0;
+}
+
+.proxy-editor {
+  padding-top: 24px;
+}
+
+.safety-group + .safety-group {
+  margin-top: 28px;
+}
+
+.safety-master-row {
+  border-bottom: 0;
+}
+
+.mode-setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+/* 二选一切换器：选中项用实色背景 + 反色文字，亮/暗主题都一眼可辨。
+   颜色走主题 token 而非写死，主题切换时自动适配。 */
+.mode-toggle :deep(.disposal-toggle__block) {
+  background: rgb(var(--v-theme-error));
+  color: rgb(var(--v-theme-on-error));
+  opacity: 1;
+}
+
+.mode-toggle :deep(.disposal-toggle__mask) {
+  background: rgb(var(--v-theme-primary));
+  color: rgb(var(--v-theme-on-primary));
+  opacity: 1;
+}
+
+.mode-toggle :deep(.scope-toggle__selected) {
+  background: rgb(var(--v-theme-primary));
+  color: rgb(var(--v-theme-on-primary));
+  opacity: 1;
+}
+
+.ip-scope-row {
+  margin: 10px 16px 12px;
+}
+
+/* 危险命令 AI 闸门子面板：与规则勾选区分层（边框 + 浅底），亮暗主题都用主题 token */
+.ai-gate-panel {
+  margin: 10px 16px 12px;
+  padding: 12px 16px;
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  border-radius: 6px;
+  background: rgba(var(--v-theme-surface-variant), 0.24);
+}
+
+.ai-gate-head-row {
+  border-bottom: 0;
+}
+
+.ai-gate-options {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.ai-gate-select {
+  flex: 1 1 260px;
+  max-width: 380px;
+}
+
+.ai-gate-wait {
+  flex: 0 1 160px;
+}
+
+/* 自定义规则编辑器：每行 名称 | 类型前缀 | 正则 | 删除 */
+.custom-rules-editor {
+  padding: 10px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.custom-rule-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.custom-rule-name {
+  flex: 0 1 140px;
+}
+
+.custom-rule-type {
+  flex: 0 1 140px;
+}
+
+.custom-rule-pattern {
+  flex: 1 1 240px;
+}
+
+.option-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 24px;
+  min-height: 104px;
+  padding: 10px 16px 12px;
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  border-radius: 6px;
+  background: rgba(var(--v-theme-surface-variant), 0.24);
+  transition: opacity 180ms ease;
+}
+
+.options-disabled {
+  opacity: 0.58;
+}
+
+.settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 28px;
+}
+
+/* 通用提示词分区：版本条与内容编辑器 */
+.prompt-version-select {
+  min-width: 220px;
+}
+
+.prompt-content-editor :deep(textarea) {
+  font-family: inherit;
+  line-height: 1.6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .option-grid {
+    transition: none;
+  }
+}
+
+@media (max-width: 700px) {
+  .settings-layout {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+
+  .settings-nav {
+    border-right: 0;
+    border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+    padding-right: 0;
+    padding-bottom: 12px;
+  }
+
+  .settings-nav :deep(.v-list) {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .setting-row {
+    align-items: flex-start;
+    gap: 20px;
+  }
+
+  .mode-setting-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 480px) {
+  .option-grid {
+    grid-template-columns: 1fr;
+  }
+}

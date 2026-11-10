@@ -1,0 +1,96 @@
+/* 渠道弹窗共享样式，各模板分区通过 scoped 引用。 */
+/* 浅色模式下副标题使用白色带透明度 */
+.text-white-subtitle {
+  color: rgba(255, 255, 255, 0.85) !important;
+}
+
+.animate-pulse {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+:deep(.key-tooltip) {
+  color: rgba(var(--v-theme-on-surface), 0.92);
+  background-color: rgba(var(--v-theme-surface), 0.98);
+  border: 1px solid rgba(var(--v-theme-primary), 0.45);
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+}
+
+/* 快速添加模式样式 */
+.quick-input-textarea :deep(textarea) {
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.detection-status-card {
+  background: rgba(var(--v-theme-surface-variant), 0.3);
+}
+
+/* 多 Base URL 项目样式 */
+.base-url-item {
+  padding: 6px 10px;
+  background: rgba(var(--v-theme-surface-variant), 0.4);
+  border-radius: 6px;
+  border-left: 2px solid rgb(var(--v-theme-success));
+}
+
+.base-url-item + .base-url-item {
+  margin-top: 4px;
+}
+
+.mode-toggle-btn {
+  text-transform: none;
+}
+
+.dialog-card-shell {
+  display: flex;
+  flex-direction: column;
+  max-height: 90vh;
+  overflow: hidden;
+}
+
+.dialog-card-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+}
+
+.dialog-card-actions {
+  flex-shrink: 0;
+  border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  background: rgb(var(--v-theme-surface));
+}
+
+.header-action-btn {
+  color: inherit;
+}
+
+/* 亮色模式下按钮在 primary 背景上显示白色 */
+.bg-primary .mode-toggle-btn {
+  color: white !important;
+  border-color: rgba(255, 255, 255, 0.7) !important;
+}
+
+.bg-primary .mode-toggle-btn:hover {
+  background-color: rgba(255, 255, 255, 0.15) !important;
+  border-color: white !important;
+}
+
+.bg-primary .header-action-btn {
+  color: white !important;
+}
+
+.bg-primary .header-action-btn:hover {
+  background-color: rgba(255, 255, 255, 0.15) !important;
+}

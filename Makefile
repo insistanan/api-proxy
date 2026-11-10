@@ -20,7 +20,7 @@ help:
 	@echo "  make clean          - 清理构建文件"
 	@echo ""
 	@echo "$(YELLOW)门禁:$(NC)"
-	@echo "  make check          - 前端 type-check+图标扫描 & 后端 fmt+vet+test"
+	@echo "  make check          - 全量门禁（前后端检查与测试）"
 
 dev:
 	@echo "$(GREEN)🚀 启动前后端开发模式...$(NC)"
@@ -51,7 +51,6 @@ frontend-dev:
 frontend-build:
 	@cd frontend && npm run build
 
-# 全量门禁: 前端 type-check + 图标扫描; 后端 gofmt + vet + test
+# 全量门禁统一走 check.mjs，与 npm run check 保持一致。
 check:
-	@cd frontend && npm run check
-	@cd backend-go && $(MAKE) check
+	@node scripts/check.mjs

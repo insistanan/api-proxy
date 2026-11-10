@@ -13,7 +13,7 @@ func TestChatHostedWebSearchDoesNotBecomeClientFunction(t *testing.T) {
 		t.Run(toolType, func(t *testing.T) {
 			body, err := json.Marshal(map[string]interface{}{
 				"model": "test-model", "messages": []map[string]interface{}{{"role": "user", "content": "搜索"}},
-				"tools": []map[string]interface{}{{"type": toolType, "name": "web_search"}},
+				"tools":       []map[string]interface{}{{"type": toolType, "name": "web_search"}},
 				"tool_choice": map[string]interface{}{"type": toolType, "name": "web_search"},
 			})
 			if err != nil {

@@ -1,0 +1,51 @@
+/* 日志对话框 */
+.channel-logs-dialog-card { max-height: calc(100vh - 48px); display: flex; flex-direction: column; }
+.channel-logs-title { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 20px; }
+.channel-logs-title-main { min-width: 0; display: flex; align-items: center; gap: 10px; }
+.channel-logs-title-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 16px; font-weight: 650; line-height: 1.25; }
+.channel-logs-subtitle { color: rgba(var(--v-theme-on-surface), 0.45); font-size: 12px; font-weight: 500; }
+.channel-logs-dialog-body { overflow: auto; padding: 16px 20px 20px; }
+
+.log-trend-panel {
+  border: 1px solid rgba(var(--v-theme-outline), 0.3); border-radius: 4px;
+  padding: 14px 16px 8px; margin-bottom: 16px;
+  background: rgba(var(--v-theme-surface-variant), 0.15);
+}
+.log-trend-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 6px; }
+
+.channel-logs-table-shell {
+  max-height: min(46vh, 520px); overflow: auto;
+  border: 1px solid rgba(var(--v-theme-outline), 0.3); border-radius: 4px;
+  background: rgb(var(--v-theme-surface));
+}
+.channel-logs-table { min-width: 1160px; }
+.channel-logs-table :deep(table) { table-layout: fixed; width: 100%; }
+.log-col-time { width: 172px; }
+.log-col-status { width: 108px; }
+.log-col-model { width: 150px; }
+.log-col-token { width: 116px; }
+.log-col-cache { width: 142px; }
+.log-col-upstream { width: 210px; }
+.log-col-key { width: 142px; }
+.log-col-duration { width: 90px; }
+.log-col-error { width: 230px; }
+
+.channel-logs-table th, .channel-logs-table td { vertical-align: middle; white-space: nowrap; }
+.channel-logs-table th {
+  position: sticky; top: 0; z-index: 1;
+  background: rgb(var(--v-theme-surface));
+  color: rgba(var(--v-theme-on-surface), 0.5);
+  font-size: 12px; font-weight: 600;
+  border-bottom: 1px solid rgba(var(--v-theme-outline), 0.1);
+}
+.channel-logs-table td {
+  height: 48px; color: rgba(var(--v-theme-on-surface), 0.8);
+  font-size: 13px; border-bottom: 1px solid rgba(var(--v-theme-outline), 0.06);
+}
+.log-time-cell, .log-key-cell, .log-duration-cell, .log-number-cell, .log-base-url { font-variant-numeric: tabular-nums; }
+.log-key-cell, .log-duration-cell, .log-number-cell, .log-base-url, .log-model { font-family: 'Fira Code', 'JetBrains Mono', 'SF Mono', monospace; }
+.log-model, .log-base-url { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-error { min-width: 0; }
+.log-error-type { overflow: hidden; color: rgb(var(--v-theme-error)); font-size: 12px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.log-error-message { display: -webkit-box; overflow: hidden; color: rgba(var(--v-theme-on-surface), 0.5); font-size: 12px; line-height: 1.35; white-space: normal; overflow-wrap: break-word; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.log-cell-note { color: rgba(var(--v-theme-on-surface), 0.45); font-size: 11px; line-height: 1.3; }

@@ -70,6 +70,14 @@ export function formatPromotionRemaining(until?: string, count?: number): string
   return limits.join(' / ')
 }
 
+/** 格式化渠道生命周期时间，无法解析时保留原值便于排查。 */
+export function formatDateTime(value?: string): string {
+  if (!value) return '--'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString()
+}
+
 /** 格式化统计数据：有请求显示 "N 请求 (X%)"，无请求显示 "--"。 */
 export function formatStats(stats?: TimeWindowStats): string {
   if (!stats || !stats.requestCount) return '--'

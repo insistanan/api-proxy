@@ -1,0 +1,576 @@
+/* ============================================================
+   API Proxy — 清晰、克制的控制台视觉系统
+   辨识度来自网格、排版和局部色轨
+   ============================================================ */
+
+/* ----- 应用栏 ----- */
+.app-header {
+  background: rgba(var(--v-theme-surface), 0.94) !important;
+  backdrop-filter: blur(14px) saturate(1.2) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(1.2) !important;
+  border-bottom: 1px solid rgba(var(--v-theme-outline), 0.62) !important;
+  box-shadow: 0 1px 0 rgba(var(--v-theme-primary), 0.16) !important;
+  padding: 0 20px !important;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.v-theme--dark .app-header {
+  background: rgba(var(--v-theme-surface), 0.9) !important;
+  border-bottom-color: rgba(var(--v-theme-outline), 0.85) !important;
+  box-shadow: 0 1px 0 rgba(var(--v-theme-primary), 0.2) !important;
+}
+
+.app-header :deep(.v-toolbar__prepend) {
+  margin-inline-end: 4px !important;
+}
+
+.app-header .v-toolbar-title {
+  overflow: hidden !important;
+  min-width: 0 !important;
+  flex: 1 !important;
+}
+
+.app-header :deep(.v-toolbar__content) {
+  overflow: visible !important;
+}
+
+.auth-card { overflow: hidden; }
+.auth-title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  font-size: 1.25rem;
+  font-weight: 750;
+}
+.auth-title-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  color: rgb(var(--v-theme-on-primary));
+  background: rgb(var(--v-theme-primary));
+  border-radius: 9px 3px 9px 3px;
+  box-shadow: 0 5px 14px rgba(var(--v-theme-primary), 0.28);
+}
+.auth-footnote {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 16px;
+  color: rgba(var(--v-theme-on-surface), 0.48);
+  font-size: 0.75rem;
+}
+
+.app-logo {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, rgb(var(--v-theme-primary)), rgb(var(--v-theme-primary-darken-1)));
+  border: 1px solid rgba(var(--v-theme-primary-darken-1), 0.8);
+  /* 不对称切角 — 品牌形状的第一处露出 */
+  border-radius: 11px 3px 11px 3px;
+  box-shadow: 0 3px 10px rgba(var(--v-theme-primary), 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  margin-right: 10px;
+  flex-shrink: 0;
+  transition: transform 0.2s var(--ease-spring), box-shadow 0.2s ease;
+}
+.app-logo:hover { transform: translateY(-2px) rotate(-6deg); box-shadow: 0 6px 16px rgba(var(--v-theme-primary), 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.28); }
+.v-theme--dark .app-logo { border-color: rgba(var(--v-theme-primary-lighten-1), 0.55); box-shadow: 0 3px 12px rgba(var(--v-theme-primary), 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.16); }
+
+/* 标题容器 */
+.header-title {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  gap: 8px;
+}
+.header-title::-webkit-scrollbar { display: none; }
+.nav-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(var(--v-theme-outline), 0.38);
+  border-radius: 10px 3px 10px 3px;
+  background: rgba(var(--v-theme-surface-variant), 0.38);
+}
+
+.api-type-text {
+  cursor: pointer;
+  opacity: 0.6;
+  transition: color 0.16s ease, background 0.16s ease, transform 0.16s var(--ease-out);
+  padding: 5px 10px;
+  text-decoration: none;
+  color: inherit;
+  border: 1px solid transparent;
+  border-radius: 7px 2px 7px 2px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+a.api-type-text { display: inline-block; }
+.api-type-text:hover { opacity: 0.95; background: rgba(var(--v-theme-primary), 0.1); transform: translateY(-1px); }
+.api-type-text.active {
+  opacity: 1;
+  font-weight: 800;
+  color: rgb(var(--v-theme-on-primary));
+  background: rgb(var(--v-theme-primary));
+  border-color: transparent;
+  box-shadow: 0 2px 8px rgba(var(--v-theme-primary), 0.28);
+}
+.v-theme--dark .nav-group {
+  background: rgba(255, 255, 255, 0.035);
+  border-color: rgba(var(--v-theme-outline), 0.62);
+}
+.v-theme--dark .api-type-text:hover {
+  background: rgba(var(--v-theme-primary), 0.1);
+}
+
+.header-btn {
+  margin-left: 2px;
+  transition: background 0.15s ease, border-color 0.15s ease !important;
+  border: 1px solid transparent;
+  border-radius: 7px 2px 7px 2px !important;
+}
+.header-btn:hover { background: rgba(var(--v-theme-primary), 0.1) !important; border-color: rgba(var(--v-theme-primary), 0.45); }
+
+/* ----- 版本信息 ----- */
+.version-badge {
+  display: flex;
+  align-items: center;
+  padding: 2px 10px;
+  margin-right: 6px;
+  font-family: 'Fira Code', 'JetBrains Mono', monospace;
+  font-size: 11px;
+  border-radius: 6px 2px 6px 2px;
+  background: rgba(var(--v-theme-surface-variant), 0.7);
+  border: 1px solid rgba(var(--v-theme-outline), 0.6);
+  box-shadow: none;
+  transition: all 0.25s ease;
+  cursor: default;
+}
+.version-badge.version-clickable { cursor: pointer; }
+.version-badge.version-clickable:hover {
+  background: rgba(var(--v-theme-primary), 0.1);
+  border-color: rgba(var(--v-theme-primary), 0.55);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 7px rgba(var(--v-theme-primary), 0.14);
+}
+.version-badge.version-latest { border-color: rgba(var(--v-theme-success), 0.6); background: rgba(var(--v-theme-success), 0.1); }
+.version-badge.version-update { border-color: rgba(var(--v-theme-warning), 0.6); background: rgba(var(--v-theme-warning), 0.1); }
+.version-text { color: rgb(var(--v-theme-on-surface)); }
+.version-arrow { color: rgb(var(--v-theme-warning)); font-weight: 700; }
+.version-latest-text { color: rgb(var(--v-theme-warning)); font-weight: 700; }
+
+/* ----- 新版本提醒气泡 ----- */
+.version-anchor { position: relative; margin-right: 6px; }
+.version-anchor .version-badge { margin-right: 0; }
+
+.update-bubble {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 1200;
+  width: 220px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: rgb(var(--v-theme-surface));
+  border: 1px solid rgba(var(--v-theme-warning), 0.55);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+/* 指向版本徽章的小箭头（边框色与气泡边框衔接） */
+.update-bubble::before {
+  content: '';
+  position: absolute;
+  top: -5px;
+  right: 16px;
+  width: 9px;
+  height: 9px;
+  background: rgb(var(--v-theme-surface));
+  border-left: 1px solid rgba(var(--v-theme-warning), 0.55);
+  border-top: 1px solid rgba(var(--v-theme-warning), 0.55);
+  transform: rotate(45deg);
+}
+.update-bubble__close {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  padding: 4px;
+  border-radius: 4px;
+  color: rgb(var(--v-theme-on-surface), 0.6);
+}
+.update-bubble__close:hover { background: rgba(var(--v-theme-on-surface), 0.08); }
+.update-bubble__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.update-bubble__versions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: 'Fira Code', 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: rgb(var(--v-theme-on-surface));
+  margin-bottom: 10px;
+}
+.update-bubble__latest { color: rgb(var(--v-theme-warning)); font-weight: 700; }
+.update-bubble__btn { text-transform: none; }
+
+/* 气泡浮现/收起过渡 */
+.update-bubble-enter-active { transition: opacity 0.25s ease, transform 0.25s ease; }
+.update-bubble-leave-active { transition: opacity 0.2s ease, transform 0.2s ease; }
+.update-bubble-enter-from,
+.update-bubble-leave-to { opacity: 0; transform: translateY(-6px); }
+
+/* 暗色模式版本徽章 */
+.v-theme--dark .version-badge {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(var(--v-theme-outline), 0.75);
+}
+.v-theme--dark .version-badge.version-latest {
+  border-color: rgba(var(--v-theme-success), 0.5);
+  background: rgba(var(--v-theme-success), 0.1);
+}
+.v-theme--dark .version-badge.version-update {
+  border-color: rgba(var(--v-theme-warning), 0.5);
+  background: rgba(var(--v-theme-warning), 0.1);
+}
+
+/* ----- 统计卡片：用细色轨区分类型，避免装饰压过数据 ----- */
+.stat-cards-row { margin-bottom: 20px !important; }
+
+/* 统计卡与操作栏入场浮现（阶梯 delay，仅首屏播放一次） */
+.stat-cards-row .v-col:nth-child(1) .stat-card { animation: float-in 0.5s ease-out both; animation-delay: 60ms; }
+.stat-cards-row .v-col:nth-child(2) .stat-card { animation: float-in 0.5s ease-out both; animation-delay: 120ms; }
+.stat-cards-row .v-col:nth-child(3) .stat-card { animation: float-in 0.5s ease-out both; animation-delay: 180ms; }
+.action-bar { animation: float-in 0.5s ease-out both; animation-delay: 240ms; }
+
+.stat-card {
+  /* 每张卡的语义色，驱动色轨 / 图标 / 数值，避免三处各写一遍 */
+  --sc: var(--v-theme-primary);
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 22px 20px 26px;
+  background: rgb(var(--v-theme-surface));
+  border: 1px solid rgba(var(--v-theme-outline), 0.62);
+  /* 与主卡片反向的切角 — 同一形状语言，不同节奏 */
+  border-radius: var(--cut-sm) var(--cut-lg) var(--cut-sm) var(--cut-lg);
+  box-shadow: var(--shadow-1);
+  transition: transform 0.2s var(--ease-out), box-shadow 0.2s ease, border-color 0.2s ease;
+  overflow: hidden;
+  min-height: 106px;
+}
+
+.stat-card-info { --sc: var(--v-theme-primary); }
+.stat-card-success,
+.stat-card-emerald { --sc: var(--v-theme-success); }
+.stat-card-error { --sc: var(--v-theme-error); }
+
+/* 左侧刻度色轨 — 从顶部横条改到侧边，配合右上大切角形成不对称构图 */
+.stat-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: var(--rail-strong);
+  background:
+    repeating-linear-gradient(180deg,
+      rgba(255, 255, 255, 0.5) 0 1px,
+      transparent 1px 9px),
+    linear-gradient(180deg,
+      rgb(var(--sc)) 0%,
+      rgba(var(--sc), 0.45) 50%,
+      rgb(var(--sc)) 100%);
+  background-size: 100% 100%, 100% 200%;
+  box-shadow: inset -1px 0 0 rgba(0, 0, 0, 0.14);
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* 色轨上滑过的高光 — 装置感扫描，缓慢循环 */
+.stat-card::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--rail-strong);
+  height: 34%;
+  background: linear-gradient(180deg, transparent, rgba(255, 255, 255, 0.75), transparent);
+  pointer-events: none;
+  z-index: 3;
+  animation: rail-sweep 4.6s ease-in-out infinite;
+}
+
+/* 色轨纵向扫光 */
+@keyframes rail-sweep {
+  0%   { transform: translateY(-120%); opacity: 0; }
+  15%  { opacity: 1; }
+  85%  { opacity: 1; }
+  100% { transform: translateY(420%); opacity: 0; }
+}
+
+.stat-card:hover {
+  border-color: rgba(var(--sc), 0.7);
+  box-shadow: var(--shadow-2);
+  transform: translateY(-3px);
+}
+
+/* 统计卡底部微光 — 悬停时泛起的呼吸光晕 */
+.stat-card-glow {
+  position: absolute;
+  right: -24px;
+  bottom: -36px;
+  width: 160px;
+  height: 160px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(var(--sc), 0.22), transparent 70%);
+  filter: blur(10px);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.4s ease, transform 0.4s ease;
+}
+.stat-card:hover .stat-card-glow {
+  opacity: 1;
+  transform: scale(1.15);
+}
+
+.v-theme--dark .stat-card {
+  border-color: rgba(var(--v-theme-outline), 0.85);
+  box-shadow: var(--shadow-1), var(--inset-hi);
+}
+
+.v-theme--dark .stat-card:hover {
+  border-color: rgba(var(--sc), 0.8);
+  box-shadow: var(--shadow-2), var(--inset-hi);
+}
+
+.stat-card-icon {
+  width: 50px;
+  height: 50px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  /* 与卡片反向切角保持同一族形状 */
+  border-radius: var(--cut-xs) var(--cut-md) var(--cut-xs) var(--cut-md);
+  background: rgb(var(--sc));
+  box-shadow: 0 3px 12px rgba(var(--sc), 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  position: relative;
+  isolation: isolate;
+  transition: transform 0.22s var(--ease-spring), box-shadow 0.22s ease;
+}
+.stat-card:hover .stat-card-icon {
+  transform: scale(1.08) rotate(-4deg);
+  box-shadow: 0 5px 18px rgba(var(--sc), 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+
+.stat-card-content { flex: 1; min-width: 0; }
+
+.stat-card-value {
+  font-size: 2rem;
+  font-weight: 700;
+  font-family: 'Fira Code', 'JetBrains Mono', monospace;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  color: rgb(var(--sc));
+}
+
+.stat-card-total { font-size: 0.9rem; font-weight: 500; opacity: 0.4; }
+
+.stat-card-label {
+  font-size: 0.72rem;
+  font-weight: 800;
+  margin-top: 4px;
+  opacity: 0.7;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgb(var(--v-theme-on-surface));
+}
+
+.stat-card-icon .v-icon { color: rgb(var(--v-theme-surface)) !important; }
+.v-theme--dark .stat-card-icon .v-icon { color: rgb(var(--v-theme-background)) !important; }
+
+/* ----- 操作按钮区域 ----- */
+.action-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px 16px 24px;
+  background: rgb(var(--v-theme-surface));
+  border: 1px solid rgba(var(--v-theme-outline), 0.62);
+  border-radius: var(--cut-sm) var(--cut-lg) var(--cut-sm) var(--cut-lg);
+  box-shadow: var(--shadow-1);
+  position: relative;
+  overflow: hidden;
+}
+
+/* 左侧刻度色轨 — 与统计卡同一装置语言 */
+.action-bar::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: var(--rail);
+  background:
+    repeating-linear-gradient(180deg,
+      rgba(255, 255, 255, 0.5) 0 1px,
+      transparent 1px 9px),
+    linear-gradient(180deg, rgb(var(--v-theme-primary)), rgba(var(--v-theme-primary), 0.4));
+  box-shadow: inset -1px 0 0 rgba(0, 0, 0, 0.14);
+  transition: opacity 0.3s ease;
+}
+
+.v-theme--dark .action-bar {
+  border-color: rgba(var(--v-theme-outline), 0.85);
+  box-shadow: var(--shadow-1), var(--inset-hi);
+}
+
+.action-bar-left, .action-bar-right { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+
+.action-btn {
+  font-weight: 700;
+  transition: transform 0.15s var(--ease-out), box-shadow 0.15s ease;
+}
+
+.action-icon-btn { min-width: 48px !important; }
+.mode-control {
+  min-width: 148px;
+  justify-content: space-between;
+  gap: 10px;
+  border-width: 1px !important;
+}
+.mode-control.is-on { box-shadow: 0 3px 12px rgba(0, 0, 0, 0.16) !important; }
+.mode-control.is-off {
+  color: rgba(var(--v-theme-on-surface), 0.65) !important;
+  border-color: rgba(var(--v-theme-outline), 0.72) !important;
+}
+.mode-control.is-unavailable { opacity: 0.46; cursor: not-allowed !important; }
+.mode-state {
+  min-width: 20px;
+  padding: 2px 5px;
+  border-radius: 4px 1px 4px 1px;
+  font-size: 10px;
+  line-height: 1.2;
+  font-family: 'Fira Code', 'JetBrains Mono', monospace;
+  opacity: 0.8;
+}
+.mode-control.is-on .mode-state { background: rgba(255, 255, 255, 0.18); }
+.mode-control.is-off .mode-state { background: rgba(var(--v-theme-on-surface), 0.08); }
+
+.action-btn-primary {
+  background: rgb(var(--v-theme-primary)) !important;
+  color: rgb(var(--v-theme-on-primary)) !important;
+  border: 1px solid rgba(var(--v-theme-primary-darken-1), 0.9) !important;
+  box-shadow: 0 3px 9px rgba(var(--v-theme-primary), 0.26) !important;
+}
+.action-btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(var(--v-theme-primary), 0.34) !important;
+}
+
+/* ----- 全局统计面板 ----- */
+.global-stats-panel {
+  background: rgb(var(--v-theme-surface)) !important;
+  border: 1px solid rgba(var(--v-theme-outline), 0.62) !important;
+  border-radius: var(--cut-lg) var(--cut-sm) var(--cut-lg) var(--cut-sm) !important;
+  overflow: hidden;
+  box-shadow: var(--shadow-1) !important;
+}
+
+.v-theme--dark .global-stats-panel {
+  border-color: rgba(var(--v-theme-outline), 0.85) !important;
+  box-shadow: var(--shadow-1), var(--inset-hi) !important;
+}
+
+.global-stats-header { min-height: 58px; position: relative; transition: background 0.15s ease; }
+.global-stats-header::before { display: none; }
+.global-stats-header > div:first-child { margin-left: 0; }
+.global-stats-header:hover { background: rgba(var(--v-theme-primary), 0.06); }
+
+/* ----- 渠道过渡动画 ----- */
+.channel-list-enter-active, .channel-list-leave-active { transition: all 0.25s ease; }
+.channel-list-enter-from { opacity: 0; transform: translateY(10px); }
+.channel-list-leave-to { opacity: 0; transform: translateY(-8px); }
+.channel-list-move { transition: transform 0.2s ease; }
+
+/* 心跳动画 — 呼吸缩放 + 微光，营造"系统活着"的感觉 */
+.pulse-animation { animation: pulse-glow 2.2s ease-in-out infinite; }
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.85; transform: scale(0.94); }
+}
+
+/* 运行状态图标 — 同心扩散，心跳般的持续呼吸 */
+.stat-card-emerald .stat-card-icon::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  border: 2px solid rgba(var(--v-theme-success), 0.6);
+  opacity: 0;
+  animation: pulse-ring 2.4s ease-out infinite;
+  pointer-events: none;
+}
+
+/* 响应式 */
+@media (min-width: 768px) { .app-header { padding: 0 28px !important; } }
+@media (min-width: 1024px) { .app-header { padding: 0 32px !important; } }
+
+@media (max-width: 600px) {
+  .v-main .v-container { padding-left: 10px !important; padding-right: 10px !important; }
+  .app-header { padding: 0 12px !important; }
+  .app-logo { width: 28px; height: 28px; margin-right: 6px; }
+  .header-title { gap: 5px; }
+  .nav-group { gap: 0; padding: 2px; }
+  .api-type-text { padding: 4px 7px; font-size: 0.72rem; }
+  .stat-card { padding: 16px 14px; gap: 12px; min-height: 84px; box-shadow: 0 2px 7px rgba(24, 28, 38, 0.05); }
+  .stat-card-icon { width: 38px; height: 38px; }
+  .stat-card-icon .v-icon { font-size: 18px !important; }
+  .stat-card-value { font-size: 1.3rem; }
+  .stat-card-label { font-size: 0.68rem; }
+  .stat-cards-row { margin-bottom: 14px !important; }
+  .stat-cards-row .v-col { padding: 4px !important; }
+  .stat-cards-row .v-col:last-child { flex: 0 0 100%; max-width: 100%; }
+  .action-bar { flex-direction: column; gap: 10px; padding: 14px; }
+  .action-bar-left { width: 100%; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .action-bar-left .action-btn { width: 100%; justify-content: center; }
+  .action-bar-left .action-btn:nth-child(3) { grid-column: 1 / -1; }
+  .action-bar-right { width: 100%; display: grid; grid-template-columns: auto 1fr; gap: 8px; }
+  .mode-control { min-width: 0; width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-logo,
+  .api-type-text,
+  .stat-card,
+  .stat-card::after,
+  .stat-card-icon,
+  .stat-card-glow,
+  .action-btn,
+  .pulse-animation,
+  .stat-card-emerald .stat-card-icon::after,
+  .channel-list-enter-active,
+  .channel-list-leave-active,
+  .channel-list-move { transition: none !important; animation: none !important; }
+}

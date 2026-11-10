@@ -1,4 +1,4 @@
-// 全量门禁：前端 type-check + 图标扫描；后端 gofmt + vet + test。
+// 全量门禁：前端 type-check + 图标扫描 + test；后端 gofmt + vet + test。
 // 等价于根 Makefile 的 check 目标，供未安装 make 的环境直接 `npm run check` 使用。
 import { spawnSync } from "node:child_process";
 import process from "node:process";
@@ -68,6 +68,7 @@ run("后端 go vet", "go", ["vet", "./..."], "backend-go");
 run("后端 go test", "go", ["test", "./..."], "backend-go");
 // Windows 下 npm 是 npm.cmd，必须经 shell 启动；命令串 + 空 args 避免 DEP0190。
 run("前端 type-check + 图标扫描", isWin ? "npm run check" : "npm", isWin ? [] : ["run", "check"], "frontend", isWin ? { shell: true } : {});
+run("前端单元测试", isWin ? "npm test" : "npm", isWin ? [] : ["test"], "frontend", isWin ? { shell: true } : {});
 // ESLint 接入门禁（R6）：存量已清零，--max-warnings 0 阻断任何新增
 // 未使用变量 / any / 模板遮蔽问题，不保留只输出警告的假门禁。
 // Windows 下 npm/npx 是 .cmd，必须经 shell 启动；命令串 + 空 args 避免 DEP0190。

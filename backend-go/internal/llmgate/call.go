@@ -41,21 +41,15 @@ type Caller struct {
 	CfgManager       *config.ConfigManager
 	ChannelScheduler *scheduler.ChannelScheduler
 	// RequestLogStore 请求日志存储（R4-b 装配层注入，替代调度器服务定位器）。
-	// 为 nil 时回退经 ChannelScheduler 获取（兼容测试与旧装配）。
+	// 未注入时不记录请求索引；调度器不负责定位内部调用的日志存储。
 	RequestLogStore *metrics.RequestLogStore
 	// TimeoutSecs 单次 Call 的整体超时；0 取 DefaultTimeoutSecs。
 	TimeoutSecs int
 }
 
-// requestLogStore 返回请求日志存储（注入优先，回退定位器兼容旧装配）。
+// requestLogStore 返回装配层显式注入的请求日志存储。
 func (c *Caller) requestLogStore() *metrics.RequestLogStore {
-	if c.RequestLogStore != nil {
-		return c.RequestLogStore
-	}
-	if c.ChannelScheduler == nil {
-		return nil
-	}
-	return c.ChannelScheduler.GetRequestLogStore()
+	return c.RequestLogStore
 }
 
 // CallResult 是一次内部调用的结果。
