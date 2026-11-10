@@ -95,7 +95,7 @@ type purgeLogRequest struct {
 	Date  string `json:"date"`
 }
 
-// PurgeLogs 手动清理 logs.db（app_logs/traffic_logs/request_logs 三表），清理后 VACUUM 收缩文件。
+// PurgeLogs 清理指定范围的日志及关联索引、无引用正文，随后 VACUUM 收缩数据库。
 func PurgeLogs(store *logger.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if store == nil {

@@ -1,46 +1,44 @@
-# --- 阶段 1: 准备 Bun 运行时 ---
-FROM docker.1ms.run/oven/bun:alpine AS bun-runtime
+# 阶段 1：从国内镜像源准备 Node 22 和 npm。
+# Node 与 Go 镜像使用相同的 Alpine 版本，避免运行库不兼容。
+FROM docker.1ms.run/library/node:22-alpine3.22 AS node-runtime
 
-# --- 阶段 2: 构建阶段 (Go + Bun) ---
-FROM docker.1ms.run/library/golang:1.25-alpine AS builder
+# 阶段 2：在 Go 镜像中完成前后端构建。
+FROM docker.1ms.run/library/golang:1.25-alpine3.22 AS builder
 
-# 声明 VERSION 构建参数（用于 CI 传入版本号，留空则从 VERSION 文件读取）
+# 可用 --build-arg VERSION 覆盖版本号；未指定时由 Makefile 读取 VERSION 文件。
 ARG VERSION
 
 WORKDIR /src
 
-# 配置 Go 代理（使用国内镜像）
+# Go 模块下载使用国内代理，代理未收录的模块仍可直连。
 ENV GOPROXY=https://goproxy.cn,direct
 ENV GO111MODULE=on
 
-# 配置国内镜像源并安装构建工具和 bun 依赖（libstdc++ libgcc 是 bun:alpine 运行所需）
+# 使用阿里云 Alpine 源安装构建工具及 Node、前端原生依赖所需的运行库。
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories && \
     apk add --no-cache git make libstdc++ libgcc
 
-# 从 bun-runtime 复制 bun 和 bunx 到 Go 镜像
-COPY --from=bun-runtime /usr/local/bin/bun /usr/local/bin/bun
-COPY --from=bun-runtime /usr/local/bin/bunx /usr/local/bin/bunx
+# 一并复制 Node、npm 包和命令链接，避免只复制可执行文件后找不到 npm。
+COPY --from=node-runtime /usr/local/ /usr/local/
 
-# 将 bun 添加到 PATH
-ENV PATH="/usr/local/bin:${PATH}"
+# 按锁文件安装前端依赖，并指定国内 npm registry。
+# 依赖安装放在源码复制之前，只修改源码时可以复用缓存。
+COPY frontend/package.json frontend/package-lock.json ./frontend/
+RUN cd frontend && npm ci --registry https://registry.npmmirror.com
+COPY backend-go/go.mod backend-go/go.sum ./backend-go/
+RUN cd backend-go && go mod download
 
-# 复制项目必要文件（.dockerignore 会排除不需要的文件）
+# 复制源码和构建脚本，本机依赖、产物及运行配置由 .dockerignore 排除。
 COPY Makefile VERSION ./
+COPY scripts/ ./scripts/
 COPY frontend/ ./frontend/
 COPY backend-go/ ./backend-go/
 
-# 使用 bun 安装前端依赖（使用国内镜像，比 npm 快 10-100 倍）
-RUN cd frontend && bun install --registry https://registry.npmmirror.com
-
-# 安装 Go 后端依赖（go mod tidy 确保 go.sum 完整）
-RUN cd backend-go && go mod tidy && go mod download
-
-# 使用 Makefile 构建整个项目（前端 + 后端）
-# 如果 CI 传入了 VERSION 则使用，否则 Makefile 会从 VERSION 文件读取
+# Makefile 负责构建前端、调用 copy-frontend.mjs，再编译嵌入资源的 Go 程序。
 RUN if [ -n "${VERSION}" ]; then VERSION=${VERSION} make build; else make build; fi
 
-# --- 阶段 3: 运行时 ---
-FROM docker.1ms.run/library/alpine:latest AS runtime
+# 阶段 3：运行镜像只保留程序、证书和时区数据。
+FROM docker.1ms.run/library/alpine:3.22 AS runtime
 
 WORKDIR /app
 
@@ -51,16 +49,16 @@ RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 # 从构建阶段复制 Go 二进制文件（已内嵌前端资源）
 COPY --from=builder /src/dist/api-proxy-go /app/api-proxy
 
-# 创建配置目录和日志目录
+# 配置和默认日志库保存在 /app/.config；/app/logs 保留给旧版挂载或自定义日志路径。
 RUN mkdir -p /app/.config/backups /app/logs
 
-# 设置时区
+# 默认使用上海时区，可在启动容器时覆盖 TZ。
 ENV TZ=Asia/Shanghai
 
-# 暴露端口
+# 默认监听 3000，同时提供代理 API 与管理界面。
 EXPOSE 3000
 
-# 健康检查
+# 通过公开的 /health 检查服务是否可用。
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
 

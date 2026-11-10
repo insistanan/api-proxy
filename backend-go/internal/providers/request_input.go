@@ -1,9 +1,7 @@
-// request_input.go 定义 Provider 的显式请求输入与构造产物契约（R4-a）。
+// request_input.go 定义 Provider 构造上游请求时使用的输入和返回结果（R4-a）。
 //
-// 目标：上游调用与核心策略能独立于 HTTP 框架复用——内部调用方
-// （llmgate / visionlayer）以 RequestInput 显式传入请求参数，
-// 不再伪造 gin 测试上下文；协议 handler 保留的 gin 方法（ConvertToProviderRequest）
-// 只是解析 gin 后委托显式实现的薄壳，待调用方迁移完成后退役。
+// llmgate 和 visionlayer 直接通过 RequestInput 传入参数，无需构造 Gin 上下文。
+// 协议 handler 则通过 ConvertToProviderRequest 解析入站请求，再交给 BuildRequest 构造。
 package providers
 
 import (
@@ -13,9 +11,9 @@ import (
 	"github.com/insistanan/api-proxy/internal/config"
 )
 
-// RequestInput 一次协议转换的显式请求输入。
-// 由入口（HTTP handler）或内部调用方（llmgate / vision）解析后传入；
-// 不携带 gin context，取消与截止时间经 Ctx 传播。
+// RequestInput 保存一次协议转换所需的请求参数。
+// 参数由 HTTP handler 或内部调用方解析后传入，不携带 Gin context；
+// 请求取消和截止时间通过 Ctx 传播。
 type RequestInput struct {
 	// Ctx 取消与截止时间（对应入站请求的 context）。
 	Ctx context.Context
@@ -31,8 +29,8 @@ type RequestInput struct {
 	// Query 入站 URL 查询参数（如 conversation_id）。
 	Query func(key string) string
 
-	// ConversationID 是编排持有的会话决定（registry 解析的内部会话 ID）。
-	// 内部调用（llmgate / vision）没有会话观测，传空串。
+	// ConversationID 是编排流程通过 registry 解析得到的内部会话 ID。
+	// llmgate 和 visionlayer 的内部调用不记录会话，传入空串。
 	ConversationID string
 
 	// 客户端伪装开关（入口按配置解析）。
@@ -40,8 +38,8 @@ type RequestInput struct {
 	CodexDisguise      bool
 }
 
-// RequestOutcome 一次协议转换的显式产物。
-// 转换结果由返回值表达，不再写回 gin context。
+// RequestOutcome 返回构造后的上游请求及协议转换元数据。
+// 调用方从返回值读取结果，无需从 Gin context 获取转换状态。
 type RequestOutcome struct {
 	// Request 构造后的上游 http.Request（Header / Body / URL 已就绪）。
 	Request *http.Request

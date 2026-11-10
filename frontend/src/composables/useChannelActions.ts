@@ -1,7 +1,7 @@
-// useChannelActions 渠道业务操作（R5，方案 8.1：App.vue 的渠道业务
-// 逐步归入 store 与 composable，页面壳只保留导航和全局组件）。
-// 数据操作经 channelStore（服务端数据唯一来源）；committed 错误
-// （R3）在此统一消费：提示刷新实际状态、不自动重试。
+// useChannelActions 编排渠道业务操作，供 App.vue 调用（R5，方案 8.1）。
+// 已保存的渠道数据由 channelStore 管理，修改也通过 store 提交。
+// committed 错误表示配置已提交，但后续处理失败；此处统一提示用户刷新
+// 并查看实际状态，不自动重试，避免重复提交（R3）。
 import { useChannelStore } from '@/stores/channel'
 import { useDialogStore } from '@/stores/dialog'
 import { ApiError, type ApiTab, type Channel } from '@/services/api'

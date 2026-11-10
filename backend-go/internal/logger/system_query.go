@@ -49,7 +49,7 @@ type requestLogMeta struct {
 	Retried        bool   `json:"retried"`
 }
 
-// ListSystemLogSummaries 按 request_id 聚合 traffic_logs，列表不带正文。
+// ListSystemLogSummaries 优先读取请求摘要索引；旧库按 request_id 聚合流量记录，列表不带正文。
 func (s *Store) ListSystemLogSummaries(ctx context.Context, opts SystemLogListOptions) ([]SystemLogSummary, error) {
 	if s == nil {
 		return nil, nil
@@ -437,8 +437,7 @@ func LocalDayRange(date string) (int64, int64, error) {
 	return start.UnixMilli(), start.AddDate(0, 0, 1).UnixMilli(), nil
 }
 
-// ListAvailableDates 枚举三张日志表中存在数据的本地日历日（按日期倒序），
-// 并统计 logs 目录下属于该日的轮转文件（app-YYYY-MM-DD.log）个数与大小。
+// ListAvailableDates 汇总三张日志表的本地日历日与记录数，按日期倒序返回。
 func (s *Store) ListAvailableDates(ctx context.Context) ([]AvailableDate, error) {
 	if s == nil {
 		return nil, nil
@@ -482,7 +481,7 @@ func (s *Store) ListAvailableDates(ctx context.Context) ([]AvailableDate, error)
 	return result, nil
 }
 
-// Purge 手动清理日志：按全部或单个本地日历日删除三张表的记录。
+// Purge 按全部或单个本地日历日删除日志，并清理摘要索引与无引用正文。
 // 与自动清理同一约定：直接走写连接，靠 s.mu 与批量写入串行；
 // 先 Flush 排空已接收未落库的日志，最后 CHECKPOINT + VACUUM 收缩 logs.db。
 func (s *Store) Purge(ctx context.Context, opts PurgeOptions) (PurgeResult, error) {

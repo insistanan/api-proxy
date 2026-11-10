@@ -25,9 +25,8 @@ function normalizePromotionValue(value: unknown): number {
 
 export const channelsApi = {
   /**
-   * 返回指定渠道类型的统一 API 方法集（前端渠道管理收敛核心）。
-   * 收敛前 getChannels/getResponsesChannels/... 五组命名方法各实现一遍，仅 URL 前缀不同；
-   * 现在按 ApiTab 查表，一份实现覆盖五种渠道。
+   * 根据入口协议构造管理 API 的路径前缀。
+   * 五组渠道共用这套操作，避免分别维护重复的 CRUD 实现。
    */
   channelApi(type: ApiTab): ChannelApi {
     const p = `/${type}`

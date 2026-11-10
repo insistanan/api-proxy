@@ -38,6 +38,8 @@ context: fork
 - **格式**: `v{major}.{minor}.{patch}`
 - **示例**: `v2.0.15`
 
+前端 `frontend/package.json` 的 `version` 必须同步，格式不含 `v`。README 与技术文档引用 `VERSION`，无需写入另一份当前版本号。
+
 ## 执行步骤
 
 ### 1. 读取当前版本号
@@ -62,6 +64,8 @@ cat VERSION
 ```bash
 echo "v{新版本号}" > VERSION
 ```
+
+同时将 `frontend/package.json` 的 `version` 更新为 `{新版本号}`；若锁文件的根包记录版本，同步该记录，不改变依赖版本。
 
 ### 4. 更新 CHANGELOG.md
 
@@ -218,7 +222,6 @@ git push origin v{新版本号}
 | `release-linux.yml`   | ubuntu-latest  | `api-proxy-linux-amd64`, `api-proxy-linux-arm64`             |
 | `release-macos.yml`   | macos-latest   | `api-proxy-darwin-amd64`, `api-proxy-darwin-arm64`           |
 | `release-windows.yml` | windows-latest | `api-proxy-windows-amd64.exe`, `api-proxy-windows-arm64.exe` |
-| `docker-build.yml`    | ubuntu-latest  | Docker 镜像 (阿里云容器镜像服务, linux/amd64 + linux/arm64)        |
 
 ### Concurrency 配置
 
@@ -237,8 +240,9 @@ concurrency:
 
 - 6 个平台的可执行文件（三平台并行构建）
 - 自动生成的 Release Notes
-- Docker 镜像（推送到阿里云容器镜像服务）
 - 发布为 **draft** 模式，需手动确认发布
+
+仓库当前没有 Docker 发布 workflow；上述 tag 构建只产出可执行文件，不自动构建或推送容器镜像。
 
 ## 注意事项
 

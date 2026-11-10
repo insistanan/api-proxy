@@ -146,8 +146,8 @@ func newApp() (_ *app, err error) {
 		log.Printf("[Metrics-Init] 指标持久化已禁用，使用纯内存模式")
 	}
 
-	// 初始化多渠道调度器（Messages、Responses、Gemini、Chat 和 Images 使用独立的指标管理器）
-	// 收敛为按 ChannelKind 分组的 map，消除五组几乎相同的初始化代码
+	// 五类协议入口分别使用独立的指标管理器，共用渠道调度器。
+	// 启用指标持久化时，各管理器使用同一份存储，并按入口类型区分记录。
 	metricsKinds := []scheduler.ChannelKind{
 		scheduler.ChannelKindMessages,
 		scheduler.ChannelKindResponses,
@@ -206,7 +206,7 @@ func newApp() (_ *app, err error) {
 		a.metricsByKind[scheduler.ChannelKindMessages].GetFailureThreshold()*100,
 		a.metricsByKind[scheduler.ChannelKindMessages].GetWindowSize())
 
-	// 渠道级三态熔断器（internal/circuit）。CIRCUIT_ENABLED=false 一键关闭。
+	// 渠道级三态熔断器使用 EnvConfig 的内部默认策略，不从旧 CIRCUIT_* 环境变量读取。
 	circuitConfig := circuit.Config{
 		FailureThreshold:   a.envCfg.CircuitFailureThreshold,
 		ErrorRateThreshold: a.envCfg.CircuitErrorRateThreshold,
@@ -253,9 +253,9 @@ func newApp() (_ *app, err error) {
 	a.contentSafetyPipeline = hooks.NewContentSafetyPipelineWithRecorder(a.cfgManager, a.blockedStore, a.cmdGate)
 	log.Printf("[Gate-Init] 危险命令 AI 闸门已装配")
 
-	// 可逆脱敏持久映射库（Veil ADR 0004 方案）：仅 sensitiveData.mode=mask 时注入。
-	// 注入后占位符密钥从主密钥派生（同原文跨重启同占位符），映射 AES-256-GCM 加密落盘；
-	// block 模式零落盘（既有行为）。mode 热切换由 watchMappingStoreMode 轮询跟随。
+	// 持久映射库在启动时初始化，以便运行中切换脱敏模式（Veil ADR 0004）。
+	// 只有 mask 模式会向请求注入映射库：占位符密钥从主密钥派生，
+	// 映射以 AES-256-GCM 加密保存。block 模式不写入脱敏映射，拦截记录仍正常保存。
 	a.mappingStore, err = sensitive.NewMappingStore(".config/redaction-mappings.db", ".config/master-key")
 	if err != nil {
 		return nil, fmt.Errorf("初始化可逆脱敏持久映射库失败: %w", err)
@@ -330,7 +330,7 @@ func newApp() (_ *app, err error) {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	// 创建路由器（使用自定义 Logger，根据 QUIET_POLLING_LOGS 配置过滤轮询日志）
+	// 创建路由器。QuietPollingLogs 由日志级别决定，FilteredLogger 据此过滤轮询访问日志。
 	r := gin.New()
 	r.Use(middleware.FilteredLogger(a.envCfg))
 	r.Use(gin.Recovery())

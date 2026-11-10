@@ -32,8 +32,7 @@ func HealthCheck(envCfg *config.EnvConfig, cfgManager *config.ConfigManager) gin
 
 // getVersion 获取版本信息
 func getVersion() gin.H {
-	// 这些变量在编译时通过 -ldflags 注入
-	// 从根目录 VERSION 文件读取
+	// main 将构建时注入的版本信息通过 SetVersionInfo 传入。
 	return gin.H{
 		"version":   getVersionString(),
 		"buildTime": getBuildTime(),
@@ -41,8 +40,7 @@ func getVersion() gin.H {
 	}
 }
 
-// 以下函数用于从 main 包获取版本信息
-// 由于无法直接导入 main 包，使用默认值
+// 包内保存 main 注入的版本信息；默认值仅用于未装配的测试或开发场景。
 var (
 	versionString = "v0.0.0-dev"
 	buildTime     = "unknown"

@@ -3,14 +3,13 @@ import { fetchHealth } from '@/services/api'
 import type { ApiTab } from '@/services/api'
 
 /**
- * "连接本代理"共享逻辑。
+ * 为客户端配置页提供「连接本代理」的共用逻辑。
  *
- * 客户端配置页的核心交互重构：不再按渠道选择，而是直接选协议（messages/responses/gemini/chat）。
- * 选定协议后：
- * 1. Base URL 默认填本代理地址 http://localhost:{port}（端口从 /health 获取），可手动改
- * 2. 模型列表从本代理 /api/proxy-models 按协议分组过滤导入
+ * 用户选择 messages、responses、gemini 或 chat 对话协议后，
+ * 页面默认填入本代理地址 http://localhost:{port}，端口从 /health 获取，
+ * 地址也可以手动修改。模型列表从 /api/proxy-models 读取，再按所选协议筛选。
  *
- * 端口获取失败时回退 3000（后端默认端口），不静默吞错——通过 lastPortError 暴露给调用方可选展示。
+ * 获取端口失败时返回 null，由调用方使用后端默认端口 3000。
  */
 
 export interface QuickPickTypeOption {

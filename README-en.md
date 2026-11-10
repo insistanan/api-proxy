@@ -1,19 +1,19 @@
 # api-proxy
 
-**Self-hosted LLM API proxy gateway** — multi-channel pooled scheduling, unified five-protocol entry with protocol conversion, content security, and a web admin UI, all shipped as a single binary.
+api-proxy is a self-hosted LLM API gateway that manages upstream channels, converts protocols, handles failover, and checks content for sensitive data and dangerous commands. The web admin UI is embedded in the Go application, so deployment requires a single executable.
 
-[中文](README.md) | Current version: v3.3.0 (see [VERSION](VERSION))
+[中文](README.md) | Current version: see [VERSION](VERSION)
 
 > Note: the detailed documentation under `docs/` is maintained in Chinese.
 
 ## Features
 
-- **Unified five-protocol entry**: Claude Messages, OpenAI Responses, OpenAI Chat, Gemini, and Images protocols are interchangeable — clients connect with any protocol, upstream channels can be any combination
-- **Multi-channel pooled scheduling**: failover, per-channel three-state circuit breaker, sliding-window rate limiting with 429 smoothing, multi-BaseURL health management and dynamic ordering, Trace/BaseURL session affinity (improves prompt cache hit rate)
-- **Client disguise & one-click setup**: configuration pages for Claude Code / Codex / OpenCode / pi-agent / DSH / GPT that point each CLI tool at this proxy, with configurable disguise version strings
-- **Content security**: sensitive-data detection with reversible redaction (AES-256-GCM), recursive private-parameter filtering, and an AI gate for dangerous commands
-- **Observability**: per-channel and per-model metrics, request & system logs (SQLite-backed with CLI queries), grouped interception records
-- **All-in-one deployment**: the Vue 3 admin UI is embedded into the Go binary via `go:embed`; a single port (3000 by default) serves both the proxy API and the web UI
+- **Protocol support**: accepts Claude Messages, OpenAI Responses, OpenAI Chat, Gemini, and Images requests. The first four support conversation protocol conversion. Images can use native Images API or Responses image-generation upstreams, with operations limited by the upstream protocol.
+- **Channel scheduling**: tries channels by pool and configuration order, supports failover and circuit breakers, and lets healthy channels temporarily take priority within their pool. Requests sharing a URL, upstream protocol, and API key share concurrency slots and a FIFO queue. Retries respect 429 cooldowns and request budgets. Scheduling also manages multiple BaseURLs and session affinity.
+- **Client setup**: configuration pages for Claude Code, Codex, OpenCode, pi-agent, DSH, and GPT help connect each client to the proxy and configure client disguise versions.
+- **Content security**: detects sensitive data, stores reversible redaction mappings with AES-256-GCM, recursively filters private parameters, and uses an AI gate to review dangerous commands.
+- **Logs and metrics**: tracks metrics by channel and model. Request and system logs are stored in SQLite and can also be queried through the CLI. Interception records are grouped by session.
+- **Deployment**: the Vue 3 admin UI is embedded via `go:embed`. One port, 3000 by default, serves both the proxy API and the web UI.
 
 ## Quick Start
 
@@ -30,21 +30,24 @@ Key environment variables:
 |---|---|
 | `PROXY_ACCESS_KEY` | Access key — **must be changed** |
 | `ENABLE_WEB_UI` | `true` (default) all-in-one mode / `false` API-only mode |
-| `LOG_LEVEL` / `ENABLE_REQUEST_LOGS` / `ENABLE_RESPONSE_LOGS` | Logging controls |
+| `PORT` / `ENV` | Listening port (default 3000) and runtime environment (default production) |
+| `LOG_LEVEL` / `LOG_TO_CONSOLE` | Log level (default info) and console logging (default false) |
 
-Configuration persists under `./.config`; logs are written to `./logs`.
+Configuration and databases default to `./.config` under the working directory. Runtime logs and request bodies are stored in its `logs.db` file. Request and response logging, timeouts, and CORS are managed in the settings UI.
+
+When upgrading, legacy variables such as `ENABLE_REQUEST_LOGS` fill in settings that have not yet been saved; persisted settings take precedence afterward. Changing the log database path or metrics persistence requires a restart. Other request policies support live updates. Instructions for building a Docker image from source are in the [development guide](docs/开发说明.md) (Chinese).
 
 ### Download a Release
 
-Grab the artifact for your platform (linux / macOS / Windows × amd64 / arm64) from [Releases](../../releases) — a single executable. Open `http://localhost:3000` in a browser for the admin UI.
+Download the executable for your platform from [Releases](../../releases). Linux, macOS, and Windows builds are available for amd64 and arm64. Set your access key, start the application, and open `http://localhost:3000` in a browser for the admin UI.
 
 ### Build from Source
 
-Requirements: Go 1.25, Node 20+ (or bun), make (on Windows, `npm run check` replaces the make-based gate).
+Requirements: Go 1.25, Node 20.19+ or 22.12+, and make. Install dependencies in `frontend/` first with `npm ci` or `bun install`. The root Makefile calls npm; on Windows, `npm run check` runs the quality gate without make.
 
 ```bash
 make build   # frontend build → embed → Go compile, output: dist/api-proxy-go
-make dev     # backend hot-reload development (run `npm run dev` in frontend/ separately)
+make dev     # start Vite frontend and Air backend hot reload
 make check   # full local gate before committing
 ```
 
@@ -60,6 +63,8 @@ make check   # full local gate before committing
 | `GET /v1/models` | Model catalog |
 | `/api/*` | Admin API (requires the access key via the `x-api-key` header) |
 | `/health` | Health check (public; used by the Docker HEALTHCHECK) |
+
+Images channels support either native **Images API** or **Responses API** upstreams. Responses image generation requires a `responsesModel` main model; the client model and mappings select the image-generation tool model. JSON and SSE results are converted to Images format with `b64_json`. Hosted image URLs and variations require a native Images API channel.
 
 ## Documentation
 

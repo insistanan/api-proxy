@@ -108,7 +108,7 @@ clean:
 	@rm -f build-errors.log
 	@echo "$(GREEN)✅ 清理完成$(NC)"
 
-# 复制前端资源（统一走 scripts/copy-frontend.mjs，对 cwd 免疫，避免嵌套 dist 历史 bug）
+# 通过统一脚本复制已有的前端产物；路径由脚本位置确定，不依赖当前工作目录。
 copy-frontend:
 	@echo "$(GREEN)📦 复制前端资源...$(NC)"
 	@node ../scripts/copy-frontend.mjs

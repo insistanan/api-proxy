@@ -1,5 +1,6 @@
-// 全量门禁：前端 type-check + 图标扫描 + test；后端 gofmt + vet + test。
-// 等价于根 Makefile 的 check 目标，供未安装 make 的环境直接 `npm run check` 使用。
+// 执行全量门禁：先检查行尾和嵌套 dist，再运行后端 gofmt、vet、test，
+// 以及前端类型检查、图标扫描、Vitest 和 ESLint。
+// 根 Makefile 的 check 目标也调用本脚本，未安装 make 时可直接使用 npm run check。
 import { spawnSync } from "node:child_process";
 import process from "node:process";
 

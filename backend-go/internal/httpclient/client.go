@@ -126,7 +126,7 @@ func (cm *ClientManager) GetStandardClientForUpstream(timeout time.Duration, cfg
 // GetStreamClient 获取流式客户端（响应体无超时，用于 SSE 流式响应）
 // ResponseHeaderTimeout 限制"发出请求到收到响应头"的时间（首字节超时），
 // 防止"连接建立但永不响应"的上游占住 handler；响应体读取本身不受限，
-// 避免思考模型长静默期被整体超时误杀。流中挂起由 IdleTimeoutReader 检测（见 STREAM_IDLE_TIMEOUT）。
+// 避免思考模型长静默期被整体超时误杀。流中挂起由 IdleTimeoutReader 按 settings.gateway.streamIdleTimeout 检测。
 func (cm *ClientManager) GetStreamClient(insecure bool, proxyURL string) (*http.Client, error) {
 	envConfig := config.NewRuntimeEnvConfig()
 	proxyURL = strings.TrimSpace(proxyURL)

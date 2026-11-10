@@ -19,7 +19,8 @@ import (
 
 // UpstreamConfig 上游配置
 type UpstreamConfig struct {
-	// 共享准入的派生字段不写入配置文件。
+	// MaxConcurrency 保存用户设置的并发上限。生效上限和实际上游协议
+	// 在发布配置时计算，不写入配置文件。
 	MaxConcurrency       int                         `json:"maxConcurrency"`               // URL、协议、Key 相同的配置共享最小上限
 	EffectiveConcurrency []EffectiveConcurrencyLimit `json:"-"`                            // 仅管理接口输出
 	ClientIdentityMode   string                      `json:"clientIdentityMode,omitempty"` // inherit、api、compatibility
@@ -32,7 +33,7 @@ type UpstreamConfig struct {
 	UseFullURL         bool                `json:"useFullUrl,omitempty"` // 使用完整请求地址，不自动追加版本号和接口路径
 	APIKeys            []string            `json:"apiKeys"`
 	HistoricalAPIKeys  []string            `json:"historicalApiKeys,omitempty"` // 历史 API Key（用于统计聚合，换 Key 后保留旧 Key 的统计数据）
-	ServiceType        string              `json:"serviceType"`                 // gemini, openai, claude
+	ServiceType        string              `json:"serviceType"`                 // gemini、openai、claude、responses，按入口校验可用类型
 	Name               string              `json:"name,omitempty"`
 	Description        string              `json:"description,omitempty"`
 	Website            string              `json:"website,omitempty"`
@@ -59,8 +60,8 @@ type UpstreamConfig struct {
 	ImagesFrameDurationMS int `json:"imagesFrameDurationMs,omitempty"`
 	// 多渠道调度相关字段
 	Priority                int        `json:"priority"`                          // 渠道优先级（数字越小优先级越高，默认按索引）
-	Status                  string     `json:"status"`                            // 渠道状态：active（正常）, suspended（暂停）, disabled（备用池）
-	PromotionUntil          *time.Time `json:"promotionUntil,omitempty"`          // 促销期截止时间，在此期间内优先使用此渠道（忽略trace亲和）
+	Status                  string     `json:"status"`                            // active、suspended、disabled、deprecated、deleted
+	PromotionUntil          *time.Time `json:"promotionUntil,omitempty"`          // 促销截止时间；分组内健康渠道临时优先，仍受对话路由与熔断约束
 	PromotionCount          int        `json:"promotionCount,omitempty"`          // 促销期剩余请求次数，每次成功请求递减，到0自动清除
 	LowQuality              bool       `json:"lowQuality,omitempty"`              // 低质量渠道标记：启用后强制本地估算 token，偏差>5%时使用本地值
 	VisionCapable           bool       `json:"visionCapable"`                     // 渠道是否原生支持图片理解，可直接接收图片，也可被图片理解层调用

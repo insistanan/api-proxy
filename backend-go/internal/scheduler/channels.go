@@ -13,18 +13,12 @@ type ChannelInfo struct {
 	Name     string
 	Priority int
 	Status   string
-	Score    float64 // 动态分数（基于失败率），分数越高优先级越高
+	Score    float64 // 基于失败率的展示分数，不参与选渠排序
 	Promoted bool    // 促销仅临时调整所在分组的顺序，健康检查与熔断准入照常执行
 }
 
-// calculateChannelScore 计算渠道分数（基于失败率）
-// 分数范围: 0-100，分数越高优先级越高
-// - 无历史数据：100 分（新渠道给满分）
-// - 失败率 0%：100 分
-// - 失败率 20%：80 分
-// - 失败率 50%：50 分
-// - 失败率 80%：20 分
-// - 失败率 100%：0 分
+// calculateChannelScore 计算展示分数：100 × (1 - 失败率)，不足 5 次请求时给 100 分。
+// 缺少渠道或 Key 时返回 0；分数不改变故障转移顺序。
 func (s *ChannelScheduler) calculateChannelScore(upstream *config.UpstreamConfig, channelIndex int, kind ChannelKind) float64 {
 	if upstream == nil || len(upstream.APIKeys) == 0 {
 		return 0

@@ -1,8 +1,6 @@
 // 本文件锁定 responses 链路纯函数缝隙的可观察行为（特征测试）：
 // 图片生成请求识别、输出 token 估算、流事件内容/错误判定、completed 事件解析、
 // input 解析、工具参数分键、compact 模型提取与 URL 构造。
-// 这些函数是未来把 responses 迁入 RunProxyRequest 骨架时要复用的接缝，
-// 迁移前先以本文件锁定行为。
 package responses
 
 import (

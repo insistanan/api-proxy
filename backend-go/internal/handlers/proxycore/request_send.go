@@ -24,10 +24,9 @@ func ShouldForceIdentityEncoding(req *http.Request, isStream bool) bool {
 	return httpclient.ShouldForceIdentityEncoding(req, isStream)
 }
 
-// SendRequest 发送 HTTP 请求到上游（R4-a：网络传输委托 internal/httpclient.Send，
-// 本函数只保留业务日志与流量记录职责）。
-// isStream: 是否为流式请求（流式请求使用无超时客户端）
-// apiType: 接口类型（Messages/Responses/Gemini），用于日志标签前缀
+// SendRequest 将请求交给 internal/httpclient.Send 发送，并记录业务日志和请求流量（R4-a）。
+// 流式请求使用不设整体超时的客户端，通过 context 处理取消，通过 body reader 检查空闲超时。
+// apiType 用于标记入口协议的日志；共享准入则使用请求上下文中绑定的实际上游协议。
 // permit: 可选的选渠许可句柄（R2-b）。仅在"客户端创建失败、请求从未发出"
 // 这类本地错误时由本函数中性归还；请求已发出的健康结果由调用方收尾。
 func SendRequest(req *http.Request, upstream *config.UpstreamConfig, envCfg *config.EnvConfig, isStream bool, apiType string, proxyURL string, permit *scheduler.ChannelPermit, requestTimeout time.Duration) (*http.Response, error) {
@@ -113,8 +112,10 @@ func SendRequest(req *http.Request, upstream *config.UpstreamConfig, envCfg *con
 	return resp, nil
 }
 
-// logRequestDetails 记录请求头与请求体（受 ENABLE_REQUEST_LOGS / RAW_LOG_OUTPUT 控制）
-// apiType: 接口类型（Messages/Responses/Gemini），用于日志标签前缀
+// logRequestDetails 记录准备发送给上游的请求。鉴权头会做掩码处理，
+// 正文中的脱敏占位符会移除映射 ID，入库时还会省略图片和超大内容。
+// 敏感数据检测由内容安全管线负责；调用方根据 settings.gateway 中的开关启用日志。
+// RawLogOutput 决定 debug 日志中的正文按原始文本还是格式化 JSON 输出。
 func logRequestDetails(req *http.Request, envCfg *config.EnvConfig, apiType string, isStream bool) error {
 	// 对请求头做敏感信息脱敏
 	reqHeaders := make(map[string]string)

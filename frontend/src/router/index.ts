@@ -66,7 +66,7 @@ const routes = [
     meta: { requiresAuth: true }
   },
   {
-    path: '/channels/:type',  // 动态参数匹配 messages/responses/gemini/chat
+    path: '/channels/:type',  // 协议参数由 ChannelsView 校验，包含 images
     name: 'channels',
     component: () => import('@/views/ChannelsView.vue'),  // 懒加载
     props: true,  // 将路由参数作为 props 传递

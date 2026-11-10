@@ -1,9 +1,7 @@
-// Package proxy 承载与 HTTP 框架无关的请求编排核心（R4-b 第一步提取）。
+// Package proxy 管理候选重试状态和错误分类，这些逻辑不依赖 HTTP 框架（R4-b，方案 7.1）。
 //
-// 当前范围：单次上游尝试的候选（BaseURL/Key）重试状态与故障分类谓词——
-// 这些纯逻辑在 proxycore 内部与 gin / scheduler 耦合混放，先收拢到本包，
-// 由 proxycore 委托调用。后续切片继续把尝试顺序、许可收尾与观测调用
-// 逐步迁入（方案 7.1 第 4 步）。
+// proxycore 调用本包记录 BaseURL 和 API Key 候选的失败情况、同一候选的重试次数，
+// 并判断请求是否由客户端取消。HTTP 请求、渠道许可和结果记录仍由 proxycore 负责。
 //
 // 依赖约束（go_test 静态断言）：不导入 gin、internal/handlers、SQLite 驱动。
 package proxy
@@ -16,8 +14,8 @@ import (
 	"github.com/insistanan/api-proxy/internal/utils"
 )
 
-// CandidateRetryState 收拢单个候选（BaseURL×Key）生命周期的 Key 失败与
-// 同候选重试状态。每进入一个 BaseURL 都必须创建新实例，避免状态跨候选泄漏。
+// CandidateRetryState 保存一个 BaseURL 下的失败 Key 和同候选重试次数。
+// 每进入一个 BaseURL 都要创建新实例，避免上一轮失败状态影响后续候选。
 type CandidateRetryState struct {
 	failedKeys           map[string]bool
 	sameCandidateRetries map[string]int

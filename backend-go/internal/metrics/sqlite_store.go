@@ -306,7 +306,7 @@ func (s *SQLiteStore) DeleteRecordsByMetricsKeys(metricsKeys []string, apiType s
 	// 先刷新缓冲区，确保待删除的记录已写入数据库
 	s.flush()
 
-	// 分批删除，避免触发 SQLite 变量上限（默认 999）
+	// 分批删除，限制单条 SQL 的参数数量。
 	const batchSize = 500
 	var totalDeleted int64
 

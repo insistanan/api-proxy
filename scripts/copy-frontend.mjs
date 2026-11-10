@@ -1,19 +1,18 @@
-// 复制前端构建产物到 Go embed 目录。
-// 唯一权威入口；所有 Makefile / build.sh / release workflow 都通过此脚本复制，
-// 避免在不同 cwd 下 cp -r 时产生 backend-go/backend-go/... 或 frontend/backend-go/...
-// 等嵌套 dist 目录（历史 bug：曾手动 cp 误把 frontend/dist 复制到了错误的相对路径下）。
+// 将前端构建产物复制到 Go 的资源嵌入目录。
+// Makefile、build.sh 和 release workflow 统一通过本脚本复制产物。
+// 路径根据脚本位置解析，不依赖当前工作目录，避免手动复制时使用错误的相对路径，
+// 产生 backend-go/backend-go/... 或 frontend/backend-go/... 这类嵌套目录。
 //
 // 行为约定：
 // - 仓库根 = scripts/ 所在目录的父级（按 import.meta.url 解析，与 cwd 无关）。
 // - 源：<repo>/frontend/dist（Vite build 产物）
 // - 目标：<repo>/backend-go/frontend/dist（被 backend-go/main.go 的 //go:embed all:frontend/dist 引用）
-// - 清空目标目录后整体复制（rm -rf + cp -r）。
-// - 源不存在 → 退出码 2，提示先 `cd frontend && npm run build`。
-// - 目标残留 .gitkeep 不删除（保留用户标记）。
+// - 先清空目标目录，再复制源目录的全部内容；旧产物和 .gitkeep 也会被替换。
+// - 源目录不存在时以状态码 2 退出，并提示先执行 cd frontend && npm run build。
 //
 // 用法：
 //   node scripts/copy-frontend.mjs           # 执行复制
-//   node scripts/copy-frontend.mjs --check   # 仅做嵌套 dist 体检（CI 门禁模式）
+//   node scripts/copy-frontend.mjs --check   # 检查嵌套目录和目标目录类型，不校验资源内容
 
 import { existsSync, mkdirSync, rmSync, cpSync, readdirSync, statSync } from "node:fs";
 import { dirname, resolve, join, relative } from "node:path";
@@ -40,7 +39,7 @@ function findNestedDists() {
 }
 
 function copyDirContents(from, to) {
-  // 等价于 `rm -rf <dst>; mkdir -p <dst>; cp -r <src>/* <dst>/`，但跨平台且对 cwd 免疫。
+  // 清空或创建目标目录，再逐项复制源目录内容；路径由调用方提前解析。
   if (existsSync(to)) {
     for (const entry of readdirSync(to)) {
       rmSync(join(to, entry), { recursive: true, force: true });

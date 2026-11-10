@@ -1,12 +1,12 @@
 services:
-  # API 代理服务 (一体化架构: 后端 + 前端界面)
+  # 一个服务同时提供代理 API 和 Web 管理界面。
   api-proxy:
     image: crpi-i19l8zl0ugidq97v.cn-hangzhou.personal.cr.aliyuncs.com/bene/api-proxy:latest
-    # 本地构建使用以下配置（注释掉 image 行）:
+    # 从本地源码构建时，移除 image 行并启用下面的 build 配置。
     # build:
     #   context: .
     #   dockerfile: Dockerfile
-    #   # 中国网络使用:
+    #   # 国内网络可改用 Dockerfile_China：
     #   # dockerfile: Dockerfile_China
     #   target: runtime
     container_name: api-proxy
@@ -14,22 +14,22 @@ services:
       # 统一端口：前端界面 + API + 管理接口
       - '3000:3000'
     volumes:
-      # 配置目录持久化
+      # 保存主配置和 SQLite 数据库，默认日志库也在这个目录中。
       - ./.config:/app/.config
-      # 可选：日志持久化
+      # 保留旧版日志目录挂载；只有将 logDBPath 设到 /app/logs 下时才会使用。
       - ./logs:/app/logs
     environment:
       # 基础配置
       - ENV=production
-      # 是否启用Web管理界面 (true=一体化模式, false=纯API模式)
+      # true 时提供 Web 管理界面，false 时仅提供 API。
       - ENABLE_WEB_UI=true
-      # 代理访问密钥 - 用于验证客户端对代理服务器的访问权限
+      # 客户端和管理 API 共用的访问密钥，启动前请替换为自己的密钥。
       - PROXY_ACCESS_KEY=your-super-strong-secret-key
       # 日志级别 (error, warn, info, debug)
       - LOG_LEVEL=warn
-      # 是否启用请求日志
+      # 旧请求日志开关，只在 settings.gateway 尚未保存对应字段时用于迁移。
       - ENABLE_REQUEST_LOGS=false
-      # 是否启用响应日志
+      # 旧响应日志开关，同样只用于迁移，后续请在设置页中修改。
       - ENABLE_RESPONSE_LOGS=false
     # 健康检查配置
     healthcheck:
@@ -39,7 +39,7 @@ services:
       retries: 3
       start_period: 40s
 
-    # 资源限制 (Go 应用内存占用更低)
+    # 容器资源上限与预留
     deploy:
       resources:
         limits:

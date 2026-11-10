@@ -667,8 +667,8 @@ const setDarkMode = (themeName: 'light' | 'dark' | 'auto') => {
 const { isAuthenticated, showAuthDialog, autoAuthenticate, handleAuthSubmit, handleLogout, handleAuthError } =
   useAuthFlow(showToast)
 
-// 渠道业务操作收敛到 useChannelActions composable（R5，方案 8.1）：
-// App.vue 逐步退回页面壳；committed 错误（R3）在 composable 内统一消费。
+// 渠道操作交给 useChannelActions 编排，App.vue 负责调用和展示反馈（R5，方案 8.1）。
+// 配置已提交但后续处理失败时，由 composable 统一提示用户刷新（R3）。
 const {
   refreshChannels: refreshChannelsAction,
   saveChannel,

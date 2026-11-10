@@ -1,3 +1,4 @@
+// Package ratelimit 保留旧滑动窗口限流实现；生产请求准入由 upstreamcontrol 负责。
 package ratelimit
 
 import (

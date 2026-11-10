@@ -1,6 +1,5 @@
-// send.go 提供唯一的上游网络发送实现（R4-a）：
-// 选择客户端（标准 / 流式）→ 强制流式 identity 编码 → 发送 →
-// 流式响应包装空闲超时 reader。
+// send.go 提供推理请求的共享发送实现（R4-a）：
+// 选择客户端与身份头 → 共享准入与发送 → 流式响应包装空闲超时 reader。
 //
 // 业务日志（请求/响应流量记录）与结果分类由调用层负责；本文件只做
 // 与 HTTP 传输相关的事，不引入协议分派，也不成为新的杂物包。
@@ -53,7 +52,7 @@ func ShouldForceIdentityEncoding(req *http.Request, isStream bool) bool {
 	return strings.Contains(acceptHeader, "text/event-stream")
 }
 
-// Send 执行一次上游请求：唯一网络发送出口。
+// Send 发送上游推理请求，复用客户端并遵守共享准入策略。
 // 请求体重放（Body 为 *bytes.Reader/bytes.Buffer 时可重试）由调用方负责
 // 构造；resp.Body 的关闭责任归调用方；取消经 req 自带的 context 传播。
 // 返回错误时 resp 恒为 nil（无资源泄漏窗口）。

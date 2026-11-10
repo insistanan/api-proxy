@@ -1,0 +1,30 @@
+# 排除本机依赖和构建产物，容器内按锁文件重新安装并构建。
+**/node_modules
+**/dist
+**/tmp
+**/coverage
+**/*.exe
+backend-go/api-proxy
+backend-go/api-proxy-*
+backend-go/coverage.out
+backend-go/coverage.html
+
+# 运行配置、密钥和数据库不参与镜像构建。
+**/.config
+**/.ccb_config
+**/.env
+**/.env.*
+!**/.env.example
+**/logs
+**/*.log
+**/*.db
+**/*.db-shm
+**/*.db-wal
+
+# 排除版本控制元数据、编辑器设置和本地助手缓存。
+.git
+.claude
+.codex
+.oce-client
+.idea
+.vscode

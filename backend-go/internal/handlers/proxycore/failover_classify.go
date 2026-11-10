@@ -11,8 +11,7 @@ import (
 // ShouldRetryWithNextKey 判断是否应该使用下一个密钥重试
 // 返回: (shouldFailover bool, isQuotaRelated bool)
 //
-// apiType: 接口类型（Messages/Responses/Gemini），用于日志标签前缀
-// fuzzyMode: 启用时，所有非 2xx 错误都触发 failover（模糊处理错误类型）
+// apiType 用于五协议日志标签；Fuzzy 放宽状态码分类，但仍排除请求尺寸和不可重试错误。
 //
 // HTTP 状态码分类策略（非 fuzzy 模式）：
 //   - 4xx 客户端错误：部分应触发 failover（密钥/配额问题）
@@ -31,9 +30,8 @@ func ShouldRetryWithNextKey(statusCode int, bodyBytes []byte, fuzzyMode bool, ap
 	return shouldRetryWithNextKeyNormal(statusCode, bodyBytes, apiType)
 }
 
-// shouldRetryWithNextKeyFuzzy Fuzzy 模式：所有非 2xx 错误都尝试 failover
-// 同时检查消息体中的配额相关关键词，确保 403 + "预扣费额度" 等情况能正确识别
-// 但对于内容审核等不可重试错误，即使在 Fuzzy 模式下也不应重试
+// shouldRetryWithNextKeyFuzzy 排除请求尺寸和不可重试错误后，对其余非 2xx 响应允许 failover。
+// 配额关键词与 402/429 状态共同决定是否降级 Key。
 func shouldRetryWithNextKeyFuzzy(statusCode int, bodyBytes []byte, apiType string) (bool, bool) {
 	log.Printf("[%s-Failover-Fuzzy] 进入 Fuzzy 模式处理: statusCode=%d, bodyLen=%d", apiType, statusCode, len(bodyBytes))
 	if statusCode >= 200 && statusCode < 300 {

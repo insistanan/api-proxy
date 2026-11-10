@@ -20,16 +20,10 @@ var defaultSkipPrefixes = []string{
 	"/api/gemini/global/stats",
 }
 
-// FilteredLogger 创建一个可过滤路径的 Logger 中间件。
-// 静默模式（QUIET_POLLING_LOGS=true）下按"请求块"打印：
-//
-//	┌──────── POST /v1/messages
-//	[Auth-Success] ... / [Messages-Scheduler] ... 等业务日志
-//	└──────── POST /v1/messages · 状态 200 · 耗时 5.23s
-//
-// 其中轮询端点、健康检查、OPTIONS 预检完全静默，避免刷屏。
-// 非静默模式保持 gin.Logger() 标准访问日志。
-// POST/PUT/DELETE 等管理操作始终记录日志以保留审计跟踪。
+// FilteredLogger 根据 QuietPollingLogs 选择访问日志的输出方式。
+// 开启时，指定前缀的 GET 请求、健康检查和 OPTIONS 预检不输出访问日志，
+// 其余请求记录开始、结束、状态码和耗时；关闭时使用 gin.Logger() 的标准输出。
+// 这个开关只影响访问日志，各业务组件的日志仍由调用方控制。
 func FilteredLogger(envCfg *config.EnvConfig, skipPrefixes ...string) gin.HandlerFunc {
 	if !envCfg.QuietPollingLogs {
 		return gin.Logger()
@@ -53,9 +47,9 @@ func FilteredLogger(envCfg *config.EnvConfig, skipPrefixes ...string) gin.Handle
 	}
 }
 
-// isSilentRequest 判断静默模式下该请求是否完全不打印日志
+// isSilentRequest 判断静默模式下是否跳过访问日志；业务日志由各调用方控制。
 func isSilentRequest(c *gin.Context, skipPrefixes []string) bool {
-	// OPTIONS 预检与健康检查是纯噪音，始终静默
+	// 静默模式下跳过 OPTIONS 预检与健康检查的访问日志。
 	if c.Request.Method == http.MethodOptions || c.Request.URL.Path == "/health" {
 		return true
 	}

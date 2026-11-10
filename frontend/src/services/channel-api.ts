@@ -14,15 +14,12 @@ import type {
   PingResult
 } from '@/types'
 
-/**
- * 渠道 API 类型（对应后端 scheduler.ChannelKind 与路由前缀）
- */
+/** 渠道 API 类型，对应后端 scheduler.ChannelKind 与管理路由前缀。 */
 export type ApiTab = 'messages' | 'responses' | 'gemini' | 'chat' | 'images'
 
 /**
- * 某一种渠道类型的统一 API 方法集。
- * 收敛前：getChannels / getResponsesChannels / getChatChannels / getGeminiChannels / getImagesChannels
- * 五组命名方法各自实现一遍 CRUD，仅 URL 前缀不同。工厂按 ApiTab 查表，一份实现覆盖五种渠道。
+ * 定义五组渠道共用的操作方法和返回类型。
+ * channels.ts 中的 channelApi 工厂按入口协议生成对应实现。
  */
 export interface ChannelApi {
   getChannels(): Promise<ChannelsResponse>
