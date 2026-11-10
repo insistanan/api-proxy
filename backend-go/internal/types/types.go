@@ -3,7 +3,42 @@ package types
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 )
+
+// UnsupportedProtocolError 表示请求合法，但当前上游协议无法等价执行。
+// 它只排除当前协议候选，不表示 Key、URL 或上游服务发生故障。
+type UnsupportedProtocolError struct {
+	Err error
+}
+
+func (e *UnsupportedProtocolError) Error() string {
+	return e.Err.Error()
+}
+
+func (e *UnsupportedProtocolError) Unwrap() error {
+	return e.Err
+}
+
+func IsUnsupportedProtocol(err error) bool {
+	var target *UnsupportedProtocolError
+	return errors.As(err, &target)
+}
+
+// InvalidRequestError 表示入站字段形状或参数非法，保持错误链并明确返回 4xx。
+type InvalidRequestError struct{ Err error }
+
+func (e *InvalidRequestError) Error() string {
+	return e.Err.Error()
+}
+
+func (e *InvalidRequestError) Unwrap() error {
+	return e.Err
+}
+
+func (e *InvalidRequestError) ClientRequestError() bool {
+	return true
+}
 
 // ClaudeRequest Claude 请求结构
 type ClaudeRequest struct {

@@ -18,7 +18,7 @@ func ConvertResponsesToGeminiRequest(model string, sess *types.Session, req *typ
 		items = utils.MergeResponsesItemsDedup(sess.Messages, items)
 	}
 	if utils.ResponsesItemsContainCompaction(items) {
-		return nil, fmt.Errorf("Responses compaction item 只能由 Responses 原生上游处理，无法转换为 Gemini")
+		return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("Responses compaction item 只能由 Responses 原生上游处理，无法转换为 Gemini")}
 	}
 	callNames := buildFunctionCallNameMap(items)
 
@@ -175,7 +175,12 @@ func ConvertGeminiResponseToResponses(originalRequestJSON []byte, upstreamRespon
 	return resp, nil
 }
 
-func responsesToolsToGeminiTools(raw interface{}) ([]types.GeminiTool, error) {
+func responsesToolsToGeminiTools(raw interface{}) (_ []types.GeminiTool, err error) {
+	defer func() {
+		if err != nil && !types.IsUnsupportedProtocol(err) {
+			err = &types.InvalidRequestError{Err: err}
+		}
+	}()
 	items, err := interfaceSlice(raw)
 	if err != nil || len(items) == 0 {
 		return nil, err
@@ -188,7 +193,7 @@ func responsesToolsToGeminiTools(raw interface{}) ([]types.GeminiTool, error) {
 		}
 		spec := normalizeResponsesToolDefinition(m)
 		if spec.ToolType != "" && spec.ToolType != "function" && spec.ToolType != "custom" {
-			return nil, fmt.Errorf("Gemini 上游暂不支持 Responses tool type %q", spec.ToolType)
+			return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("Gemini 上游无法等价执行 Responses tool type %q；内置搜索需原生 Responses 渠道", spec.ToolType)}
 		}
 		if spec.Name == "" {
 			return nil, fmt.Errorf("Responses function tool 缺少 name")
@@ -202,7 +207,12 @@ func responsesToolsToGeminiTools(raw interface{}) ([]types.GeminiTool, error) {
 	return []types.GeminiTool{{FunctionDeclarations: decls}}, nil
 }
 
-func responsesToolChoiceToGemini(raw interface{}) (*types.GeminiToolConfig, error) {
+func responsesToolChoiceToGemini(raw interface{}) (_ *types.GeminiToolConfig, err error) {
+	defer func() {
+		if err != nil && !types.IsUnsupportedProtocol(err) {
+			err = &types.InvalidRequestError{Err: err}
+		}
+	}()
 	if raw == nil {
 		return nil, nil
 	}
@@ -234,7 +244,7 @@ func responsesToolChoiceToGemini(raw interface{}) (*types.GeminiToolConfig, erro
 			cfg.Mode = "NONE"
 			return &types.GeminiToolConfig{FunctionCallingConfig: cfg}, nil
 		default:
-			return nil, fmt.Errorf("Gemini 上游暂不支持 tool_choice type %q", typ)
+			return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("Gemini 上游暂不支持 tool_choice type %q", typ)}
 		}
 		name := extractNamedToolChoice(v)
 		if name == "" {

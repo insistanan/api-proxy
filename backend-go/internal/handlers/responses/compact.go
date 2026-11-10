@@ -7,9 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
-	"regexp"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -21,6 +19,7 @@ import (
 	"github.com/insistanan/api-proxy/internal/providers"
 	"github.com/insistanan/api-proxy/internal/scheduler"
 	"github.com/insistanan/api-proxy/internal/session"
+	"github.com/insistanan/api-proxy/internal/types"
 	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
 	"github.com/insistanan/api-proxy/internal/utils"
 	"github.com/tidwall/gjson"
@@ -94,7 +93,7 @@ func CompactHandler(
 	})
 }
 
-// handleSingleChannelCompact 单渠道 compact 请求（带 key 轮转）
+// handleSingleChannelCompact 沿用单渠道入口，仅允许显式模型映射指定的单跳目标。
 func handleSingleChannelCompact(
 	c *gin.Context,
 	envCfg *config.EnvConfig,
@@ -105,76 +104,19 @@ func handleSingleChannelCompact(
 	conversationID string,
 	model string,
 ) {
-	upstream, _, err := cfgManager.GetCurrentResponsesUpstreamWithIndexForModel(model)
+	upstream, channelIndex, err := cfgManager.GetCurrentResponsesUpstreamWithIndexForModel(model)
 	if err != nil {
-		c.JSON(503, gin.H{"error": "未配置任何 Responses 渠道"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "未配置任何 Responses 渠道"})
 		return
 	}
-
-	if len(upstream.APIKeys) == 0 {
-		c.JSON(503, gin.H{"error": "当前渠道未配置 API 密钥"})
-		return
-	}
-
-	// Key 轮转：尝试所有可用 key
-	failedKeys := make(map[string]bool)
-	var lastErr *compactError
-
-	for attempt := 0; attempt < len(upstream.APIKeys); attempt++ {
-		apiKey, err := cfgManager.GetNextResponsesAPIKey(upstream, failedKeys)
-		if err != nil {
-			break
-		}
-
-		success, compactErr := tryCompactWithKey(c, upstream, apiKey, bodyBytes, envCfg, cfgManager, sessionManager, channelScheduler, conversationID)
-		if success {
-			return
-		}
-
-		if compactErr != nil {
-			if compactErr.responseWritten {
-				return
-			}
-			lastErr = compactErr
-			if compactErr.localAdmission {
-				if compactErr.budgetExhausted {
-					writeCompactResponseBody(c, compactErr.status, compactErr.body)
-					return
-				}
-				failedKeys[apiKey] = true
-				continue
-			}
-			if compactErr.shouldFailover {
-				failedKeys[apiKey] = true
-				cfgManager.MarkKeyAsFailed(apiKey, "Responses")
-				continue
-			}
-			// 非故障转移错误，直接返回
-			writeCompactResponseBody(c, compactErr.status, compactErr.body)
-			return
-		}
-	}
-
-	// 所有 key 都失败
-	if cfgManager.GetFuzzyModeEnabled() {
-		c.JSON(503, gin.H{
-			"type": "error",
-			"error": gin.H{
-				"type":    "service_unavailable",
-				"message": "All upstream channels are currently unavailable",
-			},
-		})
-		return
-	}
-
-	if lastErr != nil {
-		writeCompactResponseBody(c, lastErr.status, lastErr.body)
-	} else {
-		c.JSON(503, gin.H{"error": "所有 API 密钥都不可用"})
+	result := compactAttempt(c, upstream, channelIndex, nil, cfgManager, sessionManager,
+		channelScheduler, bodyBytes, conversationID, envCfg).TryWithModelMappingFailover()
+	if !result.Handled {
+		proxycore.HandleAllKeysFailed(c, cfgManager.GetFuzzyModeEnabled(), result.FailoverError, result.LastError, "Responses")
 	}
 }
 
-// handleMultiChannelCompact 多渠道 compact 请求（带故障转移和亲和性）
+// handleMultiChannelCompact 复用普通请求的选渠许可和健康记账外壳。
 func handleMultiChannelCompact(
 	c *gin.Context,
 	envCfg *config.EnvConfig,
@@ -185,94 +127,32 @@ func handleMultiChannelCompact(
 	conversationID string,
 	model string,
 ) {
-	failedChannels := make(map[int]bool)
-	maxAttempts := channelScheduler.GetActiveChannelCountForModel(scheduler.ChannelKindResponses, model)
-	var lastErr *compactError
-
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		selection, err := channelScheduler.SelectChannel(c.Request.Context(), conversationID, failedChannels, scheduler.ChannelKindResponses, model)
-		if err != nil {
-			break
-		}
-
-		upstream := selection.Upstream
-		channelIndex := selection.ChannelIndex
-		releaseReservation := func() {
-			if selection != nil && selection.Permit != nil {
-				selection.Permit.ReleaseReservation()
+	proxycore.HandleMultiChannelFailover(c, envCfg, channelScheduler, scheduler.ChannelKindResponses,
+		"Responses", conversationID, model, cfgManager.GetFuzzyModeEnabled(),
+		func(selection *scheduler.SelectionResult) proxycore.MultiChannelAttemptResult {
+			result := compactAttempt(c, selection.Upstream, selection.ChannelIndex, selection.Permit,
+				cfgManager, sessionManager, channelScheduler, bodyBytes, conversationID, envCfg).
+				TryWithModelMappingFailover()
+			return proxycore.MultiChannelAttemptResult{
+				Handled:           result.Handled,
+				Attempted:         true,
+				SuccessKey:        result.SuccessKey,
+				SuccessBaseURLIdx: result.SuccessBaseURLIdx,
+				FailoverError:     result.FailoverError,
+				LastError:         result.LastError,
+				Health:            result.Health,
+				AbortFailover:     result.AbortFailover,
 			}
-		}
-
-		// 每个渠道尝试所有 key
-		success, successKey, compactErr := tryCompactChannelWithAllKeys(c, upstream, channelIndex, cfgManager, sessionManager, channelScheduler, bodyBytes, conversationID, envCfg)
-
-		// 渠道结束：经许可句柄记账（成功/失败/取消中性，恰好一次）并释放
-		// 剩余资源（R2-b）。compact 失败原因无法区分审核/容量等中性类，
-		// 按 compactError 的 shouldFailover 分类：可故障转移→失败，其余→中性。
-		finalizeCompactPermit := func(healthSuccess bool) {
-			if selection.Permit == nil {
-				return
+		},
+		func(selection *scheduler.SelectionResult, result proxycore.MultiChannelAttemptResult) {
+			if result.SuccessKey != "" {
+				channelScheduler.MarkConversationSuccess(conversationID, scheduler.ChannelKindResponses,
+					selection.ChannelIndex, selection.Upstream.Name)
 			}
-			if c.Request.Context().Err() != nil {
-				selection.Permit.RecordHealthNeutral()
-			} else if healthSuccess {
-				selection.Permit.RecordHealthSuccess()
-			} else if compactErr != nil && compactErr.shouldFailover && !compactErr.localAdmission {
-				selection.Permit.RecordHealthFailure()
-			} else {
-				selection.Permit.RecordHealthNeutral()
-			}
-			selection.Permit.Release()
-			selection.Permit = nil
-		}
-
-		if success {
-			finalizeCompactPermit(true)
-			releaseReservation()
-			// compact 不产生 usage，但仍需记录成功以更新熔断器/权重
-			if successKey != "" {
-				channelScheduler.RecordSuccessWithUsage(upstream.BaseURL, successKey, channelIndex, nil, scheduler.ChannelKindResponses)
-				// compact 属同一对话，成功也要建立/续期对话级粘滞（与主链路一致）
-				channelScheduler.MarkConversationSuccess(conversationID, scheduler.ChannelKindResponses, channelIndex, upstream.Name)
-				// 只有真正成功的请求才设置会话级 Trace 亲和
-				channelScheduler.SetTraceAffinityForKind(scheduler.ChannelKindResponses, conversationID, channelIndex)
-				channelScheduler.ConsumePromotionCount(channelIndex, scheduler.ChannelKindResponses)
-			}
-			return
-		}
-
-		finalizeCompactPermit(false)
-		releaseReservation()
-		failedChannels[channelIndex] = true
-		if compactErr != nil {
-			if compactErr.responseWritten {
-				return
-			}
-			lastErr = compactErr
-			if !compactErr.shouldFailover {
-				writeCompactResponseBody(c, compactErr.status, compactErr.body)
-				return
-			}
-		}
-	}
-
-	// 所有渠道都失败
-	if cfgManager.GetFuzzyModeEnabled() {
-		c.JSON(503, gin.H{
-			"type": "error",
-			"error": gin.H{
-				"type":    "service_unavailable",
-				"message": "All upstream channels are currently unavailable",
-			},
+		},
+		func(c *gin.Context, failoverErr *proxycore.FailoverError, lastError error) {
+			proxycore.HandleAllChannelsFailed(c, cfgManager.GetFuzzyModeEnabled(), failoverErr, lastError, "Responses")
 		})
-		return
-	}
-
-	if lastErr != nil {
-		writeCompactResponseBody(c, lastErr.status, lastErr.body)
-	} else {
-		c.JSON(503, gin.H{"error": "所有 Responses 渠道都不可用"})
-	}
 }
 
 func compactRequestModel(body []byte) string {
@@ -285,77 +165,54 @@ func compactRequestModel(body []byte) string {
 	return strings.TrimSpace(payload.Model)
 }
 
-// tryCompactChannelWithAllKeys 尝试渠道的所有 key
-func tryCompactChannelWithAllKeys(
+// compactAttempt 仅注入 compact 专属载荷和成功事务；模型、目标渠道、URL、Key、
+// 预算和准入保持普通 Responses 的唯一编排，目标渠道不会再次解析其映射。
+func compactAttempt(
 	c *gin.Context,
 	upstream *config.UpstreamConfig,
 	channelIndex int,
+	permit *scheduler.ChannelPermit,
 	cfgManager *config.ConfigManager,
 	sessionManager *session.SessionManager,
 	channelScheduler *scheduler.ChannelScheduler,
 	bodyBytes []byte,
 	conversationID string,
 	envCfg *config.EnvConfig,
-) (bool, string, *compactError) {
-	if len(upstream.APIKeys) == 0 {
-		return false, "", nil
+) proxycore.UpstreamAttempt {
+	return proxycore.UpstreamAttempt{
+		Context:            c,
+		EnvConfig:          envCfg,
+		ConfigManager:      cfgManager,
+		ChannelScheduler:   channelScheduler,
+		Kind:               scheduler.ChannelKindResponses,
+		APIType:            "Responses",
+		MetricsManager:     channelScheduler.MetricsManager(scheduler.ChannelKindResponses),
+		Upstream:           upstream,
+		RequestedModel:     compactRequestModel(bodyBytes),
+		AllowModelFailover: cfgManager.GetFuzzyModeEnabled(),
+		Permit:             permit,
+		SkipVisionLayer:    true,
+		URLResults:         channelScheduler.GetSortedURLsForChannel(scheduler.ChannelKindResponses, channelIndex, upstream.GetAllBaseURLs()),
+		RequestBody:        bodyBytes,
+		NextAPIKey:         cfgManager.GetNextResponsesAPIKey,
+		LogContext: proxycore.AttemptLogContext{
+			ChannelIndex:   channelIndex,
+			Model:          compactRequestModel(bodyBytes),
+			ConversationID: conversationID,
+		},
+		BuildRequest: func(c *gin.Context, candidate *config.UpstreamConfig, apiKey string) (*http.Request, error) {
+			return buildCompactRequest(c, candidate, apiKey, bodyBytes, cfgManager, sessionManager, conversationID)
+		},
+		MarkURLFailure: func(baseURL string) {
+			channelScheduler.MarkURLFailure(scheduler.ChannelKindResponses, channelIndex, baseURL)
+		},
+		MarkURLSuccess: func(baseURL string) {
+			channelScheduler.MarkURLSuccess(scheduler.ChannelKindResponses, channelIndex, baseURL)
+		},
+		HandleSuccess: func(c *gin.Context, resp *http.Response, candidate *config.UpstreamConfig, apiKey string) (*types.Usage, error) {
+			return nil, finishCompactResponse(c, resp, bodyBytes, sessionManager, channelScheduler, conversationID)
+		},
 	}
-
-	metricsManager := channelScheduler.MetricsManager(scheduler.ChannelKindResponses)
-
-	failedKeys := make(map[string]bool)
-	var lastErr *compactError
-
-	// 强制探测模式
-	forceProbeMode := proxycore.AreAllKeysSuspended(metricsManager, upstream.BaseURL, upstream.APIKeys, channelIndex)
-	if forceProbeMode {
-		log.Printf("[Compact-Probe] 渠道 %s 所有 Key 都被熔断，启用强制探测模式", upstream.Name)
-	}
-
-	for attempt := 0; attempt < len(upstream.APIKeys); attempt++ {
-		apiKey, err := cfgManager.GetNextResponsesAPIKey(upstream, failedKeys)
-		if err != nil {
-			break
-		}
-
-		// 检查熔断状态
-		if !forceProbeMode && metricsManager.ShouldSuspendKey(upstream.BaseURL, apiKey, channelIndex) {
-			failedKeys[apiKey] = true
-			log.Printf("[Compact-Key] 跳过熔断中的 Key: %s", utils.MaskAPIKey(apiKey))
-			continue
-		}
-
-		success, compactErr := tryCompactWithKey(c, upstream, apiKey, bodyBytes, envCfg, cfgManager, sessionManager, channelScheduler, conversationID)
-		if success {
-			return true, apiKey, nil
-		}
-
-		if compactErr != nil {
-			if compactErr.responseWritten {
-				return false, "", compactErr
-			}
-			lastErr = compactErr
-			if compactErr.localAdmission {
-				if compactErr.budgetExhausted {
-					return false, "", compactErr
-				}
-				failedKeys[apiKey] = true
-				continue
-			}
-			if compactErr.shouldFailover {
-				failedKeys[apiKey] = true
-				cfgManager.MarkKeyAsFailed(apiKey, "Responses")
-				channelScheduler.RecordFailure(upstream.BaseURL, apiKey, channelIndex, scheduler.ChannelKindResponses)
-				continue
-			}
-			// 本地或不可重试错误已经写回，渠道按中性结束。
-			writeCompactResponseBody(c, compactErr.status, compactErr.body)
-			compactErr.responseWritten = true
-			return false, "", compactErr
-		}
-	}
-
-	return false, "", lastErr
 }
 
 func writeCompactResponseBody(c *gin.Context, status int, body []byte) {
@@ -367,55 +224,57 @@ func writeCompactResponseBody(c *gin.Context, status int, body []byte) {
 	c.Data(status, "application/json", restored)
 }
 
-// tryCompactWithKey 使用单个 key 尝试 compact 请求
-func tryCompactWithKey(
-	c *gin.Context,
-	upstream *config.UpstreamConfig,
-	apiKey string,
-	bodyBytes []byte,
-	envCfg *config.EnvConfig,
-	cfgManager *config.ConfigManager,
-	sessionManager *session.SessionManager,
-	channelScheduler *scheduler.ChannelScheduler,
-	conversationID string,
-) (bool, *compactError) {
+// buildCompactRequest 只修改本次目标模型和必要缓存字段，保留原生扩展字段。
+// candidate 的 BaseURL 已由编排固定，用同一地址产生 URL 与历史归属指纹。
+func buildCompactRequest(c *gin.Context, upstream *config.UpstreamConfig, apiKey string,
+	bodyBytes []byte, cfgManager *config.ConfigManager, sessionManager *session.SessionManager,
+	conversationID string) (*http.Request, error) {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(bodyBytes, &payload); err != nil {
+		return nil, &proxycore.RequestValidationError{Err: fmt.Errorf("解析 compact 请求失败: %w", err)}
+	}
+	if payload == nil {
+		return nil, &proxycore.RequestValidationError{Err: fmt.Errorf("compact 请求必须是 JSON 对象")}
+	}
+	var requestedModel string
+	if raw, ok := payload["model"]; ok {
+		if string(raw) == "null" {
+			return nil, &proxycore.RequestValidationError{Err: fmt.Errorf("compact model 必须是字符串")}
+		}
+		if err := json.Unmarshal(raw, &requestedModel); err != nil {
+			return nil, &proxycore.RequestValidationError{Err: fmt.Errorf("compact model 必须是字符串: %w", err)}
+		}
+	}
 	if upstream == nil || upstream.ServiceType != converters.ResponsesUpstreamResponses {
-		return false, &compactError{
-			status:         http.StatusBadRequest,
-			body:           []byte(`{"error":"当前渠道不是原生 Responses 上游，不支持 /responses/compact"}`),
-			shouldFailover: false,
-		}
+		return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("当前渠道不是原生 Responses 上游，不支持 /responses/compact")}
 	}
-	sessionRequestBody := bodyBytes
-	preparedBody, historyErr := providers.PrepareNativeResponseHistory(sessionManager, conversationID, bodyBytes, upstream.RequestIdentity(apiKey).Fingerprint())
-	if historyErr != nil {
-		status := http.StatusInternalServerError
-		var clientErr interface{ ClientRequestError() bool }
-		if errors.As(historyErr, &clientErr) && clientErr.ClientRequestError() {
-			status = http.StatusBadRequest
-		}
-		payload, _ := json.Marshal(gin.H{"error": historyErr.Error()})
-		return false, &compactError{status: status, body: payload}
+	model := config.ResolveUpstreamModel(requestedModel, upstream)
+	if strings.TrimSpace(model) == "" {
+		return nil, &proxycore.RequestValidationError{Err: fmt.Errorf("compact 请求缺少可解析的 model")}
 	}
-	bodyBytes = preparedBody
-	if upstream != nil && upstream.DisablePromptCacheKey {
-		var payload map[string]interface{}
-		if json.Unmarshal(bodyBytes, &payload) == nil {
-			delete(payload, "prompt_cache_key")
-			delete(payload, "prompt_cache_retention")
-			if sanitized, err := utils.MarshalJSONNoEscape(payload); err == nil {
-				bodyBytes = sanitized
+	bodyBytes, err := sjson.SetBytes(bodyBytes, "model", model)
+	if err != nil {
+		return nil, fmt.Errorf("设置 compact 目标模型失败: %w", err)
+	}
+	bodyBytes, err = providers.PrepareNativeResponseHistory(sessionManager, conversationID,
+		bodyBytes, upstream.RequestIdentity(apiKey).Fingerprint())
+	if err != nil {
+		return nil, fmt.Errorf("准备 compact 历史失败: %w", err)
+	}
+	if upstream.DisablePromptCacheKey {
+		for _, field := range []string{"prompt_cache_key", "prompt_cache_retention"} {
+			bodyBytes, err = sjson.DeleteBytes(bodyBytes, field)
+			if err != nil {
+				return nil, fmt.Errorf("清理 compact 缓存字段失败: %w", err)
 			}
 		}
 	}
-	targetURL := buildCompactURL(upstream)
-	req, err := http.NewRequestWithContext(c.Request.Context(), "POST", targetURL, bytes.NewReader(bodyBytes))
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, buildCompactURL(upstream), bytes.NewReader(bodyBytes))
 	if err != nil {
-		return false, &compactError{status: 500, body: []byte(`{"error":"创建请求失败"}`), shouldFailover: true}
+		return nil, &config.ConfigError{Message: fmt.Sprintf("创建 compact 请求失败: %s", err)}
 	}
-
 	req.Header = utils.PrepareUpstreamHeaders(c, req.URL.Host)
-	compatibility := cfgManager.ClientCompatibilityEnabled(upstream)
+	compatibility := cfgManager != nil && cfgManager.ClientCompatibilityEnabled(upstream)
 	utils.PrepareTargetIdentity(req.Header, "responses", compatibility)
 	if compatibility {
 		utils.SeedDisguiseSession(req.Header, conversationID, "responses")
@@ -425,16 +284,35 @@ func tryCompactWithKey(
 	req.Header.Del("x-api-key")
 	utils.SetAuthenticationHeader(req.Header, apiKey)
 	req.Header.Set("Content-Type", "application/json")
+	return req, nil
+}
+
+// tryCompactWithKey 保留单候选接缝供针对性验证，生产入口通过 compactAttempt 编排。
+func tryCompactWithKey(c *gin.Context, upstream *config.UpstreamConfig, apiKey string,
+	bodyBytes []byte, envCfg *config.EnvConfig, cfgManager *config.ConfigManager,
+	sessionManager *session.SessionManager, channelScheduler *scheduler.ChannelScheduler,
+	conversationID string) (bool, *compactError) {
+	req, err := buildCompactRequest(c, upstream, apiKey, bodyBytes, cfgManager, sessionManager, conversationID)
+	if err != nil {
+		status := http.StatusInternalServerError
+		var requestErr *proxycore.RequestValidationError
+		var clientErr interface{ ClientRequestError() bool }
+		if errors.As(err, &requestErr) || types.IsUnsupportedProtocol(err) ||
+			(errors.As(err, &clientErr) && clientErr.ClientRequestError()) {
+			status = http.StatusBadRequest
+		}
+		payload, _ := json.Marshal(gin.H{"error": err.Error()})
+		return false, &compactError{status: status, body: payload}
+	}
 	if err := hooks.RunAttachedPreRequestHooks(c.Request.Context(), c, req, upstream.Name, "responses"); err != nil {
 		_ = req.Body.Close()
 		writeCompactContentSafetyError(c, err)
 		return false, &compactError{responseWritten: true}
 	}
-
 	proxyURL, err := cfgManager.ResolveUpstreamProxyURL(upstream)
 	if err != nil {
 		_ = req.Body.Close()
-		return false, &compactError{status: 500, body: []byte(`{"error":"上游代理配置无效"}`), shouldFailover: false}
+		return false, &compactError{status: http.StatusInternalServerError, body: []byte(`{"error":"上游代理配置无效"}`)}
 	}
 	req = req.WithContext(cfgManager.UpstreamRequestContext(req.Context(), upstream, apiKey))
 	resp, err := proxycore.SendRequest(req, upstream, envCfg, false, "Responses", proxyURL, nil, 0)
@@ -442,66 +320,72 @@ func tryCompactWithKey(
 		if c.Request.Context().Err() != nil {
 			return false, &compactError{responseWritten: true}
 		}
-		if upstreamcontrol.IsLocalError(err) {
-			body, _ := json.Marshal(gin.H{"error": err.Error(), "code": "LOCAL_CAPACITY"})
-			budgetExhausted := errors.Is(err, upstreamcontrol.ErrBudget)
-			return false, &compactError{status: http.StatusServiceUnavailable, body: body, localAdmission: true, budgetExhausted: budgetExhausted, shouldFailover: cfgManager.GetFuzzyModeEnabled() && !budgetExhausted}
-		}
-		return false, &compactError{status: 502, body: []byte(`{"error":"上游请求失败"}`), shouldFailover: true}
+		payload, _ := json.Marshal(gin.H{"error": err.Error()})
+		return false, &compactError{status: http.StatusBadGateway, body: payload,
+			shouldFailover: !upstreamcontrol.IsLocalError(err), localAdmission: upstreamcontrol.IsLocalError(err)}
 	}
 	defer resp.Body.Close()
-
-	respBody, readErr := io.ReadAll(resp.Body)
-	if c.Request.Context().Err() != nil {
-		return false, &compactError{responseWritten: true}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return false, &compactError{status: http.StatusBadGateway, body: []byte(`{"error":"读取上游响应失败"}`), shouldFailover: true}
+		}
+		respBody = utils.DecompressGzipIfNeeded(resp, respBody)
+		shouldFailover, _ := proxycore.ShouldRetryWithNextKey(resp.StatusCode, respBody, cfgManager.GetFuzzyModeEnabled(), "Responses")
+		return false, &compactError{status: resp.StatusCode, body: respBody, shouldFailover: shouldFailover}
 	}
-	if readErr != nil {
-		// 读取中断：响应不完整，按上游网络故障转移处理，不回写截断 body。
-		log.Printf("[Compact-Key] 警告: 读取上游响应体失败 (状态: %d): %v", resp.StatusCode, readErr)
-		return false, &compactError{status: 502, body: []byte(`{"error":"读取上游响应失败"}`), shouldFailover: true}
+	if err := finishCompactResponse(c, resp, bodyBytes, sessionManager, channelScheduler, conversationID); err != nil {
+		return false, &compactError{responseWritten: c.Writer.Written(), status: http.StatusInternalServerError, body: []byte(`{"error":"compact 响应处理失败"}`)}
+	}
+	return true, nil
+}
+
+// finishCompactResponse 在成功回程后原子替换完整 compact output 与映射。
+// 本地提交失败必须中性终止，不能重发已经成功的压缩操作。
+func finishCompactResponse(c *gin.Context, resp *http.Response, requestBody []byte,
+	sessionManager *session.SessionManager, channelScheduler *scheduler.ChannelScheduler,
+	conversationID string) error {
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("读取 compact 响应失败: %w", err)
+	}
+	if err := c.Request.Context().Err(); err != nil {
+		return err
 	}
 	respBody = utils.DecompressGzipIfNeeded(resp, respBody)
-
-	// 判断是否需要故障转移
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		shouldFailover, _ := proxycore.ShouldRetryWithNextKey(resp.StatusCode, respBody, cfgManager.GetFuzzyModeEnabled(), "Responses")
-		return false, &compactError{status: resp.StatusCode, body: respBody, shouldFailover: shouldFailover, localAdmission: resp.StatusCode == http.StatusTooManyRequests}
-	}
-
-	// 成功
 	respBody, err = hooks.RunAttachedPostResponseHooks(c.Request.Context(), c, respBody, resp)
 	if err != nil {
-		writeCompactContentSafetyError(c, err)
-		return false, &compactError{responseWritten: true}
+		return err
+	}
+	if err := commitCompactSession(sessionManager, requestBody, respBody, conversationID, responseUpstreamOwner(resp)); err != nil {
+		return &compactCommitError{Err: fmt.Errorf("本地会话压缩状态保存失败: %w", err)}
 	}
 	compactResponseID := extractCompactResponseID(respBody)
-	if err := commitCompactSession(sessionManager, sessionRequestBody, respBody, conversationID, responseUpstreamOwner(resp)); err != nil {
-		// 上游 compact 已成功，但代理本地的历史边界没有落盘时，不能
-		// 继续返回成功并清理旧链；否则下一轮可能拿着新 response ID
-		// 进入一个空 session，静默丢失压缩后的上下文。
-		log.Printf("[Compact-Session] 压缩后的 Responses 会话替换失败: %v", err)
-		return false, &compactError{
-			status:         http.StatusInternalServerError,
-			body:           []byte(`{"error":"本地会话压缩状态保存失败"}`),
-			shouldFailover: false,
-		}
-	}
 	if compactResponseID != "" {
 		proxycore.AssociateConversationExternalID(channelScheduler, conversationID, scheduler.ChannelKindResponses, compactResponseID)
 	}
-	// compact 已经建立新的响应边界，不能把上游返回的旧 previous ID
-	// 原样交给客户端；Cursor 下一轮若重放它，会重新命中压缩前的链。
 	respBody, err = clearCompactPreviousResponseIDs(respBody)
 	if err != nil {
-		return false, &compactError{status: http.StatusInternalServerError,
-			body: []byte(`{"error":"清理 compact 旧会话 ID 失败"}`), shouldFailover: false}
+		return &compactCommitError{Err: fmt.Errorf("清理 compact 旧会话 ID 失败: %w", err)}
 	}
-	// compact 成功后，旧的 Messages→Responses 链不能继续引用压缩前
-	// 的 response_id；否则下一轮仍会把服务端旧上下文带回来。
 	session.DefaultResponseChainManager().Clear(conversationID)
 	utils.ForwardResponseHeaders(resp.Header, c.Writer)
 	c.Data(resp.StatusCode, "application/json", respBody)
-	return true, nil
+	return nil
+}
+
+type compactCommitError struct{ Err error }
+
+func (e *compactCommitError) Error() string {
+	return e.Err.Error()
+}
+
+func (e *compactCommitError) Unwrap() error {
+	return e.Err
+}
+
+func (e *compactCommitError) LocalResponseError() bool {
+	return true
 }
 
 func clearCompactPreviousResponseIDs(body []byte) ([]byte, error) {
@@ -575,15 +459,7 @@ func writeCompactContentSafetyError(c *gin.Context, err error) {
 	})
 }
 
-// buildCompactURL 构建 compact 端点 URL
+// buildCompactURL 与普通 Responses 共用完整地址、# 和版本前缀规则。
 func buildCompactURL(upstream *config.UpstreamConfig) string {
-	if upstream.UseFullURL {
-		return upstream.GetEffectiveBaseURL()
-	}
-	baseURL := strings.TrimSuffix(upstream.BaseURL, "/")
-	versionPattern := regexp.MustCompile(`/v\d+[a-z]*$`)
-	if versionPattern.MatchString(baseURL) {
-		return baseURL + "/responses/compact"
-	}
-	return baseURL + "/v1/responses/compact"
+	return utils.BuildUpstreamURL(upstream.GetEffectiveBaseURL(), "/v1", "/responses/compact", upstream.UseFullURL)
 }

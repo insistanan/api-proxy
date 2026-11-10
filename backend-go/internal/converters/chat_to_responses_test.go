@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/insistanan/api-proxy/internal/types"
+
 	"github.com/tidwall/gjson"
 )
 
@@ -777,24 +779,87 @@ func TestConvertResponsesToOpenAIChatRequest_FlattensNamespaceTool(t *testing.T)
 	}
 }
 
-func TestConvertResponsesToOpenAIChatRequest_MapsWebSearchTool(t *testing.T) {
+func TestConvertResponsesToOpenAIChatRequest_RejectsHostedWebSearchTool(t *testing.T) {
 	input := `{
 		"model":"gpt-4o",
 		"tools":[{"type":"web_search","description":"Search the web"}],
 		"tool_choice":{"type":"web_search"}
 	}`
 
-	result := ConvertResponsesToOpenAIChatRequest("gpt-4o", []byte(input), false)
-	root := gjson.ParseBytes(result)
+	var req types.ResponsesRequest
+	if err := json.Unmarshal([]byte(input), &req); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ConvertResponsesRequestToUpstream(ResponsesUpstreamOpenAI, "gpt-4o", []byte(input), false, nil, &req, nil)
+	if !types.IsUnsupportedProtocol(err) {
+		t.Fatalf("内置 web_search 应明确标记候选协议不支持，实际为 %v", err)
+	}
+}
 
-	if root.Get("tools.0.type").String() != "function" {
-		t.Fatalf("web_search 应降级为 function，实际为 %s", root.Get("tools.0.type").String())
+func TestResponsesHostedSearchAndClientFunction(t *testing.T) {
+	for _, serviceType := range []string{ResponsesUpstreamOpenAI, ResponsesUpstreamClaude, ResponsesUpstreamGemini, ResponsesUpstreamResponses} {
+		for _, toolType := range []string{"web_search", "web_search_preview", "function"} {
+			t.Run(serviceType+"/"+toolType, func(t *testing.T) {
+				body, err := json.Marshal(map[string]interface{}{
+					"model": "test-model", "input": "搜索",
+					"tools": []map[string]interface{}{{"type": toolType, "name": "web_search", "parameters": map[string]interface{}{"type": "object"}}},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				var req types.ResponsesRequest
+				if err := json.Unmarshal(body, &req); err != nil {
+					t.Fatal(err)
+				}
+				result, err := ConvertResponsesRequestToUpstream(serviceType, req.Model, body, false, nil, &req, nil)
+				if toolType != "function" && serviceType != ResponsesUpstreamResponses {
+					if !types.IsUnsupportedProtocol(err) {
+						t.Fatalf("内置搜索应明确拒绝，实际为 %v", err)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("原生搜索或客户端同名 function 应保留: %v", err)
+				}
+				if !strings.Contains(string(result), "web_search") {
+					t.Fatalf("丢失搜索工具定义: %s", result)
+				}
+			})
+		}
 	}
-	if root.Get("tools.0.function.name").String() != "web_search" {
-		t.Fatalf("web_search function.name 不匹配，实际为 %s", root.Get("tools.0.function.name").String())
+}
+
+func TestNativeResponsesSearchOutputPreservesAction(t *testing.T) {
+	request := []byte(`{"model":"test-model","input":"搜索","tools":[{"type":"web_search"}]}`)
+	response := []byte(`{"id":"response_1","object":"response","output":[{"id":"search_1","type":"web_search_call","status":"completed","action":{"type":"search","query":"Go"}}]}`)
+	converted, err := ConvertUpstreamResponseToResponses(ResponsesUpstreamResponses, request, response, "session_1")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if root.Get("tool_choice.function.name").String() != "web_search" {
-		t.Fatalf("web_search tool_choice 不匹配，实际为 %s", root.Get("tool_choice.function.name").String())
+	if len(converted.Output) != 1 {
+		t.Fatalf("原生搜索项丢失: %+v", converted.Output)
+	}
+	action, ok := converted.Output[0].Action.(map[string]interface{})
+	if !ok || action["type"] != "search" || action["query"] != "Go" {
+		t.Fatalf("原生响应解析丢失搜索动作: %+v", converted.Output[0])
+	}
+}
+
+func TestResponsesDynamicHostedSearchRequiresNativeUpstream(t *testing.T) {
+	for _, serviceType := range []string{ResponsesUpstreamOpenAI, ResponsesUpstreamClaude, ResponsesUpstreamGemini} {
+		for _, body := range []string{
+			`{"model":"test-model","input":[{"type":"tool_search_output","call_id":"load-tools","tools":[{"type":"web_search"}]}]}`,
+			`{"model":"test-model","input":"搜索","tools":[{"type":"namespace","name":"search","tools":[{"type":"web_search_preview"}]}]}`,
+		} {
+			var req types.ResponsesRequest
+			if err := json.Unmarshal([]byte(body), &req); err != nil {
+				t.Fatal(err)
+			}
+			_, err := ConvertResponsesRequestToUpstream(serviceType, req.Model, []byte(body), false, nil, &req, nil)
+			if !types.IsUnsupportedProtocol(err) {
+				t.Fatalf("%s 不得静默跳过动态内置搜索: %v", serviceType, err)
+			}
+		}
 	}
 }
 

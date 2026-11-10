@@ -6,10 +6,12 @@ package proxycore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -26,6 +28,137 @@ type healthAttemptEnv struct {
 	cfgManager       *config.ConfigManager
 	metricsManager   *metrics.MetricsManager
 	channelScheduler *scheduler.ChannelScheduler
+}
+
+func TestUnsupportedProtocolSkipsKeysURLsAndLocalModels(t *testing.T) {
+	env := newHealthAttemptEnv(t)
+	attempt := newHealthAttempt(env, "https://unused.example", []string{"key-a", "key-b"})
+	attempt.AllowModelFailover = true
+	attempt.Upstream.ModelMapping = map[string][]string{"test-model": {"first", "second"}}
+	attempt.URLResults = BuildDefaultURLResults([]string{"https://unused.example", "https://other.example"})
+	builds := 0
+	urlFailures := 0
+	attempt.MarkURLFailure = func(string) { urlFailures++ }
+	attempt.BuildRequest = func(*gin.Context, *config.UpstreamConfig, string) (*http.Request, error) {
+		builds++
+		return nil, fmt.Errorf("转换失败: %w", &types.UnsupportedProtocolError{Err: errors.New("只能使用原生 Responses")})
+	}
+	result := attempt.TryWithModelMappingFailover()
+	if result.Handled || result.Health != channelHealthNeutral || !types.IsUnsupportedProtocol(result.LastError) {
+		t.Fatalf("协议不支持应保留错误并中性交给其他渠道: %+v", result)
+	}
+	if builds != 1 || urlFailures != 0 {
+		t.Fatalf("不应更换 Key/URL/同协议模型: builds=%d, urlFailures=%d", builds, urlFailures)
+	}
+	for _, key := range attempt.Upstream.APIKeys {
+		if got := env.metricsManager.GetKeyMetrics(attempt.Upstream.BaseURL, key, 0); got != nil && got.FailureCount != 0 {
+			t.Fatalf("本地协议错误不能计入 Key 健康: %+v", got)
+		}
+	}
+}
+
+func TestFailoverFailureKeepsRealErrorInEitherOrder(t *testing.T) {
+	unsupported := &types.UnsupportedProtocolError{Err: errors.New("候选协议无法执行内置搜索")}
+	protocolFailure := &FailoverError{Status: http.StatusBadRequest, Body: []byte(`{"error":"不支持协议"}`)}
+	realFailure := &FailoverError{Status: http.StatusBadGateway, Body: []byte(`{"error":"上游连接失败"}`)}
+	for _, realFirst := range []bool{false, true} {
+		t.Run(fmt.Sprintf("真实失败优先出现=%v", realFirst), func(t *testing.T) {
+			var aggregated *FailoverError
+			var lastErr error
+			if realFirst {
+				aggregated, lastErr = mergeFailoverFailure(aggregated, lastErr, realFailure, nil)
+				aggregated, lastErr = mergeFailoverFailure(aggregated, lastErr, protocolFailure, unsupported)
+			} else {
+				aggregated, lastErr = mergeFailoverFailure(aggregated, lastErr, protocolFailure, unsupported)
+				aggregated, lastErr = mergeFailoverFailure(aggregated, lastErr, realFailure, nil)
+			}
+			if aggregated != realFailure || types.IsUnsupportedProtocol(lastErr) {
+				t.Fatalf("不能用本地协议错误覆盖真实上游失败: failure=%+v error=%v", aggregated, lastErr)
+			}
+		})
+	}
+	for _, fuzzy := range []bool{false, true} {
+		c := newAttemptTestContext(context.Background())
+		HandleAllChannelsFailed(c, fuzzy, protocolFailure, unsupported, "Responses")
+		if c.Writer.Status() != http.StatusBadRequest {
+			t.Fatalf("全协议不支持必须清晰400，fuzzy=%v status=%d", fuzzy, c.Writer.Status())
+		}
+	}
+}
+
+type testLocalResponseError struct{ error }
+
+func (testLocalResponseError) LocalResponseError() bool { return true }
+
+func TestLocalResponseCommitFailureIsNeutralAndStopsRetry(t *testing.T) {
+	env := newHealthAttemptEnv(t)
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer server.Close()
+	attempt := newHealthAttempt(env, server.URL, []string{"key-a", "key-b"})
+	attempt.HandleSuccess = func(*gin.Context, *http.Response, *config.UpstreamConfig, string) (*types.Usage, error) {
+		return nil, testLocalResponseError{error: errors.New("本地压缩窗口提交失败")}
+	}
+	result := attempt.TryWithModelMappingFailover()
+	if !result.Handled || result.SuccessKey != "" || result.Health != channelHealthNeutral || attempt.Context.Writer.Status() != http.StatusInternalServerError {
+		t.Fatalf("本地提交失败必须500中性终止: result=%+v status=%d", result, attempt.Context.Writer.Status())
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("上游成功后的本地提交失败不能重发，实际发送%d次", got)
+	}
+	for _, key := range attempt.Upstream.APIKeys {
+		if got := env.metricsManager.GetKeyMetrics(server.URL, key, 0); got != nil && got.FailureCount != 0 {
+			t.Fatalf("成功上游不能因本地提交失败记故障: %+v", got)
+		}
+	}
+}
+
+func TestUnsupportedProtocolContinuesMappedTargets(t *testing.T) {
+	for _, mappedFirst := range []bool{false, true} {
+		t.Run(fmt.Sprintf("先映射不支持渠道=%v", mappedFirst), func(t *testing.T) {
+			env := newHealthAttemptEnv(t)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.WriteString(w, `{"ok":true}`)
+			}))
+			defer server.Close()
+			attempt := newHealthAttempt(env, "https://unused.example", []string{"source-key"})
+			for _, up := range []config.UpstreamConfig{
+				{ID: "unsupported", Name: "不支持目标", BaseURL: "https://unsupported.example", APIKeys: []string{"bad-key"}},
+				{ID: "native", Name: "原生目标", BaseURL: server.URL, APIKeys: []string{"native-key"}, ServiceType: "responses"},
+			} {
+				if err := env.cfgManager.AddUpstream(up); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := env.cfgManager.SetFuzzyModeEnabled(true); err != nil {
+				t.Fatal(err)
+			}
+			attempt.AllowModelFailover = true
+			attempt.Upstream.ModelMapping = map[string][]string{"test-model": {"bad-model", "native-model"}}
+			attempt.Upstream.ModelMappingChannels = map[string]map[string]string{"test-model": {"native-model": "native"}}
+			if mappedFirst {
+				attempt.Upstream.ModelMappingChannels["test-model"]["bad-model"] = "unsupported"
+			}
+			builds := 0
+			attempt.BuildRequest = func(c *gin.Context, up *config.UpstreamConfig, key string) (*http.Request, error) {
+				builds++
+				if up.ServiceType != "responses" {
+					return nil, &types.UnsupportedProtocolError{Err: errors.New("目标协议无法处理压缩窗口")}
+				}
+				if got := config.ResolveUpstreamModel(attempt.RequestedModel, up); got != "native-model" {
+					t.Fatalf("映射应保持单跳目标模型，实际为 %s", got)
+				}
+				return http.NewRequestWithContext(c.Request.Context(), http.MethodPost, up.BaseURL, nil)
+			}
+			result := attempt.TryWithModelMappingFailover()
+			if !result.Handled || result.SuccessKey != "native-key" || result.Health != channelHealthNeutral || builds != 2 {
+				t.Fatalf("应继续原生目标且源渠道健康中性: builds=%d result=%+v", builds, result)
+			}
+		})
+	}
 }
 
 func newHealthAttemptEnv(t *testing.T) *healthAttemptEnv {

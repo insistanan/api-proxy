@@ -11,6 +11,7 @@ import (
 
 	"github.com/insistanan/api-proxy/internal/config"
 	"github.com/insistanan/api-proxy/internal/scheduler"
+	"github.com/insistanan/api-proxy/internal/types"
 	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
 	"github.com/insistanan/api-proxy/internal/urlhealth"
 )
@@ -51,13 +52,16 @@ func (a UpstreamAttempt) tryWithModelMappingFailover() UpstreamAttemptResult {
 
 	var lastFailoverError *FailoverError
 	var lastErr error
-	// localAttempted：本渠道自身是否发起过本地候选尝试；mappedRouted：是否有候选转交目标渠道。
-	// 二者决定源渠道的健康结论（见 mappingSourceHealth）。
-	localAttempted := false
+	// 只有本渠道真实失败才影响源健康；本地协议不支持不属于上游故障。
 	mappedRouted := false
+	unsupportedTargets := make(map[string]bool)
+	localFailure := false
 
 	for modelIdx, targetModel := range targetModels {
 		channelID := targetChannelIDs[modelIdx]
+		if unsupportedTargets[channelID] {
+			continue
+		}
 
 		// 检查客户端是否已取消
 		select {
@@ -72,7 +76,6 @@ func (a UpstreamAttempt) tryWithModelMappingFailover() UpstreamAttemptResult {
 		if channelID == "" {
 			log.Printf("[%s-ModelMapping] 尝试备选模型 %d/%d: %s -> %s",
 				a.APIType, modelIdx+1, len(targetModels), a.RequestedModel, targetModel)
-			localAttempted = true
 
 			// 创建上游副本，临时覆盖模型映射为当前尝试的单一模型。
 			// 渠道登记同样清空：本地候选不再解析映射登记（单跳）。
@@ -97,13 +100,13 @@ func (a UpstreamAttempt) tryWithModelMappingFailover() UpstreamAttemptResult {
 			mappedRouted = true
 			mappedResult, err := a.tryMappedChannelTarget(targetModel, channelID)
 			if err != nil {
-				lastErr = err
+				lastFailoverError, lastErr = mergeFailoverFailure(lastFailoverError, lastErr, nil, err)
 				log.Printf("[%s-ModelMapping] 映射目标渠道不可用，模型 %s -> %s: %v",
 					a.APIType, a.RequestedModel, targetModel, err)
 				if !a.ConfigManager.GetFuzzyModeEnabled() {
 					// 非 Fuzzy：目标渠道不可用直接报错，不转入正常调度的下一渠道
 					return newUpstreamAttemptResult(false, "", 0, nil, nil, err).
-						withHealth(mappingSourceHealth(localAttempted, mappedRouted)).
+						withHealth(mappingSourceHealth(localFailure, mappedRouted)).
 						withAbortFailover()
 				}
 				// Fuzzy：继续下一个候选，全部耗尽后由外层转入正常调度的下一渠道
@@ -112,7 +115,7 @@ func (a UpstreamAttempt) tryWithModelMappingFailover() UpstreamAttemptResult {
 			result = mappedResult
 			if result.Handled {
 				// 目标渠道已写回响应：源渠道健康结论由映射路径决定，目标渠道已自行记账
-				return result.withHealth(mappingSourceHealth(localAttempted, mappedRouted))
+				return result.withHealth(mappingSourceHealth(localFailure, mappedRouted))
 			}
 		}
 
@@ -120,13 +123,14 @@ func (a UpstreamAttempt) tryWithModelMappingFailover() UpstreamAttemptResult {
 		if upstreamcontrol.IsLocalError(result.LastError) || result.AbortFailover {
 			return result.withHealth(channelHealthNeutral)
 		}
+		if types.IsUnsupportedProtocol(result.LastError) {
+			// 同一渠道的其他模型仍使用同一转换协议；显式的其他渠道可继续。
+			unsupportedTargets[channelID] = true
+		} else if channelID == "" && result.Health == channelHealthFailure {
+			localFailure = true
+		}
 		// 未处理（failover 错误），保存错误信息并尝试下一个候选
-		if result.FailoverError != nil {
-			lastFailoverError = result.FailoverError
-		}
-		if result.LastError != nil {
-			lastErr = result.LastError
-		}
+		lastFailoverError, lastErr = mergeFailoverFailure(lastFailoverError, lastErr, result.FailoverError, result.LastError)
 
 		log.Printf("[%s-ModelMapping] 模型 %s (备选 %d/%d) 失败，尝试下一个备选模型",
 			a.APIType, targetModel, modelIdx+1, len(targetModels))
@@ -134,9 +138,13 @@ func (a UpstreamAttempt) tryWithModelMappingFailover() UpstreamAttemptResult {
 
 	// 所有候选都失败
 	log.Printf("[%s-ModelMapping] 所有 %d 个备选模型都失败", a.APIType, len(targetModels))
+	if !localFailure && len(unsupportedTargets) > 0 {
+		return newUpstreamAttemptResult(false, "", 0, lastFailoverError, nil, lastErr).
+			withHealth(channelHealthNeutral)
+	}
 	// 可重试故障耗尽全部候选：源渠道的健康结论按参与方式决定。
 	return newUpstreamAttemptResult(false, "", 0, lastFailoverError, nil, lastErr).
-		withHealth(mappingSourceHealth(localAttempted, mappedRouted))
+		withHealth(mappingSourceHealth(localFailure, mappedRouted))
 }
 
 func preferConversationBaseURL(

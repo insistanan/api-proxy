@@ -223,6 +223,12 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 				return localAdmissionResult(c, err, false)
 			}
 			if err != nil && prepareStage == "build_request" {
+				if types.IsUnsupportedProtocol(err) {
+					body, _ := json.Marshal(gin.H{"error": gin.H{"message": err.Error(), "type": "unsupported_protocol", "code": "unsupported_protocol"}})
+					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", http.StatusBadRequest, false, attemptStart, "unsupported_protocol", err.Error(), true, isStream, nil)
+					// 更换 Key 或 URL 不能补齐协议能力；交给模型层的其他目标渠道。
+					return newUpstreamAttemptResult(false, "", 0, &FailoverError{Status: http.StatusBadRequest, Body: body}, nil, err).withHealth(channelHealthNeutral)
+				}
 				var requestErr *RequestValidationError
 				var configErr *config.ConfigError
 				var clientErr interface{ ClientRequestError() bool }
@@ -278,6 +284,10 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 			// 请求准备成功后再启动请求画像和活跃度观测。
 			lifecycle := a.startAttemptLifecycle(currentBaseURL, apiKey)
 			finishRetryContentSafety := func(preparationErr error) {
+				if types.IsUnsupportedProtocol(preparationErr) {
+					lifecycle.finalizeNeutral()
+					return
+				}
 				var clientErr interface{ ClientRequestError() bool }
 				if errors.As(preparationErr, &clientErr) && clientErr.ClientRequestError() {
 					lifecycle.finalizeNeutral()
@@ -360,7 +370,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 					if a.MarkURLFailure != nil {
 						a.MarkURLFailure(currentBaseURL)
 					}
-					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", resp.StatusCode, false, attemptStart, "read_body", readErr.Error(), true, isStream, nil)
+					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", http.StatusBadGateway, false, attemptStart, "read_body", readErr.Error(), true, isStream, nil)
 					log.Printf("[%s-Key] 警告: 读取上游错误响应体失败 (状态: %d)，尝试下一个密钥: %v", apiType, resp.StatusCode, readErr)
 					continue
 				}
@@ -654,6 +664,8 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 						return newUpstreamAttemptResult(true, "", 0, nil, nil, cancelErr).withHealth(channelHealthNeutral)
 					}
 					failoverState.lastError = readErr
+					failureBody, _ := json.Marshal(gin.H{"error": "读取上游响应失败"})
+					failoverState.lastFailoverError = &FailoverError{Status: http.StatusBadGateway, Body: failureBody}
 					retryState.MarkKeyFailed(apiKey)
 					cfgManager.MarkKeyAsFailed(apiKey, apiType)
 					lifecycle.finalizeFailed()
@@ -667,14 +679,14 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 				if sniffComplete && utils.IsUpstreamErrorEnvelope(sniff) {
 					_ = resp.Body.Close()
 					failoverState.lastError = fmt.Errorf("上游 2xx 响应携带错误信封")
-					failoverState.lastFailoverError = &FailoverError{Status: resp.StatusCode, Body: sniff}
+					failoverState.lastFailoverError = &FailoverError{Status: http.StatusBadGateway, Body: sniff}
 					retryState.MarkKeyFailed(apiKey)
 					cfgManager.MarkKeyAsFailed(apiKey, apiType)
 					lifecycle.finalizeFailed()
 					if a.MarkURLFailure != nil {
 						a.MarkURLFailure(currentBaseURL)
 					}
-					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", resp.StatusCode, false, attemptStart, "error_envelope", string(sniff), true, isStream, nil)
+					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", http.StatusBadGateway, false, attemptStart, "error_envelope", string(sniff), true, isStream, nil)
 					log.Printf("[%s-Envelope] 渠道 %s 返回 2xx 错误信封，尝试下一个密钥", apiType, upstream.Name)
 					continue
 				}
@@ -702,6 +714,12 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 				// 记账外，取消/内容安全/本地检查错误均为中性（R2-a 表）。
 				health := channelHealthNeutral
 				switch decision.action {
+				case responseProcessingLocalFailure:
+					lifecycle.finalizeNeutral()
+					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", http.StatusInternalServerError, false, attemptStart, "local_response", err.Error(), false, isStream, usage)
+					if !c.Writer.Written() {
+						c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"message": err.Error(), "type": "local_response_error"}})
+					}
 				case responseProcessingClientCancelled:
 					// 客户端取消/断开：计入总请求数但不计入失败
 					lifecycle.finalizeClientCancelled()
@@ -758,10 +776,14 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 
 				case responseProcessingChannelFailure:
 					// 真实渠道故障：计入失败指标
+					failureStatus := resp.StatusCode
+					if failureStatus >= http.StatusOK && failureStatus < http.StatusMultipleChoices {
+						failureStatus = http.StatusBadGateway
+					}
 					cfgManager.MarkKeyAsFailed(apiKey, apiType)
 					lifecycle.finalizeFailed()
 					shouldRetryResponseProcessing := !c.Writer.Written()
-					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", resp.StatusCode, false, attemptStart, "response_processing", err.Error(), shouldRetryResponseProcessing, isStream, usage)
+					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", failureStatus, false, attemptStart, "response_processing", err.Error(), shouldRetryResponseProcessing, isStream, usage)
 					log.Printf("[%s-Key] 警告: 响应处理失败: %s", apiType, utils.RedactSensitivePlaceholdersForLog(err.Error()))
 					if shouldRetryResponseProcessing {
 						retryState.MarkKeyFailed(apiKey)
@@ -769,7 +791,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 							a.MarkURLFailure(currentBaseURL)
 						}
 						failoverState.lastFailoverError = &FailoverError{
-							Status: resp.StatusCode,
+							Status: failureStatus,
 							Body:   []byte(err.Error()),
 						}
 						continue
@@ -828,6 +850,16 @@ func (a UpstreamAttempt) buildPreparedAttemptRequest(
 	}
 	// 最终上游请求必须继承入站取消和共享预算，避免构建器意外使用 Background。
 	req = req.WithContext(a.Context.Request.Context())
+	if a.SkipVisionLayer {
+		if err := hooks.ResetAttachedStreamRestoration(a.Context); err != nil {
+			return req, "content_safety", err
+		}
+		if err := hooks.RunAttachedPreRequestHooks(req.Context(), a.Context, req, upstreamCopy.Name,
+			hooks.PayloadProtocolForServiceType(upstreamCopy.ServiceType, a.APIType)); err != nil {
+			return req, "content_safety", err
+		}
+		return req, "", nil
+	}
 	prepareStage, err := prepareRequestForUpstream(
 		a.Context,
 		a.EnvConfig,
@@ -925,6 +957,12 @@ func applyCompatibilityRetryResult(
 	finishRetryContentSafety func(error),
 ) (*http.Response, []byte, bool, *UpstreamAttemptResult) {
 	if retryResult.Err != nil {
+		if types.IsUnsupportedProtocol(retryResult.Err) {
+			finishRetryContentSafety(retryResult.Err)
+			body, _ := json.Marshal(gin.H{"error": gin.H{"message": retryResult.Err.Error(), "type": "unsupported_protocol"}})
+			abort := newUpstreamAttemptResult(false, "", 0, &FailoverError{Status: http.StatusBadRequest, Body: body}, nil, retryResult.Err).withHealth(channelHealthNeutral)
+			return resp, respBodyBytes, retrySucceeded, &abort
+		}
 		var clientErr interface{ ClientRequestError() bool }
 		if errors.As(retryResult.Err, &clientErr) && clientErr.ClientRequestError() {
 			finishRetryContentSafety(retryResult.Err)

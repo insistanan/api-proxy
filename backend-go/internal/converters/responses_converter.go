@@ -29,7 +29,7 @@ func ResponsesToClaudeMessagesWithOptions(sess *types.Session, newInput interfac
 		mergedItems = utils.MergeResponsesItemsDedup(sess.Messages, newItems)
 	}
 	if utils.ResponsesItemsContainCompaction(mergedItems) {
-		return nil, "", fmt.Errorf("Responses compaction item 只能由 Responses 原生上游处理，无法转换为 Claude Messages")
+		return nil, "", &types.UnsupportedProtocolError{Err: fmt.Errorf("Responses compaction item 只能由 Responses 原生上游处理，无法转换为 Claude Messages")}
 	}
 
 	messages := make([]types.ClaudeMessage, 0, len(mergedItems))
@@ -168,7 +168,7 @@ func ResponsesToOpenAIChatMessages(sess *types.Session, newInput interface{}, in
 		mergedItems = utils.MergeResponsesItemsDedup(sess.Messages, newItems)
 	}
 	if utils.ResponsesItemsContainCompaction(mergedItems) {
-		return nil, fmt.Errorf("Responses compaction item 只能由 Responses 原生上游处理，无法转换为 OpenAI Chat")
+		return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("Responses compaction item 只能由 Responses 原生上游处理，无法转换为 OpenAI Chat")}
 	}
 
 	messages := make([]map[string]interface{}, 0, len(mergedItems)+1)
@@ -913,6 +913,7 @@ func parseResponsesInput(input interface{}) ([]types.ResponsesItem, error) {
 				Execution:        execution,
 				EncryptedContent: itemMap["encrypted_content"],
 				Signature:        stringValueFromMap(itemMap, "signature"),
+				Action:           itemMap["action"],
 			}
 			if rawToolUse, ok := itemMap["tool_use"].(map[string]interface{}); ok {
 				parsed.ToolUse = &types.ToolUse{

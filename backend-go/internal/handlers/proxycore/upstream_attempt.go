@@ -55,6 +55,9 @@ type UpstreamAttempt struct {
 	// 供发送层的"未发出即失败"路径中性归还探测名额；渠道健康结果记账
 	// 仍由外壳在渠道结束时统一执行。单渠道路径为 nil。
 	Permit *scheduler.ChannelPermit
+
+	// SkipVisionLayer 用于 compact 控制请求：保留内容安全钩子，不发起视觉辅助调用。
+	SkipVisionLayer bool
 }
 
 // channelHealthResult 渠道级健康结果（R2-a）。它回答"本次渠道尝试对渠道

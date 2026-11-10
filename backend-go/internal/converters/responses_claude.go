@@ -8,7 +8,12 @@ import (
 	"github.com/insistanan/api-proxy/internal/types"
 )
 
-func ResponsesToolsToClaudeTools(raw interface{}) ([]types.ClaudeTool, error) {
+func ResponsesToolsToClaudeTools(raw interface{}) (_ []types.ClaudeTool, err error) {
+	defer func() {
+		if err != nil && !types.IsUnsupportedProtocol(err) {
+			err = &types.InvalidRequestError{Err: err}
+		}
+	}()
 	items, err := interfaceSlice(raw)
 	if err != nil || len(items) == 0 {
 		return nil, err
@@ -29,7 +34,12 @@ func ResponsesToolsToClaudeTools(raw interface{}) ([]types.ClaudeTool, error) {
 	return tools, nil
 }
 
-func ResponsesToolChoiceToClaude(raw interface{}) (interface{}, error) {
+func ResponsesToolChoiceToClaude(raw interface{}) (_ interface{}, err error) {
+	defer func() {
+		if err != nil && !types.IsUnsupportedProtocol(err) {
+			err = &types.InvalidRequestError{Err: err}
+		}
+	}()
 	if raw == nil {
 		return nil, nil
 	}
@@ -66,9 +76,9 @@ func ResponsesToolChoiceToClaude(raw interface{}) (interface{}, error) {
 		case "tool_search":
 			return map[string]interface{}{"type": "tool", "name": "tool_search"}, nil
 		case "web_search", "web_search_preview":
-			return map[string]interface{}{"type": "tool", "name": "web_search"}, nil
+			return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("Claude 转换不支持 Responses 内置 web_search 的服务器执行与回程，请使用原生 Responses 渠道")}
 		default:
-			return v, nil
+			return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("Claude 上游暂不支持 Responses tool_choice type %q", typ)}
 		}
 	default:
 		return nil, fmt.Errorf("不支持的 tool_choice 类型: %T", raw)
@@ -88,9 +98,9 @@ func responsesToolToClaudeTools(tool map[string]interface{}, index int) ([]types
 	case "tool_search":
 		return []types.ClaudeTool{buildClaudeToolSearchTool()}, nil
 	case "web_search", "web_search_preview":
-		return []types.ClaudeTool{buildClaudeWebSearchTool(tool)}, nil
+		return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("Claude 转换不支持 Responses 内置 web_search 的服务器执行与回程，请使用原生 Responses 渠道")}
 	default:
-		return nil, fmt.Errorf("Claude 上游暂不支持 Responses tool type %q", spec.ToolType)
+		return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("Claude 上游暂不支持 Responses tool type %q", spec.ToolType)}
 	}
 }
 

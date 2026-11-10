@@ -547,9 +547,8 @@ func handleStreamSuccess(
 					log.Printf("[Session] 保存 Responses 流式输入历史失败: %v", parseErr)
 				} else {
 					outputItems := sessionCollector.Items()
-					turnItems := make([]types.ResponsesItem, 0, len(inputItems)+len(outputItems))
-					turnItems = append(turnItems, inputItems...)
-					turnItems = append(turnItems, outputItems...)
+					turnItems := utils.ResponsesTurnItems(inputItems, outputItems)
+					compactionRoot := utils.ResponsesItemsContainCompaction(turnItems)
 					sessionTokens := upstreamUsage.TotalTokens
 					if sessionTokens <= 0 {
 						if hasUsage {
@@ -559,10 +558,8 @@ func handleStreamSuccess(
 						}
 					}
 					var commitErr error
-					if utils.ResponsesItemsContainCompactionFromInput(originalReq.Input) {
-						// compaction 必须优先走 CommitTurn 的根截断逻辑；即使
-						// 上游请求同时移除了 previous_response_id，也不能把压缩前
-						// 的完整 input 通过 ReplaceSessionAfterBoundary 原样保存。
+					if compactionRoot {
+						// 与非流式相同，完整压缩窗口成为新的历史根。
 						commitErr = sessionManager.CommitTurn(sess.ID, turnItems, sessionTokens,
 							utils.DetectImageContent(originalRequestJSON), streamResponseID, responseUpstreamOwner(resp))
 					} else if c.GetBool(utils.ContextKeyResponsesHistoryBoundary) {
@@ -574,7 +571,7 @@ func handleStreamSuccess(
 					}
 					if err := commitErr; err != nil {
 						log.Printf("[Session] 持久化 Responses 流式会话轮次失败: %v", err)
-					} else if utils.ResponsesItemsContainCompactionFromInput(originalReq.Input) ||
+					} else if compactionRoot ||
 						c.GetBool(utils.ContextKeyResponsesHistoryBoundary) {
 						// 压缩或客户端历史替换已建立新的本地历史根，清理旧的
 						// Messages→Responses 链，避免下一轮复用旧服务端上下文。

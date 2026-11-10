@@ -442,13 +442,10 @@ func (sm *SessionManager) CommitTurn(sessionID string, items []types.ResponsesIt
 	previousLastAccess := session.LastAccessAt
 	previousVision := session.HasVisionContent
 	compactionRoot := utils.ResponsesItemsContainCompaction(items)
-	if compactionRoot {
-		items = utils.ResponsesItemsFromCompactionRoot(items)
-	}
 	if len(items) > 0 {
 		if compactionRoot {
-			// compaction item 是新的历史根。不能再把它追加到旧 session，
-			// 否则压缩后的下一轮转换仍会携带完整旧 transcript。
+			// 包含 compaction 的规范窗口整体成为新历史根。压缩项之前
+			// 也可能有合法保留消息，不能仅依据下标裁掉；旧 session 不再拼接。
 			session.Messages = append([]types.ResponsesItem(nil), items...)
 			// tokensUsed 通常是包含压缩前完整 input 的本轮 usage，不能
 			// 作为新根的累计历史 token，否则清理阈值会把已压缩会话立即

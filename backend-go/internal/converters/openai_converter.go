@@ -237,7 +237,7 @@ func responsesToolChoiceToOpenAIChat(raw interface{}) (interface{}, error) {
 		choiceType = "function"
 	}
 	if choiceType != "function" && choiceType != "custom" && choiceType != "tool_search" && choiceType != "web_search" && choiceType != "web_search_preview" {
-		return nil, fmt.Errorf("OpenAI Chat 不支持 tool_choice.type=%q", choiceType)
+		return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("OpenAI Chat 不支持 tool_choice.type=%q", choiceType)}
 	}
 	if choiceType == "tool_search" {
 		return map[string]interface{}{
@@ -246,10 +246,7 @@ func responsesToolChoiceToOpenAIChat(raw interface{}) (interface{}, error) {
 		}, nil
 	}
 	if choiceType == "web_search" || choiceType == "web_search_preview" {
-		return map[string]interface{}{
-			"type":     "function",
-			"function": map[string]interface{}{"name": openAIChatWebSearchName},
-		}, nil
+		return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("OpenAI Chat 转换不支持内置 web_search 的服务器执行与回程，请使用原生 Responses 渠道")}
 	}
 
 	if function, ok := choice["function"].(map[string]interface{}); ok {
@@ -317,9 +314,9 @@ func buildOpenAIChatToolsFromResponsesTool(tool map[string]interface{}, index in
 	case "tool_search":
 		return []map[string]interface{}{buildOpenAIChatToolSearchTool()}, nil
 	case "web_search", "web_search_preview":
-		return []map[string]interface{}{buildOpenAIChatWebSearchTool(tool)}, nil
+		return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("OpenAI Chat 转换不支持内置 web_search 的服务器执行与回程，请使用原生 Responses 渠道")}
 	default:
-		return nil, fmt.Errorf("OpenAI Chat 不支持第 %d 个 Responses tool type %q", index, spec.ToolType)
+		return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("OpenAI Chat 不支持第 %d 个 Responses tool type %q", index, spec.ToolType)}
 	}
 }
 

@@ -208,6 +208,9 @@ func (c *responsesStreamSessionCollector) upsertItem(item types.ResponsesItem, k
 	if item.Signature != "" {
 		previous.Signature = item.Signature
 	}
+	if item.Action != nil {
+		previous.Action = item.Action
+	}
 	if item.Content != nil {
 		if previous.Type == "custom_tool_call" {
 			if previousText, ok := previous.Content.(string); ok {

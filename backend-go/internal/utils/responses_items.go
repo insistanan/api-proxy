@@ -489,16 +489,27 @@ func ResponsesItemsContainCompaction(items []types.ResponsesItem) bool {
 	return false
 }
 
-// ResponsesItemsFromCompactionRoot 丢弃 compaction 根之前的旧 transcript，
-// 保留压缩根、压缩后的新增输入以及本轮 output。客户端有时会把完整旧历史
-// 和 compaction item 一起重放；如果原样保存，下一轮转换仍会把旧历史写回去。
+// ResponsesItemsFromCompactionRoot 用于 /responses 服务端自动压缩的 output，
+// 丢弃压缩根之前的旧 transcript。不能用于客户端重放的 /responses/compact
+// 完整窗口：该窗口的 compaction 前置消息也属于新的有效上下文。
 func ResponsesItemsFromCompactionRoot(items []types.ResponsesItem) []types.ResponsesItem {
-	for index, item := range items {
-		if strings.EqualFold(strings.TrimSpace(item.Type), "compaction") {
+	for index := len(items) - 1; index >= 0; index-- {
+		if strings.EqualFold(strings.TrimSpace(items[index].Type), "compaction") {
 			return append([]types.ResponsesItem(nil), items[index:]...)
 		}
 	}
 	return append([]types.ResponsesItem(nil), items...)
+}
+
+// ResponsesTurnItems 区分客户端完整压缩窗口与本轮服务端自动压缩。
+// 客户端带 compaction 时整体保留 input；output 再次压缩时以最新根替换旧窗口。
+func ResponsesTurnItems(input, output []types.ResponsesItem) []types.ResponsesItem {
+	if ResponsesItemsContainCompaction(output) {
+		return ResponsesItemsFromCompactionRoot(output)
+	}
+	items := make([]types.ResponsesItem, 0, len(input)+len(output))
+	items = append(items, input...)
+	return append(items, output...)
 }
 
 // ResponsesItemsContainCompactionFromInput 处理 ResponsesRequest.Input 在
@@ -613,6 +624,11 @@ func canonicalResponsesRawItem(item map[string]interface{}) interface{} {
 			"call_id": stringFromRawMap(item, "call_id"),
 			"content": canonicalResponsesValue(content),
 			"tools":   canonicalResponsesValue(item["tools"]),
+		}, item)
+	case "web_search_call":
+		return withResponsesRawIntegrityFields(map[string]interface{}{
+			"type":   typ,
+			"action": canonicalResponsesValue(item["action"]),
 		}, item)
 	case "reasoning":
 		return withResponsesRawIntegrityFields(map[string]interface{}{
@@ -729,6 +745,11 @@ func canonicalResponsesItem(item types.ResponsesItem) interface{} {
 			"call_id": item.CallID,
 			"content": canonicalResponsesValue(item.Content),
 			"tools":   canonicalResponsesValue(item.Tools),
+		}, item)
+	case "web_search_call":
+		return withResponsesIntegrityFields(map[string]interface{}{
+			"type":   typ,
+			"action": canonicalResponsesValue(item.Action),
 		}, item)
 	case "reasoning":
 		return withResponsesIntegrityFields(map[string]interface{}{

@@ -5,7 +5,31 @@ import (
 	"testing"
 
 	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/types"
 )
+
+func TestChatHostedWebSearchDoesNotBecomeClientFunction(t *testing.T) {
+	for _, toolType := range []string{"web_search", "web_search_preview", "function"} {
+		t.Run(toolType, func(t *testing.T) {
+			body, err := json.Marshal(map[string]interface{}{
+				"model": "test-model", "messages": []map[string]interface{}{{"role": "user", "content": "搜索"}},
+				"tools": []map[string]interface{}{{"type": toolType, "name": "web_search"}},
+				"tool_choice": map[string]interface{}{"type": toolType, "name": "web_search"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = applyChatModelMapping(body, &config.UpstreamConfig{})
+			if toolType == "function" {
+				if err != nil {
+					t.Fatalf("客户端声明的普通同名函数应保留: %v", err)
+				}
+			} else if !types.IsUnsupportedProtocol(err) {
+				t.Fatalf("内置搜索应明确为候选协议不支持: %v", err)
+			}
+		})
+	}
+}
 
 func TestApplyChatModelMapping_DowngradesCustomTool(t *testing.T) {
 	input := []byte(`{

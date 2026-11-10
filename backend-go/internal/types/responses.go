@@ -57,6 +57,8 @@ type ResponsesItem struct {
 	// 和客户端重放匹配过程中保留。
 	EncryptedContent interface{} `json:"encrypted_content,omitempty"`
 	Signature        string      `json:"signature,omitempty"`
+	// 原生 web_search_call 的搜索、打开页面或页内查找动作须完整保留。
+	Action interface{} `json:"action,omitempty"`
 }
 
 // UnmarshalJSON 保留 Responses 扩展 item 的真实字段形态。
@@ -101,6 +103,7 @@ func (i *ResponsesItem) UnmarshalJSON(data []byte) error {
 	i.Summary = decodeValue("summary")
 	i.Tools = decodeValue("tools")
 	i.EncryptedContent = decodeValue("encrypted_content")
+	i.Action = decodeValue("action")
 	if i.Content == nil {
 		if i.Type == "custom_tool_call" {
 			i.Content = decodeValue("input")
@@ -165,6 +168,9 @@ func (i ResponsesItem) MarshalJSON() ([]byte, error) {
 	}
 	if i.Signature != "" {
 		out["signature"] = i.Signature
+	}
+	if i.Action != nil {
+		out["action"] = i.Action
 	}
 
 	switch i.Type {

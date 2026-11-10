@@ -83,7 +83,7 @@ func (p *ResponsesProvider) BuildRequest(input RequestInput, upstream *config.Up
 	if upstream.ServiceType == converters.ResponsesUpstreamResponses {
 		var responsesReq types.ResponsesRequest
 		if err := json.Unmarshal(bodyBytes, &responsesReq); err != nil {
-			return outcome, fmt.Errorf("解析 Responses 请求失败: %w", err)
+			return outcome, &types.InvalidRequestError{Err: fmt.Errorf("解析 Responses 请求失败: %w", err)}
 		}
 		model := config.ResolveUpstreamModel(responsesReq.Model, upstream)
 		targetModel = model
@@ -135,7 +135,7 @@ func (p *ResponsesProvider) BuildRequest(input RequestInput, upstream *config.Up
 	} else {
 		var responsesReq types.ResponsesRequest
 		if err := json.Unmarshal(bodyBytes, &responsesReq); err != nil {
-			return outcome, fmt.Errorf("解析 Responses 请求失败: %w", err)
+			return outcome, &types.InvalidRequestError{Err: fmt.Errorf("解析 Responses 请求失败: %w", err)}
 		}
 
 		isStream = responsesReq.Stream

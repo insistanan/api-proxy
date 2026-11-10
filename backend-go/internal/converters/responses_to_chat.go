@@ -5,14 +5,26 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/insistanan/api-proxy/internal/types"
 	"github.com/insistanan/api-proxy/internal/utils"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
 
 // ValidateResponsesToOpenAIChatRequest 对 raw JSON 快路径做协议兼容校验。
-func ValidateResponsesToOpenAIChatRequest(inputRawJSON []byte) error {
+func ValidateResponsesToOpenAIChatRequest(inputRawJSON []byte) (validationErr error) {
+	defer func() {
+		if validationErr != nil && !types.IsUnsupportedProtocol(validationErr) {
+			validationErr = &types.InvalidRequestError{Err: validationErr}
+		}
+	}()
+	if !json.Valid(inputRawJSON) {
+		return fmt.Errorf("Responses -> OpenAI Chat 请求不是合法 JSON")
+	}
 	root := gjson.ParseBytes(inputRawJSON)
+	if !gjsonResultIsObject(root) {
+		return fmt.Errorf("Responses -> OpenAI Chat 请求必须是对象")
+	}
 
 	if tools := root.Get("tools"); tools.Exists() {
 		if err := validateResponsesToolsArray(tools, "Responses -> OpenAI Chat 的 tools"); err != nil {
@@ -82,20 +94,44 @@ func validateResponsesToolsArray(tools gjson.Result, label string) error {
 
 	var err error
 	tools.ForEach(func(key, tool gjson.Result) bool {
-		toolType := tool.Get("type").String()
-		if toolType != "" && toolType != "function" && toolType != "custom" && toolType != "namespace" && toolType != "tool_search" && toolType != "web_search" && toolType != "web_search_preview" {
-			err = fmt.Errorf("OpenAI Chat 不支持第 %d 个 Responses tool type %q", key.Int(), toolType)
+		if !gjsonResultIsObject(tool) {
+			err = fmt.Errorf("%s 第 %d 项必须是对象", label, key.Int())
 			return false
 		}
-		if toolType == "tool_search" || toolType == "web_search" || toolType == "web_search_preview" {
+		if toolType := tool.Get("type"); toolType.Exists() && toolType.Type != gjson.String {
+			err = fmt.Errorf("%s 第 %d 项 type 必须是字符串", label, key.Int())
+			return false
+		}
+		toolType := tool.Get("type").String()
+		if toolType != "" && toolType != "function" && toolType != "custom" && toolType != "namespace" && toolType != "tool_search" && toolType != "web_search" && toolType != "web_search_preview" {
+			err = &types.UnsupportedProtocolError{Err: fmt.Errorf("OpenAI Chat 不支持第 %d 个 Responses tool type %q", key.Int(), toolType)}
+			return false
+		}
+		if toolType == "web_search" || toolType == "web_search_preview" {
+			err = &types.UnsupportedProtocolError{Err: fmt.Errorf("OpenAI Chat 转换不支持 Responses 内置 web_search 的服务器执行与回程，请使用原生 Responses 渠道")}
+			return false
+		}
+		if toolType == "tool_search" {
 			return true
 		}
 		if toolType == "namespace" {
-			if tool.Get("name").String() == "" {
+			if name := tool.Get("name"); name.Type != gjson.String || name.String() == "" {
 				err = fmt.Errorf("%s 第 %d 项缺少 name", label, key.Int())
 				return false
 			}
+			if nested := tool.Get("tools"); nested.Exists() {
+				err = validateResponsesToolsArray(nested, fmt.Sprintf("%s 第 %d 项 namespace.tools", label, key.Int()))
+				if err != nil {
+					return false
+				}
+			}
 			return true
+		}
+		for _, field := range []string{"name", "function.name"} {
+			if name := tool.Get(field); name.Exists() && name.Type != gjson.String {
+				err = fmt.Errorf("%s 第 %d 项 %s 必须是字符串", label, key.Int(), field)
+				return false
+			}
 		}
 		name := tool.Get("name").String()
 		if nested := tool.Get("function.name"); nested.Exists() && nested.String() != "" {
@@ -296,15 +332,26 @@ func validateOpenAIChatToolChoice(toolChoice gjson.Result) error {
 	if !gjsonResultIsObject(toolChoice) {
 		return fmt.Errorf("Responses -> OpenAI Chat 的 tool_choice 必须是字符串或对象")
 	}
+	if choiceType := toolChoice.Get("type"); choiceType.Exists() && choiceType.Type != gjson.String {
+		return fmt.Errorf("OpenAI Chat tool_choice.type 必须是字符串")
+	}
 	choiceType := toolChoice.Get("type").String()
 	if choiceType == "" {
 		choiceType = "function"
 	}
 	if choiceType != "function" && choiceType != "custom" && choiceType != "tool_search" && choiceType != "web_search" && choiceType != "web_search_preview" {
-		return fmt.Errorf("OpenAI Chat 不支持 tool_choice.type=%q", choiceType)
+		return &types.UnsupportedProtocolError{Err: fmt.Errorf("OpenAI Chat 不支持 tool_choice.type=%q", choiceType)}
 	}
-	if choiceType == "tool_search" || choiceType == "web_search" || choiceType == "web_search_preview" {
+	if choiceType == "web_search" || choiceType == "web_search_preview" {
+		return &types.UnsupportedProtocolError{Err: fmt.Errorf("OpenAI Chat 转换不支持 Responses 内置 web_search tool_choice，请使用原生 Responses 渠道")}
+	}
+	if choiceType == "tool_search" {
 		return nil
+	}
+	for _, field := range []string{"name", "function.name"} {
+		if name := toolChoice.Get(field); name.Exists() && name.Type != gjson.String {
+			return fmt.Errorf("OpenAI Chat tool_choice.%s 必须是字符串", field)
+		}
 	}
 	name := toolChoice.Get("name").String()
 	if nested := toolChoice.Get("function.name"); nested.Exists() && nested.String() != "" {
@@ -337,12 +384,8 @@ func normalizeResponsesToolChoiceForChat(toolChoice gjson.Result) (interface{}, 
 		}, true
 	}
 	if choiceType == "web_search" || choiceType == "web_search_preview" {
-		return map[string]interface{}{
-			"type": "function",
-			"function": map[string]interface{}{
-				"name": openAIChatWebSearchName,
-			},
-		}, true
+		// 生产入口先校验并返回错误，不能把服务器搜索变成客户端函数。
+		return nil, false
 	}
 	name := toolChoice.Get("function.name").String()
 	if name == "" {

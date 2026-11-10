@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/insistanan/api-proxy/internal/types"
 )
 
 func sanitizeOpenAIChatPayloadForUpstream(payload map[string]interface{}) error {
@@ -176,7 +178,7 @@ func sanitizeOpenAIChatTool(tool map[string]interface{}, index int) (map[string]
 			},
 		}, nil
 	case "web_search", "web_search_preview":
-		return buildChatWebSearchTool(tool), nil
+		return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("Chat 渠道无法等价执行内置 web_search，请使用原生 Responses 搜索；普通 function 工具仍由客户端执行")}
 	default:
 		return nil, fmt.Errorf("OpenAI Chat 不支持第 %d 个 tool type %q", index, toolType)
 	}
@@ -225,12 +227,7 @@ func sanitizeOpenAIChatToolChoice(raw interface{}) (interface{}, bool, error) {
 			},
 		}, true, nil
 	case "web_search", "web_search_preview":
-		return map[string]interface{}{
-			"type": "function",
-			"function": map[string]interface{}{
-				"name": chatWebSearchProxyName,
-			},
-		}, true, nil
+		return nil, false, &types.UnsupportedProtocolError{Err: fmt.Errorf("Chat 渠道无法等价执行内置 web_search tool_choice，请使用原生 Responses 搜索")}
 	case "auto", "none", "required":
 		return choiceType, true, nil
 	default:

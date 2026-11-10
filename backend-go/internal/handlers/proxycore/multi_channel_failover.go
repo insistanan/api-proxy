@@ -89,7 +89,9 @@ func HandleMultiChannelFailover(
 
 		selection, err := channelScheduler.SelectChannel(c.Request.Context(), conversationID, failedChannels, kind, requestedModel)
 		if err != nil {
-			lastError = err
+			if lastError == nil {
+				lastError = err
+			}
 			break
 		}
 
@@ -178,20 +180,15 @@ func HandleMultiChannelFailover(
 			handleAllFailed(c, result.FailoverError, result.LastError)
 			return
 		}
-		if result.LastError != nil {
-			lastError = result.LastError
-		}
-
-		if result.FailoverError != nil {
-			lastFailoverError = result.FailoverError
-			if result.LastError == nil {
-				if upstream != nil {
-					lastError = fmt.Errorf("渠道 [%d] %s 失败", channelIndex, upstream.Name)
-				} else {
-					lastError = fmt.Errorf("渠道 [%d] 失败", channelIndex)
-				}
+		currentError := result.LastError
+		if result.FailoverError != nil && currentError == nil {
+			if upstream != nil {
+				currentError = fmt.Errorf("渠道 [%d] %s 失败", channelIndex, upstream.Name)
+			} else {
+				currentError = fmt.Errorf("渠道 [%d] 失败", channelIndex)
 			}
 		}
+		lastFailoverError, lastError = mergeFailoverFailure(lastFailoverError, lastError, result.FailoverError, currentError)
 
 		if result.Attempted && upstream != nil {
 			log.Printf("[%s-Failover] 警告: 渠道 [%d] %s 所有密钥都失败，尝试下一个渠道", apiType, channelIndex, upstream.Name)

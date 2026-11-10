@@ -57,6 +57,7 @@ const (
 	responseProcessingClientCancelled responseProcessingAction = iota
 	responseProcessingContentSafety
 	responseProcessingContentSafetyHook
+	responseProcessingLocalFailure
 	responseProcessingRetryCandidate
 	responseProcessingChannelFailure
 )
@@ -101,6 +102,10 @@ func (a UpstreamAttempt) decideUpstreamFailure(statusCode int, body []byte) upst
 func classifyResponseProcessingError(err error, responseWritten bool) responseProcessingDecision {
 	if isClientSideError(err) {
 		return responseProcessingDecision{action: responseProcessingClientCancelled}
+	}
+	var localErr interface{ LocalResponseError() bool }
+	if errors.As(err, &localErr) && localErr.LocalResponseError() {
+		return responseProcessingDecision{action: responseProcessingLocalFailure}
 	}
 	if safetyErr := hooks.ContentSafetyErrorFrom(err); safetyErr != nil {
 		return responseProcessingDecision{

@@ -8,6 +8,46 @@ import (
 	"github.com/insistanan/api-proxy/internal/types"
 )
 
+func TestPersistentCommitCompactionPreservesCompleteWindow(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "responses.db")
+	manager, err := NewPersistentSessionManager(dbPath, time.Hour, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := manager.GetOrCreateSessionForConversation("", "compact-window")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.CommitTurn(sess.ID, []types.ResponsesItem{{Type: "message", Role: "user", Content: "旧历史"}}, 10, false, "old-response", "old-owner"); err != nil {
+		t.Fatal(err)
+	}
+	window := []types.ResponsesItem{
+		{Type: "message", Role: "user", Content: "compact 保留的用户消息"},
+		{Type: "compaction", EncryptedContent: "opaque"},
+		{Type: "message", Role: "user", Content: "新问"},
+		{Type: "message", Role: "assistant", Content: "回答"},
+	}
+	if err := manager.CommitTurn(sess.ID, window, 20, false, "new-response", "new-owner"); err != nil {
+		t.Fatal(err)
+	}
+	manager.Stop()
+	restored, err := NewPersistentSessionManager(dbPath, time.Hour, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Stop()
+	continued, err := restored.GetOrCreateSessionForConversation("new-response", "compact-window")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(continued.Messages) != 4 || continued.Messages[0].Content != window[0].Content || continued.Messages[1].EncryptedContent != "opaque" {
+		t.Fatalf("完整压缩窗口必须落盘并恢复: %+v", continued.Messages)
+	}
+	if _, found, err := restored.ResponseOwner("old-response"); err != nil || found {
+		t.Fatalf("旧映射应原子失效: found=%v err=%v", found, err)
+	}
+}
+
 func TestPersistentSessionManagerRestoresPreviousResponseChain(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "conversations.db")
 	manager, err := NewPersistentSessionManager(dbPath, 7*24*time.Hour, 100, 100000)

@@ -230,6 +230,9 @@ func applyChatModelMapping(bodyBytes []byte, upstream *config.UpstreamConfig) ([
 		return nil, err
 	}
 	if err := sanitizeOpenAIChatPayloadForUpstream(payload); err != nil {
+		if !types.IsUnsupportedProtocol(err) {
+			return nil, &types.InvalidRequestError{Err: err}
+		}
 		return nil, err
 	}
 	if upstream != nil && upstream.DisablePromptCacheKey {

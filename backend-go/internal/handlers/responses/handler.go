@@ -221,20 +221,16 @@ func handleSuccess(
 		sess, err := sessionManager.GetOrCreateSessionForConversation(sessionLookupPreviousResponseID, conversationID)
 		if err == nil {
 			previousResponseID := sess.LastResponseID
-			compactionRoot := utils.ResponsesItemsContainCompactionFromInput(originalReq.Input)
+			compactionRoot := utils.ResponsesItemsContainCompactionFromInput(originalReq.Input) ||
+				utils.ResponsesItemsContainCompaction(responsesResp.Output)
 			inputItems, parseErr := parseInputToItems(originalReq.Input)
 			if parseErr != nil {
 				return nil, fmt.Errorf("保存 Responses 输入历史失败: %w", parseErr)
 			}
-			turnItems := make([]types.ResponsesItem, 0, len(inputItems)+len(responsesResp.Output))
-			turnItems = append(turnItems, inputItems...)
-			turnItems = append(turnItems, responsesResp.Output...)
+			turnItems := utils.ResponsesTurnItems(inputItems, responsesResp.Output)
 			var commitErr error
 			if compactionRoot {
-				// compaction 优先于“previous_response_id 被移除”边界：
-				// CommitTurn 会从 compaction item 截断旧 transcript。若先走
-				// ReplaceSessionAfterBoundary，压缩前的完整历史会被再次写回本地
-				// session，下一轮转换仍会迅速恢复到旧上下文长度。
+				// 压缩窗口整体替换旧历史，并原子失效旧 response ID 映射。
 				commitErr = sessionManager.CommitTurn(sess.ID, turnItems, sessionTokens,
 					utils.DetectImageContent(originalRequestJSON), responsesResp.ID, responseUpstreamOwner(resp))
 			} else if c.GetBool(utils.ContextKeyResponsesHistoryBoundary) {
@@ -405,6 +401,7 @@ func parseResponsesItemMap(itemMap map[string]interface{}) types.ResponsesItem {
 	item.Execution, _ = itemMap["execution"].(string)
 	item.EncryptedContent = itemMap["encrypted_content"]
 	item.Signature, _ = itemMap["signature"].(string)
+	item.Action = itemMap["action"]
 
 	if rawToolUse, ok := itemMap["tool_use"].(map[string]interface{}); ok {
 		item.ToolUse = &types.ToolUse{

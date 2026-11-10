@@ -144,6 +144,7 @@ func parseResponsesPassthroughItem(itemMap map[string]interface{}) (types.Respon
 		Execution:        stringValue(itemMap, "execution"),
 		EncryptedContent: itemMap["encrypted_content"],
 		Signature:        stringValue(itemMap, "signature"),
+		Action:           itemMap["action"],
 	}
 	if rawToolUse, ok := itemMap["tool_use"].(map[string]interface{}); ok {
 		item.ToolUse = &types.ToolUse{

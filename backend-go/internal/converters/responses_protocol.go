@@ -33,6 +33,32 @@ func ConvertResponsesRequestToUpstream(serviceType string, model string, bodyByt
 		// 追加到它前面；provider 会同步删除请求中的旧链字段。
 		sess = nil
 	}
+	if serviceType != ResponsesUpstreamResponses && req != nil {
+		// 先固定有效历史边界，再检查 hosted 工具；旧窗口不能污染新历史。
+		var items []types.ResponsesItem
+		if req.Input != nil {
+			var err error
+			items, err = parseResponsesInput(req.Input)
+			if err != nil {
+				return nil, &types.InvalidRequestError{Err: err}
+			}
+		}
+		if sess != nil {
+			items = utils.MergeResponsesItemsDedup(sess.Messages, items)
+		}
+		for _, item := range items {
+			if item.Type == "web_search_call" {
+				return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("Responses 内置 web_search_call 历史无法等价转换到 %s，请使用原生 Responses 渠道", serviceType)}
+			}
+		}
+		tools, err := collectResponsesToolDefinitions(req.Tools, items)
+		if err != nil {
+			return nil, &types.InvalidRequestError{Err: err}
+		}
+		if err := rejectHostedResponsesSearchTools(tools, serviceType); err != nil {
+			return nil, err
+		}
+	}
 	switch serviceType {
 	case ResponsesUpstreamResponses:
 		return convertResponsesPassthroughRequestWithSession(model, bodyBytes, upstream, sess, req)
@@ -48,6 +74,31 @@ func ConvertResponsesRequestToUpstream(serviceType string, model string, bodyByt
 	default:
 		return nil, fmt.Errorf("Responses 上游 serviceType %q 不支持", serviceType)
 	}
+}
+
+// rejectHostedResponsesSearchTools 同时检查显式工具、动态加载工具与 namespace。
+// function 即使名为 web_search 仍是客户端工具，不能据 name 判断执行责任。
+func rejectHostedResponsesSearchTools(tools []map[string]interface{}, serviceType string) error {
+	for _, tool := range tools {
+		spec := normalizeResponsesToolDefinition(tool)
+		switch spec.ToolType {
+		case "web_search", "web_search_preview":
+			return &types.UnsupportedProtocolError{Err: fmt.Errorf("%s 转换无法等价执行 Responses 内置 %s 及其回程，请使用原生 Responses 渠道", serviceType, spec.ToolType)}
+		case "namespace":
+			rawChildren := tool["tools"]
+			if rawChildren == nil {
+				rawChildren = tool["children"]
+			}
+			children, err := normalizeMapSlice(rawChildren)
+			if err != nil {
+				return &types.InvalidRequestError{Err: fmt.Errorf("namespace tools 非法: %w", err)}
+			}
+			if err := rejectHostedResponsesSearchTools(children, serviceType); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // ConvertUpstreamResponseToResponses 将上游非流式响应转换为 Responses 响应。
@@ -417,7 +468,7 @@ func convertResponsesRequestToOpenAIChat(model string, bodyBytes []byte, stream 
 		return nil, err
 	}
 	if req != nil && utils.ResponsesItemsContainCompactionFromInput(req.Input) {
-		return nil, fmt.Errorf("Responses compaction item 只能由 Responses 原生上游处理，无法转换为 OpenAI Chat")
+		return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("Responses compaction item 只能由 Responses 原生上游处理，无法转换为 OpenAI Chat")}
 	}
 
 	// 原始 reasoning_text 会关联到 assistant.reasoning_content；摘要不冒充原文。
@@ -431,7 +482,7 @@ func convertResponsesRequestToOpenAIChat(model string, bodyBytes []byte, stream 
 		}
 		mergedItems = utils.MergeResponsesItemsDedup(sess.Messages, currentItems)
 		if utils.ResponsesItemsContainCompaction(mergedItems) {
-			return nil, fmt.Errorf("Responses compaction item 只能由 Responses 原生上游处理，无法转换为 OpenAI Chat")
+			return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("Responses compaction item 只能由 Responses 原生上游处理，无法转换为 OpenAI Chat")}
 		}
 		conversionBody, err = sjson.SetBytes(bodyBytes, "input", mergedItems)
 		if err != nil {
