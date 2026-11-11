@@ -64,6 +64,9 @@ func (cm *ConfigManager) mutateChannelSet(kind string, mutate func(*channelSet) 
 // addChannel 添加上游（通用版）。
 // chat/images 版额外做了 DefaultModel TrimSpace，此处统一对所有 kind 做（对 messages 无害）。
 func (cm *ConfigManager) addChannel(kind string, up UpstreamConfig) (AddedUpstream, error) {
+	if up.BuiltinProvider != "" {
+		return AddedUpstream{}, fmt.Errorf("不能通过普通接口创建内置免费渠道")
+	}
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
@@ -115,6 +118,10 @@ func (cm *ConfigManager) updateChannel(kind string, index int, updates UpstreamU
 	}
 	upstreams := *cs.upstreams
 
+	if err := rejectBuiltinChannel(upstreams, index); err != nil {
+		return false, err
+	}
+
 	if index < 0 || index >= len(upstreams) {
 		return false, fmt.Errorf("无效的 %s 上游索引: %d", cs.name, index)
 	}
@@ -157,6 +164,9 @@ func (cm *ConfigManager) removeChannel(kind string, index int) (*UpstreamConfig,
 	if err != nil {
 		return nil, err
 	}
+	if err := rejectBuiltinChannel(*cs.upstreams, index); err != nil {
+		return nil, err
+	}
 	newSlice, removed, err := removeFromSlice(*cs.upstreams, index, cs.name)
 	if err != nil {
 		return nil, err
@@ -174,6 +184,9 @@ func (cm *ConfigManager) removeChannel(kind string, index int) (*UpstreamConfig,
 // addChannelKey 为指定渠道添加 API 密钥。
 func (cm *ConfigManager) addChannelKey(kind string, index int, apiKey string) error {
 	return cm.mutateChannelSet(kind, func(cs *channelSet) error {
+		if err := rejectBuiltinChannel(*cs.upstreams, index); err != nil {
+			return err
+		}
 		return addAPIKeyOp(*cs.upstreams, index, apiKey, cs.name)
 	})
 }
@@ -181,6 +194,9 @@ func (cm *ConfigManager) addChannelKey(kind string, index int, apiKey string) er
 // removeChannelKey 从指定渠道移除 API 密钥。
 func (cm *ConfigManager) removeChannelKey(kind string, index int, apiKey string) error {
 	return cm.mutateChannelSet(kind, func(cs *channelSet) error {
+		if err := rejectBuiltinChannel(*cs.upstreams, index); err != nil {
+			return err
+		}
 		return removeAPIKeyOp(*cs.upstreams, index, apiKey, cs.name)
 	})
 }
@@ -188,6 +204,9 @@ func (cm *ConfigManager) removeChannelKey(kind string, index int, apiKey string)
 // moveChannelKeyTop 将 API 密钥移到列表顶部。
 func (cm *ConfigManager) moveChannelKeyTop(kind string, index int, apiKey string) error {
 	return cm.mutateChannelSet(kind, func(cs *channelSet) error {
+		if err := rejectBuiltinChannel(*cs.upstreams, index); err != nil {
+			return err
+		}
 		return moveKeyToTopOp(*cs.upstreams, index, apiKey)
 	})
 }
@@ -195,6 +214,9 @@ func (cm *ConfigManager) moveChannelKeyTop(kind string, index int, apiKey string
 // moveChannelKeyBottom 将 API 密钥移到底部。
 func (cm *ConfigManager) moveChannelKeyBottom(kind string, index int, apiKey string) error {
 	return cm.mutateChannelSet(kind, func(cs *channelSet) error {
+		if err := rejectBuiltinChannel(*cs.upstreams, index); err != nil {
+			return err
+		}
 		return moveKeyToBottomOp(*cs.upstreams, index, apiKey)
 	})
 }
@@ -209,6 +231,9 @@ func (cm *ConfigManager) reorderChannels(kind string, order []int) error {
 // setChannelStatusFor 设置渠道状态。
 func (cm *ConfigManager) setChannelStatusFor(kind string, index int, status string) error {
 	return cm.mutateChannelSet(kind, func(cs *channelSet) error {
+		if err := rejectBuiltinChannel(*cs.upstreams, index); err != nil {
+			return err
+		}
 		return setStatusOp(*cs.upstreams, index, status, cs.name)
 	})
 }
@@ -216,6 +241,9 @@ func (cm *ConfigManager) setChannelStatusFor(kind string, index int, status stri
 // setChannelPromotionFor 设置渠道促销期。
 func (cm *ConfigManager) setChannelPromotionFor(kind string, index int, duration time.Duration, count int) error {
 	return cm.mutateChannelSet(kind, func(cs *channelSet) error {
+		if err := rejectBuiltinChannel(*cs.upstreams, index); err != nil {
+			return err
+		}
 		return setPromotionOp(*cs.upstreams, index, duration, count, cs.name)
 	})
 }

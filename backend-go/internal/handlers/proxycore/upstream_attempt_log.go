@@ -107,6 +107,13 @@ func recordAttemptLog(
 	if logCtx.LogStore == nil && logCtx.RequestLogStore == nil {
 		return
 	}
+	if observation := currentAvailabilityObservation(c); observation != nil {
+		if observation.recorded {
+			return
+		}
+		observation.recorded = true
+		start = observation.startedAt
+	}
 
 	channelName := ""
 	resolvedModel := logCtx.Model
@@ -128,6 +135,7 @@ func recordAttemptLog(
 	}
 	durationMs := time.Since(start).Milliseconds()
 	firstTokenMs := requestLogFirstTokenMs(c, start)
+	sample := availabilitySample(c, success, statusCode, errorType, errorMessage)
 	errorMessage = truncateLogMessage(errorMessage, 500)
 
 	if logCtx.LogStore != nil {
@@ -159,6 +167,7 @@ func recordAttemptLog(
 	}
 	if logCtx.RequestLogStore != nil {
 		logCtx.RequestLogStore.Record(metrics.RequestLogEntry{
+			Availability:          sample,
 			RequestID:             requestID,
 			AttemptID:             attemptID,
 			Timestamp:             timestamp,

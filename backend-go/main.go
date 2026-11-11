@@ -89,6 +89,9 @@ func newApp() (_ *app, err error) {
 		return nil, fmt.Errorf("初始化配置管理器失败: %w", err)
 	}
 	a.envCfg = a.envCfg.WithSettings(a.cfgManager)
+	if err := a.cfgManager.EnsureFreeChannels(); err != nil {
+		return nil, errors.Join(fmt.Errorf("初始化免费分组失败: %w", err), a.cfgManager.Close())
+	}
 
 	// 初始化日志系统；清理仍按配置生产者 → 日志存储的顺序执行。
 	a.logStore, err = logger.Setup(&logger.Config{

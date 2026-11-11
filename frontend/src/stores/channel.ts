@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, shallowRef, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, ApiError, API_TABS, channelApiByType, type ApiTab, type Channel, type ChannelsResponse, type ChannelMetrics, type ChannelDashboardResponse } from '@/services/api'
+import type { ChannelPool } from '@/types/channel'
 
 // Dashboard 是只读响应快照，整体替换；不为大量统计段创建深层响应式代理。
 interface DashboardCache {
@@ -36,6 +37,9 @@ export const useChannelStore = defineStore('channel', () => {
   // 各协议的渠道配置与 Dashboard 快照分别缓存，切换协议时不闪烁。
   const channelsDataMap = ref(perTab(emptyChannels))
   const dashboardCache = shallowRef(perTab(emptyDashboard))
+  // 分组卡片与渠道抽屉共享配置；按协议隔离，避免切换后的迟到响应覆盖当前分组。
+  const channelPoolsMap = shallowRef(perTab(() => [] as ChannelPool[]))
+  const poolRevisions = perTab(() => 0)
 
   // 批量延迟测试加载状态
   const isPingingAll = ref(false)
@@ -106,6 +110,15 @@ export const useChannelStore = defineStore('channel', () => {
   }
 
   // ===== 操作方法 =====
+
+  async function refreshChannelPools(tab: ApiTab = activeTab.value) {
+    const revision = ++poolRevisions[tab]
+    const response = await api.getChannelPools(tab)
+    if (!Array.isArray(response.pools)) throw new Error('渠道分组响应格式无效')
+    if (poolRevisions[tab] === revision) {
+      channelPoolsMap.value = { ...channelPoolsMap.value, [tab]: response.pools }
+    }
+  }
 
   /**
    * 刷新渠道数据
@@ -291,6 +304,8 @@ export const useChannelStore = defineStore('channel', () => {
   function clearChannels() {
     channelsDataMap.value = perTab(emptyChannels)
     dashboardCache.value = perTab(emptyDashboard)
+    channelPoolsMap.value = perTab(() => [] as ChannelPool[])
+    for (const tab of API_TABS) poolRevisions[tab]++
     lastRefreshSuccess.value = null
     isPingingAll.value = false
   }
@@ -300,6 +315,7 @@ export const useChannelStore = defineStore('channel', () => {
     // 状态
     activeTab,
     channelsDataMap,
+    channelPoolsMap,
     isPingingAll,
     isSavingChannel,
     isDeletingChannel,
@@ -314,6 +330,7 @@ export const useChannelStore = defineStore('channel', () => {
 
     // 方法
     refreshChannels,
+    refreshChannelPools,
     saveChannel,
     deleteChannel,
     pingChannel,

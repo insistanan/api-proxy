@@ -125,7 +125,7 @@ func bestUpstreamIndex(upstreams []UpstreamConfig, activeOnly bool) int {
 	bestPriority := 0
 	for index := range upstreams {
 		upstream := &upstreams[index]
-		if !IsChannelSchedulable(upstream) || upstream.ExcludeFromConversation {
+		if !IsChannelSchedulable(upstream) || upstream.ExcludeFromConversation || upstream.BuiltinProvider != "" {
 			continue
 		}
 		if activeOnly && GetChannelStatus(upstream) != ChannelStatusActive {

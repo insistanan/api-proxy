@@ -84,7 +84,7 @@ const (
 type UpstreamAttemptResult struct {
 	// Handled 表示是否已向客户端写回响应（成功，或不值得故障转移的错误）。
 	Handled bool
-	// SuccessKey 是成功的 Key，仅 Handled=true 且确实成功时有值。
+	// SuccessKey 是成功的 Key；匿名渠道成功时仍为空，以 Health 判定成功。
 	SuccessKey string
 	// SuccessBaseURLIdx 是成功 BaseURL 的原始索引，用于指标记录。
 	SuccessBaseURLIdx int

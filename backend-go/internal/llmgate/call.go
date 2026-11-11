@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/insistanan/api-proxy/internal/availability"
 	"github.com/insistanan/api-proxy/internal/config"
 	"github.com/insistanan/api-proxy/internal/httpclient"
 	"github.com/insistanan/api-proxy/internal/logger"
@@ -71,7 +72,9 @@ type CallMetadata struct {
 
 type callLogContext struct {
 	CallMetadata
-	recorded bool
+	recorded   bool
+	retryAfter string
+	sent       bool
 }
 
 // Call 在选中渠道上发起一次非流式单轮调用。prompt 是 Claude Messages 格式的
@@ -428,6 +431,8 @@ func (c *Caller) sendRequest(
 	attemptStart time.Time,
 	retried bool,
 ) (*CallResult, error) {
+	trace.retryAfter = ""
+	trace.sent = false
 	timeout := c.timeoutDuration()
 	if c.EnvConfig != nil && c.EnvConfig.Current().EnableRequestLogs && trace.APIType != "cmd_gate" {
 		body, readErr := io.ReadAll(request.Body)
@@ -451,6 +456,7 @@ func (c *Caller) sendRequest(
 	c.ChannelScheduler.RecordRequestStart(baseURL, apiKey, selection.ChannelIndex, selection.Kind)
 	metricsRequestID := c.ChannelScheduler.RecordRequestConnected(baseURL, apiKey, model, selection.ChannelIndex, selection.Kind)
 	request = request.WithContext(logger.ContextWithAttemptID(logger.ContextWithRequestID(request.Context(), trace.RequestID), attemptID))
+	request = request.WithContext(httpclient.WithSendObserver(request.Context(), func() { trace.sent = true }))
 	response, requestErr := httpclient.SendForUpstream(request, timeout, c.CfgManager, upstream, apiKey)
 	if requestErr != nil {
 		if upstreamcontrol.IsLocalError(requestErr) {
@@ -469,6 +475,7 @@ func (c *Caller) sendRequest(
 		c.recordAttempt(selection, upstream, trace, attemptID, model, baseURL, apiKey, "failed", 0, false, attemptStart, "network", requestErr.Error(), retried, nil)
 		return nil, err
 	}
+	trace.retryAfter = response.Header.Get("Retry-After")
 	body, readErr := readBoundedResponse(response)
 	_ = response.Body.Close()
 	if readErr == nil && c.EnvConfig != nil && c.EnvConfig.Current().EnableResponseLogs && trace.APIType != "cmd_gate" {
@@ -508,7 +515,7 @@ func (c *Caller) sendRequest(
 				upstream.Name, response.StatusCode, upstream.ServiceType, model, baseURL, truncateBody([]byte(redactCallText(string(body), apiKey)))),
 		}
 		err.message = redactCallText(err.Err.Error(), apiKey)
-		c.recordAttempt(selection, upstream, trace, attemptID, model, baseURL, apiKey, "failed", response.StatusCode, false, attemptStart, "upstream", err.Error(), retried, nil)
+		c.recordAttempt(selection, upstream, trace, attemptID, model, baseURL, apiKey, "failed", response.StatusCode, false, attemptStart, "upstream", string(body), retried, nil)
 		return nil, err
 	}
 	claudeResponse, convertErr := convertResponse(&types.ProviderResponse{
@@ -692,7 +699,24 @@ func (c *Caller) recordAttempt(
 		store.Record(&entry)
 	}
 	if store := c.requestLogStore(); store != nil {
+		var sample *availability.Sample
+		switch errorType {
+		case "build_request", "request_body", "local_admission":
+			// 未发出请求时不创建上游可用性样本。
+		default:
+			if trace.sent && upstream.ID != "" && model != "" {
+				identityUpstream := upstream.Clone()
+				identityUpstream.BaseURL = baseURL
+				outcome, reason := availability.Classify(success, statusCode, errorType, errorMessage)
+				sample = &availability.Sample{Kind: string(selection.Kind), ChannelID: upstream.ID, Model: model,
+					CandidateID: identityUpstream.RequestIdentity(apiKey).Fingerprint(), Outcome: outcome, Reason: reason}
+				if outcome == availability.RateLimited {
+					sample.CooldownUntil = availability.Cooldown(trace.retryAfter, time.Now())
+				}
+			}
+		}
 		store.Record(metrics.RequestLogEntry{
+			Availability:    sample,
 			RequestID:       entry.RequestID,
 			AttemptID:       entry.AttemptID,
 			Timestamp:       entry.Timestamp,

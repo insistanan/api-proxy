@@ -256,6 +256,8 @@ func TestParseModelAction(t *testing.T) {
 		{"/gemini-2.0-flash:generateContent", "gemini-2.0-flash", "generateContent"},
 		{"/gemini-2.0-flash:streamGenerateContent", "gemini-2.0-flash", "streamGenerateContent"},
 		{"/gemini-2.0-flash:countTokens", "gemini-2.0-flash", "countTokens"},
+		{"/free/vendor/model:free:generateContent", "free/vendor/model:free", "generateContent"},
+		{"/free/vendor/model:free:streamGenerateContent", "free/vendor/model:free", "streamGenerateContent"},
 		{"/gemini-2.0-flash", "gemini-2.0-flash", ""},
 		{"", "", ""},
 	}

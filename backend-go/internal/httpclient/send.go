@@ -185,6 +185,7 @@ func sendWithAdmission(client *http.Client, req *http.Request) (*http.Response, 
 		}
 		return nil, err
 	}
+	notifySendObserver(req.Context())
 	resp, err := client.Do(req)
 	if err != nil {
 		if resp != nil && resp.Body != nil {

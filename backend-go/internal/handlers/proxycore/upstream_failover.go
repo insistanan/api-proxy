@@ -89,7 +89,7 @@ func (a UpstreamAttempt) tryWithModelMappingFailover() UpstreamAttemptResult {
 			modelAttempt.Upstream = upstreamCopy
 			result = modelAttempt.tryWithAllKeys()
 			if result.Handled {
-				if result.SuccessKey != "" {
+				if result.SuccessKey != "" || result.Health == channelHealthSuccess {
 					log.Printf("[%s-ModelMapping] 模型 %s (备选 %d/%d) 请求成功",
 						a.APIType, targetModel, modelIdx+1, len(targetModels))
 				}

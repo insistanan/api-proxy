@@ -9,6 +9,10 @@ package config
 //
 // 新增渠道字段时**只改这里**。
 func ChannelToDTO(up *UpstreamConfig, index int) map[string]interface{} {
+	keys := up.APIKeys
+	if up.BuiltinProvider != "" {
+		keys = []string{}
+	}
 	reasoningOutputMode := up.ReasoningOutputMode
 	if reasoningOutputMode == "" {
 		reasoningOutputMode = "preserve"
@@ -25,7 +29,8 @@ func ChannelToDTO(up *UpstreamConfig, index int) map[string]interface{} {
 		"baseUrl":                     up.BaseURL,
 		"baseUrls":                    up.BaseURLs,
 		"useFullUrl":                  up.UseFullURL,
-		"apiKeys":                     up.APIKeys,
+		"apiKeys":                     keys,
+		"builtinProvider":             up.BuiltinProvider,
 		"description":                 up.Description,
 		"website":                     up.Website,
 		"insecureSkipVerify":          up.InsecureSkipVerify,

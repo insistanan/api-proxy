@@ -1,6 +1,10 @@
 package logger
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/insistanan/api-proxy/internal/availability"
+)
 
 const (
 	// DefaultDBPath 与 conversations.db 一样落在 .config。
@@ -70,11 +74,12 @@ func (entry TrafficLog) WithPreparedBody(body string, originalBytes int, truncat
 
 // RequestLogRecord 是 Web 请求日志页的元数据行（payload 为完整 JSON）。
 type RequestLogRecord struct {
-	UnixMilli int64
-	Timestamp string
-	RequestID string
-	APIType   string
-	Payload   []byte
+	UnixMilli    int64
+	Timestamp    string
+	RequestID    string
+	APIType      string
+	Payload      []byte
+	Availability *availability.Sample
 }
 
 // QueryOptions 描述时段查询。Limit=0 表示不截断。

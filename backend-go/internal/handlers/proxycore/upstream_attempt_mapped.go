@@ -26,6 +26,11 @@ func (a UpstreamAttempt) tryMappedChannelTarget(targetModel string, channelID st
 	permit := selection.Permit
 	targetIdx := selection.ChannelIndex
 	targetCopy := selection.Upstream
+	if targetCopy.BuiltinProvider != "" || (a.Upstream != nil && a.Upstream.BuiltinProvider != "") {
+		permit.RecordHealthNeutral()
+		permit.Release()
+		return UpstreamAttemptResult{}, fmt.Errorf("内置免费渠道不支持跨渠道模型映射，请使用 free/ 模型直接请求")
+	}
 
 	baseURLs := targetCopy.GetAllBaseURLs()
 	if len(baseURLs) == 0 {

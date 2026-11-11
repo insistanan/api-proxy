@@ -12,7 +12,7 @@ import (
 )
 
 // ModelsHandler 处理 /v1/models 请求。
-// 对外仅暴露稳定家族别名（opus/sonnet/gpt/gemini/chat）以及各协议分组捕获规则。
+// 对外暴露稳定家族别名、各协议分组捕获规则，以及已启用的 free/ 免费模型别名。
 // 渠道级上游模型与 Chat 路由别名不再出现在公开列表中。
 func ModelsHandler(envCfg *config.EnvConfig, cfgManager *config.ConfigManager, channelScheduler *scheduler.ChannelScheduler) gin.HandlerFunc {
 	return func(c *gin.Context) {

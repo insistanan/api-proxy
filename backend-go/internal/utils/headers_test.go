@@ -10,6 +10,19 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func TestAnonymousAuthenticationRemovesInboundCredentials(t *testing.T) {
+	for _, key := range []string{"Authorization", "X-Api-Key", "X-Goog-Api-Key"} {
+		headers := make(http.Header)
+		headers.Set(key, "private-client-key")
+		SetAuthenticationHeader(headers, "")
+		for _, name := range []string{"Authorization", "X-Api-Key", "X-Goog-Api-Key"} {
+			if headers.Get(name) != "" {
+				t.Fatalf("匿名请求仍包含认证头 %s", name)
+			}
+		}
+	}
+}
+
 func TestPrepareUpstreamHeaders(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

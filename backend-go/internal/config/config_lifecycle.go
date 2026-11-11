@@ -15,6 +15,9 @@ func (cm *ConfigManager) DuplicateChannel(kind string, index int) error {
 	if err != nil {
 		return err
 	}
+	if err := rejectBuiltinChannel(*cs.upstreams, index); err != nil {
+		return err
+	}
 	*cs.upstreams, err = insertClonedUpstream(*cs.upstreams, index, time.Now())
 	if err != nil {
 		return err

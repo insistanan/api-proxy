@@ -126,8 +126,8 @@ func HandleMultiChannelFailover(
 			if onHandled != nil {
 				onHandled(selection, result)
 			}
-			// 只有真正成功的请求才设置 Trace 亲和（客户端取消时 SuccessKey 为空）
-			if result.SuccessKey != "" {
+			// 只有真正成功的请求才设置 Trace 亲和，匿名渠道以显式成功状态识别
+			if result.SuccessKey != "" || result.Health == channelHealthSuccess {
 				// 对话级亲和已由 onHandled 回调（protocol.go 的 MarkConversationSuccess）写入，
 				// 这里只维护会话级 Trace 亲和。
 				// 仅在以下情况设置会话级亲和：

@@ -239,6 +239,14 @@ func internalCallModel(model string, upstream *config.UpstreamConfig) (string, b
 	if upstream == nil {
 		return "", false
 	}
+	if upstream.BuiltinProvider != "" {
+		// 内部助手也只能显式请求清单内的免费别名，不能自动选中或透传未知模型。
+		targets, exists := upstream.ModelMapping[model]
+		if !exists || len(targets) != 1 {
+			return "", false
+		}
+		return targets[0], true
+	}
 	if dm := strings.TrimSpace(upstream.DefaultModel); dm != "" {
 		return dm, true
 	}
@@ -318,6 +326,12 @@ func firstAvailableChannel(cfgManager *config.ConfigManager, channelScheduler *s
 			continue
 		}
 		if channelID == "" && failedChannels != nil && failedChannels[index] {
+			continue
+		}
+		if err := cfgManager.ValidateFreeRequest(string(kind), model, &index); err != nil {
+			if channelID != "" {
+				return nil, err
+			}
 			continue
 		}
 		// 纯配置过滤必须先于消耗半开探测名额的可用性检查。

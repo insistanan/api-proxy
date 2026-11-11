@@ -515,7 +515,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
   const pools = ref<ChannelPool[]>([])
   const poolsLoading = ref(false)
   const poolLoadError = ref('')
-  const poolOptions = computed(() => pools.value.map(pool => ({
+  const poolOptions = computed(() => pools.value.filter(pool => pool.id !== 'builtin-free').map(pool => ({
     title: pool.id === 'default' ? pool.name : `${pool.name}（匹配 ${pool.modelMatcher}）`,
     value: pool.id
   })))

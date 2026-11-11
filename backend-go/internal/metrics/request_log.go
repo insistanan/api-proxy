@@ -3,9 +3,11 @@ package metrics
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"strings"
 	"time"
 
+	"github.com/insistanan/api-proxy/internal/availability"
 	"github.com/insistanan/api-proxy/internal/logger"
 )
 
@@ -44,6 +46,8 @@ type RequestLogEntry struct {
 	Stream                bool    `json:"stream"`
 	ConversationID        string  `json:"conversationId,omitempty"`
 	ParentRequestID       string  `json:"parentRequestId,omitempty"`
+
+	Availability *availability.Sample `json:"availability,omitempty"`
 }
 
 type RequestLogListOptions struct {
@@ -76,14 +80,18 @@ func (s *RequestLogStore) Record(entry RequestLogEntry) {
 	}
 	payload, err := json.Marshal(entry)
 	if err != nil {
+		log.Printf("[RequestLog-Record] 请求日志编码失败: %v", err)
 		return
 	}
-	s.logStore.RecordRequest(logger.RequestLogRecord{
-		Timestamp: entry.Timestamp,
-		RequestID: entry.RequestID,
-		APIType:   entry.APIType,
-		Payload:   payload,
-	})
+	if err := s.logStore.RecordRequest(logger.RequestLogRecord{
+		Timestamp:    entry.Timestamp,
+		RequestID:    entry.RequestID,
+		APIType:      entry.APIType,
+		Payload:      payload,
+		Availability: entry.Availability,
+	}); err != nil {
+		log.Printf("[RequestLog-Record] 请求日志入队失败: %v", err)
+	}
 }
 
 // List 读取最近的流量日志。

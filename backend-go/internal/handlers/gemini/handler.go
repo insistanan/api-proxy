@@ -191,7 +191,8 @@ const (
 // 输入: "/gemini-2.0-flash" → ("gemini-2.0-flash", "")
 func parseModelAction(param string) (model string, action string) {
 	param = strings.TrimPrefix(param, "/")
-	if idx := strings.Index(param, ":"); idx > 0 {
+	// 免费模型 ID 可能包含 :free，只有末尾冒号后才是 Gemini 操作名。
+	if idx := strings.LastIndex(param, ":"); idx > 0 {
 		return param[:idx], param[idx+1:]
 	}
 	return param, ""

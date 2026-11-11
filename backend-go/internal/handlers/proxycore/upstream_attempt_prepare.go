@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/config"
 	"github.com/insistanan/api-proxy/internal/handlers/hooks"
 	"github.com/insistanan/api-proxy/internal/logger"
 	"github.com/insistanan/api-proxy/internal/scheduler"
+	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
 	"github.com/insistanan/api-proxy/internal/visionlayer"
 )
 
@@ -43,6 +45,7 @@ func (a UpstreamAttempt) buildPreparedAttemptRequest(
 	upstreamCopy *config.UpstreamConfig,
 	apiKey string,
 ) (*http.Request, string, error) {
+	a.beginAvailabilityObservation(upstreamCopy, apiKey)
 	if err := a.Context.Request.Context().Err(); err != nil {
 		return nil, "client_cancelled", err
 	}
@@ -121,8 +124,18 @@ func (a UpstreamAttempt) retrySameCandidateRequest(
 
 	req = AttachRequestLogID(a.Context, req)
 	req = req.WithContext(a.ConfigManager.UpstreamRequestContext(req.Context(), upstreamCopy, apiKey))
+	req = a.observeAvailabilityRequest(req)
 	resp, err := SendRequest(req, upstreamCopy, a.EnvConfig, a.IsStream, a.APIType, proxyURL, a.Permit, a.RequestTimeout)
+	a.observeAvailabilityResponse(resp)
 	if err != nil {
+		errorType := "network"
+		if upstreamcontrol.IsLocalError(err) {
+			errorType = "local_admission"
+		} else if a.Context.Request.Context().Err() != nil {
+			errorType = "client_cancelled"
+		}
+		recordAttemptLog(a.Context, a.LogContext, upstreamCopy, a.APIType, BindRequestLogID(a.Context), upstreamCopy.BaseURL, apiKey,
+			"failed", 0, false, time.Now(), errorType, err.Error(), true, a.IsStream, nil)
 		return compatibilityRetryResult{PreparationStage: "send_request", Err: err}
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
@@ -131,9 +144,16 @@ func (a UpstreamAttempt) retrySameCandidateRequest(
 
 	body, readErr := readUpstreamErrorBody(resp)
 	if readErr != nil {
+		errorType := "read_body"
+		if a.Context.Request.Context().Err() != nil {
+			errorType = "client_cancelled"
+		}
+		recordAttemptLog(a.Context, a.LogContext, upstreamCopy, a.APIType, BindRequestLogID(a.Context), upstreamCopy.BaseURL, apiKey,
+			"failed", resp.StatusCode, false, time.Now(), errorType, readErr.Error(), true, a.IsStream, nil)
 		// 读取中断：响应不完整，按网络故障处理，不返回截断 body。
 		return compatibilityRetryResult{PreparationStage: "read_body", Err: fmt.Errorf("读取重试响应体失败: %w", readErr)}
 	}
+	a.rememberAvailabilityFailure(resp, body)
 	return compatibilityRetryResult{Response: resp, Body: body}
 }
 

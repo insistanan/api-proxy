@@ -397,11 +397,11 @@ const openCcsImport = async (channel: Channel) => {
 }
 // 计算属性：非活跃渠道 - 仅 disabled 状态
 const inactiveChannels = computed(() => {
-	return props.channels.filter(ch => !ch.excludeFromConversation && ch.status === 'disabled')
+	return props.channels.filter(ch => !ch.builtinProvider && !ch.excludeFromConversation && ch.status === 'disabled')
 })
 
 const deprecatedChannels = computed(() => {
-	return props.channels.filter(ch => !ch.excludeFromConversation && ch.status === 'deprecated')
+	return props.channels.filter(ch => !ch.builtinProvider && !ch.excludeFromConversation && ch.status === 'deprecated')
 })
 
 // 计算属性：是否为多渠道模式

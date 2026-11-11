@@ -110,6 +110,9 @@ func (cm *ConfigManager) prepareCandidate(data []byte) (Config, bool, error) {
 	if err := json.Unmarshal(data, &candidate); err != nil {
 		return Config{}, false, fmt.Errorf("配置 JSON 解析失败: %w", err)
 	}
+	if err := materializeFreeChannels(&candidate); err != nil {
+		return Config{}, false, err
+	}
 
 	needSaveDefaults := applyConfigDefaultsTo(&candidate, data)
 	needManagedMigration, err := migrateManagedSettings(&candidate, data)
@@ -687,6 +690,9 @@ func validateProxyConfigOf(candidate *Config) error {
 //   - 提交点后失败（目录同步等）：文件已是新内容，快照同样发布，
 //     返回 *atomicfile.CommittedError（调用方不得按未提交重试）。
 func (cm *ConfigManager) saveConfigLocked(config Config) error {
+	if err := materializeFreeChannels(&config); err != nil {
+		return err
+	}
 	// 保存前清除不支持伪装的协议池上的身份模式，保证落盘内容与运行时一致。
 	clearUnsupportedClientIdentityIn(&config)
 	if err := validateConcurrency(&config); err != nil {

@@ -253,6 +253,19 @@ func applyLogWrite(ctx context.Context, tx *sql.Tx, statements map[writeKind]*sq
 			return fmt.Errorf("写入正文引用失败: %w", err)
 		}
 	}
+	if item.kind == writeRequest && item.request.Availability != nil {
+		sample := item.request.Availability
+		id, err := result.LastInsertId()
+		if err != nil {
+			return fmt.Errorf("读取可用性请求日志 ID 失败: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO availability_samples
+			(request_log_id, unix_milli, kind, channel_id, model, candidate_id, outcome, reason, cooldown_until)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, item.request.UnixMilli, sample.Kind,
+			sample.ChannelID, sample.Model, sample.CandidateID, sample.Outcome, sample.Reason, sample.CooldownUntil); err != nil {
+			return fmt.Errorf("写入可用性样本失败: %w", err)
+		}
+	}
 	return nil
 }
 

@@ -2,6 +2,11 @@
   <!-- 路由视图根节点必须是单个真实 DOM 元素。 -->
   <div class="channels-view">
     <PageHeader :title="`${navigation?.label} 渠道`" :description="navigation?.description">
+      <ChannelTableDrawer :channel-type="channelType" :channels="channels" @edit="editChannel">
+        <template #activator="{ props: activatorProps }">
+          <v-btn v-bind="activatorProps" variant="tonal" prepend-icon="mdi-format-list-bulleted">渠道列表</v-btn>
+        </template>
+      </ChannelTableDrawer>
       <v-tooltip text="刷新" location="bottom">
         <template #activator="{ props: tooltipProps }">
           <v-btn v-bind="tooltipProps" icon="mdi-refresh" variant="text" aria-label="刷新" @click="refreshChannels" />
@@ -66,6 +71,16 @@
       <GlobalStatsChart :api-type="channelType" />
     </DisclosureSection>
 
+    <DisclosureSection
+      title="模型可用性"
+      description="基于真实请求，查看渠道、模型及各 Key／URL 的成功率与失败原因"
+      icon="mdi-chart-areaspline"
+      lazy
+      class="mb-4"
+    >
+      <ModelAvailabilityPanel :channel-type="channelType" :channels="channels" />
+    </DisclosureSection>
+
     <ChannelOrchestration
       v-if="channels.length"
       :channels="channels"
@@ -107,6 +122,8 @@ import { computed, onMounted, onUnmounted, watch } from 'vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import DisclosureSection from '@/components/common/DisclosureSection.vue'
 import ChannelOrchestration from '@/components/ChannelOrchestration.vue'
+import ModelAvailabilityPanel from '@/components/channel/ModelAvailabilityPanel.vue'
+import ChannelTableDrawer from '@/components/channel/ChannelTableDrawer.vue'
 import AddChannelModal from '@/components/AddChannelModal.vue'
 import AssistantWidget from '@/components/AssistantWidget.vue'
 import { useAuthFlow } from '@/composables/useAuthFlow'

@@ -19,7 +19,11 @@ import (
 
 // setupAdminAPI 注册 Web 管理界面 API 路由（/api 组）。
 func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
+	apiGroup.GET("/free-channels", handlers.GetFreeChannels(a.cfgManager))
+	apiGroup.PUT("/free-channels/kilo", handlers.UpdateKiloFreeChannel(a.cfgManager))
+	apiGroup.POST("/free-channels/kilo/models/sync", handlers.SyncKiloFreeModels(a.cfgManager))
 	apiGroup.GET("/request-logs", handlers.GetRequestLogs(a.requestLogStore))
+	apiGroup.GET("/model-availability", handlers.GetModelAvailability(a.logStore, a.cfgManager))
 	apiGroup.GET("/system-logs", handlers.GetSystemLogs(a.logStore))
 	apiGroup.GET("/system-logs/:requestId", handlers.GetSystemLog(a.logStore))
 	apiGroup.GET("/log-conversations", handlers.GetLogConversations(a.logStore))

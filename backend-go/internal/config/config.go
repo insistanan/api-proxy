@@ -19,6 +19,7 @@ import (
 
 // UpstreamConfig 上游配置
 type UpstreamConfig struct {
+	BuiltinProvider string `json:"builtinProvider,omitempty"`
 	// MaxConcurrency 保存用户设置的并发上限。生效上限和实际上游协议
 	// 在发布配置时计算，不写入配置文件。
 	MaxConcurrency       int                         `json:"maxConcurrency"`               // URL、协议、Key 相同的配置共享最小上限
@@ -557,7 +558,8 @@ func DefaultContentSafetyConfig() ContentSafetyConfig {
 
 // Config 配置结构
 type Config struct {
-	Settings SettingsConfig `json:"settings"`
+	FreeChannels *FreeChannelsConfig `json:"freeChannels,omitempty"`
+	Settings     SettingsConfig      `json:"settings"`
 
 	Upstream        []UpstreamConfig `json:"upstream"`
 	MessagePools    []ChannelPool    `json:"messagePools,omitempty"`
@@ -645,6 +647,11 @@ func (cm *ConfigManager) GetConfig() Config {
 // cloneConfig 隔离读取快照与写入候选；调用方持锁读取当前配置后再复制。
 func cloneConfig(current Config) Config {
 	cloned := current
+	if current.FreeChannels != nil {
+		free := *current.FreeChannels
+		free.Kilo.Models = slices.Clone(free.Kilo.Models)
+		cloned.FreeChannels = &free
+	}
 	cloned.Upstream = cloneUpstreamList(current.Upstream)
 	cloned.ResponsesUpstream = cloneUpstreamList(current.ResponsesUpstream)
 	cloned.GeminiUpstream = cloneUpstreamList(current.GeminiUpstream)

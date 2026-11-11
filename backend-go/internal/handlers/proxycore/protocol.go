@@ -201,6 +201,14 @@ func RunProxyRequest(
 		})
 		return
 	}
+	var explicitIndex *int
+	if hasRequestedChannel {
+		explicitIndex = &requestedChannelIndex
+	}
+	if err := cfgManager.ValidateFreeRequest(string(spec.Kind), model, explicitIndex); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "FREE_CHANNEL_ROUTE"})
+		return
+	}
 	if hasRequestedChannel {
 		upstream, channelIndex, err := ResolveRequestedUpstream(cfgManager, spec.Kind, requestedChannelIndex)
 		if err != nil {
@@ -215,7 +223,7 @@ func RunProxyRequest(
 	}
 
 	// 7. PreRoute（协议特有前置路由，如 chat 的 modelcatalog 路由）
-	if spec.PreRoute != nil {
+	if spec.PreRoute != nil && !config.IsFreeModel(model) {
 		if spec.PreRoute(c, bodyBytes, model, conversationID, startTime) {
 			return
 		}
@@ -277,6 +285,9 @@ func buildProtocolAttempt(
 			return spec.RequestTimeoutOverride(bodyBytes)
 		}()).
 		WithDeprioritizeKey(func(apiKey string) {
+			if upstream.BuiltinProvider != "" {
+				return
+			}
 			if err := cfgManager.MoveAPIKeyToBottomForKind(string(deprioritizeKind), channelIndex, apiKey); err != nil {
 				log.Printf("[%s-Key] 警告: 密钥降级失败: %v", spec.LogName, err)
 			}
@@ -320,7 +331,7 @@ func handleSingleChannelProxy(
 	}
 
 	// 快捷测试跳过模型重定向，直接使用用户指定的请求模型
-	isQuickTest := IsQuickTestRequest(c, bodyBytes)
+	isQuickTest := IsQuickTestRequest(c, bodyBytes) && upstream.BuiltinProvider == ""
 	if isQuickTest {
 		upstream = upstream.Clone()
 		upstream.ModelMapping = nil
@@ -380,6 +391,13 @@ func handleSingleChannelProxy(
 		return
 	}
 
+	if err := cfgManager.ValidateFreeRequest(string(spec.Kind), model, &channelIndex); err != nil {
+		if singlePermit != nil {
+			singlePermit.RecordHealthNeutral()
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "FREE_CHANNEL_ROUTE"})
+		return
+	}
 	baseURLs := upstream.GetAllBaseURLs()
 	urlResults := BuildDefaultURLResults(baseURLs)
 
@@ -392,7 +410,7 @@ func handleSingleChannelProxy(
 		result = localAdmissionResult(c, result.LastError, false)
 	}
 	if result.Handled {
-		if result.SuccessKey != "" {
+		if result.SuccessKey != "" || result.Health == channelHealthSuccess {
 			MarkConversationSuccess(channelScheduler, conversationID, spec.Kind, channelIndex, upstream.Name)
 			channelScheduler.ConsumePromotionCount(channelIndex, spec.Kind)
 		} else if result.LastError != nil && !errors.Is(result.LastError, context.Canceled) {
@@ -449,6 +467,10 @@ func handleMultiChannelProxy(
 			if upstream == nil {
 				return MultiChannelAttemptResult{}
 			}
+			if err := cfgManager.ValidateFreeRequest(string(spec.Kind), model, &channelIndex); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "FREE_CHANNEL_ROUTE"})
+				return MultiChannelAttemptResult{Handled: true, Health: channelHealthNeutral, LastError: err}
+			}
 
 			baseURLs := upstream.GetAllBaseURLs()
 			sortedURLResults := channelScheduler.GetSortedURLsForChannel(spec.Kind, channelIndex, baseURLs)
@@ -481,7 +503,7 @@ func handleMultiChannelProxy(
 			if selection == nil || selection.Upstream == nil {
 				return
 			}
-			if result.SuccessKey != "" {
+			if result.SuccessKey != "" || result.Health == channelHealthSuccess {
 				MarkConversationSuccess(channelScheduler, conversationID, spec.Kind, selection.ChannelIndex, selection.Upstream.Name)
 				return
 			}

@@ -51,6 +51,9 @@ func normalizeChannelPools(pools []ChannelPool) ([]ChannelPool, error) {
 		pool.ID = strings.TrimSpace(pool.ID)
 		pool.Name = strings.TrimSpace(pool.Name)
 		pool.ModelMatcher = normalizePoolMatcher(pool.ModelMatcher)
+		if IsFreeModel(pool.ModelMatcher) && pool.ID != FreeChannelPoolID {
+			return nil, fmt.Errorf("free/ 为内置免费分组专用规则，不能用于普通分组")
+		}
 		if pool.ID == DefaultChannelPoolID {
 			// default 是兼容旧配置的稳定 ID，其名称和规则固定为兜底语义。
 			pool.Name = FallbackChannelPoolName
@@ -104,6 +107,14 @@ func normalizeChannelPools(pools []ChannelPool) ([]ChannelPool, error) {
 // SelectChannelPoolRoute 返回本次请求的有序分组路由：最长规则命中的分组在前，
 // 兜底分组在后；没有具体规则命中时仅返回兜底分组。
 func SelectChannelPoolRoute(pools []ChannelPool, model string) ([]ChannelPool, error) {
+	if IsFreeModel(model) {
+		for _, pool := range pools {
+			if pool.ID == FreeChannelPoolID {
+				return []ChannelPool{pool}, nil
+			}
+		}
+		return nil, fmt.Errorf("未配置免费分组")
+	}
 	normalized, err := normalizeChannelPools(pools)
 	if err != nil {
 		return nil, err
@@ -113,6 +124,9 @@ func SelectChannelPoolRoute(pools []ChannelPool, model string) ([]ChannelPool, e
 	var fallback *ChannelPool
 	for index := range normalized {
 		pool := &normalized[index]
+		if pool.ID == FreeChannelPoolID {
+			continue
+		}
 		if pool.ID == DefaultChannelPoolID {
 			fallback = pool
 			continue
@@ -195,6 +209,9 @@ func (cm *ConfigManager) CreateChannelPool(kind string, pool ChannelPool) (Chann
 }
 
 func (cm *ConfigManager) UpdateChannelPool(kind string, id string, update ChannelPoolUpdate) error {
+	if id == FreeChannelPoolID {
+		return fmt.Errorf("免费分组为内置共享分组，不能修改")
+	}
 	if id == DefaultChannelPoolID {
 		return fmt.Errorf("兜底分组的名称和捕获规则不能修改")
 	}
@@ -289,6 +306,9 @@ func (cm *ConfigManager) SaveChannelPoolLayout(kind string, layout []ChannelPool
 			if upstreams[index].ExcludeFromConversation {
 				return fmt.Errorf("公用图片理解渠道不能加入模型路由分组: %s", upstreams[index].Name)
 			}
+			if (poolID == FreeChannelPoolID) != (upstreams[index].BuiltinProvider != "") {
+				return fmt.Errorf("免费渠道不能移出免费分组，普通渠道也不能移入")
+			}
 			upstreams[index].PoolID = poolID
 		}
 	}
@@ -331,6 +351,9 @@ func (cm *ConfigManager) SaveChannelPoolLayout(kind string, layout []ChannelPool
 }
 
 func (cm *ConfigManager) DeleteChannelPool(kind string, id string) error {
+	if id == FreeChannelPoolID {
+		return fmt.Errorf("免费分组为内置共享分组，不能删除")
+	}
 	if id == DefaultChannelPoolID {
 		return fmt.Errorf("兜底分组不能删除")
 	}
@@ -490,6 +513,9 @@ func poolExists(pools []ChannelPool, id string) bool {
 
 // ValidateChannelPoolAssignment 确保渠道只能归属当前 API 类型中存在的分组。
 func ValidateChannelPoolAssignment(pools []ChannelPool, poolID string) error {
+	if poolID == FreeChannelPoolID {
+		return fmt.Errorf("免费分组仅供内置免费渠道使用")
+	}
 	if !poolExists(pools, strings.TrimSpace(poolID)) {
 		return fmt.Errorf("指定的分组不存在")
 	}

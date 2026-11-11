@@ -37,7 +37,7 @@ func ListMappingTargetChannels(cfgManager *config.ConfigManager, sch *scheduler.
 		items := make([]MappingTargetChannelDTO, 0, len(upstreams))
 		for index := range upstreams {
 			up := &upstreams[index]
-			if up.ID == "" || up.ID == excludeID {
+			if up.ID == "" || up.ID == excludeID || up.BuiltinProvider != "" {
 				continue
 			}
 			if config.GetChannelStatus(up) != config.ChannelStatusActive || len(up.APIKeys) == 0 {
@@ -87,6 +87,10 @@ func ListMappingTargetChannelModels(cfgManager *config.ConfigManager, kind sched
 		}
 		if target == nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "目标渠道不存在"})
+			return
+		}
+		if target.BuiltinProvider != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "免费模型请在免费分组同步，不支持跨渠道映射"})
 			return
 		}
 		if len(target.APIKeys) == 0 {

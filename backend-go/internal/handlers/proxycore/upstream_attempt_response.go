@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/config"
 	"github.com/insistanan/api-proxy/internal/handlers/hooks"
+	"github.com/insistanan/api-proxy/internal/providers"
 	"github.com/insistanan/api-proxy/internal/proxy"
 	"github.com/insistanan/api-proxy/internal/types"
 	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
@@ -96,6 +97,11 @@ func (step candidateAttempt) deliverResponse(resp *http.Response) (UpstreamAttem
 	retryState := step.retries
 
 	usage, err := a.HandleSuccess(c, resp, upstreamCopy, apiKey)
+	if streamFailure, ok := providers.IsUpstreamStreamFailed(err); ok {
+		if observation := currentAvailabilityObservation(c); observation != nil {
+			observation.evidence = streamFailure.Payload
+		}
+	}
 	// 回调结束即交还响应所有权；失败重试前也必须释放共享名额。
 	_ = resp.Body.Close()
 	// HandleSuccess 成功返回代表协议响应已交付。客户端随后结束 SSE 或

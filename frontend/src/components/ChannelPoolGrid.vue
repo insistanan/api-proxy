@@ -28,6 +28,8 @@
         :class="{ 'is-default': pool.id === 'default', 'is-collapsed': collapsedPools.has(pool.id) }"
         :style="{ order }"
       >
+        <FreeChannelPool v-if="pool.id === FREE_POOL_ID" :channel-type="channelType" :channels="channels" />
+        <template v-else>
         <header class="pool-card-header">
           <button type="button" class="pool-card-toggle" :aria-expanded="!collapsedPools.has(pool.id)" :aria-controls="`pool-${channelType}-${pool.id}`" @click="togglePool(pool.id)">
             <v-icon size="18">{{ collapsedPools.has(pool.id) ? 'mdi-chevron-right' : 'mdi-chevron-down' }}</v-icon>
@@ -103,6 +105,7 @@
         </draggable>
         <div v-if="!collapsedPools.has(pool.id) && pool.channels.length === 0" class="pool-empty">暂无渠道，可从其他分组拖入</div>
         </div>
+        </template>
       </section>
       </div>
     </div>
@@ -190,6 +193,9 @@ import { api, type Channel, type ChannelPool } from '../services/api'
 import ChannelStatusBadge from './ChannelStatusBadge.vue'
 import { channelServiceLabel } from '@/utils/imagesChannelProtocol'
 import type { ApiTab } from '@/services/channel-api'
+import { useChannelStore } from '@/stores/channel'
+import { FREE_POOL_ID } from '@/services/free-channels'
+import FreeChannelPool from './channel/FreeChannelPool.vue'
 
 const props = defineProps<{
   channels: Channel[]
@@ -204,7 +210,8 @@ const emit = defineEmits<{
   toggleVisionStatus: [channel: Channel]
 }>()
 
-const pools = ref<ChannelPool[]>([])
+const channelStore = useChannelStore()
+const pools = computed(() => channelStore.channelPoolsMap[props.channelType])
 const loading = ref(false)
 const saving = ref(false)
 const layoutSaving = ref(false)
@@ -217,9 +224,10 @@ const poolMatcher = ref<string | null>('')
 type PoolView = ChannelPool & { channels: Channel[] }
 const poolViews = ref<PoolView[]>([])
 const collapsedPools = ref(new Set<string>())
-const allPoolsCollapsed = computed(() => poolViews.value.length > 0 && poolViews.value.every(pool => collapsedPools.value.has(pool.id)))
+const collapsiblePools = computed(() => poolViews.value.filter(pool => pool.id !== FREE_POOL_ID))
+const allPoolsCollapsed = computed(() => collapsiblePools.value.length > 0 && collapsiblePools.value.every(pool => collapsedPools.value.has(pool.id)))
 const toggleAllPools = () => {
-  collapsedPools.value = allPoolsCollapsed.value ? new Set() : new Set(poolViews.value.map(pool => pool.id))
+  collapsedPools.value = allPoolsCollapsed.value ? new Set() : new Set(collapsiblePools.value.map(pool => pool.id))
 }
 const togglePool = (id: string) => {
   const collapsed = new Set(collapsedPools.value)
@@ -236,10 +244,8 @@ const normalizedPoolMatcher = computed(() => String(poolMatcher.value ?? '').tri
 const loadPools = async () => {
   loading.value = true
   try {
-    const response = await api.getChannelPools(props.channelType)
-    pools.value = response.pools || []
+    await channelStore.refreshChannelPools(props.channelType)
   } catch (error) {
-    pools.value = []
     emit('error', `加载渠道分组失败：${errorMessage(error)}`)
   } finally {
     loading.value = false

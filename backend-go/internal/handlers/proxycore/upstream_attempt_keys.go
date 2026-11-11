@@ -189,7 +189,9 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 
 			req = AttachRequestLogID(c, req)
 			req = req.WithContext(cfgManager.UpstreamRequestContext(req.Context(), upstreamCopy, apiKey))
+			req = a.observeAvailabilityRequest(req)
 			resp, err := SendRequest(req, upstreamCopy, envCfg, isStream, apiType, proxyURL, a.Permit, a.RequestTimeout)
+			a.observeAvailabilityResponse(resp)
 			if err != nil {
 				if upstreamcontrol.IsLocalError(err) {
 					lifecycle.finalizeNeutral()
@@ -247,6 +249,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 					log.Printf("[%s-Key] 警告: 读取上游错误响应体失败 (状态: %d)，尝试下一个密钥: %v", apiType, resp.StatusCode, readErr)
 					continue
 				}
+				a.rememberAvailabilityFailure(resp, respBodyBytes)
 				retrySucceeded := false
 
 				if IsUpstreamModelCapacityError(respBodyBytes) {
@@ -270,6 +273,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 
 				// 429 的组合冷却已由发送出口按 Retry-After 登记；重试重新进入 FIFO。
 				if resp.StatusCode == http.StatusTooManyRequests && !utils.IsNonRetryableUpstreamErrorBody(respBodyBytes) {
+					recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", resp.StatusCode, false, attemptStart, "upstream", string(respBodyBytes), true, isStream, nil)
 					candidate := currentBaseURL + "\x00" + apiKey
 					if retryState.CanRetryCandidate(candidate, c.Request.Context()) {
 						retryCount := retryState.RecordCandidateRetry(candidate)

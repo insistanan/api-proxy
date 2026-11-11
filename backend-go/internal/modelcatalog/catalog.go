@@ -139,7 +139,7 @@ func staticFamilyModels() []ModelEntry {
 	return models
 }
 
-// publicModelEntries 返回对外可见模型：固定家族别名 + 各协议分组捕获规则。
+// publicModelEntries 返回对外可见模型：固定家族别名、分组捕获规则及明确的免费模型别名。
 // 不再暴露渠道级上游模型或 Chat 路由别名（如 model__c0__kxxxxxxxx）。
 func publicModelEntries(cfgManager *config.ConfigManager) []ModelEntry {
 	familyModels := staticFamilyModels()
@@ -159,6 +159,14 @@ func publicModelEntries(cfgManager *config.ConfigManager) []ModelEntry {
 		}
 		data = append(data, model)
 	}
+	if cfgManager != nil {
+		shared := cfgManager.GetConfig().FreeChannels
+		if shared != nil && shared.Kilo.Enabled {
+			for _, model := range shared.Kilo.Models {
+				data = append(data, ModelEntry{ID: "free/" + model, Object: "model", OwnedBy: "pool:chat,gemini,messages,responses"})
+			}
+		}
+	}
 	return data
 }
 
@@ -174,6 +182,9 @@ func poolMatcherModels(cfgManager *config.ConfigManager) []ModelEntry {
 	for _, kind := range publicPoolKinds {
 		pools := cfgManager.GetChannelPools(kind)
 		for _, pool := range pools {
+			if pool.ID == config.FreeChannelPoolID {
+				continue
+			}
 			matcher := strings.TrimSpace(pool.ModelMatcher)
 			if matcher == "" || matcher == "*" {
 				continue
@@ -293,6 +304,10 @@ func discoverChatModels(ctx context.Context, cfgManager *config.ConfigManager) (
 	var errors []string
 
 	for channelIndex, upstream := range cfg.ChatUpstream {
+		// 免费清单只由专用同步入口维护，不参与旧的逐 Key 模型发现或路由别名生成。
+		if upstream.BuiltinProvider != "" {
+			continue
+		}
 		if config.GetChannelStatus(&upstream) != config.ChannelStatusActive || !config.IsChannelSchedulable(&upstream) {
 			continue
 		}

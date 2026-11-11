@@ -176,6 +176,11 @@ func SetAuthenticationHeader(headers http.Header, apiKey string) {
 	headers.Del("x-api-key")
 	headers.Del("x-goog-api-key")
 
+	// 匿名上游不发送空 Bearer，也不能保留客户端访问网关的凭据。
+	if apiKey == "" {
+		return
+	}
+
 	// Claude 官方密钥格式（sk-ant-api03-xxx）使用 x-api-key
 	// 符合 Claude API 官方推荐的认证方式
 	if strings.HasPrefix(apiKey, "sk-ant-") {

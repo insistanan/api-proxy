@@ -163,6 +163,20 @@ func initLogSchema(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_request_logs_unix ON request_logs(unix_milli, id)`,
 		`CREATE INDEX IF NOT EXISTS idx_request_logs_api ON request_logs(api_type, unix_milli, id)`,
 		`CREATE INDEX IF NOT EXISTS idx_request_logs_request ON request_logs(request_id, unix_milli, id)`,
+		`CREATE TABLE IF NOT EXISTS availability_samples (
+			request_log_id INTEGER PRIMARY KEY,
+			unix_milli INTEGER NOT NULL,
+			kind TEXT NOT NULL,
+			channel_id TEXT NOT NULL,
+			model TEXT NOT NULL,
+			candidate_id TEXT NOT NULL,
+			outcome TEXT NOT NULL,
+			reason TEXT NOT NULL,
+			cooldown_until INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_availability_window ON availability_samples(kind, unix_milli)`,
+		`CREATE TRIGGER IF NOT EXISTS delete_availability_sample AFTER DELETE ON request_logs
+			BEGIN DELETE FROM availability_samples WHERE request_log_id = OLD.id; END`,
 	}
 	for _, statement := range statements {
 		if _, err := db.Exec(statement); err != nil {
@@ -309,6 +323,10 @@ func (s *Store) RecordTraffic(entry TrafficLog) error {
 func (s *Store) RecordRequest(entry RequestLogRecord) error {
 	entry = normalizeRequestRecord(entry)
 	entry.Payload = append([]byte(nil), entry.Payload...)
+	if entry.Availability != nil {
+		sample := *entry.Availability
+		entry.Availability = &sample
+	}
 	if _, err := parseRequestLogMeta(entry.Payload); err != nil {
 		s.reportError(err)
 		return err

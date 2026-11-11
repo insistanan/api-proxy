@@ -8,7 +8,26 @@ import (
 	"testing"
 
 	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/stretchr/testify/require"
 )
+
+func TestFreeCatalogUsesSharedListWithoutDiscovery(t *testing.T) {
+	cm := newTestConfigManager(t, config.Config{})
+	require.NoError(t, cm.EnsureFreeChannels())
+	ids := modelIDs(OpenAIModels(context.Background(), cm).Data)
+	require.Contains(t, ids, "free/kilo-auto/free")
+	require.NotContains(t, ids, "free/")
+	require.NotContains(t, ids, "kilo-auto/free")
+	// 只有内置免费渠道时，旧发现链路应立即返回空结果，不访问其真实地址。
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	models, routes, err := discoverChatModels(ctx, cm)
+	require.NoError(t, err)
+	require.Empty(t, models)
+	require.Empty(t, routes)
+	require.NoError(t, cm.SetKiloEnabled(false))
+	require.NotContains(t, modelIDs(OpenAIModels(context.Background(), cm).Data), "free/kilo-auto/free")
+}
 
 func TestPublicModelEntriesFamilyOnly(t *testing.T) {
 	t.Parallel()
