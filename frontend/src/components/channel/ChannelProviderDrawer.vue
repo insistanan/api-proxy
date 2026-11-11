@@ -14,7 +14,7 @@
           <button v-for="item in items" :key="item.preset.id" type="button" class="provider-item" :disabled="!item.endpoint" @click="select(item.preset)">
             <span class="provider-mark" aria-hidden="true">{{ item.preset.mark }}</span>
             <span class="provider-info">
-              <span class="provider-name">{{ item.preset.name }} <small v-if="item.preset.region">{{ item.preset.region }}</small></span>
+              <span class="provider-name">{{ item.preset.name }}</span>
               <span class="provider-protocols">{{ item.preset.endpoints.map(endpoint => presetProtocolLabels[endpoint.protocol]).join(' · ') }}</span>
               <span v-if="item.endpoint" class="provider-url">{{ item.endpoint.url }}</span>
               <span v-else class="provider-protocols">当前入口暂不支持此上游</span>
@@ -104,7 +104,6 @@ watch(() => props.modelValue, async (open, _previous, onCleanup) => {
 .provider-mark { display: grid; place-items: center; width: 34px; height: 34px; flex-shrink: 0; border-radius: 10px; background: rgba(var(--v-theme-primary), 0.12); color: rgb(var(--v-theme-primary)); font-weight: 700; }
 .provider-info { display: flex; flex-direction: column; min-width: 0; flex: 1; gap: 4px; }
 .provider-name { font-weight: 600; font-size: 0.875rem; }
-.provider-name small { font-weight: 400; font-size: 0.6875rem; color: rgb(var(--v-theme-on-surface-variant)); }
 .provider-protocols, .provider-url { font-size: 0.6875rem; line-height: 1.5; color: rgb(var(--v-theme-on-surface-variant)); }
 .provider-url { overflow-wrap: anywhere; }
 .provider-route { flex-shrink: 0; padding: 3px 5px; border-radius: 4px; font-size: 0.625rem; background: rgba(var(--v-theme-on-surface), 0.06); }

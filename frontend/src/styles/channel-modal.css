@@ -84,7 +84,6 @@
 .form-section-heading { padding: 4px 0 12px; border-bottom: 1px solid rgba(var(--v-theme-outline), 0.2); }
 .form-section-heading h3 { margin: 0; font-size: 0.9375rem; font-weight: 650; color: rgb(var(--v-theme-on-surface)); }
 .form-section-heading p { margin: 5px 0 0; font-size: 0.8125rem; line-height: 1.6; color: rgb(var(--v-theme-on-surface-variant)); }
-.quick-form-guide { margin: 0 0 16px; color: rgb(var(--v-theme-on-surface-variant)); font-size: 0.875rem; line-height: 1.6; }
 .quick-form-note { margin: 12px 0 0; color: rgb(var(--v-theme-on-surface-variant)); font-size: 0.8125rem; line-height: 1.6; }
 
 @media (max-width: 600px) {

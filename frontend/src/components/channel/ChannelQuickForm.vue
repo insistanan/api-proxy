@@ -1,6 +1,5 @@
 <template>
 <div>
-  <p class="quick-form-guide">粘贴上游请求地址和 API 密钥，每行一项；下方会显示识别结果。</p>
   <v-textarea
     v-model="quickInput"
     label="输入内容"
