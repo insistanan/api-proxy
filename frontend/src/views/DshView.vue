@@ -427,19 +427,20 @@ watch(selectedProviderKey, () => {
 // 一键导入本代理模型（按所选协议分组，导入即替换）
 const importProxyModelsToProvider = async () => {
   const provider = selectedProvider.value
-  if (!provider || !quickPickType.value) return
+  const type = quickPickType.value
+  if (!provider || !type) return
   try {
-    const response = await api.getProxyModels()
-    const modelIds = filterProxyModelsByKind(response.data, quickPickType.value)
+    const response = await api.getProxyModels(type)
+    const modelIds = filterProxyModelsByKind(response.data, type)
     if (modelIds.length === 0) {
-      notice.value = { visible: true, type: 'error', message: `本代理 ${quickPickType.value} 协议分组下暂无模型，请先在渠道管理中配置分组` }
+      notice.value = { visible: true, type: 'error', message: `本代理 ${type} 协议分组下暂无模型，请先在渠道管理中配置分组` }
       return
     }
-    const count = importProxyModels(quickPickType.value, modelIds, buildDSHModel, (models) => {
+    const count = importProxyModels(type, modelIds, buildDSHModel, (models) => {
       provider.models = models as DSHModel[]
     })
     syncModelFlags()
-    notice.value = { visible: true, type: 'success', message: `已导入本代理 ${quickPickType.value} 分组的 ${count} 个模型（已替换原有模型）` }
+    notice.value = { visible: true, type: 'success', message: `已导入本代理 ${type} 分组的 ${count} 个模型（已替换原有模型）` }
   } catch (importError) {
     notice.value = { visible: true, type: 'error', message: importError instanceof Error ? importError.message : '获取本代理模型列表失败' }
   }

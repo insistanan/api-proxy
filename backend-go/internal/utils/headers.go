@@ -183,7 +183,8 @@ func SetAuthenticationHeader(headers http.Header, apiKey string) {
 
 	// Claude 官方密钥格式（sk-ant-api03-xxx）使用 x-api-key
 	// 符合 Claude API 官方推荐的认证方式
-	if strings.HasPrefix(apiKey, "sk-ant-") {
+	// 已有订阅访问令牌使用 Bearer，不能因同属 sk-ant 前缀而误当作 API Key。
+	if strings.HasPrefix(apiKey, "sk-ant-") && !strings.HasPrefix(apiKey, "sk-ant-oat") {
 		headers.Set("x-api-key", apiKey)
 	} else {
 		// 其他格式密钥使用 Authorization: Bearer

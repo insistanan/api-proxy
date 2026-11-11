@@ -110,6 +110,9 @@ func (cm *ConfigManager) prepareCandidate(data []byte) (Config, bool, error) {
 	if err := json.Unmarshal(data, &candidate); err != nil {
 		return Config{}, false, fmt.Errorf("配置 JSON 解析失败: %w", err)
 	}
+	if err := validateFuzzyModeProtocols(&candidate); err != nil {
+		return Config{}, false, err
+	}
 	if err := materializeFreeChannels(&candidate); err != nil {
 		return Config{}, false, err
 	}
@@ -690,6 +693,9 @@ func validateProxyConfigOf(candidate *Config) error {
 //   - 提交点后失败（目录同步等）：文件已是新内容，快照同样发布，
 //     返回 *atomicfile.CommittedError（调用方不得按未提交重试）。
 func (cm *ConfigManager) saveConfigLocked(config Config) error {
+	if err := validateFuzzyModeProtocols(&config); err != nil {
+		return err
+	}
 	if err := materializeFreeChannels(&config); err != nil {
 		return err
 	}

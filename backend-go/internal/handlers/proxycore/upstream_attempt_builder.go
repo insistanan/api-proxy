@@ -48,7 +48,7 @@ func NewAttemptBuilder(
 		MetricsManager:     channelScheduler.MetricsManager(kind),
 		Upstream:           upstream,
 		RequestedModel:     requestedModel,
-		AllowModelFailover: cfgManager.GetFuzzyModeEnabled(),
+		AllowModelFailover: cfgManager.GetFuzzyModeEnabledForProtocol(string(kind)),
 		RequestBody:        requestBody,
 		IsStream:           isStream,
 		RequestTimeout:     time.Duration(envCfg.Current().RequestTimeout) * time.Millisecond,

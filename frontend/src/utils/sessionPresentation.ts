@@ -1,5 +1,5 @@
 // 五协议正文的展示解析；不参与转发或会话身份判断。
-// 正文分三类处理：完整 JSON 按消息结构解析，纯文本（如流式合成结果）按文本轨迹展示，
+// 完整 JSON 按消息结构解析，Messages SSE 按内容块聚合，纯文本按文本轨迹展示，
 // 疑似截断的 JSON 只给一行说明，不再把 JSON.parse 的原始报错抛给界面。
 export interface ParsedToolCall {
   id?: string
@@ -22,7 +22,7 @@ export interface ParsedItem {
   toolResults?: ParsedToolResult[]
 }
 
-export type SessionBodyMode = 'json' | 'text' | 'invalid' | 'unknown' | 'empty'
+export type SessionBodyMode = 'json' | 'sse' | 'text' | 'invalid' | 'unknown' | 'empty'
 
 export interface ParsedSessionBody {
   items: ParsedItem[]
@@ -99,7 +99,7 @@ function parseClaudeMessages(raw: unknown[]): ParsedItem[] {
         if (type === 'text') {
           item.text = appendLine(item.text, readString(block.text))
         } else if (type === 'thinking' || type === 'redacted_thinking') {
-          item.thinking = appendLine(item.thinking, readString(block.thinking) || '[redacted thinking]')
+          item.thinking = appendLine(item.thinking, type === 'redacted_thinking' ? '[redacted thinking]' : readString(block.thinking))
         } else if (type === 'tool_use') {
           if (!item.toolCalls) item.toolCalls = []
           item.toolCalls.push({ id: readString(block.id), name: readString(block.name) || 'tool', args: block.input })
@@ -262,9 +262,84 @@ function parseSynthesizedText(body: string): ParsedItem[] {
   return items
 }
 
+// 历史 stream_synth 在只有思考、没有可合成正文时保存原始 SSE。
+// 按块索引拼接增量，保留思考/正文/工具的区别，不能把协议事件当成助手回复。
+function parseMessagesSSE(body: string): ParsedSessionBody {
+  const items: ParsedItem[] = []
+  const blocks = new Map<number, ParsedItem>()
+  const argumentsByBlock = new Map<number, string>()
+  const notices = new Set<string>()
+  let recognized = false
+  let completed = false
+  let stopReason = ''
+  for (const frame of body.replace(/\r\n/g, '\n').split(/\n\s*\n/)) {
+    const lines = frame.split('\n')
+    const payload = lines.filter(line => line.startsWith('data:')).map(line => line.slice(5).replace(/^ /, '')).join('\n')
+    if (!payload || payload === '[DONE]') continue
+    let event: unknown
+    try { event = JSON.parse(payload) } catch {
+      notices.add('部分 SSE 数据无法解析，可能已截断；请在流量详情查看原文。')
+      continue
+    }
+    if (!isRecord(event)) continue
+    const type = readString(event.type) || lines.find(line => line.startsWith('event:'))?.slice(6).trim() || ''
+    if (type === 'message_start') {
+      recognized = true
+      if (isRecord(event.message)) items.push(...parseClaudeMessages([event.message]).filter(item => item.text || item.thinking || item.toolCalls?.length))
+    } else if (type === 'content_block_start' && isRecord(event.content_block) && typeof event.index === 'number') {
+      recognized = true
+      const item = parseClaudeMessages([{ role: 'assistant', content: [event.content_block] }])[0]!
+      blocks.set(event.index, item)
+      items.push(item)
+    } else if (type === 'content_block_delta' && isRecord(event.delta) && typeof event.index === 'number') {
+      recognized = true
+      const item = blocks.get(event.index)
+      if (!item) {
+        notices.add('SSE 内容块缺少起始事件，记录可能不完整；请在流量详情查看原文。')
+        continue
+      }
+      const delta = event.delta
+      if (delta.type === 'thinking_delta') item.thinking = (item.thinking || '') + readString(delta.thinking)
+      else if (delta.type === 'text_delta') item.text = (item.text || '') + readString(delta.text)
+      else if (delta.type === 'input_json_delta') {
+        const call = item.toolCalls?.[0]
+        if (call) {
+          const args = (argumentsByBlock.get(event.index) || '') + readString(delta.partial_json)
+          argumentsByBlock.set(event.index, args)
+          call.args = args
+        } else notices.add('SSE 工具参数缺少对应调用，记录可能不完整。')
+      }
+    } else if (type === 'message_delta' && isRecord(event.delta)) {
+      stopReason = readString(event.delta.stop_reason)
+    } else if (type === 'message_stop') {
+      recognized = true
+      completed = true
+    } else if (type === 'error') {
+      const error = isRecord(event.error) ? readString(event.error.message) : readString(event.error)
+      notices.add(error || '流式响应返回错误，请在流量详情查看原文。')
+    }
+  }
+  for (const [index, args] of argumentsByBlock) {
+    const call = blocks.get(index)?.toolCalls?.[0]
+    if (!call) continue
+    try { call.args = JSON.parse(args) } catch {
+      notices.add('工具参数不是完整 JSON，已保留收到的片段。')
+    }
+  }
+  const visible = items.filter(item => item.text || item.thinking || item.toolCalls?.length || item.toolResults?.length)
+  if (!recognized) notices.add('此 SSE 格式暂不支持结构化展示，请查看原文。')
+  else if (!completed) notices.add('日志未包含流结束事件，以下为已记录的内容。')
+  if (visible.some(item => item.thinking) && !visible.some(item => item.text?.trim() || item.toolCalls?.length)) {
+    notices.add(stopReason === 'max_tokens' ? '输出达到 token 上限，已记录思考，未收到回复正文。' : '本轮只收到思考内容，没有回复正文或工具调用。')
+  }
+  if (!visible.length && !notices.size) notices.add('流已结束，但没有可展示的回复内容。')
+  return { items: visible, notice: [...notices].join(' '), mode: 'sse' }
+}
+
 export function parseSessionBody(body: string): ParsedSessionBody {
   const trimmed = (body || '').trim()
   if (!trimmed) return { items: [], notice: '此阶段没有正文。', mode: 'empty' }
+  if (/^(?:event:|data:)/.test(trimmed) || (trimmed.startsWith(':') && /\ndata:/.test(trimmed))) return parseMessagesSSE(trimmed)
   const looksJson = trimmed.startsWith('{') || trimmed.startsWith('[')
   try {
     const items = parseSessionItems(JSON.parse(trimmed))

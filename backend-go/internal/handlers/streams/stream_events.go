@@ -9,11 +9,65 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
+	"sort"
 	"strings"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/insistanan/api-proxy/internal/utils"
 )
+
+// 还原器可能一次释放多个 SSE 事件，只记录成功写给客户端的文本与思考块。
+func (ctx *Context) trackDeliveredBlocks(events string) {
+	for _, line := range strings.Split(events, "\n") {
+		payload, ok := utils.ParseSSEDataLine(line)
+		if !ok {
+			continue
+		}
+		var data struct {
+			Type  string `json:"type"`
+			Index int    `json:"index"`
+			Block struct {
+				Type string `json:"type"`
+			} `json:"content_block"`
+		}
+		if json.Unmarshal([]byte(payload), &data) != nil {
+			continue
+		}
+		switch data.Type {
+		case "content_block_start":
+			if data.Block.Type == "thinking" || data.Block.Type == "text" {
+				if ctx.DeliveredBlocks == nil {
+					ctx.DeliveredBlocks = make(map[int]string)
+				}
+				ctx.DeliveredBlocks[data.Index] = data.Block.Type
+			}
+		case "content_block_stop":
+			delete(ctx.DeliveredBlocks, data.Index)
+		}
+	}
+}
+
+// 流失败前关闭已显示的正文和思考，避免客户端重试后遗留转圈状态。
+// 不补成功终止事件，也不把尚未完成的工具参数定稿为可执行调用。
+func (ctx *Context) closeDeliveredBlocks(w gin.ResponseWriter, flusher http.Flusher) error {
+	indexes := make([]int, 0, len(ctx.DeliveredBlocks))
+	for index := range ctx.DeliveredBlocks {
+		indexes = append(indexes, index)
+	}
+	sort.Ints(indexes)
+	for _, index := range indexes {
+		event := fmt.Sprintf("event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":%d}\n\n", index)
+		if _, err := w.Write([]byte(event)); err != nil {
+			ctx.ClientGone = true
+			return fmt.Errorf("关闭中断的内容块失败: %w", err)
+		}
+		delete(ctx.DeliveredBlocks, index)
+		flusher.Flush()
+	}
+	return nil
+}
 
 // ParseSSEEventData 解析单个 SSE 事件的第一段 JSON data。
 func ParseSSEEventData(event string) (map[string]interface{}, bool) {

@@ -249,8 +249,8 @@ func proxycoreIsModelCapacity(payload string) bool {
 	return utils.IsUpstreamModelCapacityMessage(payload)
 }
 
-// UpstreamStreamFailedError 表示 Responses 上游在流内报告了失败
-// （response.failed / 顶层 error 事件）。Capacity=true 时是 model at capacity
+// UpstreamStreamFailedError 表示上游流内失败，包括错误事件和正常结束却仅有思考的无效回复。
+// Capacity=true 时是 model at capacity
 // 类容量错误，调用方（proxycore）可按同候选重试处理；否则是真实上游失败。
 type UpstreamStreamFailedError struct {
 	Capacity bool

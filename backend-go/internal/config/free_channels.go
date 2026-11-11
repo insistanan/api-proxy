@@ -9,6 +9,8 @@ import (
 )
 
 const FreeChannelPoolID = "builtin-free"
+const FreeModelID = "free"
+const KiloAutoModelID = "kilo-auto/free"
 const KiloChatURL = "https://api.kilo.ai/api/gateway/chat/completions"
 const KiloModelsURL = "https://api.kilo.ai/api/gateway/models"
 
@@ -27,7 +29,7 @@ func SupportsFreeChannels(kind string) bool {
 	return kind == "messages" || kind == "responses" || kind == "chat" || kind == "gemini"
 }
 
-func IsFreeModel(model string) bool { return strings.HasPrefix(model, "free/") }
+func IsFreeModel(model string) bool { return model == FreeModelID || strings.HasPrefix(model, "free/") }
 
 // MarshalJSON 只落盘引用，避免四份配置互相覆盖或逐渐漂移。
 func (u UpstreamConfig) MarshalJSON() ([]byte, error) {
@@ -113,6 +115,8 @@ func materializeFreeChannels(candidate *Config) error {
 		seen[model] = true
 		mapping["free/"+model] = []string{model}
 	}
+	// free 是统一入口，模型候选与显式调用映射来自同一份配置快照。
+	mapping[FreeModelID] = slices.Clone(kilo.Models)
 	for _, kind := range []string{"messages", "responses", "chat", "gemini"} {
 		cs, err := candidate.channelSetFor(kind)
 		if err != nil {
@@ -183,14 +187,14 @@ func (cm *ConfigManager) ValidateFreeRequest(kind, model string, channelIndex *i
 		if !cm.config.FreeChannels.Kilo.Enabled {
 			return fmt.Errorf("Kilo 免费渠道已停用")
 		}
-		if !slices.Contains(cm.config.FreeChannels.Kilo.Models, strings.TrimPrefix(model, "free/")) {
+		if model != FreeModelID && !slices.Contains(cm.config.FreeChannels.Kilo.Models, strings.TrimPrefix(model, "free/")) {
 			return fmt.Errorf("未知免费模型，请同步免费模型清单后重试")
 		}
 	}
 	if channelIndex != nil && *channelIndex >= 0 && *channelIndex < len(*cs.upstreams) {
 		isBuiltin := (*cs.upstreams)[*channelIndex].BuiltinProvider != ""
 		if isBuiltin != IsFreeModel(model) {
-			return fmt.Errorf("免费模型必须使用免费分组，不能指定普通渠道；免费渠道也仅接受 free/ 模型")
+			return fmt.Errorf("免费模型必须使用免费分组，不能指定普通渠道；免费渠道仅接受 free 或 free/模型ID")
 		}
 	}
 	return nil

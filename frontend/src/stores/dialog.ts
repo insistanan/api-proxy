@@ -16,14 +16,16 @@ export const useDialogStore = defineStore('dialog', () => {
   const showAddChannelModal = ref(false)
   const editingChannel = ref<Channel | null>(null)
   const channelType = ref<ApiTab>('messages')
+  const initialPoolId = ref('default')
 
   // ===== 操作方法 =====
 
   /**
    * 打开添加渠道对话框
    */
-  function openAddChannelModal(type: ApiTab) {
+  function openAddChannelModal(type: ApiTab, poolId = 'default') {
     channelType.value = type
+    initialPoolId.value = poolId
     editingChannel.value = null
     showAddChannelModal.value = true
   }
@@ -33,6 +35,7 @@ export const useDialogStore = defineStore('dialog', () => {
    */
   function openEditChannelModal(channel: Channel, type: ApiTab) {
     channelType.value = type
+    initialPoolId.value = 'default'
     editingChannel.value = channel
     showAddChannelModal.value = true
   }
@@ -43,6 +46,7 @@ export const useDialogStore = defineStore('dialog', () => {
   function closeAddChannelModal() {
     showAddChannelModal.value = false
     editingChannel.value = null
+    initialPoolId.value = 'default'
   }
 
   /**
@@ -51,6 +55,7 @@ export const useDialogStore = defineStore('dialog', () => {
   function resetDialogState() {
     showAddChannelModal.value = false
     editingChannel.value = null
+    initialPoolId.value = 'default'
   }
 
   return {
@@ -58,6 +63,7 @@ export const useDialogStore = defineStore('dialog', () => {
     showAddChannelModal,
     editingChannel,
     channelType,
+    initialPoolId,
 
     // 方法
     openAddChannelModal,

@@ -3,6 +3,7 @@ package metrics
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -64,6 +65,14 @@ type RequestLogStore struct {
 
 func NewRequestLogStore(logStore *logger.Store) *RequestLogStore {
 	return &RequestLogStore{logStore: logStore}
+}
+
+// ChannelAvailability 复用日志中的真实观测，不发起上游探测。
+func (s *RequestLogStore) ChannelAvailability(ctx context.Context, kind, channelID string, now time.Time) ([]availability.Aggregate, error) {
+	if s == nil || s.logStore == nil {
+		return nil, fmt.Errorf("可用性日志存储未初始化")
+	}
+	return s.logStore.QueryChannelAvailability(ctx, kind, channelID, now)
 }
 
 func (s *RequestLogStore) Record(entry RequestLogEntry) {

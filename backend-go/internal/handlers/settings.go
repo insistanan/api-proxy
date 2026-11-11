@@ -109,8 +109,18 @@ func respondSaveError(c *gin.Context, message string, err error) {
 // GetFuzzyMode 获取 Fuzzy 模式状态
 func GetFuzzyMode(cfgManager *config.ConfigManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		cfg := cfgManager.GetConfig()
+		modes := make(map[string]bool)
+		for _, protocol := range []string{"messages", "responses", "gemini", "chat", "images", "embeddings", "decisions"} {
+			enabled, exists := cfg.FuzzyModeByProtocol[protocol]
+			if !exists {
+				enabled = cfg.FuzzyModeEnabled
+			}
+			modes[protocol] = enabled
+		}
 		c.JSON(200, gin.H{
-			"fuzzyModeEnabled": cfgManager.GetFuzzyModeEnabled(),
+			"fuzzyModeEnabled":    cfg.FuzzyModeEnabled,
+			"fuzzyModeByProtocol": modes,
 		})
 	}
 }
@@ -119,21 +129,34 @@ func GetFuzzyMode(cfgManager *config.ConfigManager) gin.HandlerFunc {
 func SetFuzzyMode(cfgManager *config.ConfigManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req struct {
-			Enabled bool `json:"enabled"`
+			Enabled  *bool   `json:"enabled"`
+			Protocol *string `json:"protocol"`
 		}
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(400, gin.H{"error": "Invalid request body"})
+		if err := c.ShouldBindJSON(&req); err != nil || req.Enabled == nil {
+			c.JSON(400, gin.H{"error": "必须提供 enabled 布尔值"})
 			return
 		}
 
-		if err := cfgManager.SetFuzzyModeEnabled(req.Enabled); err != nil {
-			c.JSON(500, gin.H{"error": "Failed to save config"})
+		var err error
+		if req.Protocol == nil {
+			err = cfgManager.SetFuzzyModeEnabled(*req.Enabled)
+		} else {
+			switch *req.Protocol {
+			case "messages", "responses", "gemini", "chat", "images", "embeddings", "decisions":
+				err = cfgManager.SetFuzzyModeForProtocol(*req.Protocol, *req.Enabled)
+			default:
+				c.JSON(400, gin.H{"error": "不支持的渠道协议"})
+				return
+			}
+		}
+		if err != nil {
+			respondSaveError(c, "保存自动故障转移设置失败", err)
 			return
 		}
 
 		c.JSON(200, gin.H{
 			"success":          true,
-			"fuzzyModeEnabled": req.Enabled,
+			"fuzzyModeEnabled": *req.Enabled,
 		})
 	}
 }

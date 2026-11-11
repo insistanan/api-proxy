@@ -1,5 +1,6 @@
 // 智能体配置 API：复用统一 HTTP 基础层，保留端点与返回契约。
 import { apiRequest } from './http'
+import type { ApiTab } from './channel-api'
 import type {
   AgentPromptAgent,
   AgentPromptFile,
@@ -74,12 +75,12 @@ export const clientConfigApi = {
   // ============== 本代理模型列表（客户端配置页用） ==============
 
   /**
-   * 获取本代理自身暴露的模型列表（等同 /v1/models 的内容，但走 Web 鉴权）。
+   * 获取本代理自身暴露的模型列表，由服务端按入口协议筛选，走管理 API 鉴权。
    * 返回条目的 owned_by 形如 "pool:messages" / "pool:messages,responses"，
-   * 标识该模型属于哪些协议分组（包含同名家族别名）；"api-proxy" 表示未配置同名分组的静态别名。
+   * 标识分组入口（包括 free）所属的协议，不额外提供固定家族别名。
    */
-  async getProxyModels(): Promise<ModelsResponse> {
-    return apiRequest('/proxy-models')
+  async getProxyModels(type?: ApiTab): Promise<ModelsResponse> {
+    return apiRequest(`/proxy-models${type ? `?type=${encodeURIComponent(type)}` : ''}`)
   },
 
   // ============== CLI 工具版本检测（客户端配置页用） ==============

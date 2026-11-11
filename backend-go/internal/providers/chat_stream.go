@@ -253,6 +253,14 @@ func (s *chatToClaudeStreamState) Finish() []string {
 		return nil
 	}
 	out := s.acceptContentParts(tail)
+	// 正常结束却只有推理内容，客户端得不到回答。保留长度截断语义，
+	// 也不误伤只调用工具的有效回合；错误交给消费端输出并记录失败。
+	if s.reasoningDeltaBuffer.Len() > 0 && strings.TrimSpace(s.assistantTextBuffer.String()) == "" &&
+		len(s.assistantToolCalls) == 0 && (s.pendingStopReason == "" || s.pendingStopReason == "end_turn") {
+		s.streamFailed = true
+		s.streamError = NewUpstreamStreamFailedError(false, "上游模型仅返回思考内容，没有回复正文或工具调用；请重试或更换模型")
+		return nil
+	}
 	s.messageStopEmitted = true
 
 	// 缓存本轮完整 assistant 消息。工具调用回合通常没有文本，仍需用其

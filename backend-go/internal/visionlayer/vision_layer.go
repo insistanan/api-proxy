@@ -256,14 +256,14 @@ func describeImages(
 			if attemptErr == nil {
 				return result, nil
 			}
-			if (!upstreamcontrol.IsLocalError(attemptErr) && failCount < 2) || !cfgManager.GetFuzzyModeEnabled() || errors.Is(attemptErr, upstreamcontrol.ErrBudget) {
+			if (!upstreamcontrol.IsLocalError(attemptErr) && failCount < 2) || !cfgManager.GetFuzzyModeEnabledForProtocol(string(kind)) || errors.Is(attemptErr, upstreamcontrol.ErrBudget) {
 				// 不可重试错误不应继续轮询其他渠道。
 				return nil, attemptErr
 			}
 			lastErr = attemptErr
 		} else {
 			lastErr = err
-			if !cfgManager.GetFuzzyModeEnabled() {
+			if !cfgManager.GetFuzzyModeEnabledForProtocol(string(kind)) {
 				return nil, err
 			}
 		}
@@ -302,7 +302,7 @@ func describeImages(
 				return result, nil
 			}
 			lastErr = err
-			if (!upstreamcontrol.IsLocalError(err) && failCount < 2) || !cfgManager.GetFuzzyModeEnabled() || errors.Is(err, upstreamcontrol.ErrBudget) {
+			if (!upstreamcontrol.IsLocalError(err) && failCount < 2) || !cfgManager.GetFuzzyModeEnabledForProtocol(string(kind)) || errors.Is(err, upstreamcontrol.ErrBudget) {
 				return nil, err
 			}
 		}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,7 +17,103 @@ import (
 	"github.com/insistanan/api-proxy/internal/providers"
 	"github.com/insistanan/api-proxy/internal/types"
 	"github.com/insistanan/api-proxy/internal/utils"
+	"github.com/stretchr/testify/require"
 )
+
+func TestProcessStreamEventsDoesNotLoseBufferedError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	envCfg := &config.EnvConfig{}
+	streamErr := providers.NewUpstreamStreamFailedError(false, "上游没有回复正文")
+	// 两个通道均已关闭时，select 的选择顺序不确定；循环覆盖关闭信号先到的情况。
+	for range 64 {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+		events := make(chan string)
+		close(events)
+		failures := make(chan error, 1)
+		failures <- streamErr
+		close(failures)
+
+		usage, err := ProcessStreamEvents(c, c.Writer, c.Writer, events, failures, NewStreamContext(envCfg), envCfg, time.Now(), nil)
+		require.ErrorIs(t, err, streamErr)
+		require.Nil(t, usage)
+		require.Contains(t, recorder.Body.String(), "event: error")
+		require.Contains(t, recorder.Body.String(), "上游没有回复正文")
+	}
+}
+
+func TestProcessStreamErrorClosesDeliveredReasoningAndText(t *testing.T) {
+	for _, blockType := range []string{"thinking", "text", "tool_use"} {
+		for _, alreadyClosed := range []bool{false, true} {
+			t.Run(blockType+fmt.Sprint(alreadyClosed), func(t *testing.T) {
+				recorder := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(recorder)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+				envCfg := &config.EnvConfig{} // 关闭日志时也必须跟踪块生命周期。
+				ctx := NewStreamContext(envCfg)
+				start := fmt.Sprintf("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":3,\"content_block\":{\"type\":%q}}\n\n", blockType)
+				require.NoError(t, ProcessStreamEvent(c, c.Writer, c.Writer, start, ctx, envCfg, nil))
+				stop := "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":3}\n\n"
+				if alreadyClosed {
+					require.NoError(t, ProcessStreamEvent(c, c.Writer, c.Writer, stop, ctx, envCfg, nil))
+				}
+				events := make(chan string)
+				close(events)
+				failures := make(chan error, 1)
+				upstreamErr := providers.NewUpstreamStreamFailedError(false, "模拟上游 502")
+				failures <- upstreamErr
+				close(failures)
+				_, err := ProcessStreamEvents(c, c.Writer, c.Writer, events, failures, ctx, envCfg, time.Now(), nil)
+				require.ErrorIs(t, err, upstreamErr)
+				output := recorder.Body.String()
+				if alreadyClosed || blockType != "tool_use" {
+					require.Equal(t, 1, strings.Count(output, "event: content_block_stop"))
+					require.Less(t, strings.Index(output, "event: content_block_stop"), strings.Index(output, "event: error"))
+				} else {
+					require.NotContains(t, output, "event: content_block_stop", "错误流不能将未完成的工具调用定稿")
+				}
+				require.NotContains(t, output, "event: message_delta")
+				require.NotContains(t, output, "event: message_stop", "仍须保留失败语义，不能伪造成功")
+			})
+		}
+	}
+}
+
+func TestProcessStreamEventsClosedErrorChannelPreservesEvents(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	envCfg := &config.EnvConfig{}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	events := make(chan string, 1)
+	events <- "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"正常回复\"}}\n\n"
+	close(events)
+	failures := make(chan error)
+	close(failures)
+
+	_, err := ProcessStreamEvents(c, c.Writer, c.Writer, events, failures, NewStreamContext(envCfg), envCfg, time.Now(), nil)
+	require.NoError(t, err)
+	require.Contains(t, recorder.Body.String(), "正常回复")
+}
+
+func TestProcessStreamEventsCanCancelAfterEventsClose(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	envCfg := &config.EnvConfig{}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	requestCtx, cancel := context.WithCancel(context.Background())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil).WithContext(requestCtx)
+	events := make(chan string)
+	close(events)
+	failures := make(chan error)
+	defer close(failures)
+	cancel()
+	streamCtx := NewStreamContext(envCfg)
+
+	_, err := ProcessStreamEvents(c, c.Writer, c.Writer, events, failures, streamCtx, envCfg, time.Now(), nil)
+	require.ErrorIs(t, err, context.Canceled)
+	require.True(t, streamCtx.ClientGone)
+}
 
 func TestPatchUsageFieldsWithLog_NilInputTokens(t *testing.T) {
 	tests := []struct {

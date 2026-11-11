@@ -589,7 +589,7 @@ const importProxyModelsToProvider = async () => {
   if (!provider || !type || editorBusy.value || loading.value) return
   preparingProvider.value = true
   try {
-    const response = await api.getProxyModels()
+    const response = await api.getProxyModels(type)
     const modelIds = filterProxyModelsByKind(response.data, type)
     if (modelIds.length === 0) {
       notice.value = { visible: true, type: 'error', message: `本代理 ${type} 协议分组下暂无模型，请先在渠道管理中配置分组` }

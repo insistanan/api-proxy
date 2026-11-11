@@ -1,6 +1,7 @@
 // 网关与集成设置 API：复用统一 HTTP 基础层，保留端点与返回契约。
 import { apiRequest } from './http'
 import type { AppSettings, ClientDisguiseStatus } from '@/types'
+import type { ApiTab } from './channel-api'
 
 export const settingsApi = {
   // 获取网关与集成设置
@@ -29,15 +30,15 @@ export const settingsApi = {
   },
 
   // 获取 Fuzzy 模式状态
-  async getFuzzyMode(): Promise<{ fuzzyModeEnabled: boolean }> {
+  async getFuzzyMode(): Promise<{ fuzzyModeEnabled: boolean; fuzzyModeByProtocol: Record<ApiTab, boolean> }> {
     return apiRequest('/settings/fuzzy-mode')
   },
 
   // 设置 Fuzzy 模式状态
-  async setFuzzyMode(enabled: boolean): Promise<void> {
+  async setFuzzyMode(protocol: ApiTab, enabled: boolean): Promise<void> {
     await apiRequest('/settings/fuzzy-mode', {
       method: 'PUT',
-      body: JSON.stringify({ enabled })
+      body: JSON.stringify({ protocol, enabled })
     })
   },
 

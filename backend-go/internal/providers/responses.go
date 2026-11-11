@@ -49,13 +49,14 @@ func (p *ResponsesProvider) ConvertToProviderRequest(
 	}
 
 	outcome, err := p.BuildRequest(RequestInput{
-		Ctx:            c.Request.Context(),
-		Method:         http.MethodPost,
-		Path:           "/v1/responses",
-		Header:         c.Request.Header,
-		Body:           bodyBytes,
-		ConversationID: conversationID,
-		CodexDisguise:  c.GetBool(utils.ContextKeyCodexDisguise),
+		Ctx:                c.Request.Context(),
+		Method:             http.MethodPost,
+		Path:               "/v1/responses",
+		Header:             c.Request.Header,
+		Body:               bodyBytes,
+		ConversationID:     conversationID,
+		CodexDisguise:      c.GetBool(utils.ContextKeyCodexDisguise),
+		ClaudeCodeDisguise: c.GetBool(utils.ContextKeyClaudeCodeDisguise),
 	}, upstream, apiKey)
 	if err != nil {
 		if outcome != nil {
@@ -199,7 +200,7 @@ func (p *ResponsesProvider) BuildRequest(input RequestInput, upstream *config.Up
 
 	// 构建 HTTP 请求
 	targetURL := p.buildTargetURLWithModel(upstream, targetModel, isStream)
-	req, err := http.NewRequestWithContext(input.Ctx, http.MethodPost, targetURL, bytes.NewReader(reqBody))
+	req, err := http.NewRequestWithContext(input.Ctx, http.MethodPost, targetURL, nil)
 	if err != nil {
 		return outcome, err
 	}
@@ -208,12 +209,26 @@ func (p *ResponsesProvider) BuildRequest(input RequestInput, upstream *config.Up
 	// 使用统一的头部处理逻辑，保留客户端的大部分 headers
 	req.Header = utils.PrepareUpstreamHeadersFromHeader(input.Header, req.URL.Host)
 
-	compatibility := upstream.UseClientCompatibility(input.CodexDisguise) && upstream.ServiceType == "responses"
+	inherited := input.CodexDisguise
+	if upstream.ServiceType == "claude" {
+		inherited = input.ClaudeCodeDisguise
+	}
+	compatibility := upstream.UseClientCompatibility(inherited) && (upstream.ServiceType == "responses" || upstream.ServiceType == "claude")
 	utils.PrepareTargetIdentity(req.Header, upstream.ServiceType, compatibility)
 	if compatibility {
-		utils.SeedDisguiseSession(req.Header, input.ConversationID, "responses")
-		utils.ApplyCodexDisguise(req.Header, isStream)
+		utils.SeedDisguiseSession(req.Header, input.ConversationID, upstream.ServiceType)
+		if upstream.ServiceType == "claude" {
+			utils.ApplyClaudeCodeDisguise(req.Header, isStream)
+			reqBody = utils.ApplyClaudeCodeBodyDisguise(reqBody, req.Header.Get("X-Claude-Code-Session-Id"))
+		} else {
+			utils.ApplyCodexDisguise(req.Header, isStream)
+		}
 	}
+	// 伪装会改写正文；首次发送、Content-Length 和失败重试必须使用同一份最终载荷。
+	req.Body = io.NopCloser(bytes.NewReader(reqBody))
+	req.ContentLength = int64(len(reqBody))
+	req.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(reqBody)), nil }
+	req.Header.Del("Content-Length")
 
 	// 根据 ServiceType 设置对应的认证头（会覆盖客户端的认证头）
 	switch upstream.ServiceType {

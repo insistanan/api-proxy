@@ -5,6 +5,7 @@
 package proxycore
 
 import (
+	"github.com/insistanan/api-proxy/internal/availability"
 	"github.com/insistanan/api-proxy/internal/handlers/hooks"
 	"github.com/insistanan/api-proxy/internal/providers"
 	"github.com/insistanan/api-proxy/internal/proxy"
@@ -69,6 +70,12 @@ type responseProcessingDecision struct {
 }
 
 func (a UpstreamAttempt) decideUpstreamFailure(statusCode int, body []byte) upstreamFailureDecision {
+	if a.isFreeAttempt() {
+		if outcome, _ := availability.Classify(false, statusCode, "upstream", string(body)); outcome == availability.Unsupported {
+			// 明确的模型不存在只淘汰本模型，不提前把 400/404 写给客户端，交给免费池继续选模。
+			return upstreamFailureDecision{action: upstreamFailureTryNextKey, errorType: "model_unavailable"}
+		}
+	}
 	if a.LogContext.AllowContentPolicyChannelFailover && shouldFailoverToNextChannel(
 		body,
 		a.ChannelScheduler.GetActiveChannelCountForModel(a.Kind, a.LogContext.Model),
@@ -82,7 +89,7 @@ func (a UpstreamAttempt) decideUpstreamFailure(statusCode int, body []byte) upst
 	shouldFailover, quotaRelated := ShouldRetryWithNextKey(
 		statusCode,
 		body,
-		a.ConfigManager.GetFuzzyModeEnabled(),
+		a.ConfigManager.GetFuzzyModeEnabledForProtocol(string(a.Kind)),
 		a.APIType,
 	)
 	if shouldFailover {

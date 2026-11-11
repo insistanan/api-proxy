@@ -15,9 +15,13 @@ func TestFreeCatalogUsesSharedListWithoutDiscovery(t *testing.T) {
 	cm := newTestConfigManager(t, config.Config{})
 	require.NoError(t, cm.EnsureFreeChannels())
 	ids := modelIDs(OpenAIModels(context.Background(), cm).Data)
-	require.Contains(t, ids, "free/kilo-auto/free")
-	require.NotContains(t, ids, "free/")
-	require.NotContains(t, ids, "kilo-auto/free")
+	require.Equal(t, []string{"free"}, ids)
+	require.NoError(t, cm.SetKiloModels([]string{"vendor/a", "vendor/b", config.KiloAutoModelID}, ""))
+	for _, kind := range []string{"messages", "responses", "chat", "gemini"} {
+		models, err := ModelsForKind(cm, kind)
+		require.NoError(t, err)
+		require.Equal(t, []string{"free"}, modelIDs(models.Data), "目录同步后仍只导入一个免费分组")
+	}
 	// 只有内置免费渠道时，旧发现链路应立即返回空结果，不访问其真实地址。
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -26,24 +30,19 @@ func TestFreeCatalogUsesSharedListWithoutDiscovery(t *testing.T) {
 	require.Empty(t, models)
 	require.Empty(t, routes)
 	require.NoError(t, cm.SetKiloEnabled(false))
-	require.NotContains(t, modelIDs(OpenAIModels(context.Background(), cm).Data), "free/kilo-auto/free")
+	require.Empty(t, OpenAIModels(context.Background(), cm).Data)
 }
 
-func TestPublicModelEntriesFamilyOnly(t *testing.T) {
+func TestPublicModelsEmptyWithoutConfiguredGroups(t *testing.T) {
 	t.Parallel()
 
-	got := publicModelEntries(nil)
-	wantIDs := []string{"opus", "sonnet", "gpt", "gemini", "chat"}
-	if len(got) != len(wantIDs) {
-		t.Fatalf("len=%d want %d; got=%v", len(got), len(wantIDs), modelIDs(got))
-	}
-	for index, want := range wantIDs {
-		if got[index].ID != want {
-			t.Fatalf("index %d = %q, want %q", index, got[index].ID, want)
-		}
-		if got[index].OwnedBy != "api-proxy" {
-			t.Fatalf("owned_by for %s = %q", got[index].ID, got[index].OwnedBy)
-		}
+	for _, manager := range []*config.ConfigManager{nil, newTestConfigManager(t, config.Config{})} {
+		response := OpenAIModels(context.Background(), manager)
+		encoded, err := json.Marshal(response)
+		require.NoError(t, err)
+		require.JSONEq(t, `{"object":"list","data":[]}`, string(encoded))
+		_, found := ModelDetail(context.Background(), manager, "opus")
+		require.False(t, found)
 	}
 }
 
@@ -69,20 +68,7 @@ func TestOpenAIModelsIncludesPoolMatchers(t *testing.T) {
 	response := OpenAIModels(context.Background(), cfgManager)
 	ids := modelIDs(response.Data)
 
-	for _, family := range []string{"opus", "sonnet", "gpt", "gemini", "chat"} {
-		if !containsString(ids, family) {
-			t.Fatalf("missing family model %q in %v", family, ids)
-		}
-	}
-	if !containsString(ids, "deepseek") {
-		t.Fatalf("missing pool matcher deepseek in %v", ids)
-	}
-	if !containsString(ids, "grok") {
-		t.Fatalf("missing pool matcher grok in %v", ids)
-	}
-	if containsString(ids, "*") || containsString(ids, "default") {
-		t.Fatalf("should not expose default/wildcard pool as model id: %v", ids)
-	}
+	require.Equal(t, []string{"deepseek", "grok"}, ids)
 
 	// no channel-style aliases
 	for _, id := range ids {
@@ -100,10 +86,10 @@ func TestOpenAIModelsIncludesPoolMatchers(t *testing.T) {
 	}
 }
 
-func TestOpenAIModelsPreservesFamilyPoolKinds(t *testing.T) {
+func TestOpenAIModelsPreservesConfiguredPoolKinds(t *testing.T) {
 	t.Parallel()
 
-	// 覆盖截图中的五个分组及全部固定别名，确保同名去重不会丢失协议归属。
+	// 名为 opus、sonnet 等的分组仍正常暴露，同名规则去重时保留所有协议归属。
 	matchers := []string{"opus", "sonnet", "gpt", "gemini", "chat", "claude", "deepseek", "glm", "grok", "kimi"}
 	pools := make([]config.ChannelPool, 0, len(matchers))
 	for index, matcher := range matchers {
@@ -180,11 +166,39 @@ func modelIDs(models []ModelEntry) []string {
 	return ids
 }
 
-func containsString(items []string, want string) bool {
-	for _, item := range items {
-		if item == want {
-			return true
-		}
+func TestModelsForKindUsesIngressProtocolAndFreeEligibility(t *testing.T) {
+	pools := func(kind string) []config.ChannelPool {
+		return []config.ChannelPool{{ID: kind, Name: kind, ModelMatcher: kind}}
 	}
-	return false
+	cm := newTestConfigManager(t, config.Config{
+		MessagePools: pools("messages"), ResponsesPools: pools("responses"),
+		ChatPools: pools("chat"), GeminiPools: pools("gemini"), ImagesPools: pools("images"),
+		EmbeddingsPools: pools("embeddings"), DecisionsPools: pools("decisions"),
+		// Messages 入口使用 Chat 上游，不改变公开目录的协议归属。
+		Upstream:     []config.UpstreamConfig{{PoolID: "messages", Name: "Chat 上游", ServiceType: "openai", BaseURL: "https://upstream.invalid", APIKeys: []string{"fixture"}, MaxConcurrency: 5}},
+		FreeChannels: &config.FreeChannelsConfig{Kilo: config.KiloFreeConfig{Enabled: true, Models: []string{"vendor/model"}}},
+	})
+	for _, kind := range []string{"messages", "responses", "chat", "gemini", "images", "embeddings", "decisions"} {
+		t.Run(kind, func(t *testing.T) {
+			result, err := ModelsForKind(cm, kind)
+			require.NoError(t, err)
+			want := []string{kind}
+			if kind == "messages" || kind == "responses" || kind == "chat" || kind == "gemini" {
+				want = append(want, "free")
+			}
+			require.ElementsMatch(t, want, modelIDs(result.Data))
+			for _, model := range result.Data {
+				require.Equal(t, "pool:"+kind, model.OwnedBy)
+			}
+		})
+	}
+	all, err := ModelsForKind(cm, "")
+	require.NoError(t, err)
+	require.Len(t, all.Data, 8)
+	require.NoError(t, cm.SetKiloEnabled(false))
+	result, err := ModelsForKind(cm, "messages")
+	require.NoError(t, err)
+	require.Equal(t, []string{"messages"}, modelIDs(result.Data))
+	_, err = ModelsForKind(cm, "claude")
+	require.ErrorContains(t, err, "无效的入口协议")
 }

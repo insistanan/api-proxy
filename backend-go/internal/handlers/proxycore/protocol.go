@@ -118,6 +118,11 @@ func RunProxyRequest(
 	if !ok {
 		return
 	}
+	// 两种支持伪装的入口都提供完整开关，转换器按实际目标选择身份。
+	if spec.Kind == scheduler.ChannelKindMessages || spec.Kind == scheduler.ChannelKindResponses {
+		c.Set(utils.ContextKeyClaudeCodeDisguise, cfgManager.GetClaudeCodeDisguiseEnabled())
+		c.Set(utils.ContextKeyCodexDisguise, cfgManager.GetCodexDisguiseEnabled())
+	}
 	identity := ResolveConversationIdentity(c, bodyBytes)
 	requestState.Model = model
 	requestState.Stream = stream
@@ -230,7 +235,7 @@ func RunProxyRequest(
 	}
 
 	// 8. 多渠道/单渠道分派
-	if cfgManager.GetFuzzyModeEnabled() && channelScheduler.IsMultiChannelModeForModel(spec.Kind, model) {
+	if cfgManager.GetFuzzyModeEnabledForProtocol(string(spec.Kind)) && channelScheduler.IsMultiChannelModeForModel(spec.Kind, model) {
 		handleMultiChannelProxy(c, envCfg, cfgManager, channelScheduler, spec, bodyBytes, model, stream, conversationID, startTime)
 	} else {
 		handleSingleChannelProxy(c, envCfg, cfgManager, channelScheduler, spec, bodyBytes, model, stream, conversationID, nil, 0, startTime)
@@ -432,9 +437,9 @@ func handleSingleChannelProxy(
 	log.Printf("[%s-Error] 所有API密钥都失败了", spec.LogName)
 	MarkConversationFailure(channelScheduler, conversationID, spec.Kind, result.LastError)
 	if spec.HandleAllKeysFailed != nil {
-		spec.HandleAllKeysFailed(c, cfgManager.GetFuzzyModeEnabled(), result.FailoverError, result.LastError)
+		spec.HandleAllKeysFailed(c, cfgManager.GetFuzzyModeEnabledForProtocol(string(spec.Kind)), result.FailoverError, result.LastError)
 	} else {
-		HandleAllKeysFailed(c, cfgManager.GetFuzzyModeEnabled(), result.FailoverError, result.LastError, spec.LogName)
+		HandleAllKeysFailed(c, cfgManager.GetFuzzyModeEnabledForProtocol(string(spec.Kind)), result.FailoverError, result.LastError, spec.LogName)
 	}
 }
 
@@ -459,7 +464,7 @@ func handleMultiChannelProxy(
 		spec.LogName,
 		conversationID,
 		model,
-		cfgManager.GetFuzzyModeEnabled(),
+		cfgManager.GetFuzzyModeEnabledForProtocol(string(spec.Kind)),
 		func(selection *scheduler.SelectionResult) MultiChannelAttemptResult {
 			upstream := selection.Upstream
 			channelIndex := selection.ChannelIndex
@@ -520,7 +525,7 @@ func handleMultiChannelProxy(
 			if spec.HandleAllFailed != nil {
 				spec.HandleAllFailed(ctx, failoverErr, lastError)
 			} else {
-				HandleAllChannelsFailed(ctx, cfgManager.GetFuzzyModeEnabled(), failoverErr, lastError, spec.LogName)
+				HandleAllChannelsFailed(ctx, cfgManager.GetFuzzyModeEnabledForProtocol(string(spec.Kind)), failoverErr, lastError, spec.LogName)
 			}
 		},
 	)

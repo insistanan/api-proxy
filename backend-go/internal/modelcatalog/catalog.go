@@ -28,16 +28,6 @@ var (
 	unsafeModelIDChars   = regexp.MustCompile(`[^A-Za-z0-9._:-]+`)
 	globalCache          = &catalogCache{}
 
-	// publicFamilyModelIDs 是对外稳定暴露的家族别名。
-	// 实际上游模型由渠道 modelMapping / defaultModel + 分组路由决定。
-	publicFamilyModelIDs = []string{
-		"opus",
-		"sonnet",
-		"gpt",
-		"gemini",
-		"chat",
-	}
-
 	// publicPoolKinds 决定从哪些协议收集分组并暴露为可选模型。
 	publicPoolKinds = []string{
 		"messages",
@@ -45,6 +35,8 @@ var (
 		"chat",
 		"gemini",
 		"images",
+		"embeddings",
+		"decisions",
 	}
 )
 
@@ -88,6 +80,20 @@ func OpenAIModels(ctx context.Context, cfgManager *config.ConfigManager) ModelsR
 	return ModelsResponse{Object: "list", Data: publicModelEntries(cfgManager)}
 }
 
+// ModelsForKind 按客户端入口协议筛选目录，与渠道实际上游协议无关。空串表示全部入口。
+func ModelsForKind(cfgManager *config.ConfigManager, kind string) (ModelsResponse, error) {
+	if kind != "" {
+		valid := false
+		for _, supported := range publicPoolKinds {
+			valid = valid || kind == supported
+		}
+		if !valid {
+			return ModelsResponse{}, fmt.Errorf("无效的入口协议 %q", kind)
+		}
+	}
+	return ModelsResponse{Object: "list", Data: publicModelEntriesForKind(cfgManager, kind)}, nil
+}
+
 func ModelDetail(ctx context.Context, cfgManager *config.ConfigManager, modelID string) (ModelEntry, bool) {
 	_ = ctx
 	modelID = strings.TrimSpace(modelID)
@@ -126,62 +132,49 @@ func looksLikeChatRouteAlias(modelID string) bool {
 	return strings.Contains(modelID, "__c") && strings.Contains(modelID, "__k")
 }
 
-func staticFamilyModels() []ModelEntry {
-	models := make([]ModelEntry, 0, len(publicFamilyModelIDs))
-	for _, id := range publicFamilyModelIDs {
-		models = append(models, ModelEntry{
-			ID:      id,
-			Object:  "model",
-			Created: modelCreatedFallback,
-			OwnedBy: "api-proxy",
-		})
-	}
-	return models
-}
-
-// publicModelEntries 返回对外可见模型：固定家族别名、分组捕获规则及明确的免费模型别名。
+// publicModelEntries 只根据已配置分组生成目录：普通分组使用匹配词，免费分组统一使用 free。
 // 不再暴露渠道级上游模型或 Chat 路由别名（如 model__c0__kxxxxxxxx）。
 func publicModelEntries(cfgManager *config.ConfigManager) []ModelEntry {
-	familyModels := staticFamilyModels()
-	familyIndexes := make(map[string]int, len(familyModels))
-	for index, model := range familyModels {
-		familyIndexes[model.ID] = index
-	}
+	return publicModelEntriesForKind(cfgManager, "")
+}
 
-	poolModels := poolMatcherModels(cfgManager)
-	data := make([]ModelEntry, 0, len(familyModels)+len(poolModels))
-	data = append(data, familyModels...)
-	for _, model := range poolModels {
-		if index, ok := familyIndexes[model.ID]; ok {
-			// 同名模型只保留一条，但必须保留真实分组归属，供客户端按协议导入。
-			data[index].OwnedBy = model.OwnedBy
-			continue
-		}
-		data = append(data, model)
+func publicModelEntriesForKind(cfgManager *config.ConfigManager, kind string) []ModelEntry {
+	if cfgManager == nil {
+		return []ModelEntry{}
 	}
-	if cfgManager != nil {
-		shared := cfgManager.GetConfig().FreeChannels
-		if shared != nil && shared.Kilo.Enabled {
-			for _, model := range shared.Kilo.Models {
-				data = append(data, ModelEntry{ID: "free/" + model, Object: "model", OwnedBy: "pool:chat,gemini,messages,responses"})
-			}
+	// 分组与免费清单从同一配置快照读取，热重载时不会混入不同版本的数据。
+	cfg := cfgManager.GetConfig()
+	data := poolMatcherModels(cfg, kind)
+	shared := cfg.FreeChannels
+	if shared != nil && shared.Kilo.Enabled && (kind == "" || config.SupportsFreeChannels(kind)) {
+		owner := "pool:chat,gemini,messages,responses"
+		if kind != "" {
+			owner = "pool:" + kind
 		}
+		data = append(data, ModelEntry{ID: config.FreeModelID, Object: "model", OwnedBy: owner})
 	}
+	sort.Slice(data, func(i, j int) bool { return data[i].ID < data[j].ID })
 	return data
 }
 
 // poolMatcherModels 把非通配符分组的 modelMatcher 暴露为可选模型 ID。
 // 客户端用该 ID 发请求时，调度器按 contains 最长匹配进入对应分组，再走渠道映射/故障转移。
-func poolMatcherModels(cfgManager *config.ConfigManager) []ModelEntry {
-	if cfgManager == nil {
-		return nil
+func poolMatcherModels(cfg config.Config, kind string) []ModelEntry {
+	groups := []struct {
+		kind  string
+		pools []config.ChannelPool
+	}{
+		{"messages", cfg.MessagePools}, {"responses", cfg.ResponsesPools},
+		{"chat", cfg.ChatPools}, {"gemini", cfg.GeminiPools}, {"images", cfg.ImagesPools},
+		{"embeddings", cfg.EmbeddingsPools}, {"decisions", cfg.DecisionsPools},
 	}
-
 	// matcher -> 出现过的协议种类（用于 owned_by）
 	matcherKinds := make(map[string][]string)
-	for _, kind := range publicPoolKinds {
-		pools := cfgManager.GetChannelPools(kind)
-		for _, pool := range pools {
+	for _, group := range groups {
+		if kind != "" && group.kind != kind {
+			continue
+		}
+		for _, pool := range group.pools {
 			if pool.ID == config.FreeChannelPoolID {
 				continue
 			}
@@ -194,7 +187,7 @@ func poolMatcherModels(cfgManager *config.ConfigManager) []ModelEntry {
 			kinds := matcherKinds[matcher]
 			alreadyListed := false
 			for _, existingKind := range kinds {
-				if existingKind == kind {
+				if existingKind == group.kind {
 					alreadyListed = true
 					break
 				}
@@ -202,7 +195,7 @@ func poolMatcherModels(cfgManager *config.ConfigManager) []ModelEntry {
 			if alreadyListed {
 				continue
 			}
-			matcherKinds[matcher] = append(kinds, kind)
+			matcherKinds[matcher] = append(kinds, group.kind)
 		}
 	}
 

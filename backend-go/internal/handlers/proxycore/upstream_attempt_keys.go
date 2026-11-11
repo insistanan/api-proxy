@@ -80,6 +80,10 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 				}
 				break // 当前 BaseURL 没有可用 Key，尝试下一个 BaseURL
 			}
+			// 免费渠道只有一个匿名槽位；已失败的槽位不再重复请求同一模型，交给模型层切换。
+			if a.isFreeAttempt() && retryState.FailedKeys()[apiKey] {
+				break
+			}
 
 			// 检查熔断状态
 			if !forceProbeMode && metricsManager.ShouldSuspendKey(currentBaseURL, apiKey, logCtx.ChannelIndex) {
@@ -164,7 +168,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 					"code":  code,
 				}
 				recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", status, false, attemptStart, "vision_layer", err.Error(), true, isStream, nil)
-				if cfgManager.GetFuzzyModeEnabled() && channelScheduler.GetActiveChannelCountForModel(kind, logCtx.Model) > 1 {
+				if cfgManager.GetFuzzyModeEnabledForProtocol(string(kind)) && channelScheduler.GetActiveChannelCountForModel(kind, logCtx.Model) > 1 {
 					body, _ := json.Marshal(payload)
 					// 视觉层本地失败：中性结束，交给外层换渠道。
 					return newUpstreamAttemptResult(false, "", 0, &FailoverError{Status: status, Body: body}, nil, err).withHealth(channelHealthNeutral)
@@ -431,7 +435,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 	}
 
 	if upstreamcontrol.IsLocalError(failoverState.lastError) {
-		return localAdmissionResult(c, failoverState.lastError, cfgManager.GetFuzzyModeEnabled() && channelScheduler.GetActiveChannelCountForModel(kind, logCtx.Model) > 1)
+		return localAdmissionResult(c, failoverState.lastError, cfgManager.GetFuzzyModeEnabledForProtocol(string(kind)) && channelScheduler.GetActiveChannelCountForModel(kind, logCtx.Model) > 1)
 	}
 	// 候选耗尽的最终健康结果（R2-a）：发生过明确中性结束原因（容量、审核
 	// 兼容重试失败）时按中性记账；否则为可重试真实故障耗尽候选。

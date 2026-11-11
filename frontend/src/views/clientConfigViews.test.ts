@@ -2,7 +2,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { createSSRApp, ref, type Ref, type SetupContext } from 'vue'
 import { renderToString } from '@vue/server-renderer'
-import { api, ApiError, type OpenCodeConfig, type PiAgentProvider, type PiAgentStatus } from '@/services/api'
+import { api, ApiError, type ApiTab, type OpenCodeConfig, type PiAgentProvider, type PiAgentStatus } from '@/services/api'
 import OpenCodeView from './OpenCodeView.vue'
 import PiAgentView from './PiAgentView.vue'
 
@@ -101,6 +101,19 @@ describe('pi 配置草稿与提交阶段', () => {
 })
 
 describe('OpenCode 配置提交阶段', () => {
+  it.each([
+    ['messages', 'http://localhost:9996', 'http://localhost:9996/v1', '@ai-sdk/anthropic'],
+    ['responses', 'http://localhost:9996/', 'http://localhost:9996/v1', '@ai-sdk/openai'],
+    ['chat', 'http://localhost:9996/v1/', 'http://localhost:9996/v1', '@ai-sdk/openai-compatible'],
+    ['gemini', 'http://localhost:9996', 'http://localhost:9996/v1beta', '@ai-sdk/google']
+  ])('一键连接 %s 填入 SDK 所需的版本路径', async (protocol, root, expectedUrl, npm) => {
+    vi.spyOn(api, 'getOpenCodeConfig').mockResolvedValue(openConfig())
+    const state = await setupView(OpenCodeView)
+    await run(state, 'loadConfig')
+    await (state.applyProtocol as (type: ApiTab, url: Promise<string>) => Promise<void>)(protocol as ApiTab, Promise.resolve(root))
+    expect(value<OpenCodeConfig['providers']>(state, 'providers')[0]).toMatchObject({ protocol, npm, baseUrl: expectedUrl })
+  })
+
   it('保存后刷新密钥元数据与 revision，重复点击只写一次', async () => {
     const read = vi.spyOn(api, 'getOpenCodeConfig').mockResolvedValue(openConfig())
     let resolve!: (result: { success: boolean; path: string; revision: string }) => void

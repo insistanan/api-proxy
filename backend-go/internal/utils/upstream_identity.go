@@ -45,4 +45,8 @@ func PrepareTargetIdentity(headers http.Header, protocol string, compatibility b
 		headers.Set("User-Agent", "api-proxy")
 		headers.Del("Anthropic-Dangerous-Direct-Browser-Access")
 	}
+	// 协议必需字段与客户端伪装无关，Responses 转 Messages 的普通 API 模式也必须携带。
+	if protocol == "claude" && headers.Get("Anthropic-Version") == "" {
+		headers.Set("Anthropic-Version", "2023-06-01")
+	}
 }

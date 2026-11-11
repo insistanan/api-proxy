@@ -68,13 +68,10 @@ export function validateEmbeddingsDimensions(value: unknown): string {
 
 /**
  * 客户端伪装是否对该渠道真正生效：由入口协议与上游 serviceType 共同决定。
- * Messages 入口可发往原生 Claude 或转换为 Responses；Responses 入口目前只有原生 Responses 上游会注入身份，
- * Responses→Messages 的转换请求不注入 Claude 身份，因此不提供伪装配置。
+ * Messages / Responses 两种入口均按实际 Messages / Responses 上游选择身份。
  */
 export function supportsChannelClientIdentity(channelType: string, serviceType: string): boolean {
-  if (channelType === 'messages') return serviceType === 'claude' || serviceType === 'responses'
-  if (channelType === 'responses') return serviceType === 'responses'
-  return false
+  return ['messages', 'responses'].includes(channelType) && ['claude', 'responses'].includes(serviceType)
 }
 
 /** 新渠道的默认草稿。responses 协议默认启用图片理解（历史行为）。 */

@@ -41,7 +41,6 @@ func Handler(
 		HookPipeline: contentSafetyPipeline,
 		ParseRequest: func(c *gin.Context, body []byte) (string, bool, []string, bool) {
 			body, _ = proxycore.RemoveEmptySignatures(body, envCfg.Current().EnableRequestLogs, "Messages")
-			c.Set(utils.ContextKeyClaudeCodeDisguise, cfgManager.GetClaudeCodeDisguiseEnabled())
 			var claudeReq types.ClaudeRequest
 			if len(body) > 0 {
 				_ = json.Unmarshal(body, &claudeReq)

@@ -52,7 +52,7 @@ func normalizeChannelPools(pools []ChannelPool) ([]ChannelPool, error) {
 		pool.Name = strings.TrimSpace(pool.Name)
 		pool.ModelMatcher = normalizePoolMatcher(pool.ModelMatcher)
 		if IsFreeModel(pool.ModelMatcher) && pool.ID != FreeChannelPoolID {
-			return nil, fmt.Errorf("free/ 为内置免费分组专用规则，不能用于普通分组")
+			return nil, fmt.Errorf("free 和 free/ 为内置免费分组专用规则，不能用于普通分组")
 		}
 		if pool.ID == DefaultChannelPoolID {
 			// default 是兼容旧配置的稳定 ID，其名称和规则固定为兜底语义。

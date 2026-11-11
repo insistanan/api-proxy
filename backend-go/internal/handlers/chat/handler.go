@@ -158,7 +158,7 @@ func handleRoutedChat(
 
 	log.Printf("[Chat-Route] 路由模型失败: alias=%s channel=%d key=%s", route.Alias, route.ChannelIndex, route.KeyID)
 	proxycore.MarkConversationFailure(channelScheduler, conversationID, scheduler.ChannelKindChat, result.LastError)
-	proxycore.HandleAllKeysFailed(c, cfgManager.GetFuzzyModeEnabled(), result.FailoverError, result.LastError, "Chat")
+	proxycore.HandleAllKeysFailed(c, cfgManager.GetFuzzyModeEnabledForProtocol("chat"), result.FailoverError, result.LastError, "Chat")
 }
 
 func chatRouteUpstream(cfgManager *config.ConfigManager, route modelcatalog.ChatRoute) (*config.UpstreamConfig, error) {

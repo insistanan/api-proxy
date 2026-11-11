@@ -1,8 +1,9 @@
-// 渠道页的两个全局路由开关：自动故障转移（Fuzzy）与客户端伪装。
+// 渠道页按协议独立管理的自动故障转移（Fuzzy）与客户端伪装开关。
 // 开关本体保存在服务端，preferences store 只镜像最近一次已知状态供多处渲染；
 // 加载失败时保持“未知”并禁止切换，不用本地缓存冒充服务端配置。
 import { computed, ref } from 'vue'
 import { api, ApiError } from '@/services/api'
+import { API_TABS, type ApiTab } from '@/services/channel-api'
 import { useChannelStore } from '@/stores/channel'
 import { usePreferencesStore } from '@/stores/preferences'
 import type { ToastType } from './useToast'
@@ -21,17 +22,24 @@ export function useRoutingModes(notify: (message: string, type: ToastType) => vo
   const channelStore = useChannelStore()
   const preferencesStore = usePreferencesStore()
 
-  const fuzzyLoading = ref(false)
-  const fuzzyUnknown = ref(false)
+  const fuzzySaving = ref<Partial<Record<ApiTab, boolean>>>({})
+  const fuzzyLoaded = ref(false)
+  const fuzzyLoading = computed(() => !!fuzzySaving.value[channelStore.activeTab])
+  const fuzzyUnknown = computed(() => !fuzzyLoaded.value || preferencesStore.fuzzyModeByProtocol[channelStore.activeTab] === undefined)
+  const fuzzyEnabled = computed(() => preferencesStore.fuzzyModeByProtocol[channelStore.activeTab] === true)
   const disguiseLoading = ref(false)
   const disguiseUnknown = ref(false)
 
   const loadFuzzyMode = async () => {
     try {
-      preferencesStore.setFuzzyMode((await api.getFuzzyMode()).fuzzyModeEnabled)
-      fuzzyUnknown.value = false
+      const { fuzzyModeByProtocol } = await api.getFuzzyMode()
+      if (API_TABS.some(protocol => typeof fuzzyModeByProtocol?.[protocol] !== 'boolean')) {
+        throw new Error('服务端未返回完整的协议故障转移状态')
+      }
+      for (const protocol of API_TABS) preferencesStore.setFuzzyMode(protocol, fuzzyModeByProtocol[protocol])
+      fuzzyLoaded.value = true
     } catch (error) {
-      fuzzyUnknown.value = true
+      fuzzyLoaded.value = false
       if (!isAuthFailure(error)) notify('加载自动故障转移状态失败，请刷新页面重试', 'warning')
     }
   }
@@ -51,24 +59,27 @@ export function useRoutingModes(notify: (message: string, type: ToastType) => vo
   const loadModes = () => Promise.all([loadFuzzyMode(), loadClientDisguise()])
 
   const toggleFuzzyMode = async () => {
-    const next = !preferencesStore.fuzzyModeEnabled
-    fuzzyLoading.value = true
+    if (fuzzyUnknown.value || fuzzyLoading.value) return
+    const protocol = channelStore.activeTab
+    const next = !fuzzyEnabled.value
+    fuzzySaving.value[protocol] = true
     try {
-      await api.setFuzzyMode(next)
-      preferencesStore.setFuzzyMode(next)
-      notify(`自动故障转移已${next ? '启用' : '关闭'}`, 'success')
+      await api.setFuzzyMode(protocol, next)
+      preferencesStore.setFuzzyMode(protocol, next)
+      notify(`${protocol} 自动故障转移已${next ? '启用' : '关闭'}`, 'success')
     } catch (error) {
+      if (error instanceof ApiError && error.committed) await loadFuzzyMode()
       notify(`切换自动故障转移失败: ${errorText(error)}`, 'error')
     } finally {
-      fuzzyLoading.value = false
+      fuzzySaving.value[protocol] = false
     }
   }
 
   const fuzzyTooltip = computed(() => {
     if (fuzzyUnknown.value) return '加载失败，请刷新页面'
-    return preferencesStore.fuzzyModeEnabled
-      ? 'Fuzzy 模式已启用：模糊处理错误，自动尝试所有渠道'
-      : 'Fuzzy 模式已关闭：固定首个渠道，仅重试其 Key 与地址'
+    return fuzzyEnabled.value
+      ? '当前协议已启用故障转移：请求失败时按分组规则尝试后续渠道'
+      : '当前协议已关闭故障转移：固定首个渠道，仅重试其 Key 与地址'
   })
 
   // 客户端伪装只对 Messages / Responses 入口有意义，其余协议不显示开关。
@@ -108,7 +119,7 @@ export function useRoutingModes(notify: (message: string, type: ToastType) => vo
 
   return {
     loadModes,
-    fuzzyLoading, fuzzyUnknown, fuzzyTooltip, toggleFuzzyMode,
+    fuzzyEnabled, fuzzyLoading, fuzzyUnknown, fuzzyTooltip, toggleFuzzyMode,
     disguiseProtocol, disguiseEnabled, disguiseLabel, disguiseTooltip,
     disguiseLoading, disguiseUnknown, toggleClientDisguise
   }

@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -448,6 +450,40 @@ func TestRunProxyRequestMultiChannelEndToEnd(t *testing.T) {
 	_, parseCalls, buildCalls, successCalls := rec.snapshot()
 	if parseCalls != 1 || buildCalls != 1 || successCalls != 1 {
 		t.Fatalf("多渠道成功路径各阶段应各调用一次，parse=%d build=%d success=%d", parseCalls, buildCalls, successCalls)
+	}
+}
+
+func TestRunProxyRequestUsesEntryProtocolFailover(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
+			env := newRunProxyTestEnv(t)
+			if err := env.cfgManager.SetFuzzyModeEnabled(!enabled); err != nil {
+				t.Fatal(err)
+			}
+			if err := env.cfgManager.SetFuzzyModeForProtocol("messages", enabled); err != nil {
+				t.Fatal(err)
+			}
+			server := newRecordingUpstreamServer(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("x-api-key") == "key-a" {
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = w.Write([]byte(`{"error":{"message":"模拟第一渠道拒绝请求"}}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"ok":true}`))
+			})
+			addTestUpstream(t, env, "second", server.URL(), "key-b")
+			// 新渠道插入最高优先级，最后添加 first 以固定尝试顺序。
+			addTestUpstream(t, env, "first", server.URL(), "key-a")
+			rec := &specRecorder{}
+			w := performRunProxyRequest(t, env, rec.newSpec(), `{"model":"test-model"}`, "test-access-key")
+			if enabled {
+				if w.Code != http.StatusOK || !slices.Contains(server.receivedKeys(), "key-b") {
+					t.Fatalf("入口开关开启时应转到第二渠道，状态=%d keys=%v", w.Code, server.receivedKeys())
+				}
+			} else if w.Code != http.StatusBadRequest || slices.Contains(server.receivedKeys(), "key-b") {
+				t.Fatalf("入口开关关闭时不能借用其他协议的开关，状态=%d keys=%v", w.Code, server.receivedKeys())
+			}
+		})
 	}
 }
 

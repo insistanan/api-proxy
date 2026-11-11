@@ -27,6 +27,13 @@ const entries = [
 ]
 
 describe('本代理模型按协议导入', () => {
+  it.each<ApiTab>(['messages', 'responses', 'chat', 'gemini'])('%s 的 OpenCode 导入保留一个 free 分组入口', kind => {
+    const catalog = [entry('free', 'pool:chat,gemini,messages,responses')]
+    let models: ReturnType<typeof buildOpenCodeModel>[] = []
+    importProxyModels(kind, filterProxyModelsByKind(catalog, kind), buildOpenCodeModel, imported => { models = imported })
+    expect(models.map(model => model.key)).toEqual(['free'])
+    expect(models[0]?.apiModelId).toBe('') // 留空时客户端使用模型标识 free。
+  })
   it('完整导入超过五个分组，保留与固定别名同名的分组', () => {
     expect(filterProxyModelsByKind(entries, 'messages')).toEqual(messagesModels)
   })

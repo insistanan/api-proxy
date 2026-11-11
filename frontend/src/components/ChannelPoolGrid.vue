@@ -28,7 +28,11 @@
         :class="{ 'is-default': pool.id === 'default', 'is-collapsed': collapsedPools.has(pool.id) }"
         :style="{ order }"
       >
-        <FreeChannelPool v-if="pool.id === FREE_POOL_ID" :channel-type="channelType" :channels="channels" />
+        <FreeChannelPool v-if="pool.id === FREE_POOL_ID" :channel-type="channelType">
+          <template #activity>
+            <slot v-for="channel in pool.channels" :key="channel.id || channel.index" name="free-activity" :channel="channel"></slot>
+          </template>
+        </FreeChannelPool>
         <template v-else>
         <header class="pool-card-header">
           <button type="button" class="pool-card-toggle" :aria-expanded="!collapsedPools.has(pool.id)" :aria-controls="`pool-${channelType}-${pool.id}`" @click="togglePool(pool.id)">
@@ -43,6 +47,7 @@
           </button>
           <div class="d-flex align-center ga-1">
             <span class="pool-channel-count">{{ pool.channels.length }} 个渠道</span>
+            <v-btn icon="mdi-plus" size="x-small" variant="text" :title="`添加渠道到 ${pool.name}`" :aria-label="`添加渠道到 ${pool.name}`" @click="emit('addChannel', pool.id)" />
             <v-btn v-if="pool.id !== 'default'" icon size="x-small" variant="text" title="编辑分组" :aria-label="`编辑分组 ${pool.name}`" @click="openEditDialog(pool)">
               <v-icon size="small">mdi-pencil</v-icon>
             </v-btn>
@@ -202,6 +207,7 @@ const props = defineProps<{
   channelType: ApiTab
 }>()
 const emit = defineEmits<{
+  addChannel: [poolId: string]
   edit: [channel: Channel]
   delete: [channelId: number]
   error: [message: string]

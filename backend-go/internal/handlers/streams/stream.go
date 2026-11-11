@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -48,6 +49,7 @@ type Context struct {
 	EventCount        int            // 事件总数
 	ContentBlockCount int            // content block 计数
 	ContentBlockTypes map[int]string // 每个 block 的类型
+	DeliveredBlocks   map[int]string // 已交付且尚未关闭的正文/思考块，与日志开关无关
 	// 低质量渠道处理
 	RequestModel string // 请求中的 model（用于一致性检查）
 	LowQuality   bool   // 是否为低质量渠道
@@ -290,7 +292,9 @@ func ProcessStreamEvents(
 	startTime time.Time,
 	requestBody []byte,
 ) (*types.Usage, error) {
-	for {
+	// 事件和错误由两个通道交付。必须等两者都关闭后才能认定成功，
+	// 否则 eventChan 的关闭信号可能抢在已缓冲的错误之前被选中。
+	for eventChan != nil || errChan != nil {
 		select {
 		case <-c.Request.Context().Done():
 			ctx.ClientGone = true
@@ -312,27 +316,21 @@ func ProcessStreamEvents(
 				return nil, err
 			}
 			if !ok {
-				remaining, err := hooks.DrainAttachedStreamRestoration(c)
-				if err != nil {
-					return nil, err
-				}
-				for _, pendingEvent := range remaining {
-					if _, err := w.Write([]byte(pendingEvent)); err != nil {
-						return nil, err
-					}
-					flusher.Flush()
-				}
-				if err := hooks.FlushAttachedStreamHooks(c); err != nil {
-					return nil, err
-				}
-				usage := logStreamCompletion(c, ctx, envCfg, startTime)
-				return usage, nil
+				eventChan = nil
+				continue
 			}
 			if err := ProcessStreamEvent(c, w, flusher, event, ctx, envCfg, requestBody); err != nil {
+				if !ctx.ClientGone {
+					if closeErr := ctx.closeDeliveredBlocks(w, flusher); closeErr != nil {
+						return nil, errors.Join(err, closeErr)
+					}
+				}
 				// 内容安全错误由上层统一按入口协议编码，避免先写通用
 				// stream_error、随后再写 content_safety_error 的重复事件。
 				if !ctx.ClientGone && hooks.ContentSafetyErrorFrom(err) == nil && hooks.ContentSafetyHookErrorFrom(err) == nil {
-					w.Write([]byte(BuildStreamErrorEvent(err)))
+					if _, writeErr := w.Write([]byte(BuildStreamErrorEvent(err))); writeErr != nil {
+						return nil, errors.Join(err, writeErr)
+					}
 					flusher.Flush()
 				}
 				return nil, err
@@ -350,8 +348,15 @@ func ProcessStreamEvents(
 			if err != nil {
 				log.Printf("[Messages-Stream] 错误: 流式传输错误: %v", err)
 				logPartialResponse(c, ctx, envCfg)
+				if !ctx.ClientGone {
+					if closeErr := ctx.closeDeliveredBlocks(w, flusher); closeErr != nil {
+						return nil, errors.Join(err, closeErr)
+					}
+				}
 				if !ctx.ClientGone && hooks.ContentSafetyErrorFrom(err) == nil && hooks.ContentSafetyHookErrorFrom(err) == nil {
-					w.Write([]byte(BuildStreamErrorEvent(err)))
+					if _, writeErr := w.Write([]byte(BuildStreamErrorEvent(err))); writeErr != nil {
+						return nil, errors.Join(err, writeErr)
+					}
 					flusher.Flush()
 				}
 
@@ -359,6 +364,20 @@ func ProcessStreamEvents(
 			}
 		}
 	}
+	remaining, err := hooks.DrainAttachedStreamRestoration(c)
+	if err != nil {
+		return nil, err
+	}
+	for _, pendingEvent := range remaining {
+		if _, err := w.Write([]byte(pendingEvent)); err != nil {
+			return nil, err
+		}
+		flusher.Flush()
+	}
+	if err := hooks.FlushAttachedStreamHooks(c); err != nil {
+		return nil, err
+	}
+	return logStreamCompletion(c, ctx, envCfg, startTime), nil
 }
 
 // ProcessStreamEvent 处理单个流事件
@@ -570,6 +589,7 @@ func ProcessStreamEvent(
 				log.Printf("[Messages-Stream] 客户端中断连接 (正常行为)，继续接收上游数据...")
 			}
 		} else {
+			ctx.trackDeliveredBlocks(eventToSend)
 			flusher.Flush()
 		}
 	}

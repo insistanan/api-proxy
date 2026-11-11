@@ -26,6 +26,7 @@
 code, pre, .text-mono, .font-mono { font-family: var(--font-mono); font-variant-ligatures: none; }
 code { padding: 2px 5px; border-radius: 4px; font-size: 0.875em; line-height: 1.5; color: rgb(var(--v-theme-on-surface)); background: rgba(var(--v-theme-primary), 0.07); }
 .fuzzy-tooltip, .status-tooltip { background: rgb(var(--v-theme-surface)) !important; color: rgb(var(--v-theme-on-surface)) !important; border: 1px solid rgba(var(--v-theme-outline), 0.3); box-shadow: var(--shadow-2); }
-:where(a, button, input, textarea, select, summary, [tabindex], [role='button']):focus-visible { outline: 2px solid rgb(var(--v-theme-primary)) !important; outline-offset: 3px; }
+/* Vuetify 字段已有完整的聚焦边框，内部输入元素不再叠加方形轮廓；其他控件保留键盘焦点提示。 */
+:where(a, button, input, textarea, select, summary, [tabindex], [role='button']):not(.v-field input, .v-field textarea):focus-visible { outline: 2px solid rgb(var(--v-theme-primary)) !important; outline-offset: 3px; }
 :where(a, button, summary, [role='button']) { touch-action: manipulation; }
 @media (pointer: coarse) { .v-btn--icon { min-width: 44px; min-height: 44px; } }

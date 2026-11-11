@@ -2,9 +2,9 @@
   <!-- 路由视图根节点必须是单个真实 DOM 元素。 -->
   <div class="channels-view">
     <PageHeader :title="`${navigation?.label} 渠道`" :description="navigation?.description">
-      <ChannelTableDrawer :channel-type="channelType" :channels="channels" @edit="editChannel">
+      <ChannelTableDrawer :channel-type="channelType" :channels="channels">
         <template #activator="{ props: activatorProps }">
-          <v-btn v-bind="activatorProps" variant="tonal" prepend-icon="mdi-format-list-bulleted">渠道列表</v-btn>
+          <v-btn v-bind="activatorProps" variant="tonal" prepend-icon="mdi-format-list-bulleted">模型列表</v-btn>
         </template>
       </ChannelTableDrawer>
       <v-tooltip text="刷新" location="bottom">
@@ -15,7 +15,7 @@
       <v-btn color="info" variant="tonal" prepend-icon="mdi-speedometer" :loading="channelStore.isPingingAll" @click="pingAllChannels">
         测试延迟
       </v-btn>
-      <v-btn color="primary" prepend-icon="mdi-plus" @click="openAddChannel">添加渠道</v-btn>
+      <v-btn color="primary" prepend-icon="mdi-plus" @click="openAddChannel()">添加渠道</v-btn>
     </PageHeader>
 
     <!-- 概览与路由开关合并为一行，把首屏高度留给渠道列表。 -->
@@ -71,22 +71,13 @@
       <GlobalStatsChart :api-type="channelType" />
     </DisclosureSection>
 
-    <DisclosureSection
-      title="模型可用性"
-      description="基于真实请求，查看渠道、模型及各 Key／URL 的成功率与失败原因"
-      icon="mdi-chart-areaspline"
-      lazy
-      class="mb-4"
-    >
-      <ModelAvailabilityPanel :channel-type="channelType" :channels="channels" />
-    </DisclosureSection>
-
     <ChannelOrchestration
       v-if="channels.length"
       :channels="channels"
       :channel-type="channelType"
       :dashboard-metrics="channelStore.currentDashboardMetrics"
       :dashboard-recent-activity="channelStore.currentDashboardRecentActivity"
+      @add-channel="openAddChannel"
       @edit="editChannel"
       @delete="deleteChannel($event, handleAuthError)"
       @ping="pingChannel"
@@ -99,13 +90,14 @@
       <v-icon size="40" color="primary">mdi-server-network</v-icon>
       <div class="text-h6 font-weight-bold mt-4">暂无渠道</div>
       <p class="text-body-2 text-medium-emphasis mt-2 mb-6">添加第一个上游渠道后，即可通过本代理转发 {{ navigation?.label }} 请求。</p>
-      <v-btn color="primary" prepend-icon="mdi-plus" @click="openAddChannel">添加渠道</v-btn>
+      <v-btn color="primary" prepend-icon="mdi-plus" @click="openAddChannel()">添加渠道</v-btn>
     </v-card>
 
     <AddChannelModal
       v-model:show="dialogStore.showAddChannelModal"
       :channel="dialogStore.editingChannel"
       :channel-type="dialogStore.channelType"
+      :initial-pool-id="dialogStore.initialPoolId"
       :saving="channelStore.isSavingChannel || channelStore.isDeletingChannel"
       @save="(channel, options) => saveChannel(channel, options, handleAuthError)"
     />
@@ -122,7 +114,6 @@ import { computed, onMounted, onUnmounted, watch } from 'vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import DisclosureSection from '@/components/common/DisclosureSection.vue'
 import ChannelOrchestration from '@/components/ChannelOrchestration.vue'
-import ModelAvailabilityPanel from '@/components/channel/ModelAvailabilityPanel.vue'
 import ChannelTableDrawer from '@/components/channel/ChannelTableDrawer.vue'
 import AddChannelModal from '@/components/AddChannelModal.vue'
 import AssistantWidget from '@/components/AssistantWidget.vue'
@@ -164,7 +155,7 @@ const serviceStatus = computed(() => {
 const { refreshChannels: refreshAction, saveChannel, deleteChannel, pingChannel, pingAllChannels } = useChannelActions(showToast)
 const refreshChannels = () => refreshAction(handleAuthError)
 
-const openAddChannel = () => dialogStore.openAddChannelModal(channelType.value)
+const openAddChannel = (poolId = 'default') => dialogStore.openAddChannelModal(channelType.value, poolId)
 const editChannel = (channel: Channel) => dialogStore.openEditChannelModal(channel, channelType.value)
 
 const routing = useRoutingModes(showToast)
@@ -183,11 +174,11 @@ const modes = computed(() => [
   {
     key: 'fuzzy',
     label: '自动故障转移',
-    enabled: preferencesStore.fuzzyModeEnabled,
+    enabled: routing.fuzzyEnabled.value,
     unknown: routing.fuzzyUnknown.value,
     loading: routing.fuzzyLoading.value,
     color: 'warning',
-    icon: preferencesStore.fuzzyModeEnabled ? 'mdi-shield-refresh' : 'mdi-shield-off-outline',
+    icon: routing.fuzzyEnabled.value ? 'mdi-shield-refresh' : 'mdi-shield-off-outline',
     tooltip: routing.fuzzyTooltip.value,
     toggle: routing.toggleFuzzyMode
   }

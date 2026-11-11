@@ -171,7 +171,7 @@ func (c *Caller) Call(ctx context.Context, channelID string, prompt Prompt) (res
 		if callCtx.Err() != nil {
 			return nil, callErr
 		}
-		if !c.CfgManager.GetFuzzyModeEnabled() || errors.Is(callErr, upstreamcontrol.ErrBudget) {
+		if !c.CfgManager.GetFuzzyModeEnabledForProtocol(string(selection.Kind)) || errors.Is(callErr, upstreamcontrol.ErrBudget) {
 			return nil, callErr
 		}
 		if failed[selection.Kind] == nil {

@@ -7,18 +7,20 @@ import {
   isValidApiKey as _isValidApiKey,
   isValidUrl as _isValidQuickInputUrl
 } from '../utils/quickInputParser'
-import { useChannelEditor, buildImagesOutputSettings, EMBEDDINGS_DIMENSIONS_DEFAULT, validateEmbeddingsDimensions } from '../composables/useChannelEditor'
+import { useChannelEditor, buildImagesOutputSettings, EMBEDDINGS_DIMENSIONS_DEFAULT, validateEmbeddingsDimensions, supportsChannelClientIdentity } from '../composables/useChannelEditor'
 import { compileImagesExtraParams } from '@/utils/imagesExtraParams'
 
 import { useQuickChannelDraft } from './useQuickChannelDraft'
 import { useChannelModels } from './useChannelModels'
 import type { ApiTab } from '@/services/channel-api'
+import { resolveChannelPreset, type ChannelPreset, type ChannelPresetEndpoint } from '@/utils/channelPresets'
 
 export interface ChannelModalProps {
   show: boolean
   saving?: boolean
   channel?: Channel | null
   channelType: ApiTab
+  initialPoolId?: string
 }
 
 export interface ChannelModalEmit {
@@ -34,6 +36,8 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
 
   // 模式切换: 快速添加 vs 详细表单
   const isQuickMode = ref(true)
+  const providerDrawerOpen = ref(false)
+  const quickPresetEndpoint = ref<ChannelPresetEndpoint>()
 
   const quickDraft = useQuickChannelDraft()
   const { quickInput, quickChannelName, detectedBaseUrl, detectedBaseUrls, detectedApiKeys, detectedChannelName, detectedServiceType, generatedChannelName } = quickDraft
@@ -52,6 +56,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
   // 返回详细模式时，只同步本次在快速模式中改变的字段，保留详细草稿的其余编辑。
   const toggleMode = () => {
     if (props.saving) return
+    providerDrawerOpen.value = false
     if (isQuickMode.value) {
       const next = quickTransferValues()
       if (next.urls && next.urls !== quickValuesBeforeReturn?.urls) {
@@ -77,6 +82,10 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
   // 解析快速输入内容
   const parseQuickInput = () => {
     quickDraft.parse(form.useFullUrl)
+    const preset = quickPresetEndpoint.value
+    if (preset && !detectedServiceType.value && detectedBaseUrl.value === preset.url) {
+      detectedServiceType.value = preset.serviceType
+    }
     if (props.channelType === 'images' && detectedServiceType.value && isImagesServiceType(detectedServiceType.value)) {
       form.serviceType = detectedServiceType.value
     }
@@ -103,7 +112,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
 
   // 快速模式表单验证
   const isQuickFormValid = computed(() => {
-    return detectedBaseUrls.value.length > 0 && detectedApiKeys.value.length > 0 && isImagesProtocolValid.value && (
+    return !poolsLoading.value && !poolLoadError.value && detectedBaseUrls.value.length > 0 && detectedApiKeys.value.length > 0 && isImagesProtocolValid.value && (
       props.channelType !== 'images' || !validateImagesOutputSettings(form)
     )
   })
@@ -115,8 +124,9 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
 
     const channelData = {
       maxConcurrency: 5,
-      clientIdentityMode: 'inherit' as const,
+      clientIdentityMode: form.clientIdentityMode,
       name: generatedChannelName.value,
+      website: form.website,
       serviceType: quickServiceType.value as Channel['serviceType'],
       responsesModel: props.channelType === 'images' && form.serviceType === 'responses' ? form.responsesModel.trim() : '',
       ...(props.channelType === 'images' ? buildImagesOutputSettings(form) : {}),
@@ -127,7 +137,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
       apiKeys: detectedApiKeys.value,
       modelMapping: {},
       defaultModel: '',
-      poolId: 'default',
+      poolId: form.poolId,
       visionCapable: props.channelType === 'responses',
       excludeFromConversation: false,
       visionLayerEnabled: false,
@@ -266,6 +276,18 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
   // 表单草稿经 useChannelEditor（R5，方案 8.1）：草稿独立于 store，取消不落盘。
   const { form, resetForm: resetFormDraft, loadChannelData: loadChannelDataDraft, buildPayload } = useChannelEditor(() => props.channelType)
 
+  const identityServiceType = computed(() => isQuickMode.value && !props.channel ? quickServiceType.value : form.serviceType)
+  const supportsClientIdentity = computed(() => supportsChannelClientIdentity(props.channelType, identityServiceType.value))
+  const clientIdentityFollowsClaude = computed(() => identityServiceType.value === 'claude')
+  const clientIdentityModeItems = computed(() => [
+    { title: `继承全局设置（${clientIdentityFollowsClaude.value ? 'Claude Code' : 'Codex'}）`, value: 'inherit' },
+    { title: '不伪装（普通 API）', value: 'api' },
+    { title: `伪装为 ${clientIdentityFollowsClaude.value ? 'Claude Code' : 'Codex CLI'}`, value: 'compatibility' }
+  ])
+  const clientIdentityHint = computed(() => clientIdentityFollowsClaude.value
+    ? '按 Messages 上游使用 Claude Code 身份；继承时跟随 Claude 伪装开关。'
+    : '按 Responses 上游使用 Codex 身份；继承时跟随 Codex 伪装开关。')
+
   // 开关以“自动补全”表达，配置只记录是否使用完整地址，旧渠道默认保持开启。
   const autoCompleteUrl = computed({
     get: () => !form.useFullUrl,
@@ -321,9 +343,12 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
   // resetForm：草稿重置 + 组件内 UI 状态（错误提示、模型缓存、快速添加输入）清理。
   const resetForm = () => {
     resetFormDraft()
+    form.poolId = props.initialPoolId ?? 'default'
     submitError.value = ''
     Object.assign(detailedSections, { connection: false, compatibility: false, advanced: false })
     quickValuesBeforeReturn = null
+    providerDrawerOpen.value = false
+    quickPresetEndpoint.value = undefined
     newApiKey.value = ''
     baseUrlsText.value = ''
     originalKeyMap.value.clear()
@@ -375,6 +400,33 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
 
   // 多 BaseURL 文本输入（独立变量，保留用户输入的换行）
   const baseUrlsText = ref('')
+
+  const applyProviderPreset = (preset: ChannelPreset) => {
+    if (props.saving || props.channel) return
+    const endpoint = resolveChannelPreset(preset, props.channelType)
+    if (!endpoint) {
+      submitError.value = '当前入口暂不支持此渠道商的上游协议'
+      return
+    }
+    // 详细模式修改过的密钥不能被快速模式中未变的旧输入覆盖。
+    const quickChanged = !quickValuesBeforeReturn || quickTransferValues().keys !== quickValuesBeforeReturn.keys
+    const keys = isQuickMode.value && quickChanged ? [...detectedApiKeys.value] : [...form.apiKeys]
+    const name = isQuickMode.value ? quickChannelName.value.trim() || detectedChannelName.value || form.name : form.name
+    form.name = name || preset.name
+    form.serviceType = endpoint.serviceType
+    form.useFullUrl = endpoint.useFullUrl
+    form.website = preset.website
+    form.baseUrl = endpoint.url
+    form.baseUrls = []
+    form.apiKeys = keys
+    baseUrlsText.value = endpoint.url
+    quickPresetEndpoint.value = endpoint
+    quickChannelName.value = form.name
+    quickInput.value = [endpoint.url, ...keys].join('\n')
+    parseQuickInput()
+    quickValuesBeforeReturn = null
+    providerDrawerOpen.value = false
+  }
 
   // 监听 baseUrlsText 变化，同步到 form（仅做基本同步，不修改用户输入）
   watch(baseUrlsText, val => {
@@ -497,6 +549,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
 
   const isFormValid = computed(() => {
     return (
+      !poolsLoading.value && !poolLoadError.value &&
       Number.isSafeInteger(Number(form.maxConcurrency)) && Number(form.maxConcurrency) > 0 &&
       form.name.trim() && form.serviceType && form.baseUrl.trim() && isValidUrl(form.baseUrl) && form.apiKeys.length > 0 && isImagesProtocolValid.value &&
       (!form.visionLayerEnabled || form.visionLayerChannelId) &&
@@ -556,7 +609,9 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
     try {
       const response = await api.getChannelPools(props.channelType)
       pools.value = response.pools || []
-      if (!pools.value.some(pool => pool.id === form.poolId)) form.poolId = 'default'
+      if (!poolOptions.value.some(pool => pool.value === form.poolId)) {
+        poolLoadError.value = '所选分组不存在或不可用，请重新选择分组'
+      }
     } catch (error) {
       pools.value = []
       poolLoadError.value = error instanceof Error ? error.message : '加载分组失败'
@@ -564,6 +619,10 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
       poolsLoading.value = false
     }
   }
+
+  watch(() => form.poolId, poolId => {
+    if (poolOptions.value.some(pool => pool.value === poolId)) poolLoadError.value = ''
+  })
 
   watch(() => form.visionCapable, enabled => {
     if (enabled) {
@@ -745,6 +804,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
   watch(
     () => props.show,
     newShow => {
+      if (!newShow) providerDrawerOpen.value = false
       if (newShow) {
         // 无论是编辑还是新增，都先清理密钥错误状态
         apiKeyError.value = ''
@@ -792,6 +852,10 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
   const handleKeydown = (event: Event) => {
     const keyboardEvent = event as KeyboardEvent
     if (keyboardEvent.key === 'Escape' && props.show) {
+      if (providerDrawerOpen.value) {
+        providerDrawerOpen.value = false
+        return
+      }
       handleCancel()
     }
   }
@@ -810,6 +874,11 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
     detailedSections,
     submitError,
     isQuickMode,
+    providerDrawerOpen,
+    applyProviderPreset,
+    supportsClientIdentity,
+    clientIdentityModeItems,
+    clientIdentityHint,
     toggleMode,
     parseQuickInput,
     quickServiceType,

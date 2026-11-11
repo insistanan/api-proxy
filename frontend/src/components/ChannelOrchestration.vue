@@ -3,6 +3,7 @@
     <ChannelPoolGrid
       :channels="channels"
       :channel-type="channelType"
+      @add-channel="$emit('addChannel', $event)"
       @edit="$emit('edit', $event)"
       @delete="$emit('delete', $event)"
       @error="$emit('error', $event)"
@@ -14,6 +15,13 @@
         <v-chip size="x-small" :color="isMultiChannelMode ? 'success' : 'warning'" variant="tonal">
           {{ isMultiChannelMode ? '多渠道模式' : '单渠道模式' }}
         </v-chip>
+      </template>
+      <template #free-activity="{ channel }">
+        <ChannelActivityChart
+          :bars="getActivityBars(channel.index)"
+          :channel-id="channel.index"
+          :channel-type="channelType"
+        />
       </template>
       <template #channel="{ channel: element, index, pool, move_to_top, move_to_bottom }">
           <div class="channel-item-wrapper">
@@ -311,6 +319,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
+  (_e: 'addChannel', _poolId: string): void
   (_e: 'edit', _channel: Channel): void
   (_e: 'delete', _channelId: number): void
   (_e: 'ping', _channelId: number): void

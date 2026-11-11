@@ -45,11 +45,8 @@ func Handler(
 		LogName:      "Responses",
 		HookPipeline: contentSafetyPipeline,
 		// 多渠道模式下内容审核错误跨渠道转移（与历史行为一致；单渠道不生效）。
-		AllowContentPolicyChannelFailover: cfgManager.GetFuzzyModeEnabled(),
+		AllowContentPolicyChannelFailover: cfgManager.GetFuzzyModeEnabledForProtocol("responses"),
 		ParseRequest: func(c *gin.Context, body []byte) (string, bool, []string, bool) {
-			// Codex 客户端伪装标记：ConvertToProviderRequest 构建上游请求时读取。
-			c.Set(utils.ContextKeyCodexDisguise, cfgManager.GetCodexDisguiseEnabled())
-
 			var responsesReq types.ResponsesRequest
 			if len(body) > 0 {
 				if err := json.Unmarshal(body, &responsesReq); err != nil {

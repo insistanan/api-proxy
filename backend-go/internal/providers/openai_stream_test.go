@@ -1,10 +1,61 @@
 package providers
 
 import (
+	"fmt"
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
+
+func TestOpenAIProviderReasoningOnlyCompletion(t *testing.T) {
+	for _, tc := range []struct {
+		name, finish, extra, tail string
+		hide, wantError           bool
+	}{
+		{name: "自动模型只有思考", finish: "stop", tail: "data: [DONE]\n\n", wantError: true},
+		{name: "隐藏思考也不能成功空答", finish: "stop", hide: true, wantError: true},
+		{name: "仅 DONE 收尾", tail: "data: [DONE]\n\n", wantError: true},
+		{name: "正常思考后回复", finish: "stop", extra: `data: {"choices":[{"delta":{"content":"正常回复"}}]}`},
+		{name: "长度截断保留原语义", finish: "length"},
+		{name: "只有工具调用也是有效回合", finish: "tool_calls", extra: `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"read","arguments":"{}"}}]}}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Kilo 返回 reasoning + 空 content，不能把思考移作正文。
+			body := "data: {\"model\":\"test-auto\",\"choices\":[{\"delta\":{\"content\":\"\",\"reasoning\":\"分析中\"}}]}\n\n"
+			if tc.extra != "" {
+				body += tc.extra + "\n\n"
+			}
+			if tc.finish != "" {
+				body += fmt.Sprintf("data: {\"choices\":[{\"delta\":{},\"finish_reason\":%q}]}\n\n", tc.finish)
+			}
+			body += tc.tail
+			events, errors, err := (&OpenAIProvider{hideReasoning: tc.hide}).HandleStreamResponse(io.NopCloser(strings.NewReader(body)))
+			require.NoError(t, err)
+			var output strings.Builder
+			for event := range events {
+				output.WriteString(event)
+			}
+			var failures []error
+			for failure := range errors {
+				failures = append(failures, failure)
+			}
+			if tc.wantError {
+				require.Len(t, failures, 1)
+				require.ErrorContains(t, failures[0], "仅返回思考内容")
+				failure, ok := IsUpstreamStreamFailed(failures[0])
+				require.True(t, ok, "必须作为上游失败计入可用性，而非成功回复")
+				require.False(t, failure.Capacity)
+				require.NotContains(t, output.String(), "event: message_stop")
+				require.NotContains(t, output.String(), `"text":"分析中"`)
+			} else {
+				require.Empty(t, failures)
+				require.Contains(t, output.String(), "event: message_stop")
+			}
+		})
+	}
+}
 
 func TestOpenAIProviderHandleStreamResponse_EmitsSingleTerminalEvent(t *testing.T) {
 	tests := []struct {

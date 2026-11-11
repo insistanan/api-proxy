@@ -46,6 +46,8 @@ func TestFreeChannelsSharedConfigPersistsAndKeepsIndexes(t *testing.T) {
 		require.True(t, up.UseFullURL)
 		require.Equal(t, []string{""}, up.APIKeys)
 		require.Equal(t, []string{"vendor/free-model"}, up.ModelMapping["free/vendor/free-model"])
+		require.Equal(t, []string{"vendor/free-model"}, up.ModelMapping[FreeModelID])
+		require.Equal(t, "openai", up.ServiceType)
 	}
 	// 真正从持久化配置重载也必须保留关闭状态。
 	reloaded, err := NewConfigManager(path)
@@ -64,6 +66,15 @@ func TestFreeRequestsAndMutationsStayIsolated(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, cm.EnsureFreeChannels())
 	ordinary, builtin := 0, 1
+	for _, kind := range []string{"messages", "responses", "chat", "gemini"} {
+		require.NoError(t, cm.ValidateFreeRequest(kind, "free", nil))
+		route, err := SelectChannelPoolRoute(cm.GetChannelPools(kind), "free")
+		require.NoError(t, err)
+		require.Len(t, route, 1)
+		require.Equal(t, FreeChannelPoolID, route[0].ID)
+	}
+	require.Error(t, cm.ValidateFreeRequest("messages", "free", &ordinary))
+	require.Error(t, cm.ValidateFreeRequest("images", "free", nil))
 	require.NoError(t, cm.ValidateFreeRequest("messages", "free/kilo-auto/free", &builtin))
 	require.Error(t, cm.ValidateFreeRequest("messages", "free/kilo-auto/free", &ordinary))
 	require.Error(t, cm.ValidateFreeRequest("messages", "paid-model", &builtin))
@@ -87,6 +98,7 @@ func TestFreeRequestsAndMutationsStayIsolated(t *testing.T) {
 		{PoolID: FreeChannelPoolID, ChannelIDs: []string{cm.GetConfig().Upstream[0].ID}},
 	}))
 	require.NoError(t, cm.SetKiloEnabled(false))
+	require.Error(t, cm.ValidateFreeRequest("chat", "free", nil))
 	require.Error(t, cm.ValidateFreeRequest("chat", "free/kilo-auto/free", nil))
 	require.Error(t, cm.SetKiloModels(nil, ""))
 	snapshot, err := cm.GetFreeChannels()

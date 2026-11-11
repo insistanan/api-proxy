@@ -7,7 +7,12 @@ package proxycore
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
 
 	"github.com/insistanan/api-proxy/internal/config"
 	"github.com/insistanan/api-proxy/internal/scheduler"
@@ -20,6 +25,14 @@ import (
 func (a UpstreamAttempt) TryWithModelMappingFailover() UpstreamAttemptResult {
 	if a.Context != nil && a.Context.Request != nil {
 		a.Context.Request = a.Context.Request.WithContext(upstreamcontrol.WithScope(a.Context.Request.Context()))
+	}
+	if a.isFreeAttempt() {
+		prepared, err := a.prepareFreeModels()
+		if err != nil {
+			a.Context.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error(), "code": "FREE_MODELS_UNAVAILABLE"})
+			return newUpstreamAttemptResult(true, "", 0, nil, nil, err).withHealth(channelHealthNeutral)
+		}
+		a = prepared
 	}
 	return a.tryWithModelMappingFailover()
 }
@@ -56,8 +69,18 @@ func (a UpstreamAttempt) tryWithModelMappingFailover() UpstreamAttemptResult {
 	mappedRouted := false
 	unsupportedTargets := make(map[string]bool)
 	localFailure := false
+	retryDeadline := time.Now().Add(freeModelRetryWindow)
 
 	for modelIdx, targetModel := range targetModels {
+		// 不截断已建立的响应；重试窗口到期后不再开启新模型尝试。
+		if a.isFreeAttempt() && modelIdx > 0 && time.Now().After(retryDeadline) {
+			if lastErr != nil {
+				lastErr = fmt.Errorf("免费模型重试窗口已耗尽: %w", lastErr)
+			} else {
+				lastErr = fmt.Errorf("免费模型重试窗口已耗尽")
+			}
+			break
+		}
 		channelID := targetChannelIDs[modelIdx]
 		if unsupportedTargets[channelID] {
 			continue
@@ -103,7 +126,7 @@ func (a UpstreamAttempt) tryWithModelMappingFailover() UpstreamAttemptResult {
 				lastFailoverError, lastErr = mergeFailoverFailure(lastFailoverError, lastErr, nil, err)
 				log.Printf("[%s-ModelMapping] 映射目标渠道不可用，模型 %s -> %s: %v",
 					a.APIType, a.RequestedModel, targetModel, err)
-				if !a.ConfigManager.GetFuzzyModeEnabled() {
+				if !a.ConfigManager.GetFuzzyModeEnabledForProtocol(string(a.Kind)) {
 					// 非 Fuzzy：目标渠道不可用直接报错，不转入正常调度的下一渠道
 					return newUpstreamAttemptResult(false, "", 0, nil, nil, err).
 						withHealth(mappingSourceHealth(localFailure, mappedRouted)).

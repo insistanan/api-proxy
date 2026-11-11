@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import type { ApiTab } from '@/services/channel-api'
 
 /**
  * 用户偏好设置 Store
@@ -18,8 +19,8 @@ export const usePreferencesStore = defineStore('preferences', () => {
   // 暗色模式偏好
   const darkModePreference = ref<ThemePreference>('auto')
 
-  // Fuzzy 模式开关
-  const fuzzyModeEnabled = ref(true)
+  // 服务端开关按入口协议镜像；加载前保持未知，不使用旧的全局缓存。
+  const fuzzyModeByProtocol = ref<Partial<Record<ApiTab, boolean>>>({})
 
   // 服务端持久化的客户端伪装开关
   const claudeCodeDisguiseEnabled = ref(false)
@@ -40,8 +41,8 @@ export const usePreferencesStore = defineStore('preferences', () => {
   /**
    * 设置 Fuzzy 模式
    */
-  function setFuzzyMode(enabled: boolean) {
-    fuzzyModeEnabled.value = enabled
+  function setFuzzyMode(protocol: ApiTab, enabled: boolean) {
+    fuzzyModeByProtocol.value[protocol] = enabled
   }
 
   function setClientDisguise(protocol: 'messages' | 'responses', enabled: boolean) {
@@ -55,7 +56,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   return {
     // 状态
     darkModePreference,
-    fuzzyModeEnabled,
+    fuzzyModeByProtocol,
     claudeCodeDisguiseEnabled,
     codexDisguiseEnabled,
     showGlobalStats,

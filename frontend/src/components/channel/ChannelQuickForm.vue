@@ -13,17 +13,38 @@
     @input="parseQuickInput"
   />
 
-  <p class="quick-form-note">需要模型映射、分组或独立代理时，请切换到详细配置并在那里保存。</p>
+  <p class="quick-form-note">需要模型映射或独立代理时，请切换到详细配置并在那里保存。</p>
 
-  <v-text-field
-    v-model="quickChannelName"
-    label="渠道名称 (可选)"
-    placeholder="不填则从输入内容识别或自动生成"
-    prepend-inner-icon="mdi-tag"
-    variant="outlined"
-    density="comfortable"
-    class="mt-3"
-  />
+  <div class="quick-channel-fields">
+    <v-text-field
+      v-model="quickChannelName"
+      label="渠道名称 (可选)"
+      placeholder="不填则从输入内容识别或自动生成"
+      prepend-inner-icon="mdi-tag"
+      variant="outlined"
+      density="comfortable"
+    />
+
+    <v-select
+      v-model="form.poolId"
+      label="渠道分组"
+      :items="poolOptions"
+      :loading="poolsLoading"
+      :error-messages="poolLoadError"
+      variant="outlined"
+      density="comfortable"
+    />
+
+    <v-select
+      v-if="supportsClientIdentity"
+      v-model="form.clientIdentityMode"
+      label="客户端身份"
+      :items="clientIdentityModeItems"
+      :hint="clientIdentityHint"
+      variant="outlined"
+      density="comfortable"
+    />
+  </div>
 
   <!-- 检测状态提示 -->
   <ImagesChannelProtocolFields
@@ -143,6 +164,9 @@ const props = defineProps<{ editor: ReturnType<typeof useChannelModal> }>()
 const {
   parseQuickInput,
   quickServiceType,
+  supportsClientIdentity,
+  clientIdentityModeItems,
+  clientIdentityHint,
   serviceTypeOptions,
   autoCompleteUrl,
   quickInput,
@@ -152,6 +176,9 @@ const {
   detectedChannelName,
   generatedChannelName,
   form,
+  poolOptions,
+  poolsLoading,
+  poolLoadError,
   targetModelOptions,
   fetchingModels,
   fetchModelsError,

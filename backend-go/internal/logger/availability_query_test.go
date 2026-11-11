@@ -57,3 +57,23 @@ func TestAvailabilityUsesLatestCooldownWithinSameBucket(t *testing.T) {
 	require.Len(t, rows, 1)
 	require.Equal(t, now.Add(time.Minute).UnixMilli(), rows[0].CooldownUntil, "最近一次明确冷却时间不能被同一小时内旧的较长时间覆盖")
 }
+
+func TestChannelAvailabilityIsolatesChannelAndProtocol(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "logs.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	now := time.Now()
+	for _, scope := range []struct{ kind, channel string }{{"chat", "free"}, {"chat", "other"}, {"messages", "free"}} {
+		require.NoError(t, store.RecordRequest(RequestLogRecord{UnixMilli: now.UnixMilli(), Payload: []byte(`{}`),
+			Availability: &availability.Sample{Kind: scope.kind, ChannelID: scope.channel, Model: "m",
+				CandidateID: "candidate", Outcome: availability.Success}}))
+	}
+	require.NoError(t, store.Flush())
+	rows, err := store.QueryChannelAvailability(context.Background(), "chat", "free", now.Add(time.Second))
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, "free", rows[0].ChannelID)
+	require.Equal(t, int64(1), rows[0].Count)
+	_, err = store.QueryChannelAvailability(context.Background(), "chat", "", now)
+	require.ErrorContains(t, err, "缺少渠道身份")
+}

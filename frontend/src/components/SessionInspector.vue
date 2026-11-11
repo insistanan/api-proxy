@@ -41,6 +41,7 @@
     </div>
     <!-- 轨迹视图：按 user / reasoning / tool_calls / tool 结果 / assistant 内容顺序展开 -->
     <div v-else-if="viewMode === 'structured' && blocks.length > 0" class="trace-list">
+      <v-alert v-if="parsed.notice" type="warning" variant="tonal" density="compact">{{ parsed.notice }}</v-alert>
       <div
         v-for="(block, index) in blocks"
         :key="index"

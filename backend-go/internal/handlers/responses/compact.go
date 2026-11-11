@@ -87,7 +87,7 @@ func CompactHandler(
 		}
 
 		// 检查是否为多渠道模式
-		isMultiChannel := cfgManager.GetFuzzyModeEnabled() && channelScheduler.IsMultiChannelModeForModel(scheduler.ChannelKindResponses, model)
+		isMultiChannel := cfgManager.GetFuzzyModeEnabledForProtocol("responses") && channelScheduler.IsMultiChannelModeForModel(scheduler.ChannelKindResponses, model)
 
 		if isMultiChannel {
 			handleMultiChannelCompact(c, envCfg, cfgManager, sessionManager, channelScheduler, bodyBytes, conversationID, model)
@@ -116,7 +116,7 @@ func handleSingleChannelCompact(
 	result := compactAttempt(c, upstream, channelIndex, nil, cfgManager, sessionManager,
 		channelScheduler, bodyBytes, conversationID, envCfg).TryWithModelMappingFailover()
 	if !result.Handled {
-		proxycore.HandleAllKeysFailed(c, cfgManager.GetFuzzyModeEnabled(), result.FailoverError, result.LastError, "Responses")
+		proxycore.HandleAllKeysFailed(c, cfgManager.GetFuzzyModeEnabledForProtocol("responses"), result.FailoverError, result.LastError, "Responses")
 	}
 }
 
@@ -132,7 +132,7 @@ func handleMultiChannelCompact(
 	model string,
 ) {
 	proxycore.HandleMultiChannelFailover(c, envCfg, channelScheduler, scheduler.ChannelKindResponses,
-		"Responses", conversationID, model, cfgManager.GetFuzzyModeEnabled(),
+		"Responses", conversationID, model, cfgManager.GetFuzzyModeEnabledForProtocol("responses"),
 		func(selection *scheduler.SelectionResult) proxycore.MultiChannelAttemptResult {
 			result := compactAttempt(c, selection.Upstream, selection.ChannelIndex, selection.Permit,
 				cfgManager, sessionManager, channelScheduler, bodyBytes, conversationID, envCfg).
@@ -155,7 +155,7 @@ func handleMultiChannelCompact(
 			}
 		},
 		func(c *gin.Context, failoverErr *proxycore.FailoverError, lastError error) {
-			proxycore.HandleAllChannelsFailed(c, cfgManager.GetFuzzyModeEnabled(), failoverErr, lastError, "Responses")
+			proxycore.HandleAllChannelsFailed(c, cfgManager.GetFuzzyModeEnabledForProtocol("responses"), failoverErr, lastError, "Responses")
 		})
 }
 
@@ -193,7 +193,7 @@ func compactAttempt(
 		MetricsManager:     channelScheduler.MetricsManager(scheduler.ChannelKindResponses),
 		Upstream:           upstream,
 		RequestedModel:     compactRequestModel(bodyBytes),
-		AllowModelFailover: cfgManager.GetFuzzyModeEnabled(),
+		AllowModelFailover: cfgManager.GetFuzzyModeEnabledForProtocol("responses"),
 		Permit:             permit,
 		SkipVisionLayer:    true,
 		URLResults:         channelScheduler.GetSortedURLsForChannel(scheduler.ChannelKindResponses, channelIndex, upstream.GetAllBaseURLs()),
@@ -335,7 +335,7 @@ func tryCompactWithKey(c *gin.Context, upstream *config.UpstreamConfig, apiKey s
 			return false, &compactError{status: http.StatusBadGateway, body: []byte(`{"error":"读取上游响应失败"}`), shouldFailover: true}
 		}
 		respBody = utils.DecompressGzipIfNeeded(resp, respBody)
-		shouldFailover, _ := proxycore.ShouldRetryWithNextKey(resp.StatusCode, respBody, cfgManager.GetFuzzyModeEnabled(), "Responses")
+		shouldFailover, _ := proxycore.ShouldRetryWithNextKey(resp.StatusCode, respBody, cfgManager.GetFuzzyModeEnabledForProtocol("responses"), "Responses")
 		return false, &compactError{status: resp.StatusCode, body: respBody, shouldFailover: shouldFailover}
 	}
 	if err := finishCompactResponse(c, resp, bodyBytes, sessionManager, channelScheduler, conversationID); err != nil {

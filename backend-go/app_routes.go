@@ -12,6 +12,7 @@ import (
 	"github.com/insistanan/api-proxy/internal/handlers/gemini"
 	"github.com/insistanan/api-proxy/internal/handlers/images"
 	"github.com/insistanan/api-proxy/internal/handlers/messages"
+	"github.com/insistanan/api-proxy/internal/handlers/modelapi"
 	"github.com/insistanan/api-proxy/internal/handlers/responses"
 	"github.com/insistanan/api-proxy/internal/metrics"
 	"github.com/insistanan/api-proxy/internal/scheduler"
@@ -167,9 +168,8 @@ func (a *app) setupProxyEndpoints(r *gin.Engine) {
 	r.POST("/v1/messages", messages.Handler(a.envCfg, a.cfgManager, a.channelScheduler, a.contentSafetyPipeline))
 	r.POST("/v1/messages/count_tokens", messages.CountTokensHandler(a.envCfg, a.cfgManager, a.channelScheduler))
 
-	// 代理端点 - Models API（转发到上游）
-	r.GET("/v1/models", messages.ModelsHandler(a.envCfg, a.cfgManager, a.channelScheduler))
-	r.GET("/v1/models/:model", messages.ModelsDetailHandler(a.envCfg, a.cfgManager, a.channelScheduler))
+	// 模型目录只读取本地分组配置，按入口协议筛选并输出客户端所需格式。
+	modelapi.RegisterRoutes(r, a.envCfg, a.cfgManager)
 
 	// 代理端点 - Responses API
 	r.POST("/v1/responses", responses.Handler(a.envCfg, a.cfgManager, a.sessionManager, a.channelScheduler, a.contentSafetyPipeline))

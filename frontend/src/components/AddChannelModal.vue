@@ -14,6 +14,9 @@
           </div>
         </div>
         <div class="d-flex align-center ga-2 header-actions">
+          <v-btn v-if="!isEditing && ['messages', 'responses', 'chat', 'gemini'].includes(channelType)" variant="tonal" size="small" :disabled="saving" :aria-expanded="editor.providerDrawerOpen.value" @click="editor.providerDrawerOpen.value = true">
+            常见渠道商
+          </v-btn>
           <!-- 模式切换按钮（仅在添加模式显示） -->
           <v-btn v-if="!isEditing" variant="outlined" size="small" class="mode-toggle-btn" :disabled="saving" @click="toggleMode">
             <v-icon start size="16">{{ isQuickMode ? 'mdi-form-textbox' : 'mdi-lightning-bolt' }}</v-icon>
@@ -68,6 +71,7 @@
           {{ isEditing ? '更新渠道' : '创建渠道' }}
         </v-btn>
       </v-card-actions>
+      <ChannelProviderDrawer v-model="editor.providerDrawerOpen.value" :channel-type="channelType" @select="editor.applyProviderPreset" />
     </v-card>
   </v-dialog>
 </template>
@@ -81,16 +85,19 @@ import type { ApiTab } from '../services/channel-api'
 import { useChannelModal } from '@/composables/useChannelModal'
 import ChannelQuickForm from './channel/ChannelQuickForm.vue'
 import ChannelDetailedForm from './channel/ChannelDetailedForm.vue'
+import ChannelProviderDrawer from './channel/ChannelProviderDrawer.vue'
 
 interface Props {
   show: boolean
   saving?: boolean
   channel?: Channel | null
   channelType?: ApiTab
+  initialPoolId?: string
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  channelType: 'messages'
+  channelType: 'messages',
+  initialPoolId: 'default'
 })
 
 const emit = defineEmits<{

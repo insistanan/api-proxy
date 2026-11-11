@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"maps"
 	"slices"
 	"sync"
 	"time"
@@ -597,8 +598,9 @@ type Config struct {
 	DecisionsPools       []ChannelPool    `json:"decisionsPools,omitempty"`
 	DecisionsLoadBalance string           `json:"decisionsLoadBalance"`
 
-	// Fuzzy 模式：启用时模糊处理错误，所有非 2xx 错误都尝试 failover
-	FuzzyModeEnabled bool `json:"fuzzyModeEnabled"`
+	// 旧全局值保留为未单独配置协议的初始状态，协议覆盖值互不影响。
+	FuzzyModeEnabled    bool            `json:"fuzzyModeEnabled"`
+	FuzzyModeByProtocol map[string]bool `json:"fuzzyModeByProtocol,omitempty"`
 
 	// 客户端伪装：仅规范化发往对应原生协议上游的客户端身份请求头
 	ClaudeCodeDisguiseEnabled bool `json:"claudeCodeDisguiseEnabled"`
@@ -647,6 +649,7 @@ func (cm *ConfigManager) GetConfig() Config {
 // cloneConfig 隔离读取快照与写入候选；调用方持锁读取当前配置后再复制。
 func cloneConfig(current Config) Config {
 	cloned := current
+	cloned.FuzzyModeByProtocol = maps.Clone(current.FuzzyModeByProtocol)
 	if current.FreeChannels != nil {
 		free := *current.FreeChannels
 		free.Kilo.Models = slices.Clone(free.Kilo.Models)
@@ -829,13 +832,48 @@ func (cm *ConfigManager) GetFuzzyModeEnabled() bool {
 	return cm.config.FuzzyModeEnabled
 }
 
-// SetFuzzyModeEnabled 设置 Fuzzy 模式状态
+// GetFuzzyModeEnabledForProtocol 按入口协议读取开关；旧配置沿用原全局状态。
+func (cm *ConfigManager) GetFuzzyModeEnabledForProtocol(protocol string) bool {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	if enabled, exists := cm.config.FuzzyModeByProtocol[protocol]; exists {
+		return enabled
+	}
+	return cm.config.FuzzyModeEnabled
+}
+
+func validateFuzzyModeProtocols(candidate *Config) error {
+	for protocol := range candidate.FuzzyModeByProtocol {
+		if _, err := candidate.channelSetFor(protocol); err != nil {
+			return fmt.Errorf("故障转移配置无效: %w", err)
+		}
+	}
+	return nil
+}
+
+// SetFuzzyModeForProtocol 仅更新指定入口的开关，保存失败不污染其他协议的快照。
+func (cm *ConfigManager) SetFuzzyModeForProtocol(protocol string, enabled bool) error {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	candidate := cloneConfig(cm.config)
+	if _, err := candidate.channelSetFor(protocol); err != nil {
+		return err
+	}
+	if candidate.FuzzyModeByProtocol == nil {
+		candidate.FuzzyModeByProtocol = make(map[string]bool)
+	}
+	candidate.FuzzyModeByProtocol[protocol] = enabled
+	return cm.saveConfigLocked(candidate)
+}
+
+// SetFuzzyModeEnabled 保留旧管理接口的全局设置语义，同时清除协议覆盖值。
 func (cm *ConfigManager) SetFuzzyModeEnabled(enabled bool) error {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
 	candidate := cloneConfig(cm.config)
 	candidate.FuzzyModeEnabled = enabled
+	candidate.FuzzyModeByProtocol = nil
 	if err := cm.saveConfigLocked(candidate); err != nil {
 		return err
 	}

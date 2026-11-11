@@ -160,6 +160,11 @@ func TestSetAuthenticationHeader(t *testing.T) {
 			wantAuthorization: "Bearer sk-1234567890abcdef",
 		},
 		{
+			name:              "Claude已有订阅访问令牌",
+			apiKey:            "sk-ant-oat01-fixture-token",
+			wantAuthorization: "Bearer sk-ant-oat01-fixture-token",
+		},
+		{
 			name:              "其他格式密钥",
 			apiKey:            "custom-key-format",
 			wantXApiKey:       "",

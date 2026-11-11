@@ -339,8 +339,9 @@ const applyProtocol = async (type: ApiTab, defaultBaseUrl: Promise<string>) => {
     // 自动切换协议与 SDK 包
     provider.protocol = protocolForChannelType[type]
     applyProtocolNpm(provider)
-    // Base URL 默认填本代理地址，可手动改
-    provider.baseUrl = baseUrl
+    // AI SDK 在 baseURL 后直接追加资源路径，需在这里补齐对应协议的版本前缀。
+    const root = baseUrl.replace(/\/+$/, '').replace(/\/v1(?:beta)?$/, '')
+    provider.baseUrl = `${root}/${type === 'gemini' ? 'v1beta' : 'v1'}`
     // 密钥填本代理访问 key（Web 鉴权与代理鉴权共用同一 key）
     const authStore = useAuthStore()
     if (authStore.apiKey) {
@@ -499,7 +500,7 @@ const importProxyModelsToProvider = async () => {
   if (!provider || !type || editorBusy.value || loading.value) return
   preparingProvider.value = true
   try {
-    const response = await api.getProxyModels()
+    const response = await api.getProxyModels(type)
     const modelIds = filterProxyModelsByKind(response.data, type)
     if (modelIds.length === 0) {
       notice.value = { visible: true, type: 'error', message: `本代理 ${type} 协议分组下暂无模型，请先在渠道管理中配置分组` }

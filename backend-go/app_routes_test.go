@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/handlers/hooks"
 	"github.com/insistanan/api-proxy/internal/metrics"
 	"github.com/insistanan/api-proxy/internal/middleware"
 	"github.com/insistanan/api-proxy/internal/scheduler"
@@ -21,6 +22,31 @@ import (
 var channelAdminKinds = []scheduler.ChannelKind{
 	scheduler.ChannelKindMessages, scheduler.ChannelKindResponses, scheduler.ChannelKindGemini,
 	scheduler.ChannelKindChat, scheduler.ChannelKindImages, scheduler.ChannelKindEmbeddings, scheduler.ChannelKindDecisions,
+}
+
+func TestModelCatalogRoutesCoexistWithProxyEndpoints(t *testing.T) {
+	r, a := newChannelAdminTestRouter(t)
+	a.envCfg = &config.EnvConfig{ProxyAccessKey: "test-admin"}
+	a.contentSafetyPipeline = hooks.NewContentSafetyPipeline(a.cfgManager)
+	require.NoError(t, a.cfgManager.EnsureFreeChannels())
+	a.setupProxyEndpoints(r)
+	paths := make(map[string]bool)
+	for _, route := range r.Routes() {
+		paths[route.Method+" "+route.Path] = true
+	}
+	for _, path := range []string{
+		"GET /v1/models", "GET /v1/models/*model", "GET /v1beta/models", "GET /v1beta/models/*model",
+		"POST /v1beta/models/*modelAction", "POST /v1/messages", "POST /v1/responses", "POST /v1/chat/completions",
+	} {
+		require.True(t, paths[path], path)
+	}
+	for _, path := range []string{"/v1/models/free/kilo-auto/free?type=messages", "/v1beta/models/free/kilo-auto/free"} {
+		channelAdminRequest(t, r, http.MethodGet, path, "", http.StatusOK)
+	}
+	// 验证 Gemini POST 仍命中原代理鉴权，不执行任何推理或上游请求。
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/v1beta/models/free/kilo-auto/free:generateContent", nil))
+	require.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
 // 只装配渠道管理边界：临时配置、内存指标和真实鉴权，不启动 HTTP 服务。
