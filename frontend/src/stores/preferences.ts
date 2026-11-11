@@ -10,11 +10,13 @@ import { ref } from 'vue'
  * - 管理全局统计面板展开状态
  * - 自动持久化到 localStorage
  */
+export type ThemePreference = 'light' | 'dark' | 'auto'
+
 export const usePreferencesStore = defineStore('preferences', () => {
   // ===== 状态 =====
 
   // 暗色模式偏好
-  const darkModePreference = ref<'light' | 'dark' | 'auto'>('auto')
+  const darkModePreference = ref<ThemePreference>('auto')
 
   // Fuzzy 模式开关
   const fuzzyModeEnabled = ref(true)
@@ -31,18 +33,8 @@ export const usePreferencesStore = defineStore('preferences', () => {
   /**
    * 设置暗色模式
    */
-  function setDarkMode(mode: 'light' | 'dark' | 'auto') {
+  function setDarkMode(mode: ThemePreference) {
     darkModePreference.value = mode
-  }
-
-  /**
-   * 切换暗色模式（循环切换）
-   */
-  function toggleDarkMode() {
-    const modes: Array<'light' | 'dark' | 'auto'> = ['light', 'dark', 'auto']
-    const currentIndex = modes.indexOf(darkModePreference.value)
-    const nextIndex = (currentIndex + 1) % modes.length
-    darkModePreference.value = modes[nextIndex]
   }
 
   /**
@@ -52,26 +44,12 @@ export const usePreferencesStore = defineStore('preferences', () => {
     fuzzyModeEnabled.value = enabled
   }
 
-  /**
-   * 切换 Fuzzy 模式
-   */
-  function toggleFuzzyMode() {
-    fuzzyModeEnabled.value = !fuzzyModeEnabled.value
-  }
-
   function setClientDisguise(protocol: 'messages' | 'responses', enabled: boolean) {
     if (protocol === 'messages') {
       claudeCodeDisguiseEnabled.value = enabled
     } else {
       codexDisguiseEnabled.value = enabled
     }
-  }
-
-  /**
-   * 切换全局统计面板
-   */
-  function toggleGlobalStats() {
-    showGlobalStats.value = !showGlobalStats.value
   }
 
   return {
@@ -84,11 +62,8 @@ export const usePreferencesStore = defineStore('preferences', () => {
 
     // 方法
     setDarkMode,
-    toggleDarkMode,
     setFuzzyMode,
-    toggleFuzzyMode,
     setClientDisguise,
-    toggleGlobalStats,
   }
 }, {
   // 持久化配置

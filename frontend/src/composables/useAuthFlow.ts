@@ -1,6 +1,6 @@
 // useAuthFlow 认证流程 composable（R5，方案 8.1）：
-// 把 App.vue 中的自动认证、手动提交、注销与认证失败处理收敛到这里，
-// App.vue 只保留页面壳；状态本体在 authStore（唯一来源），本文件只做编排。
+// 自动认证、手动提交、注销与认证失败处理收敛在这里，
+// App.vue 只保留应用壳；状态本体在 authStore（唯一来源），本文件只做编排。
 import { computed } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useChannelStore } from '@/stores/channel'

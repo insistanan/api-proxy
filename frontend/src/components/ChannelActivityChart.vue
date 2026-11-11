@@ -40,10 +40,10 @@ const gradientID = (key: string) => `gradient-${props.channelType}-${props.chann
 <style scoped>
 .activity-chart-bg {
   position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-  pointer-events: none; z-index: 0; opacity: 0.2; overflow: hidden;
+  pointer-events: none; z-index: 0; opacity: 0.16; overflow: hidden;
   border-radius: inherit; transition: opacity 0.2s ease;
 }
-:global(.channel-row:hover) .activity-chart-bg { opacity: 0.34; }
+:global(.channel-row:hover) .activity-chart-bg { opacity: 0.28; }
 .activity-bar { transition: none; }
 .activity-bar-latest { filter: brightness(1.45) saturate(1.2); }
 @media (prefers-reduced-motion: reduce) {

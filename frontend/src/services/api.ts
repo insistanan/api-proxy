@@ -12,6 +12,7 @@ import type { ApiTab, ChannelApi } from './channel-api'
 export { ApiError } from './http'
 export { fetchHealth, type HealthResponse } from './health'
 export { testChannel, testChannelWithModel, type TestChannelContext } from './channel-test'
+export { API_TABS } from './channel-api'
 export type { ApiTab, ChannelApi } from './channel-api'
 export * from '@/types'
 

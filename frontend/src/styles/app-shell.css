@@ -1,10 +1,9 @@
-/* 应用壳负责布局与反馈，业务页面只维护自己的内容结构。 */
-.app-header { background: rgb(var(--v-theme-surface)) !important; border-bottom: 1px solid rgba(var(--v-theme-outline), 0.2); padding-inline: 12px; }
-.app-header :deep(.v-toolbar__content) { overflow: visible; gap: 8px; }
-.header-location { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 0.875rem; }
-.header-location__group, .header-location__separator { color: rgb(var(--v-theme-on-surface-variant)); }
-.header-location__page { font-weight: 650; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.header-btn { flex-shrink: 0; }
+/* 应用壳负责顶栏、认证与反馈的布局，业务页面只维护自己的内容结构。 */
+.app-header { background: rgb(var(--v-theme-surface)) !important; border-bottom: 1px solid rgba(var(--v-theme-outline), 0.2); }
+.app-header :deep(.v-toolbar__content) { gap: 8px; padding-inline: 16px; overflow: visible; }
+.app-header :deep(.v-toolbar__extension) { padding-inline: 16px; border-top: 1px solid rgba(var(--v-theme-outline), 0.14); }
+.app-brand { display: flex; align-items: center; gap: 10px; flex-shrink: 0; margin-right: 8px; color: inherit; text-decoration: none; font-weight: 700; letter-spacing: -0.01em; }
+.app-brand__icon { display: grid; place-items: center; width: 32px; height: 32px; color: rgb(var(--v-theme-on-primary)); background: rgb(var(--v-theme-primary)); border-radius: 9px; }
 .app-content { max-width: 1680px; margin-inline: auto; padding-bottom: 80px !important; }
 .skip-link { position: fixed; top: 8px; left: 16px; z-index: 3000; padding: 12px 16px; border-radius: 8px; background: rgb(var(--v-theme-primary)); color: rgb(var(--v-theme-on-primary)); transform: translateY(-160%); }
 .skip-link:focus { transform: translateY(0); }
@@ -13,54 +12,7 @@
 .auth-title-icon { display: grid; place-items: center; width: 36px; height: 36px; color: rgb(var(--v-theme-primary)); background: rgba(var(--v-theme-primary), 0.1); border-radius: 10px; }
 .auth-footnote { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 16px; color: rgb(var(--v-theme-on-surface-variant)); font-size: 0.8125rem; }
 
-.version-anchor { position: relative; flex-shrink: 0; margin-right: 6px; }
-.version-badge { display: flex; align-items: center; padding: 4px 8px; font-size: 0.75rem; border-radius: 6px; border: 1px solid rgba(var(--v-theme-outline), 0.25); background: rgba(var(--v-theme-surface-variant), 0.3); }
-.version-clickable { cursor: pointer; }
-.version-clickable:hover { border-color: rgb(var(--v-theme-primary)); }
-.version-badge.version-update { border-color: rgba(var(--v-theme-warning), 0.5); }
-.version-arrow, .version-latest-text, .update-bubble__latest { color: rgb(var(--v-theme-warning)); }
-.update-bubble { position: absolute; top: calc(100% + 12px); right: 0; z-index: 1200; width: 220px; padding: 16px; border-radius: 12px; background: rgb(var(--v-theme-surface)); border: 1px solid rgba(var(--v-theme-outline), 0.3); box-shadow: var(--shadow-2); }
-.update-bubble__close { position: absolute; top: 4px; right: 4px; padding: 6px; border-radius: 6px; }
-.update-bubble__close:hover { background: rgba(var(--v-theme-on-surface), 0.06); }
-.update-bubble__title, .update-bubble__versions { display: flex; align-items: center; gap: 6px; font-size: 0.8125rem; margin-bottom: 10px; }
-.update-bubble__title { font-weight: 650; }
-.update-bubble__versions { font-family: var(--font-mono); }
-.update-bubble-enter-active, .update-bubble-leave-active { transition: opacity 160ms ease, transform 160ms ease; }
-.update-bubble-enter-from, .update-bubble-leave-to { opacity: 0; transform: translateY(-4px); }
-
-.stat-cards-row { margin-bottom: 16px !important; }
-.stat-card { --sc: var(--v-theme-primary); display: flex; align-items: center; gap: 14px; min-height: 88px; padding: 16px 20px; background: rgb(var(--v-theme-surface)); border: 1px solid rgba(var(--v-theme-outline), 0.24); border-radius: var(--cut-lg); }
-.stat-card-success, .stat-card-emerald { --sc: var(--v-theme-success); }
-.stat-card-error { --sc: var(--v-theme-error); }
-.stat-card-icon { display: grid; place-items: center; flex-shrink: 0; width: 42px; height: 42px; border-radius: 12px; background: rgba(var(--sc), 0.1); color: rgb(var(--sc)); }
-.stat-card-content { min-width: 0; }
-.stat-card-value { font-size: 1.65rem; font-weight: 650; line-height: 1.2; font-variant-numeric: tabular-nums; letter-spacing: -0.025em; }
-.stat-card-total { margin-left: 4px; font-size: 0.875rem; font-weight: 400; color: rgb(var(--v-theme-on-surface-variant)); }
-.stat-card-label { margin-top: 4px; font-size: 0.8125rem; color: rgb(var(--v-theme-on-surface-variant)); }
-
-.action-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; padding: 16px; background: rgb(var(--v-theme-surface)); border: 1px solid rgba(var(--v-theme-outline), 0.24); border-radius: var(--cut-lg); }
-.action-bar-left, .action-bar-right { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.action-btn { font-weight: 600; }
-.mode-control { min-width: 144px; }
-.mode-control.is-off { color: rgb(var(--v-theme-on-surface-variant)); }
-.mode-state { margin-left: 8px; padding: 2px 6px; font-size: 0.75rem; border-radius: 4px; background: rgba(var(--v-theme-on-surface), 0.08); }
-.global-stats-panel { overflow: hidden; }
-.global-stats-header { width: 100%; min-height: 52px; text-align: start; transition: background 160ms ease; }
-.global-stats-header:hover { background: rgba(var(--v-theme-primary), 0.04); }
-
 @media (max-width: 600px) {
-  .app-header { padding-inline: 4px; }
-  .app-header :deep(.v-toolbar__content) { gap: 0; }
-  .header-location { gap: 4px; }
-  .header-location__group, .header-location__separator, .version-anchor { display: none; }
-  .stat-card { min-height: 80px; gap: 10px; padding: 14px 12px; }
-  .stat-card-icon { width: 32px; height: 32px; }
-  .stat-card-icon .v-icon { font-size: 20px !important; }
-  .stat-card-value { font-size: 1.35rem; }
-  .stat-cards-row .v-col { padding: 4px; }
-  .stat-cards-row .v-col:last-child { flex-basis: 100%; max-width: 100%; }
-  .action-bar { padding: 12px; gap: 12px; }
-  .action-bar-left, .action-bar-right { width: 100%; }
-  .action-bar-left .action-btn:not(.action-icon-btn) { flex: 1; }
-  .action-bar-right .mode-control { flex: 1; min-width: 0; }
+  .app-header :deep(.v-toolbar__content), .app-header :deep(.v-toolbar__extension) { padding-inline: 8px; }
+  .app-brand__name { display: none; }
 }

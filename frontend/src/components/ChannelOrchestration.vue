@@ -1,22 +1,5 @@
 <template>
-  <v-card elevation="0" rounded="lg" class="channel-orchestration" variant="flat">
-    <!-- 调度器统计信息 -->
-    <v-card-title class="orchestration-header d-flex align-center justify-space-between py-3 px-0">
-      <div class="d-flex align-center">
-        <v-icon class="mr-2" color="primary">mdi-swap-vertical-bold</v-icon>
-        <span class="text-h6">渠道编排</span>
-        <v-chip v-if="isMultiChannelMode" size="small" color="success" variant="tonal" class="ml-3">
-          多渠道模式
-        </v-chip>
-        <v-chip v-else size="small" color="warning" variant="tonal" class="ml-3"> 单渠道模式 </v-chip>
-      </div>
-      <div class="d-flex align-center ga-2">
-        <v-progress-circular v-if="isLoadingMetrics" indeterminate size="16" width="2" color="primary" />
-      </div>
-    </v-card-title>
-
-    <v-divider />
-
+  <div class="channel-orchestration">
     <ChannelPoolGrid
       :channels="channels"
       :channel-type="channelType"
@@ -27,6 +10,11 @@
       @refresh="$emit('refresh')"
       @toggle-vision-status="toggleChannelPrimaryStatus"
     >
+      <template #heading>
+        <v-chip size="x-small" :color="isMultiChannelMode ? 'success' : 'warning'" variant="tonal">
+          {{ isMultiChannelMode ? '多渠道模式' : '单渠道模式' }}
+        </v-chip>
+      </template>
       <template #channel="{ channel: element, index, pool, move_to_top, move_to_bottom }">
           <div class="channel-item-wrapper">
             <div
@@ -41,7 +29,7 @@
               />
 
               <!-- Grid 内容容器 -->
-              <div class="channel-row-content">
+              <div class="channel-row-content" :class="{ 'is-idle': !hasRecentTraffic(element.index) }">
                 <!-- 拖拽手柄 -->
                 <div class="drag-handle" @click.stop>
                   <v-icon size="small" color="grey">mdi-drag-vertical</v-icon>
@@ -97,7 +85,7 @@
                 临时 {{ formatDateTime(element.temporaryUntil) }}
               </v-chip>
               <v-tooltip
-                v-if="shouldShowVisionCapability(element)"
+                v-if="element.visionCapable"
                 text="支持图片理解"
                 location="top"
                 :open-delay="150"
@@ -146,106 +134,7 @@
               ><v-icon size="18">{{ expandedChannelIndex === element.index ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon></v-btn>
             </div>
 
-            <!-- 指标显示 — 视觉条 -->
-            <div class="channel-metrics" @click.stop>
-              <template v-if="getChannelMetrics(element.index)">
-                <v-tooltip location="top" :open-delay="200" :open-on-focus="false">
-                  <template #activator="{ props: tooltipProps }">
-                    <div v-bind="tooltipProps" class="metrics-visual">
-                      <!-- 15分钟有请求时显示指标条，否则显示 -- -->
-                      <template v-if="get15mStats(element.index)?.requestCount">
-                        <!-- 成功率条 -->
-                        <div class="mini-metric-bar">
-                          <span class="metric-bar-label">成功</span>
-                          <div class="mmb-track">
-                            <div
-                              class="mmb-fill"
-                              :class="getRateLevel(get15mStats(element.index)?.successRate)"
-                              :style="{ width: `${get15mStats(element.index)?.successRate ?? 0}%` }"
-                            ></div>
-                          </div>
-                          <span
-                            class="mmb-value"
-                            :class="getRateLevel(get15mStats(element.index)?.successRate)"
-                          >
-                            {{ get15mStats(element.index)?.successRate?.toFixed(0) }}%
-                          </span>
-                        </div>
-                        <!-- 缓存命中率条：与成功率同规格，低命中只是省得少，不按故障报警 -->
-                        <div
-                          class="mini-metric-bar cache-mini-metric-bar"
-                          :class="{ 'is-unavailable': !shouldShowCacheHitRate(get15mStats(element.index)) }"
-                        >
-                          <span class="metric-bar-label">缓存</span>
-                          <div class="mmb-track">
-                            <div
-                              v-if="shouldShowCacheHitRate(get15mStats(element.index))"
-                              class="mmb-fill cache-mmb-fill"
-                              :class="getCacheRateLevel(getCacheHitRate(get15mStats(element.index)))"
-                              :style="{ width: `${getCacheHitRate(get15mStats(element.index)) ?? 0}%` }"
-                            ></div>
-                            <span
-                              v-if="shouldShowCacheHitRate(get15mStats(element.index))"
-                              :key="`cf-${getCacheHitRate(get15mStats(element.index))?.toFixed(0)}`"
-                              class="mmb-flash"
-                            ></span>
-                          </div>
-                          <span
-                            class="mmb-value cache-mmb-value"
-                            :class="getCacheRateLevel(getCacheHitRate(get15mStats(element.index)))"
-                          >
-                            {{ shouldShowCacheHitRate(get15mStats(element.index)) ? `${getCacheHitRate(get15mStats(element.index))?.toFixed(0)}%` : '—' }}
-                          </span>
-                        </div>
-                        <!-- 请求数 -->
-                        <div class="mini-metric-secondary">
-                          <span class="mm-requests">{{ get15mStats(element.index)?.requestCount }} 请求</span>
-                        </div>
-                      </template>
-                      <span v-else class="text-caption text-medium-emphasis">--</span>
-                    </div>
-                  </template>
-                  <div class="metrics-tooltip">
-                    <div class="text-caption font-weight-bold mb-1">请求统计</div>
-                    <div class="metrics-tooltip-row">
-                      <span>15分钟:</span>
-                      <span>{{ formatStats(get15mStats(element.index)) }}</span>
-                    </div>
-                    <div class="metrics-tooltip-row">
-                      <span>1小时:</span>
-                      <span>{{ formatStats(get1hStats(element.index)) }}</span>
-                    </div>
-                    <div class="metrics-tooltip-row">
-                      <span>6小时:</span>
-                      <span>{{ formatStats(get6hStats(element.index)) }}</span>
-                    </div>
-                    <div class="metrics-tooltip-row">
-                      <span>24小时:</span>
-                      <span>{{ formatStats(get24hStats(element.index)) }}</span>
-                    </div>
-
-                    <div class="text-caption font-weight-bold mt-2 mb-1">缓存统计 (Token)</div>
-                    <div class="metrics-tooltip-row">
-                      <span>15分钟:</span>
-                      <span>{{ formatCacheStats(get15mStats(element.index)) }}</span>
-                    </div>
-                    <div class="metrics-tooltip-row">
-                      <span>1小时:</span>
-                      <span>{{ formatCacheStats(get1hStats(element.index)) }}</span>
-                    </div>
-                    <div class="metrics-tooltip-row">
-                      <span>6小时:</span>
-                      <span>{{ formatCacheStats(get6hStats(element.index)) }}</span>
-                    </div>
-                    <div class="metrics-tooltip-row">
-                      <span>24小时:</span>
-                      <span>{{ formatCacheStats(get24hStats(element.index)) }}</span>
-                    </div>
-                  </div>
-                </v-tooltip>
-              </template>
-              <span v-else class="text-caption text-medium-emphasis">--</span>
-            </div>
+            <ChannelMetricsCell :metrics="getChannelMetrics(element.index)" />
 
             <!-- RPM/TPM 显示 -->
             <div class="channel-rpm-tpm" @click.stop>
@@ -301,24 +190,11 @@
                 :position="index"
                 :total="pool.channels.length"
                 :copied="copiedChannelIndex === element.index"
-                :supports-vision-capability="supportsVisionCapability"
                 :can-delete="canDeleteChannel(element)"
                 :supports-ccs="supportsCcs"
-                @edit="$emit('edit', element)"
-                @duplicate="duplicateChannel(element.index)"
-                @toggle-vision="toggleVisionCapability(element)"
-                @copy-config="copyChannelConfig(element)"
-                @import-ccs="openCcsImport(element)"
-                @quick-test="handleQuickTest(element)"
-                @ping="$emit('ping', element.index)"
-                @logs="openLogsDialog(element)"
-                @promotion="openPromotionDialog(element)"
+                @action="runMenuAction(element, $event)"
                 @move-top="move_to_top()"
                 @move-bottom="move_to_bottom()"
-                @resume="resumeChannel(element.index)"
-                @suspend="setChannelStatus(element.index, 'suspended')"
-                @disable="setChannelStatus(element.index, 'disabled')"
-                @deprecate="setChannelStatus(element.index, 'deprecated')"
                 @delete="handleDeleteChannel(element)"
               />
             </div>
@@ -357,22 +233,9 @@
         <ChannelQuickMenu
           :channel="channel"
           :copied="copiedChannelIndex === channel.index"
-          :supports-vision-capability="supportsVisionCapability"
           :allow-reorder="false"
           :supports-ccs="supportsCcs"
-          @edit="$emit('edit', channel)"
-          @duplicate="duplicateChannel(channel.index)"
-          @toggle-vision="toggleVisionCapability(channel)"
-          @copy-config="copyChannelConfig(channel)"
-          @import-ccs="openCcsImport(channel)"
-          @quick-test="handleQuickTest(channel)"
-          @ping="$emit('ping', channel.index)"
-          @logs="openLogsDialog(channel)"
-          @promotion="openPromotionDialog(channel)"
-          @resume="resumeChannel(channel.index)"
-          @suspend="setChannelStatus(channel.index, 'suspended')"
-          @disable="setChannelStatus(channel.index, 'disabled')"
-          @deprecate="setChannelStatus(channel.index, 'deprecated')"
+          @action="runMenuAction(channel, $event)"
           @delete="$emit('delete', channel.index)"
         />
       </template>
@@ -384,15 +247,14 @@
       :inactive-channels="inactiveChannels"
       :deprecated-channels="deprecatedChannels"
       :channel-type="channelType"
-      :supports-vision-capability="supportsVisionCapability"
       @edit="emit('edit', $event)"
       @delete="emit('delete', $event)"
-      @enable="enableChannel"
+      @enable="resumeChannel"
       @duplicate="duplicateChannel"
       @vision="toggleVisionCapability"
       @status="setChannelStatus"
     />
-  </v-card>
+  </div>
 
     <ChannelPromotionDialog :editor="promotionEditor" />
     <ChannelLogsDialog :viewer="logsViewer" />
@@ -418,36 +280,30 @@
 </template>
 
 <script setup lang="ts">
-import { ref, shallowRef, computed, watch, onMounted, onUnmounted } from 'vue'
-import { api, ApiError, channelApiByType, type ApiTab, type Channel, type ChannelMetrics, type ChannelStatus, type TimeWindowStats, type ChannelRecentActivity } from '../services/api'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { api, ApiError, channelApiByType, type ApiTab, type Channel, type ChannelMetrics, type ChannelStatus, type ChannelRecentActivity } from '../services/api'
 import { useChannelActivity } from '../composables/useChannelActivity'
 import { defineLazyChart } from '@/utils/lazyChart'
 import { channelServiceLabel } from '@/utils/imagesChannelProtocol'
 import {
-  getCacheRateLevel,
-  getRateLevel,
-  getCacheHitRate,
-  shouldShowCacheHitRate,
   getLatencyColor,
   isLatencyValid,
   isInPromotion,
   formatPromotionRemaining,
   formatDateTime,
-  formatStats,
-  formatTokens,
-  formatCacheStats,
   getWebsiteUrl
 } from '../utils/channelMetricsFormat'
 import CcsImportModal from './CcsImportModal.vue'
 import ChannelStatusBadge from './ChannelStatusBadge.vue'
 import ChannelActivityChart from './ChannelActivityChart.vue'
 import ChannelPoolGrid from './ChannelPoolGrid.vue'
-import ChannelQuickMenu from './ChannelQuickMenu.vue'
+import ChannelQuickMenu, { type ChannelMenuAction } from './ChannelQuickMenu.vue'
 import ChannelMappingBlock from './ChannelMappingBlock.vue'
 import QuickTestModal from './QuickTestModal.vue'
 import ChannelPromotionDialog from './channel/ChannelPromotionDialog.vue'
 import ChannelLogsDialog from './channel/ChannelLogsDialog.vue'
 import ChannelReservePools from './channel/ChannelReservePools.vue'
+import ChannelMetricsCell from './channel/ChannelMetricsCell.vue'
 import { useChannelLogs } from '@/composables/useChannelLogs'
 import { useChannelPromotion } from '@/composables/useChannelPromotion'
 
@@ -455,20 +311,9 @@ const KeyTrendChart = defineLazyChart(() => import('./KeyTrendChart.vue'))
 
 const props = defineProps<{
   channels: Channel[]
-  currentChannelIndex: number
   channelType: ApiTab
-  // 可选：从父组件传入的 metrics 和 stats（使用 dashboard 接口时）
-  dashboardMetrics?: ChannelMetrics[]
-  dashboardStats?: {
-    multiChannelMode: boolean
-    activeChannelCount: number
-    traceAffinityCount: number
-    traceAffinityTTL: string
-    failureThreshold: number
-    windowSize: number
-    circuitRecoveryTime?: string
-  }
-  // 可选：从父组件传入的实时活跃度数据
+  // 指标与活跃度由父级随 Dashboard 快照整体替换，本组件只读。
+  dashboardMetrics: ChannelMetrics[]
   dashboardRecentActivity?: ChannelRecentActivity[]
 }>()
 
@@ -481,30 +326,15 @@ const emit = defineEmits<{
   (_e: 'success', _message: string): void
 }>()
 
-const supportsVisionCapability = computed(() => true)
-
 // 快捷测试弹窗状态
 const showQuickTestModal = ref(false)
 const quickTestChannel = ref<Channel | null>(null)
-
-// 状态
-// 指标只接收整份快照，不在组件内修改统计段。
-const metrics = shallowRef<ChannelMetrics[]>([])
-const recentActivity = shallowRef<ChannelRecentActivity[]>([])
-const schedulerStats = shallowRef<{
-  multiChannelMode: boolean
-  activeChannelCount: number
-  traceAffinityCount: number
-  traceAffinityTTL: string
-  failureThreshold: number
-  windowSize: number
-} | null>(null)
-const isLoadingMetrics = ref(false)
 
 const logsViewer = useChannelLogs(props)
 const { openLogsDialog } = logsViewer
 
 const promotionEditor = useChannelPromotion(props, emit)
+// 促销草稿在此解构到组件作用域，特性测试通过 setup 状态观察同一份编辑状态。
 const {
   openPromotionDialog, confirmPromotion, promotionDuration, promotionCount,
   promotionError, promotionChannel, showPromotionDialog
@@ -514,10 +344,9 @@ const {
 const currentTime = ref(Date.now())
 let latencyCheckTimer: ReturnType<typeof setInterval> | null = null
 
-// 活跃度可视化收敛到 useChannelActivity composable（R5，方案 8.1）：
-// 数据本体（recentActivity）本组件持有，柱状/曲线派生计算经 composable。
+// 活跃度的柱状派生计算收敛在 useChannelActivity（R5，方案 8.1）。
 const { getActivityBars, formatRPM, formatTPM, hasActivityData } =
-  useChannelActivity(recentActivity)
+  useChannelActivity(computed(() => props.dashboardRecentActivity ?? []))
 
 // 图表展开状态
 const expandedChannelIndex = ref<number | null>(null)
@@ -594,58 +423,17 @@ const isMultiChannelMode = computed(() => {
   return activeCount > 1
 })
 
-// 监听 dashboard props 变化（从父组件传入的合并数据）
-watch(() => props.dashboardMetrics, (newMetrics) => {
-  if (newMetrics) {
-    metrics.value = newMetrics
-  }
-}, { immediate: true })
-
-watch(() => props.dashboardStats, (newStats) => {
-  if (newStats) {
-    schedulerStats.value = newStats
-  }
-}, { immediate: true })
-
-// 监听 recentActivity props 变化
-watch(() => props.dashboardRecentActivity, (newActivity) => {
-  recentActivity.value = newActivity ?? []
-}, { immediate: true })
-
-// 监听 channelType 变化 - 切换时刷新指标并收起图表
+// 切换协议时收起展开的图表
 watch(() => props.channelType, () => {
-  expandedChannelIndex.value = null // 收起展开的图表
-  // 如果没有使用 dashboard props，则自己刷新
-  if (!props.dashboardMetrics) {
-    refreshMetrics()
-  }
+  expandedChannelIndex.value = null
 })
 
-// 获取渠道指标
-const metricsByChannel = computed(() => new Map(metrics.value.map(metric => [metric.channelIndex, metric])))
+// 近 15 分钟既无请求也无实时速率的渠道，在窄布局下收起指标行。
+const hasRecentTraffic = (channelIndex: number) =>
+  !!getChannelMetrics(channelIndex)?.timeWindows?.['15m']?.requestCount || hasActivityData(channelIndex)
+
+const metricsByChannel = computed(() => new Map(props.dashboardMetrics.map(metric => [metric.channelIndex, metric])))
 const getChannelMetrics = (channelIndex: number): ChannelMetrics | undefined => metricsByChannel.value.get(channelIndex)
-
-// 获取分时段统计的辅助方法
-const get15mStats = (channelIndex: number) => {
-  return getChannelMetrics(channelIndex)?.timeWindows?.['15m']
-}
-
-const get1hStats = (channelIndex: number) => {
-  return getChannelMetrics(channelIndex)?.timeWindows?.['1h']
-}
-
-const get6hStats = (channelIndex: number) => {
-  return getChannelMetrics(channelIndex)?.timeWindows?.['6h']
-}
-
-const get24hStats = (channelIndex: number) => {
-  return getChannelMetrics(channelIndex)?.timeWindows?.['24h']
-}
-
-// 图片理解能力仅在支持该功能的入口协议中显示。
-const shouldShowVisionCapability = (channel: Channel): boolean => {
-  return supportsVisionCapability.value && !!channel.visionCapable
-}
 
 const supportsCcs = computed(() => props.channelType !== 'images' && props.channelType !== 'embeddings' && props.channelType !== 'decisions')
 
@@ -663,23 +451,6 @@ const toggleVisionCapability = async (channel: Channel) => {
     console.error('Failed to update vision capability:', error)
     const errorMessage = error instanceof Error ? error.message : '未知错误'
     emit('error', `设置图片理解能力失败: ${errorMessage}`)
-  }
-}
-
-// 刷新指标
-const refreshMetrics = async () => {
-  isLoadingMetrics.value = true
-  try {
-    const [metricsData, statsData] = await Promise.all([
-      channelApiByType(props.channelType).getChannelMetrics(),
-      api.getSchedulerStats(props.channelType)
-    ])
-    metrics.value = metricsData
-    schedulerStats.value = statsData
-  } catch (error) {
-    emit('error', `加载渠道指标失败：${error instanceof Error ? error.message : '未知错误'}`)
-  } finally {
-    isLoadingMetrics.value = false
   }
 }
 
@@ -710,12 +481,7 @@ const setChannelStatus = async (channelId: number, status: ChannelStatus) => {
   }
 }
 
-// 启用渠道（从备用池移到活跃序列）
-const enableChannel = async (channelId: number) => {
-  await setChannelStatus(channelId, 'active')
-}
-
-// 激活接口统一重置两层熔断，避免分两次请求造成恢复到一半的状态。
+// 恢复暂停渠道与启用备用渠道是同一操作：激活接口统一重置两层熔断，避免恢复到一半的状态。
 const resumeChannel = async (channelId: number) => {
   await setChannelStatus(channelId, 'active')
 }
@@ -737,6 +503,24 @@ const toggleChannelPrimaryStatus = async (channel: Channel) => {
 
   if (currentStatus === 'active') {
     await setChannelStatus(channel.index, 'suspended')
+  }
+}
+
+const runMenuAction = (channel: Channel, action: ChannelMenuAction) => {
+  switch (action) {
+    case 'edit': return emit('edit', channel)
+    case 'duplicate': return duplicateChannel(channel.index)
+    case 'toggleVision': return toggleVisionCapability(channel)
+    case 'copyConfig': return copyChannelConfig(channel)
+    case 'importCcs': return openCcsImport(channel)
+    case 'quickTest': return handleQuickTest(channel)
+    case 'ping': return emit('ping', channel.index)
+    case 'logs': return openLogsDialog(channel)
+    case 'promotion': return openPromotionDialog(channel)
+    case 'resume': return resumeChannel(channel.index)
+    case 'suspend': return setChannelStatus(channel.index, 'suspended')
+    case 'disable': return setChannelStatus(channel.index, 'disabled')
+    case 'deprecate': return setChannelStatus(channel.index, 'deprecated')
   }
 }
 
@@ -774,9 +558,7 @@ const handleDeleteChannel = (channel: Channel) => {
   emit('delete', channel.index)
 }
 
-// 组件挂载时加载指标并启动延迟过期检查定时器
 onMounted(() => {
-  if (!props.dashboardMetrics) void refreshMetrics()
   // 每 30 秒更新一次 currentTime，触发延迟显示的响应式更新
   latencyCheckTimer = setInterval(() => {
     if (!document.hidden) currentTime.value = Date.now()
@@ -792,10 +574,6 @@ onUnmounted(() => {
   }
 })
 
-// 暴露方法给父组件
-defineExpose({
-  refreshMetrics
-})
 </script>
 
 <style scoped src="../styles/channel-orchestration.css"></style>

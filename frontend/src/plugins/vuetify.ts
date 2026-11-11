@@ -3,6 +3,7 @@ import { h } from 'vue'
 import type { IconSet, IconProps, ThemeDefinition } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
+import { zhHans } from 'vuetify/locale'
 
 // 引入样式
 import 'vuetify/styles'
@@ -450,6 +451,8 @@ const darkTheme: ThemeDefinition = {
 export default createVuetify({
   components,
   directives,
+  // 分页、无数据等组件内置文案使用简体中文。
+  locale: { locale: 'zhHans', messages: { zhHans } },
   icons: {
     defaultSet: 'mdi',
     sets: { mdi: customSvgIconSet }

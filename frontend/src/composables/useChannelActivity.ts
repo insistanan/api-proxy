@@ -1,7 +1,7 @@
 // useChannelActivity 渠道实时活跃度可视化（R5，方案 8.1：
 // ChannelOrchestration 的活跃度数据处理收敛到 composable）。
 // 数据本体（recentActivity）由父级持有传入；本文件负责
-// 活跃度索引、历史峰值、波形柱与平滑曲线的派生计算。
+// 活跃度索引、历史峰值与波形柱的派生计算。
 import { computed, ref, watch, type Ref } from 'vue'
 import type { ChannelRecentActivity } from '@/services/api'
 
@@ -18,33 +18,6 @@ export type ActivityBar = {
   level: ActivityLevel
   gradientKey: string
   latest: boolean
-}
-
-/** Catmull-Rom 样条转 SVG 贝塞尔路径。 */
-export function catmullRomToPath(points: { x: number; y: number }[]): string {
-  if (points.length < 2) return ''
-
-  const path: string[] = []
-  path.push(`M ${points[0].x} ${points[0].y}`)
-
-  // 张力参数（0.3 = 较低张力，曲线更贴近原始点）
-  const tension = 0.3
-
-  for (let i = 0; i < points.length - 1; i++) {
-    const p0 = points[Math.max(0, i - 1)]
-    const p1 = points[i]
-    const p2 = points[i + 1]
-    const p3 = points[Math.min(points.length - 1, i + 2)]
-
-    const cp1x = p1.x + ((p2.x - p0.x) / 6) * tension
-    const cp1y = p1.y + ((p2.y - p0.y) / 6) * tension
-    const cp2x = p2.x - ((p3.x - p1.x) / 6) * tension
-    const cp2y = p2.y - ((p3.y - p1.y) / 6) * tension
-
-    path.push(`C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`)
-  }
-
-  return path.join(' ')
 }
 
 /**
@@ -187,48 +160,6 @@ export function useChannelActivity(recentActivity: Ref<ChannelRecentActivity[]>)
     return activityBarsCache.value.get(channelIndex) ?? []
   }
 
-  // 生成平滑曲线路径（使用移动平均 + Catmull-Rom 样条）
-  const getActivityPath = (channelIndex: number): string => {
-    const activity = getChannelActivity(channelIndex)
-    if (!activity || !activity.segments || activity.segments.length === 0) return ''
-
-    const segments = activity.segments
-    const numSegments = segments.length // 150（后端已聚合为每 6 秒一段）
-
-    // 找到最大请求数用于归一化
-    const maxRequests = Math.max(...segments.map(s => s.requestCount), 1)
-
-    // 应用移动平均平滑数据（窗口大小 5 = 10 秒）
-    const windowSize = 5
-    const smoothedData: number[] = []
-
-    for (let i = 0; i < numSegments; i++) {
-      const start = Math.max(0, i - Math.floor(windowSize / 2))
-      const end = Math.min(numSegments, i + Math.ceil(windowSize / 2))
-      let sum = 0
-      let count = 0
-
-      for (let j = start; j < end; j++) {
-        sum += segments[j].requestCount
-        count++
-      }
-
-      smoothedData.push(count > 0 ? sum / count : 0)
-    }
-
-    // 生成平滑后的点
-    const points: { x: number; y: number }[] = []
-    for (let i = 0; i < numSegments; i++) {
-      const x = i
-      const y = 100 - (smoothedData[i] / maxRequests) * 85
-      points.push({ x, y })
-    }
-
-    if (points.length < 2) return ''
-
-    return catmullRomToPath(points)
-  }
-
   // 格式化 RPM 显示
   const formatRPM = (channelIndex: number): string => {
     const activity = getChannelActivity(channelIndex)
@@ -254,9 +185,7 @@ export function useChannelActivity(recentActivity: Ref<ChannelRecentActivity[]>)
   }
 
   return {
-    getChannelActivity,
     getActivityBars,
-    getActivityPath,
     formatRPM,
     formatTPM,
     hasActivityData

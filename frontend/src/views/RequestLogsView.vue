@@ -128,24 +128,32 @@
                 <span v-else class="text-medium-emphasis">--</span>
               </td>
               <td class="action-cell">
-                <v-btn
-                  size="small"
-                  variant="text"
-                  prepend-icon="mdi-text-box-search-outline"
-                  :disabled="!log.requestId"
-                  @click="openBodyDialog(log.requestId)"
-                >
-                  查看正文
-                </v-btn>
-                <v-btn
-                  size="small"
-                  variant="text"
-                  prepend-icon="mdi-file-find-outline"
-                  :disabled="!log.requestId"
-                  @click="openSystemLog(log.requestId)"
-                >
-                  查看详情日志
-                </v-btn>
+                <v-tooltip text="查看正文">
+                  <template #activator="{ props: tooltipProps }">
+                    <v-btn
+                      v-bind="tooltipProps"
+                      icon="mdi-text-box-search-outline"
+                      size="small"
+                      variant="text"
+                      aria-label="查看正文"
+                      :disabled="!log.requestId"
+                      @click="openBodyDialog(log.requestId)"
+                    />
+                  </template>
+                </v-tooltip>
+                <v-tooltip text="查看详情日志">
+                  <template #activator="{ props: tooltipProps }">
+                    <v-btn
+                      v-bind="tooltipProps"
+                      icon="mdi-file-find-outline"
+                      size="small"
+                      variant="text"
+                      aria-label="查看详情日志"
+                      :disabled="!log.requestId"
+                      @click="openSystemLog(log.requestId)"
+                    />
+                  </template>
+                </v-tooltip>
               </td>
             </tr>
           </tbody>
@@ -222,17 +230,21 @@ type TypeFilter = LogAPIType | ''
 type LogsTab = 'request' | 'system'
 type DatePreset = 'today' | 'yesterday' | 'all' | 'custom'
 
+const typeLabelMap: Record<LogAPIType, string> = {
+  messages: 'Messages',
+  responses: 'Responses',
+  gemini: 'Gemini',
+  chat: 'Chat',
+  images: 'Images',
+  embeddings: 'Embeddings',
+  decisions: 'Decisions',
+  cmd_gate: '命令 AI 复核',
+  llmgate: '内部 AI 调用'
+}
+
 const typeItems: Array<{ title: string; value: TypeFilter }> = [
   { title: '全部', value: '' },
-  { title: 'Messages', value: 'messages' },
-  { title: 'Responses', value: 'responses' },
-  { title: 'Gemini', value: 'gemini' },
-  { title: 'Chat', value: 'chat' },
-  { title: 'Images', value: 'images' },
-  { title: 'Embeddings', value: 'embeddings' },
-  { title: 'Decisions', value: 'decisions' },
-  { title: '命令 AI 复核', value: 'cmd_gate' },
-  { title: '内部 AI 调用', value: 'llmgate' }
+  ...Object.entries(typeLabelMap).map(([value, title]) => ({ title, value: value as LogAPIType }))
 ]
 
 const datePresetItems: Array<{ title: string; value: DatePreset }> = [
@@ -401,7 +413,7 @@ const confirmPurge = async () => {
     purgeDates.value = []
     purgeDate.value = ''
     await loadLogs()
-    emitNotice(`清理完成，共删除 ${total.toLocaleString()} 条日志记录`)
+    purgeNotice.value = `清理完成，共删除 ${total.toLocaleString()} 条日志记录`
   } catch (err) {
     purgeError.value = err instanceof Error ? err.message : '清理日志失败'
   } finally {
@@ -410,9 +422,6 @@ const confirmPurge = async () => {
 }
 
 const purgeNotice = ref('')
-const emitNotice = (message: string) => {
-  purgeNotice.value = message
-}
 watch(purgeNotice, (value, _oldValue, onCleanup) => {
   if (!value) return
   const timer = window.setTimeout(() => {
@@ -420,18 +429,6 @@ watch(purgeNotice, (value, _oldValue, onCleanup) => {
   }, 6000)
   onCleanup(() => window.clearTimeout(timer))
 })
-
-const typeLabelMap: Record<LogAPIType, string> = {
-  messages: 'Messages',
-  responses: 'Responses',
-  gemini: 'Gemini',
-  chat: 'Chat',
-  images: 'Images',
-  embeddings: 'Embeddings',
-  decisions: 'Decisions',
-  cmd_gate: '命令 AI 复核',
-  llmgate: '内部 AI 调用'
-}
 
 const typeColorMap: Record<LogAPIType, string> = {
   messages: 'primary',
@@ -532,8 +529,8 @@ onBeforeUnmount(() => { logRequestSequence++ })
   display: flex;
   flex-direction: column;
   gap: 16px;
-  height: calc(100vh - 112px);
-  height: calc(100dvh - 112px);
+  /* 视口高度减去顶栏与内容区上下内边距，表格在页面内滚动。 */
+  height: calc(100dvh - var(--v-layout-top) - 48px);
   min-height: 0;
   overflow: hidden;
 }
@@ -609,7 +606,7 @@ onBeforeUnmount(() => { logRequestSequence++ })
   flex: 1;
   min-height: 0;
 }
-.request-logs-table :deep(table) { min-width: 1180px; }
+.request-logs-table :deep(table) { min-width: 1240px; }
 .request-tab-panel .logs-actions { flex-shrink: 0; }
 
 .request-logs-table :deep(th) {
@@ -628,6 +625,7 @@ onBeforeUnmount(() => { logRequestSequence++ })
 .channel-cell,
 .model-cell,
 .error-cell {
+  min-width: 150px;
   max-width: 260px;
   overflow-wrap: anywhere;
 }
@@ -638,8 +636,7 @@ onBeforeUnmount(() => { logRequestSequence++ })
 
 @media (max-width: 600px) {
   .request-logs-view {
-    height: calc(100vh - 88px);
-    height: calc(100dvh - 88px);
+    height: calc(100dvh - var(--v-layout-top) - 32px);
   }
   .date-preset-select, .type-filter-select { flex: 1 1 140px; }
 }

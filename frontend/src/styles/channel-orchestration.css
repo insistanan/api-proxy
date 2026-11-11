@@ -1,7 +1,4 @@
 /* 渠道列表按卡片实际宽度响应，装饰不参与实时刷新。 */
-.channel-orchestration { overflow: visible; background: transparent; border: none; }
-.orchestration-header { min-height: 52px; margin-bottom: 0; }
-.section-inline-label { color: rgb(var(--v-theme-on-surface-variant)); font-size: 0.75rem; }
 .channel-list, .channel-item-wrapper { display: flex; flex-direction: column; gap: 8px; }
 .channel-row { position: relative; padding: 12px 16px; min-height: 52px; background: rgb(var(--v-theme-surface)); border: 1px solid rgba(var(--v-theme-outline), 0.24); border-radius: var(--cut-md); cursor: pointer; overflow: hidden; transition: border-color 160ms ease; }
 .channel-row:hover { border-color: rgba(var(--v-theme-primary), 0.6); }
@@ -20,26 +17,6 @@
 .channel-name-link:hover { color: rgb(var(--v-theme-primary)); }
 .channel-status-toggle { display: inline-flex; align-items: center; cursor: pointer; border-radius: 6px; }
 .channel-status-toggle :deep(.badge-content) { cursor: pointer; }
-.channel-metrics { display: flex; align-items: center; min-width: 186px; }
-.metrics-visual { min-width: 176px; }
-.mini-metric-bar { display: flex; align-items: center; gap: 7px; margin-bottom: 4px; }
-.metric-bar-label { width: 28px; flex: 0 0 28px; color: rgb(var(--v-theme-on-surface-variant)); font-size: 0.6875rem; }
-.mmb-track { position: relative; flex: 1; height: 5px; min-width: 60px; overflow: hidden; border-radius: 3px; background: rgba(var(--v-theme-outline), 0.18); }
-.mmb-fill { height: 100%; border-radius: inherit; }
-.mmb-fill.high { background: rgb(var(--v-theme-success)); }
-.mmb-fill.medium { background: rgb(var(--v-theme-warning)); }
-.mmb-fill.low { background: rgb(var(--v-theme-error)); }
-.mmb-fill.cache-mmb-fill.medium { background: rgb(var(--v-theme-info)); }
-.mmb-fill.cache-mmb-fill.low { background: rgb(var(--v-theme-warning)); }
-.mmb-value { min-width: 34px; text-align: right; font-size: 0.75rem; font-variant-numeric: tabular-nums; font-weight: 600; }
-.mmb-value.high { color: rgb(var(--v-theme-success)); }
-.mmb-value.medium { color: rgb(var(--v-theme-warning)); }
-.mmb-value.low { color: rgb(var(--v-theme-error)); }
-.mmb-value.cache-mmb-value.medium { color: rgb(var(--v-theme-info)); }
-.mmb-value.cache-mmb-value.low { color: rgb(var(--v-theme-warning)); }
-.mmb-value.cache-mmb-value.unknown { color: rgb(var(--v-theme-on-surface-variant)); }
-.cache-mini-metric-bar.is-unavailable { opacity: 0.7; }
-.mini-metric-secondary { font-size: 0.6875rem; color: rgb(var(--v-theme-on-surface-variant)); }
 .channel-latency { display: flex; align-items: center; min-width: 60px; }
 .channel-row-meta { position: relative; z-index: 1; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 8px 0 0 62px; }
 .channel-row-meta > * { flex: 0 0 auto; max-width: 100%; }
@@ -57,9 +34,6 @@
 .inactive-channel-row .channel-info { display: flex; flex: 1; flex-direction: column; gap: 4px; min-width: 0; overflow: hidden; }
 .channel-info-main, .channel-info-desc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .channel-info-meta { display: flex; min-width: 0; }
-.metrics-tooltip { font-size: 0.8125rem; line-height: 1.6; }
-.metrics-tooltip-row { display: flex; justify-content: space-between; gap: 16px; padding: 2px 0; }
-.metrics-tooltip-row span:first-child { opacity: 0.75; }
 /* 响应式 */
 @media (max-width: 1400px) {
   .channel-row-content { grid-template-columns: 28px 28px 85px minmax(100px, 1fr) auto 50px 50px 50px auto; gap: 6px; }
@@ -98,6 +72,12 @@
   .channel-keys { grid-area: keys; }
   .channel-row { padding: 10px 12px; }
   .channel-row-meta { margin-left: 60px; }
+  .channel-row-content.is-idle {
+    grid-template-columns: 24px 24px 80px minmax(0, 1fr) auto auto auto;
+    grid-template-areas: 'handle priority status name latency keys actions';
+  }
+  .channel-row-content.is-idle :is(.channel-metrics, .channel-rpm-tpm) { display: none; }
+  .channel-row-content.is-idle .channel-latency { min-width: 0; }
 }
 @container (max-width: 520px) {
   .channel-row-content {
@@ -106,6 +86,7 @@
       'handle status name actions'
       'metrics metrics metrics activity';
   }
+  .channel-row-content.is-idle { grid-template-columns: 24px 76px minmax(0, 1fr) auto; grid-template-areas: 'handle status name actions'; }
   .priority-number, .channel-latency, .channel-keys { display: none; }
   .channel-row-meta { margin-left: 0; }
 }
@@ -126,6 +107,5 @@
 @media (prefers-reduced-motion: reduce) {
   .channel-row,
   .drag-handle,
-  .mmb-fill,
   .inactive-channel-row { transition: none !important; animation: none !important; }
 }

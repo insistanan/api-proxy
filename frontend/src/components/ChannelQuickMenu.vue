@@ -14,15 +14,15 @@
     </template>
 
     <v-list density="compact">
-      <v-list-item @click="emit('edit')">
+      <v-list-item @click="emit('action', 'edit')">
         <template #prepend><v-icon size="small">mdi-pencil</v-icon></template>
         <v-list-item-title>编辑</v-list-item-title>
       </v-list-item>
-      <v-list-item @click="emit('duplicate')">
+      <v-list-item @click="emit('action', 'duplicate')">
         <template #prepend><v-icon size="small">mdi-content-copy</v-icon></template>
         <v-list-item-title>复制渠道</v-list-item-title>
       </v-list-item>
-      <v-list-item v-if="supportsVisionCapability" @click="emit('toggleVision')">
+      <v-list-item @click="emit('action', 'toggleVision')">
         <template #prepend>
           <v-icon size="small" :color="channel.visionCapable ? 'success' : 'primary'">
             {{ channel.visionCapable ? 'mdi-check-circle' : 'mdi-image-search-outline' }}
@@ -32,7 +32,7 @@
           {{ channel.visionCapable ? '取消支持图片理解' : '设为支持图片理解' }}
         </v-list-item-title>
       </v-list-item>
-      <v-list-item @click="emit('copyConfig')">
+      <v-list-item @click="emit('action', 'copyConfig')">
         <template #prepend>
           <v-icon size="small" :color="copied ? 'success' : 'primary'">
             {{ copied ? 'mdi-check' : 'mdi-content-copy' }}
@@ -43,24 +43,24 @@
       <v-list-item
         v-if="supportsCcs"
         aria-label="导入到 CCS"
-        @click="emit('importCcs')"
+        @click="emit('action', 'importCcs')"
       >
         <template #prepend><v-icon size="small" color="primary">mdi-application-export</v-icon></template>
         <v-list-item-title>导入到 CCS</v-list-item-title>
       </v-list-item>
-      <v-list-item @click="emit('quickTest')">
+      <v-list-item @click="emit('action', 'quickTest')">
         <template #prepend><v-icon size="small" color="success">mdi-test-tube</v-icon></template>
         <v-list-item-title>快捷测试</v-list-item-title>
       </v-list-item>
-      <v-list-item @click="emit('ping')">
+      <v-list-item @click="emit('action', 'ping')">
         <template #prepend><v-icon size="small">mdi-speedometer</v-icon></template>
         <v-list-item-title>测试延迟</v-list-item-title>
       </v-list-item>
-      <v-list-item @click="emit('logs')">
+      <v-list-item @click="emit('action', 'logs')">
         <template #prepend><v-icon size="small">mdi-text-box-search-outline</v-icon></template>
         <v-list-item-title>请求日志</v-list-item-title>
       </v-list-item>
-      <v-list-item @click="emit('promotion')">
+      <v-list-item @click="emit('action', 'promotion')">
         <template #prepend><v-icon size="small" color="info">mdi-rocket-launch</v-icon></template>
         <v-list-item-title>抢优先级</v-list-item-title>
       </v-list-item>
@@ -74,19 +74,19 @@
       </v-list-item>
 
       <v-divider />
-      <v-list-item v-if="channel.status === 'suspended'" @click="emit('resume')">
+      <v-list-item v-if="channel.status === 'suspended'" @click="emit('action', 'resume')">
         <template #prepend><v-icon size="small" color="success">mdi-play-circle</v-icon></template>
         <v-list-item-title>恢复 (重置指标)</v-list-item-title>
       </v-list-item>
-      <v-list-item v-else @click="emit('suspend')">
+      <v-list-item v-else @click="emit('action', 'suspend')">
         <template #prepend><v-icon size="small" color="warning">mdi-pause-circle</v-icon></template>
         <v-list-item-title>暂停</v-list-item-title>
       </v-list-item>
-      <v-list-item @click="emit('disable')">
+      <v-list-item @click="emit('action', 'disable')">
         <template #prepend><v-icon size="small" color="error">mdi-stop-circle</v-icon></template>
         <v-list-item-title>移至备用池</v-list-item-title>
       </v-list-item>
-      <v-list-item @click="emit('deprecate')">
+      <v-list-item @click="emit('action', 'deprecate')">
         <template #prepend><v-icon size="small" color="grey">mdi-archive-clock-outline</v-icon></template>
         <v-list-item-title>移至弃用池</v-list-item-title>
       </v-list-item>
@@ -103,6 +103,14 @@
   </v-menu>
 </template>
 
+<script lang="ts">
+export const channelMenuActions = [
+  'edit', 'duplicate', 'toggleVision', 'copyConfig', 'importCcs', 'quickTest', 'ping',
+  'logs', 'promotion', 'resume', 'suspend', 'disable', 'deprecate'
+] as const
+export type ChannelMenuAction = (typeof channelMenuActions)[number]
+</script>
+
 <script setup lang="ts">
 import type { Channel } from '../services/api'
 
@@ -111,7 +119,6 @@ withDefaults(defineProps<{
   position?: number
   total?: number
   copied?: boolean
-  supportsVisionCapability?: boolean
   canDelete?: boolean
   allowReorder?: boolean
   /** 该渠道类型是否支持导入 CC Switch（弹窗中选择目标应用类型） */
@@ -120,28 +127,16 @@ withDefaults(defineProps<{
   position: 0,
   total: 1,
   copied: false,
-  supportsVisionCapability: true,
   canDelete: true,
   allowReorder: true,
   supportsCcs: false
 })
 
+// 不涉及排序与删除约束的操作统一走 action；排序和删除因两处用法规则不同而单独发出。
 const emit = defineEmits<{
-  edit: []
-  duplicate: []
-  toggleVision: []
-  copyConfig: []
-  importCcs: []
-  quickTest: []
-  ping: []
-  logs: []
-  promotion: []
+  action: [action: ChannelMenuAction]
   moveTop: []
   moveBottom: []
-  resume: []
-  suspend: []
-  disable: []
-  deprecate: []
   delete: []
 }>()
 </script>

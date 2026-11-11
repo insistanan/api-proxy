@@ -29,7 +29,8 @@
 ## 架构要点
 
 - 认证由 App.vue 的全局密钥对话框处理，流程在 `composables/useAuthFlow.ts` 中。路由 meta 虽带 `requiresAuth: true`，但没有 `beforeEach` 守卫。认证失败 5 次会锁定 5 分钟，只有 401 响应会使密钥失效，网络错误会保留密钥。
-- `ApiTab` 定义 messages、responses、gemini、chat 和 images 五种协议。channel store 使用 `Record<ApiTab, ...>` 保存分组数据，`channelApi(type)` 按协议返回共用操作方法。新增协议时，需要同步修改 store、API 工厂、路由参数校验和后端端点。
+- `ApiTab` 由 `services/channel-api.ts` 的 `API_TABS` 常量派生，目前包含 messages、responses、gemini、chat、images、embeddings 和 decisions 七种协议。channel store 按 `API_TABS` 生成 `Record<ApiTab, ...>` 分组数据并校验路由参数，`channelApi(type)` 按协议返回共用操作方法。新增协议时，需要同步修改 `API_TABS`、API 工厂、`router/navigation.ts` 和后端端点。
+- App.vue 只是应用壳：认证、顶栏导航（`components/layout/AppNavigation.vue`，入口全部平铺、无二级菜单，配置在 `router/navigation.ts`）、主题和全局消息。渠道页的概览、路由开关、渠道弹窗和 2 秒自动刷新都在 `views/ChannelsView.vue`，离开渠道页即停止刷新。
 - 领域服务共用 `apiRequest<T>`，由 HTTP 层注入 `x-api-key` 并统一处理响应。收到 401 时清除认证状态并抛出 `ApiError`，错误携带 status、details、code 和 committed 等信息。`committed` 表示配置已经提交，但后续处理失败；此时不自动重试，提示用户刷新并查看实际状态，处理逻辑见 `useChannelActions.ts`。
 - 需要鉴权的 SSE 通过 fetch 和 `utils/sse.ts` 中的 `readSSEStream` 读取，以便携带访问密钥。
 - Dashboard 与图表历史数据使用 `shallowRef` 保存只读快照，更新必须替换根对象。渠道配置继续保持深层响应式，并复用未变对象；分组监听仅覆盖成员与排序字段。波形由 `ChannelActivityChart` 接收稳定派生数组，图表只通过 series props 更新，不重复调用 `updateSeries`。
@@ -52,7 +53,7 @@
 ## 约定与坑
 
 1. **图标必须先注册**：vuetify.ts 中设置了 `autoImport: false`，使用新的 `mdi-*` 图标前，需要在 iconMap 中手动注册，否则 `check:icons` 会失败。
-2. **路由 transition 单根元素**：App.vue 用 `<transition mode="out-in">` 包 router-view，**视图根节点必须是单个真实 DOM 元素**，否则路由切换整块空白（ChannelsView.vue 头部有详细注释）。
+2. **路由视图单根元素**：**视图根节点必须是单个真实 DOM 元素**，否则给 router-view 加过渡或透传属性时会整块空白。
 3. 注释使用自然、完整的中文，解释状态由谁持有、错误如何处理，以及需要保持的交互约束。保留有效的设计背景和 store 分节风格，去掉失效计划与重复说明，避免过度压缩成术语短句。
 4. ESLint 9 flat config：`no-explicit-any: warn`、生产环境 `no-console: warn` / `no-debugger: error`、未用变量忽略 `^_` 前缀。
 5. UI 文案全中文（`index.html` lang="zh-CN"，标题"API Proxy · 管理面板"）。

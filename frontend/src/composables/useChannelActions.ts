@@ -1,12 +1,13 @@
-// useChannelActions 编排渠道业务操作，供 App.vue 调用（R5，方案 8.1）。
+// useChannelActions 编排渠道业务操作，供渠道页调用（R5，方案 8.1）。
 // 已保存的渠道数据由 channelStore 管理，修改也通过 store 提交。
 // committed 错误表示配置已提交，但后续处理失败；此处统一提示用户刷新
 // 并查看实际状态，不自动重试，避免重复提交（R3）。
 import { useChannelStore } from '@/stores/channel'
 import { useDialogStore } from '@/stores/dialog'
 import { ApiError, type ApiTab, type Channel } from '@/services/api'
+import type { ToastType } from './useToast'
 
-type ToastFn = (message: string, type: 'success' | 'error' | 'warning' | 'info') => void
+type ToastFn = (message: string, type: ToastType) => void
 
 export function useChannelActions(notify: ToastFn) {
   const channelStore = useChannelStore()

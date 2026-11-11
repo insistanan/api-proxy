@@ -20,7 +20,7 @@
                 临时 {{ formatDateTime(channel.temporaryUntil) }}
               </v-chip>
               <v-tooltip
-                v-if="supportsVisionCapability && channel.visionCapable"
+                v-if="channel.visionCapable"
                 text="支持图片理解"
                 location="top"
                 :open-delay="150"
@@ -87,7 +87,7 @@
                   </template>
                   <v-list-item-title>复制渠道</v-list-item-title>
                 </v-list-item>
-                <v-list-item v-if="supportsVisionCapability" @click="emit('vision', channel)">
+                <v-list-item @click="emit('vision', channel)">
                   <template #prepend>
                     <v-icon size="small" :color="channel.visionCapable ? 'success' : 'primary'">
                       {{ channel.visionCapable ? 'mdi-check-circle' : 'mdi-image-search-outline' }}
@@ -192,7 +192,6 @@ defineProps<{
   inactiveChannels: Channel[]
   deprecatedChannels: Channel[]
   channelType: ApiTab
-  supportsVisionCapability: boolean
 }>()
 
 const emit = defineEmits<{

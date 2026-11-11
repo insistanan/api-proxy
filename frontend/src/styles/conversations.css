@@ -28,7 +28,7 @@
 }
 
 .conversation-table :deep(table) {
-  min-width: 1480px;
+  min-width: 1240px;
   table-layout: fixed;
 }
 
@@ -182,7 +182,7 @@
 .error-pre {
   white-space: pre-wrap;
   word-break: break-all;
-  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   max-height: 120px;
   overflow-y: auto;
@@ -231,7 +231,7 @@
 .model-name {
   display: block;
   overflow: hidden;
-  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;

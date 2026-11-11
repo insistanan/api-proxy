@@ -1,7 +1,18 @@
 import { defineStore } from 'pinia'
 import { ref, shallowRef, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { api, ApiError, channelApiByType, type ApiTab, type Channel, type ChannelsResponse, type ChannelMetrics, type ChannelDashboardResponse } from '@/services/api'
+import { api, ApiError, API_TABS, channelApiByType, type ApiTab, type Channel, type ChannelsResponse, type ChannelMetrics, type ChannelDashboardResponse } from '@/services/api'
+
+// Dashboard 是只读响应快照，整体替换；不为大量统计段创建深层响应式代理。
+interface DashboardCache {
+  metrics: ChannelMetrics[]
+  recentActivity: ChannelDashboardResponse['recentActivity'] | undefined
+}
+
+const perTab = <T>(create: () => T) =>
+  Object.fromEntries(API_TABS.map(tab => [tab, create()])) as Record<ApiTab, T>
+const emptyChannels = (): ChannelsResponse => ({ channels: [], current: -1, loadBalance: 'failover' })
+const emptyDashboard = (): DashboardCache => ({ metrics: [], recentActivity: undefined })
 
 /**
  * 渠道数据管理 Store
@@ -15,85 +26,24 @@ import { api, ApiError, channelApiByType, type ApiTab, type Channel, type Channe
 export const useChannelStore = defineStore('channel', () => {
   // ===== 状态 =====
 
-  // 当前选中的 API 类型
-  const activeTab = ref<ApiTab>('messages')
-
-  // 路由同步：从路由读取当前类型
+  // 当前协议跟随路由参数；非法参数回落到 Messages。
   const router = useRouter()
-  const currentChannelType = computed(() => {
-    const route = router.currentRoute.value
-    const type = route.params.type as ApiTab
-    return (type === 'messages' || type === 'responses' || type === 'gemini' || type === 'chat' || type === 'images' || type === 'embeddings' || type === 'decisions') ? type : 'messages'
-  })
-
-  // 监听路由变化，同步 activeTab（确保兼容性）
-  watch(currentChannelType, (newType) => {
-    activeTab.value = newType
+  const activeTab = ref<ApiTab>('messages')
+  watch(() => router.currentRoute.value.params.type, type => {
+    activeTab.value = API_TABS.find(tab => tab === type) ?? 'messages'
   }, { immediate: true })
 
-  // 各 API 类型的渠道数据（收敛为 Record，替代五组独立 ref）
-  const channelsDataMap = ref<Record<ApiTab, ChannelsResponse>>({
-    messages: { channels: [], current: -1, loadBalance: 'failover' },
-    responses: { channels: [], current: -1, loadBalance: 'failover' },
-    gemini: { channels: [], current: -1, loadBalance: 'failover' },
-    chat: { channels: [], current: -1, loadBalance: 'failover' },
-    images: { channels: [], current: -1, loadBalance: 'failover' },
-    embeddings: { channels: [], current: -1, loadBalance: 'failover' },
-    decisions: { channels: [], current: -1, loadBalance: 'failover' }
-  })
-
-  // Dashboard 是只读响应快照，整体替换；不为大量统计段创建深层响应式代理。
-  interface DashboardCache {
-    metrics: ChannelMetrics[]
-    stats: ChannelDashboardResponse['stats'] | undefined
-    recentActivity: ChannelDashboardResponse['recentActivity'] | undefined
-  }
-
-  const dashboardCache = shallowRef<Record<ApiTab, DashboardCache>>({
-    messages: {
-      metrics: [],
-      stats: undefined,
-      recentActivity: undefined
-    },
-    responses: {
-      metrics: [],
-      stats: undefined,
-      recentActivity: undefined
-    },
-    gemini: {
-      metrics: [],
-      stats: undefined,
-      recentActivity: undefined
-    },
-    chat: {
-      metrics: [],
-      stats: undefined,
-      recentActivity: undefined
-    },
-    images: {
-      metrics: [],
-      stats: undefined,
-      recentActivity: undefined
-    },
-    embeddings: {
-      metrics: [],
-      stats: undefined,
-      recentActivity: undefined
-    },
-    decisions: {
-      metrics: [],
-      stats: undefined,
-      recentActivity: undefined
-    }
-  })
+  // 各协议的渠道配置与 Dashboard 快照分别缓存，切换协议时不闪烁。
+  const channelsDataMap = ref(perTab(emptyChannels))
+  const dashboardCache = shallowRef(perTab(emptyDashboard))
 
   // 批量延迟测试加载状态
   const isPingingAll = ref(false)
   const isSavingChannel = ref(false)
   const isDeletingChannel = ref(false)
 
-  // 最后一次刷新状态（用于 systemStatus 更新）
-  const lastRefreshSuccess = ref(true)
+  // 最近一次刷新是否成功；null 表示尚未完成首次刷新。
+  const lastRefreshSuccess = ref<boolean | null>(null)
 
   // 自动刷新定时器（串行 setTimeout，避免重入）
   let autoRefreshTimer: ReturnType<typeof setTimeout> | null = null
@@ -114,21 +64,16 @@ export const useChannelStore = defineStore('channel', () => {
 
   // 根据当前 Tab 返回对应的 Dashboard 数据（独立缓存，避免切换闪烁）
   const currentDashboardMetrics = computed(() => dashboardCache.value[activeTab.value].metrics)
-  const currentDashboardStats = computed(() => dashboardCache.value[activeTab.value].stats)
   const currentDashboardRecentActivity = computed(() => dashboardCache.value[activeTab.value].recentActivity)
 
   // 活跃渠道数（仅 active 状态）
   const activeChannelCount = computed(() => {
-    const data = currentChannelsData.value
-    if (!data.channels) return 0
-    return data.channels.filter(ch => !ch.excludeFromConversation && (ch.status === 'active' || ch.status === undefined || ch.status === '')).length
+    return currentChannelsData.value.channels.filter(ch => !ch.excludeFromConversation && (ch.status === 'active' || ch.status === undefined || ch.status === '')).length
   })
 
   // 参与故障转移的渠道数（active + suspended）
   const failoverChannelCount = computed(() => {
-    const data = currentChannelsData.value
-    if (!data.channels) return 0
-    return data.channels.filter(ch => !ch.excludeFromConversation && ch.status !== 'disabled' && ch.status !== 'deprecated' && ch.status !== 'deleted').length
+    return currentChannelsData.value.channels.filter(ch => !ch.excludeFromConversation && ch.status !== 'disabled' && ch.status !== 'deprecated' && ch.status !== 'deleted').length
   })
 
   // ===== 辅助方法 =====
@@ -185,11 +130,7 @@ export const useChannelStore = defineStore('channel', () => {
         // shallowRef 必须替换根对象；其余协议继续复用各自快照。
         dashboardCache.value = {
           ...dashboardCache.value,
-          [tab]: {
-            metrics: dashboard.metrics,
-            stats: dashboard.stats,
-            recentActivity: dashboard.recentActivity
-          }
+          [tab]: { metrics: dashboard.metrics, recentActivity: dashboard.recentActivity }
         }
 
         lastRefreshSuccess.value = true
@@ -307,16 +248,6 @@ export const useChannelStore = defineStore('channel', () => {
   }
 
   /**
-   * 更新负载均衡策略
-   */
-  async function updateLoadBalance(strategy: string) {
-    const tab = activeTab.value
-    await tabApi(tab).updateLoadBalance(strategy)
-    channelsDataMap.value[tab].loadBalance = strategy
-    return { success: true, message: `负载均衡策略已更新为: ${strategy}` }
-  }
-
-  /**
    * 启动自动刷新定时器
    */
   function startAutoRefresh() {
@@ -358,36 +289,10 @@ export const useChannelStore = defineStore('channel', () => {
    * 清空所有渠道数据（用于注销）
    */
   function clearChannels() {
-    const empty: ChannelsResponse = { channels: [], current: -1, loadBalance: 'failover' }
-    channelsDataMap.value = {
-      messages: { ...empty },
-      responses: { ...empty },
-      gemini: { ...empty },
-      chat: { ...empty },
-      images: { ...empty },
-      embeddings: { ...empty },
-      decisions: { ...empty }
-    }
-
-    // 清空所有 tab 的独立缓存
-    dashboardCache.value = {
-      messages: { metrics: [], stats: undefined, recentActivity: undefined },
-      responses: { metrics: [], stats: undefined, recentActivity: undefined },
-      gemini: { metrics: [], stats: undefined, recentActivity: undefined },
-      chat: { metrics: [], stats: undefined, recentActivity: undefined },
-      images: { metrics: [], stats: undefined, recentActivity: undefined },
-      embeddings: { metrics: [], stats: undefined, recentActivity: undefined },
-      decisions: { metrics: [], stats: undefined, recentActivity: undefined }
-    }
-
-    // 重置状态标志，避免注销后状态残留
-    lastRefreshSuccess.value = true
+    channelsDataMap.value = perTab(emptyChannels)
+    dashboardCache.value = perTab(emptyDashboard)
+    lastRefreshSuccess.value = null
     isPingingAll.value = false
-  }
-
-  // 获取特定类型的渠道列表
-  function getChannelsByType(type: ApiTab): Channel[] {
-    return channelsDataMap.value[type].channels || []
   }
 
   // ===== 返回公开接口 =====
@@ -403,7 +308,6 @@ export const useChannelStore = defineStore('channel', () => {
     // 计算属性
     currentChannelsData,
     currentDashboardMetrics,
-    currentDashboardStats,
     currentDashboardRecentActivity,
     activeChannelCount,
     failoverChannelCount,
@@ -414,9 +318,7 @@ export const useChannelStore = defineStore('channel', () => {
     deleteChannel,
     pingChannel,
     pingAllChannels,
-    updateLoadBalance,
     startAutoRefresh,
-    getChannelsByType,
     stopAutoRefresh,
     clearChannels,
   }

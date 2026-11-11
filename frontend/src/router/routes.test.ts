@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import router from './index'
 import { usePreferencesStore } from '@/stores/preferences'
-import ChannelQuickMenu from '@/components/ChannelQuickMenu.vue'
+import { channelMenuActions } from '@/components/ChannelQuickMenu.vue'
 
 vi.mock('vue-router', () => ({
   createWebHistory: () => ({}),
@@ -18,10 +18,9 @@ describe('评测功能移除后的入口契约', () => {
     expect(routes.map(route => route.path)).toEqual(expect.arrayContaining(['/channels/:type', '/settings', '/pi-agent', '/opencode', '/skills', '/mcp']))
   })
 
-  it('渠道菜单移除评测事件，保留快捷测试、促销和延迟检查', () => {
-    const events = (ChannelQuickMenu as unknown as { emits: string[] }).emits
-    expect(events).not.toContain('eval')
-    expect(events).toEqual(expect.arrayContaining(['quickTest', 'promotion', 'ping', 'edit']))
+  it('渠道菜单移除评测动作，保留快捷测试、促销和延迟检查', () => {
+    expect(channelMenuActions).not.toContain('eval')
+    expect(channelMenuActions).toEqual(expect.arrayContaining(['quickTest', 'promotion', 'ping', 'edit']))
   })
 
   it('偏好设置不再保存评测选择，主题和伪装设置可继续修改', () => {

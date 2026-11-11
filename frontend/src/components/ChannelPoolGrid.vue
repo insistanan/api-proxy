@@ -5,12 +5,13 @@
         <v-icon size="20" color="primary">mdi-swap-horizontal</v-icon>
         <div class="text-subtitle-2 font-weight-bold">渠道分组</div>
         <v-chip size="x-small" color="primary" variant="tonal">{{ pools.length }}</v-chip>
+        <slot name="heading"></slot>
       </div>
+      <p class="pool-guide">按模型名称匹配分组，组内顺序即故障转移优先级；拖动手柄可调整顺序或移入其他已展开的分组。</p>
       <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-plus" @click="openCreateDialog">
         新建分组
       </v-btn>
     </header>
-    <p class="pool-guide">按模型名称匹配分组，组内顺序决定故障转移优先级。拖动手柄可调整顺序或移入其他已展开的分组。</p>
 
     <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-3" />
     <div v-else class="pool-grid">
@@ -255,9 +256,8 @@ watch([pools, () => props.channels.map(channel => [
   channel.status, channel.excludeFromConversation, channel.priority
 ])], syncPoolViews, { immediate: true })
 
-const conversationPools = computed(() => poolViews.value)
 const poolColumns = computed(() => {
-  const orderedPools = conversationPools.value.map((pool, order) => ({ pool, order }))
+  const orderedPools = poolViews.value.map((pool, order) => ({ pool, order }))
   return [
     orderedPools.filter(({ order }) => order % 2 === 0),
     orderedPools.filter(({ order }) => order % 2 === 1)
@@ -389,8 +389,8 @@ const deletePool = async () => {
 </script>
 
 <style scoped>
-.pool-section { padding-top: 12px; container-type: inline-size; container-name: channel-pools; }
-.pool-guide { margin: 0 0 16px; color: rgb(var(--v-theme-on-surface-variant)); font-size: 0.8125rem; line-height: 1.6; }
+.pool-section { container-type: inline-size; container-name: channel-pools; }
+.pool-guide { flex: 1 1 320px; min-width: 0; margin: 0; color: rgb(var(--v-theme-on-surface-variant)); font-size: 0.8125rem; line-height: 1.6; }
 .pool-card-toggle { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; min-height: 36px; text-align: start; }
 .section-header, .vision-pool-header {
   display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px;
@@ -402,13 +402,7 @@ const deletePool = async () => {
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
-.section-header {
-  position: relative;
-  min-height: 54px;
-  padding-top: 0;
-  border-top: none;
-}
-.section-header::before { display: none; }
+.section-header { flex-wrap: wrap; }
 .pool-grid {
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; align-items: start;
 }
@@ -444,7 +438,7 @@ const deletePool = async () => {
 .pool-rule {
   display: block;
   margin-top: 3px; font-size: 12px;
-  font-family: 'Fira Code', 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   color: rgb(var(--v-theme-on-surface-variant));
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -476,7 +470,7 @@ const deletePool = async () => {
   background: rgb(var(--v-theme-primary));
   color: rgb(var(--v-theme-on-primary));
   font-size: 11px; font-weight: 800;
-  font-family: 'Fira Code', 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   border: none;
   border-radius: 6px;
 }

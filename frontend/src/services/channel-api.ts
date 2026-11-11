@@ -15,14 +15,8 @@ import type {
 } from '@/types'
 
 /** 渠道 API 类型，对应后端 scheduler.ChannelKind 与管理路由前缀。 */
-export type ApiTab =
-  | 'messages'
-  | 'responses'
-  | 'gemini'
-  | 'chat'
-  | 'images'
-  | 'embeddings'
-  | 'decisions'
+export const API_TABS = ['messages', 'responses', 'gemini', 'chat', 'images', 'embeddings', 'decisions'] as const
+export type ApiTab = (typeof API_TABS)[number]
 
 /**
  * 定义各组渠道共用的操作方法和返回类型。

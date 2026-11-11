@@ -479,14 +479,15 @@ import CommandSafetyHistory from '@/components/CommandSafetyHistory.vue'
 import { api, type ConversationEntry, type ConversationKind, type ConversationRouteOptionChannel } from '@/services/api'
 
 const headers = [
-  { title: '对话', key: 'identity', sortable: false, width: 190 },
-  { title: '提示词摘要', key: 'prompt', sortable: false, width: 300 },
-  { title: '协议 / 模型', key: 'protocol', sortable: false, width: 220 },
-  { title: '活动状态', key: 'activity', sortable: false, width: 130 },
-  { title: '请求统计', key: 'requests', sortable: false, width: 100 },
-  { title: '渠道路由', key: 'routing', sortable: false, width: 210 },
-  { title: '创建 / 活动时间', key: 'timestamps', sortable: false, width: 170 },
-  { title: '操作', key: 'actions', sortable: false, width: 160 }
+  { title: '对话', key: 'identity', sortable: false, width: 180 },
+  // 提示词摘要不设宽度，占用其余列分配后的剩余空间。
+  { title: '提示词摘要', key: 'prompt', sortable: false },
+  { title: '协议 / 模型', key: 'protocol', sortable: false, width: 190 },
+  { title: '活动状态', key: 'activity', sortable: false, width: 120 },
+  { title: '请求统计', key: 'requests', sortable: false, width: 96 },
+  { title: '渠道路由', key: 'routing', sortable: false, width: 200 },
+  { title: '创建 / 活动时间', key: 'timestamps', sortable: false, width: 150 },
+  { title: '操作', key: 'actions', sortable: false, width: 150 }
 ]
 
 const kindItems: ConversationKind[] = ['messages', 'responses', 'gemini', 'chat', 'images', 'embeddings', 'decisions']

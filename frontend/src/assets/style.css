@@ -9,11 +9,6 @@
   --cut-md: 10px;
   --cut-xs: 10px;
 
-  /* ---- 结构令牌 ---- */
-  --rail: 2px;          /* 模块色轨宽度 */
-  --rail-strong: 2px;   /* 强调色轨（渠道卡左侧） */
-  --tick: 6px;          /* 刻度间距 */
-
   /* ---- 缓动 ---- */
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-spring: cubic-bezier(0.34, 1.4, 0.5, 1);
@@ -23,15 +18,13 @@
   --shadow-1: 0 1px 2px rgba(18, 22, 31, 0.05), 0 2px 8px rgba(18, 22, 31, 0.045);
   --shadow-2: 0 2px 5px rgba(18, 22, 31, 0.07), 0 12px 28px rgba(18, 22, 31, 0.09);
   --shadow-lift: 0 4px 10px rgba(18, 22, 31, 0.08), 0 18px 40px rgba(18, 22, 31, 0.11);
-  --inset-hi: inset 0 1px 0 rgba(255, 255, 255, 0.7);
 }
 
 .v-theme--dark {
-  /* 暗色：影子承担纵深，内高光勾出模块上沿 */
+  /* 暗色：影子承担纵深 */
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 3px 12px rgba(0, 0, 0, 0.3);
   --shadow-2: 0 3px 8px rgba(0, 0, 0, 0.45), 0 14px 34px rgba(0, 0, 0, 0.38);
   --shadow-lift: 0 6px 14px rgba(0, 0, 0, 0.5), 0 22px 50px rgba(0, 0, 0, 0.45);
-  --inset-hi: inset 0 1px 0 rgba(255, 255, 255, 0.055);
 }
 
 html {
@@ -40,39 +33,6 @@ html {
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
   scroll-behavior: smooth;
-}
-
-/* 过渡动画 */
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.25s var(--ease-io);
-}
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
-
-.slide-up-enter-active,
-.slide-up-leave-active {
-  transition: all 0.3s var(--ease-io);
-}
-.slide-up-enter-from {
-  opacity: 0;
-  transform: translateY(16px);
-}
-.slide-up-leave-to {
-  opacity: 0;
-  transform: translateY(-8px);
-}
-
-.scale-enter-active,
-.scale-leave-active {
-  transition: all 0.2s var(--ease-io);
-}
-.scale-enter-from,
-.scale-leave-to {
-  opacity: 0;
-  transform: scale(0.95);
 }
 
 /* 滚动条 — 细轨，hover 时才显形 */
@@ -134,7 +94,7 @@ html {
 }
 .meta-block-value {
   overflow: hidden;
-  font-family: 'Fira Code', 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;

@@ -1,63 +1,34 @@
 import { ref } from 'vue'
 
+export type ToastType = 'success' | 'error' | 'warning' | 'info'
+
 interface Toast {
   id: number
   message: string
-  type: 'success' | 'error' | 'warning' | 'info'
-  show?: boolean
+  type: ToastType
+  show: boolean
 }
 
+export const toastIcons: Record<ToastType, string> = {
+  success: 'mdi-check-circle',
+  error: 'mdi-alert-circle',
+  warning: 'mdi-alert',
+  info: 'mdi-information'
+}
+
+const TOAST_DURATION_MS = 3000
 const toasts = ref<Toast[]>([])
 let toastId = 0
 
-/**
- * Toast 消息管理 composable
- * 全局单例，供 App.vue 和 Store 使用
- */
+/** 全局单例消息队列：App.vue 负责渲染，任意页面和 composable 都可以推送。 */
 export function useToast() {
-  const getToastColor = (type: string) => {
-    const colorMap: Record<string, string> = {
-      success: 'success',
-      error: 'error',
-      warning: 'warning',
-      info: 'info',
-    }
-    return colorMap[type] || 'info'
-  }
-
-  const getToastIcon = (type: string) => {
-    const iconMap: Record<string, string> = {
-      success: 'mdi-check-circle',
-      error: 'mdi-alert-circle',
-      warning: 'mdi-alert',
-      info: 'mdi-information',
-    }
-    return iconMap[type] || 'mdi-information'
-  }
-
-  const showToast = (message: string, type: 'success' | 'error' | 'warning' | 'info' = 'info') => {
-    const toast: Toast = { id: ++toastId, message, type, show: true }
-    toasts.value.push(toast)
+  const showToast = (message: string, type: ToastType = 'info') => {
+    const id = ++toastId
+    toasts.value.push({ id, message, type, show: true })
     setTimeout(() => {
-      const index = toasts.value.findIndex(t => t.id === toast.id)
-      if (index > -1) toasts.value.splice(index, 1)
-    }, 3000)
+      toasts.value = toasts.value.filter(toast => toast.id !== id)
+    }, TOAST_DURATION_MS)
   }
 
-  const showErrorToast = (message: string) => {
-    showToast(message, 'error')
-  }
-
-  const showSuccessToast = (message: string) => {
-    showToast(message, 'info')
-  }
-
-  return {
-    toasts,
-    getToastColor,
-    getToastIcon,
-    showToast,
-    showErrorToast,
-    showSuccessToast,
-  }
+  return { toasts, showToast, TOAST_DURATION_MS }
 }
