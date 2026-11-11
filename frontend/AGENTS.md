@@ -10,7 +10,7 @@
 - HTTP 使用原生 fetch，统一封装在 `src/services/http.ts` 的 `apiRequest<T>` 中；`api.ts` 保留原有导入入口。
 - 图表 apexcharts + vue3-apexcharts；拖拽 vuedraggable；测试 Vitest
 - 依赖可通过 Bun 或 npm 安装。发布 workflow 使用 `bun.lock`，Docker 构建使用 `package-lock.json`，修改依赖后需要核对两份锁文件。
-- Node 24.16.0 与 Bun 1.4.4 分别由根 `.node-version`、`.bun-version` 固定。Wails 桌面版加载同进程 HTTP 页面，复用现有 fetch、鉴权、SSE 和 localStorage；外链由桌面入口交给系统浏览器，无独立前端副本。
+- Node 24.16.0 与 Bun 1.4.4 分别由根 `.node-version`、`.bun-version` 固定。
 
 ## 目录结构（src/）
 

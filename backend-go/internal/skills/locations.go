@@ -9,24 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync/atomic"
 )
-
-var boundProjectDirectory atomic.Pointer[string]
-
-// BindProjectDirectory 在桌面入口启动前绑定项目目录，避免更改工作目录影响其他文件路径。
-// 服务版不调用此方法，继续按原工作目录定位项目 Skills。
-func BindProjectDirectory(directory string) error {
-	if strings.TrimSpace(directory) == "" {
-		return errors.New("项目目录不能为空")
-	}
-	absolute, err := filepath.Abs(directory)
-	if err != nil {
-		return fmt.Errorf("解析项目目录失败: %w", err)
-	}
-	boundProjectDirectory.Store(&absolute)
-	return nil
-}
 
 // Locations 枚举当前运行用户的已知 Agent Skill 目录，避免把任意路径暴露为文件浏览器。
 // openCodeSkillsDir 由调用方传入：OpenCode 配置路径的多级回退规则归 handlers 的 OpenCode
@@ -140,9 +123,6 @@ func discoverClaudePluginLocations(claudeHome string) ([]Location, error) {
 }
 
 func projectRoot() (string, error) {
-	if directory := boundProjectDirectory.Load(); directory != nil {
-		return filepath.Join(*directory, "skills"), nil
-	}
 	workingDir, err := os.Getwd()
 	if err != nil {
 		return "", err

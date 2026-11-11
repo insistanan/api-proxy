@@ -6,9 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -68,11 +71,6 @@ type app struct {
 // 初始化中途失败时按逆序清理已创建资源（方案 R4-b 第 6 步），
 // 不把半初始化的资源泄漏给操作系统回收。
 func newApp() (_ *app, err error) {
-	return newAppWithPaths(appPaths{})
-}
-
-// newAppWithPaths 只改变装配时的文件位置，不改变配置格式和资源释放责任。
-func newAppWithPaths(paths appPaths) (_ *app, err error) {
 	a := &app{}
 	defer func() {
 		if err != nil {
@@ -84,7 +82,7 @@ func newAppWithPaths(paths appPaths) (_ *app, err error) {
 	a.envCfg = config.NewEnvConfig()
 
 	// 先加载并迁移设置，日志路径和指标保留期必须在存储初始化前确定。
-	a.cfgManager, err = config.NewConfigManager(paths.resolve(".config/config.json"))
+	a.cfgManager, err = config.NewConfigManager(".config/config.json")
 	if err != nil {
 		return nil, fmt.Errorf("初始化配置管理器失败: %w", err)
 	}
@@ -92,7 +90,7 @@ func newAppWithPaths(paths appPaths) (_ *app, err error) {
 
 	// 初始化日志系统；清理仍按配置生产者 → 日志存储的顺序执行。
 	a.logStore, err = logger.Setup(&logger.Config{
-		DBPath:  paths.resolve(a.envCfg.LogDBPath),
+		DBPath:  a.envCfg.LogDBPath,
 		Console: a.envCfg.LogToConsole,
 	})
 	if err != nil {
@@ -103,7 +101,7 @@ func newAppWithPaths(paths appPaths) (_ *app, err error) {
 
 	a.registerCleanup("配置管理器", a.cfgManager.Close)
 
-	a.blockedStore, err = sensitive.NewBlockedStore(paths.resolve(".config/blocked-logs.db"))
+	a.blockedStore, err = sensitive.NewBlockedStore(".config/blocked-logs.db")
 	if err != nil {
 		return nil, fmt.Errorf("初始化内容安全拦截记录存储失败: %w", err)
 	}
@@ -112,7 +110,7 @@ func newAppWithPaths(paths appPaths) (_ *app, err error) {
 
 	// 初始化会话管理器（Responses API 专用），与对话记录共用持久化数据库。
 	a.sessionManager, err = session.NewPersistentSessionManager(
-		paths.resolve(".config/conversations.db"),
+		".config/conversations.db",
 		7*24*time.Hour, // 与对话记录一致，保留 7 天
 		0,              // 不按消息数删除整段会话
 		0,              // 不按 Token 数删除整段会话
@@ -125,7 +123,7 @@ func newAppWithPaths(paths appPaths) (_ *app, err error) {
 	log.Printf("[Session-Init] 持久化会话管理器已初始化 (保留: 7天, 上限: 5000)")
 
 	// 对话存储先于调度组件创建，关闭时必须等依赖它的生产者退出。
-	a.conversationRegistry, err = conversation.NewPersistentRegistry(paths.resolve(".config/conversations.db"))
+	a.conversationRegistry, err = conversation.NewPersistentRegistry(".config/conversations.db")
 	if err != nil {
 		return nil, fmt.Errorf("初始化对话持久化存储失败: %w", err)
 	}
@@ -134,7 +132,7 @@ func newAppWithPaths(paths appPaths) (_ *app, err error) {
 	// 初始化指标持久化存储（可选）
 	if a.envCfg.MetricsPersistenceEnabled {
 		a.metricsStore, err = metrics.NewSQLiteStore(&metrics.SQLiteStoreConfig{
-			DBPath:        paths.resolve(".config/metrics.db"),
+			DBPath:        ".config/metrics.db",
 			RetentionDays: a.envCfg.MetricsRetentionDays,
 			RetentionDaysProvider: func() int {
 				return a.cfgManager.GetGatewaySettings().MetricsRetentionDays
@@ -234,7 +232,7 @@ func newAppWithPaths(paths appPaths) (_ *app, err error) {
 
 	// 危险命令 AI 闸门：存储与拦截记录同库；遗留的 waiting 记录一律按拦截处理
 	// （重启后内存等待者已不存在）。llmgate.Caller 供闸门与 AI 助手共用。
-	a.gateStore, err = sensitive.NewGateStore(paths.resolve(".config/blocked-logs.db"))
+	a.gateStore, err = sensitive.NewGateStore(".config/blocked-logs.db")
 	if err != nil {
 		return nil, fmt.Errorf("初始化危险命令 AI 闸门存储失败: %w", err)
 	}
@@ -258,7 +256,7 @@ func newAppWithPaths(paths appPaths) (_ *app, err error) {
 	// 持久映射库在启动时初始化，以便运行中切换脱敏模式（Veil ADR 0004）。
 	// 只有 mask 模式会向请求注入映射库：占位符密钥从主密钥派生，
 	// 映射以 AES-256-GCM 加密保存。block 模式不写入脱敏映射，拦截记录仍正常保存。
-	a.mappingStore, err = sensitive.NewMappingStore(paths.resolve(".config/redaction-mappings.db"), paths.resolve(".config/master-key"))
+	a.mappingStore, err = sensitive.NewMappingStore(".config/redaction-mappings.db", ".config/master-key")
 	if err != nil {
 		return nil, fmt.Errorf("初始化可逆脱敏持久映射库失败: %w", err)
 	}
@@ -296,7 +294,7 @@ func newAppWithPaths(paths appPaths) (_ *app, err error) {
 	a.skillsAPI = handlers.NewSkillsAPI()
 
 	// AI 配置助手（复用闸门的 llmgate.Caller：渠道优先级 messages → responses → chat → gemini）
-	assistantStore, err := assistant.NewStore(paths.resolve(".config/assistant.db"))
+	assistantStore, err := assistant.NewStore(".config/assistant.db")
 	if err != nil {
 		return nil, fmt.Errorf("初始化 AI 配置助手存储失败: %w", err)
 	}
@@ -424,8 +422,29 @@ func main() {
 	// 设置版本信息到 handlers 包
 	handlers.SetVersionInfo(Version, BuildTime, GitCommit)
 
-	if err := launchApplication(); err != nil {
+	if err := runServer(); err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
+}
+
+// runServer 保证监听失败、收到信号和正常退出都先回收资源，再由 main 决定退出码。
+func runServer() (err error) {
+	application, err := newApp()
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, application.shutdown()) }()
+
+	addr := fmt.Sprintf(":%d", application.envCfg.Port)
+	application.logStartupInfo()
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           application.engine,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	return serveUntilStopped(ctx, srv, 10*time.Second)
 }

@@ -51,8 +51,6 @@ make dev     # start Vite frontend and Air backend hot reload
 make check   # full local gate before committing
 ```
 
-For the Wails desktop build, run `npm run build:desktop` with Wails CLI v3.1.0 and the platform's native dependencies installed. Artifacts are placed in `dist/desktop/` for Windows, macOS, and Linux (amd64/arm64). By default, configuration and databases are stored in `.config/` beside the executable (beside the `.app` bundle on macOS); use `--data-dir` to override the data root. Platform requirements, checks, data directories, and distribution limits are in the [development guide](docs/开发说明.md#wails-桌面构建) (Chinese).
-
 ## Endpoints
 
 | Endpoint | Purpose |

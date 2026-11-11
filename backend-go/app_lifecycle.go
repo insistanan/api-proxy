@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -114,26 +113,8 @@ func (a *app) shutdown() error {
 	return a.shutdownErr
 }
 
-func (a *app) newHTTPServer(addr string) *http.Server {
-	return &http.Server{
-		Addr:              addr,
-		Handler:           a.engine,
-		ReadHeaderTimeout: 10 * time.Second,
-		IdleTimeout:       120 * time.Second,
-	}
-}
-
-// serveUntilStopped 保留服务版入口；桌面版先绑定 listener，成功后才显示管理页面。
+// serveUntilStopped 由调用方等待信号和监听结果；监听失败也会返回装配层释放资源。
 func serveUntilStopped(ctx context.Context, srv *http.Server, shutdownTimeout time.Duration) error {
-	listener, err := net.Listen("tcp", srv.Addr)
-	if err != nil {
-		return fmt.Errorf("服务器监听失败: %w", err)
-	}
-	return serveListenerUntilStopped(ctx, srv, listener, shutdownTimeout)
-}
-
-// serveListenerUntilStopped 拥有 listener，返回前等待请求退出，调用方随后关闭应用资源。
-func serveListenerUntilStopped(ctx context.Context, srv *http.Server, listener net.Listener, shutdownTimeout time.Duration) error {
 	// Shutdown 超时后 Close 只取消连接，不等待 handler；存储仍须等请求实际退出再关闭。
 	handler := srv.Handler
 	if handler == nil {
@@ -161,15 +142,13 @@ func serveListenerUntilStopped(ctx context.Context, srv *http.Server, listener n
 		requests.Wait()
 	}()
 	listenResult := make(chan error, 1)
-	go func() { listenResult <- srv.Serve(listener) }()
+	go func() { listenResult <- srv.ListenAndServe() }()
 	select {
 	case err := <-listenResult:
-		// Serve 异常返回仍可能留下活跃连接，先取消连接再等 handler，避免清理永久等待。
-		closeErr := srv.Close()
 		if errors.Is(err, http.ErrServerClosed) {
-			return closeErr
+			return nil
 		}
-		return errors.Join(fmt.Errorf("服务器监听失败: %w", err), closeErr)
+		return fmt.Errorf("服务器监听失败: %w", err)
 	case <-ctx.Done():
 	}
 

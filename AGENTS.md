@@ -9,7 +9,7 @@
 - 内容安全：敏感数据检测、可逆脱敏、危险命令 AI 闸门
 - Go 后端 + Vue 3 前端，前端产物 `go:embed` 嵌入，单二进制单端口（默认 3000）一体化部署
 
-单 Go module：`github.com/insistanan/api-proxy`（Go 1.26，工具链 1.26.10），无 go workspace。Wails v3.1.0 桌面入口通过 `desktop` 标签选择，复用同进程代理与管理页面。
+单 Go module：`github.com/insistanan/api-proxy`（Go 1.26，工具链 1.26.10），无 go workspace。
 
 ## 仓库结构
 
@@ -42,8 +42,6 @@
 |---|---|
 | `make dev` | 启动前端 Vite 与后端 Air 热重载 |
 | `make build` | 前端构建 → copy-frontend → Go 单二进制，产物 `dist/api-proxy-go` |
-| `npm run build:desktop` / `make build-desktop` | 当前平台 Wails 桌面构建，产物 `dist/desktop/` |
-| `npm run check:desktop` / `make check-desktop` | 当前宿主平台桌面标签 vet/test，需安装原生依赖 |
 | `make check` | 全量门禁；等价写法 `npm run check`（无需安装 make/bun） |
 | `make run` | 构建并嵌入前端，然后运行 Go 源码 |
 
@@ -54,5 +52,5 @@
 1. **本地门禁**：提交前 `npm run check`（或 `make check`）必须全绿——行尾 / 嵌套 dist / gofmt / go vet / go test / 前端 type-check / 图标扫描 / Vitest / ESLint `--max-warnings 0`。仓库没有分支 push 或 PR 触发的检查 CI，门禁依赖本地执行。
 2. **行尾策略**：Windows 工作区 CRLF，Go/shell/`.githooks`/`scripts/*.mjs` 例外强制 LF，由 `.gitattributes` + pre-commit 钩子 + `scripts/eol.mjs` 三层保障，不要手动绕过。
 3. **前端产物链路**：`frontend/dist` → `scripts/copy-frontend.mjs` → `backend-go/frontend/dist` → `go:embed`。产物统一由复制脚本处理，不要手工复制 dist。历史上错误的相对路径曾产生嵌套目录并导致构建事故，`.gitignore` 和门禁保留了对应的防御检查。
-4. **发布流程**：`version-bump` 项目技能升版本并提交 → push tag `v*` → 服务版三个 workflow 与 `release-desktop.yml` 产出三平台 × 两架构的 draft release 资产 → `github-release` 项目技能从 CHANGELOG 生成发布公告。桌面 workflow 还支持手动构建。
+4. **发布流程**：`version-bump` 项目技能升版本并提交 → push tag `v*` → 三平台（linux/macos/windows × amd64/arm64）release workflow 产出 draft release → `github-release` 项目技能从 CHANGELOG 生成发布公告。
 5. **敏感信息**：`.config/`（运行时数据）、`.ccb_config/` 等目录含密钥，绝不能提交或写入文档。

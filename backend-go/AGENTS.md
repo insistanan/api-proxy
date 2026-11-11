@@ -4,7 +4,7 @@
 
 ## 技术栈
 
-- Go 1.26（工具链 1.26.10，`go.mod`），module `github.com/insistanan/api-proxy`；服务版 `CGO_ENABLED=0`，Wails v3.1.0 桌面版在 macOS/Linux 使用 CGO
+- Go 1.26（工具链 1.26.10，`go.mod`），module `github.com/insistanan/api-proxy`，`CGO_ENABLED=0` 纯静态构建
 - Web 框架：Gin（版本见 `go.mod`）；业务 SSE 解析与转发在 `utils/sse.go`、`handlers/streams` 和 `providers`，无 WebSocket 功能
 - 数据库：modernc.org/sqlite（纯 Go SQLite），`database/sql` 原生 SQL；各存储自行建表与升级列，无 ORM 或外部 migration 框架
 - 其他直接依赖：tidwall/gjson + sjson（JSON 操作）、fsnotify（配置热重载）、godotenv、go-toml、klauspost/compress + andybalholm/brotli（响应解压）、stretchr/testify（测试）
@@ -15,10 +15,7 @@
 
 | 文件 | 职责 |
 |---|---|
-| `main.go` | 定义 `app`，通过 `newAppWithPaths()` 按依赖顺序创建组件；资源创建成功后登记释放动作 |
-| `launch_server.go` | `!desktop` 服务入口，监听与退出信号 |
-| `launch_desktop.go` / `desktop_lifecycle.go` | `desktop` 入口，Wails 窗口/托盘/单实例、网关启动与退出协调 |
-| `app_paths.go` | 数据路径解析；空根目录保持服务版相对路径语义 |
+| `main.go` | 定义 `app`，通过 `newApp()` 按依赖顺序创建组件，并处理监听与退出信号；资源创建成功后登记释放动作 |
 | `app_routes.go` | 路由装配（`/api` 管理组 + 五协议代理端点） |
 | `app_lifecycle.go` | 启动横幅、脱敏模式热跟随、逆序 shutdown |
 | `version.go` | `Version`/`BuildTime`/`GitCommit`（由 ldflags 注入） |
@@ -54,8 +51,6 @@
 
 在本目录执行 `make build` 前，需要先构建 `frontend/dist`。本目录的构建命令通过 `../scripts/copy-frontend.mjs` 复制已有产物，不会重新构建前端；需要一次完成前后端构建时，使用根目录的 `make build`。
 
-桌面版从根目录执行 `npm run build:desktop` 或 `npm run check:desktop`。构建脚本在临时源码副本生成 Windows `.syso`，不将 GUI 资源放入服务版源码目录；只在对应平台使用原生依赖构建 macOS/Linux。详细平台要求见 [开发说明](../docs/开发说明.md)。
-
 ## 配置
 
 启动配置通过环境变量或 `.env` 读取，包括 `PORT`（默认 3000）、`ENV`（默认 production）、`PROXY_ACCESS_KEY`、`ENABLE_WEB_UI`（默认 true）、`LOG_LEVEL`（默认 info）和 `LOG_TO_CONSOLE`（默认 false）。程序先加载可执行文件所在目录的 `.env`，再加载工作目录中的文件，不覆盖已有环境变量。这些启动配置修改后需要重启。
@@ -63,8 +58,6 @@
 请求与响应日志、超时、请求体限制、指标保留期、CORS、日志路径和指标持久化开关保存在 `settings.gateway` 中。升级时只为缺失字段迁移旧环境变量值，之后以持久化设置为准。修改日志路径或指标持久化开关需要重启，其余策略支持热更新。客户端伪装版本由 `settings.disguise` 管理，配置发布后立即应用本地版本，npm 查询在后台独立执行。
 
 `config.json` 保存五组渠道配置和 settings。`internal/config/config_loader.go` 使用 fsnotify 监听变化，以 100ms 防抖和 SHA-256 摘要比较减少重复加载。写入通过 `internal/atomicfile` 原子完成，热重载只发布完整候选快照。
-
-桌面版默认把相对数据路径解析到可执行文件所在目录；macOS `.app` 使用应用包的父目录，不依赖进程工作目录。保留 `.config/*` 文件结构，Windows WebView 缓存保存在 `.config/webview`；`--data-dir` 指定数据根目录，`--project-dir` 单独指定项目 Skills 的父目录，默认使用数据根目录（其下 `skills/`）。桌面 HTTP 仅监听 `127.0.0.1:PORT`，端口冲突显式报错；窗口关闭隐藏托盘，托盘不可用时关闭窗口退出。真正退出先取消并等待 HTTP 排空和资源清理，worker 不同步等待界面线程。
 
 ## 数据存储
 
