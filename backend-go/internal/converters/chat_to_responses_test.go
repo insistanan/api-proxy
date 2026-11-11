@@ -779,7 +779,7 @@ func TestConvertResponsesToOpenAIChatRequest_FlattensNamespaceTool(t *testing.T)
 	}
 }
 
-func TestConvertResponsesToOpenAIChatRequest_RejectsHostedWebSearchTool(t *testing.T) {
+func TestConvertResponsesToOpenAIChatRequest_DowngradesHostedWebSearchTool(t *testing.T) {
 	input := `{
 		"model":"gpt-4o",
 		"tools":[{"type":"web_search","description":"Search the web"}],
@@ -790,9 +790,13 @@ func TestConvertResponsesToOpenAIChatRequest_RejectsHostedWebSearchTool(t *testi
 	if err := json.Unmarshal([]byte(input), &req); err != nil {
 		t.Fatal(err)
 	}
-	_, err := ConvertResponsesRequestToUpstream(ResponsesUpstreamOpenAI, "gpt-4o", []byte(input), false, nil, &req, nil)
-	if !types.IsUnsupportedProtocol(err) {
-		t.Fatalf("内置 web_search 应明确标记候选协议不支持，实际为 %v", err)
+	result, err := ConvertResponsesRequestToUpstream(ResponsesUpstreamOpenAI, "gpt-4o", []byte(input), false, nil, &req, nil)
+	if err != nil {
+		t.Fatalf("内置搜索应降级而非阻断请求: %v", err)
+	}
+	root := gjson.ParseBytes(result)
+	if root.Get("tools").Exists() || root.Get("tool_choice").Exists() {
+		t.Fatalf("不能把内置搜索转换为客户端工具或保留强制搜索约束: %s", result)
 	}
 }
 
@@ -812,14 +816,14 @@ func TestResponsesHostedSearchAndClientFunction(t *testing.T) {
 					t.Fatal(err)
 				}
 				result, err := ConvertResponsesRequestToUpstream(serviceType, req.Model, body, false, nil, &req, nil)
+				if err != nil {
+					t.Fatalf("搜索降级、原生搜索或客户端同名 function 均应正常转换: %v", err)
+				}
 				if toolType != "function" && serviceType != ResponsesUpstreamResponses {
-					if !types.IsUnsupportedProtocol(err) {
-						t.Fatalf("内置搜索应明确拒绝，实际为 %v", err)
+					if strings.Contains(string(result), "web_search") {
+						t.Fatalf("非原生渠道不应伪造内置搜索工具: %s", result)
 					}
 					return
-				}
-				if err != nil {
-					t.Fatalf("原生搜索或客户端同名 function 应保留: %v", err)
 				}
 				if !strings.Contains(string(result), "web_search") {
 					t.Fatalf("丢失搜索工具定义: %s", result)
@@ -845,19 +849,22 @@ func TestNativeResponsesSearchOutputPreservesAction(t *testing.T) {
 	}
 }
 
-func TestResponsesDynamicHostedSearchRequiresNativeUpstream(t *testing.T) {
+func TestResponsesDynamicHostedSearchDowngrades(t *testing.T) {
 	for _, serviceType := range []string{ResponsesUpstreamOpenAI, ResponsesUpstreamClaude, ResponsesUpstreamGemini} {
 		for _, body := range []string{
-			`{"model":"test-model","input":[{"type":"tool_search_output","call_id":"load-tools","tools":[{"type":"web_search"}]}]}`,
+			`{"model":"test-model","input":[{"type":"tool_search_call","call_id":"load-tools","arguments":"{}"},{"type":"tool_search_output","call_id":"load-tools","tools":[{"type":"web_search"}]},{"role":"user","content":"继续"}]}`,
 			`{"model":"test-model","input":"搜索","tools":[{"type":"namespace","name":"search","tools":[{"type":"web_search_preview"}]}]}`,
 		} {
 			var req types.ResponsesRequest
 			if err := json.Unmarshal([]byte(body), &req); err != nil {
 				t.Fatal(err)
 			}
-			_, err := ConvertResponsesRequestToUpstream(serviceType, req.Model, []byte(body), false, nil, &req, nil)
-			if !types.IsUnsupportedProtocol(err) {
-				t.Fatalf("%s 不得静默跳过动态内置搜索: %v", serviceType, err)
+			result, err := ConvertResponsesRequestToUpstream(serviceType, req.Model, []byte(body), false, nil, &req, nil)
+			if err != nil {
+				t.Fatalf("%s 应移除动态内置搜索并继续对话: %v", serviceType, err)
+			}
+			if strings.Contains(string(result), "web_search") || strings.Contains(string(result), "load-tools") {
+				t.Fatalf("%s 不能保留内置搜索或孤立的动态加载回合: %s", serviceType, result)
 			}
 		}
 	}

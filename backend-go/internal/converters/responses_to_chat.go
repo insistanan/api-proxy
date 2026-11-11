@@ -384,7 +384,7 @@ func normalizeResponsesToolChoiceForChat(toolChoice gjson.Result) (interface{}, 
 		}, true
 	}
 	if choiceType == "web_search" || choiceType == "web_search_preview" {
-		// 生产入口先校验并返回错误，不能把服务器搜索变成客户端函数。
+		// 生产入口会先移除内置搜索约束；底层也不能把服务器搜索变成客户端函数。
 		return nil, false
 	}
 	name := toolChoice.Get("function.name").String()
