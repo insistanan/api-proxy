@@ -75,6 +75,7 @@ export interface Channel {
   imagesOutputFormat?: ImagesOutputFormat // 空值跟随请求，显式格式在两种上游协议中都生效
   imagesFrameCount?: number // GIF 帧数，零表示不覆盖
   imagesFrameDurationMs?: number // GIF 每帧时长（毫秒），零表示不覆盖
+  embeddingsDimensions?: number // Embeddings 输出维度：大于零时覆盖请求中的 dimensions，零表示不覆盖
   latency?: number
   status?: ChannelStatus | 'healthy' | 'error' | 'unknown' | ''
   index: number

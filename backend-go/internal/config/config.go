@@ -62,6 +62,9 @@ type UpstreamConfig struct {
 	// GIF 帧参数为零时不覆盖，沿用请求或上游默认值。
 	ImagesFrameCount      int `json:"imagesFrameCount,omitempty"`
 	ImagesFrameDurationMS int `json:"imagesFrameDurationMs,omitempty"`
+	// EmbeddingsDimensions 是 Embeddings 渠道固定的输出维度。大于零时覆盖请求体中的 dimensions，
+	// 用于上游模型只接受固定维度的情况；零表示不覆盖，请求体原样透传。
+	EmbeddingsDimensions int `json:"embeddingsDimensions,omitempty"`
 	// 多渠道调度相关字段
 	Priority                int        `json:"priority"`                          // 渠道优先级（数字越小优先级越高，默认按索引）
 	Status                  string     `json:"status"`                            // active、suspended、disabled、deprecated、deleted
@@ -179,6 +182,8 @@ type UpstreamUpdate struct {
 	ImagesOutputFormat    *string `json:"imagesOutputFormat"`
 	ImagesFrameCount      *int    `json:"imagesFrameCount"`
 	ImagesFrameDurationMS *int    `json:"imagesFrameDurationMs"`
+	// EmbeddingsDimensions 为 nil 表示本次更新未传、不覆盖；零表示清除覆盖。
+	EmbeddingsDimensions *int `json:"embeddingsDimensions"`
 	// 多渠道调度相关字段
 	Priority                *int       `json:"priority"`
 	Status                  *string    `json:"status"`

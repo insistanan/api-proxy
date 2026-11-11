@@ -11,6 +11,9 @@ func ValidateEmbeddingsUpstream(upstream *UpstreamConfig) error {
 	if upstream == nil {
 		return &ConfigError{Message: "Embeddings 渠道配置不能为空"}
 	}
+	if upstream.EmbeddingsDimensions < 0 {
+		return &ConfigError{Message: "Embeddings 输出维度不能为负数，零表示不覆盖请求维度"}
+	}
 	upstream.ServiceType = strings.TrimSpace(upstream.ServiceType)
 	switch upstream.ServiceType {
 	case "", "openai":

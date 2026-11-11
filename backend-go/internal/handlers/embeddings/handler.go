@@ -62,7 +62,7 @@ func buildUpstreamRequest(c *gin.Context, upstream *config.UpstreamConfig, apiKe
 	if err := config.ValidateEmbeddingsUpstream(upstream); err != nil {
 		return nil, err
 	}
-	bodyBytes, err := applyModelMapping(originalBody, upstream)
+	bodyBytes, err := rewriteEmbeddingsPayload(originalBody, upstream)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +79,9 @@ func buildUpstreamRequest(c *gin.Context, upstream *config.UpstreamConfig, apiKe
 	return req, nil
 }
 
-func applyModelMapping(bodyBytes []byte, upstream *config.UpstreamConfig) ([]byte, error) {
+// rewriteEmbeddingsPayload 只改写渠道明确配置的字段：映射模型名；渠道设置了输出维度时覆盖 dimensions。
+// 其余字段原样保留。维度为零时不改写 dimensions，由客户端请求决定。
+func rewriteEmbeddingsPayload(bodyBytes []byte, upstream *config.UpstreamConfig) ([]byte, error) {
 	var payload map[string]interface{}
 	decoder := json.NewDecoder(bytes.NewReader(bodyBytes))
 	decoder.UseNumber()
@@ -92,6 +94,9 @@ func applyModelMapping(bodyBytes []byte, upstream *config.UpstreamConfig) ([]byt
 	}
 	if mapped := config.ResolveUpstreamModel(model, upstream); strings.TrimSpace(mapped) != "" {
 		payload["model"] = mapped
+	}
+	if upstream.EmbeddingsDimensions > 0 {
+		payload["dimensions"] = upstream.EmbeddingsDimensions
 	}
 	bodyBytes, err := utils.MarshalJSONNoEscape(payload)
 	if err != nil {

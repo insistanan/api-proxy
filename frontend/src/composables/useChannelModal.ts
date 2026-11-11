@@ -8,7 +8,7 @@ import {
   isValidApiKey as _isValidApiKey,
   isValidUrl as _isValidQuickInputUrl
 } from '../utils/quickInputParser'
-import { useChannelEditor, buildImagesOutputSettings } from '../composables/useChannelEditor'
+import { useChannelEditor, buildImagesOutputSettings, EMBEDDINGS_DIMENSIONS_DEFAULT, validateEmbeddingsDimensions } from '../composables/useChannelEditor'
 import { compileImagesExtraParams } from '@/utils/imagesExtraParams'
 
 import { useQuickChannelDraft } from './useQuickChannelDraft'
@@ -143,6 +143,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
           : detectedServiceType.value || getDefaultServiceTypeValue(),
       responsesModel: props.channelType === 'images' && form.serviceType === 'responses' ? form.responsesModel.trim() : '',
       ...(props.channelType === 'images' ? buildImagesOutputSettings(form) : {}),
+      embeddingsDimensions: props.channelType === 'embeddings' ? EMBEDDINGS_DIMENSIONS_DEFAULT : 0,
       baseUrl: detectedBaseUrl.value,
       baseUrls: detectedBaseUrls.value,
       useFullUrl: form.useFullUrl,
@@ -537,7 +538,8 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
       Number.isSafeInteger(Number(form.maxConcurrency)) && Number(form.maxConcurrency) > 0 &&
       form.name.trim() && form.serviceType && form.baseUrl.trim() && isValidUrl(form.baseUrl) && form.apiKeys.length > 0 && isImagesProtocolValid.value &&
       (!form.visionLayerEnabled || form.visionLayerChannelId) &&
-      (form.proxyMode !== 'custom' || rules.proxyUrl(form.proxyUrl) === true)
+      (form.proxyMode !== 'custom' || rules.proxyUrl(form.proxyUrl) === true) &&
+      (props.channelType !== 'embeddings' || !validateEmbeddingsDimensions(form.embeddingsDimensions))
     )
   })
 

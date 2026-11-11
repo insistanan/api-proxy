@@ -72,6 +72,9 @@ func applyCommonUpdates(upstream *UpstreamConfig, index int, updates UpstreamUpd
 	if updates.ImagesFrameDurationMS != nil {
 		upstream.ImagesFrameDurationMS = *updates.ImagesFrameDurationMS
 	}
+	if updates.EmbeddingsDimensions != nil {
+		upstream.EmbeddingsDimensions = *updates.EmbeddingsDimensions
+	}
 	if updates.Description != nil {
 		upstream.Description = *updates.Description
 	}

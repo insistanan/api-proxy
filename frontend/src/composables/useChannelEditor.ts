@@ -47,6 +47,23 @@ export type ChannelFormState = {
   imagesOutputFormat: ImagesOutputFormat
   imagesFrameCount: number | string | null
   imagesFrameDurationMs: number | string | null
+  /** Embeddings 输出维度；0 表示不覆盖请求中的 dimensions。 */
+  embeddingsDimensions: number | string | null
+}
+
+/** 新建 Embeddings 渠道的默认输出维度，与常用的 1024 维向量模型一致。 */
+export const EMBEDDINGS_DIMENSIONS_DEFAULT = 1024
+
+/**
+ * Embeddings 输出维度校验：必须是非负整数，0 表示不覆盖。
+ * 返回空字符串表示合法，否则返回错误说明。
+ */
+export function validateEmbeddingsDimensions(value: unknown): string {
+  if (value === null || value === '') return '请输入输出维度（0 表示不覆盖）'
+  if (typeof value !== 'number' && typeof value !== 'string') return '输出维度必须是整数'
+  const number = Number(value)
+  if (!Number.isInteger(number) || number < 0) return '输出维度必须是非负整数（0 表示不覆盖）'
+  return ''
 }
 
 /** 新渠道的默认草稿。responses 协议默认启用图片理解（历史行为）。 */
@@ -87,7 +104,8 @@ export function defaultChannelForm(channelType: string): ChannelFormState {
     imagesForceNonStream: false,
     imagesOutputFormat: '',
     imagesFrameCount: imagesGIFDefaults.frameCount,
-    imagesFrameDurationMs: imagesGIFDefaults.frameDurationMs
+    imagesFrameDurationMs: imagesGIFDefaults.frameDurationMs,
+    embeddingsDimensions: EMBEDDINGS_DIMENSIONS_DEFAULT
   }
 }
 
@@ -214,6 +232,8 @@ export function buildChannelPayload(
     defaultModel: isChat ? modelValueString(form.defaultModel).trim() : '',
     ...(isImages ? { imagesForceNonStream: form.imagesForceNonStream } : {}),
     ...(isImages ? buildImagesOutputSettings(form) : {}),
+    // 只有 Embeddings 渠道使用该字段；其他协议固定为 0，即不覆盖。
+    embeddingsDimensions: channelType === 'embeddings' ? Number(form.embeddingsDimensions) : 0,
     ...(imagesExtraParams ? { imagesExtraParams } : {})
   }
   if (urls.length > 1) channel.baseUrls = urls
@@ -284,6 +304,8 @@ export function useChannelEditor(channelType: MaybeRefOrGetter<string>) {
       ? imagesGIFDefaults.frameCount : channel.imagesFrameCount
     form.imagesFrameDurationMs = channel.imagesFrameDurationMs === undefined || channel.imagesFrameDurationMs === 0
       ? imagesGIFDefaults.frameDurationMs : channel.imagesFrameDurationMs
+    // 旧渠道没有该字段时按 0 回填（不覆盖），避免编辑时悄悄改成默认维度。
+    form.embeddingsDimensions = channel.embeddingsDimensions ?? 0
   }
 
   const buildPayload = (isEditing: boolean, imagesExtraParams?: Record<string, string>) =>

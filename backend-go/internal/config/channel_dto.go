@@ -40,6 +40,7 @@ func ChannelToDTO(up *UpstreamConfig, index int) map[string]interface{} {
 		"imagesOutputFormat":          up.ImagesOutputFormat,
 		"imagesFrameCount":            up.ImagesFrameCount,
 		"imagesFrameDurationMs":       up.ImagesFrameDurationMS,
+		"embeddingsDimensions":        up.EmbeddingsDimensions,
 		"latency":                     nil,
 		"status":                      GetChannelStatus(up),
 		"priority":                    GetChannelPriority(up, index),

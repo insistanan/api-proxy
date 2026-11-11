@@ -74,6 +74,22 @@
       <div v-if="imagesOutputError" class="text-error text-caption mt-2">{{ imagesOutputError }}</div>
     </v-col>
 
+    <!-- Embeddings 输出维度：覆盖请求体中的 dimensions，0 表示不覆盖 -->
+    <v-col v-if="channelType === 'embeddings'" cols="12" md="6">
+      <v-text-field
+        v-model="form.embeddingsDimensions"
+        label="输出维度 *"
+        type="number"
+        min="0"
+        step="1"
+        hint="覆盖请求中的 dimensions，需与上游模型支持的维度一致；0 表示不覆盖"
+        persistent-hint
+        variant="outlined"
+        density="comfortable"
+        :rules="[embeddingsDimensionsRule]"
+      />
+    </v-col>
+
     <!-- 基础URL -->
     <v-col cols="12">
       <div class="d-flex align-center justify-space-between flex-wrap ga-2 mb-2">
@@ -731,8 +747,11 @@ import type { useChannelModal } from '@/composables/useChannelModal'
 import ModelMappingEditor from '../ModelMappingEditor.vue'
 import ImagesChannelProtocolFields from '../ImagesChannelProtocolFields.vue'
 import ImagesOutputFields from '../ImagesOutputFields.vue'
+import { validateEmbeddingsDimensions } from '@/composables/useChannelEditor'
 
 const props = defineProps<{ editor: ReturnType<typeof useChannelModal> }>()
+// Vuetify 规则要求返回 true 或错误文案
+const embeddingsDimensionsRule = (value: unknown) => validateEmbeddingsDimensions(value) || true
 const {
   formRef,
   reasoningCompatibilityPanel,
