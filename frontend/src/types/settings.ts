@@ -144,7 +144,11 @@ export interface CustomRuleItem {
 /** 危险命令 AI 闸门：命中后先查会话白/黑名单，再由代理调用大模型渠道二次判断 */
 export interface DangerousCmdAIGateSettings {
   enabled: boolean
-  /** 判断渠道稳定 ID；空串表示按 messages → responses → chat → gemini 自动挑选 */
+  /** 旧配置未提供时按对话 API 处理 */
+  protocol?: 'chat' | 'decisions' | 'systemone'
+  /** 空串使用渠道默认模型；显式模型优先于渠道默认值 */
+  model?: string
+  /** 判断渠道稳定 ID；空串表示在所选协议的渠道池内自动挑选 */
   channelId: string
   /** 用户决定窗口秒数（3-120，默认 10） */
   waitSeconds: number

@@ -1,5 +1,13 @@
 // 危险命令 AI 闸门类型（待确认列表 / 会话级白黑名单）。
 
+export interface GateChannelOption {
+  kind: string
+  id: string
+  name: string
+  defaultModel: string
+  models: string[]
+}
+
 /** 一条等待用户决定的危险命令命中 */
 export interface GatePending {
   id: number

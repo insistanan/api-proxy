@@ -100,6 +100,7 @@ func newGateTestHarness(t *testing.T, waitSeconds int) *gateTestHarness {
 	metricsManagers := []*metrics.MetricsManager{
 		metrics.NewMetricsManager(), metrics.NewMetricsManager(), metrics.NewMetricsManager(),
 		metrics.NewMetricsManager(), metrics.NewMetricsManager(),
+		metrics.NewMetricsManager(), metrics.NewMetricsManager(),
 	}
 	t.Cleanup(func() {
 		for _, manager := range metricsManagers {
@@ -109,7 +110,7 @@ func newGateTestHarness(t *testing.T, waitSeconds int) *gateTestHarness {
 	channelScheduler := scheduler.NewChannelScheduler(
 		cfgManager,
 		metricsManagers[0], metricsManagers[1], metricsManagers[2], metricsManagers[3], metricsManagers[4],
-		nil, nil,
+		metricsManagers[5], metricsManagers[6],
 		nil, nil,
 	)
 	caller := &llmgate.Caller{EnvConfig: config.NewEnvConfig(), CfgManager: cfgManager, ChannelScheduler: channelScheduler}
@@ -396,6 +397,75 @@ func TestGateOnlyReviewsRuleMatchesAcrossResponseModes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestGateDecisionReviewUsesConfiguredProtocolAndModel(t *testing.T) {
+	for _, protocol := range []string{"chat", "decisions", "systemone"} {
+		t.Run(protocol, func(t *testing.T) {
+			h := newGateTestHarness(t, 3)
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+				}
+				if body["model"] != "approval-model" {
+					t.Errorf("审批模型没有覆盖渠道默认模型: %v", body["model"])
+				}
+				w.Header().Set("Content-Type", "application/json")
+				switch protocol {
+				case "chat":
+					_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"{\"verdict\":\"allow\",\"reason\":\"命令目标明确\"}"}]}`))
+				case "decisions":
+					_, _ = w.Write([]byte(`{"answers":[{"name":"command_safety","type":"choice","choice":"allow"}]}`))
+				case "systemone":
+					_, _ = w.Write([]byte(`{"answers":{"command_safety":{"type":"choice","choice":"allow"}}}`))
+				}
+			}))
+			t.Cleanup(upstream.Close)
+			channel := config.UpstreamConfig{ID: "approval-target", Name: "审批目标", BaseURL: upstream.URL, APIKeys: []string{"test-key"}, DefaultModel: "default-model"}
+			if protocol == "chat" {
+				channel.ServiceType = "claude"
+				if err := h.cfgManager.AddUpstream(channel); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				channel.ServiceType = "openai"
+				if _, err := h.cfgManager.AddDecisionsUpstreamWithResult(channel); err != nil {
+					t.Fatal(err)
+				}
+			}
+			settings := config.DangerousCmdAIGateConfig{Protocol: protocol, Model: "approval-model", ChannelID: channel.ID}
+			review, err := h.gate.askModel(context.Background(), h.metadata(), h.match(), settings)
+			if err != nil || review.Verdict != "allow" || review.Model != "approval-model" || review.ChannelName != channel.Name || review.Reason == "" {
+				t.Fatalf("审批链路未使用配置目标或未解析决策答案: review=%+v err=%v", review, err)
+			}
+			if h.aiCalls.Load() != 0 {
+				t.Fatal("指定审批渠道不能调用原来的自动对话渠道")
+			}
+		})
+	}
+}
+
+func TestGateApprovalModelChangeInvalidatesReviewCache(t *testing.T) {
+	h := newGateTestHarness(t, 3)
+	h.aiVerdict.Store("allow")
+	first, err := h.gate.reviewWithCache(context.Background(), h.metadata(), h.match())
+	if err != nil || first.Reused {
+		t.Fatalf("首次审核失败: %+v %v", first, err)
+	}
+	second, err := h.gate.reviewWithCache(context.Background(), h.metadata(), h.match())
+	if err != nil || !second.Reused || h.aiCalls.Load() != 1 {
+		t.Fatalf("相同审批配置应复用审核: %+v %v", second, err)
+	}
+	settings := h.cfgManager.GetSettings()
+	settings.ContentSafety.DangerousCmd.AIGate.Model = "new-review-model"
+	if err := h.cfgManager.UpdateSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	third, err := h.gate.reviewWithCache(context.Background(), h.metadata(), h.match())
+	if err != nil || third.Reused || third.Model != "new-review-model" || h.aiCalls.Load() != 2 {
+		t.Fatalf("修改审批模型后必须重新送审: %+v %v", third, err)
 	}
 }
 

@@ -117,6 +117,14 @@ func (g *CmdGate) Enabled() bool {
 	return settings.Enabled && settings.AIGate.Enabled
 }
 
+// ChannelOptions 返回审批专用候选，不依赖 AI 助手的模型或渠道设置。
+func (g *CmdGate) ChannelOptions(ctx context.Context) ([]llmgate.ChannelOption, error) {
+	if g == nil || g.caller == nil {
+		return nil, fmt.Errorf("命令审批服务未装配")
+	}
+	return g.caller.ChannelOptions(ctx)
+}
+
 // waitSeconds 返回用户决定窗口时长。
 func (g *CmdGate) waitSeconds() int {
 	seconds := g.gateSettings().WaitSeconds
@@ -213,7 +221,7 @@ func (g *CmdGate) latestDecision(ctx context.Context, conversationID, commandHas
 }
 
 // askModel 记录实际调用的身份、渠道和结论，供对话与日志相互追溯。
-func (g *CmdGate) askModel(ctx context.Context, metadata HookContext, match sensitive.CommandMatch, channelID string) (review sensitive.CommandAIReview, err error) {
+func (g *CmdGate) askModel(ctx context.Context, metadata HookContext, match sensitive.CommandMatch, settings config.DangerousCmdAIGateConfig) (review sensitive.CommandAIReview, err error) {
 	startedAt := time.Now()
 	review.RequestID = "cmd-gate-" + logger.NewRequestID()
 	defer func() {
@@ -232,19 +240,42 @@ func (g *CmdGate) askModel(ctx context.Context, metadata HookContext, match sens
 	if err != nil {
 		return review, err
 	}
+	prompt.Model = strings.TrimSpace(settings.Model)
+	prompt.OverrideModel = true
+	prompt.Protocol = settings.Protocol
+	if settings.Protocol == "decisions" || settings.Protocol == "systemone" {
+		prompt.Decision = &llmgate.DecisionQuestion{
+			Name: "command_safety", Instructions: strings.TrimSuffix(prompt.System, gateVerdictInstructions),
+			Criteria: map[string]string{
+				"allow": "执行范围明确且无实际危险，可以立即交付给客户端执行。",
+				"block": "存在破坏、泄露、提权等危险，或缺少确认执行范围所必需的信息，需要人工确认。",
+			},
+		}
+	}
 	prompt.Metadata = llmgate.CallMetadata{
 		RequestID:       review.RequestID,
 		ParentRequestID: metadata.RequestID,
 		ConversationID:  metadata.ConversationID,
 		APIType:         "cmd_gate",
 	}
-	result, err := g.caller.Call(ctx, channelID, prompt)
+	result, err := g.caller.Call(ctx, settings.ChannelID, prompt)
 	if err != nil {
 		return review, err
 	}
 	review.Model = result.Model
 	review.ChannelName = result.ChannelName
-	review.Verdict, review.Reason, err = parseGateVerdict(result.Text)
+	if prompt.Decision != nil {
+		switch result.Text {
+		case sensitive.GateDecisionAllow:
+			review.Verdict, review.Reason = result.Text, "决策模型判定执行范围明确且可以放行"
+		case sensitive.GateDecisionBlock:
+			review.Verdict, review.Reason = result.Text, "决策模型判定存在风险或执行范围不明确，需要人工确认"
+		default:
+			return review, fmt.Errorf("决策模型返回了无效的命令审核结论")
+		}
+	} else {
+		review.Verdict, review.Reason, err = parseGateVerdict(result.Text)
+	}
 	review.Reason = sensitive.RedactAuditText(review.Reason)
 	return review, err
 }
@@ -541,7 +572,7 @@ func (g *CmdGate) reviewWithCache(ctx context.Context, metadata HookContext, mat
 	metadata.preRequestSnapshot = nil
 	go func() {
 		defer cancel()
-		review, callErr := g.askModel(callCtx, metadata, match, settings.ChannelID)
+		review, callErr := g.askModel(callCtx, metadata, match, settings)
 		<-g.reviewSlots
 		g.aiReviewMu.Lock()
 		flight.review, flight.err = review, callErr
@@ -740,6 +771,8 @@ func truncateGateSnippet(command string) string {
 	return string(runes[:limit-3]) + "..."
 }
 
+const gateVerdictInstructions = "必须只输出一个 JSON 对象：{\"verdict\":\"allow\" 或 \"block\",\"reason\":\"简体中文一句话理由\"}。理由不要复述密钥、密码或令牌。"
+
 // buildGatePrompt 使用完整命令和工具参数；输入数据不能提供新的审核指令或虚构授权。
 func buildGatePrompt(metadata HookContext, match sensitive.CommandMatch) (llmgate.Prompt, error) {
 	system := "你是命令安全审查员。审查 JSON 数据中的完整命令及相关工具参数，判断执行是否会造成实际危险。" +
@@ -749,7 +782,7 @@ func buildGatePrompt(metadata HookContext, match sensitive.CommandMatch) (llmgat
 		"工具参数提供的 cwd、workdir、shell、环境变量仅是已知输入；不能因为出现 tmp、sandbox 等路径名就认定存在隔离。" +
 		"标记为[凭据已隐藏]的值不可用于推断安全目标；若它影响执行范围，应判 block。" +
 		"明确受限的普通构建目录清理、只读查询等可以判 allow；危险目标或执行范围无法确认时判 block，并说明具体缺失的信息。" +
-		"必须只输出一个 JSON 对象：{\"verdict\":\"allow\" 或 \"block\",\"reason\":\"简体中文一句话理由\"}。理由不要复述密钥、密码或令牌。"
+		gateVerdictInstructions
 	input, err := json.Marshal(map[string]string{
 		"rule":              match.Rule,
 		"source":            match.Context,

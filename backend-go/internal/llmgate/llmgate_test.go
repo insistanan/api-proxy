@@ -39,9 +39,10 @@ func newGateTestEnv(t *testing.T) (*config.ConfigManager, *scheduler.ChannelSche
 		}
 	})
 	// scheduler 的指标方法不允许 nil manager（ShouldSuspendKey 等直接调用其方法），
-	// 五协议各建一份，与 content_safety_integration_test 的做法一致。
+	// 各协议各建一份，决策审批也沿用真实调度和准入链路。
 	metricsManagers := []*metrics.MetricsManager{
 		metrics.NewMetricsManager(), metrics.NewMetricsManager(), metrics.NewMetricsManager(),
+		metrics.NewMetricsManager(), metrics.NewMetricsManager(),
 		metrics.NewMetricsManager(), metrics.NewMetricsManager(),
 	}
 	t.Cleanup(func() {
@@ -52,10 +53,85 @@ func newGateTestEnv(t *testing.T) (*config.ConfigManager, *scheduler.ChannelSche
 	channelScheduler := scheduler.NewChannelScheduler(
 		cfgManager,
 		metricsManagers[0], metricsManagers[1], metricsManagers[2], metricsManagers[3], metricsManagers[4],
-		nil, nil,
+		metricsManagers[5], metricsManagers[6],
 		nil, nil,
 	)
 	return cfgManager, channelScheduler
+}
+
+func TestCallDecisionProtocolsUseSelectedChannelAndModel(t *testing.T) {
+	for _, protocol := range []string{"decisions", "systemone"} {
+		t.Run(protocol, func(t *testing.T) {
+			var received map[string]json.RawMessage
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/v1/"+protocol || r.Header.Get("Authorization") != "Bearer decision-test-key" {
+					t.Errorf("决策请求路径或鉴权不正确: %s", r.URL.Path)
+				}
+				if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+					t.Error(err)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				if protocol == "decisions" {
+					_, _ = io.WriteString(w, `{"answers":[{"name":"command_safety","type":"choice","choice":"allow"}],"usage":{"input_tokens":18,"output_tokens":0}}`)
+				} else {
+					_, _ = io.WriteString(w, `{"answers":{"command_safety":{"type":"choice","choice":"allow"}},"usage":{"input_tokens":18,"output_tokens":0}}`)
+				}
+			}))
+			t.Cleanup(upstream.Close)
+			cfgManager, sch := newGateTestEnv(t)
+			if _, err := cfgManager.AddDecisionsUpstreamWithResult(config.UpstreamConfig{
+				ID: "decision-1", Name: "decision-reviewer", BaseURL: upstream.URL, ServiceType: "openai",
+				APIKeys: []string{"decision-test-key"}, DefaultModel: "channel-default",
+				ModelMapping: map[string][]string{"approval-alias": {"selected-decision-model"}},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			caller := &Caller{EnvConfig: config.NewEnvConfig(), CfgManager: cfgManager, ChannelScheduler: sch}
+			prompt := Prompt{
+				Protocol: protocol, Model: "approval-alias", OverrideModel: true,
+				Messages: []PromptMessage{{Role: "user", Content: `{"command":"rm -rf /tmp/build"}`}},
+				Decision: &DecisionQuestion{Name: "command_safety", Instructions: "判断完整命令是否可以执行", Criteria: map[string]string{"allow": "安全", "block": "危险或无法确认"}},
+			}
+			result, err := caller.Call(context.Background(), "decision-1", prompt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Text != "allow" || result.Model != "selected-decision-model" || result.ChannelName != "decision-reviewer" || result.Usage == nil || result.Usage.InputTokens != 18 {
+				t.Fatalf("决策审批结果或调用身份不正确: %+v", result)
+			}
+			if string(received["model"]) != `"selected-decision-model"` || received["messages"] != nil || received["max_tokens"] != nil {
+				t.Fatalf("决策请求不应被转为聊天请求，且应优先使用显式审批模型: %s", received)
+			}
+			if protocol == "decisions" && (received["input"] == nil || received["state"] != nil || !strings.HasPrefix(string(received["questions"]), "[")) {
+				t.Fatalf("Decisions 请求格式不正确: %s", received)
+			}
+			if protocol == "systemone" && (received["state"] == nil || received["input"] != nil || !strings.HasPrefix(string(received["questions"]), "{")) {
+				t.Fatalf("System One 请求格式不正确: %s", received)
+			}
+			if _, err := caller.Call(context.Background(), "decision-1", Prompt{}); err == nil {
+				t.Fatal("对话调用不能误用 Decisions 渠道")
+			}
+		})
+	}
+}
+
+func TestDecisionResponseRejectsMissingOrInvalidAnswers(t *testing.T) {
+	question := &DecisionQuestion{Name: "command_safety", Criteria: map[string]string{"allow": "安全", "block": "危险"}}
+	for _, test := range []struct {
+		protocol string
+		body     string
+	}{
+		{"decisions", `{"answers":[]}`},
+		{"decisions", `{"answers":[{"name":"other","type":"choice","choice":"allow"}]}`},
+		{"decisions", `{"answers":[{"name":"command_safety","type":"choice","choice":"allow"},{"name":"command_safety","type":"choice","choice":"block"}]}`},
+		{"decisions", `{"answers":[{"name":"command_safety","type":"choice","choice":"unknown"}]}`},
+		{"systemone", `{"answers":{"command_safety":{"type":"noul","noul":1}}}`},
+		{"systemone", `{"answers":[{"name":"command_safety","type":"choice","choice":"allow"}]}`},
+	} {
+		if _, err := decodeDecisionResponse([]byte(test.body), Prompt{Protocol: test.protocol, Decision: question}); err == nil {
+			t.Fatalf("缺失、重复或格式不符的决策答案不能放行: %s", test.body)
+		}
+	}
 }
 
 func TestReadBoundedResponsePreservesSupportedEncodings(t *testing.T) {

@@ -140,7 +140,7 @@ func (c *Caller) Call(ctx context.Context, channelID string, prompt Prompt) (res
 
 	// channelID 显式指定代表用户意图：不换渠道，选不中即失败。
 	if channelID != "" {
-		selection, err := PickChannel(callCtx, c.CfgManager, c.ChannelScheduler, channelID, prompt.Model, nil)
+		selection, err := pickChannelForProtocol(callCtx, c.CfgManager, c.ChannelScheduler, channelID, prompt.Model, nil, prompt.Protocol)
 		if err != nil {
 			return nil, err
 		}
@@ -153,7 +153,7 @@ func (c *Caller) Call(ctx context.Context, channelID string, prompt Prompt) (res
 	failed := make(map[scheduler.ChannelKind]map[int]bool)
 	var lastErr error
 	for range maxChannelAttempts {
-		selection, err := PickChannel(callCtx, c.CfgManager, c.ChannelScheduler, "", prompt.Model, failed)
+		selection, err := pickChannelForProtocol(callCtx, c.CfgManager, c.ChannelScheduler, "", prompt.Model, failed, prompt.Protocol)
 		if err != nil {
 			if lastErr != nil {
 				return nil, fmt.Errorf("%w（换渠道重试后仍失败）", lastErr)
@@ -212,6 +212,11 @@ type Prompt struct {
 	Metadata CallMetadata
 	// MaxTokens 为 0 时取 DefaultMaxTokens。
 	MaxTokens int
+	// Protocol 为空/chat 时使用对话 API；decisions/systemone 使用原生决策格式。
+	Protocol string
+	// OverrideModel 允许审批配置显式覆盖渠道默认模型，不改变助手原有模型优先级。
+	OverrideModel bool
+	Decision      *DecisionQuestion
 }
 
 type PromptMessage struct {
@@ -242,11 +247,13 @@ func (c *Caller) callOnChannel(ctx context.Context, selection *SelectedChannel, 
 		selection.Permit = nil
 	}()
 	upstream := selection.Upstream
-	provider := providers.GetProvider(upstream.ServiceType)
-	if provider == nil {
-		return nil, fmt.Errorf("内部调用渠道 %q 的服务类型 %q 不受支持", upstream.Name, upstream.ServiceType)
-	}
 	model, resolvable := internalCallModel(prompt.Model, upstream)
+	if prompt.OverrideModel && strings.TrimSpace(prompt.Model) != "" {
+		modelUpstream := upstream.Clone()
+		modelUpstream.DefaultModel = ""
+		model = strings.TrimSpace(config.ResolveUpstreamModel(prompt.Model, modelUpstream))
+		resolvable = model != ""
+	}
 	if !resolvable {
 		return nil, fmt.Errorf("内部调用渠道 %q 未能解析可用模型（请配置默认模型或模型映射）", upstream.Name)
 	}
@@ -260,7 +267,31 @@ func (c *Caller) callOnChannel(ctx context.Context, selection *SelectedChannel, 
 	gateUpstream.DefaultModel = model
 	gateUpstream.ModelMapping = nil
 
-	body, err := buildClaudeRequestBody(model, prompt)
+	var body []byte
+	var buildRequest func(context.Context, *config.UpstreamConfig, string, []byte) (*http.Request, error)
+	var convertResponse func(*types.ProviderResponse) (*types.ClaudeResponse, error)
+	if prompt.Protocol == "decisions" || prompt.Protocol == "systemone" {
+		if selection.Kind != scheduler.ChannelKindDecisions {
+			return nil, fmt.Errorf("决策调用必须使用 Decisions 渠道")
+		}
+		body, err = buildDecisionRequestBody(model, prompt)
+		buildRequest = func(ctx context.Context, up *config.UpstreamConfig, key string, body []byte) (*http.Request, error) {
+			return buildDecisionRequest(ctx, up, key, body, prompt.Protocol)
+		}
+		convertResponse = func(response *types.ProviderResponse) (*types.ClaudeResponse, error) {
+			return decodeDecisionResponse(response.Body, prompt)
+		}
+	} else {
+		provider := providers.GetProvider(upstream.ServiceType)
+		if provider == nil {
+			return nil, fmt.Errorf("内部调用渠道 %q 的服务类型 %q 不受支持", upstream.Name, upstream.ServiceType)
+		}
+		body, err = buildClaudeRequestBody(model, prompt)
+		buildRequest = func(ctx context.Context, up *config.UpstreamConfig, key string, body []byte) (*http.Request, error) {
+			return buildProviderRequest(ctx, provider, up, key, body)
+		}
+		convertResponse = provider.ConvertToClaudeResponse
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -289,7 +320,7 @@ func (c *Caller) callOnChannel(ctx context.Context, selection *SelectedChannel, 
 			attemptID := logger.NewRequestID()
 			upstreamCopy := gateUpstream.Clone()
 			upstreamCopy.BaseURL = baseURL
-			request, requestErr := buildProviderRequest(ctx, provider, upstreamCopy, apiKey, body)
+			request, requestErr := buildRequest(ctx, upstreamCopy, apiKey, body)
 			if requestErr != nil {
 				requestErr = &gateAttemptError{Err: requestErr, message: redactCallText(requestErr.Error(), apiKey)}
 				lastErr = requestErr
@@ -301,7 +332,7 @@ func (c *Caller) callOnChannel(ctx context.Context, selection *SelectedChannel, 
 				}
 				continue
 			}
-			result, attemptErr := c.sendRequest(provider, selection, upstreamCopy, trace, attemptID, model, baseURL, apiKey, request, attemptStart, attempt > 0)
+			result, attemptErr := c.sendRequest(convertResponse, selection, upstreamCopy, trace, attemptID, model, baseURL, apiKey, request, attemptStart, attempt > 0)
 			if attemptErr == nil {
 				return result, nil
 			}
@@ -388,7 +419,7 @@ func asGateAttemptError(err error, target **gateAttemptError) bool {
 // sendRequest 发送一次上游请求并解析响应。超时与取消由 request 自带的
 // context（调用方注入）控制。
 func (c *Caller) sendRequest(
-	provider providers.Provider,
+	convertResponse func(*types.ProviderResponse) (*types.ClaudeResponse, error),
 	selection *SelectedChannel,
 	upstream *config.UpstreamConfig,
 	trace *callLogContext,
@@ -480,7 +511,7 @@ func (c *Caller) sendRequest(
 		c.recordAttempt(selection, upstream, trace, attemptID, model, baseURL, apiKey, "failed", response.StatusCode, false, attemptStart, "upstream", err.Error(), retried, nil)
 		return nil, err
 	}
-	claudeResponse, convertErr := provider.ConvertToClaudeResponse(&types.ProviderResponse{
+	claudeResponse, convertErr := convertResponse(&types.ProviderResponse{
 		StatusCode: response.StatusCode,
 		Headers:    response.Header,
 		Body:       body,

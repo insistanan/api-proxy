@@ -317,11 +317,34 @@
                   </div>
                   <div v-if="contentSafety.dangerousCmd.aiGate.enabled" class="ai-gate-options">
                     <v-select
+                      v-model="contentSafety.dangerousCmd.aiGate.protocol"
+                      :items="gateProtocolItems"
+                      label="审批协议"
+                      variant="outlined"
+                      density="compact"
+                      class="ai-gate-select"
+                      @update:model-value="resetGateTarget"
+                    />
+                    <v-select
                       v-model="contentSafety.dangerousCmd.aiGate.channelId"
                       :items="gateChannelItems"
                       item-title="title"
                       item-value="value"
                       label="判断渠道"
+                      :loading="gateChannelsLoading"
+                      :error-messages="gateChannelsError"
+                      variant="outlined"
+                      density="compact"
+                      class="ai-gate-select"
+                      @update:menu="open => { if (open) loadGateChannels() }"
+                    />
+                    <v-combobox
+                      v-model="contentSafety.dangerousCmd.aiGate.model"
+                      :items="gateModelItems"
+                      label="审批模型"
+                      placeholder="留空使用渠道默认模型"
+                      hint="可选已有模型或输入模型 ID；显式选择优先于渠道默认模型，并应用渠道模型映射。"
+                      persistent-hint
                       variant="outlined"
                       density="compact"
                       class="ai-gate-select"
@@ -331,11 +354,14 @@
                       type="number"
                       min="3"
                       max="120"
-                      label="放行等待时间（秒）"
+                      label="人工确认窗口（秒）"
                       variant="outlined"
                       density="compact"
                       class="ai-gate-wait"
                     />
+                  </div>
+                  <div v-if="contentSafety.dangerousCmd.aiGate.enabled" class="text-body-2 text-medium-emphasis mt-2">
+                    {{ gateProtocolHint }}
                   </div>
                 </div>
               </v-expand-transition>
@@ -583,22 +609,56 @@ const dangerousCommandRules: Array<{ value: DangerousCommandRule; label: string 
   { value: 'environment_tampering', label: '环境变量篡改' }
 ]
 
-// AI 闸门判断渠道候选：复用助手 status 探测出的四协议可用渠道（messages →
-// responses → chat → gemini 顺序）。该来源已经过后端 PreviewChannel 的可用性、
-// 熔断、模型可解析过滤，且排除识图专用渠道（ExcludeFromConversation），与助手
-// 渠道选择器、闸门实际选渠口径完全一致；不再前端逐个拉取原始渠道列表。
-// assistantStatus 与 assistantKindLabel 被本 computed 引用，声明上移至此以避免 TDZ。
-type GateChannelOption = { title: string; value: string }
-
-const AUTO_GATE_CHANNEL: GateChannelOption = { title: '自动选择', value: '' }
-
-const gateChannelItems = computed<GateChannelOption[]>(() => [
-  AUTO_GATE_CHANNEL,
-  ...(assistantStatus.value?.channels || []).map(channel => ({
-    title: `${assistantKindLabel(channel.kind)} · ${channel.name}`,
-    value: channel.id
-  }))
-])
+// 审批使用独立渠道候选，不读取 AI 助手的模型和渠道筛选结果。
+const gateProtocolItems = [
+  { title: '大模型对话 API', value: 'chat' },
+  { title: 'Decisions API（OpenAI 格式）', value: 'decisions' },
+  { title: 'System One API（Jev 原生格式）', value: 'systemone' }
+]
+const gateChannels = ref<Awaited<ReturnType<typeof api.getGateChannels>>['channels']>([])
+const gateChannelsLoading = ref(false)
+const gateChannelsError = ref('')
+const loadGateChannels = async () => {
+  if (gateChannelsLoading.value) return
+  gateChannelsLoading.value = true
+  gateChannelsError.value = ''
+  try {
+    gateChannels.value = (await api.getGateChannels()).channels
+  } catch (error) {
+    gateChannelsError.value = error instanceof Error ? error.message : '读取审批渠道失败'
+  } finally {
+    gateChannelsLoading.value = false
+  }
+}
+const isDecisionGate = computed(() => ['decisions', 'systemone'].includes(contentSafety.value.dangerousCmd.aiGate.protocol ?? 'chat'))
+const eligibleGateChannels = computed(() => gateChannels.value.filter(channel => isDecisionGate.value ? channel.kind === 'decisions' : channel.kind !== 'decisions'))
+const gateChannelItems = computed(() => {
+  const items = [
+    { title: isDecisionGate.value ? '自动选择 Decisions 渠道' : '自动选择对话渠道', value: '' },
+    ...eligibleGateChannels.value.map(channel => ({
+      title: `${channel.kind} · ${channel.name}`,
+      value: channel.id
+    }))
+  ]
+  const selected = contentSafety.value.dangerousCmd.aiGate.channelId
+  if (selected && !items.some(item => item.value === selected)) {
+    items.push({ title: `已选渠道当前不可用（${selected}）`, value: selected })
+  }
+  return items
+})
+const gateModelItems = computed(() => {
+  const selected = contentSafety.value.dangerousCmd.aiGate.channelId
+  return [...new Set(eligibleGateChannels.value
+    .filter(channel => !selected || channel.id === selected)
+    .flatMap(channel => channel.models))]
+})
+const gateProtocolHint = computed(() => {
+  switch (contentSafety.value.dangerousCmd.aiGate.protocol) {
+    case 'decisions': return '使用 Decisions 渠道调用 /v1/decisions，发送 input 和问题数组。Jev 经 LiteLLM 等兼容网关接入时也可选此格式。'
+    case 'systemone': return '使用 Decisions 渠道调用 /v1/systemone，发送 state 和具名问题。适用于 Jev 原生 API；渠道启用完整 URL 时按配置地址发送。'
+    default: return '使用 Messages、Responses、Chat 或 Gemini 渠道；只将命中本地规则的执行工具命令送审。'
+  }
+})
 
 const formRef = ref()
 const selectedSections = ref<SettingsSection[]>(['network'])
@@ -615,7 +675,7 @@ const { disguiseClaudeVersion, disguiseCodexVersion, disguiseAutoUpdate, savedDi
 const promptsEditor = usePromptSettings(saving)
 const { promptEntries, promptActiveVersion, selectedPromptEntry, savedPromptsSnapshot } = promptsEditor
 const assistantEditor = useAssistantSettings(saving)
-const { assistantStatus, assistantKindLabel, assistantModel, savedAssistantModel, assistantChannel, savedAssistantChannel, loadAssistantModelOptions, loadAssistantStatus } = assistantEditor
+const { assistantModel, savedAssistantModel, assistantChannel, savedAssistantChannel, loadAssistantModelOptions, loadAssistantStatus } = assistantEditor
 
 const proxyEnabled = ref(false)
 const proxyUrl = ref('')
@@ -624,6 +684,11 @@ const savedProxyEnabled = ref(false)
 const contentSafety = ref<ContentSafetySettings>(defaultContentSafety())
 const savedContentSafety = ref('')
 const notice = ref<Notice>(null)
+
+const resetGateTarget = () => {
+  contentSafety.value.dangerousCmd.aiGate.channelId = ''
+  contentSafety.value.dangerousCmd.aiGate.model = ''
+}
 
 // 集成设置（CC Switch）
 const integrationFormRef = ref()
@@ -814,6 +879,7 @@ const validateCustomRulesForSave = (rules: CustomRuleItem[]): string | null => {
 const saveContentSafetySettings = async () => {
   notice.value = null
   const settingsToSave = normalizeContentSafety(contentSafety.value)
+  settingsToSave.dangerousCmd.aiGate.model = settingsToSave.dangerousCmd.aiGate.model?.trim() ?? ''
   const hasSensitiveWordRule = sensitiveWordCategories.some(item => settingsToSave.sensitiveWord[item.key]) ||
     settingsToSave.sensitiveWord.customWords.length > 0
   if (settingsToSave.sensitiveWord.enabled && !hasSensitiveWordRule) {
@@ -904,6 +970,7 @@ const toggleDesktopNotify = async (value: boolean | null) => {
 
 onMounted(() => {
   loadSettings()
+  loadGateChannels()
   loadAssistantModelOptions()
   loadAssistantStatus()
   initDesktopNotify()

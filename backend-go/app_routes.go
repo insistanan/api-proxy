@@ -34,6 +34,7 @@ func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
 	apiGroup.POST("/logs/purge", handlers.PurgeLogs(a.logStore))
 
 	// 危险命令 AI 闸门（待确认列表 / 用户决定 / 会话级白黑名单）
+	apiGroup.GET("/security/gate/channels", handlers.GetGateChannels(a.cmdGate))
 	apiGroup.GET("/security/gate/pending", handlers.GetGatePending(a.cmdGate))
 	apiGroup.POST("/security/gate/pending/:id/decision", handlers.DecideGatePending(a.cmdGate))
 	apiGroup.GET("/security/gate/decisions", handlers.ListGateDecisions(a.cmdGate))

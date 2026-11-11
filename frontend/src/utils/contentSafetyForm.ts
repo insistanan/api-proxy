@@ -33,6 +33,8 @@ export const defaultContentSafety = (): ContentSafetySettings => ({
     enabledRules: [],
     aiGate: {
       enabled: false,
+      protocol: 'chat',
+      model: '',
       channelId: '',
       waitSeconds: 10
     }
@@ -111,6 +113,8 @@ export const normalizeContentSafety = (
       aiGate: {
         ...defaults.dangerousCmd.aiGate,
         ...(dangerousCmd?.aiGate || {}),
+        protocol: dangerousCmd?.aiGate?.protocol ?? 'chat',
+        model: typeof dangerousCmd?.aiGate?.model === 'string' ? dangerousCmd.aiGate.model : '',
         channelId: typeof dangerousCmd?.aiGate?.channelId === 'string' ? dangerousCmd.aiGate.channelId : '',
         waitSeconds:
           typeof dangerousCmd?.aiGate?.waitSeconds === 'number' && dangerousCmd.aiGate.waitSeconds > 0

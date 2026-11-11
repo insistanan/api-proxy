@@ -5,6 +5,7 @@ import type {
   AssistantMessage,
   AssistantSession,
   AssistantStatusResponse,
+  GateChannelOption,
   GateDecision,
   GateDecisionResponse,
   GatePending,
@@ -12,6 +13,9 @@ import type {
 } from '@/types'
 
 export const assistantApi = {
+  async getGateChannels(): Promise<{ channels: GateChannelOption[] }> {
+    return apiRequest('/security/gate/channels')
+  },
   // 危险命令 AI 闸门：待确认列表 / 用户决定 / 会话级白黑名单
   async getGatePending(signal?: AbortSignal): Promise<GatePendingResponse> {
     return apiRequest('/security/gate/pending', { signal })

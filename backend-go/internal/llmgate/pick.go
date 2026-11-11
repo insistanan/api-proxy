@@ -27,6 +27,74 @@ var preferredKinds = []scheduler.ChannelKind{
 	scheduler.ChannelKindGemini,
 }
 
+// ChannelOption 只返回审批设置所需的公开字段，不向页面暴露渠道密钥。
+type ChannelOption struct {
+	Kind         string   `json:"kind"`
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	DefaultModel string   `json:"defaultModel"`
+	Models       []string `json:"models"`
+}
+
+// ChannelOptions 独立列出审批候选，避免受助手所选模型或助手配置影响。
+// 没有默认模型的渠道仍可列出，由审批页显式指定模型；探测许可立即中性释放。
+func (c *Caller) ChannelOptions(ctx context.Context) ([]ChannelOption, error) {
+	if c == nil || c.CfgManager == nil {
+		return nil, fmt.Errorf("审批调用器未初始化")
+	}
+	cfg := c.CfgManager.GetConfig()
+	groups := []struct {
+		kind      scheduler.ChannelKind
+		upstreams []config.UpstreamConfig
+	}{
+		{scheduler.ChannelKindMessages, cfg.Upstream},
+		{scheduler.ChannelKindResponses, cfg.ResponsesUpstream},
+		{scheduler.ChannelKindChat, cfg.ChatUpstream},
+		{scheduler.ChannelKindGemini, cfg.GeminiUpstream},
+		{scheduler.ChannelKindDecisions, cfg.DecisionsUpstream},
+	}
+	options := make([]ChannelOption, 0)
+	for _, group := range groups {
+		for index := range group.upstreams {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			upstream := &group.upstreams[index]
+			if strings.TrimSpace(upstream.ID) == "" {
+				continue
+			}
+			selected, _ := checkChannelAvailable(c.ChannelScheduler, group.kind, upstream, index)
+			if selected == nil {
+				continue // 停用、无密钥或暂不可用的渠道不作为审批候选。
+			}
+			if selected.Permit != nil {
+				selected.Permit.Release()
+			}
+			models := make(map[string]struct{})
+			if model := strings.TrimSpace(upstream.DefaultModel); model != "" {
+				models[model] = struct{}{}
+			}
+			for source, targets := range upstream.ModelMapping {
+				if source != "*" && !strings.ContainsAny(source, "*?[") {
+					models[source] = struct{}{}
+				}
+				for _, target := range targets {
+					if model := strings.TrimSpace(target); model != "" {
+						models[model] = struct{}{}
+					}
+				}
+			}
+			modelIDs := make([]string, 0, len(models))
+			for model := range models {
+				modelIDs = append(modelIDs, model)
+			}
+			sort.Strings(modelIDs)
+			options = append(options, ChannelOption{Kind: string(group.kind), ID: upstream.ID, Name: upstream.Name, DefaultModel: upstream.DefaultModel, Models: modelIDs})
+		}
+	}
+	return options, nil
+}
+
 // SelectedChannel 描述一次内部调用选中的渠道。
 type SelectedChannel struct {
 	Kind         scheduler.ChannelKind
@@ -52,18 +120,37 @@ type SelectedChannel struct {
 // chat → gemini × 配置顺序全池扫描，取第一个"可用 + 能解析出模型"的渠道。
 // failedChannels 按 kind 排除已失败的渠道（自动模式换渠道重试用）；nil 不排除。
 func PickChannel(ctx context.Context, cfgManager *config.ConfigManager, channelScheduler *scheduler.ChannelScheduler, channelID string, model string, failedChannels map[scheduler.ChannelKind]map[int]bool) (*SelectedChannel, error) {
+	return pickChannelForProtocol(ctx, cfgManager, channelScheduler, channelID, model, failedChannels, "")
+}
+
+func protocolKinds(protocol string) ([]scheduler.ChannelKind, error) {
+	switch protocol {
+	case "", "chat":
+		return preferredKinds, nil
+	case "decisions", "systemone":
+		return []scheduler.ChannelKind{scheduler.ChannelKindDecisions}, nil
+	default:
+		return nil, fmt.Errorf("内部调用协议无效: %q", protocol)
+	}
+}
+
+func pickChannelForProtocol(ctx context.Context, cfgManager *config.ConfigManager, channelScheduler *scheduler.ChannelScheduler, channelID, model string, failedChannels map[scheduler.ChannelKind]map[int]bool, protocol string) (*SelectedChannel, error) {
 	if cfgManager == nil {
 		return nil, fmt.Errorf("内部调用未绑定配置管理器")
+	}
+	kinds, err := protocolKinds(protocol)
+	if err != nil {
+		return nil, err
 	}
 	channelID = strings.TrimSpace(channelID)
 	model = strings.TrimSpace(model)
 	if channelID != "" {
-		return pickByID(cfgManager, channelScheduler, channelID, model)
+		return pickByID(cfgManager, channelScheduler, channelID, model, kinds)
 	}
 	if channelScheduler != nil && model != "" {
-		return pickByOrchestration(ctx, channelScheduler, model, failedChannels)
+		return pickByOrchestration(ctx, channelScheduler, model, failedChannels, kinds)
 	}
-	for _, kind := range preferredKinds {
+	for _, kind := range kinds {
 		var kindFailed map[int]bool
 		if failedChannels != nil {
 			kindFailed = failedChannels[kind]
@@ -73,7 +160,7 @@ func PickChannel(ctx context.Context, cfgManager *config.ConfigManager, channelS
 			return selected, err
 		}
 	}
-	return nil, fmt.Errorf("没有可用的内部调用渠道（按 messages → responses → chat → gemini 顺序查找均失败）")
+	return nil, fmt.Errorf("没有可用的内部调用渠道（候选协议: %v）", kinds)
 }
 
 // pickByOrchestration 按四协议优先级复用主链路编排选渠。
@@ -87,9 +174,9 @@ func PickChannel(ctx context.Context, cfgManager *config.ConfigManager, channelS
 // 内部调用结束时以 Circuit 记账（Success/Failure/Neutral）释放——真实调用
 // 见 Caller.callOnChannel，探测见 Caller.PreviewChannel；漏记会把渠道卡死在
 // HalfOpen，表现为"状态栏显示该渠道、实际请求却选不中它"。
-func pickByOrchestration(ctx context.Context, channelScheduler *scheduler.ChannelScheduler, model string, failedChannels map[scheduler.ChannelKind]map[int]bool) (*SelectedChannel, error) {
+func pickByOrchestration(ctx context.Context, channelScheduler *scheduler.ChannelScheduler, model string, failedChannels map[scheduler.ChannelKind]map[int]bool, kinds []scheduler.ChannelKind) (*SelectedChannel, error) {
 	var lastErr error
-	for _, kind := range preferredKinds {
+	for _, kind := range kinds {
 		// 组内排除集：入参 failedChannels（跨渠道重试）+ 本轮模型过滤排除，
 		// SelectChannel 按 failedChannels 语义自然推进到下一渠道。
 		excluded := make(map[int]bool)
@@ -126,9 +213,9 @@ func pickByOrchestration(ctx context.Context, channelScheduler *scheduler.Channe
 		}
 	}
 	if lastErr != nil {
-		return nil, fmt.Errorf("按 messages → responses → chat → gemini 编排选渠均失败: %w", lastErr)
+		return nil, fmt.Errorf("内部调用编排选渠失败（候选协议: %v）: %w", kinds, lastErr)
 	}
-	return nil, fmt.Errorf("没有可用的内部调用渠道（按 messages → responses → chat → gemini 顺序查找均失败）")
+	return nil, fmt.Errorf("没有可用的内部调用渠道（候选协议: %v）", kinds)
 }
 
 // canResolveInternalModel 判断渠道能否为内部调用解析出非空模型，口径与
@@ -193,14 +280,14 @@ func internalCallModel(model string, upstream *config.UpstreamConfig) (string, b
 
 // pickByID 按稳定渠道 ID 选渠。同 canResolveInternalModel 口径：解析不出
 // 模型的渠道（无 DefaultModel 且映射不命中）显式报错，不静默换渠道。
-func pickByID(cfgManager *config.ConfigManager, channelScheduler *scheduler.ChannelScheduler, channelID string, model string) (*SelectedChannel, error) {
-	for _, kind := range preferredKinds {
+func pickByID(cfgManager *config.ConfigManager, channelScheduler *scheduler.ChannelScheduler, channelID string, model string, kinds []scheduler.ChannelKind) (*SelectedChannel, error) {
+	for _, kind := range kinds {
 		selected, err := firstAvailableChannel(cfgManager, channelScheduler, kind, channelID, model, nil)
 		if err != nil || selected != nil {
 			return selected, err
 		}
 	}
-	return nil, fmt.Errorf("内部调用渠道 %q 不存在或不在 messages/responses/chat/gemini 四类之中", channelID)
+	return nil, fmt.Errorf("内部调用渠道 %q 不存在或与所选协议不匹配（候选协议: %v）", channelID, kinds)
 }
 
 // firstAvailableChannel 在单个 kind 的渠道切片中按配置顺序找可用渠道。
@@ -220,6 +307,8 @@ func firstAvailableChannel(cfgManager *config.ConfigManager, channelScheduler *s
 		upstreams = cfg.ChatUpstream
 	case scheduler.ChannelKindGemini:
 		upstreams = cfg.GeminiUpstream
+	case scheduler.ChannelKindDecisions:
+		upstreams = cfg.DecisionsUpstream
 	default:
 		return nil, fmt.Errorf("内部调用不支持渠道类型 %s", kind)
 	}

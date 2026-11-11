@@ -10,6 +10,18 @@ import (
 	"github.com/insistanan/api-proxy/internal/sensitive"
 )
 
+// GetGateChannels 返回命令审批可选渠道和已有模型配置，不实际调用上游。
+func GetGateChannels(gate *hooks.CmdGate) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		channels, err := gate.ChannelOptions(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"channels": channels})
+	}
+}
+
 // GetGatePending 返回当前等待用户决定的危险命令待确认列表。
 // 前端全局轮询此端点驱动通知卡片。
 func GetGatePending(gate *hooks.CmdGate) gin.HandlerFunc {

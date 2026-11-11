@@ -291,6 +291,14 @@ func validateSensitiveDataMode(mode string) error {
 // validateDangerousCmdAIGate 校验危险命令 AI 闸门设置。
 // 闸门依赖危险命令检测本体：本体关闭时闸门一并拒绝，避免"闸门开了却永远不触发"的假配置。
 func validateDangerousCmdAIGate(cmd DangerousCmdConfig) error {
+	switch cmd.AIGate.Protocol {
+	case "", "chat", "decisions", "systemone":
+	default:
+		return proxyConfigErrorf("危险命令审批协议无效: %q", cmd.AIGate.Protocol)
+	}
+	if len(cmd.AIGate.Model) > 256 || strings.ContainsAny(cmd.AIGate.Model, "\r\n\x00") {
+		return proxyConfigErrorf("危险命令审批模型不能超过 256 字节或包含换行、空字符")
+	}
 	if !cmd.AIGate.Enabled {
 		return nil
 	}

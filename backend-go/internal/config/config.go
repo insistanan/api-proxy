@@ -452,9 +452,12 @@ type DangerousCmdConfig struct {
 // AI 判定安全时立即放行并保留同长度的否决窗口。AI 判断失败一律拦截。
 type DangerousCmdAIGateConfig struct {
 	Enabled bool `json:"enabled"`
-	// ChannelID 指定判断渠道的稳定 ID；为空时按 messages → responses → chat → gemini
-	// 自动挑选第一个可用渠道。
+	// ChannelID 指定判断渠道的稳定 ID；为空时在所选协议的渠道池内自动选择。
 	ChannelID string `json:"channelId"`
+	// Protocol 为空或 chat 时使用对话渠道；decisions/systemone 使用 Decisions 池及对应原生格式。
+	Protocol string `json:"protocol,omitempty"`
+	// Model 为空时沿用渠道默认模型；非空时按渠道映射解析，覆盖渠道默认模型。
+	Model string `json:"model,omitempty"`
 	// WaitSeconds 用户决定窗口秒数，范围 3-120，默认 10。
 	WaitSeconds int `json:"waitSeconds"`
 }
