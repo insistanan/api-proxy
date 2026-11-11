@@ -110,6 +110,7 @@ func newGateTestHarness(t *testing.T, waitSeconds int) *gateTestHarness {
 		cfgManager,
 		metricsManagers[0], metricsManagers[1], metricsManagers[2], metricsManagers[3], metricsManagers[4],
 		nil, nil,
+		nil, nil,
 	)
 	caller := &llmgate.Caller{EnvConfig: config.NewEnvConfig(), CfgManager: cfgManager, ChannelScheduler: channelScheduler}
 	harness.gate = NewCmdGate(cfgManager, caller, store, harness.recorder)

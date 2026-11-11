@@ -736,8 +736,9 @@ func TestContentSafetyPipelineReturnsRecorderFailure(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	AttachHookPipeline(c, pipeline, HookContext{APIType: "chat", Model: "test", RequestID: "req-closed"})
+	// 危险命令只检查执行工具的参数（普通文本中的代码块不再作为命令审核），因此用 Bash 工具调用承载危险命令。
 	_, err = RunAttachedPostResponseHooks(context.Background(), c,
-		[]byte("{\"choices\":[{\"message\":{\"content\":\"```sh\\nrm -rf /\\n```\"}}]}"), nil)
+		[]byte(`{"choices":[{"message":{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"Bash","arguments":"{\"command\":\"rm -rf /\"}"}}]}}]}`), nil)
 	var safetyErr *ContentSafetyError
 	if !errors.As(err, &safetyErr) {
 		t.Fatalf("存储失败后内容安全错误丢失: %v", err)

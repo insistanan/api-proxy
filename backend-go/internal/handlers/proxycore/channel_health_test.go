@@ -172,7 +172,7 @@ func newHealthAttemptEnv(t *testing.T) *healthAttemptEnv {
 	metricsManager := metrics.NewMetricsManager()
 	t.Cleanup(metricsManager.Stop)
 
-	channelScheduler := scheduler.NewChannelScheduler(cfgManager, metricsManager, nil, nil, nil, nil, nil, nil)
+	channelScheduler := scheduler.NewChannelScheduler(cfgManager, metricsManager, nil, nil, nil, nil, nil, nil, nil, nil)
 	t.Cleanup(channelScheduler.Stop)
 
 	return &healthAttemptEnv{

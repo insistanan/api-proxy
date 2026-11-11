@@ -186,7 +186,7 @@ func newContentSafetyTestRouter(t *testing.T) (*gin.Engine, *config.ConfigManage
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id": "msg-content-safety-e2e", "type": "message", "role": "assistant", "model": contentSafetyTestModel,
-				"content": []map[string]any{{"type": "tool_use", "id": "tool-dangerous", "name": "Bash", "input": map[string]any{"command": "rm -rf /"}}},
+				"content":     []map[string]any{{"type": "tool_use", "id": "tool-dangerous", "name": "Bash", "input": map[string]any{"command": "rm -rf /"}}},
 				"stop_reason": "tool_use", "stop_sequence": nil,
 				"usage": map[string]any{"input_tokens": 10, "output_tokens": 5},
 			})
@@ -246,6 +246,7 @@ func newContentSafetyTestRouter(t *testing.T) (*gin.Engine, *config.ConfigManage
 	channelScheduler := scheduler.NewChannelScheduler(
 		cfgManager,
 		metricsManagers[0], metricsManagers[1], metricsManagers[2], metricsManagers[3], metricsManagers[4],
+		nil, nil,
 		traceAffinity,
 		urlhealth.NewURLManager(30*time.Second, 3),
 	)

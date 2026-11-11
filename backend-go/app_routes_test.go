@@ -20,7 +20,7 @@ import (
 
 var channelAdminKinds = []scheduler.ChannelKind{
 	scheduler.ChannelKindMessages, scheduler.ChannelKindResponses, scheduler.ChannelKindGemini,
-	scheduler.ChannelKindChat, scheduler.ChannelKindImages,
+	scheduler.ChannelKindChat, scheduler.ChannelKindImages, scheduler.ChannelKindEmbeddings, scheduler.ChannelKindDecisions,
 }
 
 // 只装配渠道管理边界：临时配置、内存指标和真实鉴权，不启动 HTTP 服务。
@@ -33,7 +33,8 @@ func newChannelAdminTestRouter(t *testing.T) (*gin.Engine, *app) {
 		mms[kind] = metrics.NewMetricsManager()
 	}
 	sch := scheduler.NewChannelScheduler(cm, mms[scheduler.ChannelKindMessages], mms[scheduler.ChannelKindResponses],
-		mms[scheduler.ChannelKindGemini], mms[scheduler.ChannelKindChat], mms[scheduler.ChannelKindImages], session.NewTraceAffinityManager(), nil)
+		mms[scheduler.ChannelKindGemini], mms[scheduler.ChannelKindChat], mms[scheduler.ChannelKindImages],
+		mms[scheduler.ChannelKindEmbeddings], mms[scheduler.ChannelKindDecisions], session.NewTraceAffinityManager(), nil)
 	t.Cleanup(func() {
 		sch.Stop()
 		require.NoError(t, cm.Close())

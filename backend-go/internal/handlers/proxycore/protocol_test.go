@@ -172,7 +172,7 @@ func newRunProxyTestEnv(t *testing.T) *runProxyTestEnv {
 	metricsManager := metrics.NewMetricsManager()
 	t.Cleanup(metricsManager.Stop)
 
-	channelScheduler := scheduler.NewChannelScheduler(cfgManager, metricsManager, nil, nil, nil, nil, nil, nil)
+	channelScheduler := scheduler.NewChannelScheduler(cfgManager, metricsManager, nil, nil, nil, nil, nil, nil, nil, nil)
 	t.Cleanup(channelScheduler.Stop)
 
 	return &runProxyTestEnv{

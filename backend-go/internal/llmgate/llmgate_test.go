@@ -53,6 +53,7 @@ func newGateTestEnv(t *testing.T) (*config.ConfigManager, *scheduler.ChannelSche
 		cfgManager,
 		metricsManagers[0], metricsManagers[1], metricsManagers[2], metricsManagers[3], metricsManagers[4],
 		nil, nil,
+		nil, nil,
 	)
 	return cfgManager, channelScheduler
 }

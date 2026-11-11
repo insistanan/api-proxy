@@ -42,7 +42,7 @@ func TestImagesLargeJSONPassesSharedAttemptWithoutKeyRetry(t *testing.T) {
 	}))
 	defer server.Close()
 	env := newHealthAttemptEnv(t)
-	imageScheduler := scheduler.NewChannelScheduler(env.cfgManager, nil, nil, nil, nil, env.metricsManager, nil, nil)
+	imageScheduler := scheduler.NewChannelScheduler(env.cfgManager, nil, nil, nil, nil, env.metricsManager, nil, nil, nil, nil)
 	t.Cleanup(imageScheduler.Stop)
 	attempt := newHealthAttempt(env, server.URL, []string{"key-a", "key-b"})
 	attempt.ChannelScheduler = imageScheduler

@@ -79,7 +79,7 @@ func createTestScheduler(t *testing.T, cfg config.Config) (*ChannelScheduler, fu
 	traceAffinity := session.NewTraceAffinityManager()
 	urlManager := urlhealth.NewURLManager(30*time.Second, 3)
 
-	scheduler := NewChannelScheduler(cfgManager, messagesMetrics, responsesMetrics, geminiMetrics, chatMetrics, imagesMetrics, traceAffinity, urlManager)
+	scheduler := NewChannelScheduler(cfgManager, messagesMetrics, responsesMetrics, geminiMetrics, chatMetrics, imagesMetrics, nil, nil, traceAffinity, urlManager)
 
 	return scheduler, func() {
 		scheduler.Stop()
