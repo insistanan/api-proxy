@@ -131,9 +131,13 @@ func RunProxyRequest(
 	})
 	defer hooks.ClearAttachedSensitiveData(c)
 	if err := hooks.RunAttachedPreRequestHooks(c.Request.Context(), c, c.Request, "", string(spec.Kind)); err != nil {
-		conversationID := ObserveConversationRequest(
+		conversationID, observeErr := ObserveConversationRequest(
 			channelScheduler, spec.Kind, identity, transcript, model, nil, imageFingerprints, stream,
 		)
+		if observeErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": observeErr.Error(), "code": "CONVERSATION_STORE_ERROR"})
+			return
+		}
 		if assignErr := hooks.AssignAttachedConversation(c.Request.Context(), c, conversationID); assignErr != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "关联内容安全记录会话失败", "code": "CONTENT_SAFETY_LOG_ERROR"})
 			MarkConversationFailure(channelScheduler, conversationID, spec.Kind, assignErr)
@@ -160,7 +164,7 @@ func RunProxyRequest(
 	}
 
 	// 4. 会话观测
-	conversationID := ObserveConversationRequest(
+	conversationID, observeErr := ObserveConversationRequest(
 		channelScheduler,
 		spec.Kind,
 		identity,
@@ -170,6 +174,10 @@ func RunProxyRequest(
 		imageFingerprints,
 		stream,
 	)
+	if observeErr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": observeErr.Error(), "code": "CONVERSATION_STORE_ERROR"})
+		return
+	}
 	defer MarkConversationComplete(channelScheduler, conversationID, spec.Kind)
 	// 会话记录 ID 写入请求上下文，供协议回调（如 HandleSuccess）取用。
 	c.Set(utils.ContextKeyConversationUserID, conversationID)

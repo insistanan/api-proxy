@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -44,10 +45,37 @@ func ListConversations(registry *conversation.Registry) gin.HandlerFunc {
 			return
 		}
 
+		if c.Query("page") != "" {
+			page, err := strconv.Atoi(c.Query("page"))
+			if err != nil || page < 1 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "页码必须为正整数"})
+				return
+			}
+			size, err := strconv.Atoi(c.DefaultQuery("pageSize", "25"))
+			if err != nil || size < 1 || size > 100 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "每页条数必须在 1–100 之间"})
+				return
+			}
+			status, order := c.DefaultQuery("status", "all"), c.DefaultQuery("order", "created")
+			if status != "all" && status != "active" && status != "idle" || order != "created" && order != "status" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "无效的状态或排序参数"})
+				return
+			}
+			result, err := registry.QueryPage(conversation.ListOptions{Query: c.Query("q"), Kind: c.Query("kind"), Status: status, Order: order, Page: page, PageSize: size})
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, result)
+			return
+		}
 		query := strings.ToLower(strings.TrimSpace(c.Query("q")))
 		apiKind := strings.ToLower(strings.TrimSpace(c.Query("kind")))
-
-		items := registry.List()
+		items, err := registry.ListRecords()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 		filtered := make([]*conversation.Record, 0, len(items))
 		for _, item := range items {
 			if apiKind != "" && strings.ToLower(item.APIKind) != apiKind {
@@ -58,7 +86,6 @@ func ListConversations(registry *conversation.Registry) gin.HandlerFunc {
 			}
 			filtered = append(filtered, item)
 		}
-
 		c.JSON(http.StatusOK, gin.H{"conversations": filtered})
 	}
 }
@@ -70,8 +97,12 @@ func GetConversation(registry *conversation.Registry) gin.HandlerFunc {
 			return
 		}
 
-		item, ok := registry.Get(c.Param("id"))
-		if !ok {
+		item, err := registry.Lookup(c.Param("id"))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if item == nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "conversation not found"})
 			return
 		}
@@ -106,7 +137,12 @@ func DeleteConversation(registry *conversation.Registry, sessionManager *session
 			return
 		}
 		conversationID := c.Param("id")
-		if _, ok := registry.Get(conversationID); !ok {
+		item, err := registry.Lookup(conversationID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if item == nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "conversation not found"})
 			return
 		}
@@ -166,8 +202,12 @@ func SetConversationRouteOverride(registry *conversation.Registry, cfgManager *c
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 			return
 		}
-		item, ok := registry.Get(c.Param("id"))
-		if !ok {
+		item, err := registry.Lookup(c.Param("id"))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if item == nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "conversation not found"})
 			return
 		}
@@ -189,7 +229,7 @@ func SetConversationRouteOverride(registry *conversation.Registry, cfgManager *c
 			return
 		}
 
-		item, err := registry.SetRouteOverride(c.Param("id"), req.Kind, req.ChannelIndex, channelName)
+		item, err = registry.SetRouteOverride(c.Param("id"), req.Kind, req.ChannelIndex, channelName)
 		if err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 			return

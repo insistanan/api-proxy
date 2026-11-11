@@ -22,15 +22,15 @@ func ResolveExistingConversationID(
 	channelScheduler *scheduler.ChannelScheduler,
 	kind scheduler.ChannelKind,
 	identity conversation.Identity,
-) string {
+) (string, error) {
 	if channelScheduler == nil {
-		return identity.ExplicitID
+		return identity.ExplicitID, nil
 	}
 	registry := channelScheduler.GetConversationRegistry()
 	if registry == nil {
-		return identity.ExplicitID
+		return identity.ExplicitID, nil
 	}
-	return registry.ResolveExistingRecordID(string(kind), identity)
+	return registry.ResolveExistingRecordIDWithError(string(kind), identity)
 }
 
 func ObserveConversationRequest(
@@ -42,20 +42,20 @@ func ObserveConversationRequest(
 	prompts []string,
 	imageFingerprints []string,
 	stream bool,
-) string {
+) (string, error) {
 	if channelScheduler == nil {
-		return identity.ExplicitID
+		return identity.ExplicitID, nil
 	}
 	registry := channelScheduler.GetConversationRegistry()
 	if registry == nil {
-		return identity.ExplicitID
+		return identity.ExplicitID, nil
 	}
 
 	firstPrompt := ""
 	if len(prompts) > 0 {
 		firstPrompt = prompts[0]
 	}
-	record := registry.ObserveRequest(conversation.Observation{
+	record, err := registry.ObserveRequestWithError(conversation.Observation{
 		APIKind:           string(kind),
 		Model:             model,
 		Stream:            stream,
@@ -66,10 +66,10 @@ func ObserveConversationRequest(
 		Prompts:           prompts,
 		ImageFingerprints: imageFingerprints,
 	})
-	if record == nil {
-		return identity.ExplicitID
+	if err != nil {
+		return "", err
 	}
-	return record.ID
+	return record.ID, nil
 }
 
 func MarkConversationSuccess(channelScheduler *scheduler.ChannelScheduler, conversationID string, kind scheduler.ChannelKind, channelIndex int, channelName string) {

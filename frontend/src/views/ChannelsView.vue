@@ -1,12 +1,5 @@
 <template>
-  <!--
-    根节点必须是单个真实 DOM 元素：
-    App.vue 用 <transition mode="out-in"> 包裹 router-view，Transition 需要一个
-    可动画的元素节点来触发 afterLeave，才会挂载下一个组件。若这里渲染 fragment
-    （多根），或根节点是同样多根的 ChannelOrchestration（v-card + v-dialog...），
-    Transition 会递归下探到 fragment 而拿不到元素，isLeaving 卡死，切换路由后
-    整块空白（刷新页面走 appear 路径才恢复）。
-  -->
+  <!-- 页面容器负责整体布局，业务事件通过 attrs 显式交给渠道编排组件。 -->
   <div class="channels-view">
     <!-- 渠道编排（高密度列表模式） -->
     <ChannelOrchestration

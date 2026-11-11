@@ -1,33 +1,29 @@
 <template>
   <div class="skills-page">
-    <div class="page-heading mb-5">
-      <div>
-        <div class="text-h5 font-weight-bold">Skills</div>
-        <!-- 统一管理本机 Agent Skills，支持本地导入、skills.sh 发现和 Chat 翻译备份 -->
-      </div>
-      <div class="d-flex flex-wrap ga-2">
+    <PageHeader title="Skills" description="发现、安装并管理各客户端使用的技能。">
         <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="loadSkills">刷新</v-btn>
         <v-btn variant="text" prepend-icon="mdi-archive-outline" :loading="consolidating" @click="consolidateInstalledSkills">导入现有</v-btn>
         <v-btn variant="text" prepend-icon="mdi-swap-horizontal" @click="showTranslatedNames = !showTranslatedNames">{{ showTranslatedNames ? '显示原名称' : '显示译名' }}</v-btn>
         <v-btn variant="tonal" prepend-icon="mdi-magnify" @click="openDiscover">发现 Skill</v-btn>
         <v-btn color="primary" prepend-icon="mdi-plus" @click="openImport">本地安装</v-btn>
-      </div>
-    </div>
+    </PageHeader>
 
     <v-alert v-if="error" type="error" variant="tonal" class="mb-5" closable @click:close="error = ''">{{ error }}</v-alert>
 
-    <v-alert type="info" variant="tonal" density="compact" class="mb-5">
-      项目 <code>skills/</code> 目录是统一可恢复来源：导入、远程安装和翻译保存都会同步保留 Skill；翻译备份位于 <code>skills/&lt;名称&gt;/.backups/&lt;时间&gt;/</code>。插件缓存与 Codex 内置 Skill 仅供查看，删除请回到原 Agent 的插件管理。
-    </v-alert>
+    <DisclosureSection title="来源与安装位置" description="查看各客户端的技能目录、读写状态和备份位置。" icon="mdi-folder-open" class="mb-5">
+      <v-alert type="info" variant="tonal" density="compact" class="mb-4">
+        项目 <code>skills/</code> 目录是统一可恢复来源：导入、远程安装和翻译保存都会同步保留 Skill；翻译备份位于 <code>skills/&lt;名称&gt;/.backups/&lt;时间&gt;/</code>。插件缓存与 Codex 内置 Skill 仅供查看，删除请回到原 Agent 的插件管理。
+      </v-alert>
 
-    <div class="locations-strip mb-5">
-      <div class="text-caption text-medium-emphasis mb-2">已检查的本机目录</div>
-      <div class="d-flex flex-wrap ga-2">
-        <v-chip v-for="location in locations" :key="location.key" size="small" label :title="`${location.path}（点击筛选）`" :color="location.exists ? (location.readOnly ? 'info' : 'success') : undefined" :class="['location-chip', { 'location-chip--active': agentFilter === location.key }]" @click="filterByAgent(location.key)">
-          {{ location.agent }} · {{ location.exists ? (location.readOnly ? '只读' : '可安装') : '目录不存在' }}
-        </v-chip>
+      <div class="locations-strip">
+        <div class="text-caption text-medium-emphasis mb-2">已检查的本机目录</div>
+        <div class="d-flex flex-wrap ga-2">
+          <v-chip v-for="location in locations" :key="location.key" size="small" label :title="`${location.path}（点击筛选）`" :color="location.exists ? (location.readOnly ? 'info' : 'success') : undefined" :class="['location-chip', { 'location-chip--active': agentFilter === location.key }]" @click="filterByAgent(location.key)">
+            {{ location.agent }} · {{ location.exists ? (location.readOnly ? '只读' : '可安装') : '目录不存在' }}
+          </v-chip>
+        </div>
       </div>
-    </div>
+    </DisclosureSection>
 
     <v-row class="mb-1">
       <v-col cols="12" md="7">
@@ -47,7 +43,7 @@
         </thead>
         <tbody>
           <tr v-if="!loading && filteredSkills.length === 0"><td colspan="5" class="text-center text-medium-emphasis py-10">未发现符合条件的 Skill</td></tr>
-          <tr v-for="skill in filteredSkills" :key="`${skill.locationKey}:${skill.name}`">
+          <tr v-for="skill in visibleSkills" :key="`${skill.locationKey}:${skill.name}`">
             <td>
               <v-tooltip :text="skill.note || ''" :disabled="!skill.note" location="top" theme="dark"><template #activator="{ props }"><button v-bind="props" type="button" class="skill-name-button font-weight-medium" @click="openSkill(skill)">{{ displaySkillName(skill) }}<v-tooltip v-if="skill.translatedName" text="已翻译" location="top" theme="dark"><template #activator="{ props: tipProps }"><v-icon v-bind="tipProps" icon="mdi-translate" size="x-small" color="primary" class="ml-1" /></template></v-tooltip></button></template></v-tooltip>
               <div class="text-caption text-medium-emphasis skill-description">{{ skill.description || '未读取到说明' }}</div>
@@ -66,6 +62,10 @@
           </tr>
         </tbody>
       </v-table>
+      <div class="skills-pagination">
+        <span class="text-body-2 text-medium-emphasis" role="status">共 {{ filteredSkills.length }} 项 · 每页 {{ skillsPageSize }} 项</span>
+        <v-pagination v-if="skillsPageCount > 1" v-model="skillsPage" :length="skillsPageCount" :total-visible="3" density="compact" aria-label="技能列表分页" />
+      </div>
     </v-card>
 
     <v-dialog v-model="importDialog" max-width="700" persistent>
@@ -181,6 +181,8 @@
 </template>
 
 <script setup lang="ts">
+import PageHeader from '@/components/common/PageHeader.vue'
+import DisclosureSection from '@/components/common/DisclosureSection.vue'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { api, fetchUpstreamModels, channelApiByType, type Channel, type ManagedSkill, type RemoteSkillPreview, type SkillLocation, type SkillSearchResult } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
@@ -276,6 +278,13 @@ const filteredSkills = computed(() => {
   const keyword = query.value.toLowerCase()
   return skills.value.filter(skill => (!agentFilter.value || skill.locationKey === agentFilter.value) && (!keyword || `${skill.name} ${skill.description} ${skill.agent} ${skill.path}`.toLowerCase().includes(keyword)))
 })
+// 搜索覆盖全部技能，表格只挂载当前页，避免为每条记录同时创建多个浮层和按钮。
+const skillsPage = ref(1)
+const skillsPageSize = 30
+const skillsPageCount = computed(() => Math.max(1, Math.ceil(filteredSkills.value.length / skillsPageSize)))
+const visibleSkills = computed(() => filteredSkills.value.slice((skillsPage.value - 1) * skillsPageSize, skillsPage.value * skillsPageSize))
+watch([query, agentFilter], () => { skillsPage.value = 1 })
+watch(skillsPageCount, count => { skillsPage.value = Math.min(skillsPage.value, count) })
 const displaySkillName = (skill: ManagedSkill) => showTranslatedNames.value && skill.translatedName ? skill.translatedName : skill.name
 const translatedNameFromContent = (content: string) => {
   const frontmatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
@@ -701,19 +710,20 @@ const copySkillPath = async (path: string) => {
     notice.value = { visible: true, type: 'error', message: '复制路径失败，请检查浏览器权限' }
   }
 }
-const formatInstalls = (value: number) => new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 1 }).format(value || 0).replace(/\s+/g, '')
+const installCountFormatter = new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 1 })
+const formatInstalls = (value: number) => installCountFormatter.format(value || 0).replace(/\s+/g, '')
 const formatBytes = (value: number) => value < 1024 ? `${value} B` : value < 1024 * 1024 ? `${(value / 1024).toFixed(1)} KB` : `${(value / (1024 * 1024)).toFixed(1)} MB`
 onMounted(loadSkills)
 </script>
 
 <style scoped>
 .skills-page { max-width: 1440px; margin: 0 auto; }
-.page-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .locations-strip { border: 1px solid rgba(var(--v-theme-on-surface), 0.12); border-radius: 6px; padding: 12px 16px; }
 .location-chip, .source-chip { cursor: pointer; }
 .location-chip:hover, .source-chip:hover { filter: brightness(0.96); }
 .location-chip--active, .source-chip--active { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: 1px; }
 .skills-list-card { border: 1px solid rgba(var(--v-theme-on-surface), 0.12); overflow-x: auto; }
+.skills-pagination { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 12px 16px; border-top: 1px solid rgba(var(--v-theme-outline), 0.2); }
 .skill-name-button { background: none; border: 0; color: inherit; cursor: pointer; font: inherit; padding: 0; text-align: left; text-decoration: none; }
 .skill-name-button:hover { color: rgb(var(--v-theme-primary)); text-decoration: underline; }
 .skill-description { max-width: 440px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -731,5 +741,5 @@ onMounted(loadSkills)
 .source-link { color: rgb(var(--v-theme-primary)); text-decoration: none; }
 .source-link:hover { text-decoration: underline; }
 .file-list { max-height: 220px; overflow-y: auto; border: 1px solid rgba(var(--v-theme-on-surface), 0.12); border-radius: 6px; padding: 12px; }
-@media (max-width: 600px) { .page-heading { align-items: flex-start; flex-direction: column; } .skill-description, .skill-path { max-width: 180px; } .detail-card { height: calc(100vh - 24px); max-height: calc(100vh - 24px); } .detail-actions { justify-content: flex-start; } }
+@media (max-width: 600px) { .skill-description, .skill-path { max-width: 180px; } .detail-card { height: calc(100vh - 24px); max-height: calc(100vh - 24px); } .detail-actions { justify-content: flex-start; } }
 </style>

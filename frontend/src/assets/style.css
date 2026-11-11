@@ -1,25 +1,17 @@
-/*
- * API Proxy — 设计系统基座
- * 视觉语言："Instrument Deck / 仪表舱"
- *   · 底色柔和（雾灰 / 深空），不做高亮度对撞，长时间盯屏不刺眼
- *   · 模块靠深边框 + 分层阴影 + 不对称切角拉开强对比，像面板上拧上去的独立仪表
- *   · 全部"狂野"的动态都收敛到数据元素（指标条、状态灯、波形柱）上
- * 字体: Inter (正文) + Fira Code (数据/代码)
- */
+/* 管理面板共享令牌与动效。旧变量名保留为兼容入口，圆角统一为对称形状。 */
 
 :root {
-  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --font-mono: 'Fira Code', 'JetBrains Mono', 'SF Mono', 'Cascadia Code', monospace;
 
-  /* ---- 形状令牌：不对称切角是本设计的签名，避免"到处都是圆角矩形"的模板感 ---- */
-  --cut-lg: 16px;   /* 主卡片长边圆角 */
-  --cut-sm: 3px;    /* 主卡片短边圆角（对角收紧） */
-  --cut-md: 10px;   /* 次级模块 */
-  --cut-xs: 2px;
+  --cut-lg: 14px;
+  --cut-sm: 14px;
+  --cut-md: 10px;
+  --cut-xs: 10px;
 
   /* ---- 结构令牌 ---- */
-  --rail: 4px;          /* 模块色轨宽度 */
-  --rail-strong: 7px;   /* 强调色轨（渠道卡左侧） */
+  --rail: 2px;          /* 模块色轨宽度 */
+  --rail-strong: 2px;   /* 强调色轨（渠道卡左侧） */
   --tick: 6px;          /* 刻度间距 */
 
   /* ---- 缓动 ---- */
@@ -108,161 +100,6 @@ html {
   }
 }
 
-/* 背景纹理 — 极细微噪点，压住大面积纯色的塑料感 */
-body::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: -1;
-  opacity: 0.3;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
-  background-repeat: repeat;
-  background-size: 200px 200px;
-}
-
-.v-theme--dark body::before {
-  opacity: 0.16;
-}
-
-/* ============================================================
-   动效基座 — "呼吸感"关键帧
-   原则：只动 transform/opacity/filter，避免 layout 抖动；
-   持续动画仅保留数据元素（指标条/状态灯/波形），其余为触发式；尊重 reduced-motion
-   ============================================================ */
-
-/* 浮现入场 — 用于卡片/区块首次展示，配合 animation-delay 做阶梯 */
-@keyframes float-in {
-  from { opacity: 0; transform: translateY(12px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-
-/* 呼吸光晕 — 持续活跃元素（状态徽章/状态灯）的轻微呼吸，不喧宾夺主 */
-@keyframes breath-glow {
-  0%, 100% { opacity: 0.25; }
-  50%      { opacity: 0.7; }
-}
-
-/* 同心圆扩散 — 心跳感，用于系统状态灯 */
-@keyframes pulse-ring {
-  0%         { opacity: 0.45; transform: scale(0.85); }
-  70%, 100%  { opacity: 0; transform: scale(1.5); }
-}
-
-/* 流光扫过 — 用于指标条/高亮色轨，提示数据在流动 */
-@keyframes shimmer-slide {
-  from { transform: translateX(-130%); }
-  to   { transform: translateX(230%); }
-}
-
-/* 数值更新浮现 — 数据变化时轻微上浮淡入（配合 :key 触发重放），带一点弹性 */
-@keyframes value-pop {
-  0%   { opacity: 0.25; transform: translateY(4px) scale(0.92); }
-  62%  { opacity: 1; transform: translateY(-1px) scale(1.03); }
-  100% { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-/* ============ 数据元素动效 ============ */
-
-/* 发光末端呼吸 — 指标条末端的亮点在持续脉动，提示"数据活着" */
-@keyframes fill-breathe {
-  0%, 100% { opacity: 0.55; transform: translate(-50%, -50%) scale(0.85); }
-  50%      { opacity: 1;    transform: translate(-50%, -50%) scale(1.2); }
-}
-
-/* 波头 — 比 fill-breathe 幅度更大、更有方向感，用于健康指标条的行进感 */
-@keyframes wave-head {
-  0%, 100% { opacity: 0.45; transform: translateY(-50%) scale(0.75); }
-  42%      { opacity: 1;    transform: translateY(-50%) scale(1.45); }
-}
-
-/* 波头外扩环 — 从条尾持续向外推开的水波，指标条的"心跳" */
-@keyframes head-ripple {
-  0%   { opacity: 0.55; transform: translateY(-50%) scale(0.5); }
-  100% { opacity: 0;    transform: translateY(-50%) scale(2.6); }
-}
-
-/* LED 状态灯 — 模拟设备面板上闪烁的指示灯 */
-@keyframes led-blink {
-  0%, 100% { opacity: 1; }
-  50%      { opacity: 0.25; }
-}
-
-/* 环形冲击波 — 比 pulse-ring 更短促有力的光环扩散，用于故障警示 */
-@keyframes ring-ping {
-  0%   { transform: scale(0.6); opacity: 0.7; }
-  100% { transform: scale(1.9); opacity: 0; }
-}
-
-/* 柱状图生长 — 数据柱从底部竖起（transform-origin 由调用方设为 bottom） */
-@keyframes bar-rise {
-  from { transform: scaleY(0); }
-  to   { transform: scaleY(1); }
-}
-
-/* 扫描线 — 数据面板上缓慢扫过的横线，制造"持续监测"的装置感 */
-@keyframes scan-sweep {
-  0%   { transform: translateX(-130%); opacity: 0; }
-  12%  { opacity: 1; }
-  88%  { opacity: 1; }
-  100% { transform: translateX(430%); opacity: 0; }
-}
-
-/* 光晕脉动 — 卡片/徽章阴影的柔和呼吸，制造纵深对比 */
-@keyframes glow-pulse {
-  0%, 100% { box-shadow: 0 0 0 1px rgba(var(--v-theme-primary), 0.18), 0 4px 14px rgba(0, 0, 0, 0.06); }
-  50%      { box-shadow: 0 0 0 1px rgba(var(--v-theme-primary), 0.36), 0 6px 22px rgba(0, 0, 0, 0.1); }
-}
-
-/* 色轨微光 — 强调色条的呼吸扫光，跟随 hover 触发 */
-@keyframes edge-shine {
-  0%, 100% { opacity: 0.55; }
-  50%      { opacity: 1; }
-}
-
-/* 危险斜纹滚动 — 低成功率指标条的警示纹理，工程设备语言 */
-@keyframes stripe-drift {
-  from { background-position: 0 0; }
-  to   { background-position: 22px 0; }
-}
-
-/* 刻度漂移 — 轨道刻度缓慢左移，像走纸记录仪的纸带 */
-@keyframes tick-drift {
-  from { background-position-x: 0; }
-  to   { background-position-x: -12px; }
-}
-
-/* 色轨流动 — 渐变沿轨道循环推进，替代静态色块 */
-@keyframes rail-flow {
-  from { background-position: 50% 0%; }
-  to   { background-position: 50% 200%; }
-}
-
-/* 警报呼吸 — 故障态的急促红光，节奏约为常规呼吸的两倍 */
-@keyframes alarm-breathe {
-  0%, 100% { box-shadow: 0 0 3px rgba(var(--v-theme-error), 0.3); }
-  50%      { box-shadow: 0 0 13px 1px rgba(var(--v-theme-error), 0.62); }
-}
-
-/* 数据刷新闪光 — 指标条整体短促提亮一次（配合 :key 重放） */
-@keyframes bar-flash {
-  0%   { filter: brightness(1.7) saturate(0.85); }
-  100% { filter: brightness(1) saturate(1); }
-}
-
-/* 柱顶火花 — 最新数据柱顶端的短促高亮 */
-@keyframes spark-blink {
-  0%, 100% { opacity: 0.3; }
-  50%      { opacity: 1; }
-}
-
-/* 指标条柔和呼吸 — 光晕用 currentColor，档位换色时自动跟随，
-   不像 alarm-breathe 那样绑死 error 色（缓存命中低只是省得少，不是故障） */
-@keyframes fill-glow-breathe {
-  0%, 100% { box-shadow: 0 0 3px 0 currentColor, inset 0 1px 0 rgba(255, 255, 255, 0.28); }
-  50%      { box-shadow: 0 0 11px 1px currentColor, inset 0 1px 0 rgba(255, 255, 255, 0.28); }
-}
-
 /* ============================================================
    元信息块 — 渠道行副行 / 池卡片里"标签 + 值"的统一外形
    渠道映射组件（ChannelMappingBlock）使用，
@@ -274,10 +111,10 @@ body::before {
   gap: 5px;
   max-width: 100%;
   padding: 3px 8px;
-  border: 1px solid rgba(var(--v-theme-outline), 0.6);
-  /* 与卡片同向的不对称切角 */
-  border-radius: 5px 2px 5px 2px;
-  background: rgba(var(--v-theme-surface-variant), 0.5);
+  border: 1px solid rgba(var(--v-theme-outline), 0.24);
+  /* 副行标签保持紧凑，但不缩小主要阅读文本。 */
+  border-radius: 6px;
+  background: rgba(var(--v-theme-surface-variant), 0.25);
   font-size: 12px;
   line-height: 1.5;
   text-align: left;
@@ -320,18 +157,4 @@ body::before {
 
 @media (prefers-reduced-motion: reduce) {
   .meta-block { transition: none !important; }
-}
-
-/* 路由页面过渡 — 轻微上浮淡入，200ms 微交互节奏 */
-.page-enter-active,
-.page-leave-active {
-  transition: opacity 0.2s ease, transform 0.2s ease;
-}
-.page-enter-from {
-  opacity: 0;
-  transform: translateY(8px);
-}
-.page-leave-to {
-  opacity: 0;
-  transform: translateY(-4px);
 }

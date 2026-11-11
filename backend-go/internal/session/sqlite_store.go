@@ -3,33 +3,34 @@ package session
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"github.com/insistanan/api-proxy/internal/sqlitedb"
 )
 
 type sqliteStore struct {
-	db *sql.DB
+	db     *sql.DB
+	ownsDB bool
 }
 
 func newSQLiteStore(path string) (*sqliteStore, error) {
-	if path == "" {
-		return nil, fmt.Errorf("session database path is required")
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return nil, err
-	}
-	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)")
+	db, err := sqlitedb.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
+	store, err := newSQLiteStoreWithDB(db)
+	if err != nil {
+		return nil, errors.Join(err, db.Close())
+	}
+	store.ownsDB = true
+	return store, nil
+}
+
+func newSQLiteStoreWithDB(db *sql.DB) (*sqliteStore, error) {
 	store := &sqliteStore{db: db}
 	if err := store.initSchema(); err != nil {
-		_ = db.Close()
 		return nil, err
 	}
 	return store, nil
@@ -434,7 +435,10 @@ func (s *sqliteStore) close() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
-	return s.db.Close()
+	if s.ownsDB {
+		return s.db.Close()
+	}
+	return nil
 }
 
 func boolToInt(value bool) int {

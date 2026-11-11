@@ -1,5 +1,7 @@
 <template>
   <v-app>
+    <a class="skip-link" href="#main-content">跳转到主要内容</a>
+    <AppNavigation v-if="isAuthenticated" v-model="navigationOpen" />
     <!-- 自动认证加载提示 - 只在真正进行自动认证时显示 -->
     <v-overlay
       :model-value="authStore.isAutoAuthenticating && !authStore.isInitialized"
@@ -37,7 +39,6 @@
               :rules="[v => !!v || '请输入访问密钥']"
               required
               autofocus
-              @keyup.enter="handleAuthSubmit"
             />
 
             <v-btn type="submit" color="primary" variant="flat" block size="large" class="mt-4" :loading="authStore.authLoading">
@@ -52,35 +53,27 @@
       </v-card>
     </v-dialog>
 
-    <!-- 应用栏 - 玻璃拟态效果 -->
+    <!-- 顶栏只保留当前位置与全局操作，功能入口由分组导航承载。 -->
     <v-app-bar elevation="0" :height="$vuetify.display.mobile ? 56 : 64" class="app-header">
       <template #prepend>
-        <div class="app-logo">
-          <v-icon :size="$vuetify.display.mobile ? 20 : 26" color="white"> mdi-rocket-launch </v-icon>
-        </div>
+        <v-btn v-if="isAuthenticated" icon="mdi-menu" variant="text" class="header-btn" :aria-expanded="!!navigationOpen" aria-label="切换主导航" @click="navigationOpen = !navigationOpen" />
       </template>
 
-      <nav class="header-title" aria-label="主导航">
-        <div v-for="group in navGroups" :key="group.key" class="nav-group" role="group" :aria-label="group.label">
-          <router-link
-            v-for="item in group.items"
-            :key="item.key"
-            :to="item.to"
-            class="api-type-text"
-            :class="{ active: topNavActive === item.key }"
-          >
-            {{ item.label }}
-          </router-link>
-        </div>
-      </nav>
+      <div class="header-location" aria-label="当前位置">
+        <span class="header-location__group">{{ currentNavigation?.group || '管理面板' }}</span>
+        <v-icon size="16" class="header-location__separator">mdi-chevron-right</v-icon>
+        <span class="header-location__page">{{ currentNavigation?.label || 'API Proxy' }}</span>
+      </div>
 
       <v-spacer/>
 
       <!-- 版本信息 -->
       <div class="version-anchor">
-        <div
+        <button
           v-if="systemStore.versionInfo.currentVersion"
+          type="button"
           class="version-badge"
+          :aria-label="`当前版本 ${systemStore.versionInfo.currentVersion}，查看版本信息`"
           :class="{
             'version-clickable': systemStore.versionInfo.status === 'update-available' || systemStore.versionInfo.status === 'latest',
             'version-checking': systemStore.versionInfo.status === 'checking',
@@ -111,7 +104,7 @@
             <span class="version-arrow mx-1">→</span>
             <span class="version-latest-text">{{ systemStore.versionInfo.latestVersion }}</span>
           </template>
-        </div>
+        </button>
 
         <!-- 新版本提醒气泡：显示 5 秒自动收起，每小时重复提醒（见 watchUpdateBubble） -->
         <transition name="update-bubble">
@@ -181,6 +174,7 @@
         size="small"
         class="header-btn"
         title="注销"
+        aria-label="注销"
         @click="handleLogout"
       >
         <v-icon size="20">mdi-logout</v-icon>
@@ -188,14 +182,17 @@
     </v-app-bar>
 
     <!-- 主要内容 -->
-    <v-main>
-      <v-container fluid class="pa-4 pa-md-6">
+    <v-main id="main-content" tabindex="-1">
+      <v-container fluid class="app-content pa-4 pa-md-6">
         <template v-if="isAuthenticated && !isStandalonePage">
+        <PageHeader :title="`${activeProtocolLabel} 渠道`" :description="currentNavigation?.description" />
         <!-- 全局统计顶部可折叠卡片（根据当前 Tab 显示对应统计） -->
         <v-card class="mb-4 global-stats-panel">
-          <div
+          <button
+            type="button"
             class="global-stats-header d-flex align-center justify-space-between px-4 py-2"
-            style="cursor: pointer;"
+            :aria-expanded="preferencesStore.showGlobalStats"
+            aria-controls="global-stats-content"
             @click="preferencesStore.toggleGlobalStats()"
           >
             <div class="d-flex align-center">
@@ -204,24 +201,19 @@
                 {{ activeProtocolLabel }} 流量统计
              </span>
             </div>
-            <v-btn
-              icon
-              size="small"
-              variant="text"
-              :aria-label="preferencesStore.showGlobalStats ? '收起流量统计' : '展开流量统计'"
-            >
+            <span>
               <v-icon>{{ preferencesStore.showGlobalStats ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
-            </v-btn>
-          </div>
+            </span>
+          </button>
           <v-expand-transition>
-            <div v-if="preferencesStore.showGlobalStats">
+            <div v-if="preferencesStore.showGlobalStats" id="global-stats-content">
               <v-divider />
               <GlobalStatsChart :api-type="channelStore.activeTab" />
             </div>
           </v-expand-transition>
         </v-card>
 
-        <!-- 统计卡片 - 玻璃拟态风格 -->
+        <!-- 当前入口的渠道与请求统计 -->
         <v-row class="mb-6 stat-cards-row">
           <v-col cols="6" sm="4">
             <div class="stat-card stat-card-info">
@@ -232,7 +224,6 @@
                 <div class="stat-card-value">{{ totalChannelsDisplay }}</div>
                 <div class="stat-card-label">渠道</div>
               </div>
-              <div class="stat-card-glow"></div>
             </div>
           </v-col>
 
@@ -247,7 +238,6 @@
                 </div>
                 <div class="stat-card-label">活跃</div>
               </div>
-              <div class="stat-card-glow"></div>
             </div>
           </v-col>
 
@@ -256,14 +246,13 @@
               class="stat-card"
               :class="systemStore.systemStatus === 'running' ? 'stat-card-emerald' : 'stat-card-error'"
             >
-              <div class="stat-card-icon" :class="{ 'pulse-animation': systemStore.systemStatus === 'running' }">
+              <div class="stat-card-icon">
                 <v-icon size="28">{{ systemStore.systemStatus === 'running' ? 'mdi-heart-pulse' : 'mdi-alert-circle' }}</v-icon>
               </div>
               <div class="stat-card-content">
                 <div class="stat-card-value">{{ systemStore.systemStatusText }}</div>
                 <div class="stat-card-label">服务</div>
               </div>
-              <div class="stat-card-glow"></div>
             </div>
           </v-col>
         </v-row>
@@ -320,7 +309,7 @@
                     {{ systemStore.clientDisguiseLoadError ? 'mdi-alert-circle-outline' : (clientDisguiseEnabled ? 'mdi-robot' : 'mdi-robot-outline') }}
                   </v-icon>
                   {{ clientDisguiseLabel }}
-                  <span class="mode-state">{{ clientDisguiseEnabled ? '开' : '关' }}</span>
+                  <span class="mode-state">{{ systemStore.clientDisguiseLoadError ? '未知' : clientDisguiseEnabled ? '开' : '关' }}</span>
                 </v-btn>
               </template>
               <span>{{ clientDisguiseTooltip }}</span>
@@ -344,8 +333,8 @@
                   <v-icon start size="20">
                     {{ systemStore.fuzzyModeLoadError ? 'mdi-alert-circle-outline' : (preferencesStore.fuzzyModeEnabled ? 'mdi-shield-refresh' : 'mdi-shield-off-outline') }}
                   </v-icon>
-                  Fuzzy
-                  <span class="mode-state">{{ preferencesStore.fuzzyModeEnabled ? '开' : '关' }}</span>
+                  自动故障转移
+                  <span class="mode-state">{{ systemStore.fuzzyModeLoadError ? '未知' : preferencesStore.fuzzyModeEnabled ? '开' : '关' }}</span>
                 </v-btn>
               </template>
               <span>{{ systemStore.fuzzyModeLoadError ? '加载失败，请刷新页面' : (preferencesStore.fuzzyModeEnabled ? 'Fuzzy 模式已启用：模糊处理错误，自动尝试所有渠道' : 'Fuzzy 模式已关闭：固定首个渠道，仅重试其 Key 与地址') }}</span>
@@ -353,11 +342,13 @@
           </div>
         </div>
 
-        <!-- 渠道编排（高密度列表模式） -->
-        <router-view v-slot="{ Component }">
-          <transition name="page" mode="out-in" appear>
+        </template>
+        <!-- 直接挂载目标页面，让懒加载与首屏请求立即开始。 -->
+        <router-view v-if="isAuthenticated" v-slot="{ Component }">
+            <component :is="Component" v-if="isStandalonePage" :key="route.path" />
             <component
               :is="Component"
+              v-else
               :key="route.path"
               @edit="editChannel"
               @delete="handleDeleteChannel"
@@ -366,16 +357,7 @@
               @error="showErrorToast"
               @success="showSuccessToast"
             />
-          </transition>
         </router-view>
-        </template>
-        <template v-else-if="isAuthenticated">
-          <router-view v-slot="{ Component }">
-            <transition name="page" mode="out-in" appear>
-              <component :is="Component" :key="route.path" />
-            </transition>
-          </router-view>
-        </template>
       </v-container>
     </v-main>
 
@@ -416,7 +398,7 @@
 import { ref, onMounted, onUnmounted, onBeforeUnmount, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useTheme } from 'vuetify'
-import { api, fetchHealth, ApiError, channelApiByType, type Channel } from './services/api'
+import { api, fetchHealth, type Channel } from './services/api'
 import { versionService } from './services/version'
 import GatePendingNotification from './components/GatePendingNotification.vue'
 import AssistantWidget from './components/AssistantWidget.vue'
@@ -431,6 +413,9 @@ import { useToast } from './composables/useToast'
 import AddChannelModal from './components/AddChannelModal.vue'
 import { defineLazyChart } from './utils/lazyChart'
 import { useCountUp } from './composables/useCountUp'
+import AppNavigation from './components/layout/AppNavigation.vue'
+import PageHeader from './components/common/PageHeader.vue'
+import { findNavigation } from './router/navigation'
 
 const GlobalStatsChart = defineLazyChart(() => import('./components/GlobalStatsChart.vue'))
 
@@ -452,70 +437,11 @@ const { displayValue: totalChannelsDisplay } = useCountUp(totalChannels)
 const activeChannels = computed(() => channelStore.activeChannelCount || 0)
 const { displayValue: activeChannelCountDisplay } = useCountUp(activeChannels)
 
-const isConversationPage = computed(() => route.name === 'conversations')
-const isLogsPage = computed(() => route.name === 'request-logs')
-const isBlockedLogsPage = computed(() => route.name === 'blocked-logs')
-const isSkillsPage = computed(() => route.name === 'skills')
-const isMcpPage = computed(() => route.name === 'mcp')
-const isOpenCodePage = computed(() => route.name === 'opencode')
-const isClaudeCodePage = computed(() => route.name === 'claude-code')
-const isGptPage = computed(() => route.name === 'gpt')
-const isPiAgentPage = computed(() => route.name === 'pi-agent')
-const isDshPage = computed(() => route.name === 'dsh')
+const navigationOpen = ref<boolean | null>(null)
+const currentNavigation = computed(() => findNavigation(route.path))
+const isStandalonePage = computed(() => route.name !== 'channels')
 const isSettingsPage = computed(() => route.name === 'settings')
-const isStandalonePage = computed(() => isConversationPage.value || isLogsPage.value || isBlockedLogsPage.value || isSkillsPage.value || isMcpPage.value || isOpenCodePage.value || isClaudeCodePage.value || isGptPage.value || isPiAgentPage.value || isDshPage.value || isSettingsPage.value)
-
-const activeProtocolLabel = computed(() => {
-  const labels: Record<string, string> = {
-    messages: 'Messages',
-    responses: 'Responses',
-    gemini: 'Gemini',
-    chat: 'Chat',
-    images: 'Images',
-    embeddings: 'Embeddings',
-    decisions: 'Decisions'
-  }
-  return labels[channelStore.activeTab] ?? 'Chat'
-})
-
-const navGroups = [
-  {
-    key: 'protocols',
-    label: '协议',
-    items: [
-      { key: 'messages', label: 'Messages', to: '/channels/messages' },
-      { key: 'responses', label: 'Responses', to: '/channels/responses' },
-      { key: 'gemini', label: 'Gemini', to: '/channels/gemini' },
-      { key: 'chat', label: 'Chat', to: '/channels/chat' },
-      { key: 'images', label: 'Images', to: '/channels/images' },
-      { key: 'embeddings', label: 'Embeddings', to: '/channels/embeddings' },
-      { key: 'decisions', label: 'Decisions', to: '/channels/decisions' }
-    ]
-  },
-  {
-    key: 'workspace',
-    label: '工作台',
-    items: [
-      { key: 'conversations', label: '对话', to: '/conversations' },
-      { key: 'logs', label: '日志', to: '/logs' },
-      { key: 'blocked-logs', label: '拦截', to: '/blocked-logs' },
-      { key: 'skills', label: 'Skills', to: '/skills' },
-      { key: 'mcp', label: 'MCP', to: '/mcp' }
-    ]
-  },
-  {
-    key: 'clients',
-    label: '客户端',
-    items: [
-      { key: 'claude-code', label: 'Claude Code', to: '/claude-code' },
-      { key: 'gpt', label: 'GPT', to: '/gpt' },
-      { key: 'opencode', label: 'OpenCode', to: '/opencode' },
-      { key: 'pi-agent', label: 'pi', to: '/pi-agent' },
-      { key: 'dsh', label: 'DSH', to: '/dsh' }
-    ]
-  }
-]
-
+const activeProtocolLabel = computed(() => findNavigation(`/channels/${channelStore.activeTab}`)?.label)
 // 偏好设置 Store
 const preferencesStore = usePreferencesStore()
 
@@ -525,54 +451,11 @@ const dialogStore = useDialogStore()
 // 系统状态 Store
 const systemStore = useSystemStore()
 
-// 对话框状态已迁移到 DialogStore
-
-// 主题和偏好设置已迁移到 PreferencesStore
-
-// 系统状态已迁移到 SystemStore
-
-const topNavActive = computed(() => {
-  if (isConversationPage.value) {
-    return 'conversations'
-  }
-  if (isLogsPage.value) {
-    return 'logs'
-  }
-  if (isBlockedLogsPage.value) {
-    return 'blocked-logs'
-  }
-  if (isSkillsPage.value) {
-    return 'skills'
-  }
-  if (isMcpPage.value) {
-    return 'mcp'
-  }
-  if (isOpenCodePage.value) {
-    return 'opencode'
-  }
-  if (isClaudeCodePage.value) {
-    return 'claude-code'
-  }
-  if (isGptPage.value) {
-    return 'gpt'
-  }
-  if (isPiAgentPage.value) {
-    return 'pi-agent'
-  }
-  if (isDshPage.value) {
-    return 'dsh'
-  }
-  if (isSettingsPage.value) {
-    return 'settings'
-  }
-  const type = route.params.type
-  return typeof type === 'string' ? type : 'messages'
-})
-
 const { toasts, getToastColor, getToastIcon, showToast, showErrorToast, showSuccessToast } = useToast()
 
 // Fuzzy 模式管理
 const loadFuzzyModeStatus = async () => {
+  systemStore.setFuzzyModeLoading(true)
   systemStore.setFuzzyModeLoadError(false)
   try {
     const { fuzzyModeEnabled: enabled } = await api.getFuzzyMode()
@@ -581,22 +464,24 @@ const loadFuzzyModeStatus = async () => {
     console.error('Failed to load fuzzy mode status:', e)
     systemStore.setFuzzyModeLoadError(true)
     // 加载失败时不使用默认值，保持 UI 显示未知状态
-    showToast('加载 Fuzzy 模式状态失败，请刷新页面重试', 'warning')
+    showToast('加载自动故障转移状态失败，请刷新页面重试', 'warning')
+  } finally {
+    systemStore.setFuzzyModeLoading(false)
   }
 }
 
 const toggleFuzzyMode = async () => {
   if (systemStore.fuzzyModeLoadError) {
-    showToast('Fuzzy 模式状态未知，请先刷新页面', 'warning')
+    showToast('自动故障转移状态未知，请先刷新页面', 'warning')
     return
   }
   systemStore.setFuzzyModeLoading(true)
   try {
     await api.setFuzzyMode(!preferencesStore.fuzzyModeEnabled)
     preferencesStore.toggleFuzzyMode()
-    showToast(`Fuzzy 模式已${preferencesStore.fuzzyModeEnabled ? '启用' : '关闭'}`, 'success')
+    showToast(`自动故障转移已${preferencesStore.fuzzyModeEnabled ? '启用' : '关闭'}`, 'success')
   } catch (e) {
-    showToast(`切换 Fuzzy 模式失败: ${e instanceof Error ? e.message : '未知错误'}`, 'error')
+    showToast(`切换自动故障转移失败: ${e instanceof Error ? e.message : '未知错误'}`, 'error')
   } finally {
     systemStore.setFuzzyModeLoading(false)
   }
@@ -628,6 +513,7 @@ const clientDisguiseTooltip = computed(() => {
 })
 
 const loadClientDisguiseStatus = async () => {
+  systemStore.setClientDisguiseLoading(true)
   systemStore.setClientDisguiseLoadError(false)
   try {
     const status = await api.getClientDisguise()
@@ -637,6 +523,8 @@ const loadClientDisguiseStatus = async () => {
     console.error('Failed to load client disguise status:', e)
     systemStore.setClientDisguiseLoadError(true)
     showToast('加载客户端伪装状态失败，请刷新页面重试', 'warning')
+  } finally {
+    systemStore.setClientDisguiseLoading(false)
   }
 }
 
@@ -664,7 +552,7 @@ const toggleClientDisguise = async () => {
 
 // 主题管理
 const toggleDarkMode = () => {
-  const newMode = preferencesStore.darkModePreference === 'dark' ? 'light' : 'dark'
+  const newMode = theme.global.current.value.dark ? 'light' : 'dark'
   setDarkMode(newMode)
 }
 
@@ -686,8 +574,15 @@ const setDarkMode = (themeName: 'light' | 'dark' | 'auto') => {
 
 // 认证流程收敛到 useAuthFlow composable（R5，方案 8.1）：
 // 自动认证 / 手动提交 / 注销 / 认证失败处理离开页面壳，状态本体在 authStore。
-const { isAuthenticated, showAuthDialog, autoAuthenticate, handleAuthSubmit, handleLogout, handleAuthError } =
+const { isAuthenticated, showAuthDialog, autoAuthenticate, handleAuthSubmit: submitAuthCredentials, handleLogout, handleAuthError } =
   useAuthFlow(showToast)
+
+const handleAuthSubmit = async () => {
+  if (authStore.authLoading) return
+  await submitAuthCredentials()
+  // 手动认证后也读取服务端开关，避免把浏览器保留的旧状态显示为当前配置。
+  if (isAuthenticated.value) await Promise.all([loadFuzzyModeStatus(), loadClientDisguiseStatus()])
+}
 
 // 渠道操作交给 useChannelActions 编排，App.vue 负责调用和展示反馈（R5，方案 8.1）。
 // 配置已提交但后续处理失败时，由 composable 统一提示用户刷新（R3）。
@@ -804,17 +699,19 @@ onBeforeUnmount(() => {
   if (updateBubbleHideTimer !== null) clearTimeout(updateBubbleHideTimer)
 })
 
+let themeMediaQuery: ReturnType<typeof window.matchMedia> | undefined
+const handleSystemThemeChange = () => {
+  if (preferencesStore.darkModePreference === 'auto') setDarkMode('auto')
+}
+
 // 初始化
 onMounted(async () => {
   // 加载保存的暗色模式偏好（从 PreferencesStore 读取，已自动从 localStorage 恢复）
   setDarkMode(preferencesStore.darkModePreference)
 
   // 监听系统主题变化
-  const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
-  const handlePref = () => {
-    if (preferencesStore.darkModePreference === 'auto') setDarkMode('auto')
-  }
-  mediaQuery.addEventListener('change', handlePref)
+  themeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+  themeMediaQuery.addEventListener('change', handleSystemThemeChange)
 
   // 版本检查（独立于认证，静默执行）
   checkVersion()
@@ -834,12 +731,8 @@ onMounted(async () => {
   const authenticated = await autoAuthenticate()
 
   if (authenticated) {
-    // 加载渠道数据
-    await refreshChannels()
-    // 加载 Fuzzy 模式状态
-    await loadFuzzyModeStatus()
-    // 加载 Messages / Responses 客户端伪装状态
-    await loadClientDisguiseStatus()
+    // 三类状态相互独立，并行加载以缩短首次可交互的等待。
+    await Promise.all([refreshChannels(), loadFuzzyModeStatus(), loadClientDisguiseStatus()])
     // 启动自动刷新
     startAutoRefresh()
     // 初始化完成后根据最新刷新结果设置系统状态
@@ -886,6 +779,7 @@ watch(() => channelStore.lastRefreshSuccess, (success) => {
 
 // 在组件卸载时清除定时器
 onUnmounted(() => {
+  themeMediaQuery?.removeEventListener('change', handleSystemThemeChange)
   channelStore.stopAutoRefresh()
 })
 </script>
@@ -893,7 +787,7 @@ onUnmounted(() => {
 <style scoped src="./styles/app-shell.css"></style>
 
 <!-- ============================================================
-     全局样式 — Instrument Deck 设计系统
-     柔和的雾底 / 深空底，模块靠深边框与切角"焊"在上面
+     全局样式 — 管理面板共享设计系统
+     页面与浮层统一使用主题色、间距和圆角令牌
      ============================================================ -->
 <style src="./styles/app-global.css"></style>

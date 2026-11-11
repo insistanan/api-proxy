@@ -58,7 +58,7 @@
         </v-card-text>
       </v-card>
 
-      <v-row>
+      <v-row class="agent-provider-layout">
         <!-- 提供商列表 -->
         <v-col cols="12" lg="4">
           <v-card class="provider-list-card" elevation="0">

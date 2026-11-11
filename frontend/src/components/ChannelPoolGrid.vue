@@ -10,6 +10,7 @@
         新建分组
       </v-btn>
     </header>
+    <p class="pool-guide">按模型名称匹配分组，组内顺序决定故障转移优先级。拖动手柄可调整顺序或移入其他已展开的分组。</p>
 
     <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-3" />
     <div v-else class="pool-grid">
@@ -22,13 +23,16 @@
         :style="{ order }"
       >
         <header class="pool-card-header">
-          <div class="min-width-0">
-            <div class="pool-name">{{ pool.name }}</div>
-            <div class="pool-rule">
+          <button type="button" class="pool-card-toggle" :aria-expanded="!collapsedPools.has(pool.id)" :aria-controls="`pool-${channelType}-${pool.id}`" @click="togglePool(pool.id)">
+            <v-icon size="18">{{ collapsedPools.has(pool.id) ? 'mdi-chevron-right' : 'mdi-chevron-down' }}</v-icon>
+            <span class="min-width-0">
+            <span class="pool-name">{{ pool.name }}</span>
+            <span class="pool-rule">
               <template v-if="pool.id === 'default'">未匹配或命中分组不可用时使用</template>
               <template v-else>匹配：{{ pool.modelMatcher }}</template>
-            </div>
-          </div>
+            </span>
+            </span>
+          </button>
           <div class="d-flex align-center ga-1">
             <v-chip size="x-small" color="primary" variant="tonal">{{ pool.channels.length }}</v-chip>
             <v-btn v-if="pool.id !== 'default'" icon size="x-small" variant="text" title="编辑分组" @click="openEditDialog(pool)">
@@ -48,7 +52,9 @@
             </v-btn>
           </div>
         </header>
+        <div :id="`pool-${channelType}-${pool.id}`">
         <draggable
+          v-if="!collapsedPools.has(pool.id)"
           :list="pool.channels"
           item-key="id"
           handle=".drag-handle"
@@ -88,7 +94,8 @@
             </div>
           </template>
         </draggable>
-        <div v-if="pool.channels.length === 0" class="pool-empty">暂无渠道，可从其他分组拖入</div>
+        <div v-if="!collapsedPools.has(pool.id) && pool.channels.length === 0" class="pool-empty">暂无渠道，可从其他分组拖入</div>
+        </div>
       </section>
       </div>
     </div>
@@ -202,6 +209,13 @@ const poolName = ref('')
 const poolMatcher = ref<string | null>('')
 type PoolView = ChannelPool & { channels: Channel[] }
 const poolViews = ref<PoolView[]>([])
+const collapsedPools = ref(new Set<string>())
+const togglePool = (id: string) => {
+  const collapsed = new Set(collapsedPools.value)
+  if (collapsed.has(id)) collapsed.delete(id)
+  else collapsed.add(id)
+  collapsedPools.value = collapsed
+}
 let layoutSaveTimer: ReturnType<typeof setTimeout> | null = null
 let layoutSavePending = false
 
@@ -375,7 +389,9 @@ const deletePool = async () => {
 </script>
 
 <style scoped>
-.pool-section { padding-top: 12px; }
+.pool-section { padding-top: 12px; container-type: inline-size; container-name: channel-pools; }
+.pool-guide { margin: 0 0 16px; color: rgb(var(--v-theme-on-surface-variant)); font-size: 0.8125rem; line-height: 1.6; }
+.pool-card-toggle { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; min-height: 36px; text-align: start; }
 .section-header, .vision-pool-header {
   display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px;
 }
@@ -399,47 +415,34 @@ const deletePool = async () => {
 .pool-column { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
 .pool-card {
   background: rgb(var(--v-theme-surface));
-  border: 1px solid rgba(var(--v-theme-outline), 0.6);
-  border-radius: var(--cut-md) var(--cut-xs) var(--cut-md) var(--cut-xs);
-  box-shadow: var(--shadow-1);
+  border: 1px solid rgba(var(--v-theme-outline), 0.24);
+  border-radius: var(--cut-md);
   min-width: 0;
   overflow: hidden;
   container-type: inline-size;
-  transition: box-shadow 0.18s ease, border-color 0.2s ease;
+  transition: border-color 0.2s ease;
 }
 .pool-card:hover {
-  border-color: rgba(var(--v-theme-primary), 0.6);
-  box-shadow: var(--shadow-2);
+  border-color: rgba(var(--v-theme-primary), 0.4);
 }
 
 .pool-card-header {
   min-height: 58px;
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding: 11px 14px 10px 18px;
-  border-bottom: 1px solid rgba(var(--v-theme-outline), 0.45);
-  background: rgba(var(--v-theme-surface-variant), 0.6);
-  position: relative;
+  border-bottom: 1px solid rgba(var(--v-theme-outline), 0.2);
+  background: rgba(var(--v-theme-surface-variant), 0.25);
 }
 .pool-card.is-default .pool-card-header { background: color-mix(in srgb, rgb(var(--v-theme-primary)) 8%, rgb(var(--v-theme-surface))); }
-/* 分组左侧刻度色轨 */
-.pool-card-header::before {
-  content: '';
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: var(--rail);
-  background:
-    repeating-linear-gradient(180deg,
-      rgba(255, 255, 255, 0.5) 0 1px,
-      transparent 1px 8px),
-    rgb(var(--v-theme-primary));
-}
 .v-theme--dark .pool-card-header { background: rgba(255, 255, 255, 0.035); }
 .pool-name {
-  font-weight: 800; line-height: 1.2;
+  display: block;
+  font-weight: 650; line-height: 1.4;
   letter-spacing: -0.01em;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .pool-rule {
+  display: block;
   margin-top: 3px; font-size: 12px;
   font-family: 'Fira Code', 'JetBrains Mono', monospace;
   color: rgb(var(--v-theme-on-surface-variant));
@@ -457,15 +460,14 @@ const deletePool = async () => {
 .pool-channel-row, .vision-channel-row {
   display: flex; align-items: center; gap: 8px; min-width: 0;
   padding: 8px 10px;
-  border: 1px solid rgba(var(--v-theme-outline), 0.5);
-  border-radius: 6px 2px 6px 2px;
+  border: 1px solid rgba(var(--v-theme-outline), 0.2);
+  border-radius: 8px;
   cursor: pointer;
-  transition: transform 0.16s var(--ease-out), background 0.16s ease, border-color 0.16s ease;
+  transition: background 0.16s ease, border-color 0.16s ease;
 }
 .pool-channel-row:hover, .vision-channel-row:hover {
   background: rgba(var(--v-theme-primary), 0.07);
-  border-color: rgb(var(--v-theme-primary));
-  transform: translateX(3px);
+  border-color: rgba(var(--v-theme-primary), 0.4);
 }
 .vision-channel-actions { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
 .pool-index {
@@ -476,8 +478,7 @@ const deletePool = async () => {
   font-size: 11px; font-weight: 800;
   font-family: 'Fira Code', 'JetBrains Mono', monospace;
   border: none;
-  border-radius: 5px 2px 5px 2px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  border-radius: 6px;
 }
 .pool-channel-main {
   min-width: 0; flex: 1;
@@ -492,14 +493,13 @@ const deletePool = async () => {
 }
 .vision-pool-section {
   margin-top: 22px; padding: 14px 0;
-  border-top: 1px solid rgba(var(--v-theme-outline), 0.5);
-  border-bottom: 1px solid rgba(var(--v-theme-outline), 0.35);
+  border-top: 1px solid rgba(var(--v-theme-outline), 0.2);
 }
 .vision-channel-list {
   display: flex; flex-direction: column; gap: 6px; padding: 10px;
-  border: 1px dashed rgba(var(--v-theme-outline), 0.65);
-  border-radius: var(--cut-md) var(--cut-xs) var(--cut-md) var(--cut-xs);
-  background: rgba(var(--v-theme-surface-variant), 0.45);
+  border: 1px solid rgba(var(--v-theme-outline), 0.24);
+  border-radius: var(--cut-md);
+  background: rgb(var(--v-theme-surface));
 }
 .vision-status-toggle {
   display: inline-flex; padding: 0; border: 0; background: transparent; cursor: pointer;
@@ -507,7 +507,7 @@ const deletePool = async () => {
 .vision-status-toggle:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: 2px; }
 .vision-status-toggle :deep(.badge-content) { cursor: pointer; }
 .min-width-0 { min-width: 0; }
-@media (max-width: 1400px) {
+@container channel-pools (max-width: 1120px) {
   /* inline-size 容器不提供内容宽度，单列必须拉伸，避免缩放后卡片收缩到零宽。 */
   .pool-grid { display: flex; flex-direction: column; align-items: stretch; }
   .pool-column { display: contents; }

@@ -10,7 +10,7 @@
       <div class="setting-row">
         <div class="setting-copy">
           <div class="text-body-1 font-weight-medium">模型分组</div>
-          <!-- 助手以分组的匹配词作为模型 ID 走主链路编排（分组匹配 → 优先级 → 熔断/健康 → 兜底）， 复用渠道编排能力，不单独维护默认模型 -->
+          <div class="text-body-2 text-medium-emphasis mt-1">使用分组匹配词选择模型，复用渠道的优先级和健康检查。</div>
         </div>
       </div>
 
@@ -20,6 +20,8 @@
         item-title="title"
         item-value="value"
         label="模型分组"
+        :loading="assistantModelsLoading"
+        :error-messages="assistantModelsError"
         variant="outlined"
         density="comfortable"
       />
@@ -30,6 +32,9 @@
         item-title="title"
         item-value="value"
         label="指定渠道"
+        hint="自动选择按协议优先级调度；指定后固定使用该渠道，不自动切换。"
+        persistent-hint
+        :error-messages="assistantStatusError"
         variant="outlined"
         density="comfortable"
         class="mt-5"
@@ -46,7 +51,7 @@
       </v-select>
 
       <v-alert
-        v-if="assistantStatus"
+        v-if="assistantStatus && !assistantStatusError"
         :type="assistantStatus.available ? 'info' : 'warning'"
         variant="tonal"
         density="compact"
@@ -86,6 +91,9 @@ import type { useAssistantSettings } from '@/composables/settings/useAssistantSe
 const props = defineProps<{ editor: ReturnType<typeof useAssistantSettings> }>()
 const {
   assistantStatus,
+  assistantStatusError,
+  assistantModelsError,
+  assistantModelsLoading,
   assistantKindLabel,
   assistantModel,
   assistantChannel,

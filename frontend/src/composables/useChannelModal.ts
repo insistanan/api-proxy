@@ -1,6 +1,5 @@
 // 渠道弹窗编排：连接独立草稿、快速输入和模型探测，管理校验、提交与关闭。
-import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
-import { useTheme } from 'vuetify'
+import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import type { Channel, ChannelPool, ChannelStatus } from '../services/api'
 import { api, channelApiByType } from '../services/api'
 import { imagesModelOptions, imagesProtocolLabel, isImagesServiceType, validateImagesOutputSettings } from '@/utils/imagesChannelProtocol'
@@ -28,11 +27,10 @@ export interface ChannelModalEmit {
 }
 
 export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit) {
-  // 主题
-  const theme = useTheme()
-
   // 表单引用
   const formRef = ref()
+  const detailedSections = reactive({ connection: false, compatibility: false, advanced: false })
+  const submitError = ref('')
 
   // 高级兼容设置默认折叠，每次载入渠道或重置草稿时收起。
   const reasoningCompatibilityPanel = ref<string>()
@@ -344,6 +342,8 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
   // resetForm：草稿重置 + 组件内 UI 状态（错误提示、模型缓存、快速添加输入）清理。
   const resetForm = () => {
     resetFormDraft()
+    submitError.value = ''
+    Object.assign(detailedSections, { connection: false, compatibility: false, advanced: false })
     reasoningCompatibilityPanel.value = undefined
     newApiKey.value = ''
     baseUrlsText.value = ''
@@ -365,6 +365,8 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
   // loadChannelData：载入编辑目标 + 组件内 UI 状态同步（baseUrl 预览、模型缓存重置）。
   const loadChannelData = (channel: Channel) => {
     loadChannelDataDraft(channel)
+    submitError.value = ''
+    Object.assign(detailedSections, { connection: false, compatibility: false, advanced: false })
     reasoningCompatibilityPanel.value = undefined
     if (channel.baseUrls && channel.baseUrls.length > 0) {
       baseUrlsText.value = channel.baseUrls.join('\n')
@@ -421,6 +423,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
 
   // 密钥重复检测状态
   const apiKeyError = ref('')
+  const copyNotice = ref('')
   const duplicateKeyIndex = ref(-1)
 
   // 处理 API 密钥输入事件
@@ -513,26 +516,6 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
   // 计算属性
   const isEditing = computed(() => !!props.channel)
 
-  // 动态header样式
-  const headerClasses = computed(() => {
-    const isDark = theme.global.current.value.dark
-    // Dark: keep neutral surface header; Light: use brand primary header
-    return isDark ? 'bg-surface text-high-emphasis' : 'bg-primary text-white'
-  })
-
-  const avatarColor = computed(() => 'primary')
-
-  // Use Vuetify theme "on-primary" token so icon isn't fixed white
-  const headerIconStyle = computed(() => ({
-    color: 'rgb(var(--v-theme-on-primary))'
-  }))
-
-  const subtitleClasses = computed(() => {
-    const isDark = theme.global.current.value.dark
-    // Dark mode: use medium emphasis; Light mode: use white with opacity for primary bg
-    return isDark ? 'text-medium-emphasis' : 'text-white-subtitle'
-  })
-
   const isFormValid = computed(() => {
     return (
       Number.isSafeInteger(Number(form.maxConcurrency)) && Number(form.maxConcurrency) > 0 &&
@@ -549,6 +532,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
 
   const visionChannels = ref<Channel[]>([])
   const visionChannelsLoading = ref(false)
+  const visionChannelsError = ref('')
   const pools = ref<ChannelPool[]>([])
   const poolsLoading = ref(false)
   const poolLoadError = ref('')
@@ -566,6 +550,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
   })
 
   const visionLayerChannelError = computed(() => {
+    if (visionChannelsError.value) return visionChannelsError.value
     if (form.visionLayerEnabled && !form.visionLayerChannelId) {
       return '启用图片理解层后必须选择图片理解渠道'
     }
@@ -574,12 +559,13 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
 
   const loadVisionChannels = async () => {
     visionChannelsLoading.value = true
+    visionChannelsError.value = ''
     try {
       const response = await channelApiByType(props.channelType).getChannels()
       visionChannels.value = response.channels || []
     } catch (error) {
-      console.error('加载图片理解渠道失败:', error)
       visionChannels.value = []
+      visionChannelsError.value = `加载图片理解渠道失败：${error instanceof Error ? error.message : String(error)}`
     } finally {
       visionChannelsLoading.value = false
     }
@@ -683,40 +669,37 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
     copiedKeyIndex.value = null
   }
 
-  // 复制API密钥到剪贴板
+  let copyResetTimer: ReturnType<typeof setTimeout> | undefined
+  // 复制失败保留明确反馈，不把未成功的复制显示为成功。
   const copyApiKey = async (key: string, index: number) => {
+    copyNotice.value = ''
     try {
-      await navigator.clipboard.writeText(key)
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(key)
+      } else {
+        // 普通 HTTP 部署可能没有 Clipboard API，保留原有的兼容复制能力并明确反馈。
+        const previousFocus = document.activeElement as HTMLElement | null
+        const input = document.createElement('textarea')
+        input.value = key
+        input.style.cssText = 'position:fixed;left:-9999px;top:0'
+        document.body.appendChild(input)
+        try {
+          input.select()
+          if (!document.execCommand('copy')) throw new Error('浏览器未能完成兼容复制')
+          copyNotice.value = '当前连接不支持 Clipboard API，已使用浏览器兼容方式复制。'
+        } finally {
+          input.remove()
+          previousFocus?.focus({ preventScroll: true })
+        }
+      }
       copiedKeyIndex.value = index
 
-      // 2秒后重置复制状态
-      setTimeout(() => {
+      if (copyResetTimer) clearTimeout(copyResetTimer)
+      copyResetTimer = setTimeout(() => {
         copiedKeyIndex.value = null
       }, 2000)
     } catch (err) {
-      console.error('复制密钥失败:', err)
-      // 降级方案：使用传统的复制方法
-      const textArea = document.createElement('textarea')
-      textArea.value = key
-      textArea.style.position = 'fixed'
-      textArea.style.left = '-999999px'
-      textArea.style.top = '-999999px'
-      document.body.appendChild(textArea)
-      textArea.focus()
-      textArea.select()
-
-      try {
-        document.execCommand('copy')
-        copiedKeyIndex.value = index
-
-        setTimeout(() => {
-          copiedKeyIndex.value = null
-        }, 2000)
-      } catch (err) {
-        console.error('降级复制方案也失败:', err)
-      } finally {
-        textArea.remove()
-      }
+      apiKeyError.value = `复制密钥失败，请检查浏览器剪贴板权限：${err instanceof Error ? err.message : String(err)}`
     }
   }
 
@@ -724,8 +707,23 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
     if (props.saving) return
     if (!formRef.value) return
 
+    submitError.value = ''
+    if (!form.apiKeys.length) apiKeyError.value = '请至少添加一个 API 密钥'
     const { valid } = await formRef.value.validate()
-    if (!valid) return
+    if (!valid || !isFormValid.value) {
+      submitError.value = '尚有配置未完成，请检查名称、请求地址、API 密钥及下方标出的错误。'
+      await nextTick()
+      const formElement = formRef.value?.$el as HTMLElement | undefined
+      if (!formElement) return
+      for (const section of ['connection', 'compatibility', 'advanced'] as const) {
+        if (formElement.querySelector(`[data-form-section="${section}"] .v-input--error`)) detailedSections[section] = true
+      }
+      await nextTick()
+      const invalidInput = formElement.querySelector<HTMLElement>('.v-input--error input, .v-input--error textarea')
+      invalidInput?.focus()
+      invalidInput?.scrollIntoView({ block: 'center', behavior: 'instant' })
+      return
+    }
 
     let imagesExtraParams: Record<string, string> | undefined
     if (props.channelType === 'images') {
@@ -756,6 +754,9 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
       if (newShow) {
         // 无论是编辑还是新增，都先清理密钥错误状态
         apiKeyError.value = ''
+        copyNotice.value = ''
+        copiedKeyIndex.value = null
+        if (copyResetTimer) clearTimeout(copyResetTimer)
         duplicateKeyIndex.value = -1
         imagesExtraParamsError.value = ''
         imagesOutputError.value = ''
@@ -807,10 +808,13 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
 
   onUnmounted(() => {
     document.removeEventListener('keydown', handleKeydown)
+    if (copyResetTimer) clearTimeout(copyResetTimer)
   })
 
   return {
     formRef,
+    detailedSections,
+    submitError,
     reasoningCompatibilityPanel,
     isQuickMode,
     toggleMode,
@@ -833,16 +837,13 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
     baseUrlsText,
     newApiKey,
     apiKeyError,
+    copyNotice,
     duplicateKeyIndex,
     handleApiKeyInput,
     copiedKeyIndex,
     errors,
     rules,
     isEditing,
-    headerClasses,
-    avatarColor,
-    headerIconStyle,
-    subtitleClasses,
     isFormValid,
     visionChannelsLoading,
     poolsLoading,

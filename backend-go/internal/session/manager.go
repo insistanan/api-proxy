@@ -2,6 +2,7 @@ package session
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -42,6 +43,17 @@ type SessionManager struct {
 
 func NewPersistentSessionManager(path string, maxAge time.Duration, maxMessages int, maxTokens int) (*SessionManager, error) {
 	store, err := newSQLiteStore(path)
+	if err != nil {
+		return nil, err
+	}
+	sm := newSessionManager(maxAge, maxMessages, maxTokens, store)
+	go sm.cleanupLoop()
+	return sm, nil
+}
+
+// NewPersistentSessionManagerWithDB 借用共享连接；Stop 只停止会话后台任务。
+func NewPersistentSessionManagerWithDB(db *sql.DB, maxAge time.Duration, maxMessages int, maxTokens int) (*SessionManager, error) {
+	store, err := newSQLiteStoreWithDB(db)
 	if err != nil {
 		return nil, err
 	}

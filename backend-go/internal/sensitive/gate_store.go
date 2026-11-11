@@ -5,16 +5,16 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/insistanan/api-proxy/internal/sqlitedb"
 )
 
 // 危险命令 AI 闸门的待确认与白/黑名单持久化。
 // 与 BlockedStore 共用同一个数据库文件（.config/blocked-logs.db），
-// 各自持有独立连接（WAL + busy_timeout 支持多连接并发）。
+// 装配层共享单连接，独立构造入口仍可用于测试或单独使用。
 
 const (
 	// GateDecisionAllow / GateDecisionBlock 是会话内同命令的白/黑名单决定。
@@ -70,32 +70,27 @@ type GateStore struct {
 	mu        sync.RWMutex
 	closed    bool
 	closeOnce sync.Once
+	ownsDB    bool
 }
 
-// NewGateStore 打开（或创建）闸门存储。与 BlockedStore 指向同一文件时
-// 依赖 SQLite WAL 模式下的多连接并发。
+// NewGateStore 打开独立连接；装配层通过 WithDB 入口与拦截记录共享连接。
 func NewGateStore(path string) (*GateStore, error) {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return nil, fmt.Errorf("闸门存储数据库路径不能为空")
-	}
-	if path != ":memory:" {
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			return nil, fmt.Errorf("创建闸门存储数据库目录失败: %w", err)
-		}
-	}
-	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)"
-	if path == ":memory:" {
-		dsn = "file:gate_store?mode=memory&cache=shared&_pragma=busy_timeout(5000)"
-	}
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sqlitedb.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("打开闸门存储数据库失败: %w", err)
+		return nil, err
 	}
-	db.SetMaxOpenConns(1)
+	store, err := NewGateStoreWithDB(db)
+	if err != nil {
+		return nil, errors.Join(err, db.Close())
+	}
+	store.ownsDB = true
+	return store, nil
+}
+
+// NewGateStoreWithDB 借用共享连接，Close 不关闭底层数据库。
+func NewGateStoreWithDB(db *sql.DB) (*GateStore, error) {
 	store := &GateStore{db: db}
 	if err := store.initSchema(); err != nil {
-		_ = db.Close()
 		return nil, err
 	}
 	return store, nil
@@ -538,7 +533,9 @@ func (s *GateStore) Close() error {
 	s.closeOnce.Do(func() {
 		s.mu.Lock()
 		s.closed = true
-		closeErr = s.db.Close()
+		if s.ownsDB {
+			closeErr = s.db.Close()
+		}
 		s.mu.Unlock()
 	})
 	return closeErr

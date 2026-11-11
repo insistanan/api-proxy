@@ -434,8 +434,11 @@ func (s *ChannelScheduler) selectConversationRouteOverride(
 	if conversationID == "" || registry == nil {
 		return nil, false, nil
 	}
-	override, ok := registry.GetRouteOverride(conversationID)
-	if !ok {
+	override, err := registry.LookupRouteOverride(conversationID)
+	if err != nil {
+		return nil, true, fmt.Errorf("读取对话固定渠道失败: %w", err)
+	}
+	if override == nil {
 		return nil, false, nil
 	}
 	if override.Kind != string(kind) {

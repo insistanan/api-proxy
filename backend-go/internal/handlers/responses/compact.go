@@ -66,8 +66,12 @@ func CompactHandler(
 		// compact 是控制面操作：只复用主请求已经建立的内部会话，不创建新的会话记录。
 		// 这样不会改变客户端协议，同时避免外部 conversation ID 与内部记录 ID 分裂。
 		identity := proxycore.ResolveConversationIdentity(c, bodyBytes)
-		conversationID := proxycore.ResolveExistingConversationID(
+		conversationID, err := proxycore.ResolveExistingConversationID(
 			channelScheduler, scheduler.ChannelKindResponses, identity)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "CONVERSATION_STORE_ERROR"})
+			return
+		}
 		model := compactRequestModel(bodyBytes)
 		hooks.AttachHookPipeline(c, contentSafetyPipeline, hooks.HookContext{
 			APIType:        string(scheduler.ChannelKindResponses),

@@ -1,5 +1,6 @@
 <template>
   <div class="request-logs-view" :class="{ 'system-tab-active': activeTab === 'system' }">
+    <PageHeader title="请求与系统日志" description="筛选最近 50 条请求，查看正文、耗时和对应的运行日志。" />
     <div class="logs-toolbar">
       <v-tabs v-model="activeTab" color="primary" density="comfortable" class="logs-tabs">
         <v-tab value="request">请求日志</v-tab>
@@ -24,12 +25,8 @@
           <v-text-field v-model="fromTime" type="datetime-local" label="开始时间" density="compact" hide-details />
           <v-text-field v-model="toTime" type="datetime-local" label="结束时间" density="compact" hide-details />
         </template>
-        <v-chip size="small" variant="tonal">{{ requestLogs.length }}/50</v-chip>
-        <v-btn-toggle v-model="typeFilter" mandatory density="compact" variant="outlined" divided>
-          <v-btn v-for="item in typeItems" :key="item.value" :value="item.value" size="small">
-            {{ item.title }}
-          </v-btn>
-        </v-btn-toggle>
+        <v-select v-model="typeFilter" :items="typeItems" label="入口类型" density="compact" hide-details class="type-filter-select" />
+        <span class="logs-count text-body-2 text-medium-emphasis" role="status">{{ requestLogs.length }} / 50 条</span>
         <v-btn
           color="primary"
           variant="tonal"
@@ -57,10 +54,12 @@
 
       <v-alert v-if="error" type="error" variant="tonal" density="compact" class="mb-4">
         {{ error }}
+        <span v-if="requestLogs.length">；下方保留上次成功加载的结果。</span>
       </v-alert>
 
-      <v-card variant="flat" class="logs-table-card">
-        <v-table density="compact" class="request-logs-table">
+      <v-card variant="flat" class="logs-table-card" :aria-busy="loading">
+        <v-progress-linear :active="loading" :indeterminate="loading" color="primary" height="2" />
+        <v-table density="comfortable" class="request-logs-table" fixed-header>
           <thead>
             <tr>
               <th>时间</th>
@@ -77,12 +76,12 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-if="loading">
+            <tr v-if="loading && requestLogs.length === 0">
               <td colspan="11" class="text-center text-medium-emphasis py-8">
                 <v-progress-circular indeterminate size="24" width="2" color="primary" />
               </td>
             </tr>
-            <tr v-else-if="requestLogs.length === 0">
+            <tr v-else-if="!loading && requestLogs.length === 0">
               <td colspan="11" class="text-center text-medium-emphasis py-8">暂无请求日志</td>
             </tr>
             <tr v-for="log in requestLogs" :key="log.attemptId">
@@ -212,7 +211,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import PageHeader from '@/components/common/PageHeader.vue'
 import { useRoute, useRouter } from 'vue-router'
 import PromptBodyDialog from '@/components/PromptBodyDialog.vue'
 import SystemLogsPanel from '@/components/SystemLogsPanel.vue'
@@ -248,7 +248,7 @@ const fromTime = ref('')
 const toTime = ref('')
 const loading = ref(false)
 const error = ref('')
-const requestLogs = ref<RequestLogEntry[]>([])
+const requestLogs = shallowRef<RequestLogEntry[]>([])
 
 const bodyDialogVisible = ref(false)
 const bodyRequestId = ref('')
@@ -339,9 +339,14 @@ const resolveDateRange = (): DateRange | null => {
   return customRangeRFC()
 }
 
+let logRequestSequence = 0
 const loadLogs = async () => {
+  const sequence = ++logRequestSequence
   const range = resolveDateRange()
-  if (!range) return
+  if (!range) {
+    loading.value = false
+    return
+  }
   loading.value = true
   error.value = ''
   try {
@@ -351,11 +356,11 @@ const loadLogs = async () => {
       from: range.from,
       to: range.to
     })
-    requestLogs.value = response.logs || []
+    if (sequence === logRequestSequence) requestLogs.value = response.logs || []
   } catch (err) {
-    error.value = err instanceof Error ? err.message : '加载请求日志失败'
+    if (sequence === logRequestSequence) error.value = err instanceof Error ? err.message : '加载请求日志失败'
   } finally {
-    loading.value = false
+    if (sequence === logRequestSequence) loading.value = false
   }
 }
 
@@ -408,11 +413,12 @@ const purgeNotice = ref('')
 const emitNotice = (message: string) => {
   purgeNotice.value = message
 }
-watch(purgeNotice, value => {
+watch(purgeNotice, (value, _oldValue, onCleanup) => {
   if (!value) return
-  window.setTimeout(() => {
+  const timer = window.setTimeout(() => {
     if (purgeNotice.value === value) purgeNotice.value = ''
   }, 6000)
+  onCleanup(() => window.clearTimeout(timer))
 })
 
 const typeLabelMap: Record<LogAPIType, string> = {
@@ -468,9 +474,10 @@ const formatTime = (value?: string) => {
   return date.toLocaleString()
 }
 
+const numberFormatter = new Intl.NumberFormat()
 const formatNumber = (value?: number) => {
   if (!value) return '0'
-  return new Intl.NumberFormat().format(value)
+  return numberFormatter.format(value)
 }
 
 const formatPair = (left?: number, right?: number) => {
@@ -517,6 +524,7 @@ watch([fromTime, toTime], () => {
 onMounted(() => {
   loadLogs()
 })
+onBeforeUnmount(() => { logRequestSequence++ })
 </script>
 
 <style scoped>
@@ -530,12 +538,16 @@ onMounted(() => {
   overflow: hidden;
 }
 
+.request-logs-view > :deep(.page-header) { flex-shrink: 0; margin-bottom: 0; }
+
 .logs-toolbar {
   display: flex;
   align-items: center;
   justify-content: flex-start;
   gap: 16px;
-  padding: 16px 0 8px;
+  padding: 0;
+  flex-shrink: 0;
+  border-bottom: 1px solid rgba(var(--v-theme-outline), 0.24);
 }
 
 .logs-actions {
@@ -543,7 +555,11 @@ onMounted(() => {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  justify-content: flex-end;
+  justify-content: flex-start;
+  padding: 16px;
+  background: rgb(var(--v-theme-surface));
+  border: 1px solid rgba(var(--v-theme-outline), 0.24);
+  border-radius: var(--cut-md);
 }
 
 .logs-tabs {
@@ -551,15 +567,17 @@ onMounted(() => {
 }
 
 .logs-tabs :deep(.v-tab) {
-  font-size: 18px;
-  font-weight: 700;
+  font-size: 14px;
+  font-weight: 600;
   letter-spacing: 0;
   min-width: 96px;
 }
 
-.date-preset-select {
-  max-width: 160px;
+.date-preset-select, .type-filter-select {
+  flex: 0 1 180px;
+  min-width: 144px;
 }
+.logs-count { flex: 1; white-space: nowrap; }
 
 .system-tab-active > :deep(.system-logs-panel) {
   flex: 1 1 auto;
@@ -569,7 +587,9 @@ onMounted(() => {
 .request-tab-panel {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   padding-right: 2px;
 }
 
@@ -578,15 +598,19 @@ onMounted(() => {
 }
 
 .logs-table-card {
-  border: 2px solid rgb(var(--v-theme-on-surface));
-  border-radius: 0;
-  box-shadow: 5px 5px 0 0 rgb(var(--v-theme-on-surface));
-  overflow-x: auto;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .request-logs-table {
-  min-width: 1180px;
+  flex: 1;
+  min-height: 0;
 }
+.request-logs-table :deep(table) { min-width: 1180px; }
+.request-tab-panel .logs-actions { flex-shrink: 0; }
 
 .request-logs-table :deep(th) {
   font-size: 12px;
@@ -617,6 +641,7 @@ onMounted(() => {
     height: calc(100vh - 88px);
     height: calc(100dvh - 88px);
   }
+  .date-preset-select, .type-filter-select { flex: 1 1 140px; }
 }
 
 @media (max-width: 900px) {

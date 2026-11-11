@@ -1,209 +1,31 @@
-/* 全局背景 — 工程图纸网格 + 顶部主色微光；网格比色块更耐看，也更不像模板 */
-.v-application {
-  background:
-    radial-gradient(1100px 460px at 50% -170px, rgba(var(--v-theme-primary), 0.07), transparent 62%),
-    linear-gradient(rgba(var(--v-theme-on-background), 0.022) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(var(--v-theme-on-background), 0.022) 1px, transparent 1px),
-    rgb(var(--v-theme-background)) !important;
-  background-size: auto, 26px 26px, 26px 26px, auto;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
-  min-height: 100vh;
-}
-
-/* 暗色模式 — 顶部主色光晕 + 右下角铜色微光，两点光源拉开纵深 */
-.v-application.v-theme--dark {
-  background:
-    radial-gradient(1200px 520px at 50% -190px, rgba(var(--v-theme-primary), 0.13), transparent 62%),
-    radial-gradient(900px 460px at 100% 100%, rgba(var(--v-theme-accent), 0.05), transparent 62%),
-    linear-gradient(rgba(255, 255, 255, 0.022) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.022) 1px, transparent 1px),
-    rgb(var(--v-theme-background)) !important;
-  background-size: auto, auto, 26px 26px, 26px 26px, auto;
-}
-
-.v-main {
-  background: transparent !important;
-  position: relative;
-  z-index: 1;
-}
-
-/* 主卡片 — 对角不对称切角是全站签名；边框深、影子浅，模块边界硬但不压抑 */
-.v-card {
-  border-radius: var(--cut-lg) var(--cut-sm) var(--cut-lg) var(--cut-sm) !important;
-  border: 1px solid rgba(var(--v-theme-outline), 0.62) !important;
-  box-shadow: var(--shadow-1) !important;
-}
-
-/* 暗色卡片 — 提亮一档 + 内高光勾边，从近黑底上"浮"起来 */
-.v-application.v-theme--dark .v-card {
-  background: rgb(var(--v-theme-surface)) !important;
-  border-color: rgba(var(--v-theme-outline), 0.85) !important;
-  box-shadow: var(--shadow-1), var(--inset-hi) !important;
-}
-
-/* 代码元素 — Fira Code 等宽字体 */
-code, pre, .text-mono {
-  font-family: 'Fira Code', 'JetBrains Mono', 'Consolas', 'Courier New', monospace;
-  font-size: 0.85em;
-  line-height: 1.5;
-}
-
-code {
-  background: rgba(var(--v-theme-primary), 0.07);
-  border: 1px solid rgba(var(--v-theme-primary), 0.18);
-  border-radius: 4px 1px 4px 1px;
-  padding: 1px 5px;
-  color: rgb(var(--v-theme-on-surface-variant));
-}
-
-.v-application.v-theme--dark code {
-  background: rgba(var(--v-theme-primary), 0.1);
-  border-color: rgba(var(--v-theme-primary), 0.24);
-  color: rgb(var(--v-theme-primary-lighten-1));
-}
-
-/* 无边框卡片变体 */
-.v-card.v-card--flat {
-  border: none !important;
-  box-shadow: none !important;
-}
-
-/* 按钮 — 小号切角，与卡片大切角形成层级对比 */
-.v-btn:not(.v-btn--icon) {
-  border-radius: 9px 3px 9px 3px !important;
-  font-weight: 700 !important;
-  text-transform: none !important;
-  letter-spacing: 0.01em;
-}
-
-.v-btn--icon { border-radius: 8px 3px 8px 3px !important; }
-
-/* 描边按钮 — 边框加实，弱化"幽灵按钮"的模板感 */
-.v-btn--variant-outlined { border-width: 1px !important; }
-
-/* Chip — 切角 + 实边框 */
-.v-chip {
-  border-radius: 5px 1px 5px 1px !important;
-  font-weight: 650;
-}
-
-/* 对话框 */
-.v-dialog .v-card {
-  border-radius: var(--cut-lg) var(--cut-sm) var(--cut-lg) var(--cut-sm) !important;
-  box-shadow: 0 28px 60px rgba(0, 0, 0, 0.2) !important;
-  border: 1px solid rgba(var(--v-theme-outline), 0.6) !important;
-}
-
-.v-application.v-theme--dark .v-dialog .v-card {
-  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.6), 0 0 44px rgba(var(--v-theme-primary), 0.06) !important;
-  border-color: rgba(var(--v-theme-outline), 0.9) !important;
-}
-
-/* 菜单 */
-.v-menu > .v-overlay__content > .v-list {
-  border-radius: var(--cut-md) var(--cut-xs) var(--cut-md) var(--cut-xs) !important;
-  border: 1px solid rgba(var(--v-theme-outline), 0.55) !important;
-  box-shadow: var(--shadow-2) !important;
-  padding: 6px !important;
-}
-
-.v-application.v-theme--dark .v-menu > .v-overlay__content > .v-list {
-  background: rgb(var(--v-theme-surface)) !important;
-  border-color: rgba(var(--v-theme-outline), 0.9) !important;
-}
-
-.v-menu > .v-overlay__content > .v-list .v-list-item {
-  border-radius: 5px 1px 5px 1px !important;
-  margin-bottom: 1px;
-}
-
-/* Snackbar */
-.v-snackbar__wrapper {
-  border-radius: var(--cut-md) var(--cut-xs) var(--cut-md) var(--cut-xs) !important;
-  box-shadow: var(--shadow-2) !important;
-  border: 1px solid rgba(var(--v-theme-outline), 0.5) !important;
-}
-
-/* 输入框 */
-.v-text-field .v-field,
-.v-select .v-field {
-  border-radius: 8px 2px 8px 2px !important;
-}
-
-/* 工具提示 */
-.v-tooltip > .v-overlay__content {
-  border-radius: 6px 1px 6px 1px !important;
-  font-size: 0.8rem;
-  padding: 6px 12px;
-  border: 1px solid rgba(var(--v-theme-outline), 0.4);
-}
-
-/* 表格 */
-.v-table {
-  border-radius: var(--cut-md) var(--cut-xs) var(--cut-md) var(--cut-xs) !important;
-  border: 1px solid rgba(var(--v-theme-outline), 0.4) !important;
-}
-
-/* 展开面板 */
-.v-expansion-panel {
-  border-radius: var(--cut-md) var(--cut-xs) var(--cut-md) var(--cut-xs) !important;
-  border: 1px solid rgba(var(--v-theme-outline), 0.45) !important;
-}
-
-.v-expansion-panel-title {
-  border-radius: inherit !important;
-}
-
-/* 分割线 */
-.v-divider {
-  border-color: rgba(var(--v-theme-outline), 0.4) !important;
-}
-
-/* 进度条 */
-.v-progress-circular { stroke-linecap: round; }
-
-/* 按钮组 */
-.v-btn-toggle .v-btn:first-child { border-radius: 8px 0 8px 0 !important; }
-.v-btn-toggle .v-btn:last-child { border-radius: 0 8px 0 8px !important; }
-
-/* 警报 */
-.v-alert { border-radius: var(--cut-md) var(--cut-xs) var(--cut-md) var(--cut-xs) !important; }
-
-/* 选中态高亮 */
-.v-list-item--active {
-  background: rgba(var(--v-theme-primary), 0.1) !important;
-}
-
-/* 输入框 outline 圆角 */
-.v-field--variant-outlined .v-field__outline__start,
-.v-field--variant-outlined .v-field__outline__end,
-.v-field--variant-outlined .v-field__outline__notch::before,
-.v-field--variant-outlined .v-field__outline__notch::after {
-  border-radius: 6px !important;
-}
-
-/* 通用浮层 tooltip */
-.fuzzy-tooltip {
-  background: rgb(var(--v-theme-surface)) !important;
-  color: rgb(var(--v-theme-on-surface)) !important;
-  border: 1px solid rgba(var(--v-theme-outline), 0.6) !important;
-  border-radius: 8px 2px 8px 2px !important;
-  box-shadow: var(--shadow-2) !important;
-  padding: 8px 14px !important;
-  font-size: 0.8rem !important;
-}
-
-:where(a, button, [role='button'], .v-btn, .v-list-item):focus-visible {
-  outline: 2px solid rgb(var(--v-theme-primary)) !important;
-  outline-offset: 3px;
-}
-
-:where(a, button, [role='button'], .v-btn, .v-list-item) {
-  touch-action: manipulation;
-}
-
-/* 文本选中 — 主色薄底，保留原文字色，不做高饱和反白 */
-::selection {
-  background: rgba(var(--v-theme-primary), 0.22);
-  color: inherit;
-}
+/* 全站基础样式使用主题令牌，页面不再各自定义浮层与控件外观。 */
+.v-application { background: rgb(var(--v-theme-background)); font-family: var(--font-body) !important; min-height: 100vh; }
+.v-main { min-width: 0; }
+.v-card { border-radius: var(--cut-lg) !important; border: 1px solid rgba(var(--v-theme-outline), 0.24); box-shadow: var(--shadow-1) !important; }
+.v-card.v-card--flat { box-shadow: none !important; }
+.v-btn { text-transform: none !important; letter-spacing: 0; font-weight: 600; }
+.v-btn:not(.v-btn--icon) { border-radius: 8px; }
+.v-btn--icon { border-radius: 8px; }
+.v-btn--variant-outlined { border-width: 1px; }
+.v-chip { border-radius: 6px; font-weight: 500; }
+.v-dialog > .v-overlay__content > .v-card { border-radius: var(--cut-lg) !important; box-shadow: var(--shadow-lift) !important; }
+.v-menu > .v-overlay__content > .v-list { padding: 6px; border-radius: 12px; border: 1px solid rgba(var(--v-theme-outline), 0.24); box-shadow: var(--shadow-2); }
+.v-menu .v-list-item { border-radius: 6px; }
+.v-snackbar__wrapper { border-radius: 10px !important; box-shadow: var(--shadow-2) !important; }
+.v-field { border-radius: 8px; }
+.v-tooltip > .v-overlay__content { max-width: min(360px, calc(100vw - 32px)); padding: 8px 12px; border-radius: 6px; font-size: 0.8125rem; line-height: 1.6; }
+.v-expansion-panel { border-radius: 10px !important; border: 1px solid rgba(var(--v-theme-outline), 0.24); }
+.v-expansion-panel-title { min-height: 52px; }
+.v-alert { border-radius: 10px; }
+.v-divider { border-color: rgba(var(--v-theme-outline), 0.24); opacity: 1; }
+.v-list-item--active { font-weight: 600; }
+.v-table { border-radius: var(--cut-md); }
+.v-table th { color: rgb(var(--v-theme-on-surface-variant)); font-weight: 600; white-space: nowrap; }
+.v-table td { line-height: 1.6; }
+.v-table tbody tr:hover { background: rgba(var(--v-theme-primary), 0.035); }
+code, pre, .text-mono, .font-mono { font-family: var(--font-mono); font-variant-ligatures: none; }
+code { padding: 2px 5px; border-radius: 4px; font-size: 0.875em; line-height: 1.5; color: rgb(var(--v-theme-on-surface)); background: rgba(var(--v-theme-primary), 0.07); }
+.fuzzy-tooltip, .status-tooltip { background: rgb(var(--v-theme-surface)) !important; color: rgb(var(--v-theme-on-surface)) !important; border: 1px solid rgba(var(--v-theme-outline), 0.3); box-shadow: var(--shadow-2); }
+:where(a, button, input, textarea, select, summary, [tabindex], [role='button']):focus-visible { outline: 2px solid rgb(var(--v-theme-primary)) !important; outline-offset: 3px; }
+:where(a, button, summary, [role='button']) { touch-action: manipulation; }
+@media (pointer: coarse) { .v-btn--icon { min-width: 44px; min-height: 44px; } }

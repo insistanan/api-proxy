@@ -3,30 +3,36 @@ package conversation
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"github.com/insistanan/api-proxy/internal/sqlitedb"
 )
 
-type SQLiteStore struct{ db *sql.DB }
+type SQLiteStore struct {
+	db     *sql.DB
+	ownsDB bool
+}
 
 func NewSQLiteStore(path string) (*SQLiteStore, error) {
-	if path == "" {
-		return nil, fmt.Errorf("conversation database path is required")
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return nil, err
-	}
-	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
+	db, err := sqlitedb.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
+	store, err := newSQLiteStore(db)
+	if err != nil {
+		return nil, errors.Join(err, db.Close())
+	}
+	store.ownsDB = true
+	return store, nil
+}
+
+// newSQLiteStore 借用连接，初始化失败及正常关闭均不释放调用方资源。
+func newSQLiteStore(db *sql.DB) (*SQLiteStore, error) {
 	store := &SQLiteStore{db: db}
+	var err error
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS conversations (
 		id TEXT PRIMARY KEY, identity_key TEXT NOT NULL UNIQUE, api_kind TEXT NOT NULL, name TEXT NOT NULL DEFAULT '',
 		last_model TEXT NOT NULL DEFAULT '', last_resolved_model TEXT NOT NULL DEFAULT '', first_prompt TEXT NOT NULL DEFAULT '',
@@ -35,7 +41,6 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 		request_count INTEGER NOT NULL DEFAULT 0, error_count INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '',
 		route_override_json TEXT NOT NULL DEFAULT '', last_resolved_json TEXT NOT NULL DEFAULT '', image_fingerprints_json TEXT NOT NULL DEFAULT '[]')`)
 	if err != nil {
-		_ = db.Close()
 		return nil, err
 	}
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS conversation_aliases (
@@ -43,7 +48,6 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 		conversation_id TEXT NOT NULL
 	)`)
 	if err != nil {
-		_ = db.Close()
 		return nil, err
 	}
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS conversation_lineages (
@@ -59,17 +63,14 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 		FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
 	)`)
 	if err != nil {
-		_ = db.Close()
 		return nil, err
 	}
 	if _, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_conversation_lineages_frontier
 		ON conversation_lineages(client_family, frontier_depth, frontier_hash)`); err != nil {
-		_ = db.Close()
 		return nil, err
 	}
 	// 旧版全局图片缓存不绑定对话，无法满足删除对话即失效的语义。
 	if _, err = db.Exec(`DROP TABLE IF EXISTS image_understandings`); err != nil {
-		_ = db.Close()
 		return nil, err
 	}
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS conversation_image_understandings (
@@ -82,34 +83,23 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 		FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
 	)`)
 	if err != nil {
-		_ = db.Close()
 		return nil, err
 	}
 	if _, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_conversation_image_understandings_conversation_id
 		ON conversation_image_understandings(conversation_id)`); err != nil {
-		_ = db.Close()
 		return nil, err
 	}
-	return store, nil
-}
-
-func (s *SQLiteStore) LoadAll() ([]*Record, error) {
-	rows, err := s.db.Query(`SELECT id, identity_key, api_kind, name, last_model, last_resolved_model, first_prompt, prompts_json, stream,
-		first_seen_at, last_seen_at, last_request_at, last_completed_at, request_count, error_count, last_error,
-		route_override_json, last_resolved_json, image_fingerprints_json FROM conversations`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var records []*Record
-	for rows.Next() {
-		rec, err := scanRecord(rows)
-		if err != nil {
+	for _, statement := range []string{
+		`CREATE INDEX IF NOT EXISTS idx_conversations_last_seen ON conversations(last_seen_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_conversations_created ON conversations(first_seen_at DESC, id)`,
+		`CREATE INDEX IF NOT EXISTS idx_conversation_aliases_record ON conversation_aliases(conversation_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_conversation_parent ON conversation_lineages(parent_conversation_id)`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
 			return nil, err
 		}
-		records = append(records, rec)
 	}
-	return records, rows.Err()
+	return store, nil
 }
 
 func (s *SQLiteStore) Upsert(rec *Record) error {
@@ -152,32 +142,6 @@ func (s *SQLiteStore) Upsert(rec *Record) error {
 		return err
 	}
 	return tx.Commit()
-}
-
-func (s *SQLiteStore) LoadLineages() (map[string]lineageState, error) {
-	rows, err := s.db.Query(`SELECT conversation_id, client_family, identity_source, scope_hash, lane_hash,
-		frontier_hash, frontier_depth, parent_conversation_id, updated_at FROM conversation_lineages`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	result := make(map[string]lineageState)
-	for rows.Next() {
-		var conversationID string
-		var lineage lineageState
-		var updatedAt int64
-		if err := rows.Scan(&conversationID, &lineage.ClientFamily, &lineage.IdentitySource, &lineage.ScopeHash,
-			&lineage.LaneHash, &lineage.FrontierHash, &lineage.FrontierDepth, &lineage.ParentConversationID, &updatedAt); err != nil {
-			return nil, err
-		}
-		lineage.UpdatedAt = unixTime(updatedAt)
-		result[conversationID] = lineage
-	}
-	return result, rows.Err()
-}
-
-func (s *SQLiteStore) UpsertLineage(conversationID string, lineage lineageState) error {
-	return upsertLineage(s.db, conversationID, lineage)
 }
 
 type sqlExecer interface {
@@ -248,22 +212,6 @@ func (s *SQLiteStore) DeleteAll() error {
 	}
 	return tx.Commit()
 }
-func (s *SQLiteStore) LoadAliases() (map[string]string, error) {
-	rows, err := s.db.Query("SELECT alias_key, conversation_id FROM conversation_aliases")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	aliases := make(map[string]string)
-	for rows.Next() {
-		var alias, conversationID string
-		if err := rows.Scan(&alias, &conversationID); err != nil {
-			return nil, err
-		}
-		aliases[alias] = conversationID
-	}
-	return aliases, rows.Err()
-}
 func (s *SQLiteStore) UpsertAlias(alias string, conversationID string) error {
 	_, err := s.db.Exec(`INSERT INTO conversation_aliases (alias_key, conversation_id) VALUES (?, ?)
 		ON CONFLICT(alias_key) DO UPDATE SET conversation_id = excluded.conversation_id`, alias, conversationID)
@@ -310,7 +258,10 @@ func (s *SQLiteStore) Close() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
-	return s.db.Close()
+	if s.ownsDB {
+		return s.db.Close()
+	}
+	return nil
 }
 
 type scanner interface{ Scan(...interface{}) error }

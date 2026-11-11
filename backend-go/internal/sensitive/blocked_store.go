@@ -6,13 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"github.com/insistanan/api-proxy/internal/sqlitedb"
 )
 
 const (
@@ -139,31 +137,27 @@ type BlockedStore struct {
 	mu        sync.RWMutex
 	closed    bool
 	closeOnce sync.Once
+	ownsDB    bool
 }
 
 // NewBlockedStore 创建并初始化拦截记录存储。
 func NewBlockedStore(path string) (*BlockedStore, error) {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return nil, fmt.Errorf("拦截记录数据库路径不能为空")
-	}
-	if path != ":memory:" {
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			return nil, fmt.Errorf("创建拦截记录数据库目录失败: %w", err)
-		}
-	}
-	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)"
-	if path == ":memory:" {
-		dsn = "file:blocked_logs?mode=memory&cache=shared&_pragma=busy_timeout(5000)"
-	}
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sqlitedb.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("打开拦截记录数据库失败: %w", err)
+		return nil, err
 	}
-	db.SetMaxOpenConns(1)
+	store, err := NewBlockedStoreWithDB(db)
+	if err != nil {
+		return nil, errors.Join(err, db.Close())
+	}
+	store.ownsDB = true
+	return store, nil
+}
+
+// NewBlockedStoreWithDB 借用共享连接，Close 不关闭底层数据库。
+func NewBlockedStoreWithDB(db *sql.DB) (*BlockedStore, error) {
 	store := &BlockedStore{db: db}
 	if err := store.initSchema(); err != nil {
-		_ = db.Close()
 		return nil, err
 	}
 	return store, nil
@@ -562,7 +556,9 @@ func (s *BlockedStore) Close() error {
 	s.closeOnce.Do(func() {
 		s.mu.Lock()
 		s.closed = true
-		closeErr = s.db.Close()
+		if s.ownsDB {
+			closeErr = s.db.Close()
+		}
 		s.mu.Unlock()
 	})
 	return closeErr

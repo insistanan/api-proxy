@@ -4,18 +4,11 @@
   margin: 0 auto;
 }
 
-.settings-header {
-  display: flex;
-  align-items: center;
-  min-height: 84px;
-  padding: 8px 4px 20px;
-}
-
 .settings-layout {
   display: grid;
-  grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
-  gap: 40px;
-  padding-top: 24px;
+  grid-template-columns: 196px minmax(0, 1fr);
+  gap: 28px;
+  padding-top: 0;
 }
 
 .ccs-path-row {
@@ -30,6 +23,9 @@
 }
 
 .settings-nav {
+  position: sticky;
+  top: 88px;
+  align-self: start;
   border-right: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   padding-right: 20px;
 }
@@ -37,7 +33,10 @@
 .settings-content {
   max-width: 760px;
   min-width: 0;
-  padding: 4px 0 48px;
+  padding: 24px;
+  background: rgb(var(--v-theme-surface));
+  border: 1px solid rgba(var(--v-theme-outline), 0.24);
+  border-radius: var(--cut-lg);
 }
 
 .section-heading {
@@ -64,7 +63,7 @@
 }
 
 .proxy-editor {
-  padding-top: 24px;
+  padding-top: 0;
 }
 
 .safety-group + .safety-group {
@@ -181,7 +180,13 @@
 .settings-actions {
   display: flex;
   justify-content: flex-end;
-  padding-top: 28px;
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin-top: 20px;
+  padding: 16px 0 max(8px, env(safe-area-inset-bottom));
+  background: rgb(var(--v-theme-surface));
+  border-top: 1px solid rgba(var(--v-theme-outline), 0.2);
 }
 
 /* 通用提示词分区：版本条与内容编辑器 */
@@ -200,13 +205,17 @@
   }
 }
 
-@media (max-width: 700px) {
+@media (max-width: 900px) {
   .settings-layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 20px;
   }
 
   .settings-nav {
+    position: static;
+    min-width: 0;
+    overflow-x: auto;
+    max-width: 100%;
     border-right: 0;
     border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
     padding-right: 0;
@@ -214,8 +223,8 @@
   }
 
   .settings-nav :deep(.v-list) {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    display: flex;
+    width: max-content;
   }
 
   .setting-row {
@@ -238,4 +247,12 @@
   .option-grid {
     grid-template-columns: 1fr;
   }
+}
+
+.settings-dirty-dot { width: 7px; height: 7px; margin-left: 8px; border-radius: 50%; background: rgb(var(--v-theme-warning)); }
+.settings-nav :deep(.v-list-item) { min-height: 44px; }
+@media (max-width: 600px) {
+  .settings-content { padding: 16px; }
+  .ccs-path-row { flex-direction: column; }
+  .ccs-path-row > * { width: 100%; }
 }

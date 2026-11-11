@@ -20,7 +20,7 @@ const (
 	PhaseUpstreamHeaders   = "upstream_headers"
 	PhaseUpstreamAdmission = "upstream_admission"
 
-	writeQueueSize = 8192
+	writeQueueSize = 2048
 )
 
 // AvailableDate 是一个存在日志的本地日历日及其三张表的总行数。

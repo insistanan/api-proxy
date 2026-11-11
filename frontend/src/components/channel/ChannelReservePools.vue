@@ -1,16 +1,7 @@
 <template>
   <div>
     <!-- 备用资源池 (disabled only) -->
-    <div class="pt-2 pb-3">
-      <div class="inactive-pool-header">
-        <div class="text-subtitle-2 text-medium-emphasis d-flex align-center">
-          <v-icon size="small" class="mr-1" color="grey">mdi-archive-outline</v-icon>
-          备用资源池
-          <v-chip size="x-small" class="ml-2">{{ inactiveChannels.length }}</v-chip>
-        </div>
-        <span class="section-inline-label">待启用</span>
-      </div>
-
+    <DisclosureSection title="备用渠道" description="暂不参与调度，启用后回到所属分组。" icon="mdi-archive-outline" :count="inactiveChannels.length" lazy>
       <div v-if="inactiveChannels.length > 0" class="inactive-pool">
         <div v-for="channel in inactiveChannels" :key="channel.index" class="inactive-channel-row">
           <!-- 渠道信息 -->
@@ -79,7 +70,7 @@
 
             <v-menu>
               <template #activator="{ props: menuProps }">
-                <v-btn icon size="x-small" variant="text" v-bind="menuProps">
+                <v-btn icon size="x-small" variant="text" v-bind="menuProps" :aria-label="`打开 ${channel.name} 的备用渠道菜单`">
                   <v-icon size="small">mdi-dots-vertical</v-icon>
                 </v-btn>
               </template>
@@ -132,21 +123,10 @@
       </div>
 
       <div v-else class="text-center py-4 text-medium-emphasis text-caption">所有渠道都处于活跃状态</div>
-    </div>
-
-    <v-divider class="my-2" />
+    </DisclosureSection>
 
     <!-- 弃用渠道池 (deprecated only) -->
-    <div class="pt-2 pb-3">
-      <div class="inactive-pool-header">
-        <div class="text-subtitle-2 text-medium-emphasis d-flex align-center">
-          <v-icon size="small" class="mr-1" color="grey">mdi-archive-clock-outline</v-icon>
-          弃用渠道池
-          <v-chip size="x-small" class="ml-2">{{ deprecatedChannels.length }}</v-chip>
-        </div>
-        <span class="section-inline-label">待清理</span>
-      </div>
-
+    <DisclosureSection title="弃用渠道" description="可转为备用或手动删除；弃用超过 3 天后由后台清理。" icon="mdi-archive-clock-outline" :count="deprecatedChannels.length" lazy>
       <div v-if="deprecatedChannels.length > 0" class="inactive-pool deprecated-pool">
         <div v-for="channel in deprecatedChannels" :key="channel.index" class="inactive-channel-row">
           <div class="channel-info">
@@ -195,7 +175,7 @@
       </div>
 
       <div v-else class="text-center py-4 text-medium-emphasis text-caption">暂无弃用渠道</div>
-    </div>
+    </DisclosureSection>
   </div>
 </template>
 
@@ -206,6 +186,7 @@ import type { ApiTab } from '@/services/channel-api'
 import { channelServiceLabel } from '@/utils/imagesChannelProtocol'
 import { formatDateTime } from '@/utils/channelMetricsFormat'
 import ChannelMappingBlock from '../ChannelMappingBlock.vue'
+import DisclosureSection from '../common/DisclosureSection.vue'
 
 defineProps<{
   inactiveChannels: Channel[]

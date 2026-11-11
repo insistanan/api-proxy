@@ -3,6 +3,7 @@ package conversation
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -68,6 +69,7 @@ type Record struct {
 	IdentitySource       string         `json:"identitySource,omitempty"`
 	ParentConversationID string         `json:"parentConversationId,omitempty"`
 
+	dirty       bool
 	identityKey string
 	lineage     lineageState
 }
@@ -84,15 +86,17 @@ func (r *Record) RouteOverrideString() string {
 }
 
 type Registry struct {
-	mu            sync.RWMutex
-	records       map[string]*Record
-	identityIndex map[string]string
-	frontierIndex map[string]map[string]struct{}
-	maxIdle       time.Duration
-	stopCh        chan struct{}
-	doneCh        chan struct{}
-	stopOnce      sync.Once
-	store         *SQLiteStore
+	mu               sync.RWMutex
+	records          map[string]*Record
+	identityIndex    map[string]string
+	frontierIndex    map[string]map[string]struct{}
+	maxIdle          time.Duration
+	stopCh           chan struct{}
+	doneCh           chan struct{}
+	stopOnce         sync.Once
+	store            *SQLiteStore
+	maxCachedRecords int
+	maxCacheBytes    int
 }
 
 func NewRegistry() *Registry {
@@ -104,61 +108,24 @@ func NewPersistentRegistry(dbPath string) (*Registry, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := newRegistry(store)
-	records, err := store.LoadAll()
+	registry, err := newPersistentRegistry(store)
 	if err != nil {
-		r.Stop()
-		return nil, err
+		return nil, errors.Join(err, store.Close())
 	}
-	for _, rec := range records {
-		if rec == nil || rec.ID == "" || rec.identityKey == "" {
-			continue
-		}
-		normalizeRecordPrompts(rec)
-		rec.IsSending = false
-		rec.ActiveRequests = 0
-		r.records[rec.ID] = rec
-		r.identityIndex[rec.identityKey] = rec.ID
-	}
-	aliases, err := store.LoadAliases()
-	if err != nil {
-		r.Stop()
-		return nil, err
-	}
-	for alias, recordID := range aliases {
-		if _, ok := r.records[recordID]; ok {
-			r.identityIndex[alias] = recordID
-		}
-	}
-	lineages, err := store.LoadLineages()
-	if err != nil {
-		r.Stop()
-		return nil, err
-	}
-	for recordID, lineage := range lineages {
-		rec := r.records[recordID]
-		if rec == nil {
-			continue
-		}
-		rec.lineage = lineage
-		rec.ClientFamily = lineage.ClientFamily
-		rec.IdentitySource = lineage.IdentitySource
-		rec.ParentConversationID = lineage.ParentConversationID
-		r.indexLineageLocked(rec)
-	}
-	r.cleanup()
-	return r, nil
+	return registry, nil
 }
 
 func newRegistry(store *SQLiteStore) *Registry {
 	r := &Registry{
-		records:       make(map[string]*Record),
-		identityIndex: make(map[string]string),
-		frontierIndex: make(map[string]map[string]struct{}),
-		maxIdle:       defaultMaxIdle,
-		stopCh:        make(chan struct{}),
-		doneCh:        make(chan struct{}),
-		store:         store,
+		records:          make(map[string]*Record),
+		identityIndex:    make(map[string]string),
+		frontierIndex:    make(map[string]map[string]struct{}),
+		maxIdle:          defaultMaxIdle,
+		stopCh:           make(chan struct{}),
+		doneCh:           make(chan struct{}),
+		store:            store,
+		maxCachedRecords: defaultCachedRecords,
+		maxCacheBytes:    defaultCacheBytes,
 	}
 	go r.cleanupLoop()
 	return r
@@ -176,11 +143,24 @@ func (r *Registry) Stop() {
 	})
 }
 
+// ObserveRequest 保留内部调用入口；代理请求使用带错误返回的 ObserveRequestWithError。
 func (r *Registry) ObserveRequest(obs Observation) *Record {
+	rec, err := r.ObserveRequestWithError(obs)
+	if err != nil {
+		log.Printf("[Conversation] 观测对话失败: %v", err)
+	}
+	return rec
+}
+
+func (r *Registry) ObserveRequestWithError(obs Observation) (*Record, error) {
 	now := time.Now()
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	defer r.trimCacheLocked()
+	if err := r.prepareObservationLocked(obs); err != nil {
+		return nil, err
+	}
 
 	rec, identityKey, parentID, resolution := r.resolveObservationLocked(obs)
 	if rec == nil {
@@ -224,8 +204,12 @@ func (r *Registry) ObserveRequest(obs Observation) *Record {
 	rec.LastRequestAt = now
 	rec.RequestCount++
 
-	r.persistLocked(rec)
-	return cloneRecord(rec)
+	if err := r.persistLocked(rec); err != nil {
+		rec.ActiveRequests--
+		rec.IsSending = rec.ActiveRequests > 0
+		return nil, err
+	}
+	return cloneRecord(rec), nil
 }
 
 func (r *Registry) MarkAttempt(recordID string, kind string, channelIndex int, channelName string, requestedModel string, resolvedModel string, stream bool) {
@@ -311,6 +295,7 @@ func (r *Registry) MarkComplete(recordID string, kind string) {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	defer r.trimCacheLocked()
 
 	rec := r.records[recordID]
 	if rec == nil {
@@ -327,60 +312,95 @@ func (r *Registry) MarkComplete(recordID string, kind string) {
 }
 
 func (r *Registry) List() []*Record {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	records, err := r.ListRecords()
+	if err != nil {
+		log.Printf("[Conversation] 查询对话列表失败: %v", err)
+	}
+	return records
+}
 
+func (r *Registry) ListRecords() ([]*Record, error) {
+	r.mu.RLock()
 	result := make([]*Record, 0, len(r.records))
-	for _, rec := range r.records {
-		if rec == nil {
-			continue
+	if r.store != nil {
+		stored, err := r.store.loadRecords("")
+		if err != nil {
+			r.mu.RUnlock()
+			return nil, err
 		}
+		for _, rec := range stored {
+			if r.records[rec.ID] == nil {
+				result = append(result, rec)
+			}
+		}
+	}
+	for _, rec := range r.records {
 		result = append(result, cloneRecord(rec))
 	}
-
+	r.mu.RUnlock()
 	sortRecords(result)
-	return result
+	return result, nil
 }
 
 func (r *Registry) Get(recordID string) (*Record, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	rec := r.records[recordID]
-	if rec == nil {
-		return nil, false
+	rec, err := r.Lookup(recordID)
+	if err != nil {
+		log.Printf("[Conversation] 读取对话失败: %v", err)
 	}
-	return cloneRecord(rec), true
+	return rec, rec != nil
+}
+
+func (r *Registry) Lookup(recordID string) (*Record, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	defer r.trimCacheLocked()
+	rec, err := r.loadRecordLocked(recordID)
+	if err != nil {
+		return nil, err
+	}
+	return cloneRecord(rec), nil
 }
 
 // ResolveExistingRecordID 根据明确身份查找已有会话记录，但不会创建新记录或更新请求状态。
 // 控制面请求（例如 Responses compact）只应复用主链路已经建立的会话，不能因为一次
 // compact 请求凭空创建会话、污染请求计数，或把仅有 ScopeID 的并行客户端窗口强行合并。
 func (r *Registry) ResolveExistingRecordID(apiKind string, identity Identity) string {
+	id, err := r.ResolveExistingRecordIDWithError(apiKind, identity)
+	if err != nil {
+		log.Printf("[Conversation] 解析已有对话失败: %v", err)
+	}
+	return id
+}
+
+func (r *Registry) ResolveExistingRecordIDWithError(apiKind string, identity Identity) (string, error) {
 	if r == nil {
-		return ""
+		return "", nil
 	}
 	key := buildExplicitIdentityKey(Observation{
 		APIKind:  apiKind,
 		Identity: identity,
 	})
 	if key == "" {
-		return ""
+		return "", nil
 	}
 
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	defer r.trimCacheLocked()
+	if err := r.prepareObservationLocked(Observation{APIKind: apiKind, Identity: identity}); err != nil {
+		return "", err
+	}
 
 	if recordID, ok := r.identityIndex[key]; ok && r.records[recordID] != nil {
-		return recordID
+		return recordID, nil
 	}
 	if isPreviousResponseIdentity(identity) {
 		baseKey := explicitIdentityKey(apiKind, identity.ExplicitID)
 		if recordID, ok := r.identityIndex[baseKey]; ok && r.records[recordID] != nil {
-			return recordID
+			return recordID, nil
 		}
 	}
-	return ""
+	return "", nil
 }
 
 func (r *Registry) SetRouteOverride(recordID string, kind string, channelIndex int, channelName string) (*Record, error) {
@@ -388,8 +408,12 @@ func (r *Registry) SetRouteOverride(recordID string, kind string, channelIndex i
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	defer r.trimCacheLocked()
 
-	rec := r.records[recordID]
+	rec, err := r.loadRecordLocked(recordID)
+	if err != nil {
+		return nil, err
+	}
 	if rec == nil {
 		return nil, fmt.Errorf("conversation not found")
 	}
@@ -402,7 +426,9 @@ func (r *Registry) SetRouteOverride(recordID string, kind string, channelIndex i
 	}
 	rec.LastSeenAt = now
 
-	r.persistLocked(rec)
+	if err := r.persistLocked(rec); err != nil {
+		return nil, err
+	}
 	return cloneRecord(rec), nil
 }
 
@@ -411,14 +437,20 @@ func (r *Registry) ClearRouteOverride(recordID string) (*Record, error) {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	defer r.trimCacheLocked()
 
-	rec := r.records[recordID]
+	rec, err := r.loadRecordLocked(recordID)
+	if err != nil {
+		return nil, err
+	}
 	if rec == nil {
 		return nil, fmt.Errorf("conversation not found")
 	}
 	rec.RouteOverride = nil
 	rec.LastSeenAt = now
-	r.persistLocked(rec)
+	if err := r.persistLocked(rec); err != nil {
+		return nil, err
+	}
 	return cloneRecord(rec), nil
 }
 
@@ -429,20 +461,30 @@ func (r *Registry) SetName(recordID string, name string) (*Record, error) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	rec := r.records[recordID]
+	defer r.trimCacheLocked()
+	rec, err := r.loadRecordLocked(recordID)
+	if err != nil {
+		return nil, err
+	}
 	if rec == nil {
 		return nil, fmt.Errorf("conversation not found")
 	}
 	rec.Name = name
 	rec.LastSeenAt = time.Now()
-	r.persistLocked(rec)
+	if err := r.persistLocked(rec); err != nil {
+		return nil, err
+	}
 	return cloneRecord(rec), nil
 }
 
 func (r *Registry) Delete(recordID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	rec := r.records[recordID]
+	defer r.trimCacheLocked()
+	rec, err := r.loadRecordLocked(recordID)
+	if err != nil {
+		return err
+	}
 	if rec == nil {
 		return fmt.Errorf("conversation not found")
 	}
@@ -483,7 +525,15 @@ func (r *Registry) AssociateExternalID(recordID string, apiKind string, external
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.records[recordID] == nil {
+	defer r.trimCacheLocked()
+	if err := r.prepareObservationLocked(Observation{APIKind: apiKind, ConversationID: externalID}); err != nil {
+		return err
+	}
+	rec, err := r.loadRecordLocked(recordID)
+	if err != nil {
+		return err
+	}
+	if rec == nil {
 		return fmt.Errorf("conversation not found")
 	}
 	if existingID, ok := r.identityIndex[alias]; ok && existingID != recordID {
@@ -499,30 +549,43 @@ func (r *Registry) AssociateExternalID(recordID string, apiKind string, external
 }
 
 func (r *Registry) GetRouteOverride(recordID string) (*RouteOverride, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	rec := r.records[recordID]
-	if rec == nil || rec.RouteOverride == nil {
-		return nil, false
+	result, err := r.LookupRouteOverride(recordID)
+	if err != nil {
+		log.Printf("[Conversation] 读取固定渠道失败: %v", err)
 	}
-	override := *rec.RouteOverride
-	return &override, true
+	return result, result != nil
 }
 
-// GetLastResolved 返回对话最近一次"成功/尝试"命中的渠道。
-// 用作对话级亲和（conversation stickiness）的依据：多轮会话优先复用最近成功的渠道，
-// 只有在它过载、不可用或本协议不匹配时才迁移，从而兼顾"分布"与"不来回乱切"。
-func (r *Registry) GetLastResolved(recordID string) (*ChannelRef, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+func (r *Registry) LookupRouteOverride(recordID string) (*RouteOverride, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	defer r.trimCacheLocked()
+	rec, err := r.loadRecordLocked(recordID)
+	if err != nil {
+		return nil, err
+	}
+	if rec == nil || rec.RouteOverride == nil {
+		return nil, nil
+	}
+	result := *rec.RouteOverride
+	return &result, nil
+}
 
-	rec := r.records[recordID]
+// GetLastResolved 返回最近一次命中的渠道，冷记录按需从持久层恢复。
+func (r *Registry) GetLastResolved(recordID string) (*ChannelRef, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	defer r.trimCacheLocked()
+	rec, err := r.loadRecordLocked(recordID)
+	if err != nil {
+		log.Printf("[Conversation] 读取亲和渠道失败: %v", err)
+		return nil, false
+	}
 	if rec == nil || rec.LastResolved == nil {
 		return nil, false
 	}
-	resolved := *rec.LastResolved
-	return &resolved, true
+	result := *rec.LastResolved
+	return &result, true
 }
 
 // LoadConversationImageUnderstanding 读取当前对话内的图片理解结果。
@@ -530,27 +593,34 @@ func (r *Registry) LoadConversationImageUnderstanding(conversationID string, cac
 	if r == nil {
 		return "", false, nil
 	}
-	r.mu.RLock()
-	exists := r.records[conversationID] != nil
-	store := r.store
-	r.mu.RUnlock()
-	if !exists {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	defer r.trimCacheLocked()
+	rec, err := r.loadRecordLocked(conversationID)
+	if err != nil {
+		return "", false, err
+	}
+	if rec == nil {
 		return "", false, fmt.Errorf("conversation not found")
 	}
-	if store == nil {
+	if r.store == nil {
 		return "", false, nil
 	}
-	return store.LoadConversationImageUnderstanding(conversationID, cacheKey)
+	return r.store.LoadConversationImageUnderstanding(conversationID, cacheKey)
 }
 
-// SaveConversationImageUnderstanding 保存当前对话内的图片理解结果。
 func (r *Registry) SaveConversationImageUnderstanding(conversationID string, cacheKey string, result string) error {
 	if r == nil {
 		return nil
 	}
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	if r.records[conversationID] == nil {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	defer r.trimCacheLocked()
+	rec, err := r.loadRecordLocked(conversationID)
+	if err != nil {
+		return err
+	}
+	if rec == nil {
 		return fmt.Errorf("conversation not found")
 	}
 	if r.store == nil {
@@ -575,25 +645,55 @@ func (r *Registry) cleanupLoop() {
 }
 
 func (r *Registry) cleanup() {
-	now := time.Now()
-
+	cutoff := time.Now().Add(-r.maxIdle)
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
+	active := make([]string, 0)
+	expired := make(map[string]bool)
 	for id, rec := range r.records {
-		if rec == nil || now.Sub(rec.LastSeenAt) <= r.maxIdle {
-			continue
+		if rec.ActiveRequests > 0 || rec.dirty {
+			active = append(active, id)
+		} else if rec.LastSeenAt.Before(cutoff) {
+			expired[id] = true
 		}
-		delete(r.records, id)
-		r.unindexLineageLocked(rec)
-		r.removeIdentityKeysLocked(id)
-		if r.store != nil {
-			if err := r.store.Delete(id); err != nil {
-				log.Printf("[Conversation] 清理过期对话失败: %v", err)
+	}
+	if r.store != nil {
+		if err := r.store.purgeExpired(cutoff, active); err != nil {
+			log.Printf("[Conversation] 清理过期对话失败: %v", err)
+			return
+		}
+		// 父记录可能早已离开缓存，不能仅依赖当前内存中的 expired 集合。
+		for _, rec := range r.records {
+			if rec.ParentConversationID == "" {
+				continue
+			}
+			var exists bool
+			if err := r.store.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM expired_conversation_ids WHERE id = ?)`, rec.ParentConversationID).Scan(&exists); err != nil {
+				log.Printf("[Conversation] 同步过期父对话失败: %v", err)
+				return
+			}
+			if exists {
+				rec.ParentConversationID = ""
+				rec.lineage.ParentConversationID = ""
 			}
 		}
-		r.clearParentReferencesLocked(id)
 	}
+	for id := range expired {
+		r.unindexLineageLocked(r.records[id])
+		delete(r.records, id)
+	}
+	for key, id := range r.identityIndex {
+		if expired[id] {
+			delete(r.identityIndex, key)
+		}
+	}
+	for _, rec := range r.records {
+		if expired[rec.ParentConversationID] {
+			rec.ParentConversationID = ""
+			rec.lineage.ParentConversationID = ""
+		}
+	}
+	r.trimCacheLocked()
 }
 
 func (r *Registry) clearParentReferencesLocked(parentID string) {
@@ -766,13 +866,17 @@ func appendImageFingerprints(rec *Record, fingerprints ...string) {
 	}
 }
 
-func (r *Registry) persistLocked(rec *Record) {
+func (r *Registry) persistLocked(rec *Record) error {
 	if r.store == nil || rec == nil {
-		return
+		return nil
 	}
 	if err := r.store.Upsert(rec); err != nil {
+		rec.dirty = true
 		log.Printf("[Conversation] 保存对话失败: %v", err)
+		return err
 	}
+	rec.dirty = false
+	return nil
 }
 
 func cleanPromptList(values []string, limit int) []string {

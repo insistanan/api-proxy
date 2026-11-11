@@ -21,6 +21,10 @@ services:
     environment:
       # 基础配置
       - ENV=production
+      # 可选的 Go 运行时软内存预算；按实际峰值启用并调整，不等同于容器或 RSS 上限。
+      # - GOMEMLIMIT=128MiB
+      # 需要进一步压低堆余量时单独对照延迟与 GC CPU，避免与 GOMEMLIMIT 同时盲调。
+      # - GOGC=50
       # true 时提供 Web 管理界面，false 时仅提供 API。
       - ENABLE_WEB_UI=true
       # 客户端和管理 API 共用的访问密钥，启动前请替换为自己的密钥。

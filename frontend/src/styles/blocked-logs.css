@@ -6,9 +6,6 @@
   margin: 0 auto;
 }
 
-.page-toolbar,
-.page-title,
-.toolbar-actions,
 .pagination-bar,
 .dialog-title,
 .action-cell {
@@ -16,14 +13,6 @@
   align-items: center;
 }
 
-.page-toolbar {
-  justify-content: space-between;
-  gap: 16px;
-  padding: 16px 0 4px;
-}
-
-.page-title,
-.toolbar-actions,
 .dialog-title,
 .action-cell {
   gap: 10px;
@@ -31,14 +20,12 @@
 
 .filters {
   display: grid;
-  grid-template-columns:
-    minmax(130px, 0.8fr) minmax(140px, 0.9fr) minmax(130px, 0.8fr) auto
-    minmax(180px, 1fr) minmax(180px, 1fr) auto auto;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
   gap: 10px;
   align-items: center;
   padding: 14px;
   border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  border-radius: 6px;
+  border-radius: var(--cut-md);
   background: rgb(var(--v-theme-surface));
 }
 
@@ -58,7 +45,7 @@
 .table-frame {
   overflow-x: auto;
   border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  border-radius: 6px;
+  border-radius: var(--cut-md);
   background: rgb(var(--v-theme-surface));
 }
 
@@ -261,16 +248,6 @@
 }
 
 @media (max-width: 700px) {
-  .page-toolbar {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .toolbar-actions {
-    width: 100%;
-    flex-wrap: wrap;
-  }
-
   .filters {
     grid-template-columns: 1fr;
   }

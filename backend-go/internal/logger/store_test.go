@@ -276,7 +276,7 @@ func TestLogBurstPersistsEveryAcceptedEntry(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 
 	const workers = 4
-	const perWorker = writeQueueSize / 2
+	const perWorker = 4096
 	errors := make(chan error, workers)
 	var wg sync.WaitGroup
 	for worker := 0; worker < workers; worker++ {

@@ -111,10 +111,14 @@ export const observabilityApi = {
     return apiRequest('/logs/purge', { method: 'POST', body: JSON.stringify(body) })
   },
 
-  async getConversations(params?: { q?: string; kind?: ConversationKind }): Promise<ConversationsResponse> {
+  async getConversations(params?: { q?: string; kind?: ConversationKind; page?: number; pageSize?: number; status?: 'all' | 'active' | 'idle'; order?: 'created' | 'status' }): Promise<ConversationsResponse> {
     const search = new URLSearchParams()
     if (params?.q) search.set('q', params.q)
     if (params?.kind) search.set('kind', params.kind)
+    if (params?.page) search.set('page', String(params.page))
+    if (params?.pageSize) search.set('pageSize', String(params.pageSize))
+    if (params?.status) search.set('status', params.status)
+    if (params?.order) search.set('order', params.order)
     const suffix = search.toString() ? `?${search.toString()}` : ''
     return apiRequest(`/conversations${suffix}`)
   },

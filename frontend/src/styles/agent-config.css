@@ -3,6 +3,8 @@
   max-width: 1480px;
   margin: 0 auto;
   padding-bottom: 40px;
+  container-type: inline-size;
+  container-name: client-config;
 }
 
 .agent-config-editor {
@@ -12,50 +14,6 @@
   min-width: 0;
 }
 
-.agent-config-header {
-  /* 冻结在顶部：top 偏移避开 v-app-bar（桌面 64px / 移动 56px） */
-  position: sticky;
-  top: 64px;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  min-height: 64px;
-  margin-bottom: 20px;
-  padding: 12px 16px;
-  background: rgb(var(--v-theme-background));
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-}
-
-@media (max-width: 600px) {
-  .agent-config-header {
-    top: 56px;
-  }
-}
-
-.agent-config-header__copy {
-  min-width: 0;
-}
-
-.agent-config-header__copy h1 {
-  margin: 0;
-  color: rgb(var(--v-theme-on-background));
-  font-size: 1.5rem;
-  font-weight: 750;
-  line-height: 1.25;
-  letter-spacing: 0;
-}
-
-.agent-config-header__copy p {
-  margin: 5px 0 0;
-  color: rgba(var(--v-theme-on-background), 0.62);
-  font-size: 0.875rem;
-  line-height: 1.5;
-}
-
-.agent-config-header__actions,
 .agent-config-panel-actions {
   display: flex;
   flex: 0 0 auto;
@@ -97,7 +55,7 @@
 .agent-config-page .settings-card,
 .agent-config-page .empty-editor {
   overflow: hidden;
-  border-color: rgba(var(--v-theme-outline), 0.72) !important;
+  border-color: rgba(var(--v-theme-outline), 0.24) !important;
 }
 
 .agent-config-page .provider-list-card {
@@ -159,18 +117,18 @@
 
 .agent-config-page .empty-providers,
 .agent-config-page .empty-models {
-  border: 1px dashed rgba(var(--v-theme-outline), 0.65);
+  border: 1px dashed rgba(var(--v-theme-outline), 0.3);
   border-radius: var(--cut-md) var(--cut-xs) var(--cut-md) var(--cut-xs);
 }
 
 .agent-config-page .model-panels .v-expansion-panel {
   margin-bottom: 8px;
-  border-color: rgba(var(--v-theme-outline), 0.6) !important;
+  border-color: rgba(var(--v-theme-outline), 0.24) !important;
 }
 
 .agent-config-tabs {
   margin-bottom: 20px;
-  border-bottom: 1px solid rgba(var(--v-theme-outline), 0.5);
+  border-bottom: 1px solid rgba(var(--v-theme-outline), 0.24);
 }
 
 .agent-config-tabs .v-tab {
@@ -178,25 +136,16 @@
   font-weight: 700;
 }
 
+/* 侧栏占用的宽度也计入断点，避免窗口较宽但编辑区仍然拥挤。 */
+@container client-config (max-width: 1000px) {
+  .agent-provider-layout > .v-col { flex: 0 0 100%; max-width: 100%; }
+  .agent-config-page .provider-list-card { min-height: 0; }
+  .provider-list-card .v-list { max-height: 280px; overflow-y: auto; }
+}
+
 @media (max-width: 600px) {
   .agent-config-page {
     padding-bottom: 24px;
-  }
-
-  .agent-config-header {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 12px;
-    margin-bottom: 16px;
-  }
-
-  .agent-config-header__copy h1 {
-    font-size: 1.3rem;
-  }
-
-  .agent-config-header__actions {
-    width: 100%;
-    justify-content: flex-start;
   }
 
   .agent-config-location {

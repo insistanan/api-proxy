@@ -1,12 +1,7 @@
 <template>
   <div class="blocked-logs-view">
-    <header class="page-toolbar">
-      <div class="page-title">
-        <v-icon size="22" color="error">mdi-shield-alert</v-icon>
-        <h1 class="text-h5 font-weight-bold">拦截记录</h1>
+    <PageHeader title="拦截记录" description="查看内容安全命中、危险命令与审批结果，可按入口、规则和时间筛选。">
         <v-chip size="small" variant="tonal">{{ total }}</v-chip>
-      </div>
-      <div class="toolbar-actions">
         <v-btn variant="tonal" prepend-icon="mdi-refresh" :loading="loading" @click="loadLogs">刷新</v-btn>
         <v-btn
           color="error"
@@ -17,8 +12,7 @@
         >
           清空全部
         </v-btn>
-      </div>
-    </header>
+    </PageHeader>
 
     <section class="filters" aria-label="拦截记录筛选">
       <v-select v-model="apiType" :items="apiTypeItems" label="API 类型" density="compact" hide-details />
@@ -426,6 +420,7 @@
 </template>
 
 <script setup lang="ts">
+import PageHeader from '@/components/common/PageHeader.vue'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import {
   blockedLogSnippetPreview as snippetPreview,

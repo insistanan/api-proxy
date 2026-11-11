@@ -46,6 +46,9 @@ export interface ConversationEntry {
 
 export interface ConversationsResponse {
   conversations: ConversationEntry[]
+  total?: number
+  page?: number
+  pageSize?: number
 }
 
 export interface ConversationRouteOptionChannel {

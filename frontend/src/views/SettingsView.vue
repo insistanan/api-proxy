@@ -1,32 +1,23 @@
 <template>
   <div class="settings-page">
-    <header class="settings-header">
-      <div>
-        <h1 class="text-h5 font-weight-bold">设置</h1>
-      </div>
-    </header>
-
-    <v-divider />
+    <PageHeader title="设置" description="按分类管理全局配置；切换分类会保留当前页面内的未保存修改。" />
 
     <div class="settings-layout">
       <nav class="settings-nav" aria-label="设置分类">
         <v-list v-model:selected="selectedSections" nav mandatory density="compact" bg-color="transparent">
-          <v-list-item value="network" color="primary" prepend-icon="mdi-web" title="网络" />
-          <v-list-item value="gateway" color="primary" prepend-icon="mdi-text" title="请求与日志" />
-          <v-list-item value="content-safety" color="primary" prepend-icon="mdi-shield-alert" title="内容安全" />
-          <v-list-item value="integration" color="primary" prepend-icon="mdi-swap-horizontal" title="集成" />
-          <v-list-item value="disguise" color="primary" prepend-icon="mdi-incognito" title="伪装" />
-          <v-list-item value="assistant" color="primary" prepend-icon="mdi-robot" title="AI 助手" />
-          <v-list-item value="prompts" color="primary" prepend-icon="mdi-text" title="通用提示词" />
+          <v-list-item v-for="section in settingsSections" :key="section.key" :value="section.key" :prepend-icon="section.icon" :title="section.label" color="primary" :aria-current="activeSection === section.key ? 'page' : undefined">
+            <template #append><span v-if="!loading && dirtySections[section.key]" class="settings-dirty-dot" aria-label="有未保存的修改"></span></template>
+          </v-list-item>
         </v-list>
       </nav>
 
-      <main class="settings-content">
+      <div class="settings-content">
         <v-alert v-if="loadError" type="error" variant="tonal" density="compact" class="mb-5">
           {{ loadError }}
         </v-alert>
 
         <v-skeleton-loader v-if="loading" type="list-item-two-line, list-item-two-line, list-item-two-line" />
+        <v-btn v-else-if="loadError" variant="tonal" prepend-icon="mdi-refresh" @click="loadSettings">重新加载设置</v-btn>
 
         <section v-else-if="activeSection === 'network'" aria-labelledby="network-settings-title">
           <div class="section-heading">
@@ -39,6 +30,7 @@
             <div class="setting-row">
               <div class="setting-copy">
                 <div class="text-body-1 font-weight-medium">全局上游代理</div>
+                <div class="text-body-2 text-medium-emphasis mt-1">用于网关访问上游服务；单个渠道可选择继承、直连或独立代理。</div>
               </div>
               <v-switch v-model="proxyEnabled" color="primary" inset hide-details aria-label="启用全局上游代理" />
             </div>
@@ -84,7 +76,7 @@
             <div class="setting-row">
               <div class="setting-copy">
                 <div class="text-body-1 font-weight-medium">CC Switch 路径</div>
-                <!-- 配置后，渠道菜单可将渠道一键导入 CC Switch（支持便携版）； 未配置时渠道菜单仅提供"复制 CCS 链接" -->
+                <div class="text-body-2 text-medium-emphasis mt-1">配置后可从渠道菜单一键导入 CC Switch；留空时仍可复制导入链接。</div>
               </div>
             </div>
 
@@ -541,13 +533,15 @@
             </div>
           </form>
         </section>
-      </main>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import PageHeader from '@/components/common/PageHeader.vue'
 import {
   api,
   type ContentSafetySettings,
@@ -661,8 +655,25 @@ const gateProtocolHint = computed(() => {
 })
 
 const formRef = ref()
-const selectedSections = ref<SettingsSection[]>(['network'])
-const activeSection = computed<SettingsSection>(() => selectedSections.value[0] || 'network')
+const settingsSections: Array<{ key: SettingsSection; label: string; icon: string }> = [
+  { key: 'network', label: '网络连接', icon: 'mdi-web' },
+  { key: 'gateway', label: '请求与日志', icon: 'mdi-text' },
+  { key: 'content-safety', label: '内容安全', icon: 'mdi-shield-alert' },
+  { key: 'integration', label: '外部集成', icon: 'mdi-swap-horizontal' },
+  { key: 'disguise', label: '客户端伪装', icon: 'mdi-incognito' },
+  { key: 'assistant', label: 'AI 助手', icon: 'mdi-robot' },
+  { key: 'prompts', label: '通用提示词', icon: 'mdi-text' }
+]
+const route = useRoute()
+const router = useRouter()
+const activeSection = computed<SettingsSection>(() => settingsSections.find(section => section.key === route.query.section)?.key ?? 'network')
+const selectedSections = computed({
+  get: () => [activeSection.value],
+  set: (sections: SettingsSection[]) => {
+    const section = sections[0]
+    if (section) void router.push({ query: { ...route.query, section } })
+  }
+})
 const loading = ref(true)
 const saving = ref(false)
 const loadError = ref('')
@@ -673,7 +684,7 @@ const { gateway, savedGateway } = gatewayEditor
 const disguiseEditor = useDisguiseSettings(saving, activeSection)
 const { disguiseClaudeVersion, disguiseCodexVersion, disguiseAutoUpdate, savedDisguiseClaudeVersion, savedDisguiseCodexVersion, savedDisguiseAutoUpdate, loadDisguiseStatus } = disguiseEditor
 const promptsEditor = usePromptSettings(saving)
-const { promptEntries, promptActiveVersion, selectedPromptEntry, savedPromptsSnapshot } = promptsEditor
+const { promptEntries, promptActiveVersion, selectedPromptEntry, savedPromptsSnapshot, savedPromptActiveVersion } = promptsEditor
 const assistantEditor = useAssistantSettings(saving)
 const { assistantModel, savedAssistantModel, assistantChannel, savedAssistantChannel, loadAssistantModelOptions, loadAssistantStatus } = assistantEditor
 
@@ -720,6 +731,15 @@ const networkDirty = computed(() =>
   proxyEnabled.value !== savedProxyEnabled.value || normalizedProxyUrl.value !== savedProxyUrl.value
 )
 const contentSafetyDirty = computed(() => JSON.stringify(contentSafety.value) !== savedContentSafety.value)
+const dirtySections = computed<Record<SettingsSection, boolean>>(() => ({
+  network: networkDirty.value,
+  gateway: gatewayEditor.gatewayDirty.value,
+  'content-safety': contentSafetyDirty.value,
+  integration: integrationDirty.value,
+  disguise: disguiseEditor.disguiseDirty.value,
+  assistant: assistantEditor.assistantDirty.value,
+  prompts: promptsEditor.promptsDirty.value
+}))
 
 const proxyUrlRule = (value: string) => {
   const raw = value?.trim()
@@ -777,6 +797,7 @@ const loadSettings = async () => {
     // 通用提示词版本库（兼容旧配置：prompts 缺失时按空版本库处理）
     promptEntries.value = settings.prompts?.entries ?? []
     promptActiveVersion.value = settings.prompts?.activeVersion ?? ''
+    savedPromptActiveVersion.value = promptActiveVersion.value
     selectedPromptEntry.value =
       promptEntries.value.find(entry => entry.version === promptActiveVersion.value) ?? promptEntries.value[0] ?? null
     savedPromptsSnapshot.value = JSON.stringify(promptEntries.value)

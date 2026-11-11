@@ -29,6 +29,7 @@ import (
 	"github.com/insistanan/api-proxy/internal/scheduler"
 	"github.com/insistanan/api-proxy/internal/sensitive"
 	"github.com/insistanan/api-proxy/internal/session"
+	"github.com/insistanan/api-proxy/internal/sqlitedb"
 	"github.com/insistanan/api-proxy/internal/urlhealth"
 )
 
@@ -102,7 +103,12 @@ func newApp() (_ *app, err error) {
 
 	a.registerCleanup("配置管理器", a.cfgManager.Close)
 
-	a.blockedStore, err = sensitive.NewBlockedStore(".config/blocked-logs.db")
+	blockedDB, err := sqlitedb.Open(".config/blocked-logs.db")
+	if err != nil {
+		return nil, err
+	}
+	a.registerCleanup("内容安全数据库", blockedDB.Close)
+	a.blockedStore, err = sensitive.NewBlockedStoreWithDB(blockedDB)
 	if err != nil {
 		return nil, fmt.Errorf("初始化内容安全拦截记录存储失败: %w", err)
 	}
@@ -110,8 +116,13 @@ func newApp() (_ *app, err error) {
 	log.Printf("[ContentSafety-Init] 拦截记录存储已初始化")
 
 	// 初始化会话管理器（Responses API 专用），与对话记录共用持久化数据库。
-	a.sessionManager, err = session.NewPersistentSessionManager(
-		".config/conversations.db",
+	conversationDB, err := sqlitedb.Open(".config/conversations.db")
+	if err != nil {
+		return nil, err
+	}
+	a.registerCleanup("对话数据库", conversationDB.Close)
+	a.sessionManager, err = session.NewPersistentSessionManagerWithDB(
+		conversationDB,
 		7*24*time.Hour, // 与对话记录一致，保留 7 天
 		0,              // 不按消息数删除整段会话
 		0,              // 不按 Token 数删除整段会话
@@ -124,7 +135,7 @@ func newApp() (_ *app, err error) {
 	log.Printf("[Session-Init] 持久化会话管理器已初始化 (保留: 7天, 上限: 5000)")
 
 	// 对话存储先于调度组件创建，关闭时必须等依赖它的生产者退出。
-	a.conversationRegistry, err = conversation.NewPersistentRegistry(".config/conversations.db")
+	a.conversationRegistry, err = conversation.NewPersistentRegistryWithDB(conversationDB)
 	if err != nil {
 		return nil, fmt.Errorf("初始化对话持久化存储失败: %w", err)
 	}
@@ -237,7 +248,7 @@ func newApp() (_ *app, err error) {
 
 	// 危险命令 AI 闸门：存储与拦截记录同库；遗留的 waiting 记录一律按拦截处理
 	// （重启后内存等待者已不存在）。llmgate.Caller 供闸门与 AI 助手共用。
-	a.gateStore, err = sensitive.NewGateStore(".config/blocked-logs.db")
+	a.gateStore, err = sensitive.NewGateStoreWithDB(blockedDB)
 	if err != nil {
 		return nil, fmt.Errorf("初始化危险命令 AI 闸门存储失败: %w", err)
 	}

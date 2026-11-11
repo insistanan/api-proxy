@@ -56,7 +56,7 @@
       </v-card>
 
       <!-- 供应商 + 模型（单页上段） -->
-      <v-row>
+      <v-row class="agent-provider-layout">
         <v-col cols="12" lg="4">
           <v-card class="provider-list-card" elevation="0">
             <div class="agent-config-panel-header">

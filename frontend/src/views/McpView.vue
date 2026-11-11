@@ -1,17 +1,11 @@
 <template>
   <div class="mcp-page">
-    <div class="page-heading mb-5">
-      <div>
-        <h1 class="text-h5 font-weight-bold">MCP</h1>
-        <div class="text-body-2 text-medium-emphasis mt-1">统一管理服务器，按应用启用</div>
-      </div>
-      <div class="d-flex flex-wrap ga-2 align-center">
+    <PageHeader title="MCP" description="集中管理工具服务器，按客户端启用与分发。开关自动保存，内容编辑后需点击保存。">
         <v-chip v-if="dirty" color="warning" size="small" label>有未保存的修改</v-chip>
         <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="saving" @click="reloadList">刷新</v-btn>
         <v-btn variant="tonal" prepend-icon="mdi-plus" :disabled="!editable" @click="openCreate">新增 MCP</v-btn>
         <v-btn color="primary" prepend-icon="mdi-content-save" :disabled="!editable || (!dirty && !needsSync)" :loading="saving" @click="saveList">{{ dirty ? '保存' : needsSync ? '重新分发' : '保存' }}</v-btn>
-      </div>
-    </div>
+    </PageHeader>
 
     <v-alert v-if="loadError" type="error" variant="tonal" class="mb-5" closable @click:close="loadError = ''">{{ loadError }}</v-alert>
     <v-alert v-if="saveError" type="error" variant="tonal" class="mb-5" closable @click:close="saveError = ''">{{ saveError }}</v-alert>
@@ -24,12 +18,7 @@
       </div>
     </v-alert>
 
-    <v-alert type="info" variant="tonal" density="compact" class="mb-5">
-      点击应用开关即可启用或禁用，自动保存。所有条目均可直接编辑或删除，修改后点击“保存”更新应用配置。开关表示用户级配置状态，客户端可能需要重新加载配置。
-    </v-alert>
-
-    <div v-if="agentStatuses.length" class="agent-strip mb-5">
-      <div class="text-caption text-medium-emphasis mb-2">智能体配置文件</div>
+    <DisclosureSection v-if="agentStatuses.length" title="客户端配置位置" description="查看配置文件路径与读取状态；修改后客户端可能需要重新加载配置。" icon="mdi-folder-open" class="mb-5">
       <div class="agent-grid">
         <div v-for="status in agentStatuses" :key="status.key">
           <div class="d-flex align-center flex-wrap ga-2 mb-1">
@@ -40,7 +29,7 @@
           <div v-if="status.error" class="text-caption text-error mt-1">{{ status.error }}</div>
         </div>
       </div>
-    </div>
+    </DisclosureSection>
 
     <div class="list-toolbar mb-4">
       <v-text-field v-model="search" class="mcp-search" label="搜索名称、命令或地址" prepend-inner-icon="mdi-magnify" clearable hide-details density="compact" />
@@ -186,6 +175,8 @@
 </template>
 
 <script setup lang="ts">
+import PageHeader from '@/components/common/PageHeader.vue'
+import DisclosureSection from '@/components/common/DisclosureSection.vue'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { api, ApiError } from '@/services/api'
 import { formatMcpCommand, parseMcpCommand } from '@/utils/mcpCommand'
@@ -813,11 +804,9 @@ onMounted(loadList)
 
 <style scoped>
 .mcp-page { max-width: 1440px; margin: 0 auto; }
-.page-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .list-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; }
 .mcp-search { flex: 0 1 400px; min-width: 220px; }
-.agent-strip { border: 1px solid rgba(var(--v-theme-on-surface), 0.12); border-radius: 6px; padding: 12px 16px; }
-.agent-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+.agent-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); }
 .agent-path { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mcp-list-card { border: 1px solid rgba(var(--v-theme-on-surface), 0.12); border-radius: 12px; overflow: hidden; }
 .mcp-list-card :deep(thead) { background: rgba(var(--v-theme-on-surface), 0.04); }
@@ -829,7 +818,6 @@ onMounted(loadList)
 .mcp-target { display: block; max-width: min(660px, 48vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; line-height: 1.6; }
 .command-preview { padding: 12px; border-radius: 6px; background: rgba(var(--v-theme-on-surface), 0.04); overflow-wrap: anywhere; }
 @media (max-width: 600px) {
-  .page-heading { align-items: flex-start; flex-direction: column; }
   .mcp-search { flex-basis: 100%; }
   .agent-column { min-width: 90px; }
   .mcp-target { max-width: 260px; }

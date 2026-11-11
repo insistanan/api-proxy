@@ -1,5 +1,6 @@
 <template>
   <div class="conversation-view">
+    <PageHeader title="对话" description="查看会话状态、真实输入与请求链路，追踪一次对话使用的渠道和模型。" />
     <v-card class="conversation-toolbar mb-4 pa-4" rounded="lg">
       <div class="conversation-filters">
         <v-text-field
@@ -54,15 +55,21 @@
         </v-btn>
 
         <div class="conversation-count text-body-2 text-medium-emphasis">
-          显示 {{ filteredConversations.length }} / {{ conversations.length }} 条
+          本页 {{ conversations.length }} 条 · 共 {{ totalConversations }} 条
         </div>
       </div>
     </v-card>
 
+    <v-alert v-if="loadError" type="error" variant="tonal" density="compact" class="mb-4">{{ loadError }}<span v-if="conversations.length">；下方保留上次成功加载的结果。</span></v-alert>
+
     <v-card rounded="lg">
-      <v-data-table
+      <v-data-table-server
+        v-model:page="page"
+        v-model:items-per-page="pageSize"
+        :items-length="totalConversations"
+        :items-per-page-options="[10, 25, 50, 100]"
         :headers="headers"
-        :items="filteredConversations"
+        :items="conversations"
         :loading="loading"
         item-key="id"
         density="compact"
@@ -173,7 +180,7 @@
             <v-btn icon="mdi-delete" size="small" variant="text" color="error" title="删除" aria-label="删除对话" @click="openDeleteDialog(item)" />
           </div>
         </template>
-      </v-data-table>
+      </v-data-table-server>
     </v-card>
 
     <v-dialog v-model="routeDialog" max-width="640">
@@ -190,6 +197,7 @@
             v-model="selectedChannelIndex"
             :items="routeChannelItems"
             label="渠道"
+            :error-messages="routeOptionsError"
             variant="outlined"
             density="compact"
             class="mt-3"
@@ -465,7 +473,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import PageHeader from '@/components/common/PageHeader.vue'
+import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import CommandSafetyHistory from '@/components/CommandSafetyHistory.vue'
 import { api, type ConversationEntry, type ConversationKind, type ConversationRouteOptionChannel } from '@/services/api'
 
@@ -501,7 +510,12 @@ type RouteSelectItem = {
 
 const loading = ref(false)
 const saving = ref(false)
-const conversations = ref<ConversationEntry[]>([])
+const conversations = shallowRef<ConversationEntry[]>([])
+const page = ref(1)
+const pageSize = ref(25)
+const totalConversations = ref(0)
+const loadError = ref('')
+const routeOptionsError = ref('')
 const searchText = ref('')
 const kindFilter = ref<ConversationKind | null>(null)
 const statusFilter = ref<ConversationStatusFilter>('all')
@@ -528,12 +542,21 @@ const routeOptions = ref<Record<ConversationKind, RouteSelectItem[]>>({
 })
 let clockTimer: ReturnType<typeof setInterval> | null = null
 let refreshTimer: ReturnType<typeof setInterval> | null = null
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+let disposed = false
+let conversationRequestSequence = 0
+let conversationRequestsInFlight = 0
 
 const detailDialog = ref(false)
 const selectedConversation = ref<ConversationEntry | null>(null)
 const snackbar = ref(false)
 const snackbarText = ref('')
 const snackbarColor = ref('success')
+const showOperationError = (error: unknown, message: string) => {
+  snackbarText.value = error instanceof Error ? `${message}：${error.message}` : message
+  snackbarColor.value = 'error'
+  snackbar.value = true
+}
 
 const openDetailDialog = (item: ConversationEntry) => {
   selectedConversation.value = item
@@ -560,6 +583,8 @@ const saveName = async () => {
     const updated = await api.setConversationName(editingNameConversation.value.id, conversationName.value.trim())
     updateConversation(updated)
     nameDialog.value = false
+  } catch (error) {
+    showOperationError(error, '保存对话名称失败')
   } finally {
     saving.value = false
   }
@@ -576,20 +601,20 @@ const deleteConversation = async () => {
   try {
     const id = deletingConversation.value.id
     await api.deleteConversation(id)
-    conversations.value = conversations.value.filter(item => item.id !== id)
+    await loadConversations()
     if (selectedConversation.value?.id === id) {
       detailDialog.value = false
       selectedConversation.value = null
-		}
-		deleteDialog.value = false
-		snackbarText.value = '对话已删除'
-		snackbarColor.value = 'success'
-		snackbar.value = true
-	} catch (error) {
-		snackbarText.value = error instanceof Error ? error.message : '删除对话失败'
-		snackbarColor.value = 'error'
-		snackbar.value = true
-	} finally {
+    }
+    deleteDialog.value = false
+    snackbarText.value = '对话已删除'
+    snackbarColor.value = 'success'
+    snackbar.value = true
+  } catch (error) {
+    snackbarText.value = error instanceof Error ? error.message : '删除对话失败'
+    snackbarColor.value = 'error'
+    snackbar.value = true
+  } finally {
     saving.value = false
   }
 }
@@ -605,17 +630,19 @@ const deleteAllConversations = async () => {
   try {
     await api.deleteAllConversations()
     conversations.value = []
+    totalConversations.value = 0
+    page.value = 1
     selectedConversation.value = null
     detailDialog.value = false
     deleteAllDialog.value = false
     snackbarText.value = '已清空全部对话'
-		snackbarColor.value = 'success'
-		snackbar.value = true
-	} catch (error) {
-		snackbarText.value = error instanceof Error ? error.message : '清空全部对话失败'
-		snackbarColor.value = 'error'
-		snackbar.value = true
-	} finally {
+    snackbarColor.value = 'success'
+    snackbar.value = true
+  } catch (error) {
+    snackbarText.value = error instanceof Error ? error.message : '清空全部对话失败'
+    snackbarColor.value = 'error'
+    snackbar.value = true
+  } finally {
     saving.value = false
   }
 }
@@ -639,39 +666,13 @@ const copyText = async (text: string) => {
   }
 }
 
-const filteredConversations = computed(() => {
-  const q = searchText.value.trim().toLowerCase()
-  return conversations.value
-    .filter(item => {
-      if (kindFilter.value && item.apiKind !== kindFilter.value) return false
-      if (statusFilter.value === 'active' && !item.isSending) return false
-      if (statusFilter.value === 'idle' && item.isSending) return false
-      if (!q) return true
-      const promptMatch = item.prompts && item.prompts.some(p => p.toLowerCase().includes(q))
-      return [item.id, item.name, item.firstPrompt, item.lastModel, item.lastResolvedModel, item.lastError, item.routeOverride?.channelName, item.lastResolved?.channelName]
-        .filter(Boolean)
-        .some(value => String(value).toLowerCase().includes(q)) || promptMatch
-    })
-    .slice()
-    .sort(compareConversations)
-})
-
-const compareConversations = (a: ConversationEntry, b: ConversationEntry): number => {
-  if (orderMode.value === 'status' && Boolean(a.isSending) !== Boolean(b.isSending)) {
-    return a.isSending ? -1 : 1
-  }
-  const createdDifference = timestampOf(b.firstSeenAt) - timestampOf(a.firstSeenAt)
-  if (createdDifference !== 0) return createdDifference
-  return a.id.localeCompare(b.id)
-}
-
 const timestampOf = (value?: string): number => {
   if (!value) return 0
   const timestamp = new Date(value).getTime()
   return Number.isFinite(timestamp) ? timestamp : 0
 }
 
-const conversationPrompts = (item?: ConversationEntry | null): string[] => {
+const normalizeConversationPrompts = (item?: ConversationEntry | null): string[] => {
   if (!item) return []
   const prompts = Array.isArray(item.prompts) ? item.prompts : []
   const values = prompts.length > 0 ? prompts : [item.firstPrompt || '']
@@ -686,43 +687,68 @@ const conversationPrompts = (item?: ConversationEntry | null): string[] => {
     .slice(0, 3)
 }
 
+// 提示词去重只在快照更新时计算，秒级活动时钟无需反复扫描每条正文。
+const promptsByConversation = computed(() => new Map(conversations.value.map(item => [item.id, normalizeConversationPrompts(item)])))
+const conversationPrompts = (item?: ConversationEntry | null): string[] => item ? promptsByConversation.value.get(item.id) ?? normalizeConversationPrompts(item) : []
+
 const routeChannelItems = computed(() => {
   const kind = editingConversation.value?.apiKind
   return kind ? routeOptions.value[kind] ?? [] : []
 })
 
 const loadRouteOptions = async () => {
-  const res = await api.getConversationRouteOptions()
-  const next: Record<ConversationKind, RouteSelectItem[]> = {
-    messages: [],
-    responses: [],
-    gemini: [],
-    chat: [],
-    images: [],
-    embeddings: [],
-    decisions: []
+  routeOptionsError.value = ''
+  try {
+    const res = await api.getConversationRouteOptions()
+    const next: Record<ConversationKind, RouteSelectItem[]> = {
+      messages: [],
+      responses: [],
+      gemini: [],
+      chat: [],
+      images: [],
+      embeddings: [],
+      decisions: []
+    }
+    for (const group of res.kinds) {
+      next[group.kind] = group.channels.map(ch => ({
+        title: formatRouteOptionTitle(ch),
+        value: ch.channelIndex,
+        channel: ch
+      }))
+    }
+    routeOptions.value = next
+  } catch (error) {
+    routeOptionsError.value = error instanceof Error ? error.message : '加载渠道选项失败'
   }
-  for (const group of res.kinds) {
-    next[group.kind] = group.channels.map(ch => ({
-      title: formatRouteOptionTitle(ch),
-      value: ch.channelIndex,
-      channel: ch
-    }))
-  }
-  routeOptions.value = next
 }
 
 const loadConversations = async (silent = false) => {
+  if (disposed || (silent && (document.hidden || conversationRequestsInFlight > 0))) return
+  const sequence = ++conversationRequestSequence
+  conversationRequestsInFlight++
   if (!silent) loading.value = true
   try {
-    const res = await api.getConversations()
+    const res = await api.getConversations({
+      page: page.value, pageSize: pageSize.value, q: searchText.value.trim(),
+      kind: kindFilter.value ?? undefined, status: statusFilter.value, order: orderMode.value
+    })
+    if (disposed || sequence !== conversationRequestSequence) return
+    loadError.value = ''
     conversations.value = res.conversations
-    if (selectedConversation.value) {
-      selectedConversation.value = res.conversations.find(item => item.id === selectedConversation.value?.id) ?? null
-      if (!selectedConversation.value) detailDialog.value = false
+    totalConversations.value = res.total ?? res.conversations.length
+    if (page.value > Math.max(1, Math.ceil(totalConversations.value / pageSize.value))) {
+      page.value = Math.max(1, Math.ceil(totalConversations.value / pageSize.value))
+      return
     }
+    if (selectedConversation.value) {
+      const current = res.conversations.find(item => item.id === selectedConversation.value?.id)
+      if (current) selectedConversation.value = current
+    }
+  } catch (error) {
+    if (!disposed && sequence === conversationRequestSequence) loadError.value = error instanceof Error ? error.message : '加载对话失败'
   } finally {
-    if (!silent) loading.value = false
+    conversationRequestsInFlight--
+    if (sequence === conversationRequestSequence) loading.value = false
   }
 }
 
@@ -743,14 +769,20 @@ const saveRoute = async () => {
     )
     updateConversation(updated)
     routeDialog.value = false
+  } catch (error) {
+    showOperationError(error, '保存固定渠道失败')
   } finally {
     saving.value = false
   }
 }
 
 const clearRoute = async (item: ConversationEntry) => {
-  const updated = await api.clearConversationRoute(item.id)
-  updateConversation(updated)
+  try {
+    const updated = await api.clearConversationRoute(item.id)
+    updateConversation(updated)
+  } catch (error) {
+    showOperationError(error, '清除固定渠道失败')
+  }
 }
 
 const formatModelChain = (item: ConversationEntry): string => {
@@ -850,22 +882,38 @@ const formatConversationID = (id: string): string => {
   return `${id.slice(0, 9)}…${id.slice(-6)}`
 }
 
+const dateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false
+})
 const formatDateTime = (value?: string): string => {
   const timestamp = timestampOf(value)
-  if (!timestamp) return '--'
-  return new Intl.DateTimeFormat('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false
-  }).format(timestamp)
+  return timestamp ? dateTimeFormatter.format(timestamp) : '--'
 }
+
+watch([page, pageSize], () => { void loadConversations() })
+watch([kindFilter, statusFilter, orderMode], () => {
+  if (page.value !== 1) page.value = 1
+  else void loadConversations()
+})
+watch(searchText, () => {
+  if (searchTimer) clearTimeout(searchTimer)
+  // 立即使旧请求失效，防抖期间不能把旧筛选结果当成新结果。
+  conversationRequestSequence++
+  searchTimer = setTimeout(() => {
+    if (page.value !== 1) page.value = 1
+    else void loadConversations()
+  }, 300)
+})
 
 onMounted(async () => {
   await Promise.all([loadRouteOptions(), loadConversations()])
+  if (disposed) return
   clockTimer = setInterval(() => {
-    now.value = Date.now()
+    if (!document.hidden) now.value = Date.now()
   }, 1000)
   refreshTimer = setInterval(() => {
     void loadConversations(true)
@@ -873,6 +921,9 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  if (searchTimer) clearTimeout(searchTimer)
+  disposed = true
+  conversationRequestSequence++
   if (clockTimer) {
     clearInterval(clockTimer)
     clockTimer = null

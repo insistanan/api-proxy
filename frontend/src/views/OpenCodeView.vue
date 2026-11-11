@@ -23,7 +23,7 @@
         <v-chip v-if="config?.jsonc" size="x-small" label>JSONC 将在保存后规范化为 JSON</v-chip>
       </AgentConfigLocation>
 
-      <v-row>
+      <v-row class="agent-provider-layout">
         <v-col cols="12" lg="4">
           <v-card class="provider-list-card" elevation="0">
             <div class="agent-config-panel-header">

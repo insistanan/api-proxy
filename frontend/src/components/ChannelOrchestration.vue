@@ -73,7 +73,7 @@
                 role="button"
                 @click.stop="$emit('edit', element)"
                 @keydown.enter.stop="$emit('edit', element)"
-                @keydown.space.stop="$emit('edit', element)"
+                @keydown.space.prevent.stop="$emit('edit', element)"
               >{{ element.name }}</span>
               <!-- 促销期标识 -->
               <v-chip
@@ -134,12 +134,16 @@
               </v-btn>
               <span class="text-caption text-medium-emphasis ml-2">{{ channelServiceLabel(channelType, element.serviceType) }}</span>
               <!-- 展开图标 -->
-              <v-icon
+              <v-btn
+                icon
                 size="x-small"
+                variant="text"
                 class="ml-auto expand-icon"
                 :color="expandedChannelIndex === element.index ? 'primary' : 'grey-lighten-1'"
+                :aria-label="`${expandedChannelIndex === element.index ? '收起' : '展开'} ${element.name} 的密钥趋势`"
+                :aria-expanded="expandedChannelIndex === element.index"
                 @click.stop="toggleChannelChart(element.index)"
-              >{{ expandedChannelIndex === element.index ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
+              ><v-icon size="18">{{ expandedChannelIndex === element.index ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon></v-btn>
             </div>
 
             <!-- 指标显示 — 视觉条 -->
@@ -159,14 +163,8 @@
                               :class="getRateLevel(get15mStats(element.index)?.successRate)"
                               :style="{ width: `${get15mStats(element.index)?.successRate ?? 0}%` }"
                             ></div>
-                            <!-- 指标刷新时重放一次扫光 -->
-                            <span
-                              :key="`mf-${get15mStats(element.index)?.successRate?.toFixed(0)}`"
-                              class="mmb-flash"
-                            ></span>
                           </div>
                           <span
-                            :key="`mmb-${get15mStats(element.index)?.successRate?.toFixed(0)}`"
                             class="mmb-value"
                             :class="getRateLevel(get15mStats(element.index)?.successRate)"
                           >
@@ -193,7 +191,6 @@
                             ></span>
                           </div>
                           <span
-                            :key="`cmb-${getCacheHitRate(get15mStats(element.index))?.toFixed(0) ?? 'unknown'}`"
                             class="mmb-value cache-mmb-value"
                             :class="getCacheRateLevel(getCacheHitRate(get15mStats(element.index)))"
                           >
@@ -537,6 +534,7 @@ const handleQuickTest = (channel: Channel) => {
 
 // 复制渠道配置到剪贴板
 const copiedChannelIndex = ref<number | null>(null)
+let copyStatusTimer: ReturnType<typeof setTimeout> | undefined
 const copyChannelConfig = async (channel: Channel) => {
   try {
     // 获取第一个密钥
@@ -549,11 +547,12 @@ URL: ${channel.baseUrl}
     await navigator.clipboard.writeText(configText)
     // 显示已复制状态
     copiedChannelIndex.value = channel.index
-    setTimeout(() => {
+    if (copyStatusTimer) clearTimeout(copyStatusTimer)
+    copyStatusTimer = setTimeout(() => {
       copiedChannelIndex.value = null
     }, 2000)
   } catch (error) {
-    console.error('复制配置失败:', error)
+    emit('error', `复制配置失败：${error instanceof Error ? error.message : '无法访问剪贴板'}`)
   }
 }
 
@@ -564,22 +563,16 @@ const ccsConfigured = ref(false)
 const showCcsModal = ref(false)
 const ccsModalChannel = ref<Channel | null>(null)
 
-onMounted(async () => {
+const openCcsImport = async (channel: Channel) => {
   try {
     const settings = await api.getSettings()
     ccsConfigured.value = Boolean(settings.integration?.ccSwitchPath?.trim())
-  } catch {
-    // 取不到设置就按未配置处理：复制链接兜底
-    ccsConfigured.value = false
+    ccsModalChannel.value = channel
+    showCcsModal.value = true
+  } catch (error) {
+    emit('error', `读取 CC Switch 集成设置失败：${error instanceof Error ? error.message : '未知错误'}；请重试`)
   }
-})
-
-// 打开导入弹窗（目标 app 在弹窗中选择，按渠道池预选）
-const openCcsImport = (channel: Channel) => {
-  ccsModalChannel.value = channel
-  showCcsModal.value = true
 }
-
 // 计算属性：非活跃渠道 - 仅 disabled 状态
 const inactiveChannels = computed(() => {
 	return props.channels.filter(ch => !ch.excludeFromConversation && ch.status === 'disabled')
@@ -649,7 +642,7 @@ const get24hStats = (channelIndex: number) => {
   return getChannelMetrics(channelIndex)?.timeWindows?.['24h']
 }
 
-// 指标条档位：驱动 CSS 里的配色与动效强度（成功率与缓存各一套阈值）
+// 图片理解能力仅在支持该功能的入口协议中显示。
 const shouldShowVisionCapability = (channel: Channel): boolean => {
   return supportsVisionCapability.value && !!channel.visionCapable
 }
@@ -684,7 +677,7 @@ const refreshMetrics = async () => {
     metrics.value = metricsData
     schedulerStats.value = statsData
   } catch (error) {
-    console.error('Failed to load metrics:', error)
+    emit('error', `加载渠道指标失败：${error instanceof Error ? error.message : '未知错误'}`)
   } finally {
     isLoadingMetrics.value = false
   }
@@ -792,6 +785,7 @@ onMounted(() => {
 
 // 组件卸载时清理定时器
 onUnmounted(() => {
+  if (copyStatusTimer) clearTimeout(copyStatusTimer)
   if (latencyCheckTimer) {
     clearInterval(latencyCheckTimer)
     latencyCheckTimer = null

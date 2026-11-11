@@ -12,11 +12,12 @@ export function usePromptSettings(saving: Ref<boolean>) {
   // 选中条目按对象引用而非版本号定位：重命名版本号时编辑器不会失焦丢失
   const selectedPromptEntry = ref<PromptEntry | null>(null)
   const savedPromptsSnapshot = ref('')
+  const savedPromptActiveVersion = ref('')
   const promptNotice = ref<Notice>(null)
 
   const promptEntryTitle = (entry: PromptEntry): string => entry.version + (entry.note ? ` · ${entry.note}` : '')
 
-  const promptsDirty = computed(() => JSON.stringify(promptEntries.value) !== savedPromptsSnapshot.value)
+  const promptsDirty = computed(() => JSON.stringify(promptEntries.value) !== savedPromptsSnapshot.value || promptActiveVersion.value !== savedPromptActiveVersion.value)
 
   const formatPromptTime = (millis: number): string => {
     if (!millis) return '从未保存'
@@ -68,9 +69,11 @@ export function usePromptSettings(saving: Ref<boolean>) {
       const settings = await api.updateSettings({
         prompts: { entries: promptEntries.value, activeVersion: promptActiveVersion.value }
       })
+      if (!settings.prompts) throw new Error('服务端未返回提示词设置，请刷新确认保存状态')
       // 后端保存时会归一化（trim + 刷新 UpdatedAt），以响应为准回填快照
-      promptEntries.value = settings.prompts?.entries ?? []
-      promptActiveVersion.value = settings.prompts?.activeVersion ?? ''
+      promptEntries.value = settings.prompts.entries
+      promptActiveVersion.value = settings.prompts.activeVersion
+      savedPromptActiveVersion.value = promptActiveVersion.value
       selectedPromptEntry.value =
         promptEntries.value.find(entry => entry.version === promptActiveVersion.value) ?? promptEntries.value[0] ?? null
       savedPromptsSnapshot.value = JSON.stringify(promptEntries.value)
@@ -87,6 +90,7 @@ export function usePromptSettings(saving: Ref<boolean>) {
     promptActiveVersion,
     selectedPromptEntry,
     savedPromptsSnapshot,
+    savedPromptActiveVersion,
     promptNotice,
     promptEntryTitle,
     promptsDirty,
