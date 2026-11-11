@@ -26,6 +26,10 @@ type UpstreamConfig struct {
 	ClientIdentityMode   string                      `json:"clientIdentityMode,omitempty"` // inherit、api、compatibility
 	upstreamProtocol     string                      // 实际上游协议，Images 的 openai 与 Chat 区分
 
+	// noClientIdentity 表示渠道所属协议池不支持客户端伪装（Gemini / Chat / Images / Embeddings / Decisions），
+	// 由 publishConfigLocked 在发布快照时设置；只有 Messages / Responses 渠道保留伪装能力。
+	noClientIdentity bool
+
 	ID                 string              `json:"id,omitempty"`     // 稳定渠道标识，避免数组位置变化影响关联状态
 	PoolID             string              `json:"poolId,omitempty"` // 所属渠道分组；空值迁移到兜底分组
 	BaseURL            string              `json:"baseUrl"`

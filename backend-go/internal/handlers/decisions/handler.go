@@ -15,7 +15,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/config"
-	"github.com/insistanan/api-proxy/internal/handlers/hooks"
 	"github.com/insistanan/api-proxy/internal/handlers/proxycore"
 	"github.com/insistanan/api-proxy/internal/scheduler"
 	"github.com/insistanan/api-proxy/internal/types"
@@ -24,17 +23,15 @@ import (
 
 // Handler Decisions API 代理处理器。
 // Decisions 是独立一等公民：只走 Decisions 渠道池，请求原样透传到 {baseUrl}/v1/decisions。
+// 不接入内容安全管道（不做敏感数据检测与脱敏），仅负责鉴权、模型映射、调度与故障转移。
 func Handler(
 	envCfg *config.EnvConfig,
 	cfgManager *config.ConfigManager,
 	channelScheduler *scheduler.ChannelScheduler,
-	contentSafetyPipelines ...*hooks.Pipeline,
 ) gin.HandlerFunc {
-	contentSafetyPipeline := hooks.ResolveContentSafetyPipeline(cfgManager, contentSafetyPipelines...)
 	spec := proxycore.ProtocolSpec{
-		Kind:         scheduler.ChannelKindDecisions,
-		LogName:      "Decisions",
-		HookPipeline: contentSafetyPipeline,
+		Kind:    scheduler.ChannelKindDecisions,
+		LogName: "Decisions",
 		ParseRequest: func(c *gin.Context, body []byte) (string, bool, []string, bool) {
 			if len(body) == 0 {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Decisions request body"})
@@ -177,11 +174,6 @@ func handleSuccess(c *gin.Context, resp *http.Response, envCfg *config.EnvConfig
 	if usage == nil {
 		usage = &types.Usage{InputTokens: utils.EstimateTokens(string(originalBody))}
 	}
-	bodyBytes, err = hooks.RunAttachedPostResponseHooks(c.Request.Context(), c, bodyBytes, resp)
-	if err != nil {
-		return nil, err
-	}
-
 	utils.ForwardResponseHeaders(resp.Header, c.Writer)
 	proxycore.MarkRequestLogFirstToken(c)
 	c.Data(resp.StatusCode, "application/json", bodyBytes)

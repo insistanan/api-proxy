@@ -122,6 +122,9 @@ func (cm *ConfigManager) prepareCandidate(data []byte) (Config, bool, error) {
 		log.Printf("[Config-Migration] 检测到旧格式配置，正在迁移到新格式...")
 	}
 	needNormalization := normalizeChannelListsIn(&candidate)
+	if clearUnsupportedClientIdentityIn(&candidate) {
+		needNormalization = true
+	}
 	if err := validateConcurrency(&candidate); err != nil {
 		return Config{}, false, err
 	}
@@ -569,6 +572,30 @@ func normalizeChannelListsIn(candidate *Config) bool {
 	return changed
 }
 
+// clearUnsupportedClientIdentityIn 清除非 Messages / Responses 渠道上残留的客户端身份模式。
+// 这些协议没有伪装能力，设置不会生效；清除后配置文件、界面与运行时行为保持一致。
+func clearUnsupportedClientIdentityIn(candidate *Config) bool {
+	changed := false
+	lists := [][]UpstreamConfig{
+		candidate.GeminiUpstream,
+		candidate.ChatUpstream,
+		candidate.ImagesUpstream,
+		candidate.EmbeddingsUpstream,
+		candidate.DecisionsUpstream,
+	}
+	for _, upstreams := range lists {
+		for index := range upstreams {
+			if upstreams[index].ClientIdentityMode == "" {
+				continue
+			}
+			log.Printf("[Config-Migration] 渠道 %q 所属协议不支持客户端伪装，已清除身份模式设置", upstreams[index].Name)
+			upstreams[index].ClientIdentityMode = ""
+			changed = true
+		}
+	}
+	return changed
+}
+
 // migrateUpstreamsList 迁移单个渠道列表
 func migrateUpstreamsList(upstreams []UpstreamConfig, currentIdx int, name string) bool {
 	if len(upstreams) == 0 {
@@ -660,6 +687,8 @@ func validateProxyConfigOf(candidate *Config) error {
 //   - 提交点后失败（目录同步等）：文件已是新内容，快照同样发布，
 //     返回 *atomicfile.CommittedError（调用方不得按未提交重试）。
 func (cm *ConfigManager) saveConfigLocked(config Config) error {
+	// 保存前清除不支持伪装的协议池上的身份模式，保证落盘内容与运行时一致。
+	clearUnsupportedClientIdentityIn(&config)
 	if err := validateConcurrency(&config); err != nil {
 		return err
 	}

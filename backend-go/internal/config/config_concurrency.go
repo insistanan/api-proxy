@@ -66,6 +66,8 @@ func (cm *ConfigManager) publishConfigLocked(candidate Config) {
 			if group == 6 && upstream.ServiceType == "openai" {
 				upstream.upstreamProtocol = "decisions"
 			}
+			// 分组 0 = Messages、1 = Responses，只有这两组支持客户端伪装。
+			upstream.noClientIdentity = group > 1
 			if GetChannelStatus(upstream) == ChannelStatusDeleted {
 				continue
 			}
@@ -162,7 +164,12 @@ func (cm *ConfigManager) ClientCompatibilityEnabled(upstream *UpstreamConfig) bo
 }
 
 // UseClientCompatibility 允许渠道覆盖旧的全局伪装设置。
+// 伪装只属于 Messages / Responses 渠道：其他协议池无论全局开关与渠道设置如何都不启用，
+// 这是所有伪装判断的唯一入口，调用方不得绕过。
 func (u *UpstreamConfig) UseClientCompatibility(inherited bool) bool {
+	if u.noClientIdentity {
+		return false
+	}
 	switch strings.TrimSpace(u.ClientIdentityMode) {
 	case "api":
 		return false

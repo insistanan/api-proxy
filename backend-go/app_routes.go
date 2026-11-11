@@ -174,9 +174,9 @@ func (a *app) setupProxyEndpoints(r *gin.Engine) {
 	r.POST("/v1/images/variations", images.Handler(a.envCfg, a.cfgManager, a.channelScheduler, "/images/variations", a.contentSafetyPipeline))
 
 	// 代理端点 - Embeddings API (OpenAI-compatible 独立协议)
-	r.POST("/v1/embeddings", embeddings.Handler(a.envCfg, a.cfgManager, a.channelScheduler, a.contentSafetyPipeline))
+	r.POST("/v1/embeddings", embeddings.Handler(a.envCfg, a.cfgManager, a.channelScheduler))
 	// 代理端点 - Decisions API (独立协议)
-	r.POST("/v1/decisions", decisions.Handler(a.envCfg, a.cfgManager, a.channelScheduler, a.contentSafetyPipeline))
+	r.POST("/v1/decisions", decisions.Handler(a.envCfg, a.cfgManager, a.channelScheduler))
 
 	// 代理端点 - Gemini API (原生协议)
 	// 使用通配符捕获 model:action 格式，如 gemini-pro:generateContent
