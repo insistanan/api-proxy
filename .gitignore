@@ -268,3 +268,6 @@ docs/claude-code-investigation-*.md
 **/frontend/backend-go/
 
 临时/
+
+# 本地 Trae 规格目录
+.trae/
