@@ -6,6 +6,42 @@
       </div>
     </div>
 
+    <!-- 全局启用开关：与 Messages / Responses 渠道页顶部按钮读写同一份服务端配置 -->
+    <div class="setting-row">
+      <div class="setting-copy">
+        <div class="text-body-1 font-weight-medium">全局启用</div>
+        <div class="text-body-2 text-medium-emphasis">
+          与渠道页顶部快捷开关同步。仅对渠道中设置为「继承全局设置」、且实际发往 Claude / Codex 原生接口的请求生效。
+        </div>
+      </div>
+      <div class="d-flex flex-wrap ga-2">
+        <v-btn
+          :variant="claudeCodeDisguiseEnabled ? 'flat' : 'outlined'"
+          :color="claudeCodeDisguiseEnabled ? 'success' : undefined"
+          :prepend-icon="claudeCodeDisguiseEnabled ? 'mdi-robot' : 'mdi-robot-outline'"
+          :loading="disguiseToggleLoading === 'messages'"
+          :disabled="!disguiseInfo || disguiseToggleLoading !== null"
+          @click="setClientDisguiseEnabled('messages', !claudeCodeDisguiseEnabled)"
+        >
+          Claude 伪装
+          <span class="ml-2">{{ claudeCodeDisguiseEnabled ? '开' : '关' }}</span>
+        </v-btn>
+        <v-btn
+          :variant="codexDisguiseEnabled ? 'flat' : 'outlined'"
+          :color="codexDisguiseEnabled ? 'success' : undefined"
+          :prepend-icon="codexDisguiseEnabled ? 'mdi-robot' : 'mdi-robot-outline'"
+          :loading="disguiseToggleLoading === 'responses'"
+          :disabled="!disguiseInfo || disguiseToggleLoading !== null"
+          @click="setClientDisguiseEnabled('responses', !codexDisguiseEnabled)"
+        >
+          Codex 伪装
+          <span class="ml-2">{{ codexDisguiseEnabled ? '开' : '关' }}</span>
+        </v-btn>
+      </div>
+    </div>
+
+    <v-divider class="my-4" />
+
     <v-form ref="disguiseFormRef" @submit.prevent="saveDisguiseSettings">
       <div class="setting-row">
         <div class="setting-copy">
@@ -128,6 +164,10 @@ const {
   disguiseClaudeVersion,
   disguiseCodexVersion,
   disguiseAutoUpdate,
+  claudeCodeDisguiseEnabled,
+  codexDisguiseEnabled,
+  disguiseToggleLoading,
+  setClientDisguiseEnabled,
   disguiseNotice,
   disguiseInfo,
   disguiseStatusError,

@@ -1,10 +1,13 @@
 // disguise 设置的草稿与操作编排；草稿仅供本设置页使用，保存以服务端响应回填。
 import { computed, onUnmounted, ref, watch, type Ref } from 'vue'
 import { api } from '@/services/api'
+import { usePreferencesStore } from '@/stores/preferences'
 import type { ClientDisguiseStatus } from '@/types'
 import type { SettingsNotice as Notice, SettingsSection } from './types'
 
 export function useDisguiseSettings(saving: Ref<boolean>, activeSection: Ref<SettingsSection>) {
+  // 全局伪装开关与渠道页顶部快捷开关共用同一 Pinia 状态，任一处切换后另一处即时同步。
+  const preferencesStore = usePreferencesStore()
   // ===== 客户端伪装设置 =====
   const disguiseFormRef = ref()
   const disguiseClaudeVersion = ref('')
@@ -29,13 +32,53 @@ export function useDisguiseSettings(saving: Ref<boolean>, activeSection: Ref<Set
     disguiseAutoUpdate.value !== savedDisguiseAutoUpdate.value
   )
 
+  // 开关本体持久化在服务端配置中，这里只镜像到 preferences store 供两个页面共同渲染。
+  const claudeCodeDisguiseEnabled = computed(() => preferencesStore.claudeCodeDisguiseEnabled)
+  const codexDisguiseEnabled = computed(() => preferencesStore.codexDisguiseEnabled)
+  const disguiseToggleLoading = ref<'messages' | 'responses' | null>(null)
+
   const loadDisguiseStatus = async () => {
     try {
-      disguiseInfo.value = await api.getClientDisguise()
+      const info = await api.getClientDisguise()
+      disguiseInfo.value = info
+      preferencesStore.setClientDisguise('messages', info.claudeCodeDisguiseEnabled)
+      preferencesStore.setClientDisguise('responses', info.codexDisguiseEnabled)
       disguiseStatusError.value = ''
     } catch (error) {
       disguiseInfo.value = null
       disguiseStatusError.value = error instanceof Error ? error.message : '读取伪装状态失败'
+    }
+  }
+
+  // 设置页开关与渠道页顶部按钮调用同一接口，保证两条入口没有独立状态。
+  const setClientDisguiseEnabled = async (protocol: 'messages' | 'responses', enabled: boolean) => {
+    if (disguiseToggleLoading.value) return
+    const previous = protocol === 'messages' ? claudeCodeDisguiseEnabled.value : codexDisguiseEnabled.value
+    disguiseNotice.value = null
+    disguiseToggleLoading.value = protocol
+    try {
+      await api.setClientDisguise(protocol, enabled)
+      preferencesStore.setClientDisguise(protocol, enabled)
+      if (disguiseInfo.value) {
+        if (protocol === 'messages') {
+          disguiseInfo.value.claudeCodeDisguiseEnabled = enabled
+        } else {
+          disguiseInfo.value.codexDisguiseEnabled = enabled
+        }
+      }
+      disguiseNotice.value = {
+        type: 'success',
+        message: `${protocol === 'messages' ? 'Claude Code' : 'Codex'} 伪装已${enabled ? '启用' : '关闭'}`
+      }
+    } catch (error) {
+      // 保存失败时回写切换前的状态，避免按钮与服务端实际配置不一致。
+      preferencesStore.setClientDisguise(protocol, previous)
+      disguiseNotice.value = {
+        type: 'error',
+        message: error instanceof Error ? error.message : '切换客户端伪装失败'
+      }
+    } finally {
+      disguiseToggleLoading.value = null
     }
   }
 
@@ -102,6 +145,10 @@ export function useDisguiseSettings(saving: Ref<boolean>, activeSection: Ref<Set
     disguiseClaudeVersion,
     disguiseCodexVersion,
     disguiseAutoUpdate,
+    claudeCodeDisguiseEnabled,
+    codexDisguiseEnabled,
+    disguiseToggleLoading,
+    setClientDisguiseEnabled,
     savedDisguiseClaudeVersion,
     savedDisguiseCodexVersion,
     savedDisguiseAutoUpdate,

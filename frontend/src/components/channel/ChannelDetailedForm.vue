@@ -140,11 +140,9 @@
       <v-select
         v-model="form.clientIdentityMode"
         label="是否伪装"
-        :items="[
-          { title: '继承全局设置', value: 'inherit' },
-          { title: '不伪装（普通 API）', value: 'api' },
-          { title: '伪装（中转兼容模式）', value: 'compatibility' }
-        ]"
+        :items="clientIdentityModeItems"
+        :hint="clientIdentityHint"
+        persistent-hint
         variant="outlined"
         density="comfortable"
       />
@@ -747,7 +745,7 @@ import type { useChannelModal } from '@/composables/useChannelModal'
 import ModelMappingEditor from '../ModelMappingEditor.vue'
 import ImagesChannelProtocolFields from '../ImagesChannelProtocolFields.vue'
 import ImagesOutputFields from '../ImagesOutputFields.vue'
-import { validateEmbeddingsDimensions } from '@/composables/useChannelEditor'
+import { supportsChannelClientIdentity, validateEmbeddingsDimensions } from '@/composables/useChannelEditor'
 
 const props = defineProps<{ editor: ReturnType<typeof useChannelModal> }>()
 // Vuetify 规则要求返回 true 或错误文案
@@ -801,8 +799,20 @@ const {
   channel
 } = props.editor
 
-// 是否伪装只在 Messages / Responses 渠道可配置。
-const supportsClientIdentity = computed(() => channelType.value === 'messages' || channelType.value === 'responses')
+// 伪装配置只在会真正注入身份的组合中显示：Messages→Claude/Responses，Responses→Responses。
+const supportsClientIdentity = computed(() => supportsChannelClientIdentity(channelType.value, form.serviceType))
+// 继承全局时实际跟随哪个全局开关由上游协议决定，直接写在下拉项里避免误判。
+const clientIdentityFollowsClaude = computed(() => form.serviceType === 'claude')
+const clientIdentityModeItems = computed(() => [
+  { title: `继承全局设置（跟随 ${clientIdentityFollowsClaude.value ? 'Claude' : 'Codex'} 伪装开关）`, value: 'inherit' },
+  { title: '不伪装（普通 API）', value: 'api' },
+  { title: '伪装（中转兼容模式）', value: 'compatibility' }
+])
+const clientIdentityHint = computed(() =>
+  clientIdentityFollowsClaude.value
+    ? '继承时跟随 Messages 页顶部的 Claude 伪装开关。'
+    : '继承时跟随 Responses 页顶部的 Codex 伪装开关。'
+)
 // 图片理解与对话缓存只属于对话类入口协议，Embeddings / Decisions 为纯透传。
 const supportsConversationFeatures = computed(() =>
   ['messages', 'responses', 'gemini', 'chat'].includes(channelType.value)

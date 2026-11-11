@@ -66,6 +66,17 @@ export function validateEmbeddingsDimensions(value: unknown): string {
   return ''
 }
 
+/**
+ * 客户端伪装是否对该渠道真正生效：由入口协议与上游 serviceType 共同决定。
+ * Messages 入口可发往原生 Claude 或转换为 Responses；Responses 入口目前只有原生 Responses 上游会注入身份，
+ * Responses→Messages 的转换请求不注入 Claude 身份，因此不提供伪装配置。
+ */
+export function supportsChannelClientIdentity(channelType: string, serviceType: string): boolean {
+  if (channelType === 'messages') return serviceType === 'claude' || serviceType === 'responses'
+  if (channelType === 'responses') return serviceType === 'responses'
+  return false
+}
+
 /** 新渠道的默认草稿。responses 协议默认启用图片理解（历史行为）。 */
 export function defaultChannelForm(channelType: string): ChannelFormState {
   return {
@@ -194,8 +205,8 @@ export function buildChannelPayload(
 ): Omit<Channel, 'id' | 'index' | 'latency'> {
   const isImages = channelType === 'images'
   const isChat = channelType === 'chat'
-  // 只有 Messages / Responses 支持客户端伪装，其余协议固定继承全局设置。
-  const supportsClientIdentity = channelType === 'messages' || channelType === 'responses'
+  // 只有事实上会注入伪装身份的组合才保留该配置，其余协议固定继承全局设置。
+  const supportsClientIdentity = supportsChannelClientIdentity(channelType, form.serviceType)
   // Embeddings / Decisions 是纯透传协议，不参与图片理解与对话调度。
   const supportsConversationFeatures = !isImages && channelType !== 'embeddings' && channelType !== 'decisions'
   const urls = deduplicateBaseUrls(form)
@@ -260,14 +271,15 @@ export function useChannelEditor(channelType: MaybeRefOrGetter<string>) {
   /** 载入编辑目标（草稿复制自服务端数据，未保存前不影响 store）。 */
   const loadChannelData = (channel: Channel): void => {
     const currentChannelType = toValue(channelType)
-    const supportsClientIdentity = currentChannelType === 'messages' || currentChannelType === 'responses'
     const supportsConversationFeatures =
       currentChannelType !== 'images' && currentChannelType !== 'embeddings' && currentChannelType !== 'decisions'
     form.maxConcurrency = channel.maxConcurrency ?? 5
-    // 非 Messages / Responses 渠道不保留伪装配置，避免误显示与回写。
-    form.clientIdentityMode = supportsClientIdentity ? channel.clientIdentityMode || 'inherit' : 'inherit'
     form.name = channel.name
     form.serviceType = channel.serviceType
+    // 只对真正会注入伪装的入口 + 上游组合保留配置，避免误显示与回写。
+    form.clientIdentityMode = supportsChannelClientIdentity(currentChannelType, channel.serviceType)
+      ? channel.clientIdentityMode || 'inherit'
+      : 'inherit'
     // 前端 Channel.status 含运行时衍生值（''/error/healthy 等，来自 dashboard 合并）；
     // 表单只接受持久化状态，其余回退 active。
     form.status = isPersistableStatus(channel.status) ? channel.status : 'active'
