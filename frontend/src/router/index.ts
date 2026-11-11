@@ -30,6 +30,12 @@ const routes = [
     meta: { requiresAuth: true }
   },
   {
+    path: '/mcp',
+    name: 'mcp',
+    component: () => import('@/views/McpView.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
     path: '/opencode',
     name: 'opencode',
     component: () => import('@/views/OpenCodeView.vue'),

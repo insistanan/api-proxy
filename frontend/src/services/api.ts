@@ -5,6 +5,7 @@ import { assistantApi } from './assistant'
 import { settingsApi } from './settings'
 import { clientConfigApi } from './client-config'
 import { skillsApi } from './skills'
+import { mcpApi } from './mcp'
 import type { ModelsResponse, UpstreamModelsRequest } from '@/types'
 import type { ApiTab, ChannelApi } from './channel-api'
 
@@ -20,7 +21,8 @@ export const api = {
   ...assistantApi,
   ...settingsApi,
   ...clientConfigApi,
-  ...skillsApi
+  ...skillsApi,
+  ...mcpApi
 }
 
 export function fetchUpstreamModels(

@@ -456,13 +456,14 @@ const isConversationPage = computed(() => route.name === 'conversations')
 const isLogsPage = computed(() => route.name === 'request-logs')
 const isBlockedLogsPage = computed(() => route.name === 'blocked-logs')
 const isSkillsPage = computed(() => route.name === 'skills')
+const isMcpPage = computed(() => route.name === 'mcp')
 const isOpenCodePage = computed(() => route.name === 'opencode')
 const isClaudeCodePage = computed(() => route.name === 'claude-code')
 const isGptPage = computed(() => route.name === 'gpt')
 const isPiAgentPage = computed(() => route.name === 'pi-agent')
 const isDshPage = computed(() => route.name === 'dsh')
 const isSettingsPage = computed(() => route.name === 'settings')
-const isStandalonePage = computed(() => isConversationPage.value || isLogsPage.value || isBlockedLogsPage.value || isSkillsPage.value || isOpenCodePage.value || isClaudeCodePage.value || isGptPage.value || isPiAgentPage.value || isDshPage.value || isSettingsPage.value)
+const isStandalonePage = computed(() => isConversationPage.value || isLogsPage.value || isBlockedLogsPage.value || isSkillsPage.value || isMcpPage.value || isOpenCodePage.value || isClaudeCodePage.value || isGptPage.value || isPiAgentPage.value || isDshPage.value || isSettingsPage.value)
 
 const activeProtocolLabel = computed(() => {
   const labels: Record<string, string> = {
@@ -498,7 +499,8 @@ const navGroups = [
       { key: 'conversations', label: '对话', to: '/conversations' },
       { key: 'logs', label: '日志', to: '/logs' },
       { key: 'blocked-logs', label: '拦截', to: '/blocked-logs' },
-      { key: 'skills', label: 'Skills', to: '/skills' }
+      { key: 'skills', label: 'Skills', to: '/skills' },
+      { key: 'mcp', label: 'MCP', to: '/mcp' }
     ]
   },
   {
@@ -541,6 +543,9 @@ const topNavActive = computed(() => {
   }
   if (isSkillsPage.value) {
     return 'skills'
+  }
+  if (isMcpPage.value) {
+    return 'mcp'
   }
   if (isOpenCodePage.value) {
     return 'opencode'

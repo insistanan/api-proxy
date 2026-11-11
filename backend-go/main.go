@@ -57,6 +57,7 @@ type app struct {
 	profileManager        *metrics.ProfileManager
 	piAgentAPI            *handlers.PiAgentAPI
 	skillsAPI             *handlers.SkillsAPI
+	mcpAPI                *handlers.MCPAPI
 	assistantService      *assistant.Service
 	assistantAPI          *handlers.AssistantAPI
 	disguiseSyncer        *handlers.DisguiseSyncer
@@ -296,6 +297,9 @@ func newApp() (_ *app, err error) {
 		return nil, fmt.Errorf("初始化 pi-agent 管理 API 失败: %w", err)
 	}
 	a.skillsAPI = handlers.NewSkillsAPI()
+
+	// MCP 统一列表与智能体分发（列表含 env/headers 等可能的密钥，存放于 .config 下）
+	a.mcpAPI = handlers.NewMCPAPI(".config/mcp.json")
 
 	// AI 配置助手（复用闸门的 llmgate.Caller：渠道优先级 messages → responses → chat → gemini）
 	assistantStore, err := assistant.NewStore(".config/assistant.db")

@@ -15,7 +15,7 @@ describe('评测功能移除后的入口契约', () => {
     const routes = router.getRoutes()
     expect(routes.map(route => route.path)).not.toContain('/eval')
     expect(routes.map(route => route.name)).not.toContain('eval')
-    expect(routes.map(route => route.path)).toEqual(expect.arrayContaining(['/channels/:type', '/settings', '/pi-agent', '/opencode', '/skills']))
+    expect(routes.map(route => route.path)).toEqual(expect.arrayContaining(['/channels/:type', '/settings', '/pi-agent', '/opencode', '/skills', '/mcp']))
   })
 
   it('渠道菜单移除评测事件，保留快捷测试、促销和延迟检查', () => {

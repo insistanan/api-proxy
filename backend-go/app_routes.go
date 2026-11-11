@@ -114,6 +114,10 @@ func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
 	apiGroup.POST("/skills/copy", a.skillsAPI.Copy())
 	apiGroup.DELETE("/skills", a.skillsAPI.Delete())
 	apiGroup.POST("/skills/backup", a.skillsAPI.Backup())
+	// MCP 统一列表与智能体分发（沿用 apiGroup 的统一鉴权）
+	apiGroup.GET("/mcp", a.mcpAPI.List())
+	apiGroup.PUT("/mcp", a.mcpAPI.Save())
+	apiGroup.POST("/mcp/toggle", a.mcpAPI.Toggle())
 	a.assistantAPI.Register(apiGroup)
 }
 
