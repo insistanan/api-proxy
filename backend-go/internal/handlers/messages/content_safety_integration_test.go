@@ -87,7 +87,7 @@ func TestContentSafetyVerificationSurfaceEndToEnd(t *testing.T) {
 		}
 	})
 
-	t.Run("非流式危险代码块返回协议错误", func(t *testing.T) {
+	t.Run("非流式危险工具调用返回协议错误", func(t *testing.T) {
 		response := performContentSafetyMessagesRequest(t, router,
 			`{"model":"`+contentSafetyTestModel+`","max_tokens":32,"messages":[{"role":"user","content":"触发非流式危险响应"}]}`,
 			"req-dangerous-normal",
@@ -112,8 +112,8 @@ func TestContentSafetyVerificationSurfaceEndToEnd(t *testing.T) {
 		if strings.Contains(body, `"type":"stream_error"`) {
 			t.Fatalf("流式内容安全错误不应混入通用 stream_error: %s", body)
 		}
-		if strings.Contains(body, "\"text\":\" /\\n```\"") {
-			t.Fatalf("命中危险命令的 chunk 不应继续转发: %s", body)
+		if strings.Contains(body, "tool_use") || strings.Contains(body, "input_json_delta") {
+			t.Fatalf("被拦截的工具开始和参数事件都不应交付: %s", body)
 		}
 	})
 
@@ -183,7 +183,13 @@ func newContentSafetyTestRouter(t *testing.T) (*gin.Engine, *config.ConfigManage
 
 		switch {
 		case bytes.Contains(body, []byte("触发非流式危险响应")):
-			writeContentSafetyClaudeResponse(w, "```sh\nrm -rf /\n```")
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": "msg-content-safety-e2e", "type": "message", "role": "assistant", "model": contentSafetyTestModel,
+				"content": []map[string]any{{"type": "tool_use", "id": "tool-dangerous", "name": "Bash", "input": map[string]any{"command": "rm -rf /"}}},
+				"stop_reason": "tool_use", "stop_sequence": nil,
+				"usage": map[string]any{"input_tokens": 10, "output_tokens": 5},
+			})
 		case bytes.Contains(body, []byte("触发流式危险响应")):
 			writeContentSafetyClaudeStream(w)
 		default:
@@ -326,9 +332,9 @@ func writeContentSafetyClaudeStream(w http.ResponseWriter) {
 	}
 	events := []string{
 		"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg-content-safety-stream\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"" + contentSafetyTestModel + "\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":1}}}\n\n",
-		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
-		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"```sh\\nrm -rf\"}}\n\n",
-		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" /\\n```\"}}\n\n",
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"tool-dangerous\",\"name\":\"Bash\",\"input\":{}}}\n\n",
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"command\\\":\\\"rm -rf\"}}\n\n",
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\" /\\\"}\"}}\n\n",
 		"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
 		"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
 	}

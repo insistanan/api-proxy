@@ -22,6 +22,7 @@ type customRule struct {
 	name    string
 	typeTag string
 	pattern *regexp.Regexp
+	prefix  string
 }
 
 // CustomDetector 执行用户自定义的正则检测规则。它只负责检测，
@@ -45,10 +46,12 @@ func NewCustomDetector(settings config.CustomRulesConfig) (*CustomDetector, erro
 		if err != nil {
 			return nil, err
 		}
+		prefix, _ := pattern.LiteralPrefix()
 		detector.rules = append(detector.rules, customRule{
 			name:    strings.TrimSpace(item.Name),
 			typeTag: strings.TrimSpace(item.Type),
 			pattern: pattern,
+			prefix:  prefix,
 		})
 	}
 	return detector, nil
@@ -68,6 +71,9 @@ func (d *CustomDetector) FindAll(text string) []CustomMatch {
 	}
 	matches := make([]CustomMatch, 0)
 	for _, rule := range d.rules {
+		if rule.prefix != "" && !strings.Contains(text, rule.prefix) {
+			continue
+		}
 		for _, index := range rule.pattern.FindAllStringIndex(text, -1) {
 			if index[0] == index[1] {
 				continue // 空匹配无掩码意义

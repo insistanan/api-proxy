@@ -72,17 +72,21 @@ func (d *CmdDetector) Find(text string) []CommandMatch {
 	return matches
 }
 
-// FindInToolArguments 保留无工具名调用入口，仅把命令字段作为执行输入。
+// FindInToolArguments 保留无工具名的显式命令检测入口；网关应使用具名入口筛选执行工具。
 func (d *CmdDetector) FindInToolArguments(value any) []CommandMatch {
-	return d.FindInNamedToolArguments("", value)
+	return d.findInToolArguments("", value)
 }
 
 // FindInNamedToolArguments 保留完整参数作为执行上下文，编辑/读取工具的文件内容不视为命令。
 func (d *CmdDetector) FindInNamedToolArguments(toolName string, value any) []CommandMatch {
-	if d == nil || !d.enabled || len(d.rules) == 0 {
+	if !IsExecutionTool(toolName) {
 		return nil
 	}
-	if nonExecutingTool(toolName) {
+	return d.findInToolArguments(toolName, value)
+}
+
+func (d *CmdDetector) findInToolArguments(toolName string, value any) []CommandMatch {
+	if d == nil || !d.enabled || len(d.rules) == 0 {
 		return nil
 	}
 	if encoded, ok := value.(string); ok {
@@ -158,7 +162,7 @@ func (d *CmdDetector) FindInNamedToolArguments(toolName string, value any) []Com
 
 // FindInRawToolInput 检查自定义工具的原始脚本，不把 shell 的花括号或引号当成 JSON。
 func (d *CmdDetector) FindInRawToolInput(toolName, input string) []CommandMatch {
-	if d == nil || !d.enabled || len(d.rules) == 0 || nonExecutingTool(toolName) {
+	if d == nil || !d.enabled || len(d.rules) == 0 || !IsExecutionTool(toolName) {
 		return nil
 	}
 	if len(input) > MaxCommandBytes {
@@ -174,7 +178,9 @@ func (d *CmdDetector) FindInRawToolInput(toolName, input string) []CommandMatch 
 	return matches
 }
 
-func nonExecutingTool(name string) bool {
+// IsExecutionTool 只识别已知的命令执行工具，避免把检索、编辑或未知工具的文本误当成命令。
+// MCP 和函数命名空间只参与名称归一化，完整工具名仍保留在授权身份中。
+func IsExecutionTool(name string) bool {
 	name = strings.ToLower(strings.TrimSpace(name))
 	if index := strings.LastIndex(name, "__"); index >= 0 {
 		name = name[index+2:]
@@ -183,7 +189,8 @@ func nonExecutingTool(name string) bool {
 		name = name[index+1:]
 	}
 	switch name {
-	case "apply_patch", "write", "write_file", "edit", "edit_file", "multiedit", "read", "read_file", "glob", "grep", "search", "web_search", "web_fetch", "view_image":
+	case "bash", "bash_tool", "shell", "shell_command", "shellcommand", "run_shell_command",
+		"run_command", "exec_command", "execute_command", "terminal", "powershell", "cmd":
 		return true
 	default:
 		return false
@@ -200,7 +207,11 @@ func (d *CmdDetector) findInSegment(segment, context string, base int) []Command
 		return []CommandMatch{{Rule: "command_size_limit", Context: context, Command: "命令上下文超过检查容量上限"}}
 	}
 	matches := make([]CommandMatch, 0)
+	lower := strings.ToLower(segment)
 	for _, rule := range d.rules {
+		if !rule.mayMatch(lower) {
+			continue
+		}
 		// 完整上下文只需按规则审一次，避免重复命中让同一大脚本反复散列和排队。
 		if index := rule.regex.FindStringIndex(segment); index != nil {
 			matches = append(matches, CommandMatch{

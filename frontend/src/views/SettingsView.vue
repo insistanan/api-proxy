@@ -274,6 +274,7 @@
               <div class="setting-row safety-master-row">
                 <div class="setting-copy">
                   <div class="text-body-1 font-weight-medium">危险命令检测</div>
+                  <div class="text-body-2 text-medium-emphasis mt-1">检查 Bash、exec_command 等已知执行工具；普通回复和代码示例直接放行。</div>
                 </div>
                 <v-switch
                   v-model="contentSafety.dangerousCmd.enabled"
@@ -304,7 +305,7 @@
                         <v-icon size="18" class="mr-1" color="warning">mdi-brain</v-icon>
                         AI 闸门
                       </div>
-                      <!-- 命中危险命令后由大模型渠道二次判断：判定危险时挂起请求等待确认（超时拦截）， 判定安全时放行并保留否决窗口；判断失败一律拦截 -->
+                      <div class="text-body-2 text-medium-emphasis mt-1">模型审批最多等待 10 秒。判定危险后进入确认窗口；审批失败时拦截该工具调用。</div>
                     </div>
                     <v-switch
                       v-model="contentSafety.dangerousCmd.aiGate.enabled"

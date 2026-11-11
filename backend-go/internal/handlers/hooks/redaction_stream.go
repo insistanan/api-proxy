@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/insistanan/api-proxy/internal/config"
 	"github.com/insistanan/api-proxy/internal/sensitive"
 	"github.com/insistanan/api-proxy/internal/utils"
 )
@@ -27,12 +28,73 @@ type streamRestoreTemplate struct {
 }
 
 // RestoreAttachedSSEEvent 对已完成协议转换、即将写给客户端的 SSE 事件执行
-// 请求级精确还原。不同 JSON 字段路径使用独立增量状态，避免正文与并行工具参数串接。
+// 请求级精确还原。待审核工具及必要后续事件按原顺序暂存，审核完成后才交付。
+// 不同 JSON 字段路径使用独立增量状态，避免正文与并行工具参数串接。
 func RestoreAttachedSSEEvent(c requestContextGetter, event string) (string, error) {
 	boundary := streamSafetyBoundaryForEvent(event)
 	if err := finishAttachedStreamSafetyEvent(c, boundary); err != nil {
 		return "", err
 	}
+	attached, err := attachedPipelineFromContext(c)
+	if err != nil || attached == nil || event == "" {
+		return event, wrapContentSafetyHookError(err)
+	}
+	attached.streamMu.Lock()
+	if len(attached.toolArgs) == 0 && len(attached.toolDelivery) == 0 {
+		attached.streamMu.Unlock()
+		return restoreAttachedSSEEvent(c, event, boundary)
+	}
+	events, err := attached.prepareToolDelivery(event)
+	attached.streamMu.Unlock()
+	if err != nil {
+		return "", wrapContentSafetyHookError(err)
+	}
+	if len(events) == 0 {
+		return "", nil
+	}
+	if len(events) == 1 {
+		return restoreAttachedSSEEvent(c, events[0], boundary)
+	}
+	var output strings.Builder
+	for _, pending := range events {
+		restored, err := restoreAttachedSSEEvent(c, pending, streamSafetyBoundaryForEvent(pending))
+		if err != nil {
+			return "", err
+		}
+		output.WriteString(restored)
+	}
+	return output.String(), nil
+}
+
+// prepareToolDelivery 由 streamMu 保护。保持事件顺序，避免工具结束事件先于其参数交付。
+func (a *attachedHookPipeline) prepareToolDelivery(event string) ([]string, error) {
+	pending := false
+	for _, state := range a.toolArgs {
+		needsReview := a.streamSettings.DangerousCmd.Enabled && sensitive.IsExecutionTool(state.name) ||
+			a.streamSettings.Credential.Enabled && a.streamMaskMode == config.ContentSafetyModeBlock
+		if needsReview && !state.finished {
+			pending = true
+			break
+		}
+	}
+	if !pending && len(a.toolDelivery) == 0 {
+		return []string{event}, nil
+	}
+	if len(event) > maxStreamToolArgumentBytes-a.toolDeliveryBytes || len(a.toolDelivery) >= 8192 {
+		return nil, fmt.Errorf("待审核工具的流式交付缓冲超过容量上限")
+	}
+	a.toolDelivery = append(a.toolDelivery, event)
+	a.toolDeliveryBytes += len(event)
+	if pending {
+		return nil, nil
+	}
+	events := a.toolDelivery
+	a.toolDelivery = nil
+	a.toolDeliveryBytes = 0
+	return events, nil
+}
+
+func restoreAttachedSSEEvent(c requestContextGetter, event string, boundary streamSafetyBoundary) (string, error) {
 	attached, err := attachedPipelineFromContext(c)
 	if err != nil || attached == nil || attached.vault == nil || !attached.vault.CanRestore() || event == "" {
 		return event, wrapContentSafetyHookError(err)
@@ -69,7 +131,7 @@ func RestoreAttachedSSEEvent(c requestContextGetter, event string) (string, erro
 		if err := decoder.Decode(&value); err != nil {
 			return payload, false
 		}
-		valueChanged := restoreStreamValue(attached, value, value, fmt.Sprintf("line[%d]", currentLine), nil, nil, eventName)
+		valueChanged := restoreStreamValue(attached, value, value, fmt.Sprintf("line[%d]", currentLine), nil, nil, eventName, false)
 		if !valueChanged {
 			return payload, false
 		}
@@ -91,7 +153,7 @@ func RestoreAttachedSSEEvent(c requestContextGetter, event string) (string, erro
 	return prefix + rewritten, nil
 }
 
-func restoreStreamValue(attached *attachedHookPipeline, root, value interface{}, key string, path []streamPathStep, identities []string, eventName string) bool {
+func restoreStreamValue(attached *attachedHookPipeline, root, value interface{}, key string, path []streamPathStep, identities []string, eventName string, complete bool) bool {
 	changed := false
 	switch typed := value.(type) {
 	case map[string]interface{}:
@@ -102,10 +164,29 @@ func restoreStreamValue(attached *attachedHookPipeline, root, value interface{},
 				continue
 			}
 			childPath := appendPath(path, streamPathStep{key: field})
+			// 工具完整快照独立还原；末尾占位符不能留到客户端已开始执行之后才释放。
+			childComplete := complete || field == "input" && (typed["type"] == "tool_use" || typed["type"] == "custom_tool_call" ||
+				equalString(rootEventType(root), "response.custom_tool_call_input.done")) ||
+				field == "arguments" && (typed["type"] == "function_call" || equalString(rootEventType(root), "response.function_call_arguments.done")) ||
+				field == "args" && typed["name"] != nil && streamPathHasFunction(path)
 			if text, ok := typed[field].(string); ok {
 				stateKey := streamStateKey(key, eventName, childPath, identities)
-				restorer := attached.restorer(stateKey)
+				jsonEncoded := field == "partial_json" || field == "arguments" && (typed["name"] != nil || typed["type"] == "function_call" ||
+					equalString(rootEventType(root), "response.function_call_arguments.done") || streamPathHasFunction(path)) ||
+					field == "delta" && equalString(rootEventType(root), "response.function_call_arguments.delta")
+				var restorer *sensitive.StreamRestorer
+				if childComplete {
+					restorer = sensitive.NewStreamRestorer(attached.vault)
+					if jsonEncoded {
+						restorer = sensitive.NewJSONStreamRestorer(attached.vault)
+					}
+				} else {
+					restorer = attached.restorer(stateKey, jsonEncoded)
+				}
 				restored := restorer.Feed(text)
+				if childComplete {
+					restored += restorer.Flush()
+				}
 				if restored != text {
 					typed[field] = restored
 					changed = true
@@ -117,7 +198,7 @@ func restoreStreamValue(attached *attachedHookPipeline, root, value interface{},
 				}
 				continue
 			}
-			if restoreStreamValue(attached, root, typed[field], key, childPath, identities, eventName) {
+			if restoreStreamValue(attached, root, typed[field], key, childPath, identities, eventName, childComplete) {
 				changed = true
 			}
 		}
@@ -126,8 +207,16 @@ func restoreStreamValue(attached *attachedHookPipeline, root, value interface{},
 			childPath := appendPath(path, streamPathStep{index: index, array: true})
 			if text, ok := typed[index].(string); ok {
 				stateKey := streamStateKey(key, eventName, childPath, identities)
-				restorer := attached.restorer(stateKey)
+				var restorer *sensitive.StreamRestorer
+				if complete {
+					restorer = sensitive.NewStreamRestorer(attached.vault)
+				} else {
+					restorer = attached.restorer(stateKey)
+				}
 				restored := restorer.Feed(text)
+				if complete {
+					restored += restorer.Flush()
+				}
 				if restored != text {
 					typed[index] = restored
 					changed = true
@@ -139,7 +228,7 @@ func restoreStreamValue(attached *attachedHookPipeline, root, value interface{},
 				}
 				continue
 			}
-			if restoreStreamValue(attached, root, typed[index], key, childPath, identities, eventName) {
+			if restoreStreamValue(attached, root, typed[index], key, childPath, identities, eventName, complete) {
 				changed = true
 			}
 		}
@@ -147,7 +236,23 @@ func restoreStreamValue(attached *attachedHookPipeline, root, value interface{},
 	return changed
 }
 
-func (a *attachedHookPipeline) restorer(key string) *sensitive.StreamRestorer {
+func rootEventType(root interface{}) interface{} {
+	if data, ok := root.(map[string]interface{}); ok {
+		return data["type"]
+	}
+	return nil
+}
+
+func streamPathHasFunction(path []streamPathStep) bool {
+	for _, step := range path {
+		if step.key == "function" || step.key == "function_call" || step.key == "functionCall" {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *attachedHookPipeline) restorer(key string, jsonEncoded ...bool) *sensitive.StreamRestorer {
 	if a.restorers == nil {
 		a.restorers = make(map[string]*sensitive.StreamRestorer)
 	}
@@ -162,6 +267,9 @@ func (a *attachedHookPipeline) restorer(key string) *sensitive.StreamRestorer {
 		return nil
 	}
 	current := sensitive.NewStreamRestorer(a.vault)
+	if len(jsonEncoded) > 0 && jsonEncoded[0] {
+		current = sensitive.NewJSONStreamRestorer(a.vault)
+	}
 	a.restorers[key] = current
 	return current
 }
@@ -191,8 +299,25 @@ func DrainAttachedStreamRestoration(c requestContextGetter) ([]string, error) {
 		return nil, wrapContentSafetyHookError(err)
 	}
 	attached.streamMu.Lock()
+	pending := attached.toolDelivery
+	attached.toolDelivery = nil
+	attached.toolDeliveryBytes = 0
+	attached.streamMu.Unlock()
+	result := make([]string, 0, len(pending)+1)
+	for _, event := range pending {
+		restored, err := restoreAttachedSSEEvent(c, event, streamSafetyBoundaryForEvent(event))
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, restored)
+	}
+	attached.streamMu.Lock()
 	defer attached.streamMu.Unlock()
-	return drainStreamRestorationLocked(attached, nil)
+	drained, err := drainStreamRestorationLocked(attached, nil)
+	if err != nil {
+		return nil, err
+	}
+	return append(result, drained...), nil
 }
 
 func drainStreamRestorationLocked(attached *attachedHookPipeline, branches []string) ([]string, error) {
@@ -463,6 +588,16 @@ func streamSafetyBoundaryForEvent(event string) streamSafetyBoundary {
 			boundary.terminal = true
 		case "content_block_stop":
 			boundary.stoppedTools = append(boundary.stoppedTools, "messages.content_block."+strings.TrimSpace(fmt.Sprint(data["index"])))
+		case "response.output_item.done":
+			item, _ := data["item"].(map[string]interface{})
+			if item["type"] == "function_call" || item["type"] == "custom_tool_call" {
+				for _, field := range []string{"output_index", "item_id", "call_id"} {
+					if value, exists := data[field]; exists {
+						boundary.stoppedTools = append(boundary.stoppedTools, "responses.tool."+strings.TrimSpace(fmt.Sprint(value)))
+						break
+					}
+				}
+			}
 		}
 		// 只结束声明 finish 的候选，其他候选可能仍在接收半段参数。
 		for _, field := range []string{"choices", "candidates"} {

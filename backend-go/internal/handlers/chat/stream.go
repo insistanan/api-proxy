@@ -97,6 +97,13 @@ func handleStreamSuccess(c *gin.Context, resp *http.Response, envCfg *config.Env
 		if err != nil {
 			return nil, err
 		}
+		if restoredLine == "" {
+			if readErr != nil {
+				streamReadErr = readErr
+				break
+			}
+			continue
+		}
 		proxycore.MarkRequestLogFirstToken(c)
 		if _, err := c.Writer.Write([]byte(restoredLine)); err != nil {
 			return nil, err

@@ -49,6 +49,7 @@ const (
 	maxAIReviewEntries  = 1024
 	gateReviewTTL       = 5 * time.Minute
 	gateStoreTimeout    = 2 * time.Second
+	gateModelTimeout    = 10 * time.Second
 	maxGateWaiters      = 64
 	maxGateCommandBytes = 16 << 10
 	maxGateContextBytes = 32 << 10
@@ -527,8 +528,8 @@ func (g *CmdGate) reviewWithCache(ctx context.Context, metadata HookContext, mat
 		return sensitive.CommandAIReview{}, fmt.Errorf("AI 命令审核并发已达上限，请稍后重试")
 	}
 	// 同组请求共同拥有模型调用；单个客户端取消只退出自己的等待。
-	// 最后一个等待者离开时取消共享调用，llmgate 本身仍有整体超时。
-	callCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	// 最后一个等待者离开时取消共享调用；模型审批含排队和重试最多等待 10 秒。
+	callCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), gateModelTimeout)
 	flight := &inflightGateReview{done: make(chan struct{}), cancel: cancel, waiters: 1}
 	epoch := g.cacheEpoch
 	g.inflight[flightKey] = flight
@@ -746,6 +747,7 @@ func buildGatePrompt(metadata HookContext, match sensitive.CommandMatch) (llmgat
 		"重点检查删除与覆盖的完整目标、重定向、管道和逻辑操作符、变量展开、下载后执行、反弹连接、提权和环境篡改。" +
 		"命令由代理返回给客户端，代理不执行它，也无法验证客户端的实际权限、沙箱、容器、文件系统或先前的口头授权。" +
 		"工具参数提供的 cwd、workdir、shell、环境变量仅是已知输入；不能因为出现 tmp、sandbox 等路径名就认定存在隔离。" +
+		"标记为[凭据已隐藏]的值不可用于推断安全目标；若它影响执行范围，应判 block。" +
 		"明确受限的普通构建目录清理、只读查询等可以判 allow；危险目标或执行范围无法确认时判 block，并说明具体缺失的信息。" +
 		"必须只输出一个 JSON 对象：{\"verdict\":\"allow\" 或 \"block\",\"reason\":\"简体中文一句话理由\"}。理由不要复述密钥、密码或令牌。"
 	input, err := json.Marshal(map[string]string{
@@ -754,8 +756,8 @@ func buildGatePrompt(metadata HookContext, match sensitive.CommandMatch) (llmgat
 		"tool_name":         match.ToolName,
 		"entry_protocol":    metadata.APIType,
 		"request_model":     metadata.Model,
-		"command":           match.Command,
-		"tool_arguments":    match.ExecutionContext,
+		"command":           sensitive.RedactAuditText(match.Command),
+		"tool_arguments":    sensitive.RedactAuditText(match.ExecutionContext),
 		"environment_state": "代理未验证客户端执行环境与授权状态",
 	})
 	if err != nil {
@@ -766,7 +768,7 @@ func buildGatePrompt(metadata HookContext, match sensitive.CommandMatch) (llmgat
 		Messages: []llmgate.PromptMessage{
 			{Role: "user", Content: string(input)},
 		},
-		MaxTokens: 512,
+		MaxTokens: 256,
 	}, nil
 }
 

@@ -424,7 +424,7 @@ func TestContentSafetyPostResponseBlocksExecutableContexts(t *testing.T) {
 		{
 			name:      "代码块",
 			body:      "{\"choices\":[{\"message\":{\"content\":\"执行：\\n```sh\\nrm -rf /\\n```\"}}]}",
-			wantBlock: true,
+			wantBlock: false,
 		},
 		{
 			name:      "普通解释",
@@ -459,6 +459,11 @@ func TestContentSafetyPostResponseBlocksExecutableContexts(t *testing.T) {
 		{
 			name:      "工具结构标识不是命令",
 			body:      `{"choices":[{"message":{"tool_calls":[{"id":"rm -rf /","type":"function","function":{"name":"shell","arguments":"{\"command\":\"echo safe\"}"}}]}}]}`,
+			wantBlock: false,
+		},
+		{
+			name:      "未知工具中的命令字段",
+			body:      `{"content":[{"type":"tool_use","name":"custom_search","input":{"command":"rm -rf /"}}]}`,
 			wantBlock: false,
 		},
 	}
@@ -498,7 +503,7 @@ func TestContentSafetyPostResponseHonorsDisabledSetting(t *testing.T) {
 	}
 }
 
-func TestContentSafetyStreamScannerDetectsAcrossChunks(t *testing.T) {
+func TestContentSafetyStreamOnlyChecksExecutionTools(t *testing.T) {
 	configManager, err := config.NewConfigManager(filepath.Join(t.TempDir(), "config.json"))
 	if err != nil {
 		t.Fatalf("创建配置管理器失败: %v", err)
@@ -513,9 +518,49 @@ func TestContentSafetyStreamScannerDetectsAcrossChunks(t *testing.T) {
 		t.Fatalf("前缀不应立即拦截: %v", err)
 	}
 	err = FeedAttachedStreamText(c, " /\n```")
+	if err != nil {
+		t.Fatalf("完整 Markdown 示例应直接放行: %v", err)
+	}
+	start := "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{}}}\n\n"
+	if err := FeedAttachedStreamToolArgumentsForKey(c, "messages.content_block.1", "", "Bash"); err != nil {
+		t.Fatal(err)
+	}
+	if sent, err := RestoreAttachedSSEEvent(c, start); err != nil || sent != "" {
+		t.Fatalf("待审核的工具开始事件不能提前交付: sent=%q err=%v", sent, err)
+	}
+	arguments := `{"command":"echo safe"}`
+	delta := "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"command\\\":\\\"echo safe\\\"}\"}}\n\n"
+	if err := FeedAttachedStreamToolArgumentsForKey(c, "messages.content_block.1", arguments); err != nil {
+		t.Fatal(err)
+	}
+	if sent, err := RestoreAttachedSSEEvent(c, delta); err != nil || sent != "" {
+		t.Fatalf("工具参数完整后仍应等待调用结束: sent=%q err=%v", sent, err)
+	}
+	stop := "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\n"
+	if sent, err := RestoreAttachedSSEEvent(c, stop); err != nil || sent != start+delta+stop {
+		t.Fatalf("审核通过后应原序交付全部工具事件: sent=%q err=%v", sent, err)
+	}
+	if err := FeedAttachedStreamToolArgumentsForKey(c, "messages.content_block.2", `{"command":"rm -rf`, "Bash"); err != nil {
+		t.Fatal(err)
+	}
+	err = FeedAttachedStreamToolArgumentsForKey(c, "messages.content_block.2", ` /"}`)
 	var safetyErr *ContentSafetyError
 	if !errors.As(err, &safetyErr) || safetyErr.Code() != "DANGEROUS_COMMAND_BLOCKED" {
-		t.Fatalf("跨 chunk 检测错误 = %v", err)
+		t.Fatalf("跨 chunk 执行命令检测错误 = %v", err)
+	}
+	attached, err := attachedPipelineFromContext(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	masked := maskTestValue(t, attached.vault, "CUSTOM", "rm -rf /")
+	err = FeedAttachedStreamToolArgumentsSnapshot(c, "messages.content_block.3", `{"command":"`+masked+`"}`, "Bash")
+	if !errors.As(err, &safetyErr) || safetyErr.Command != "rm -rf /" {
+		t.Fatalf("必须审核还原后的执行命令: %v", err)
+	}
+	body := []byte(`{"content":[{"type":"tool_use","name":"Bash","input":{"command":"` + masked + `"}}]}`)
+	_, err = RunAttachedPostResponseHooks(context.Background(), c, body, nil)
+	if !errors.As(err, &safetyErr) || safetyErr.Command != "rm -rf /" {
+		t.Fatalf("非流式响应也必须审核还原后的执行命令: %v", err)
 	}
 }
 
@@ -530,7 +575,7 @@ func TestContentSafetyStreamToolArgumentsAndProtocolError(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	AttachHookPipeline(c, pipeline, HookContext{APIType: "chat", Stream: true})
-	if err := FeedAttachedStreamToolArgumentsForKey(c, defaultStreamToolArgumentKey, `{"command":"rm -rf `); err != nil {
+	if err := FeedAttachedStreamToolArgumentsForKey(c, defaultStreamToolArgumentKey, `{"command":"rm -rf `, "Bash"); err != nil {
 		t.Fatalf("不完整工具参数不应拦截: %v", err)
 	}
 	err = FeedAttachedStreamToolArgumentsForKey(c, defaultStreamToolArgumentKey, `/"}`)
@@ -628,7 +673,7 @@ func TestContentSafetyPipelineRecordsPreResponseAndStreamBlocks(t *testing.T) {
 		t.Fatalf("关联响应拦截记录失败: %v", err)
 	}
 	_, err = RunAttachedPostResponseHooks(context.Background(), postContext,
-		[]byte("{\"choices\":[{\"message\":{\"content\":\"```sh\\nrm -rf /\\n```\"}}]}"), nil)
+		[]byte(`{"choices":[{"message":{"tool_calls":[{"function":{"name":"Bash","arguments":"{\"command\":\"rm -rf /\"}"}}]}}]}`), nil)
 	if !errors.As(err, &safetyErr) || safetyErr.BlockType != sensitive.BlockTypeDangerousCmd {
 		t.Fatalf("非流式响应拦截错误 = %v", err)
 	}
@@ -645,10 +690,10 @@ func TestContentSafetyPipelineRecordsPreResponseAndStreamBlocks(t *testing.T) {
 	if err := AssignAttachedConversation(context.Background(), streamContext, "conv-shared"); err != nil {
 		t.Fatalf("关联流式拦截记录失败: %v", err)
 	}
-	if err := FeedAttachedStreamText(streamContext, "```sh\nrm -rf"); err != nil {
+	if err := FeedAttachedStreamToolArgumentsForKey(streamContext, "responses.tool.0", `{"command":"rm -rf`, "Bash"); err != nil {
 		t.Fatalf("危险命令前缀不应提前拦截: %v", err)
 	}
-	err = FeedAttachedStreamText(streamContext, " /\n```")
+	err = FeedAttachedStreamToolArgumentsForKey(streamContext, "responses.tool.0", ` /"}`)
 	if !errors.As(err, &safetyErr) || safetyErr.BlockType != sensitive.BlockTypeDangerousCmd {
 		t.Fatalf("流式响应拦截错误 = %v", err)
 	}
@@ -853,8 +898,7 @@ func TestStreamCandidatesKeepIndependentCodeBlocks(t *testing.T) {
 		t.Fatalf("候选 0 结束不应触发候选 1 的未闭合代码块: %v", err)
 	}
 	err = FinishAttachedStreamSafetyEvent(c, `data: {"choices":[{"index":1,"finish_reason":"stop"}]}`)
-	var safetyErr *ContentSafetyError
-	if !errors.As(err, &safetyErr) || safetyErr.BlockType != sensitive.BlockTypeDangerousCmd {
-		t.Fatalf("候选 1 结束前必须拦截其危险命令: %v", err)
+	if err != nil {
+		t.Fatalf("不同候选的正文示例均应放行: %v", err)
 	}
 }

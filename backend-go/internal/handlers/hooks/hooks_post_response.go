@@ -67,10 +67,13 @@ func (h *contentSafetyPostResponseHook) Run(ctx context.Context, metadata HookCo
 	}
 	if value, ok := decodeJSONValue(result.ResponseBody); ok {
 		if snapshot.settings.DangerousCmd.Enabled {
-			if safetyErr := reviewMatches(findDangerousCodeBlocks(snapshot.detector, value)); safetyErr != nil {
-				return result, safetyErr
+			// 危险命令只检查执行工具，并审核还原后的参数；凭据检查仍使用上游原值，
+			// 避免把请求中已脱敏、按契约还原的凭据误报为上游新生成的泄露。
+			matches, err := findDangerousToolArguments(snapshot.detector, value, metadata.redactionVault)
+			if err != nil {
+				return result, err
 			}
-			if safetyErr := reviewMatches(findDangerousToolArguments(snapshot.detector, value)); safetyErr != nil {
+			if safetyErr := reviewMatches(matches); safetyErr != nil {
 				return result, safetyErr
 			}
 		}
@@ -116,8 +119,6 @@ func (h *contentSafetyPostResponseHook) Run(ctx context.Context, metadata HookCo
 				}
 			}
 		}
-	} else if safetyErr := reviewMatches(snapshot.detector.Find(string(result.ResponseBody))); safetyErr != nil {
-		return result, safetyErr
 	}
 	return result, nil
 }
@@ -188,13 +189,46 @@ func decodeJSONValue(body []byte) (interface{}, bool) {
 	return value, true
 }
 
-func findDangerousToolArguments(detector *sensitive.CmdDetector, value interface{}) []sensitive.CommandMatch {
+func findDangerousToolArguments(detector *sensitive.CmdDetector, value interface{}, vault *sensitive.Vault) ([]sensitive.CommandMatch, error) {
 	if detector == nil {
-		return nil
+		return nil, nil
 	}
 	var matches []sensitive.CommandMatch
+	var restoreErr error
+	// 只还原执行工具的参数，不重复解析和复制整个响应，也不改动凭据检查使用的原值。
+	restoreArguments := func(arguments interface{}) (interface{}, error) {
+		if vault == nil || !vault.CanRestore() {
+			return arguments, nil
+		}
+		encoded, isText := arguments.(string)
+		if !isText {
+			body, err := json.Marshal(arguments)
+			if err != nil {
+				return nil, fmt.Errorf("序列化待审核工具参数失败: %w", err)
+			}
+			encoded = string(body)
+		}
+		if len(encoded) > sensitive.MaxCommandBytes {
+			return arguments, nil // 超限参数由检测器明确拦截，不继续还原大对象。
+		}
+		restored, err := vault.RestoreJSON([]byte(encoded))
+		if err != nil {
+			return nil, fmt.Errorf("还原待审核工具参数失败: %w", err)
+		}
+		if isText {
+			return string(restored), nil
+		}
+		decoded, ok := decodeJSONValue(restored)
+		if !ok {
+			return nil, fmt.Errorf("已还原工具参数不是完整有效的 JSON")
+		}
+		return decoded, nil
+	}
 	var walk func(interface{}, bool)
 	walk = func(current interface{}, toolContext bool) {
+		if restoreErr != nil {
+			return
+		}
 		switch typed := current.(type) {
 		case []interface{}:
 			for _, item := range typed {
@@ -202,7 +236,17 @@ func findDangerousToolArguments(detector *sensitive.CmdDetector, value interface
 			}
 		case map[string]interface{}:
 			if equalString(typed["type"], "custom_tool_call") {
+				if !sensitive.IsExecutionTool(stringValue(typed["name"])) {
+					return
+				}
 				if input, ok := typed["input"].(string); ok {
+					if vault != nil && vault.CanRestore() && len(input) <= sensitive.MaxCommandBytes {
+						input = vault.Restore(input)
+						if err := vault.Err(); err != nil {
+							restoreErr = fmt.Errorf("还原待审核工具输入失败: %w", err)
+							return
+						}
+					}
 					matches = append(matches, detector.FindInRawToolInput(stringValue(typed["name"]), input)...)
 				} else {
 					matches = append(matches, sensitive.CommandMatch{Rule: "invalid_tool_arguments", Context: "tool", ToolName: stringValue(typed["name"])})
@@ -213,6 +257,13 @@ func findDangerousToolArguments(detector *sensitive.CmdDetector, value interface
 			if isCall {
 				for _, field := range []string{"input", "arguments", "args"} {
 					if arguments, exists := typed[field]; exists {
+						if !sensitive.IsExecutionTool(stringValue(typed["name"])) {
+							return
+						}
+						arguments, restoreErr = restoreArguments(arguments)
+						if restoreErr != nil {
+							return
+						}
 						matches = append(matches, detector.FindInNamedToolArguments(stringValue(typed["name"]), arguments)...)
 						return
 					}
@@ -226,7 +277,10 @@ func findDangerousToolArguments(detector *sensitive.CmdDetector, value interface
 		}
 	}
 	walk(value, false)
-	return matches
+	if restoreErr != nil {
+		return nil, restoreErr
+	}
+	return matches, nil
 }
 
 func findDangerousCodeBlocks(detector *sensitive.CmdDetector, value interface{}) []sensitive.CommandMatch {

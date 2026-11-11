@@ -113,6 +113,29 @@ func TestRestoreAttachedSSEEventIsolatesParallelToolCallStreams(t *testing.T) {
 	if got := sseToolArguments(t, secondHead) + sseToolArguments(t, secondTail); got != secondOriginal+" " {
 		t.Fatalf("第二个工具流还原结果 = %q", got)
 	}
+	for _, original := range []string{`C:\Users\name\file.txt`, "包含\"引号\"\n和换行"} {
+		placeholder := maskTestValue(t, attached.vault, "SECRET", original)
+		arguments := `{"command":"` + placeholder + `"}`
+		for split := 0; split <= len(arguments); split++ {
+			attached.restorers = nil
+			attached.restorePending = nil
+			first, err := RestoreAttachedSSEEvent(c, sseToolArgumentEvent(t, 2, arguments[:split]))
+			if err != nil {
+				t.Fatal(err)
+			}
+			second, err := RestoreAttachedSSEEvent(c, sseToolArgumentEvent(t, 2, arguments[split:]))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var decoded map[string]string
+			if err := json.Unmarshal([]byte(sseToolArguments(t, first)+sseToolArguments(t, second)), &decoded); err != nil {
+				t.Fatalf("还原后的工具参数必须保持合法 JSON: %v", err)
+			}
+			if decoded["command"] != original {
+				t.Fatalf("工具参数转义改变了执行内容: got=%q want=%q", decoded["command"], original)
+			}
+		}
+	}
 }
 
 func TestResetAttachedStreamRestorationKeepsVaultAndDropsAttemptFragments(t *testing.T) {
@@ -131,8 +154,14 @@ func TestResetAttachedStreamRestorationKeepsVaultAndDropsAttemptFragments(t *tes
 	if got := sseDeltaText(t, firstAttempt); got != "" {
 		t.Fatalf("首次尝试的未完成前缀不应输出: %q", got)
 	}
+	attached.toolDelivery = []string{"data: stale-tool-event\n\n"}
+	attached.toolDeliveryBytes = len(attached.toolDelivery[0])
+	attached.toolArgs = map[string]*streamToolArgumentState{"old-tool": {name: "Bash"}}
 	if err := ResetAttachedStreamRestoration(c); err != nil {
 		t.Fatalf("重置流式还原状态失败: %v", err)
+	}
+	if len(attached.toolDelivery) != 0 || attached.toolDeliveryBytes != 0 || len(attached.toolArgs) != 0 {
+		t.Fatal("重试必须清除上一轮未交付的工具事件和审核状态")
 	}
 
 	retry, err := RestoreAttachedSSEEvent(c, sseTextEvent(t, placeholder+" "))
@@ -166,6 +195,46 @@ func TestRestoreAttachedResponseBodyRestoresJSONAndPlainErrorBodies(t *testing.T
 	}
 	if got := string(plainBody); got != "upstream error: "+original {
 		t.Fatalf("纯文本错误体还原结果 = %q", got)
+	}
+	for _, original := range []string{`C:\Users\name\file.txt`, "包含\"引号\"\n和换行"} {
+		placeholder := maskTestValue(t, attached.vault, "SECRET", original)
+		body := []byte(`{"output":[{"type":"function_call","name":"Bash","arguments":"{\"command\":\"` + placeholder + `\"}"}]}`)
+		restored, err := RestoreAttachedResponseBody(c, body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var response struct {
+			Output []struct {
+				Arguments string `json:"arguments"`
+			} `json:"output"`
+		}
+		if err := json.Unmarshal(restored, &response); err != nil {
+			t.Fatal(err)
+		}
+		var arguments map[string]string
+		if err := json.Unmarshal([]byte(response.Output[0].Arguments), &arguments); err != nil {
+			t.Fatalf("非流式工具参数还原后必须保持合法 JSON: %v", err)
+		}
+		if arguments["command"] != original {
+			t.Fatalf("非流式工具参数含义被改变: got=%q want=%q", arguments["command"], original)
+		}
+		encodedOriginal, err := json.Marshal(original)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, payload := range []string{
+			`{"type":"content_block_start","content_block":{"type":"tool_use","input":{"command":"` + placeholder + `"}}}`,
+			`{"candidates":[{"content":{"parts":[{"functionCall":{"name":"Bash","args":{"command":"` + placeholder + `"}}}]}}]}`,
+			`{"type":"response.output_item.done","output_index":0,"item":{"type":"custom_tool_call","name":"shell","input":"` + placeholder + `"}}`,
+		} {
+			event, err := RestoreAttachedSSEEvent(c, "data: "+payload+"\n\n")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(event, placeholder) || !strings.Contains(event, string(encodedOriginal)) {
+				t.Fatalf("工具完整快照必须立即还原末尾占位符: %s", event)
+			}
+		}
 	}
 }
 

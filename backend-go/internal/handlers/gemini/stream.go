@@ -174,6 +174,9 @@ func streamGeminiToGemini(
 			if err != nil {
 				return nil, err
 			}
+			if restoredLine == "" {
+				continue
+			}
 			proxycore.MarkRequestLogFirstToken(c)
 			if _, err := fmt.Fprintf(c.Writer, "%s\n", restoredLine); err != nil {
 				return nil, err
@@ -545,6 +548,9 @@ func writeGeminiSSE(c *gin.Context, flusher http.Flusher, payload []byte) error 
 	event, err := hooks.RestoreAttachedSSEEvent(c, "data: "+string(payload)+"\n\n")
 	if err != nil {
 		return err
+	}
+	if event == "" {
+		return nil
 	}
 	proxycore.MarkRequestLogFirstToken(c)
 	if _, err := fmt.Fprint(c.Writer, event); err != nil {

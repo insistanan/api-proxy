@@ -386,6 +386,9 @@ func handleStreamSuccess(
 			if err != nil {
 				return nil, err
 			}
+			if eventToSend == "" {
+				continue
+			}
 			// 会话持久化保存客户端可见的已还原内容；下一轮即使只携带
 			// previous_response_id，也会重新经过上行脱敏而不会遗留旧占位符。
 			sessionCollector.consumeEvent(eventToSend)
@@ -404,7 +407,7 @@ func handleStreamSuccess(
 
 					// 如果是 response.completed 且仍在缓冲阶段，说明是空响应
 					// （没有收到任何内容 delta 就完成了）
-					if isResponsesTerminalEvent(eventToSend) {
+					if isResponsesTerminalEvent(event) {
 						log.Printf("[Responses-Stream] 检测到空响应 (model at capacity)，buffered=%d, written=%v",
 							len(bufferedEvents), c.Writer.Written())
 						// 不写入任何数据，返回 error 让上层 failover
@@ -429,7 +432,7 @@ func handleStreamSuccess(
 				if hasDeliveredResponsesToolCall(eventToSend) {
 					toolCallDelivered = true
 				}
-				if isResponsesTerminalEvent(eventToSend) {
+				if isResponsesTerminalEvent(event) {
 					streamCompleted = true
 				}
 			}

@@ -297,7 +297,9 @@ func (s *MappingStore) lookupPlaceholder(ctx context.Context, placeholder string
 	}
 	ctx, cancel := context.WithTimeout(ctx, mappingIOTimeout)
 	defer cancel()
-	row := s.db.QueryRowContext(ctx, `SELECT original_ct FROM redaction_mappings WHERE placeholder = ?`, placeholder)
+	// 读取与刷新访问时间合并为一次写语句，保持 TTL/LRU 语义和同步错误传播。
+	row := s.db.QueryRowContext(ctx, `UPDATE redaction_mappings SET last_access = ? WHERE placeholder = ? RETURNING original_ct`,
+		time.Now().UTC().Format(mappingTimeLayout), placeholder)
 	var ciphertext []byte
 	if err := row.Scan(&ciphertext); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -308,10 +310,6 @@ func (s *MappingStore) lookupPlaceholder(ctx context.Context, placeholder string
 	original, err := s.decrypt(ciphertext)
 	if err != nil {
 		return MappingLookup{}, fmt.Errorf("解密持久映射失败: %w", err)
-	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE redaction_mappings SET last_access = ? WHERE placeholder = ?`,
-		time.Now().UTC().Format(mappingTimeLayout), placeholder); err != nil {
-		return MappingLookup{}, fmt.Errorf("刷新持久映射访问时间失败: %w", err)
 	}
 	return MappingLookup{Found: true, Placeholder: placeholder, Original: string(original)}, nil
 }

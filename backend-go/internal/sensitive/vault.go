@@ -118,6 +118,21 @@ func restoreJSONStrings(value interface{}, vault *Vault) interface{} {
 	switch typed := value.(type) {
 	case map[string]interface{}:
 		for key, item := range typed {
+			// Chat/Responses 的工具参数是 JSON 内嵌字符串；先还原其 JSON 值，
+			// 避免明文中的引号、反斜杠或换行破坏客户端将要解析的参数。
+			if key == "arguments" && (typed["type"] == "function_call" || typed["name"] != nil) {
+				if encoded, ok := item.(string); ok && json.Valid([]byte(encoded)) {
+					restored, err := vault.RestoreJSON([]byte(encoded))
+					if err != nil {
+						vault.mu.Lock()
+						vault.err = err
+						vault.mu.Unlock()
+						return value
+					}
+					typed[key] = string(restored)
+					continue
+				}
+			}
 			typed[key] = restoreJSONStrings(item, vault)
 		}
 	case []interface{}:
@@ -543,10 +558,30 @@ type StreamRestorer struct {
 	pending            string
 	previousSourceByte byte
 	hasPreviousSource  bool
+	jsonEncoded        bool
 }
 
 func NewStreamRestorer(vault *Vault) *StreamRestorer {
 	return &StreamRestorer{vault: vault}
+}
+
+// NewJSONStreamRestorer 用于工具参数的 JSON 文本增量，只对还原的明文做 JSON 字符串转义。
+func NewJSONStreamRestorer(vault *Vault) *StreamRestorer {
+	return &StreamRestorer{vault: vault, jsonEncoded: true}
+}
+
+func (r *StreamRestorer) encodeOriginal(original string) string {
+	if !r.jsonEncoded {
+		return original
+	}
+	encoded, err := json.Marshal(original)
+	if err != nil {
+		r.vault.mu.Lock()
+		r.vault.err = fmt.Errorf("编码已还原工具参数失败: %w", err)
+		r.vault.mu.Unlock()
+		return ""
+	}
+	return string(encoded[1 : len(encoded)-1])
 }
 
 func (r *StreamRestorer) Feed(fragment string) string {
@@ -591,7 +626,7 @@ func (r *StreamRestorer) Feed(fragment string) string {
 					token := input[:end]
 					if reservedPlaceholderPattern.FindString(token) == token {
 						if original, ok := r.vault.lookupPlaceholder(token); ok {
-							output.WriteString(original)
+							output.WriteString(r.encodeOriginal(original))
 							r.consumeSource(token)
 							input = input[end:]
 							continue
@@ -640,7 +675,7 @@ func (r *StreamRestorer) Flush() string {
 	if pending != "" && r.vault != nil && r.validLeftBoundary() && reservedPlaceholderPattern.FindString(pending) == pending {
 		if original, ok := r.vault.lookupPlaceholder(pending); ok {
 			r.consumeSource(pending)
-			return original
+			return r.encodeOriginal(original)
 		}
 	}
 	r.consumeSource(pending)

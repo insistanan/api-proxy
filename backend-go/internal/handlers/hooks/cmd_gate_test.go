@@ -373,6 +373,13 @@ func TestGateOnlyReviewsRuleMatchesAcrossResponseModes(t *testing.T) {
 				t.Fatal("未命中本地规则的命令不应调用 AI 或产生复核记录")
 			}
 			send("rm -rf /\nsudo su")
+			if !testCase.tool {
+				send("LD_PRELOAD=/tmp/evil.so app")
+				if h.aiCalls.Load() != 0 || len(h.recorder.entries) != 0 {
+					t.Fatal("正文代码示例不应调用 AI 或产生命令复核记录")
+				}
+				return
+			}
 			if h.aiCalls.Load() != 1 || len(h.recorder.entries) != 1 || !strings.Contains(h.recorder.entries[0].Command, "sudo su") {
 				t.Fatalf("同一完整脚本的多条规则应一次审核全部内容: calls=%d records=%+v", h.aiCalls.Load(), h.recorder.entries)
 			}
@@ -391,6 +398,29 @@ func TestGateOnlyReviewsRuleMatchesAcrossResponseModes(t *testing.T) {
 	}
 }
 
+func TestGatePromptHidesCredentials(t *testing.T) {
+	match := sensitive.CommandMatch{
+		ToolName: "Bash", Context: "tool",
+		Command:          "rm -rf /; deploy --token=private-approval-token",
+		ExecutionContext: `{"command":"rm -rf /; deploy --token=private-approval-token","cwd":"/workspace"}`,
+	}
+	identity := sensitive.CommandIdentity(match)
+	prompt, err := buildGatePrompt(HookContext{APIType: "messages"}, match)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prompt.Messages) != 1 || strings.Contains(prompt.Messages[0].Content, "private-approval-token") ||
+		!strings.Contains(prompt.Messages[0].Content, "[凭据已隐藏]") {
+		t.Fatalf("审批提示词必须隐藏命令和参数中的凭据: %+v", prompt)
+	}
+	other := match
+	other.Command = strings.ReplaceAll(other.Command, "private-approval-token", "another-private-token")
+	other.ExecutionContext = strings.ReplaceAll(other.ExecutionContext, "private-approval-token", "another-private-token")
+	if sensitive.CommandIdentity(other) == identity {
+		t.Fatal("凭据不同的实际命令不能因为提示词脱敏而共用授权身份")
+	}
+}
+
 func TestGateFailureIsAuditedOnce(t *testing.T) {
 	h := newGateTestHarness(t, 3)
 	h.aiUnavailable.Store(true)
@@ -399,7 +429,7 @@ func TestGateFailureIsAuditedOnce(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 	AttachHookPipeline(c, pipeline, h.metadata())
 	t.Cleanup(func() { ClearAttachedSensitiveData(c) })
-	err := FeedAttachedStreamToolArgumentsForKey(c, "tool-1", `{"command":"rm -rf /"}`)
+	err := FeedAttachedStreamToolArgumentsForKey(c, "tool-1", `{"command":"rm -rf /"}`, "Bash")
 	safetyErr := ContentSafetyErrorFrom(err)
 	if safetyErr == nil || safetyErr.Code() != "DANGEROUS_COMMAND_BLOCKED" {
 		t.Fatalf("AI 失败应明确拦截: %v", err)

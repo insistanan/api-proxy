@@ -552,6 +552,9 @@ func ProcessStreamEvent(
 	if err != nil {
 		return err
 	}
+	if eventToSend == "" {
+		return nil
+	}
 
 	// 转发给客户端
 	// 未做 usage / message_start 修补的事件按原文字节转发。未知事件和字段

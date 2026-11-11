@@ -32,6 +32,8 @@ type streamToolArgumentState struct {
 	escaped  bool
 	closed   bool
 	scanned  bool
+	finished bool
+	ignored  bool
 	stack    []byte
 	digest   [sha256.Size]byte
 }
@@ -87,43 +89,14 @@ func (s *streamToolArgumentState) append(fragment string) error {
 	return nil
 }
 
-// FeedAttachedStreamText 在代码块完整后审核，容量错误通过 Hook 错误显式上报。
+// FeedAttachedStreamText 保留调用入口；正文和 Markdown 示例不参与执行命令审核。
 func FeedAttachedStreamText(c requestContextGetter, text string) error {
 	return FeedAttachedStreamTextForKey(c, "", text)
 }
 
-// FeedAttachedStreamTextForKey 分别保留各 choice / candidate 的代码块边界。
+// FeedAttachedStreamTextForKey 只检查事后否决，普通正文可以直接流式下发。
 func FeedAttachedStreamTextForKey(c requestContextGetter, key, text string) error {
-	if err := AttachedStreamVetoError(c); err != nil {
-		return err
-	}
-	attached, err := attachedPipelineFromContext(c)
-	if err != nil || attached == nil || text == "" {
-		return wrapContentSafetyHookError(err)
-	}
-	attached.streamMu.Lock()
-	defer attached.streamMu.Unlock()
-	if err := ensureAttachedStreamScanner(attached); err != nil {
-		return wrapContentSafetyHookError(err)
-	}
-	scanner := attached.stream
-	if key != "" {
-		state, err := attached.textStream(key)
-		if err != nil {
-			return wrapContentSafetyHookError(err)
-		}
-		if state.finished {
-			return wrapContentSafetyHookError(fmt.Errorf("已结束的响应候选不能继续追加文本"))
-		}
-		scanner = state.scanner
-	}
-	previous := scanner.BufferedBytes()
-	match, blocked := scanner.Feed(text)
-	attached.textStreamBytes += scanner.BufferedBytes() - previous
-	if attached.textStreamBytes > maxStreamToolArgumentBytes {
-		return wrapContentSafetyHookError(fmt.Errorf("流式文本缓冲超过 4 MiB 检查上限"))
-	}
-	return attached.reviewStreamMatches(c, scanner, match, blocked)
+	return AttachedStreamVetoError(c)
 }
 
 func (a *attachedHookPipeline) textStream(key string) (*streamTextState, error) {
@@ -164,21 +137,12 @@ func (a *attachedHookPipeline) flushStreamText(c requestContextGetter, scanner *
 }
 
 func (a *attachedHookPipeline) finishStreamBranch(c requestContextGetter, key string) error {
-	state, err := a.textStream(key)
-	if err != nil {
-		return wrapContentSafetyHookError(err)
-	}
-	if !state.finished {
-		if err := a.flushStreamText(c, state.scanner); err != nil {
-			return err
-		}
-		state.finished = true
-	}
 	for toolKey, tool := range a.toolArgs {
-		if !tool.scanned && strings.HasPrefix(toolKey, key) {
+		if strings.HasPrefix(toolKey, key) {
 			if err := a.scanStreamToolArguments(c, toolKey); err != nil {
 				return err
 			}
+			tool.finished = true
 		}
 	}
 	return nil
@@ -247,6 +211,16 @@ func feedAttachedStreamToolArguments(c requestContextGetter, key, fragment strin
 		}
 		state.name = toolNames[0]
 	}
+	if state.name != "" && !sensitive.IsExecutionTool(state.name) && !attached.streamSettings.Credential.Enabled {
+		// 非执行工具没有响应凭据策略时只保留身份，文件内容无需累积或解析。
+		state.ignored = true
+		state.finished = true
+		attached.toolArgBytes -= state.body.Len()
+		state.body.Reset()
+	}
+	if state.ignored {
+		return nil
+	}
 	if len(fragment) > maxStreamToolArgumentWindow {
 		return wrapContentSafetyHookError(fmt.Errorf("工具参数超过 %d 字节检查上限", maxStreamToolArgumentWindow))
 	}
@@ -280,7 +254,13 @@ func feedAttachedStreamToolArguments(c requestContextGetter, key, fragment strin
 	}
 	attached.toolArgBytes += len(fragment)
 	if state.closed || snapshot {
-		return attached.scanStreamToolArguments(c, key)
+		if err := attached.scanStreamToolArguments(c, key); err != nil {
+			return err
+		}
+		// Gemini 函数参数是完整快照，没有独立的参数增量和工具结束事件。
+		if strings.HasPrefix(key, "gemini.") {
+			state.finished = true
+		}
 	}
 	return nil
 }
@@ -305,7 +285,7 @@ func streamToolArgumentDigest(arguments string, rawInput bool) ([sha256.Size]byt
 // scanStreamToolArguments 只审核完整值，JSON 解码失败时不能退回未解码文本放行。
 func (a *attachedHookPipeline) scanStreamToolArguments(c requestContextGetter, key string) error {
 	state := a.toolArgs[key]
-	if state == nil || state.scanned {
+	if state == nil || state.scanned || state.ignored {
 		return nil
 	}
 	if !state.started && !state.rawInput {
@@ -315,28 +295,45 @@ func (a *attachedHookPipeline) scanStreamToolArguments(c requestContextGetter, k
 		a.toolArgBytes += 2
 	}
 	toolArgs := state.body.String()
+	reviewArgs := toolArgs
+	if a.streamSettings.DangerousCmd.Enabled && sensitive.IsExecutionTool(state.name) && a.vault != nil && a.vault.CanRestore() {
+		if state.rawInput {
+			reviewArgs = a.vault.Restore(toolArgs)
+			if err := a.vault.Err(); err != nil {
+				return wrapContentSafetyHookError(err)
+			}
+		} else {
+			restored, err := a.vault.RestoreJSON([]byte(toolArgs))
+			if err != nil {
+				return wrapContentSafetyHookError(err)
+			}
+			reviewArgs = string(restored)
+		}
+	}
 	var value any = toolArgs
 	var matches []sensitive.CommandMatch
 	if state.rawInput {
-		matches = attachedStreamDetector(a).FindInRawToolInput(state.name, toolArgs)
+		matches = attachedStreamDetector(a).FindInRawToolInput(state.name, reviewArgs)
 	} else {
 		decoded, ok := decodeJSONValue([]byte(toolArgs))
 		if !ok {
 			return wrapContentSafetyHookError(fmt.Errorf("工具参数不是完整有效的 JSON"))
 		}
 		value = decoded
-		matches = attachedStreamDetector(a).FindInNamedToolArguments(state.name, toolArgs)
+		matches = attachedStreamDetector(a).FindInNamedToolArguments(state.name, reviewArgs)
 	}
 	for _, match := range matches {
 		if safetyErr := gateReviewDangerousCommand(attachedRequestContext(c), c, a, a.currentMetadata(), match); safetyErr != nil {
 			return a.recordContentSafetyError(attachedRequestContext(c), a.currentMetadata(), safetyErr)
 		}
 	}
-	segments := make([]SafetySegment, 0)
-	appendImmutableJSONSegmentWithTool(&segments, a.currentMetadata().APIType, safetySourceToolArgument, fmt.Sprintf("stream.tool_arguments[%q]", key), value, state.name)
-	for _, segment := range segments {
-		if err := scanAttachedStreamCredentials(c, a, key, segment); err != nil {
-			return wrapContentSafetyHookError(err)
+	if a.streamSettings.Credential.Enabled {
+		segments := make([]SafetySegment, 0)
+		appendImmutableJSONSegmentWithTool(&segments, a.currentMetadata().APIType, safetySourceToolArgument, fmt.Sprintf("stream.tool_arguments[%q]", key), value, state.name)
+		for _, segment := range segments {
+			if err := scanAttachedStreamCredentials(c, a, key, segment); err != nil {
+				return wrapContentSafetyHookError(err)
+			}
 		}
 	}
 	digest, err := streamToolArgumentDigest(toolArgs, state.rawInput)
@@ -397,23 +394,13 @@ func FlushAttachedStreamHooks(c requestContextGetter) error {
 	if err := ensureAttachedStreamScanner(attached); err != nil {
 		return wrapContentSafetyHookError(err)
 	}
-	if err := attached.flushStreamText(c, attached.stream); err != nil {
-		return err
-	}
-	for _, state := range attached.textStreams {
-		if !state.finished {
-			if err := attached.flushStreamText(c, state.scanner); err != nil {
-				return err
-			}
-			state.finished = true
-		}
-	}
 	for key, state := range attached.toolArgs {
 		if !state.scanned {
 			if err := attached.scanStreamToolArguments(c, key); err != nil {
 				return err
 			}
 		}
+		state.finished = true
 	}
 	return nil
 }
@@ -450,6 +437,9 @@ func finishAttachedStreamSafetyEvent(c requestContextGetter, boundary streamSafe
 	for _, key := range boundary.stoppedTools {
 		if err := attached.scanStreamToolArguments(c, key); err != nil {
 			return err
+		}
+		if state := attached.toolArgs[key]; state != nil {
+			state.finished = true
 		}
 	}
 	return nil
