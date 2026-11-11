@@ -8,9 +8,14 @@
         <slot name="heading"></slot>
       </div>
       <p class="pool-guide">按模型名称匹配分组，组内顺序即故障转移优先级；拖动手柄可调整顺序或移入其他已展开的分组。</p>
-      <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-plus" @click="openCreateDialog">
-        新建分组
-      </v-btn>
+      <div class="pool-header-actions">
+        <v-btn size="small" variant="text" :disabled="!poolViews.length" @click="toggleAllPools">
+          {{ allPoolsCollapsed ? '展开全部' : '收起全部' }}
+        </v-btn>
+        <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-plus" @click="openCreateDialog">
+          新建分组
+        </v-btn>
+      </div>
     </header>
 
     <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-3" />
@@ -20,23 +25,23 @@
         v-for="{ pool, order } in column"
         :key="pool.id"
         class="pool-card"
-        :class="{ 'is-default': pool.id === 'default' }"
+        :class="{ 'is-default': pool.id === 'default', 'is-collapsed': collapsedPools.has(pool.id) }"
         :style="{ order }"
       >
         <header class="pool-card-header">
           <button type="button" class="pool-card-toggle" :aria-expanded="!collapsedPools.has(pool.id)" :aria-controls="`pool-${channelType}-${pool.id}`" @click="togglePool(pool.id)">
             <v-icon size="18">{{ collapsedPools.has(pool.id) ? 'mdi-chevron-right' : 'mdi-chevron-down' }}</v-icon>
             <span class="min-width-0">
-            <span class="pool-name">{{ pool.name }}</span>
-            <span class="pool-rule">
+            <span class="pool-name" :title="pool.name">{{ pool.name }}</span>
+            <span class="pool-rule" :title="pool.id === 'default' ? undefined : pool.modelMatcher">
               <template v-if="pool.id === 'default'">未匹配或命中分组不可用时使用</template>
               <template v-else>匹配：{{ pool.modelMatcher }}</template>
             </span>
             </span>
           </button>
           <div class="d-flex align-center ga-1">
-            <v-chip size="x-small" color="primary" variant="tonal">{{ pool.channels.length }}</v-chip>
-            <v-btn v-if="pool.id !== 'default'" icon size="x-small" variant="text" title="编辑分组" @click="openEditDialog(pool)">
+            <span class="pool-channel-count">{{ pool.channels.length }} 个渠道</span>
+            <v-btn v-if="pool.id !== 'default'" icon size="x-small" variant="text" title="编辑分组" :aria-label="`编辑分组 ${pool.name}`" @click="openEditDialog(pool)">
               <v-icon size="small">mdi-pencil</v-icon>
             </v-btn>
             <v-btn
@@ -46,6 +51,7 @@
               color="error"
               variant="text"
               title="删除分组"
+              :aria-label="`删除分组 ${pool.name}`"
               :disabled="hasAssignedChannels(pool.id)"
               @click="openDeletePoolDialog(pool)"
             >
@@ -211,6 +217,10 @@ const poolMatcher = ref<string | null>('')
 type PoolView = ChannelPool & { channels: Channel[] }
 const poolViews = ref<PoolView[]>([])
 const collapsedPools = ref(new Set<string>())
+const allPoolsCollapsed = computed(() => poolViews.value.length > 0 && poolViews.value.every(pool => collapsedPools.value.has(pool.id)))
+const toggleAllPools = () => {
+  collapsedPools.value = allPoolsCollapsed.value ? new Set() : new Set(poolViews.value.map(pool => pool.id))
+}
 const togglePool = (id: string) => {
   const collapsed = new Set(collapsedPools.value)
   if (collapsed.has(id)) collapsed.delete(id)
@@ -396,6 +406,7 @@ const deletePool = async () => {
   display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px;
 }
 .section-heading-mark { display: flex; align-items: center; gap: 8px; }
+.pool-header-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .section-inline-label {
   color: rgba(var(--v-theme-on-surface), 0.48);
   font-size: 11px;
@@ -427,6 +438,8 @@ const deletePool = async () => {
   border-bottom: 1px solid rgba(var(--v-theme-outline), 0.2);
   background: rgba(var(--v-theme-surface-variant), 0.25);
 }
+.pool-card.is-collapsed .pool-card-header { border-bottom-color: transparent; }
+.pool-channel-count { flex-shrink: 0; padding-inline: 4px; color: rgb(var(--v-theme-on-surface-variant)); font-size: 0.75rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .pool-card.is-default .pool-card-header { background: color-mix(in srgb, rgb(var(--v-theme-primary)) 8%, rgb(var(--v-theme-surface))); }
 .v-theme--dark .pool-card-header { background: rgba(255, 255, 255, 0.035); }
 .pool-name {
@@ -509,6 +522,8 @@ const deletePool = async () => {
 }
 @media (max-width: 900px) {
   .section-header, .vision-pool-header { align-items: flex-start; flex-direction: column; }
+  /* 列布局下 flex-basis 会变成高度，说明文字不能继续占用桌面的 320px 基准。 */
+  .pool-guide { flex: initial; }
   .pool-channel-row, .vision-channel-row { flex-wrap: wrap; }
 }
 

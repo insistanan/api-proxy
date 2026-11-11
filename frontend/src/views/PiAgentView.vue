@@ -301,6 +301,7 @@ import { api, type ApiError, type PiAgentProvider, type PiAgentStatus, type ApiT
 import { useProxyProtocolPick, defaultQuickPickTypeOptions } from '@/composables/useChannelQuickPick'
 import { filterProxyModelsByKind, importProxyModels, buildPiAgentModel } from '@/composables/useChannelModelImport'
 import { useAuthStore } from '@/stores/auth'
+import { parseJSONObject } from '@/utils/parseJSONObject'
 
 const loading = ref(false)
 const disabled = ref(false)
@@ -422,15 +423,6 @@ const toJSON = (v: unknown): string => {
   return keys.length ? JSON.stringify(v, null, 2) : ''
 }
 
-// 安全 JSON 解析
-const parseJSON = (text: string, field: string): Record<string, unknown> => {
-  if (!text.trim()) return {}
-  let parsed: unknown
-  try { parsed = JSON.parse(text) } catch { throw new Error(`${field} 必须是有效的 JSON 对象`) }
-  if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') throw new Error(`${field} 必须是 JSON 对象`)
-  return parsed as Record<string, unknown>
-}
-
 // 连接本代理（协议选择）
 const quickPickTypeOptions = defaultQuickPickTypeOptions
 
@@ -538,8 +530,8 @@ const toModelObj = (m: EditableModel): Record<string, unknown> => {
   if (m.inputTextEnabled) input.push('text')
   if (m.inputImage) input.push('image')
   if (input.length) obj.input = input
-  const h = parseJSON(m.headersText, 'headers'); if (Object.keys(h).length) obj.headers = h
-  const c = parseJSON(m.compatText, 'compat'); if (Object.keys(c).length) obj.compat = c
+  const h = parseJSONObject(m.headersText, 'headers'); if (Object.keys(h).length) obj.headers = h
+  const c = parseJSONObject(m.compatText, 'compat'); if (Object.keys(c).length) obj.compat = c
   return obj
 }
 
@@ -551,9 +543,9 @@ const toProviderObj = (p: EditableProvider): Record<string, unknown> => {
   if (p.baseUrl) obj.baseUrl = p.baseUrl
   if (p.apiKey) obj.apiKey = p.apiKey
   if (p.authHeader !== null) obj.authHeader = p.authHeader
-  const h = parseJSON(p.headersText, 'headers'); if (Object.keys(h).length) obj.headers = h
-  const c = parseJSON(p.compatText, 'compat'); if (Object.keys(c).length) obj.compat = c
-  const o = parseJSON(p.modelOverridesText, 'modelOverrides'); if (Object.keys(o).length) obj.modelOverrides = o
+  const h = parseJSONObject(p.headersText, 'headers'); if (Object.keys(h).length) obj.headers = h
+  const c = parseJSONObject(p.compatText, 'compat'); if (Object.keys(c).length) obj.compat = c
+  const o = parseJSONObject(p.modelOverridesText, 'modelOverrides'); if (Object.keys(o).length) obj.modelOverrides = o
   const blankModel = p.models.find(m => !m.id.trim())
   if (blankModel) throw new Error('模型 ID 不能为空；请填写或删除空模型')
   const models = p.models.map(toModelObj)

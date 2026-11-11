@@ -243,6 +243,7 @@ import { useProxyProtocolPick, defaultQuickPickTypeOptions } from '@/composables
 import { filterProxyModelsByKind, importProxyModels, buildOpenCodeModel } from '@/composables/useChannelModelImport'
 import { PROTOCOL_DEFAULTS } from '@/composables/channelDefaults'
 import { useAuthStore } from '@/stores/auth'
+import { parseJSONObject } from '@/utils/parseJSONObject'
 
 interface EditableVariant {
   name: string
@@ -554,18 +555,6 @@ const clearAPIKey = (provider: EditableProvider) => {
   provider.apiKeyAction = 'remove'
   provider.apiKeyPresent = false
   provider.apiKeyMasked = ''
-}
-
-const parseJSONObject = (text: string, field: string): Record<string, unknown> => {
-  if (!text.trim()) return {}
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(text)
-  } catch {
-    throw new Error(`${field} 必须是有效的 JSON 对象`)
-  }
-  if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') throw new Error(`${field} 必须是 JSON 对象`)
-  return parsed as Record<string, unknown>
 }
 
 const prepareProvider = (provider: EditableProvider): SaveOpenCodeProvider => {

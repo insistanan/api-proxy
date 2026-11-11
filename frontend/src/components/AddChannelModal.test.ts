@@ -1,6 +1,6 @@
 // 表单提交入口回归：校验失败不保存，Images 参数先编译，再交给编辑器组装。
 import { describe, expect, it, vi } from 'vitest'
-import { createSSRApp, ref, type Ref, type SetupContext } from 'vue'
+import { createSSRApp, nextTick, ref, type Ref, type SetupContext } from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import type { ChannelFormState } from '@/composables/useChannelEditor'
 import AddChannelModal from './AddChannelModal.vue'
@@ -31,6 +31,46 @@ const setupForm = async (saving = false) => {
 }
 
 describe('渠道表单提交入口', () => {
+  it('往返快速模式不会覆盖详细表单中修改的名称和密钥', async () => {
+    const { state } = await setupForm()
+    const quickInput = state.quickInput as Ref<string>
+    const parse = state.parseQuickInput as () => void
+    const toggle = state.toggleMode as () => void
+    quickInput.value = 'https://images.example\nsk-original-key\nname: 快速名称'
+    parse()
+    toggle()
+    await nextTick()
+    const form = state.form as ChannelFormState
+    form.name = '详细配置名称'
+    form.apiKeys = ['edited-key']
+    toggle()
+    toggle()
+    expect(form.name).toBe('详细配置名称')
+    expect(form.apiKeys).toEqual(['edited-key'])
+  })
+
+  it('快速模式只修改名称时，返回详细表单保留已编辑的密钥和地址', async () => {
+    const { state } = await setupForm()
+    const quickInput = state.quickInput as Ref<string>
+    const parse = state.parseQuickInput as () => void
+    const toggle = state.toggleMode as () => void
+    quickInput.value = 'https://images.example\nsk-original-key\nname: 原名称'
+    parse()
+    toggle()
+    await nextTick()
+    const form = state.form as ChannelFormState
+    form.apiKeys = ['edited-key']
+    form.baseUrl = 'https://edited.example'
+    toggle()
+    quickInput.value = 'https://images.example\nsk-original-key\nname: 新名称'
+    parse()
+    toggle()
+    await nextTick()
+    expect(form.name).toBe('新名称')
+    expect(form.apiKeys).toEqual(['edited-key'])
+    expect(form.baseUrl).toBe('https://edited.example')
+  })
+
   it('关闭自动补全后详细表单提交保留完整请求地址', async () => {
     const { state, emit } = await setupForm()
     const url = 'https://images.example/custom/render/?mode=fast'

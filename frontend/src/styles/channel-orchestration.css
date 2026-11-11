@@ -13,7 +13,8 @@
 .channel-name { display: flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; }
 .channel-name .expand-icon { flex-shrink: 0; margin-left: auto; }
 .channel-name .font-weight-medium { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.9rem; }
-.channel-name-link { cursor: pointer; }
+.channel-name-link { cursor: pointer; text-align: start; border-radius: 4px; }
+.channel-service { color: rgb(var(--v-theme-on-surface-variant)); font-size: 0.75rem; }
 .channel-name-link:hover { color: rgb(var(--v-theme-primary)); }
 .channel-status-toggle { display: inline-flex; align-items: center; cursor: pointer; border-radius: 6px; }
 .channel-status-toggle :deep(.badge-content) { cursor: pointer; }
@@ -91,7 +92,7 @@
   .channel-row-meta { margin-left: 0; }
 }
 @media (max-width: 600px) {
-  .channel-row-content {
+  .channel-row-content, .channel-row-content.is-idle {
     grid-template-columns: 76px minmax(0, 1fr) auto;
     grid-template-areas: 'status name actions';
     gap: 8px;

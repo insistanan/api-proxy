@@ -41,28 +41,25 @@
             </div>
 
             <!-- 状态指示器 -->
-            <div
+            <button
+              type="button"
               class="channel-status-toggle"
-              role="button"
-              tabindex="0"
               :title="shouldResumeChannel(element) ? '点击恢复为活跃并重置熔断' : '点击切换为熔断'"
+              :aria-label="`${shouldResumeChannel(element) ? '恢复' : '暂停'} ${element.name}`"
               @click.stop="toggleChannelPrimaryStatus(element)"
-              @keydown.enter.stop="toggleChannelPrimaryStatus(element)"
-              @keydown.space.prevent.stop="toggleChannelPrimaryStatus(element)"
             >
               <ChannelStatusBadge :status="element.status || 'active'" :metrics="getChannelMetrics(element.index)" />
-            </div>
+            </button>
 
             <!-- 渠道名称和描述 -->
             <div class="channel-name">
-              <span
+              <button
+                type="button"
                 class="font-weight-medium channel-name-link"
-                tabindex="0"
-                role="button"
+                :title="element.name"
+                :aria-label="`编辑渠道 ${element.name}`"
                 @click.stop="$emit('edit', element)"
-                @keydown.enter.stop="$emit('edit', element)"
-                @keydown.space.prevent.stop="$emit('edit', element)"
-              >{{ element.name }}</span>
+              >{{ element.name }}</button>
               <!-- 促销期标识 -->
               <v-chip
                 v-if="isInPromotion(element)"
@@ -96,7 +93,7 @@
                     v-bind="tooltipProps"
                     size="x-small"
                     color="primary"
-                    variant="flat"
+                    variant="tonal"
                     class="ml-2 vision-default-chip"
                     @click.stop
                   >
@@ -105,22 +102,6 @@
                   </v-chip>
                 </template>
               </v-tooltip>
-              <!-- 官网链接按钮 -->
-              <v-btn
-                :href="getWebsiteUrl(element)"
-                target="_blank"
-                rel="noopener"
-                icon
-                size="x-small"
-                variant="text"
-                color="primary"
-                class="ml-1"
-                title="打开官网"
-                @click.stop
-              >
-                <v-icon size="14">mdi-open-in-new</v-icon>
-              </v-btn>
-              <span class="text-caption text-medium-emphasis ml-2">{{ channelServiceLabel(channelType, element.serviceType) }}</span>
               <!-- 展开图标 -->
               <v-btn
                 icon
@@ -207,6 +188,18 @@
                   :channel="element"
                   :channel-type="channelType"
                   @edit="$emit('edit', element)"
+                />
+
+                <span class="channel-service">{{ channelServiceLabel(channelType, element.serviceType) }}</span>
+                <v-btn
+                  :href="getWebsiteUrl(element)"
+                  target="_blank"
+                  rel="noopener"
+                  icon="mdi-open-in-new"
+                  size="x-small"
+                  variant="text"
+                  title="打开官网"
+                  :aria-label="`打开 ${element.name} 的官网`"
                 />
 
                 <span v-if="element.description" class="meta-desc" :title="element.description">

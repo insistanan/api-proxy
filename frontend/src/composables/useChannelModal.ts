@@ -32,9 +32,6 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
   const detailedSections = reactive({ connection: false, compatibility: false, advanced: false })
   const submitError = ref('')
 
-  // 高级兼容设置默认折叠，每次载入渠道或重置草稿时收起。
-  const reasoningCompatibilityPanel = ref<string>()
-
   // 模式切换: 快速添加 vs 详细表单
   const isQuickMode = ref(true)
 
@@ -44,32 +41,36 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
   // Embeddings / Decisions 只接受 OpenAI 兼容上游，不允许从快速输入推断服务类型。
   const isFixedOpenAIProtocol = () => props.channelType === 'embeddings' || props.channelType === 'decisions'
 
-  // 切换模式时，将快速模式检测到的值同步到详细表单，但不清空快速模式输入
+  const quickTransferValues = () => ({
+    urls: detectedBaseUrls.value.length ? detectedBaseUrls.value.join('\n') : detectedBaseUrl.value,
+    keys: JSON.stringify(detectedApiKeys.value),
+    name: generatedChannelName.value,
+    serviceType: isFixedOpenAIProtocol() ? 'openai' as const : detectedServiceType.value || getDefaultServiceTypeValue()
+  })
+  let quickValuesBeforeReturn: ReturnType<typeof quickTransferValues> | null = null
+
+  // 返回详细模式时，只同步本次在快速模式中改变的字段，保留详细草稿的其余编辑。
   const toggleMode = () => {
+    if (props.saving) return
     if (isQuickMode.value) {
-      // 从快速模式切换到详细模式：始终用检测到的值覆盖表单
-      if (detectedBaseUrls.value.length > 0) {
-        // 多个 BaseURL
-        form.baseUrl = detectedBaseUrls.value[0]
+      const next = quickTransferValues()
+      if (next.urls && next.urls !== quickValuesBeforeReturn?.urls) {
+        form.baseUrl = detectedBaseUrls.value[0] || detectedBaseUrl.value
         form.baseUrls = [...detectedBaseUrls.value]
-        baseUrlsText.value = detectedBaseUrls.value.join('\n')
-      } else if (detectedBaseUrl.value) {
-        // 单个 BaseURL
-        form.baseUrl = detectedBaseUrl.value
-        form.baseUrls = []
-        baseUrlsText.value = detectedBaseUrl.value
+        baseUrlsText.value = next.urls
       }
-      if (detectedApiKeys.value.length > 0) {
+      if (detectedApiKeys.value.length > 0 && next.keys !== quickValuesBeforeReturn?.keys) {
         form.apiKeys = [...detectedApiKeys.value]
       }
-      if (generatedChannelName.value) {
-        form.name = generatedChannelName.value
+      if (next.name && next.name !== quickValuesBeforeReturn?.name) {
+        form.name = next.name
       }
-      if (props.channelType !== 'images') {
-        form.serviceType = isFixedOpenAIProtocol() ? 'openai' : detectedServiceType.value || getDefaultServiceTypeValue()
+      if (props.channelType !== 'images' && next.serviceType !== quickValuesBeforeReturn?.serviceType) {
+        form.serviceType = next.serviceType
       }
+    } else {
+      quickValuesBeforeReturn = quickTransferValues()
     }
-    // 切换回快速模式时不做任何清理，保留 quickInput 原有内容
     isQuickMode.value = !isQuickMode.value
   }
 
@@ -79,29 +80,6 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
     if (props.channelType === 'images' && detectedServiceType.value && isImagesServiceType(detectedServiceType.value)) {
       form.serviceType = detectedServiceType.value
     }
-  }
-
-  // 获取默认服务类型
-  const getDefaultServiceType = (): string => {
-    if (props.channelType === 'gemini') {
-      return 'Gemini'
-    }
-    if (props.channelType === 'responses') {
-      return 'Responses (原生接口)'
-    }
-    if (props.channelType === 'chat') {
-      return 'Chat'
-    }
-    if (props.channelType === 'images') {
-      return 'Images'
-    }
-    if (props.channelType === 'embeddings') {
-      return 'Embeddings'
-    }
-    if (props.channelType === 'decisions') {
-      return 'Decisions'
-    }
-    return 'Messages'
   }
 
   // 获取默认服务类型值
@@ -117,6 +95,11 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
     }
     return 'claude'
   }
+
+  // 快速模式的预览和提交使用同一协议，避免界面只显示入口默认值。
+  const quickServiceType = computed(() => isFixedOpenAIProtocol()
+    ? 'openai'
+    : props.channelType === 'images' ? form.serviceType : detectedServiceType.value || getDefaultServiceTypeValue())
 
   // 快速模式表单验证
   const isQuickFormValid = computed(() => {
@@ -134,11 +117,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
       maxConcurrency: 5,
       clientIdentityMode: 'inherit' as const,
       name: generatedChannelName.value,
-      serviceType: isFixedOpenAIProtocol()
-        ? 'openai'
-        : props.channelType === 'images'
-          ? form.serviceType as Channel['serviceType']
-          : detectedServiceType.value || getDefaultServiceTypeValue(),
+      serviceType: quickServiceType.value as Channel['serviceType'],
       responsesModel: props.channelType === 'images' && form.serviceType === 'responses' ? form.responsesModel.trim() : '',
       ...(props.channelType === 'images' ? buildImagesOutputSettings(form) : {}),
       embeddingsDimensions: props.channelType === 'embeddings' ? EMBEDDINGS_DIMENSIONS_DEFAULT : 0,
@@ -344,7 +323,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
     resetFormDraft()
     submitError.value = ''
     Object.assign(detailedSections, { connection: false, compatibility: false, advanced: false })
-    reasoningCompatibilityPanel.value = undefined
+    quickValuesBeforeReturn = null
     newApiKey.value = ''
     baseUrlsText.value = ''
     originalKeyMap.value.clear()
@@ -367,7 +346,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
     loadChannelDataDraft(channel)
     submitError.value = ''
     Object.assign(detailedSections, { connection: false, compatibility: false, advanced: false })
-    reasoningCompatibilityPanel.value = undefined
+    quickValuesBeforeReturn = null
     if (channel.baseUrls && channel.baseUrls.length > 0) {
       baseUrlsText.value = channel.baseUrls.join('\n')
     } else {
@@ -459,7 +438,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
 
   // 验证规则
   const rules = {
-    required: (value: string) => !!value || '此字段为必填项',
+    required: (value: string) => !!value?.trim() || '此字段为必填项',
     url: (value: string) => {
       try {
         new URL(value)
@@ -703,35 +682,50 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
     }
   }
 
+  // Vuetify 字段错误与自定义参数错误共用展开和定位流程。
+  const revealFormError = async () => {
+    await nextTick()
+    const formElement = formRef.value?.$el as HTMLElement | undefined
+    if (!formElement) return
+    const errorSelector = '.v-input--error, [data-form-error="true"]'
+    for (const section of ['connection', 'compatibility', 'advanced'] as const) {
+      if (formElement.querySelector(`[data-form-section="${section}"]`)?.querySelector(errorSelector)) {
+        detailedSections[section] = true
+      }
+    }
+    await nextTick()
+    const invalidField = formElement.querySelector<HTMLElement>(errorSelector)
+    const target = invalidField?.querySelector<HTMLElement>('input:not(:disabled), textarea:not(:disabled), button:not(:disabled)')
+      ?? invalidField
+    target?.focus({ preventScroll: true })
+    target?.scrollIntoView({ block: 'center', behavior: 'instant' })
+  }
+
   const handleSubmit = async () => {
-    if (props.saving) return
-    if (!formRef.value) return
+    if (props.saving || !formRef.value) return
 
     submitError.value = ''
     if (!form.apiKeys.length) apiKeyError.value = '请至少添加一个 API 密钥'
     const { valid } = await formRef.value.validate()
     if (!valid || !isFormValid.value) {
-      submitError.value = '尚有配置未完成，请检查名称、请求地址、API 密钥及下方标出的错误。'
-      await nextTick()
-      const formElement = formRef.value?.$el as HTMLElement | undefined
-      if (!formElement) return
-      for (const section of ['connection', 'compatibility', 'advanced'] as const) {
-        if (formElement.querySelector(`[data-form-section="${section}"] .v-input--error`)) detailedSections[section] = true
-      }
-      await nextTick()
-      const invalidInput = formElement.querySelector<HTMLElement>('.v-input--error input, .v-input--error textarea')
-      invalidInput?.focus()
-      invalidInput?.scrollIntoView({ block: 'center', behavior: 'instant' })
+      submitError.value = '尚有配置未完成，请检查标出的字段；折叠区域中的错误会自动展开。'
+      await revealFormError()
       return
     }
 
     let imagesExtraParams: Record<string, string> | undefined
     if (props.channelType === 'images') {
       imagesOutputError.value = validateImagesOutputSettings(form)
-      if (imagesOutputError.value) return
+      if (imagesOutputError.value) {
+        submitError.value = imagesOutputError.value
+        await revealFormError()
+        return
+      }
       const compiled = compileImagesExtraParams(form.imagesExtraParams)
       if (compiled.error) {
         imagesExtraParamsError.value = compiled.error
+        submitError.value = compiled.error
+        await revealFormError()
         return
       }
       imagesExtraParamsError.value = ''
@@ -815,11 +809,10 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
     formRef,
     detailedSections,
     submitError,
-    reasoningCompatibilityPanel,
     isQuickMode,
     toggleMode,
     parseQuickInput,
-    getDefaultServiceType,
+    quickServiceType,
     isQuickFormValid,
     handleQuickSubmit,
     serviceTypeOptions,

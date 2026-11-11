@@ -121,10 +121,13 @@
               </td>
               <td class="text-no-wrap">{{ formatTPM(log.tpm) }}</td>
               <td class="error-cell">
-                <template v-if="log.errorType || log.errorMessage">
-                  <div class="font-weight-medium">{{ formatErrorType(log.errorType) }}</div>
-                  <div class="text-caption text-medium-emphasis">{{ log.errorMessage }}</div>
-                </template>
+                <button v-if="log.errorType || log.errorMessage" type="button" class="error-summary" aria-label="查看完整终止或失败原因" @click="selectedFailure = log">
+                  <span class="error-summary__heading">
+                    <span>{{ formatErrorType(log.errorType) }}</span>
+                    <v-icon size="16" aria-hidden="true">mdi-chevron-right</v-icon>
+                  </span>
+                  <span v-if="log.errorMessage" class="error-summary__message">{{ log.errorMessage }}</span>
+                </button>
                 <span v-else class="text-medium-emphasis">--</span>
               </td>
               <td class="action-cell">
@@ -162,6 +165,7 @@
     </div>
 
     <PromptBodyDialog v-model="bodyDialogVisible" :request-id="bodyRequestId" />
+    <RequestFailureDialog v-model="selectedFailure" @locate="openSystemLog" />
 
     <SystemLogsPanel
       v-if="activeTab === 'system'"
@@ -223,6 +227,7 @@ import { computed, onMounted, onBeforeUnmount, ref, shallowRef, watch } from 'vu
 import PageHeader from '@/components/common/PageHeader.vue'
 import { useRoute, useRouter } from 'vue-router'
 import PromptBodyDialog from '@/components/PromptBodyDialog.vue'
+import RequestFailureDialog from '@/components/RequestFailureDialog.vue'
 import SystemLogsPanel from '@/components/SystemLogsPanel.vue'
 import { api, type LogAPIType, type LogAvailableDate, type RequestLogEntry } from '@/services/api'
 
@@ -261,6 +266,7 @@ const toTime = ref('')
 const loading = ref(false)
 const error = ref('')
 const requestLogs = shallowRef<RequestLogEntry[]>([])
+const selectedFailure = shallowRef<RequestLogEntry | null>(null)
 
 const bodyDialogVisible = ref(false)
 const bodyRequestId = ref('')
@@ -620,7 +626,16 @@ onBeforeUnmount(() => { logRequestSequence++ })
 .request-logs-table :deep(td) {
   vertical-align: top;
   font-size: 13px;
+  padding-block: 12px;
+  font-variant-numeric: tabular-nums;
 }
+
+.error-summary { display: flex; flex-direction: column; gap: 4px; width: 100%; min-height: 44px; padding: 0; text-align: left; border-radius: 4px; }
+.error-summary__heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-weight: 600; color: rgb(var(--v-theme-on-surface)); }
+.error-summary__heading > span { min-width: 0; }
+.error-summary__heading .v-icon { flex-shrink: 0; color: rgb(var(--v-theme-on-surface-variant)); }
+.error-summary:hover .error-summary__heading { color: rgb(var(--v-theme-primary)); }
+.error-summary__message { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: rgb(var(--v-theme-on-surface-variant)); font-size: 0.75rem; line-height: 1.5; }
 
 .channel-cell,
 .model-cell,
@@ -637,6 +652,7 @@ onBeforeUnmount(() => { logRequestSequence++ })
 @media (max-width: 600px) {
   .request-logs-view {
     height: calc(100dvh - var(--v-layout-top) - 32px);
+    min-height: 480px;
   }
   .date-preset-select, .type-filter-select { flex: 1 1 140px; }
 }

@@ -2,6 +2,12 @@
 <v-form ref="formRef" @submit.prevent="handleSubmit">
   <v-alert v-if="submitError" type="error" variant="tonal" class="mb-4" role="alert">{{ submitError }}</v-alert>
   <v-row>
+    <v-col cols="12">
+      <div class="form-section-heading">
+        <h3>连接信息</h3>
+        <p>入口接收客户端请求；上游服务类型决定网关如何连接供应商。</p>
+      </div>
+    </v-col>
     <!-- 基本信息 -->
     <v-col cols="12" md="6">
       <v-text-field
@@ -30,7 +36,7 @@
       <v-select
         v-else
         v-model="form.serviceType"
-        label="服务类型 *"
+        label="上游服务类型 *"
         :items="serviceTypeOptions"
         prepend-inner-icon="mdi-cog"
         variant="outlined"
@@ -38,56 +44,6 @@
         :rules="[rules.required]"
         required
         :error-messages="errors.serviceType"
-      />
-    </v-col>
-
-    <!-- 渠道状态（仅编辑时显示） -->
-    <v-col v-if="isEditing" cols="12" md="6">
-      <v-select
-        v-model="form.status"
-        label="渠道状态"
-        :items="channelStatusOptions"
-        variant="outlined"
-        density="comfortable"
-      />
-    </v-col>
-
-    <!-- 渠道分组 -->
-    <v-col cols="12" :md="isEditing ? 6 : 12">
-      <v-select
-        v-model="form.poolId"
-        label="渠道分组"
-        :items="poolOptions"
-        :loading="poolsLoading"
-        :error-messages="poolLoadError"
-        variant="outlined"
-        density="comfortable"
-      />
-    </v-col>
-
-    <v-col v-if="channelType === 'images'" cols="12">
-      <ImagesOutputFields
-        v-model:output-format="form.imagesOutputFormat"
-        v-model:frame-count="form.imagesFrameCount"
-        v-model:frame-duration-ms="form.imagesFrameDurationMs"
-        :service-type="form.serviceType"
-      />
-      <div v-if="imagesOutputError" class="text-error text-caption mt-2">{{ imagesOutputError }}</div>
-    </v-col>
-
-    <!-- Embeddings 输出维度：覆盖请求体中的 dimensions，0 表示不覆盖 -->
-    <v-col v-if="channelType === 'embeddings'" cols="12" md="6">
-      <v-text-field
-        v-model="form.embeddingsDimensions"
-        label="输出维度 *"
-        type="number"
-        min="0"
-        step="1"
-        hint="覆盖请求中的 dimensions，需与上游模型支持的维度一致；0 表示不覆盖"
-        persistent-hint
-        variant="outlined"
-        density="comfortable"
-        :rules="[embeddingsDimensionsRule]"
       />
     </v-col>
 
@@ -123,203 +79,65 @@
 
     </v-col>
 
-    <!-- API密钥管理 -->
     <v-col cols="12">
-      <v-card variant="outlined" rounded="lg" :color="form.apiKeys.length === 0 ? 'error' : undefined">
-        <v-card-title class="d-flex align-center justify-space-between pa-4 pb-2">
-          <div class="d-flex align-center ga-2">
-            <v-icon :color="form.apiKeys.length > 0 ? 'primary' : 'error'">mdi-key</v-icon>
-            <span class="text-body-1 font-weight-bold">API密钥管理 *</span>
-            <v-chip v-if="form.apiKeys.length === 0" size="x-small" color="error" variant="tonal">
-              至少需要一个密钥
-            </v-chip>
-          </div>
-          <v-chip size="small" color="info" variant="tonal"> 可添加多个密钥用于负载均衡 </v-chip>
-        </v-card-title>
+      <ChannelApiKeysFields :editor="editor" />
+    </v-col>
 
-        <v-card-text class="pt-2">
-          <div v-if="copyNotice" class="text-caption text-medium-emphasis mb-3" role="status">{{ copyNotice }}</div>
-          <!-- 现有密钥列表 -->
-          <div v-if="form.apiKeys.length" class="mb-4">
-            <v-list density="compact" class="bg-transparent">
-              <v-list-item
-                v-for="(key, index) in form.apiKeys"
-                :key="index"
-                class="mb-2"
-                rounded="lg"
-                variant="tonal"
-                :color="duplicateKeyIndex === index ? 'error' : 'surface-variant'"
-                :class="{ 'animate-pulse': duplicateKeyIndex === index }"
-              >
-                <template #prepend>
-                  <v-icon size="small" :color="duplicateKeyIndex === index ? 'error' : 'primary'">
-                    {{ duplicateKeyIndex === index ? 'mdi-alert' : 'mdi-key' }}
-                  </v-icon>
-                </template>
+    <v-col cols="12">
+      <div class="form-section-heading">
+        <h3>模型与路由</h3>
+        <p>{{ channelType === 'chat' ? '默认模型可覆盖客户端请求；留空时保留原模型。' : '将客户端请求的模型名称映射到上游模型；连接信息无需重复填写。' }}</p>
+      </div>
+    </v-col>
 
-                <v-list-item-title>
-                  <div class="d-flex align-center justify-space-between">
-                    <code class="text-caption">{{ maskApiKey(key) }}</code>
-                    <div class="d-flex align-center ga-1">
-                      <!-- Models 状态标签 -->
-                      <v-chip
-                        v-if="keyModelsStatus.get(key)?.loading"
-                        size="x-small"
-                        color="info"
-                        variant="tonal"
-                      >
-                        <v-icon start size="12">mdi-loading</v-icon>
-                        检测中...
-                      </v-chip>
-                      <v-chip
-                        v-else-if="keyModelsStatus.get(key)?.success"
-                        size="x-small"
-                        color="success"
-                        variant="tonal"
-                      >
-                        models {{ keyModelsStatus.get(key)?.statusCode }} ({{ keyModelsStatus.get(key)?.modelCount }} 个)
-                      </v-chip>
-                      <v-tooltip
-                        v-else-if="keyModelsStatus.get(key)?.error"
-                        :text="keyModelsStatus.get(key)?.error"
-                        location="top"
-                        max-width="300"
-                      >
-                        <template #activator="{ props: tooltipProps }">
-                          <v-chip
-                            v-bind="tooltipProps"
-                            size="x-small"
-                            color="error"
-                            variant="tonal"
-                          >
-                            models {{ keyModelsStatus.get(key)?.statusCode || 'ERR' }}
-                          </v-chip>
-                        </template>
-                      </v-tooltip>
-                      <!-- 重复密钥标签 -->
-                      <v-chip v-if="duplicateKeyIndex === index" size="x-small" color="error" variant="text">
-                        重复密钥
-                      </v-chip>
-                    </div>
-                  </div>
-                </v-list-item-title>
+    <!-- 渠道状态（仅编辑时显示） -->
+    <v-col v-if="isEditing" cols="12" md="6">
+      <v-select
+        v-model="form.status"
+        label="渠道状态"
+        :items="channelStatusOptions"
+        variant="outlined"
+        density="comfortable"
+      />
+    </v-col>
 
-                <template #append>
-                  <div class="d-flex align-center ga-1">
-                    <!-- 置顶/置底：仅首尾密钥显示 -->
-                    <v-tooltip
-                      v-if="index === form.apiKeys.length - 1 && form.apiKeys.length > 1"
-                      text="置顶"
-                      location="top"
-                      :open-delay="150"
-                      content-class="key-tooltip"
-                    >
-                      <template #activator="{ props: tooltipProps }">
-                        <v-btn
-                          v-bind="tooltipProps"
-                          size="small"
-                          color="warning"
-                          icon
-                          variant="text"
-                          rounded="md"
-                          @click="moveApiKeyToTop(index)"
-                        >
-                          <v-icon size="small">mdi-arrow-up-bold</v-icon>
-                        </v-btn>
-                      </template>
-                    </v-tooltip>
-                    <v-tooltip
-                      v-if="index === 0 && form.apiKeys.length > 1"
-                      text="置底"
-                      location="top"
-                      :open-delay="150"
-                      content-class="key-tooltip"
-                    >
-                      <template #activator="{ props: tooltipProps }">
-                        <v-btn
-                          v-bind="tooltipProps"
-                          size="small"
-                          color="warning"
-                          icon
-                          variant="text"
-                          rounded="md"
-                          @click="moveApiKeyToBottom(index)"
-                        >
-                          <v-icon size="small">mdi-arrow-down-bold</v-icon>
-                        </v-btn>
-                      </template>
-                    </v-tooltip>
-                    <v-tooltip
-                      :text="copiedKeyIndex === index ? '已复制!' : '复制密钥'"
-                      location="top"
-                      :open-delay="150"
-                      content-class="key-tooltip"
-                    >
-                      <template #activator="{ props: tooltipProps }">
-                        <v-btn
-                          v-bind="tooltipProps"
-                          size="small"
-                          :color="copiedKeyIndex === index ? 'success' : 'primary'"
-                          icon
-                          variant="text"
-                          @click="copyApiKey(key, index)"
-                        >
-                          <v-icon size="small">{{
-                            copiedKeyIndex === index ? 'mdi-check' : 'mdi-content-copy'
-                          }}</v-icon>
-                        </v-btn>
-                      </template>
-                    </v-tooltip>
-                    <v-tooltip text="删除密钥" location="top" :open-delay="150" content-class="key-tooltip">
-                      <template #activator="{ props: tooltipProps }">
-                        <v-btn
-                          v-bind="tooltipProps"
-                          size="small"
-                          color="error"
-                          icon
-                          variant="text"
-                          @click="removeApiKey(index)"
-                        >
-                          <v-icon size="small" color="error">mdi-close</v-icon>
-                        </v-btn>
-                      </template>
-                    </v-tooltip>
-                  </div>
-                </template>
-              </v-list-item>
-            </v-list>
-          </div>
+    <!-- 渠道分组 -->
+    <v-col cols="12" :md="isEditing ? 6 : 12">
+      <v-select
+        v-model="form.poolId"
+        label="渠道分组"
+        :items="poolOptions"
+        :loading="poolsLoading"
+        :error-messages="poolLoadError"
+        variant="outlined"
+        density="comfortable"
+      />
+    </v-col>
 
-          <!-- 添加新密钥 -->
-          <div class="d-flex align-start ga-3">
-            <v-text-field
-              v-model="newApiKey"
-              label="添加新的API密钥"
-              placeholder="输入完整的API密钥"
-              prepend-inner-icon="mdi-plus"
-              variant="outlined"
-              density="comfortable"
-              type="password"
-              :error="!!apiKeyError"
-              :error-messages="apiKeyError"
-              class="flex-grow-1"
-              @keydown.enter.prevent="addApiKey"
-              @input="handleApiKeyInput"
-            />
-            <v-btn
-              color="primary"
-              variant="elevated"
-              size="large"
-              height="40"
-              :disabled="!newApiKey.trim()"
-              class="mt-1"
-              @click="addApiKey"
-            >
-              添加
-            </v-btn>
-          </div>
-        </v-card-text>
-      </v-card>
+    <v-col v-if="channelType === 'images'" cols="12" :data-form-error="!!imagesOutputError" tabindex="-1">
+      <ImagesOutputFields
+        v-model:output-format="form.imagesOutputFormat"
+        v-model:frame-count="form.imagesFrameCount"
+        v-model:frame-duration-ms="form.imagesFrameDurationMs"
+        :service-type="form.serviceType"
+      />
+      <div v-if="imagesOutputError" class="text-error text-caption mt-2" role="alert">{{ imagesOutputError }}</div>
+    </v-col>
+
+    <!-- Embeddings 输出维度：覆盖请求体中的 dimensions，0 表示不覆盖 -->
+    <v-col v-if="channelType === 'embeddings'" cols="12" md="6">
+      <v-text-field
+        v-model="form.embeddingsDimensions"
+        label="输出维度 *"
+        type="number"
+        min="0"
+        step="1"
+        hint="覆盖请求中的 dimensions，需与上游模型支持的维度一致；0 表示不覆盖"
+        persistent-hint
+        variant="outlined"
+        density="comfortable"
+        :rules="[embeddingsDimensionsRule]"
+      />
     </v-col>
 
     <!-- Chat 默认模型 -->
@@ -447,7 +265,7 @@
               </v-btn>
             </div>
           </div>
-          <div v-if="imagesExtraParamsError" class="text-error text-caption mt-2">
+          <div v-if="imagesExtraParamsError" class="text-error text-caption mt-2" data-form-error="true" tabindex="-1" role="alert">
             {{ imagesExtraParamsError }}
           </div>
         </v-card-text>
@@ -455,7 +273,7 @@
     </v-col>
 
     <v-col cols="12">
-      <DisclosureSection v-model="detailedSections.connection" title="连接与并发" description="调整并发上限、客户端身份与出站代理。" icon="mdi-web" data-form-section="connection">
+      <DisclosureSection v-model="detailedSections.connection" title="连接与并发" :description="connectionSummary" icon="mdi-web" data-form-section="connection">
         <v-row class="pt-3">
           <!-- 并发按 URL、上游协议和 Key 共享最小上限，默认 5，FIFO 最多排队 3 个、等待 10 秒。 -->
           <v-col cols="12" md="6">
@@ -531,7 +349,7 @@
       </DisclosureSection>
     </v-col>
     <v-col v-if="supportsConversationFeatures" cols="12">
-      <DisclosureSection v-model="detailedSections.compatibility" title="图片理解与对话兼容" description="设置图片理解来源、对话用途和缓存兼容选项。" icon="mdi-image-search-outline" data-form-section="compatibility">
+      <DisclosureSection v-model="detailedSections.compatibility" title="图片理解与对话兼容" :description="compatibilitySummary" icon="mdi-image-search-outline" data-form-section="compatibility">
         <v-row class="pt-3">
           <!-- 图片理解能力与图片理解层 -->
           <v-col cols="12">
@@ -615,39 +433,29 @@
                     <v-switch v-model="form.disablePromptCacheKey" aria-label="上游不支持缓存键" inset color="secondary" hide-details />
                   </div>
                 </template>
-                <v-expansion-panels
-                  v-if="channelType === 'messages' && form.serviceType === 'openai'"
-                  v-model="reasoningCompatibilityPanel"
-                  variant="accordion"
-                  class="mt-4"
-                >
-                  <v-expansion-panel
-                    value="reasoning"
-                    :title="form.reasoningOutputMode === 'hide' || form.parseEmbeddedReasoning ? '高级兼容设置（已启用）' : '高级兼容设置'"
-                  >
-                    <v-expansion-panel-text>
-                      <p class="text-body-2 text-medium-emphasis mb-3">默认保留上游思考，正文保持原样。</p>
-                      <v-switch
-                        v-model="form.reasoningOutputMode"
-                        true-value="hide"
-                        false-value="preserve"
-                        label="隐藏思考"
-                        :hint="form.reasoningOutputMode === 'hide' ? '隐藏后客户端无法保存思考；缓存失效时，严格上游可能无法续接历史。' : undefined"
-                        :persistent-hint="form.reasoningOutputMode === 'hide'"
-                        inset
-                        color="secondary"
-                      />
-                      <v-switch
-                        v-model="form.parseEmbeddedReasoning"
-                        label="解析正文中的思考标签"
-                        hint="仅用于上游通过 <think> 或 <thinking> 标签返回思考的情况。"
-                        persistent-hint
-                        inset
-                        color="secondary"
-                      />
-                    </v-expansion-panel-text>
-                  </v-expansion-panel>
-                </v-expansion-panels>
+                <template v-if="channelType === 'messages' && form.serviceType === 'openai'">
+                  <v-divider class="my-4" />
+                  <div class="text-body-1 font-weight-medium mb-2">思考内容兼容</div>
+                  <p class="text-body-2 text-medium-emphasis mb-3">默认保留上游思考，正文保持原样。</p>
+                  <v-switch
+                    v-model="form.reasoningOutputMode"
+                    true-value="hide"
+                    false-value="preserve"
+                    label="隐藏思考"
+                    :hint="form.reasoningOutputMode === 'hide' ? '隐藏后客户端无法保存思考；缓存失效时，严格上游可能无法续接历史。' : undefined"
+                    :persistent-hint="form.reasoningOutputMode === 'hide'"
+                    inset
+                    color="secondary"
+                  />
+                  <v-switch
+                    v-model="form.parseEmbeddedReasoning"
+                    label="解析正文中的思考标签"
+                    hint="仅用于上游通过 <think> 或 <thinking> 标签返回思考的情况。"
+                    persistent-hint
+                    inset
+                    color="secondary"
+                  />
+                </template>
               </v-card-text>
             </v-card>
           </v-col>
@@ -656,7 +464,7 @@
       </DisclosureSection>
     </v-col>
     <v-col cols="12">
-      <DisclosureSection v-model="detailedSections.advanced" title="高级选项与备注" description="TLS、Token 估算、渠道有效期与协议兼容；按需修改。" icon="mdi-tune" data-form-section="advanced">
+      <DisclosureSection v-model="detailedSections.advanced" title="高级选项与备注" :description="advancedSummary" icon="mdi-tune" data-form-section="advanced">
         <v-row class="pt-3">
           <!-- 官网/控制台（可选） -->
           <v-col cols="12">
@@ -765,6 +573,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import DisclosureSection from '../common/DisclosureSection.vue'
+import ChannelApiKeysFields from './ChannelApiKeysFields.vue'
 import type { useChannelModal } from '@/composables/useChannelModal'
 import ModelMappingEditor from '../ModelMappingEditor.vue'
 import ImagesChannelProtocolFields from '../ImagesChannelProtocolFields.vue'
@@ -778,7 +587,6 @@ const {
   formRef,
   detailedSections,
   submitError,
-  reasoningCompatibilityPanel,
   serviceTypeOptions,
   sourceModelOptions,
   targetModelPlaceholder,
@@ -788,16 +596,9 @@ const {
   isNativeSpecialOutput,
   addImagesExtraParam,
   removeImagesExtraParam,
-  addApiKey,
   channelStatusOptions,
   proxyModeOptions,
   baseUrlsText,
-  newApiKey,
-  apiKeyError,
-  copyNotice,
-  duplicateKeyIndex,
-  handleApiKeyInput,
-  copiedKeyIndex,
   errors,
   rules,
   isEditing,
@@ -807,11 +608,6 @@ const {
   poolOptions,
   visionChannelOptions,
   visionLayerChannelError,
-  maskApiKey,
-  removeApiKey,
-  moveApiKeyToTop,
-  moveApiKeyToBottom,
-  copyApiKey,
   handleSubmit,
   form,
   targetModelOptions,
@@ -820,7 +616,6 @@ const {
   targetChannelOptions,
   targetModelOptionsByChannel,
   targetStatusByChannel,
-  keyModelsStatus,
   handleFetchModels,
   channelType,
   channel
@@ -844,6 +639,39 @@ const clientIdentityHint = computed(() =>
 const supportsConversationFeatures = computed(() =>
   ['messages', 'responses', 'gemini', 'chat'].includes(channelType.value)
 )
+
+// 摘要读取当前草稿，让收起的分区仍能表达已选择的策略，不额外维护状态。
+const connectionSummary = computed(() => {
+  const proxy = proxyModeOptions.find(option => option.value === form.proxyMode)?.title
+  const identity = supportsClientIdentity.value
+    ? clientIdentityModeItems.value.find(option => option.value === form.clientIdentityMode)?.title
+    : undefined
+  return [`并发上限 ${form.maxConcurrency}`, proxy ? `代理：${proxy}` : undefined, identity].filter(Boolean).join(' · ')
+})
+const compatibilitySummary = computed(() => {
+  const items = [form.excludeFromConversation ? '仅用于图片理解' : '参与对话调度']
+  if (form.visionCapable) items.push('支持图片理解')
+  if (form.visionLayerEnabled) items.push('指定图片理解渠道')
+  if (['openai', 'responses'].includes(form.serviceType) && form.disablePromptCacheKey) items.push('移除缓存键')
+  if (channelType.value === 'messages' && form.serviceType === 'openai') {
+    if (form.reasoningOutputMode === 'hide') items.push('隐藏思考')
+    if (form.parseEmbeddedReasoning) items.push('解析思考标签')
+  }
+  return items.join(' · ')
+})
+const advancedSummary = computed(() => {
+  const items: string[] = []
+  if (form.insecureSkipVerify) items.push('跳过证书验证')
+  if (channelType.value !== 'images' && form.lowQuality) items.push('本地估算 Token')
+  if (form.temporary) items.push('临时渠道')
+  if (channelType.value === 'gemini') {
+    if (form.injectDummyThoughtSignature) items.push('注入占位签名')
+    if (form.stripThoughtSignature) items.push('移除签名')
+  }
+  if (form.website.trim()) items.push('已填官网')
+  if (form.description.trim()) items.push('已填备注')
+  return items.length ? items.join(' · ') : '未开启高级选项；可填写官网和备注。'
+})
 </script>
 
 <style scoped src="../../styles/channel-modal.css"></style>

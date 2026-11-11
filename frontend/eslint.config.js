@@ -54,6 +54,7 @@ export default [
         // DOM API（按 lint 实际使用补全，R6 环境声明修正）
         HTMLElement: 'readonly',
         Element: 'readonly',
+        ResizeObserver: 'readonly',
         PointerEvent: 'readonly',
         CustomEvent: 'readonly',
         FileReader: 'readonly',

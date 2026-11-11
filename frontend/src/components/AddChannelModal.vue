@@ -10,7 +10,7 @@
             {{ isEditing ? '编辑渠道' : '添加新渠道' }}
           </div>
           <div class="text-body-2 text-medium-emphasis dialog-card-subtitle">
-            {{ isEditing ? '修改渠道配置信息' : isQuickMode ? '快速批量添加 API 密钥' : '配置API渠道信息和密钥' }}
+            {{ entryLabel }} 入口 · {{ isQuickMode && !isEditing ? '粘贴地址和密钥，快速创建渠道' : '连接信息、模型映射与渠道策略' }}
           </div>
         </div>
         <div class="d-flex align-center ga-2 header-actions">
@@ -75,6 +75,8 @@
 <script setup lang="ts">
 // 渠道弹窗入口：保持公开事件，编排逻辑与两种表单分别维护。
 import type { Channel } from '../services/api'
+import { computed } from 'vue'
+import { findNavigation } from '@/router/navigation'
 import type { ApiTab } from '../services/channel-api'
 import { useChannelModal } from '@/composables/useChannelModal'
 import ChannelQuickForm from './channel/ChannelQuickForm.vue'
@@ -97,6 +99,7 @@ const emit = defineEmits<{
 }>()
 
 const editor = useChannelModal(props, emit)
+const entryLabel = computed(() => findNavigation(`/channels/${props.channelType}`)?.label)
 const {
   isEditing, isQuickMode, toggleMode,
   isQuickFormValid, handleQuickSubmit, handleSubmit, handleCancel,
