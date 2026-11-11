@@ -54,6 +54,10 @@ func getChannelName(cfgManager *config.ConfigManager, kind scheduler.ChannelKind
 		upstreams = cfg.ChatUpstream
 	case scheduler.ChannelKindImages:
 		upstreams = cfg.ImagesUpstream
+	case scheduler.ChannelKindEmbeddings:
+		upstreams = cfg.EmbeddingsUpstream
+	case scheduler.ChannelKindDecisions:
+		upstreams = cfg.DecisionsUpstream
 	default:
 		return "", false
 	}

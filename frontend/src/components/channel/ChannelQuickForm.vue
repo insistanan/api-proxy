@@ -119,7 +119,7 @@
           <div class="flex-grow-1">
             <div class="text-body-2 font-weight-medium">渠道类型</div>
             <div class="text-caption text-medium-emphasis">
-              {{ channelType === 'gemini' ? 'Gemini' : channelType === 'responses' ? 'Responses' : channelType === 'chat' ? 'Chat' : channelType === 'images' ? 'Images' : 'Messages' }} -
+              {{ channelTypeLabel }} -
               {{ channelType === 'images' ? imagesProtocolLabel(form.serviceType) : getDefaultServiceType() }}
             </div>
           </div>
@@ -131,7 +131,9 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { useChannelModal } from '@/composables/useChannelModal'
+import type { ApiTab } from '@/services/channel-api'
 import ImagesChannelProtocolFields from '../ImagesChannelProtocolFields.vue'
 import ImagesOutputFields from '../ImagesOutputFields.vue'
 
@@ -154,6 +156,17 @@ const {
   imagesProtocolLabel,
   channelType
 } = props.editor
+
+const CHANNEL_TYPE_LABELS: Record<ApiTab, string> = {
+  messages: 'Messages',
+  responses: 'Responses',
+  gemini: 'Gemini',
+  chat: 'Chat',
+  images: 'Images',
+  embeddings: 'Embeddings',
+  decisions: 'Decisions'
+}
+const channelTypeLabel = computed(() => CHANNEL_TYPE_LABELS[channelType.value] ?? 'Messages')
 </script>
 
 <style scoped src="../../styles/channel-modal.css"></style>

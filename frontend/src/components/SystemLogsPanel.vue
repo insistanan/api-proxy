@@ -76,6 +76,7 @@ const typeItems: { title: string; value: LogAPIType | '' }[] = [
   { title: '全部协议', value: '' }, { title: 'Messages', value: 'messages' },
   { title: 'Responses', value: 'responses' }, { title: 'Gemini', value: 'gemini' },
   { title: 'Chat', value: 'chat' }, { title: 'Images', value: 'images' },
+  { title: 'Embeddings', value: 'embeddings' }, { title: 'Decisions', value: 'decisions' },
   { title: '命令 AI 复核', value: 'cmd_gate' }, { title: '内部 AI 调用', value: 'llmgate' }
 ]
 const entryLabel = (kind?: string) => typeItems.find(item => item.value === kind?.toLowerCase())?.title || kind || '未知协议'

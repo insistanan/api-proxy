@@ -32,6 +32,10 @@ func (cfg *Config) channelSetFor(kind string) (*channelSet, error) {
 		return &channelSet{"Chat", &cfg.ChatUpstream, &cfg.ChatPools, &cfg.ChatLoadBalance}, nil
 	case "images":
 		return &channelSet{"Images", &cfg.ImagesUpstream, &cfg.ImagesPools, &cfg.ImagesLoadBalance}, nil
+	case "embeddings":
+		return &channelSet{"Embeddings", &cfg.EmbeddingsUpstream, &cfg.EmbeddingsPools, &cfg.EmbeddingsLoadBalance}, nil
+	case "decisions":
+		return &channelSet{"Decisions", &cfg.DecisionsUpstream, &cfg.DecisionsPools, &cfg.DecisionsLoadBalance}, nil
 	default:
 		return nil, fmt.Errorf("不支持的渠道类型: %s", kind)
 	}
@@ -75,6 +79,16 @@ func (cm *ConfigManager) addChannel(kind string, up UpstreamConfig) (AddedUpstre
 			return AddedUpstream{}, err
 		}
 	}
+	if kind == "embeddings" {
+		if err := ValidateEmbeddingsUpstream(&up); err != nil {
+			return AddedUpstream{}, err
+		}
+	}
+	if kind == "decisions" {
+		if err := ValidateDecisionsUpstream(&up); err != nil {
+			return AddedUpstream{}, err
+		}
+	}
 	next, result, err := addValidatedUpstreamOp(*cs.upstreams, *cs.pools, up)
 	if err != nil {
 		return AddedUpstream{}, err
@@ -111,6 +125,16 @@ func (cm *ConfigManager) updateChannel(kind string, index int, updates UpstreamU
 	}
 	if kind == "images" {
 		if err := ValidateImagesUpstream(&upstreams[index]); err != nil {
+			return false, err
+		}
+	}
+	if kind == "embeddings" {
+		if err := ValidateEmbeddingsUpstream(&upstreams[index]); err != nil {
+			return false, err
+		}
+	}
+	if kind == "decisions" {
+		if err := ValidateDecisionsUpstream(&upstreams[index]); err != nil {
 			return false, err
 		}
 	}

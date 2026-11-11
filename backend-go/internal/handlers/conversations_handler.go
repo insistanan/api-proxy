@@ -223,6 +223,8 @@ func GetConversationRouteOptions(cfgManager *config.ConfigManager) gin.HandlerFu
 				buildRouteOptionGroup(cfgManager, scheduler.ChannelKindGemini, "Gemini"),
 				buildRouteOptionGroup(cfgManager, scheduler.ChannelKindChat, "Chat"),
 				buildRouteOptionGroup(cfgManager, scheduler.ChannelKindImages, "Images"),
+				buildRouteOptionGroup(cfgManager, scheduler.ChannelKindEmbeddings, "Embeddings"),
+				buildRouteOptionGroup(cfgManager, scheduler.ChannelKindDecisions, "Decisions"),
 			},
 		})
 	}
@@ -291,6 +293,10 @@ func getConfigUpstreams(cfg config.Config, kind scheduler.ChannelKind) []config.
 		return cfg.ChatUpstream
 	case scheduler.ChannelKindImages:
 		return cfg.ImagesUpstream
+	case scheduler.ChannelKindEmbeddings:
+		return cfg.EmbeddingsUpstream
+	case scheduler.ChannelKindDecisions:
+		return cfg.DecisionsUpstream
 	default:
 		return nil
 	}
@@ -308,6 +314,10 @@ func getConfigPools(cfg config.Config, kind scheduler.ChannelKind) []config.Chan
 		return cfg.ChatPools
 	case scheduler.ChannelKindImages:
 		return cfg.ImagesPools
+	case scheduler.ChannelKindEmbeddings:
+		return cfg.EmbeddingsPools
+	case scheduler.ChannelKindDecisions:
+		return cfg.DecisionsPools
 	default:
 		return nil
 	}
@@ -315,7 +325,7 @@ func getConfigPools(cfg config.Config, kind scheduler.ChannelKind) []config.Chan
 
 func isValidConversationKind(kind string) bool {
 	switch kind {
-	case string(scheduler.ChannelKindMessages), string(scheduler.ChannelKindResponses), string(scheduler.ChannelKindGemini), string(scheduler.ChannelKindChat), string(scheduler.ChannelKindImages):
+	case string(scheduler.ChannelKindMessages), string(scheduler.ChannelKindResponses), string(scheduler.ChannelKindGemini), string(scheduler.ChannelKindChat), string(scheduler.ChannelKindImages), string(scheduler.ChannelKindEmbeddings), string(scheduler.ChannelKindDecisions):
 		return true
 	default:
 		return false

@@ -55,7 +55,7 @@ export function defaultChannelForm(channelType: string): ChannelFormState {
     maxConcurrency: 5,
     clientIdentityMode: 'inherit',
     name: '',
-    serviceType: channelType === 'images' ? 'openai' : '',
+    serviceType: channelType === 'images' || channelType === 'embeddings' || channelType === 'decisions' ? 'openai' : '',
     status: 'active',
     baseUrl: '',
     baseUrls: [],
@@ -176,11 +176,15 @@ export function buildChannelPayload(
 ): Omit<Channel, 'id' | 'index' | 'latency'> {
   const isImages = channelType === 'images'
   const isChat = channelType === 'chat'
+  // 只有 Messages / Responses 支持客户端伪装，其余协议固定继承全局设置。
+  const supportsClientIdentity = channelType === 'messages' || channelType === 'responses'
+  // Embeddings / Decisions 是纯透传协议，不参与图片理解与对话调度。
+  const supportsConversationFeatures = !isImages && channelType !== 'embeddings' && channelType !== 'decisions'
   const urls = deduplicateBaseUrls(form)
   const mapping = isChat ? {} : cloneModelMapping(form.modelMapping)
   const channel: Omit<Channel, 'id' | 'index' | 'latency'> = {
     maxConcurrency: Number(form.maxConcurrency),
-    clientIdentityMode: form.clientIdentityMode,
+    clientIdentityMode: supportsClientIdentity ? form.clientIdentityMode : 'inherit',
     name: form.name.trim(),
     serviceType: form.serviceType as Channel['serviceType'],
     responsesModel: isImages && form.serviceType === 'responses' ? form.responsesModel.trim() : '',
@@ -191,12 +195,12 @@ export function buildChannelPayload(
     proxyMode: form.proxyMode,
     proxyUrl: form.proxyMode === 'custom' ? form.proxyUrl.trim() : '',
     lowQuality: isImages ? false : form.lowQuality,
-    visionCapable: isImages ? false : form.visionCapable,
+    visionCapable: supportsConversationFeatures ? form.visionCapable : false,
     poolId: form.poolId,
-    excludeFromConversation: isImages ? false : form.excludeFromConversation,
-    visionLayerEnabled: isImages ? false : form.visionLayerEnabled,
-    visionLayerChannelId: isImages ? '' : form.visionLayerChannelId || undefined,
-    visionLayerModel: isImages ? '' : form.visionLayerModel.trim(),
+    excludeFromConversation: supportsConversationFeatures ? form.excludeFromConversation : false,
+    visionLayerEnabled: supportsConversationFeatures ? form.visionLayerEnabled : false,
+    visionLayerChannelId: supportsConversationFeatures ? form.visionLayerChannelId || undefined : '',
+    visionLayerModel: supportsConversationFeatures ? form.visionLayerModel.trim() : '',
     temporary: form.temporary,
     injectDummyThoughtSignature: isImages ? false : form.injectDummyThoughtSignature,
     stripThoughtSignature: isImages ? false : form.stripThoughtSignature,
@@ -235,9 +239,13 @@ export function useChannelEditor(channelType: MaybeRefOrGetter<string>) {
 
   /** 载入编辑目标（草稿复制自服务端数据，未保存前不影响 store）。 */
   const loadChannelData = (channel: Channel): void => {
-    form.maxConcurrency = channel.maxConcurrency ?? 5
-    form.clientIdentityMode = channel.clientIdentityMode || 'inherit'
     const currentChannelType = toValue(channelType)
+    const supportsClientIdentity = currentChannelType === 'messages' || currentChannelType === 'responses'
+    const supportsConversationFeatures =
+      currentChannelType !== 'images' && currentChannelType !== 'embeddings' && currentChannelType !== 'decisions'
+    form.maxConcurrency = channel.maxConcurrency ?? 5
+    // 非 Messages / Responses 渠道不保留伪装配置，避免误显示与回写。
+    form.clientIdentityMode = supportsClientIdentity ? channel.clientIdentityMode || 'inherit' : 'inherit'
     form.name = channel.name
     form.serviceType = channel.serviceType
     // 前端 Channel.status 含运行时衍生值（''/error/healthy 等，来自 dashboard 合并）；
@@ -251,12 +259,12 @@ export function useChannelEditor(channelType: MaybeRefOrGetter<string>) {
     form.proxyMode = channel.proxyMode || 'inherit'
     form.proxyUrl = channel.proxyUrl || ''
     form.lowQuality = currentChannelType !== 'images' && !!channel.lowQuality
-    form.visionCapable = currentChannelType !== 'images' && !!channel.visionCapable
+    form.visionCapable = supportsConversationFeatures && !!channel.visionCapable
     form.poolId = channel.poolId || 'default'
-    form.excludeFromConversation = currentChannelType !== 'images' && !!channel.excludeFromConversation
-    form.visionLayerEnabled = currentChannelType !== 'images' && !!channel.visionLayerEnabled
-    form.visionLayerChannelId = currentChannelType === 'images' ? '' : channel.visionLayerChannelId || ''
-    form.visionLayerModel = currentChannelType === 'images' ? '' : channel.visionLayerModel || ''
+    form.excludeFromConversation = supportsConversationFeatures && !!channel.excludeFromConversation
+    form.visionLayerEnabled = supportsConversationFeatures && !!channel.visionLayerEnabled
+    form.visionLayerChannelId = supportsConversationFeatures ? channel.visionLayerChannelId || '' : ''
+    form.visionLayerModel = supportsConversationFeatures ? channel.visionLayerModel || '' : ''
     form.temporary = !!channel.temporary
     form.injectDummyThoughtSignature = !!channel.injectDummyThoughtSignature
     form.stripThoughtSignature = !!channel.stripThoughtSignature

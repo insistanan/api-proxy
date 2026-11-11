@@ -38,7 +38,7 @@ export interface ChannelLogsResponse {
 
 export interface RequestLogEntry extends ChannelLogEntry {
   apiType: LogAPIType
-  entry?: 'claude' | 'codex' | 'gemini' | 'chat' | 'images' | 'cmd_gate' | 'llmgate'
+  entry?: 'claude' | 'codex' | 'gemini' | 'chat' | 'images' | 'embeddings' | 'decisions' | 'cmd_gate' | 'llmgate'
   firstTokenMs?: number
   resolvedModel?: string
   transform?: string

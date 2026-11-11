@@ -2,7 +2,7 @@
 
 import type { Channel } from './channel'
 
-export type ConversationKind = 'messages' | 'responses' | 'gemini' | 'chat' | 'images'
+export type ConversationKind = 'messages' | 'responses' | 'gemini' | 'chat' | 'images' | 'embeddings' | 'decisions'
 
 export interface ConversationRouteOverride {
   kind: ConversationKind

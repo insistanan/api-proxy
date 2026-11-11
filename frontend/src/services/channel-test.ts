@@ -92,6 +92,24 @@ export const testChannelWithModel = async (
       endpoint = '/v1/images/generations'
       body = { model: selectedModel, prompt: message, metadata, n: 1, response_format: 'url' }
       break
+    case 'embeddings':
+      endpoint = '/v1/embeddings'
+      body = { model: selectedModel, input: message }
+      break
+    case 'decisions':
+      endpoint = '/v1/decisions'
+      body = {
+        model: selectedModel,
+        state: { task: message },
+        questions: {
+          result: {
+            type: 'noul',
+            instructions: message,
+            criteria: { true: '是', false: '否' }
+          }
+        }
+      }
+      break
   }
 
   const response = await fetch(`${baseUrl}${endpoint}`, {
@@ -124,6 +142,13 @@ export const testChannelWithModel = async (
       .map(item => item.url || item.revised_prompt || (item.b64_json ? '[base64 image data]' : ''))
       .filter(Boolean)
     onChunk(outputs.length > 0 ? outputs.join('\n') : JSON.stringify(result, null, 2))
+    return
+  }
+
+  if (apiType === 'embeddings' || apiType === 'decisions') {
+    // 两个透传协议固定返回 JSON，不提供 SSE 通道。
+    const result = await response.json()
+    onChunk(JSON.stringify(result, null, 2))
     return
   }
 

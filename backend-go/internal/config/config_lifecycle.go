@@ -77,6 +77,10 @@ func (cm *ConfigManager) runChannelLifecycle(now time.Time, cleanupDeprecated bo
 	changed = changed || listChanged
 	candidate.ImagesUpstream, listChanged = applyLifecycleToUpstreams(candidate.ImagesUpstream, now, cleanupDeprecated, "Images")
 	changed = changed || listChanged
+	candidate.EmbeddingsUpstream, listChanged = applyLifecycleToUpstreams(candidate.EmbeddingsUpstream, now, cleanupDeprecated, "Embeddings")
+	changed = changed || listChanged
+	candidate.DecisionsUpstream, listChanged = applyLifecycleToUpstreams(candidate.DecisionsUpstream, now, cleanupDeprecated, "Decisions")
+	changed = changed || listChanged
 
 	if !changed {
 		return nil

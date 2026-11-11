@@ -1,5 +1,5 @@
 // app_routes.go 路由装配（R4-b 按初始化职责分文件）：
-// 管理路由组（/api、/admin）与五协议代理端点的注册。
+// 管理路由组（/api、/admin）与各协议代理端点的注册。
 package main
 
 import (
@@ -7,6 +7,8 @@ import (
 	"github.com/insistanan/api-proxy/internal/core/channelcrud"
 	"github.com/insistanan/api-proxy/internal/handlers"
 	"github.com/insistanan/api-proxy/internal/handlers/chat"
+	"github.com/insistanan/api-proxy/internal/handlers/decisions"
+	"github.com/insistanan/api-proxy/internal/handlers/embeddings"
 	"github.com/insistanan/api-proxy/internal/handlers/gemini"
 	"github.com/insistanan/api-proxy/internal/handlers/images"
 	"github.com/insistanan/api-proxy/internal/handlers/messages"
@@ -114,7 +116,7 @@ func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
 	a.assistantAPI.Register(apiGroup)
 }
 
-// setupChannelAdminAPI 装配五协议渠道管理路由，沿用调用方路由组的鉴权。
+// setupChannelAdminAPI 装配各协议渠道管理路由，沿用调用方路由组的鉴权。
 func (a *app) setupChannelAdminAPI(apiGroup *gin.RouterGroup) {
 	channelDeps := handlers.ChannelRouteDeps{
 		Cfg:       a.cfgManager,
@@ -135,6 +137,8 @@ func (a *app) setupChannelAdminAPI(apiGroup *gin.RouterGroup) {
 		{scheduler.ChannelKindGemini, gemini.Crud(a.cfgManager, a.channelScheduler)},
 		{scheduler.ChannelKindChat, chat.Crud(a.cfgManager, a.channelScheduler)},
 		{scheduler.ChannelKindImages, images.Crud(a.cfgManager, a.channelScheduler)},
+		{scheduler.ChannelKindEmbeddings, embeddings.Crud(a.cfgManager, a.channelScheduler)},
+		{scheduler.ChannelKindDecisions, decisions.Crud(a.cfgManager, a.channelScheduler)},
 	} {
 		opts := handlers.ChannelRouteOptions{
 			Crud:        channel.crud,
@@ -148,7 +152,7 @@ func (a *app) setupChannelAdminAPI(apiGroup *gin.RouterGroup) {
 	}
 }
 
-// setupProxyEndpoints 注册五协议代理端点。
+// setupProxyEndpoints 注册各协议代理端点。
 func (a *app) setupProxyEndpoints(r *gin.Engine) {
 	// 代理端点 - Messages API
 	r.POST("/v1/messages", messages.Handler(a.envCfg, a.cfgManager, a.channelScheduler, a.contentSafetyPipeline))
@@ -168,6 +172,11 @@ func (a *app) setupProxyEndpoints(r *gin.Engine) {
 	r.POST("/v1/images/generations", images.Handler(a.envCfg, a.cfgManager, a.channelScheduler, "/images/generations", a.contentSafetyPipeline))
 	r.POST("/v1/images/edits", images.Handler(a.envCfg, a.cfgManager, a.channelScheduler, "/images/edits", a.contentSafetyPipeline))
 	r.POST("/v1/images/variations", images.Handler(a.envCfg, a.cfgManager, a.channelScheduler, "/images/variations", a.contentSafetyPipeline))
+
+	// 代理端点 - Embeddings API (OpenAI-compatible 独立协议)
+	r.POST("/v1/embeddings", embeddings.Handler(a.envCfg, a.cfgManager, a.channelScheduler, a.contentSafetyPipeline))
+	// 代理端点 - Decisions API (独立协议)
+	r.POST("/v1/decisions", decisions.Handler(a.envCfg, a.cfgManager, a.channelScheduler, a.contentSafetyPipeline))
 
 	// 代理端点 - Gemini API (原生协议)
 	// 使用通配符捕获 model:action 格式，如 gemini-pro:generateContent

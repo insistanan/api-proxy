@@ -145,6 +145,10 @@ func ResolveRequestedUpstream(
 		upstreams = cfg.ChatUpstream
 	case scheduler.ChannelKindImages:
 		upstreams = cfg.ImagesUpstream
+	case scheduler.ChannelKindEmbeddings:
+		upstreams = cfg.EmbeddingsUpstream
+	case scheduler.ChannelKindDecisions:
+		upstreams = cfg.DecisionsUpstream
 	default:
 		return nil, -1, fmt.Errorf("不支持的渠道类型: %s", kind)
 	}
@@ -163,7 +167,7 @@ func ResolveRequestedUpstream(
 	if config.GetChannelStatus(upstream) == config.ChannelStatusDeleted {
 		return nil, -1, fmt.Errorf("%s 渠道 [%d] 已删除", kind, channelIndex)
 	}
-	if kind != scheduler.ChannelKindImages && upstream.ExcludeFromConversation {
+	if kind != scheduler.ChannelKindImages && kind != scheduler.ChannelKindEmbeddings && kind != scheduler.ChannelKindDecisions && upstream.ExcludeFromConversation {
 		return nil, -1, fmt.Errorf("%s 渠道 [%d] 已设置为不参与对话", kind, channelIndex)
 	}
 	if strings.TrimSpace(upstream.GetEffectiveBaseURL()) == "" {

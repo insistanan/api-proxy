@@ -79,6 +79,10 @@ func (s *ChannelScheduler) ConsumePromotionCount(channelIndex int, kind ChannelK
 		channelType = "chat"
 	case ChannelKindImages:
 		channelType = "images"
+	case ChannelKindEmbeddings:
+		channelType = "embeddings"
+	case ChannelKindDecisions:
+		channelType = "decisions"
 	}
 	s.configManager.ConsumePromotionCount(channelIndex, channelType)
 }

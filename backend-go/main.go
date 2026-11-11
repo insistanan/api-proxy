@@ -146,7 +146,7 @@ func newApp() (_ *app, err error) {
 		log.Printf("[Metrics-Init] 指标持久化已禁用，使用纯内存模式")
 	}
 
-	// 五类协议入口分别使用独立的指标管理器，共用渠道调度器。
+	// 每类协议入口分别使用独立的指标管理器，共用渠道调度器。
 	// 启用指标持久化时，各管理器使用同一份存储，并按入口类型区分记录。
 	metricsKinds := []scheduler.ChannelKind{
 		scheduler.ChannelKindMessages,
@@ -154,6 +154,8 @@ func newApp() (_ *app, err error) {
 		scheduler.ChannelKindGemini,
 		scheduler.ChannelKindChat,
 		scheduler.ChannelKindImages,
+		scheduler.ChannelKindEmbeddings,
+		scheduler.ChannelKindDecisions,
 	}
 	a.metricsByKind = make(map[scheduler.ChannelKind]*metrics.MetricsManager, len(metricsKinds))
 	var traceAffinityManager *session.TraceAffinityManager
@@ -197,6 +199,8 @@ func newApp() (_ *app, err error) {
 		a.metricsByKind[scheduler.ChannelKindGemini],
 		a.metricsByKind[scheduler.ChannelKindChat],
 		a.metricsByKind[scheduler.ChannelKindImages],
+		a.metricsByKind[scheduler.ChannelKindEmbeddings],
+		a.metricsByKind[scheduler.ChannelKindDecisions],
 		traceAffinityManager,
 		urlManager,
 	)
@@ -317,6 +321,8 @@ func newApp() (_ *app, err error) {
 		{scheduler.ChannelKindGemini, syncConfig.GeminiUpstream},
 		{scheduler.ChannelKindChat, syncConfig.ChatUpstream},
 		{scheduler.ChannelKindImages, syncConfig.ImagesUpstream},
+		{scheduler.ChannelKindEmbeddings, syncConfig.EmbeddingsUpstream},
+		{scheduler.ChannelKindDecisions, syncConfig.DecisionsUpstream},
 	}
 	for _, entry := range kindToUpstreams {
 		for i := range entry.upstreams {
@@ -363,7 +369,7 @@ func newApp() (_ *app, err error) {
 	apiGroup := r.Group("/api", middleware.AdminAuthMiddleware(a.envCfg))
 	a.setupAdminAPI(apiGroup)
 
-	// 五协议代理端点
+	// 各协议代理端点
 	a.setupProxyEndpoints(r)
 
 	// 静态文件服务 (嵌入的前端)
@@ -377,13 +383,15 @@ func newApp() (_ *app, err error) {
 				"mode":    "API Only",
 				"version": Version,
 				"endpoints": gin.H{
-					"chat":      "/v1/chat/completions",
-					"config":    "/admin/config/save",
-					"gemini":    "/v1beta/models/*modelAction",
-					"health":    "/health",
-					"images":    "/v1/images/generations",
-					"messages":  "/v1/messages",
-					"responses": "/v1/responses",
+					"chat":       "/v1/chat/completions",
+					"config":     "/admin/config/save",
+					"decisions":  "/v1/decisions",
+					"embeddings": "/v1/embeddings",
+					"gemini":     "/v1beta/models/*modelAction",
+					"health":     "/health",
+					"images":     "/v1/images/generations",
+					"messages":   "/v1/messages",
+					"responses":  "/v1/responses",
 				},
 				"message": "Web界面已禁用，此服务器运行在纯API模式下",
 			})

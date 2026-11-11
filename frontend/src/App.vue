@@ -201,7 +201,7 @@
             <div class="d-flex align-center">
               <v-icon size="20" class="mr-2">mdi-chart-areaspline</v-icon>
              <span class="text-subtitle-1 font-weight-bold">
-                {{ channelStore.activeTab === 'messages' ? 'Messages' : (channelStore.activeTab === 'responses' ? 'Responses' : (channelStore.activeTab === 'gemini' ? 'Gemini' : (channelStore.activeTab === 'images' ? 'Images' : 'Chat'))) }} 流量统计
+                {{ activeProtocolLabel }} 流量统计
              </span>
             </div>
             <v-btn
@@ -464,6 +464,19 @@ const isDshPage = computed(() => route.name === 'dsh')
 const isSettingsPage = computed(() => route.name === 'settings')
 const isStandalonePage = computed(() => isConversationPage.value || isLogsPage.value || isBlockedLogsPage.value || isSkillsPage.value || isOpenCodePage.value || isClaudeCodePage.value || isGptPage.value || isPiAgentPage.value || isDshPage.value || isSettingsPage.value)
 
+const activeProtocolLabel = computed(() => {
+  const labels: Record<string, string> = {
+    messages: 'Messages',
+    responses: 'Responses',
+    gemini: 'Gemini',
+    chat: 'Chat',
+    images: 'Images',
+    embeddings: 'Embeddings',
+    decisions: 'Decisions'
+  }
+  return labels[channelStore.activeTab] ?? 'Chat'
+})
+
 const navGroups = [
   {
     key: 'protocols',
@@ -473,7 +486,9 @@ const navGroups = [
       { key: 'responses', label: 'Responses', to: '/channels/responses' },
       { key: 'gemini', label: 'Gemini', to: '/channels/gemini' },
       { key: 'chat', label: 'Chat', to: '/channels/chat' },
-      { key: 'images', label: 'Images', to: '/channels/images' }
+      { key: 'images', label: 'Images', to: '/channels/images' },
+      { key: 'embeddings', label: 'Embeddings', to: '/channels/embeddings' },
+      { key: 'decisions', label: 'Decisions', to: '/channels/decisions' }
     ]
   },
   {

@@ -38,11 +38,13 @@ type ChannelScheduler struct {
 type ChannelKind string
 
 const (
-	ChannelKindMessages  ChannelKind = "messages"
-	ChannelKindResponses ChannelKind = "responses"
-	ChannelKindGemini    ChannelKind = "gemini"
-	ChannelKindChat      ChannelKind = "chat"
-	ChannelKindImages    ChannelKind = "images"
+	ChannelKindMessages   ChannelKind = "messages"
+	ChannelKindResponses  ChannelKind = "responses"
+	ChannelKindGemini     ChannelKind = "gemini"
+	ChannelKindChat       ChannelKind = "chat"
+	ChannelKindImages     ChannelKind = "images"
+	ChannelKindEmbeddings ChannelKind = "embeddings"
+	ChannelKindDecisions  ChannelKind = "decisions"
 )
 
 // NewChannelScheduler 创建多渠道调度器
@@ -53,24 +55,30 @@ func NewChannelScheduler(
 	geminiMetrics *metrics.MetricsManager,
 	chatMetrics *metrics.MetricsManager,
 	imagesMetrics *metrics.MetricsManager,
+	embeddingsMetrics *metrics.MetricsManager,
+	decisionsMetrics *metrics.MetricsManager,
 	traceAffinity *session.TraceAffinityManager,
 	urlMgr *urlhealth.URLManager,
 ) *ChannelScheduler {
 	return &ChannelScheduler{
 		configManager: cfgManager,
 		metricsManagers: map[ChannelKind]*metrics.MetricsManager{
-			ChannelKindMessages:  messagesMetrics,
-			ChannelKindResponses: responsesMetrics,
-			ChannelKindGemini:    geminiMetrics,
-			ChannelKindChat:      chatMetrics,
-			ChannelKindImages:    imagesMetrics,
+			ChannelKindMessages:   messagesMetrics,
+			ChannelKindResponses:  responsesMetrics,
+			ChannelKindGemini:     geminiMetrics,
+			ChannelKindChat:       chatMetrics,
+			ChannelKindImages:     imagesMetrics,
+			ChannelKindEmbeddings: embeddingsMetrics,
+			ChannelKindDecisions:  decisionsMetrics,
 		},
 		channelLogStores: map[ChannelKind]*metrics.ChannelLogStore{
-			ChannelKindMessages:  metrics.NewChannelLogStore(),
-			ChannelKindResponses: metrics.NewChannelLogStore(),
-			ChannelKindGemini:    metrics.NewChannelLogStore(),
-			ChannelKindChat:      metrics.NewChannelLogStore(),
-			ChannelKindImages:    metrics.NewChannelLogStore(),
+			ChannelKindMessages:   metrics.NewChannelLogStore(),
+			ChannelKindResponses:  metrics.NewChannelLogStore(),
+			ChannelKindGemini:     metrics.NewChannelLogStore(),
+			ChannelKindChat:       metrics.NewChannelLogStore(),
+			ChannelKindImages:     metrics.NewChannelLogStore(),
+			ChannelKindEmbeddings: metrics.NewChannelLogStore(),
+			ChannelKindDecisions:  metrics.NewChannelLogStore(),
 		},
 		traceAffinity:   traceAffinity,
 		baseURLAffinity: session.NewBaseURLAffinityManager(),
@@ -194,7 +202,7 @@ func (s *ChannelScheduler) GetProfileManager() *metrics.ProfileManager {
 }
 
 // MetricsManager 按渠道类型返回对应的指标管理器，是外部取用指标管理器的唯一入口。
-// 五协议各有一份 MetricsManager 实例，调用方一律传 kind，不要在调用侧按 kind 分支。
+// 每种协议各有一份 MetricsManager 实例，调用方一律传 kind，不要在调用侧按 kind 分支。
 func (s *ChannelScheduler) MetricsManager(kind ChannelKind) *metrics.MetricsManager {
 	return s.getMetricsManager(kind)
 }
@@ -214,6 +222,10 @@ func kindSchedulerLogPrefix(kind ChannelKind) string {
 		return "Scheduler-Chat"
 	case ChannelKindImages:
 		return "Scheduler-Images"
+	case ChannelKindEmbeddings:
+		return "Scheduler-Embeddings"
+	case ChannelKindDecisions:
+		return "Scheduler-Decisions"
 	default:
 		return "Scheduler-Unknown"
 	}

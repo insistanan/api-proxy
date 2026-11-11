@@ -71,6 +71,10 @@ func (s *ChannelScheduler) getActiveChannelsByPool(kind ChannelKind, poolIDs []s
 		upstreams = cfg.ChatUpstream
 	case ChannelKindImages:
 		upstreams = cfg.ImagesUpstream
+	case ChannelKindEmbeddings:
+		upstreams = cfg.EmbeddingsUpstream
+	case ChannelKindDecisions:
+		upstreams = cfg.DecisionsUpstream
 	default:
 		return map[string][]ChannelInfo{}
 	}
@@ -163,6 +167,10 @@ func (s *ChannelScheduler) getChannelPools(kind ChannelKind) []config.ChannelPoo
 		return cfg.ChatPools
 	case ChannelKindImages:
 		return cfg.ImagesPools
+	case ChannelKindEmbeddings:
+		return cfg.EmbeddingsPools
+	case ChannelKindDecisions:
+		return cfg.DecisionsPools
 	default:
 		return nil
 	}
@@ -185,6 +193,10 @@ func (s *ChannelScheduler) getUpstreamByIndex(index int, kind ChannelKind) *conf
 		upstreams = cfg.ChatUpstream
 	case ChannelKindImages:
 		upstreams = cfg.ImagesUpstream
+	case ChannelKindEmbeddings:
+		upstreams = cfg.EmbeddingsUpstream
+	case ChannelKindDecisions:
+		upstreams = cfg.DecisionsUpstream
 	default:
 		return nil
 	}

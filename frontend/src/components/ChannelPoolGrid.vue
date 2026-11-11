@@ -175,10 +175,11 @@ import draggable from 'vuedraggable'
 import { api, type Channel, type ChannelPool } from '../services/api'
 import ChannelStatusBadge from './ChannelStatusBadge.vue'
 import { channelServiceLabel } from '@/utils/imagesChannelProtocol'
+import type { ApiTab } from '@/services/channel-api'
 
 const props = defineProps<{
   channels: Channel[]
-  channelType: 'messages' | 'responses' | 'gemini' | 'chat' | 'images'
+  channelType: ApiTab
 }>()
 const emit = defineEmits<{
   edit: [channel: Channel]

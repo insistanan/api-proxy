@@ -24,5 +24,8 @@ export const PROTOCOL_DEFAULTS: Record<ApiTab, ProtocolDefaults> = {
   responses: { contextLimit: 220000, outputLimit: 32000, inputLimit: 200000 },
   gemini: { contextLimit: 1000000, outputLimit: 65536, inputLimit: 900000 },
   chat: { contextLimit: 220000, outputLimit: 32000, inputLimit: 200000 },
-  images: { contextLimit: 220000, outputLimit: 32000, inputLimit: 200000 }
+  images: { contextLimit: 220000, outputLimit: 32000, inputLimit: 200000 },
+  // 透传协议的模型没有统一上下文窗口概念，沿用通用对话默认值。
+  embeddings: { contextLimit: 220000, outputLimit: 32000, inputLimit: 200000 },
+  decisions: { contextLimit: 220000, outputLimit: 32000, inputLimit: 200000 }
 }

@@ -324,7 +324,9 @@ const protocolForChannelType: Record<ApiTab, OpenCodeProtocol> = {
   responses: 'responses',
   gemini: 'gemini',
   chat: 'chat',
-  images: 'chat'
+  images: 'chat',
+  embeddings: 'chat',
+  decisions: 'chat'
 }
 
 const applyProtocol = async (type: ApiTab, defaultBaseUrl: Promise<string>) => {

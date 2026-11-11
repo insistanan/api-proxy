@@ -15,12 +15,16 @@ export type CcsApp = 'claude' | 'codex' | 'gemini' | 'opencode'
 /** 渠道池 → 默认 app。用户在哪个池操作，意图就是把该协议的供应商加进 CC Switch，
  *  与渠道自身的 serviceType（代理侧协议转换目标）无关——
  *  messages 池里挂 openai 上游是代理在做转换，用户要的仍是 claude。 */
-export const CCS_APP_BY_KIND: Record<'messages' | 'responses' | 'gemini' | 'chat' | 'images', CcsApp> = {
+export const CCS_APP_BY_KIND: Record<'messages' | 'responses' | 'gemini' | 'chat' | 'images' | 'embeddings' | 'decisions', CcsApp> = {
   messages: 'claude',
   chat: 'claude',
   responses: 'codex',
   gemini: 'gemini',
-  images: 'opencode'
+  images: 'opencode',
+  // 两个透传协议没有专属 CC Switch 应用，按 OpenAI 兼容入口处理；
+  // 渠道列表已对它们隐藏 CC Switch 导入入口，这里仅保证类型完整。
+  embeddings: 'opencode',
+  decisions: 'opencode'
 }
 
 /** app 类型的界面文案与提示 */

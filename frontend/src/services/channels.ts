@@ -76,33 +76,31 @@ export const channelsApi = {
     }
   },
 
-  async getChannelPools(
-    type: 'messages' | 'responses' | 'gemini' | 'chat' | 'images'
-  ): Promise<{ pools: ChannelPool[] }> {
+  async getChannelPools(type: ApiTab): Promise<{ pools: ChannelPool[] }> {
     return apiRequest(`/${type}/pools`)
   },
 
   async createChannelPool(
-    type: 'messages' | 'responses' | 'gemini' | 'chat' | 'images',
+    type: ApiTab,
     pool: Pick<ChannelPool, 'name' | 'modelMatcher'>
   ): Promise<{ pool: ChannelPool }> {
     return apiRequest(`/${type}/pools`, { method: 'POST', body: JSON.stringify(pool) })
   },
 
   async updateChannelPool(
-    type: 'messages' | 'responses' | 'gemini' | 'chat' | 'images',
+    type: ApiTab,
     id: string,
     pool: Partial<Pick<ChannelPool, 'name' | 'modelMatcher'>>
   ): Promise<void> {
     await apiRequest(`/${type}/pools/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(pool) })
   },
 
-  async deleteChannelPool(type: 'messages' | 'responses' | 'gemini' | 'chat' | 'images', id: string): Promise<void> {
+  async deleteChannelPool(type: ApiTab, id: string): Promise<void> {
     await apiRequest(`/${type}/pools/${encodeURIComponent(id)}`, { method: 'DELETE' })
   },
 
   async saveChannelPoolLayout(
-    type: 'messages' | 'responses' | 'gemini' | 'chat' | 'images',
+    type: ApiTab,
     pools: Array<{ poolId: string; channelIds: string[] }>
   ): Promise<void> {
     await apiRequest(`/${type}/pools/layout`, { method: 'PUT', body: JSON.stringify({ pools }) })
@@ -112,7 +110,7 @@ export const channelsApi = {
 
   // 复制渠道
   async duplicateChannel(
-    type: 'messages' | 'responses' | 'gemini' | 'chat' | 'images',
+    type: ApiTab,
     channelId: number
   ): Promise<void> {
     await apiRequest(`/${type}/channels/${channelId}/duplicate`, {
@@ -120,7 +118,7 @@ export const channelsApi = {
     })
   },
 
-  async tidyProblemChannels(type: 'messages' | 'responses' | 'gemini' | 'chat' | 'images'): Promise<void> {
+  async tidyProblemChannels(type: ApiTab): Promise<void> {
     await apiRequest(`/${type}/channels/tidy`, {
       method: 'POST'
     })
@@ -132,7 +130,7 @@ export const channelsApi = {
   },
 
   // 获取调度器统计信息
-  async getSchedulerStats(type?: 'messages' | 'responses' | 'gemini' | 'chat' | 'images'): Promise<{
+  async getSchedulerStats(type?: ApiTab): Promise<{
     multiChannelMode: boolean
     activeChannelCount: number
     traceAffinityCount: number
@@ -145,16 +143,11 @@ export const channelsApi = {
   },
 
   // 获取渠道仪表盘数据（合并 channels + metrics + stats）
-  async getChannelDashboard(
-    type: 'messages' | 'responses' | 'gemini' | 'chat' | 'images' = 'messages'
-  ): Promise<ChannelDashboardResponse> {
+  async getChannelDashboard(type: ApiTab = 'messages'): Promise<ChannelDashboardResponse> {
     return apiRequest(`/${type}/channels/dashboard`)
   },
 
-  async getChannelLogs(
-    type: 'messages' | 'responses' | 'gemini' | 'chat' | 'images',
-    channelId: number
-  ): Promise<ChannelLogsResponse> {
+  async getChannelLogs(type: ApiTab, channelId: number): Promise<ChannelLogsResponse> {
     return apiRequest(`/${type}/channels/${channelId}/logs`)
   },
 

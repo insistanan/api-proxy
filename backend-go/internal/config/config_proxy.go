@@ -544,6 +544,8 @@ func (cm *ConfigManager) validateProxyConfig() error {
 		cm.config.GeminiUpstream,
 		cm.config.ChatUpstream,
 		cm.config.ImagesUpstream,
+		cm.config.EmbeddingsUpstream,
+		cm.config.DecisionsUpstream,
 	}
 	for _, upstreams := range groups {
 		for index := range upstreams {

@@ -19,7 +19,15 @@ type EffectiveConcurrencyLimit struct {
 }
 
 func upstreamLists(candidate *Config) [][]UpstreamConfig {
-	return [][]UpstreamConfig{candidate.Upstream, candidate.ResponsesUpstream, candidate.GeminiUpstream, candidate.ChatUpstream, candidate.ImagesUpstream}
+	return [][]UpstreamConfig{
+		candidate.Upstream,
+		candidate.ResponsesUpstream,
+		candidate.GeminiUpstream,
+		candidate.ChatUpstream,
+		candidate.ImagesUpstream,
+		candidate.EmbeddingsUpstream,
+		candidate.DecisionsUpstream,
+	}
 }
 
 func validateConcurrency(candidate *Config) error {
@@ -51,6 +59,12 @@ func (cm *ConfigManager) publishConfigLocked(candidate Config) {
 			upstream.upstreamProtocol = upstream.ServiceType
 			if group == 4 && upstream.ServiceType == "openai" {
 				upstream.upstreamProtocol = "images"
+			}
+			if group == 5 && upstream.ServiceType == "openai" {
+				upstream.upstreamProtocol = "embeddings"
+			}
+			if group == 6 && upstream.ServiceType == "openai" {
+				upstream.upstreamProtocol = "decisions"
 			}
 			if GetChannelStatus(upstream) == ChannelStatusDeleted {
 				continue

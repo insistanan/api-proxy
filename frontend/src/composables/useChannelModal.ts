@@ -13,12 +13,13 @@ import { compileImagesExtraParams } from '@/utils/imagesExtraParams'
 
 import { useQuickChannelDraft } from './useQuickChannelDraft'
 import { useChannelModels } from './useChannelModels'
+import type { ApiTab } from '@/services/channel-api'
 
 export interface ChannelModalProps {
   show: boolean
   saving?: boolean
   channel?: Channel | null
-  channelType: 'messages' | 'responses' | 'gemini' | 'chat' | 'images'
+  channelType: ApiTab
 }
 
 export interface ChannelModalEmit {
@@ -42,6 +43,9 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
   const quickDraft = useQuickChannelDraft()
   const { quickInput, quickChannelName, detectedBaseUrl, detectedBaseUrls, detectedApiKeys, detectedChannelName, detectedServiceType, generatedChannelName } = quickDraft
 
+  // Embeddings / Decisions 只接受 OpenAI 兼容上游，不允许从快速输入推断服务类型。
+  const isFixedOpenAIProtocol = () => props.channelType === 'embeddings' || props.channelType === 'decisions'
+
   // 切换模式时，将快速模式检测到的值同步到详细表单，但不清空快速模式输入
   const toggleMode = () => {
     if (isQuickMode.value) {
@@ -64,7 +68,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
         form.name = generatedChannelName.value
       }
       if (props.channelType !== 'images') {
-        form.serviceType = detectedServiceType.value || getDefaultServiceTypeValue()
+        form.serviceType = isFixedOpenAIProtocol() ? 'openai' : detectedServiceType.value || getDefaultServiceTypeValue()
       }
     }
     // 切换回快速模式时不做任何清理，保留 quickInput 原有内容
@@ -93,6 +97,12 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
     if (props.channelType === 'images') {
       return 'Images'
     }
+    if (props.channelType === 'embeddings') {
+      return 'Embeddings'
+    }
+    if (props.channelType === 'decisions') {
+      return 'Decisions'
+    }
     return 'Messages'
   }
 
@@ -104,7 +114,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
     if (props.channelType === 'responses') {
       return 'responses'
     }
-    if (props.channelType === 'chat' || props.channelType === 'images') {
+    if (props.channelType === 'chat' || props.channelType === 'images' || isFixedOpenAIProtocol()) {
       return 'openai'
     }
     return 'claude'
@@ -126,7 +136,11 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
       maxConcurrency: 5,
       clientIdentityMode: 'inherit' as const,
       name: generatedChannelName.value,
-      serviceType: props.channelType === 'images' ? form.serviceType as Channel['serviceType'] : detectedServiceType.value || getDefaultServiceTypeValue(),
+      serviceType: isFixedOpenAIProtocol()
+        ? 'openai'
+        : props.channelType === 'images'
+          ? form.serviceType as Channel['serviceType']
+          : detectedServiceType.value || getDefaultServiceTypeValue(),
       responsesModel: props.channelType === 'images' && form.serviceType === 'responses' ? form.responsesModel.trim() : '',
       ...(props.channelType === 'images' ? buildImagesOutputSettings(form) : {}),
       baseUrl: detectedBaseUrl.value,
@@ -160,6 +174,11 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
     if (props.channelType === 'chat') {
       return [
         { title: 'Chat', value: 'openai' }
+      ]
+    }
+    if (props.channelType === 'embeddings' || props.channelType === 'decisions') {
+      return [
+        { title: 'OpenAI 兼容', value: 'openai' }
       ]
     }
     if (props.channelType === 'responses') {
@@ -206,6 +225,18 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
         { title: 'gpt-5.6-terra', value: 'gpt-5.6-terra' },
       ]
     }
+    if (props.channelType === 'embeddings') {
+      return [
+        { title: 'text-embedding-3-small', value: 'text-embedding-3-small' },
+        { title: 'text-embedding-3-large', value: 'text-embedding-3-large' },
+        { title: 'text-embedding-ada-002', value: 'text-embedding-ada-002' },
+      ]
+    }
+    if (props.channelType === 'decisions') {
+      return [
+        { title: 'cloudflare/clef', value: 'cloudflare/clef' },
+      ]
+    }
     if (props.channelType === 'chat') {
       return [
         { title: 'gpt-4o', value: 'gpt-4o' },
@@ -234,6 +265,12 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
   const targetModelPlaceholder = computed(() => {
     if (props.channelType === 'images') {
       return '例如：sensenova-u1.5-lite'
+    }
+    if (props.channelType === 'embeddings') {
+      return '例如：text-embedding-3-small'
+    }
+    if (props.channelType === 'decisions') {
+      return '例如：cloudflare/clef'
     }
     if (props.channelType === 'gemini') {
       return '例如：gemini-2.0-flash'
@@ -720,7 +757,15 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
         duplicateKeyIndex.value = -1
         imagesExtraParamsError.value = ''
         imagesOutputError.value = ''
-        if (props.channelType !== 'images') void loadVisionChannels()
+        // 图片理解只属于对话类入口协议，透传协议不加载相关渠道。
+        if (
+          props.channelType === 'messages' ||
+          props.channelType === 'responses' ||
+          props.channelType === 'gemini' ||
+          props.channelType === 'chat'
+        ) {
+          void loadVisionChannels()
+        }
         void loadPools()
         void loadMappingTargetChannels()
 

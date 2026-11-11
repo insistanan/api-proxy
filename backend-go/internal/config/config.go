@@ -573,6 +573,16 @@ type Config struct {
 	ImagesPools       []ChannelPool    `json:"imagesPools,omitempty"`
 	ImagesLoadBalance string           `json:"imagesLoadBalance"`
 
+	// Embeddings 接口专用配置（OpenAI Embeddings API，独立渠道池）
+	EmbeddingsUpstream    []UpstreamConfig `json:"embeddingsUpstream"`
+	EmbeddingsPools       []ChannelPool    `json:"embeddingsPools,omitempty"`
+	EmbeddingsLoadBalance string           `json:"embeddingsLoadBalance"`
+
+	// Decisions 接口专用配置（Decisions API，独立渠道池）
+	DecisionsUpstream    []UpstreamConfig `json:"decisionsUpstream"`
+	DecisionsPools       []ChannelPool    `json:"decisionsPools,omitempty"`
+	DecisionsLoadBalance string           `json:"decisionsLoadBalance"`
+
 	// Fuzzy 模式：启用时模糊处理错误，所有非 2xx 错误都尝试 failover
 	FuzzyModeEnabled bool `json:"fuzzyModeEnabled"`
 
@@ -628,11 +638,15 @@ func cloneConfig(current Config) Config {
 	cloned.GeminiUpstream = cloneUpstreamList(current.GeminiUpstream)
 	cloned.ChatUpstream = cloneUpstreamList(current.ChatUpstream)
 	cloned.ImagesUpstream = cloneUpstreamList(current.ImagesUpstream)
+	cloned.EmbeddingsUpstream = cloneUpstreamList(current.EmbeddingsUpstream)
+	cloned.DecisionsUpstream = cloneUpstreamList(current.DecisionsUpstream)
 	cloned.MessagePools = slices.Clone(current.MessagePools)
 	cloned.ResponsesPools = slices.Clone(current.ResponsesPools)
 	cloned.GeminiPools = slices.Clone(current.GeminiPools)
 	cloned.ChatPools = slices.Clone(current.ChatPools)
 	cloned.ImagesPools = slices.Clone(current.ImagesPools)
+	cloned.EmbeddingsPools = slices.Clone(current.EmbeddingsPools)
+	cloned.DecisionsPools = slices.Clone(current.DecisionsPools)
 	cloned.Settings = cloneSettingsConfig(current.Settings)
 	return cloned
 }

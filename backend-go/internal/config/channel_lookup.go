@@ -37,6 +37,12 @@ func (cm *ConfigManager) FindChannelByID(id string) (LocatedChannel, bool) {
 	if located, ok := findChannelInSlice(cm.config.ImagesUpstream, "images", id); ok {
 		return located, true
 	}
+	if located, ok := findChannelInSlice(cm.config.EmbeddingsUpstream, "embeddings", id); ok {
+		return located, true
+	}
+	if located, ok := findChannelInSlice(cm.config.DecisionsUpstream, "decisions", id); ok {
+		return located, true
+	}
 	return LocatedChannel{}, false
 }
 

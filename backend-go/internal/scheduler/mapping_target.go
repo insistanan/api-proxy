@@ -78,6 +78,10 @@ func UpstreamsOfKind(cfg config.Config, kind ChannelKind) []config.UpstreamConfi
 		return cfg.ChatUpstream
 	case ChannelKindImages:
 		return cfg.ImagesUpstream
+	case ChannelKindEmbeddings:
+		return cfg.EmbeddingsUpstream
+	case ChannelKindDecisions:
+		return cfg.DecisionsUpstream
 	default:
 		return nil
 	}

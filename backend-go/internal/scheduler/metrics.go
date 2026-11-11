@@ -139,6 +139,10 @@ func urlManagerChannelKeyOrdinal(kind ChannelKind) int {
 		return 3
 	case ChannelKindImages:
 		return 4
+	case ChannelKindEmbeddings:
+		return 5
+	case ChannelKindDecisions:
+		return 6
 	default:
 		return -1
 	}

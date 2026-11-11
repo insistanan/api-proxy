@@ -1,4 +1,4 @@
-// 五协议渠道操作契约；类型与 HTTP 实现分离，避免调用方依赖完整 API 门面。
+// 各协议渠道操作契约；类型与 HTTP 实现分离，避免调用方依赖完整 API 门面。
 import type {
   Channel,
   ChannelDashboardResponse,
@@ -15,10 +15,17 @@ import type {
 } from '@/types'
 
 /** 渠道 API 类型，对应后端 scheduler.ChannelKind 与管理路由前缀。 */
-export type ApiTab = 'messages' | 'responses' | 'gemini' | 'chat' | 'images'
+export type ApiTab =
+  | 'messages'
+  | 'responses'
+  | 'gemini'
+  | 'chat'
+  | 'images'
+  | 'embeddings'
+  | 'decisions'
 
 /**
- * 定义五组渠道共用的操作方法和返回类型。
+ * 定义各组渠道共用的操作方法和返回类型。
  * channels.ts 中的 channelApi 工厂按入口协议生成对应实现。
  */
 export interface ChannelApi {

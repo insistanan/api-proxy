@@ -306,7 +306,7 @@
                 :copied="copiedChannelIndex === element.index"
                 :supports-vision-capability="supportsVisionCapability"
                 :can-delete="canDeleteChannel(element)"
-                :supports-ccs="channelType !== 'images'"
+                :supports-ccs="supportsCcs"
                 @edit="$emit('edit', element)"
                 @duplicate="duplicateChannel(element.index)"
                 @toggle-vision="toggleVisionCapability(element)"
@@ -362,7 +362,7 @@
           :copied="copiedChannelIndex === channel.index"
           :supports-vision-capability="supportsVisionCapability"
           :allow-reorder="false"
-          :supports-ccs="channelType !== 'images'"
+          :supports-ccs="supportsCcs"
           @edit="$emit('edit', channel)"
           @duplicate="duplicateChannel(channel.index)"
           @toggle-vision="toggleVisionCapability(channel)"
@@ -422,7 +422,7 @@
 
 <script setup lang="ts">
 import { ref, shallowRef, computed, watch, onMounted, onUnmounted } from 'vue'
-import { api, ApiError, channelApiByType, type Channel, type ChannelMetrics, type ChannelStatus, type TimeWindowStats, type ChannelRecentActivity } from '../services/api'
+import { api, ApiError, channelApiByType, type ApiTab, type Channel, type ChannelMetrics, type ChannelStatus, type TimeWindowStats, type ChannelRecentActivity } from '../services/api'
 import { useChannelActivity } from '../composables/useChannelActivity'
 import { defineLazyChart } from '@/utils/lazyChart'
 import { channelServiceLabel } from '@/utils/imagesChannelProtocol'
@@ -459,7 +459,7 @@ const KeyTrendChart = defineLazyChart(() => import('./KeyTrendChart.vue'))
 const props = defineProps<{
   channels: Channel[]
   currentChannelIndex: number
-  channelType: 'messages' | 'responses' | 'gemini' | 'chat' | 'images'
+  channelType: ApiTab
   // 可选：从父组件传入的 metrics 和 stats（使用 dashboard 接口时）
   dashboardMetrics?: ChannelMetrics[]
   dashboardStats?: {
@@ -653,6 +653,8 @@ const get24hStats = (channelIndex: number) => {
 const shouldShowVisionCapability = (channel: Channel): boolean => {
   return supportsVisionCapability.value && !!channel.visionCapable
 }
+
+const supportsCcs = computed(() => props.channelType !== 'images' && props.channelType !== 'embeddings' && props.channelType !== 'decisions')
 
 const toggleVisionCapability = async (channel: Channel) => {
   const nextValue = !channel.visionCapable

@@ -480,7 +480,7 @@ const headers = [
   { title: '操作', key: 'actions', sortable: false, width: 160 }
 ]
 
-const kindItems: ConversationKind[] = ['messages', 'responses', 'gemini', 'chat', 'images']
+const kindItems: ConversationKind[] = ['messages', 'responses', 'gemini', 'chat', 'images', 'embeddings', 'decisions']
 type ConversationStatusFilter = 'all' | 'active' | 'idle'
 type ConversationOrderMode = 'created' | 'status'
 
@@ -522,7 +522,9 @@ const routeOptions = ref<Record<ConversationKind, RouteSelectItem[]>>({
   responses: [],
   gemini: [],
   chat: [],
-  images: []
+  images: [],
+  embeddings: [],
+  decisions: []
 })
 let clockTimer: ReturnType<typeof setInterval> | null = null
 let refreshTimer: ReturnType<typeof setInterval> | null = null
@@ -696,7 +698,9 @@ const loadRouteOptions = async () => {
     responses: [],
     gemini: [],
     chat: [],
-    images: []
+    images: [],
+    embeddings: [],
+    decisions: []
   }
   for (const group of res.kinds) {
     next[group.kind] = group.channels.map(ch => ({
@@ -760,7 +764,7 @@ const formatModelChain = (item: ConversationEntry): string => {
 
 const fallbackModelLabel = (kind: ConversationKind): string => {
   if (kind === 'messages') return 'claude'
-  if (kind === 'responses' || kind === 'chat' || kind === 'images') return 'GPT'
+  if (kind === 'responses' || kind === 'chat' || kind === 'images' || kind === 'embeddings' || kind === 'decisions') return 'GPT'
   if (kind === 'gemini') return 'gemini'
   return '--'
 }
@@ -779,7 +783,7 @@ const formatRouteChannelModelPreview = (channel: ConversationRouteOptionChannel)
   const entries = normalizeModelMappingEntries(channel.modelMapping)
   if (entries.length === 0) {
     if (channel.kind === 'messages') return 'claude'
-    if (channel.kind === 'responses' || channel.kind === 'chat') return 'GPT'
+    if (channel.kind === 'responses' || channel.kind === 'chat' || channel.kind === 'embeddings' || channel.kind === 'decisions') return 'GPT'
     if (channel.kind === 'gemini') return 'gemini'
     return ''
   }

@@ -42,6 +42,7 @@ import { computed } from 'vue'
 import { useChannelStore } from '@/stores/channel'
 import { useDialogStore } from '@/stores/dialog'
 import ChannelOrchestration from '@/components/ChannelOrchestration.vue'
+import type { ApiTab } from '@/services/channel-api'
 
 // attrs 已显式 v-bind 到 ChannelOrchestration，关闭自动继承避免落到根 div 上
 defineOptions({ inheritAttrs: false })
@@ -50,9 +51,7 @@ defineOptions({ inheritAttrs: false })
 const props = defineProps<{ type: string }>()
 
 // 转换为类型安全的 channelType
-const channelType = computed(() =>
-  props.type as 'messages' | 'responses' | 'gemini' | 'chat' | 'images'
-)
+const channelType = computed(() => props.type as ApiTab)
 
 const channelStore = useChannelStore()
 const dialogStore = useDialogStore()

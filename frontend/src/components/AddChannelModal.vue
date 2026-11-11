@@ -74,6 +74,7 @@
 <script setup lang="ts">
 // 渠道弹窗入口：保持公开事件，编排逻辑与两种表单分别维护。
 import type { Channel } from '../services/api'
+import type { ApiTab } from '../services/channel-api'
 import { useChannelModal } from '@/composables/useChannelModal'
 import ChannelQuickForm from './channel/ChannelQuickForm.vue'
 import ChannelDetailedForm from './channel/ChannelDetailedForm.vue'
@@ -82,7 +83,7 @@ interface Props {
   show: boolean
   saving?: boolean
   channel?: Channel | null
-  channelType?: 'messages' | 'responses' | 'gemini' | 'chat' | 'images'
+  channelType?: ApiTab
 }
 
 const props = withDefaults(defineProps<Props>(), {

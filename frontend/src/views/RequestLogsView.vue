@@ -229,6 +229,8 @@ const typeItems: Array<{ title: string; value: TypeFilter }> = [
   { title: 'Gemini', value: 'gemini' },
   { title: 'Chat', value: 'chat' },
   { title: 'Images', value: 'images' },
+  { title: 'Embeddings', value: 'embeddings' },
+  { title: 'Decisions', value: 'decisions' },
   { title: '命令 AI 复核', value: 'cmd_gate' },
   { title: '内部 AI 调用', value: 'llmgate' }
 ]
@@ -419,6 +421,8 @@ const typeLabelMap: Record<LogAPIType, string> = {
   gemini: 'Gemini',
   chat: 'Chat',
   images: 'Images',
+  embeddings: 'Embeddings',
+  decisions: 'Decisions',
   cmd_gate: '命令 AI 复核',
   llmgate: '内部 AI 调用'
 }
@@ -429,6 +433,8 @@ const typeColorMap: Record<LogAPIType, string> = {
   gemini: 'success',
   chat: 'info',
   images: 'warning',
+  embeddings: 'info',
+  decisions: 'success',
   cmd_gate: 'warning',
   llmgate: 'secondary'
 }

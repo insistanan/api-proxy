@@ -119,11 +119,12 @@
 import { ref, computed, watch } from 'vue'
 import type { Channel } from '@/services/api'
 import { api, testChannelWithModel } from '@/services/api'
+import type { ApiTab } from '@/services/channel-api'
 
 const props = defineProps<{
   modelValue: boolean
   channel: Channel | null
-  apiType: 'messages' | 'responses' | 'gemini' | 'chat' | 'images'
+  apiType: ApiTab
 }>()
 
 const emit = defineEmits<{

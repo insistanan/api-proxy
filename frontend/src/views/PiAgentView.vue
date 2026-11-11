@@ -345,7 +345,9 @@ const protocolForChannelType: Record<ApiTab, string> = {
   responses: 'openai-responses',
   gemini: 'google-generative-ai',
   chat: 'openai-completions',
-  images: 'openai-completions'
+  images: 'openai-completions',
+  embeddings: 'openai-completions',
+  decisions: 'openai-completions'
 }
 
 // ---- 编辑模型接口 ----

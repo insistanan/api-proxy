@@ -23,6 +23,10 @@ func upstreamsByKind(cfg config.Config, kind scheduler.ChannelKind) ([]config.Up
 		return cfg.ChatUpstream, cfg.ChatLoadBalance
 	case scheduler.ChannelKindImages:
 		return cfg.ImagesUpstream, cfg.ImagesLoadBalance
+	case scheduler.ChannelKindEmbeddings:
+		return cfg.EmbeddingsUpstream, cfg.EmbeddingsLoadBalance
+	case scheduler.ChannelKindDecisions:
+		return cfg.DecisionsUpstream, cfg.DecisionsLoadBalance
 	default:
 		return nil, ""
 	}
@@ -102,6 +106,10 @@ func GetSchedulerStats(sch *scheduler.ChannelScheduler) gin.HandlerFunc {
 			kind = scheduler.ChannelKindChat
 		case "images":
 			kind = scheduler.ChannelKindImages
+		case "embeddings":
+			kind = scheduler.ChannelKindEmbeddings
+		case "decisions":
+			kind = scheduler.ChannelKindDecisions
 		}
 
 		metricsManager := sch.MetricsManager(kind)

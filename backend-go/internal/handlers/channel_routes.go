@@ -21,7 +21,7 @@ type ChannelRouteDeps struct {
 // 大多数端点（CRUD / key 管理 / pools / reorder / status / promotion / metrics / ping）
 // 对所有渠道类型完全一致，下列字段用于装配已绑定协议的 handler：
 //   - LoadBalance：该渠道类型是否注册 /{kind}/loadbalance 端点
-//   - Dashboard：该渠道类型的 dashboard 实现（当前五协议共用按 kind 取快照的实现）
+//   - Dashboard：该渠道类型的 dashboard 实现（当前各协议共用按 kind 取快照的实现）
 //   - SchedulerStats：该渠道类型是否注册 /{kind}/channels/scheduler/stats 端点
 type ChannelRouteOptions struct {
 	Crud           *channelcrud.Handlers

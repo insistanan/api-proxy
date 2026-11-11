@@ -7,7 +7,7 @@ import { api, ApiError, channelApiByType, type ApiTab, type Channel, type Channe
  * 渠道数据管理 Store
  *
  * 职责：
- * - 管理五种 API 类型的渠道数据
+ * - 管理各 API 类型的渠道数据
  * - 管理渠道指标和统计数据
  * - 提供渠道操作方法（添加、编辑、删除、测试延迟等）
  * - 管理自动刷新定时器
@@ -23,7 +23,7 @@ export const useChannelStore = defineStore('channel', () => {
   const currentChannelType = computed(() => {
     const route = router.currentRoute.value
     const type = route.params.type as ApiTab
-    return (type === 'messages' || type === 'responses' || type === 'gemini' || type === 'chat' || type === 'images') ? type : 'messages'
+    return (type === 'messages' || type === 'responses' || type === 'gemini' || type === 'chat' || type === 'images' || type === 'embeddings' || type === 'decisions') ? type : 'messages'
   })
 
   // 监听路由变化，同步 activeTab（确保兼容性）
@@ -37,7 +37,9 @@ export const useChannelStore = defineStore('channel', () => {
     responses: { channels: [], current: -1, loadBalance: 'failover' },
     gemini: { channels: [], current: -1, loadBalance: 'failover' },
     chat: { channels: [], current: -1, loadBalance: 'failover' },
-    images: { channels: [], current: -1, loadBalance: 'failover' }
+    images: { channels: [], current: -1, loadBalance: 'failover' },
+    embeddings: { channels: [], current: -1, loadBalance: 'failover' },
+    decisions: { channels: [], current: -1, loadBalance: 'failover' }
   })
 
   // Dashboard 是只读响应快照，整体替换；不为大量统计段创建深层响应式代理。
@@ -72,6 +74,16 @@ export const useChannelStore = defineStore('channel', () => {
       metrics: [],
       stats: undefined,
       recentActivity: undefined
+    },
+    embeddings: {
+      metrics: [],
+      stats: undefined,
+      recentActivity: undefined
+    },
+    decisions: {
+      metrics: [],
+      stats: undefined,
+      recentActivity: undefined
     }
   })
 
@@ -97,7 +109,7 @@ export const useChannelStore = defineStore('channel', () => {
   // 根据当前 Tab 返回对应的渠道数据
   const currentChannelsData = computed(() => channelsDataMap.value[activeTab.value])
 
-  // 各类型对应的统一 API 方法集（收敛：store 内不再散落 5 组命名方法）
+  // 各类型对应的统一 API 方法集（收敛：store 内不再散落各协议命名方法）
   const tabApi = (tab: ApiTab = activeTab.value) => channelApiByType(tab)
 
   // 根据当前 Tab 返回对应的 Dashboard 数据（独立缓存，避免切换闪烁）
@@ -352,7 +364,9 @@ export const useChannelStore = defineStore('channel', () => {
       responses: { ...empty },
       gemini: { ...empty },
       chat: { ...empty },
-      images: { ...empty }
+      images: { ...empty },
+      embeddings: { ...empty },
+      decisions: { ...empty }
     }
 
     // 清空所有 tab 的独立缓存
@@ -361,7 +375,9 @@ export const useChannelStore = defineStore('channel', () => {
       responses: { metrics: [], stats: undefined, recentActivity: undefined },
       gemini: { metrics: [], stats: undefined, recentActivity: undefined },
       chat: { metrics: [], stats: undefined, recentActivity: undefined },
-      images: { metrics: [], stats: undefined, recentActivity: undefined }
+      images: { metrics: [], stats: undefined, recentActivity: undefined },
+      embeddings: { metrics: [], stats: undefined, recentActivity: undefined },
+      decisions: { metrics: [], stats: undefined, recentActivity: undefined }
     }
 
     // 重置状态标志，避免注销后状态残留

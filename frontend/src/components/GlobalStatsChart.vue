@@ -74,11 +74,12 @@ import { useTheme } from 'vuetify'
 import VueApexCharts from 'vue3-apexcharts'
 import type { ApexOptions } from 'apexcharts'
 import { api, channelApiByType, type GlobalStatsHistoryResponse, type GlobalStatsSummary } from '../services/api'
+import type { ApiTab } from '../services/channel-api'
 
 const apexchart = VueApexCharts
 
 const props = withDefaults(defineProps<{
-  apiType: 'messages' | 'responses' | 'gemini' | 'chat' | 'images'
+  apiType: ApiTab
   compact?: boolean
 }>(), { compact: false })
 

@@ -60,12 +60,13 @@ import { computed, ref, watch } from 'vue'
 import type { Channel } from '@/types/channel'
 import { buildCcsDeepLink, CCS_APP_BY_KIND, CCS_APP_OPTIONS, type CcsApp } from '@/utils/ccsDeepLink'
 import { api } from '@/services/api'
+import type { ApiTab } from '@/services/channel-api'
 
 const props = defineProps<{
   modelValue: boolean
   channel: Channel | null
   /** 当前渠道池，决定默认目标 app */
-  channelType: 'messages' | 'responses' | 'gemini' | 'chat' | 'images'
+  channelType: ApiTab
   /** 是否已配置 CC Switch 路径：导入 or 复制链接 */
   ccsConfigured: boolean
 }>()

@@ -120,7 +120,7 @@
         :rules="[(value: unknown) => Number.isSafeInteger(Number(value)) && Number(value) > 0 || '请输入正整数']"
       />
     </v-col>
-    <v-col cols="12" md="6">
+    <v-col v-if="supportsClientIdentity" cols="12" md="6">
       <v-select
         v-model="form.clientIdentityMode"
         label="是否伪装"
@@ -562,7 +562,7 @@
     </v-col>
 
     <!-- 图片理解能力与图片理解层 -->
-    <v-col v-if="channelType !== 'images'" cols="12">
+    <v-col v-if="supportsConversationFeatures" cols="12">
       <v-card variant="outlined" rounded="lg">
         <v-card-title class="d-flex align-center ga-2 pa-4 pb-2">
           <v-icon color="primary">mdi-image-search-outline</v-icon>
@@ -618,7 +618,7 @@
     </v-col>
 
     <!-- 对话与缓存兼容性 -->
-    <v-col v-if="channelType !== 'images'" cols="12">
+    <v-col v-if="supportsConversationFeatures" cols="12">
       <v-card variant="outlined" rounded="lg">
         <v-card-title class="d-flex align-center ga-2 pa-4 pb-2">
           <v-icon color="primary">mdi-chat-outline</v-icon>
@@ -726,6 +726,7 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { useChannelModal } from '@/composables/useChannelModal'
 import ModelMappingEditor from '../ModelMappingEditor.vue'
 import ImagesChannelProtocolFields from '../ImagesChannelProtocolFields.vue'
@@ -780,6 +781,13 @@ const {
   channelType,
   channel
 } = props.editor
+
+// 是否伪装只在 Messages / Responses 渠道可配置。
+const supportsClientIdentity = computed(() => channelType.value === 'messages' || channelType.value === 'responses')
+// 图片理解与对话缓存只属于对话类入口协议，Embeddings / Decisions 为纯透传。
+const supportsConversationFeatures = computed(() =>
+  ['messages', 'responses', 'gemini', 'chat'].includes(channelType.value)
+)
 </script>
 
 <style scoped src="../../styles/channel-modal.css"></style>

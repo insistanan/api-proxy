@@ -57,13 +57,14 @@ import { useTheme } from 'vuetify'
 import VueApexCharts from 'vue3-apexcharts'
 import type { ApexOptions } from 'apexcharts'
 import { api, channelApiByType, type ChannelKeyMetricsHistoryResponse } from '../services/api'
+import type { ApiTab } from '../services/channel-api'
 import { useAutoRefresh } from '../composables/useAutoRefresh'
 
 const apexchart = VueApexCharts
 
 const props = defineProps<{
   channelId: number
-  channelType: 'messages' | 'responses' | 'gemini' | 'chat' | 'images'
+  channelType: ApiTab
 }>()
 
 type ViewMode = 'traffic' | 'tokens' | 'cache'

@@ -327,7 +327,9 @@ const protocolForChannelType: Record<ApiTab, string> = {
   responses: 'openai-responses',
   gemini: 'gemini-generate-content',
   chat: 'openai-completions',
-  images: 'openai-completions'
+  images: 'openai-completions',
+  embeddings: 'openai-completions',
+  decisions: 'openai-completions'
 }
 
 const reasoningLevels = [

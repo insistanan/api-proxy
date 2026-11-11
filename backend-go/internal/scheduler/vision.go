@@ -40,6 +40,10 @@ func (s *ChannelScheduler) SelectVisionChannel(ctx context.Context, kind Channel
 		upstreams = cfg.ChatUpstream
 	case ChannelKindImages:
 		upstreams = cfg.ImagesUpstream
+	case ChannelKindEmbeddings:
+		upstreams = cfg.EmbeddingsUpstream
+	case ChannelKindDecisions:
+		upstreams = cfg.DecisionsUpstream
 	default:
 		return nil, fmt.Errorf("不支持的图片理解渠道类型: %s", kind)
 	}
@@ -125,6 +129,10 @@ func (s *ChannelScheduler) listVisionChannels(ctx context.Context, kind ChannelK
 		upstreams = cfg.ChatUpstream
 	case ChannelKindImages:
 		upstreams = cfg.ImagesUpstream
+	case ChannelKindEmbeddings:
+		upstreams = cfg.EmbeddingsUpstream
+	case ChannelKindDecisions:
+		upstreams = cfg.DecisionsUpstream
 	default:
 		return nil
 	}

@@ -478,6 +478,10 @@ func noActiveChannelError(kind ChannelKind) error {
 		return fmt.Errorf("没有可用的活跃 Chat 渠道")
 	case ChannelKindImages:
 		return fmt.Errorf("没有可用的活跃 Images 渠道")
+	case ChannelKindEmbeddings:
+		return fmt.Errorf("没有可用的活跃 Embeddings 渠道")
+	case ChannelKindDecisions:
+		return fmt.Errorf("没有可用的活跃 Decisions 渠道")
 	default:
 		return fmt.Errorf("不支持的渠道类型: %s", kind)
 	}

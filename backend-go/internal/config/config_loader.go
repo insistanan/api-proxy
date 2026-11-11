@@ -203,6 +203,12 @@ func (cm *ConfigManager) createDefaultConfig() error {
 		ImagesUpstream:            []UpstreamConfig{},
 		ImagesPools:               []ChannelPool{defaultChannelPool()},
 		ImagesLoadBalance:         "failover",
+		EmbeddingsUpstream:        []UpstreamConfig{},
+		EmbeddingsPools:           []ChannelPool{defaultChannelPool()},
+		EmbeddingsLoadBalance:     "failover",
+		DecisionsUpstream:         []UpstreamConfig{},
+		DecisionsPools:            []ChannelPool{defaultChannelPool()},
+		DecisionsLoadBalance:      "failover",
 		FuzzyModeEnabled:          true, // 默认启用 Fuzzy 模式
 		ClaudeCodeDisguiseEnabled: false,
 		CodexDisguiseEnabled:      false,
@@ -263,6 +269,20 @@ func applyConfigDefaultsTo(candidate *Config, rawJSON []byte) bool {
 		needSave = true
 	} else if candidate.ImagesLoadBalance != "failover" {
 		candidate.ImagesLoadBalance = "failover"
+		needSave = true
+	}
+	if candidate.EmbeddingsLoadBalance == "" {
+		candidate.EmbeddingsLoadBalance = "failover"
+		needSave = true
+	} else if candidate.EmbeddingsLoadBalance != "failover" {
+		candidate.EmbeddingsLoadBalance = "failover"
+		needSave = true
+	}
+	if candidate.DecisionsLoadBalance == "" {
+		candidate.DecisionsLoadBalance = "failover"
+		needSave = true
+	} else if candidate.DecisionsLoadBalance != "failover" {
+		candidate.DecisionsLoadBalance = "failover"
 		needSave = true
 	}
 
@@ -339,6 +359,8 @@ func applyConfigDefaultsTo(candidate *Config, rawJSON []byte) bool {
 		{&candidate.GeminiPools, candidate.GeminiUpstream, "Gemini"},
 		{&candidate.ChatPools, candidate.ChatUpstream, "Chat"},
 		{&candidate.ImagesPools, candidate.ImagesUpstream, "Images"},
+		{&candidate.EmbeddingsPools, candidate.EmbeddingsUpstream, "Embeddings"},
+		{&candidate.DecisionsPools, candidate.DecisionsUpstream, "Decisions"},
 	}
 	for _, set := range poolSets {
 		normalized, changed, err := ensurePoolsAndAssignments(*set.pools, set.upstreams)
@@ -513,6 +535,12 @@ func migrateOldFormatIn(candidate *Config) bool {
 	if migrateUpstreamsList(candidate.ImagesUpstream, 0, "Images") {
 		needMigration = true
 	}
+	if migrateUpstreamsList(candidate.EmbeddingsUpstream, 0, "Embeddings") {
+		needMigration = true
+	}
+	if migrateUpstreamsList(candidate.DecisionsUpstream, 0, "Decisions") {
+		needMigration = true
+	}
 
 	return needMigration
 }
@@ -525,6 +553,8 @@ func normalizeChannelListsIn(candidate *Config) bool {
 		candidate.GeminiUpstream,
 		candidate.ChatUpstream,
 		candidate.ImagesUpstream,
+		candidate.EmbeddingsUpstream,
+		candidate.DecisionsUpstream,
 	}
 	for _, upstreams := range lists {
 		changed = ensureUpstreamIDs(upstreams) || changed
@@ -581,6 +611,8 @@ func validateChannelKeysIn(candidate *Config) bool {
 	modified = validateUpstreamKeys(candidate.GeminiUpstream, "Gemini") || modified
 	modified = validateUpstreamKeys(candidate.ChatUpstream, "Chat") || modified
 	modified = validateUpstreamKeys(candidate.ImagesUpstream, "Images") || modified
+	modified = validateUpstreamKeys(candidate.EmbeddingsUpstream, "Embeddings") || modified
+	modified = validateUpstreamKeys(candidate.DecisionsUpstream, "Decisions") || modified
 
 	return modified
 }
@@ -609,6 +641,8 @@ func validateProxyConfigOf(candidate *Config) error {
 		candidate.GeminiUpstream,
 		candidate.ChatUpstream,
 		candidate.ImagesUpstream,
+		candidate.EmbeddingsUpstream,
+		candidate.DecisionsUpstream,
 	}
 	for _, upstreams := range groups {
 		for index := range upstreams {
