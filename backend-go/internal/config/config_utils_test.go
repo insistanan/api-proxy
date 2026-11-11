@@ -251,6 +251,37 @@ func TestUpstreamUpdateUnmarshalLegacyModelMapping(t *testing.T) {
 	assertStringSlice(t, update.ModelMapping["sonnet"], []string{"gpt-4o"})
 }
 
+func TestExplicitActivationRequestsFailureStateReset(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		input string
+		reset bool
+	}{
+		{"active", `{"status":"active"}`, true},
+		{"normalized-active", `{"status":" ACTIVE "}`, true},
+		{"suspended", `{"status":"suspended"}`, false},
+		{"disabled", `{"status":"disabled"}`, false},
+		{"unchanged-status", `{"name":"改名"}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, status := range []string{ChannelStatusActive, ChannelStatusSuspended} {
+				upstream := UpstreamConfig{Status: status}
+				var update UpstreamUpdate
+				if err := json.Unmarshal([]byte(tc.input), &update); err != nil {
+					t.Fatal(err)
+				}
+				reset, err := applyCommonUpdates(&upstream, 0, update, "test")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if reset != tc.reset {
+					t.Fatalf("原状态=%s，更新=%s，重置=%v，期望=%v", status, tc.input, reset, tc.reset)
+				}
+			}
+		})
+	}
+}
+
 func assertStringSlice(t *testing.T, got []string, want []string) {
 	t.Helper()
 	if len(got) != len(want) {

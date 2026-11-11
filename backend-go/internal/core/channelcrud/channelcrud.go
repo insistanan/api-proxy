@@ -338,7 +338,7 @@ func (h *Handlers) ReorderChannels(c *gin.Context) {
 	c.JSON(200, gin.H{"success": true, "message": "渠道顺序已更新"})
 }
 
-// SetChannelStatus 设置渠道状态
+// SetChannelStatus 设置渠道状态；手动激活同时重置运行时熔断。
 func (h *Handlers) SetChannelStatus(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)
@@ -355,7 +355,12 @@ func (h *Handlers) SetChannelStatus(c *gin.Context) {
 		return
 	}
 
-	if err := h.ops.SetStatus(id, req.Status); err != nil {
+	err = h.ops.SetStatus(id, req.Status)
+	if (err == nil || config.IsCommittedError(err)) &&
+		strings.EqualFold(strings.TrimSpace(req.Status), config.ChannelStatusActive) {
+		h.resetMetrics(id)
+	}
+	if err != nil {
 		if strings.Contains(err.Error(), "无效的上游索引") {
 			c.JSON(404, gin.H{"error": "Channel not found"})
 			return

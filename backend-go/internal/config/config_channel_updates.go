@@ -111,6 +111,10 @@ func applyCommonUpdates(upstream *UpstreamConfig, index int, updates UpstreamUpd
 		if err := setUpstreamStatus(upstream, *updates.Status, time.Now()); err != nil {
 			return false, err
 		}
+		// 编辑表单显式设为活跃时，也需要解除独立于配置状态的运行时熔断。
+		if upstream.Status == ChannelStatusActive {
+			shouldResetMetrics = true
+		}
 	}
 	if updates.PromotionUntil != nil {
 		upstream.PromotionUntil = updates.PromotionUntil

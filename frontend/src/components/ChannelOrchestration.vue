@@ -57,7 +57,7 @@
               class="channel-status-toggle"
               role="button"
               tabindex="0"
-              title="点击切换活跃或熔断"
+              :title="shouldResumeChannel(element) ? '点击恢复为活跃并重置熔断' : '点击切换为熔断'"
               @click.stop="toggleChannelPrimaryStatus(element)"
               @keydown.enter.stop="toggleChannelPrimaryStatus(element)"
               @keydown.space.prevent.stop="toggleChannelPrimaryStatus(element)"
@@ -705,8 +705,12 @@ const setChannelStatus = async (channelId: number, status: ChannelStatus) => {
     await channelApiByType(props.channelType).setStatus(channelId, status)
     emit('refresh')
   } catch (error) {
-    console.error('Failed to set channel status:', error)
     const errorMessage = error instanceof Error ? error.message : '未知错误'
+    if (error instanceof ApiError && error.committed) {
+      emit('refresh')
+      emit('error', `${errorMessage}（状态已写入，请刷新查看实际状态，请勿重复提交）`)
+      return
+    }
     emit('error', `设置渠道状态失败: ${errorMessage}`)
   }
 }
@@ -716,20 +720,22 @@ const enableChannel = async (channelId: number) => {
   await setChannelStatus(channelId, 'active')
 }
 
-// 恢复渠道（重置指标并设为 active）
+// 激活接口统一重置两层熔断，避免分两次请求造成恢复到一半的状态。
 const resumeChannel = async (channelId: number) => {
-  try {
-    await channelApiByType(props.channelType).resumeChannel(channelId)
-    await setChannelStatus(channelId, 'active')
-  } catch (error) {
-    console.error('Failed to resume channel:', error)
-  }
+  await setChannelStatus(channelId, 'active')
+}
+
+const shouldResumeChannel = (channel: Channel): boolean => {
+  const status = channel.status || 'active'
+  const circuitState = getChannelMetrics(channel.index)?.circuitState
+  return status === 'suspended' ||
+    (status === 'active' && (circuitState === 'open' || circuitState === 'half_open'))
 }
 
 const toggleChannelPrimaryStatus = async (channel: Channel) => {
   const currentStatus = channel.status || 'active'
 
-  if (currentStatus === 'suspended') {
+  if (shouldResumeChannel(channel)) {
     await resumeChannel(channel.index)
     return
   }

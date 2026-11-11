@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/atomicfile"
+	"github.com/insistanan/api-proxy/internal/circuit"
 	"github.com/insistanan/api-proxy/internal/config"
 	"github.com/insistanan/api-proxy/internal/metrics"
 	"github.com/insistanan/api-proxy/internal/scheduler"
@@ -68,7 +69,7 @@ func TestCommittedOperationsFinishSchedulerCleanup(t *testing.T) {
 		{"before-commit", errors.New("备份失败"), false},
 		{"after-commit", &atomicfile.CommittedError{Phase: atomicfile.PhaseDirSync, Err: errors.New("目录同步失败")}, true},
 	}
-	for _, operation := range []string{"update", "delete"} {
+	for _, operation := range []string{"update", "delete", "activate", "suspend"} {
 		for _, tc := range cases {
 			t.Run(operation+"/"+tc.name, func(t *testing.T) {
 				cm, err := config.NewConfigManager(filepath.Join(t.TempDir(), "config.json"))
@@ -88,12 +89,17 @@ func TestCommittedOperationsFinishSchedulerCleanup(t *testing.T) {
 				trace := session.NewTraceAffinityManager()
 				sch := scheduler.NewChannelScheduler(cm, mm, nil, nil, nil, nil, trace, nil)
 				t.Cleanup(sch.Stop)
+				breaker := circuit.NewManager(circuit.Config{FailureThreshold: 1, Cooldown: time.Hour}, true)
+				sch.SetCircuitManager(breaker)
+				breaker.RecordFailure("messages", 0)
+				breaker.RecordFailure("responses", 0)
 				mm.RecordFailure(up.BaseURL, up.APIKeys[0], 0)
 				trace.SetPreferredChannelForKind("messages", "conversation", 0)
 				h := New(Ops{
-					Kind:   scheduler.ChannelKindMessages,
-					Update: func(int, config.UpstreamUpdate) (bool, error) { return true, tc.err },
-					Remove: func(int) (*config.UpstreamConfig, error) { return &up, tc.err },
+					Kind:      scheduler.ChannelKindMessages,
+					Update:    func(int, config.UpstreamUpdate) (bool, error) { return true, tc.err },
+					Remove:    func(int) (*config.UpstreamConfig, error) { return &up, tc.err },
+					SetStatus: func(int, string) error { return tc.err },
 				}, sch)
 				rr := httptest.NewRecorder()
 				ctx, _ := gin.CreateTestContext(rr)
@@ -102,8 +108,16 @@ func TestCommittedOperationsFinishSchedulerCleanup(t *testing.T) {
 				ctx.Request.Header.Set("Content-Type", "application/json")
 				if operation == "update" {
 					h.UpdateUpstream(ctx)
-				} else {
+				} else if operation == "delete" {
 					h.DeleteUpstream(ctx)
+				} else {
+					status := "active"
+					if operation == "suspend" {
+						status = "suspended"
+					}
+					ctx.Request = httptest.NewRequest(http.MethodPatch, "/0/status", strings.NewReader(`{"status":"`+status+`"}`))
+					ctx.Request.Header.Set("Content-Type", "application/json")
+					h.SetChannelStatus(ctx)
 				}
 				wantStatus := http.StatusOK
 				if tc.err != nil {
@@ -130,10 +144,20 @@ func TestCommittedOperationsFinishSchedulerCleanup(t *testing.T) {
 						t.Fatalf("删除清理时机不符: count=%d affinity=%v applied=%v", count, affinityExists, applied)
 					}
 				} else {
+					reset := applied && operation != "suspend"
 					rate := mm.CalculateChannelFailureRate(up.BaseURL, up.APIKeys, 0)
-					if (rate == 0) != applied || !affinityExists {
+					if (rate == 0) != reset || !affinityExists {
 						t.Fatalf("更新重置时机不符: failureRate=%v affinity=%v applied=%v", rate, affinityExists, applied)
 					}
+					if snap := breaker.SnapshotEntry("messages", 0); (snap.State == circuit.StateClosed) != reset {
+						t.Fatalf("渠道级熔断重置时机不符: %+v, reset=%v", snap, reset)
+					}
+					if count := mm.GetChannelRequestCount(up.BaseURL, up.APIKeys, 0); count != 1 {
+						t.Fatalf("恢复熔断不应清空历史请求数: %d", count)
+					}
+				}
+				if snap := breaker.SnapshotEntry("responses", 0); snap.State != circuit.StateOpen {
+					t.Fatalf("不应重置其他协议的同索引渠道: %+v", snap)
 				}
 			})
 		}

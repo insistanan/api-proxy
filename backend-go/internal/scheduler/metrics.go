@@ -53,7 +53,7 @@ func (s *ChannelScheduler) ShouldSuspendKey(baseURL, apiKey string, channelIndex
 	return s.getMetricsManager(kind).ShouldSuspendKey(baseURL, apiKey, channelIndex)
 }
 
-// ResetChannelMetrics 重置渠道所有 Key 的熔断/失败状态（保留历史统计）
+// ResetChannelMetrics 重置渠道级熔断器及所有 Key 的熔断/失败状态（保留历史统计）
 // 用于：1) 手动恢复熔断 2) 更换 API Key 后重置熔断状态
 func (s *ChannelScheduler) ResetChannelMetrics(channelIndex int, kind ChannelKind) {
 	upstream := s.getUpstreamByIndex(channelIndex, kind)
@@ -66,6 +66,7 @@ func (s *ChannelScheduler) ResetChannelMetrics(channelIndex int, kind ChannelKin
 			metricsManager.ResetKeyFailureState(baseURL, apiKey, channelIndex)
 		}
 	}
+	s.ResetCircuitBreaker(string(kind), channelIndex)
 	prefix := kindSchedulerLogPrefix(kind)
 	log.Printf("[%s-Reset] 渠道 [%d] %s 的熔断状态已重置（保留历史统计）", prefix, channelIndex, upstream.Name)
 }
