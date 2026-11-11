@@ -31,9 +31,11 @@ const (
 	logWriteTimeout      = 5 * time.Second
 	cleanupBatchSize     = 1000
 	// 自动清理和日志写入共用一条连接。单批预算到点就中断，避免大正文把写入堵住。
-	cleanupTimeout = 2 * time.Second
+	cleanupTimeout = 1 * time.Second
 	// 流量和请求日志带正文。一次删一千行很容易超预算，超时还会把 WAL 里这笔删除整批回滚。
 	cleanupShrinkBatch = 32
+	// 某张表报错或单行仍超时后暂停清理这么久，避免每分钟重复扫描同一张大表。
+	cleanupRetryInterval = time.Hour
 )
 
 type queuedWrite struct {
@@ -71,9 +73,11 @@ type Store struct {
 	lastDiagnostic time.Time
 
 	// cleanupBatch / cleanupCeiling 按 app、traffic、request、body 记住删得动的批量。
-	// ceiling 是上次超时的批量，本进程内不再涨回去。只在持有 s.mu 时访问。
-	cleanupBatch   [4]int
-	cleanupCeiling [4]int
+	// ceiling 是上次超时的批量，本进程内不再涨回去；cleanupSkipUntil 表示该表暂停清理到什么时候。
+	// 只在持有 s.mu 时访问。
+	cleanupBatch     [4]int
+	cleanupCeiling   [4]int
+	cleanupSkipUntil [4]time.Time
 }
 
 func logDatabaseURI(path string) (string, error) {
@@ -142,6 +146,8 @@ func initLogSchema(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_traffic_logs_unix ON traffic_logs(unix_milli, id)`,
 		`CREATE INDEX IF NOT EXISTS idx_traffic_logs_request ON traffic_logs(request_id, unix_milli, id)`,
 		`CREATE TABLE IF NOT EXISTS traffic_bodies (body_hash TEXT PRIMARY KEY, body TEXT NOT NULL, created_at INTEGER NOT NULL)`,
+		// 清理按 created_at 找过期正文；覆盖索引让判断不必读取大正文所在的整行。
+		`CREATE INDEX IF NOT EXISTS idx_traffic_bodies_created ON traffic_bodies(created_at, body_hash)`,
 		`CREATE TABLE IF NOT EXISTS traffic_body_refs (traffic_id INTEGER PRIMARY KEY, body_hash TEXT NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS idx_traffic_body_refs_hash ON traffic_body_refs(body_hash)`,
 		`CREATE TRIGGER IF NOT EXISTS delete_traffic_body_ref AFTER DELETE ON traffic_logs

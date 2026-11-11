@@ -2,6 +2,7 @@ package logger
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -45,7 +46,7 @@ func TestCleanupDeletesOlderThanYesterday(t *testing.T) {
 	if err := store.Flush(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.cleanupExpired(); err != nil {
+	if _, _, err := store.cleanupExpired(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -62,6 +63,46 @@ func TestCleanupDeletesOlderThanYesterday(t *testing.T) {
 	}
 	if len(got) != 2 || got[0] != "yesterday" || got[1] != "today" {
 		t.Fatalf("got %v, want [yesterday today]", got)
+	}
+}
+
+func TestCleanupFailureDoesNotBlockOtherTables(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "logs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	old := RetentionCutoff(time.Now()).Add(-time.Hour)
+	if err := store.RecordAppLog(AppLog{UnixMilli: old.UnixMilli(), Message: "old"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordTraffic(TrafficLog{
+		UnixMilli: old.UnixMilli(),
+		RequestID: "old",
+		Phase:     PhaseClientRequest,
+		Body:      strings.Repeat("x", 5000),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`DROP TABLE app_logs`); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.cleanupExpired(); err == nil {
+		t.Fatal("app_logs 不可清理时必须返回错误")
+	}
+	var bodies int
+	if err := store.readDB.QueryRow(`SELECT COUNT(*) FROM traffic_bodies`).Scan(&bodies); err != nil {
+		t.Fatal(err)
+	}
+	if bodies != 0 {
+		t.Fatal("一张表失败后，其他表的过期正文仍应被清理")
+	}
+	if _, _, err := store.cleanupExpired(); err != nil {
+		t.Fatalf("失败表在暂停期内不应再次报错: %v", err)
 	}
 }
 
@@ -106,19 +147,25 @@ func TestNextCleanupBatchAvoidsRetryingASizeThatTimedOut(t *testing.T) {
 }
 
 func TestIsCleanupTimeout(t *testing.T) {
-	if !isCleanupTimeout(context.DeadlineExceeded) {
+	ctx := context.Background()
+	if !isCleanupTimeout(ctx, context.DeadlineExceeded) {
 		t.Fatal("context deadline 应视为本批超时")
 	}
-	if !isCleanupTimeout(fmt.Errorf("清理过期日志失败: %w", context.DeadlineExceeded)) {
+	if !isCleanupTimeout(ctx, fmt.Errorf("清理过期日志失败: %w", context.DeadlineExceeded)) {
 		t.Fatal("包装后的 deadline 应视为本批超时")
 	}
-	if !isCleanupTimeout(fmt.Errorf("Operation terminated by sqlite3_interrupt()(SQLITE_INTERRUPT)")) {
+	if !isCleanupTimeout(ctx, fmt.Errorf("Operation terminated by sqlite3_interrupt()(SQLITE_INTERRUPT)")) {
 		t.Fatal("sqlite 中断应视为本批超时")
 	}
-	if isCleanupTimeout(fmt.Errorf("database is locked")) {
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if !isCleanupTimeout(canceled, errors.New("interrupted (9)")) {
+		t.Fatal("ctx 已到期时驱动返回的中断错误应视为本批超时")
+	}
+	if isCleanupTimeout(ctx, fmt.Errorf("database is locked")) {
 		t.Fatal("锁冲突不能当成批量过大")
 	}
-	if isCleanupTimeout(nil) {
+	if isCleanupTimeout(ctx, nil) {
 		t.Fatal("nil 不是超时")
 	}
 }
