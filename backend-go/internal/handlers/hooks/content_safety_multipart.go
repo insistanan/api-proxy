@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"unicode/utf8"
 
-	"github.com/insistanan/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/infra/utils"
 )
 
 // runMultipartFormSafety 对 multipart/form-data 上游请求体执行内容安全检查。

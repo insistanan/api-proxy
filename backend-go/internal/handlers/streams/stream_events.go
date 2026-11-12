@@ -15,7 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/insistanan/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/infra/utils"
 )
 
 // 还原器可能一次释放多个 SSE 事件，只记录成功写给客户端的文本与思考块。

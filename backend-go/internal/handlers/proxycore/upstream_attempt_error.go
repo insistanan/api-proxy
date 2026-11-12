@@ -5,23 +5,23 @@
 package proxycore
 
 import (
-	"github.com/insistanan/api-proxy/internal/availability"
 	"github.com/insistanan/api-proxy/internal/handlers/hooks"
-	"github.com/insistanan/api-proxy/internal/providers"
-	"github.com/insistanan/api-proxy/internal/proxy"
+	"github.com/insistanan/api-proxy/internal/orchestration/availability"
+	"github.com/insistanan/api-proxy/internal/orchestration/proxy"
+	"github.com/insistanan/api-proxy/internal/protocol/providers"
 
 	"errors"
 	"net/http"
 )
 
 // isClientSideError 判断错误是否由客户端明确取消（不应计入渠道失败）。
-// 实现委托 internal/proxy（R4-b：与 HTTP 框架无关的分类谓词唯一出处）。
+// 实现委托 internal/orchestration/proxy（R4-b：与 HTTP 框架无关的分类谓词唯一出处）。
 func isClientSideError(err error) bool {
 	return proxy.IsClientSideCancel(err)
 }
 
 // RetrySameCandidateError 表示响应已成功到达代理，但模型暂时无法产出内容
-// （模型容量状态，不应污染失败指标）。实现委托 internal/proxy（R4-b）。
+// （模型容量状态，不应污染失败指标）。实现委托 internal/orchestration/proxy（R4-b）。
 type RetrySameCandidateError = proxy.RetrySameCandidateError
 
 func NewRetrySameCandidateError(err error) error {
@@ -33,7 +33,7 @@ func isRetrySameCandidateError(err error) bool {
 }
 
 // IsUpstreamModelCapacityError 判断上游响应体是否为已知模型容量错误。
-// 判据唯一出处 utils（R4-a 收敛），委托 internal/proxy 转发（R4-b）。
+// 判据唯一出处 utils（R4-a 收敛），委托 internal/orchestration/proxy 转发（R4-b）。
 func IsUpstreamModelCapacityError(body []byte) bool {
 	return proxy.IsUpstreamModelCapacityErrorBody(body)
 }

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/config"
-	"github.com/insistanan/api-proxy/internal/sensitive"
+	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/safety/sensitive"
 )
 
 // applyContentSafetySegments 对提取出的文本片段依次执行敏感词、凭据、

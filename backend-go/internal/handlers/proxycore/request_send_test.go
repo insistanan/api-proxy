@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/config"
-	"github.com/insistanan/api-proxy/internal/logger"
+	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/storage/logger"
 )
 
 func TestLogRequestDetailsPreservesBodyAndClose(t *testing.T) {

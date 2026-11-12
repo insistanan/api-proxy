@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/conversation"
-	"github.com/insistanan/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
+	"github.com/insistanan/api-proxy/internal/infra/utils"
 )
 
 // ResolveConversationIdentity 只把语义明确的 conversation/thread/composer 标识

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/insistanan/api-proxy/internal/types"
+	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
 type responsesImageUsageDetails struct {

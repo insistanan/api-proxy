@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/config"
-	"github.com/insistanan/api-proxy/internal/types"
+	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
 // geminiUsageBody 是一份带 thinking 的 Gemini 原生非流式回包：

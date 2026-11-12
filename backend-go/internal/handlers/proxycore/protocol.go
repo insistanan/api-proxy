@@ -9,16 +9,16 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/bodyfilter"
-	"github.com/insistanan/api-proxy/internal/config"
 	"github.com/insistanan/api-proxy/internal/handlers/hooks"
-	"github.com/insistanan/api-proxy/internal/logger"
-	"github.com/insistanan/api-proxy/internal/middleware"
-	"github.com/insistanan/api-proxy/internal/scheduler"
-	"github.com/insistanan/api-proxy/internal/types"
-	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
-	"github.com/insistanan/api-proxy/internal/urlhealth"
-	"github.com/insistanan/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/infra/middleware"
+	"github.com/insistanan/api-proxy/internal/infra/utils"
+	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
+	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"github.com/insistanan/api-proxy/internal/orchestration/urlhealth"
+	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"github.com/insistanan/api-proxy/internal/safety/bodyfilter"
+	"github.com/insistanan/api-proxy/internal/storage/logger"
 )
 
 // ProtocolSpec 描述一种代理协议的差异点。
@@ -356,7 +356,7 @@ func handleSingleChannelProxy(
 		upstream.DefaultModel = ""
 	}
 
-	// 渠道级熔断检查（internal/circuit）：非快捷测试且已熔断（Open）时直接拦截并返回 503 CIRCUIT_OPEN。
+	// 渠道级熔断检查（internal/orchestration/circuit）：非快捷测试且已熔断（Open）时直接拦截并返回 503 CIRCUIT_OPEN。
 	// 快捷测试跳过熔断拦截，允许管理端手动探测或快速测试已熔断的渠道——
 	// 也不占用半开探测名额（R2-b：不挤占其他请求的探测许可）。
 	// 非快捷测试经 CircuitAllow 正式占用：可能取得探测名额（封装为许可句柄，

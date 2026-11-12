@@ -4,10 +4,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/config"
-	"github.com/insistanan/api-proxy/internal/core/channelcrud"
-	"github.com/insistanan/api-proxy/internal/httpclient"
-	"github.com/insistanan/api-proxy/internal/scheduler"
+	"github.com/insistanan/api-proxy/internal/admin/channelcrud"
+	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/infra/httpclient"
+	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
 )
 
 // Crud 返回 Embeddings 协议专用的渠道管理 handler 集合。

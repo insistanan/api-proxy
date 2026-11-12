@@ -10,21 +10,21 @@ import (
 	"strings"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/config"
 	"github.com/insistanan/api-proxy/internal/handlers/hooks"
-	"github.com/insistanan/api-proxy/internal/httpclient"
-	"github.com/insistanan/api-proxy/internal/logger"
-	"github.com/insistanan/api-proxy/internal/scheduler"
-	"github.com/insistanan/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/infra/httpclient"
+	"github.com/insistanan/api-proxy/internal/infra/utils"
+	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
+	"github.com/insistanan/api-proxy/internal/storage/logger"
 )
 
 // ShouldForceIdentityEncoding 判定是否应强制上游使用 identity 编码（禁止压缩）。
-// 判据唯一出处已收敛到 internal/httpclient（R4-a），此处保留导出供既有调用方使用。
+// 判据唯一出处已收敛到 internal/infra/httpclient（R4-a），此处保留导出供既有调用方使用。
 func ShouldForceIdentityEncoding(req *http.Request, isStream bool) bool {
 	return httpclient.ShouldForceIdentityEncoding(req, isStream)
 }
 
-// SendRequest 将请求交给 internal/httpclient.Send 发送，并记录业务日志和请求流量（R4-a）。
+// SendRequest 将请求交给 internal/infra/httpclient.Send 发送，并记录业务日志和请求流量（R4-a）。
 // 流式请求使用不设整体超时的客户端，通过 context 处理取消，通过 body reader 检查空闲超时。
 // apiType 用于标记入口协议的日志；共享准入则使用请求上下文中绑定的实际上游协议。
 // permit: 可选的选渠许可句柄（R2-b）。仅在"客户端创建失败、请求从未发出"

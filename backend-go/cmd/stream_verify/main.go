@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/infra/utils"
 )
 
 type UsageInfo struct {

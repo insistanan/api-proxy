@@ -54,12 +54,12 @@ jobs:
       - name: Build Backend arm64
         run: |
           go mod download
-          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -mod=readonly -ldflags "-s -w -X main.Version=${{ github.ref_name }} -X main.BuildTime=$(date -u '+%Y-%m-%d_%H:%M:%S') -X main.GitCommit=${{ github.sha }}" -o api-proxy-darwin-arm64
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -mod=readonly -ldflags "-s -w -X main.Version=${{ github.ref_name }} -X main.BuildTime=$(date -u '+%Y-%m-%d_%H:%M:%S') -X main.GitCommit=${{ github.sha }}" -o api-proxy-darwin-arm64 ./cmd/server
         working-directory: ./backend-go
 
       - name: Build Backend amd64
         run: |
-          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -mod=readonly -ldflags "-s -w -X main.Version=${{ github.ref_name }} -X main.BuildTime=$(date -u '+%Y-%m-%d_%H:%M:%S') -X main.GitCommit=${{ github.sha }}" -o api-proxy-darwin-amd64
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -mod=readonly -ldflags "-s -w -X main.Version=${{ github.ref_name }} -X main.BuildTime=$(date -u '+%Y-%m-%d_%H:%M:%S') -X main.GitCommit=${{ github.sha }}" -o api-proxy-darwin-amd64 ./cmd/server
         working-directory: ./backend-go
 
       - name: Release

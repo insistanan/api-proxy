@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/types"
+	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
 func sanitizeOpenAIChatPayloadForUpstream(payload map[string]interface{}) error {

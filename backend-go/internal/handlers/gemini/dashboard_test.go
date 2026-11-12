@@ -10,13 +10,13 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/config"
-	"github.com/insistanan/api-proxy/internal/handlers"
-	"github.com/insistanan/api-proxy/internal/metrics"
-	"github.com/insistanan/api-proxy/internal/scheduler"
-	"github.com/insistanan/api-proxy/internal/session"
-	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
-	"github.com/insistanan/api-proxy/internal/urlhealth"
+	"github.com/insistanan/api-proxy/internal/dialogue/session"
+	"github.com/insistanan/api-proxy/internal/handlers/channels"
+	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
+	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"github.com/insistanan/api-proxy/internal/orchestration/urlhealth"
+	"github.com/insistanan/api-proxy/internal/storage/metrics"
 )
 
 func TestGetDashboard_IncludesStripThoughtSignature(t *testing.T) {
@@ -71,7 +71,7 @@ func TestGetDashboard_IncludesStripThoughtSignature(t *testing.T) {
 	sch := scheduler.NewChannelScheduler(cfgManager, messagesMetrics, responsesMetrics, geminiMetrics, chatMetrics, imagesMetrics, nil, nil, traceAffinity, urlManager)
 
 	r := gin.New()
-	r.GET("/gemini/channels/dashboard", handlers.GetChannelDashboard(cfgManager, sch, scheduler.ChannelKindGemini))
+	r.GET("/gemini/channels/dashboard", channels.GetChannelDashboard(cfgManager, sch, scheduler.ChannelKindGemini))
 
 	req := httptest.NewRequest(http.MethodGet, "/gemini/channels/dashboard", nil)
 	w := httptest.NewRecorder()

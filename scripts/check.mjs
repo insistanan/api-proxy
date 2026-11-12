@@ -87,7 +87,7 @@ checkDocRegistry(
   "后端 internal 包目录登记校验",
   "backend-go/internal",
   "backend-go/AGENTS.md",
-  new Set(["handlers", "core"]),
+  new Set(["handlers"]),
   "",
 );
 checkDocRegistry(
@@ -96,13 +96,6 @@ checkDocRegistry(
   "backend-go/AGENTS.md",
   new Set(),
   "handlers/",
-);
-checkDocRegistry(
-  "后端 core 包目录登记校验",
-  "backend-go/internal/core",
-  "backend-go/AGENTS.md",
-  new Set(),
-  "core/",
 );
 checkDocRegistry(
   "后端 cmd 目录登记校验",

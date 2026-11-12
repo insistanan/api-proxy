@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"log"
 
-	"github.com/insistanan/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/infra/utils"
 )
 
 // RemoveEmptySignatures 移除请求体中 messages[*].content[*].signature 的空值

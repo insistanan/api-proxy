@@ -5,7 +5,7 @@ import (
 	"log"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/infra/utils"
 )
 
 // ShouldRetryWithNextKey 判断是否应该使用下一个密钥重试

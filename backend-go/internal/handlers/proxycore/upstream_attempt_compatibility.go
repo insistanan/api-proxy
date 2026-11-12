@@ -8,12 +8,12 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/mediasanitizer"
-	"github.com/insistanan/api-proxy/internal/rectifier"
-	"github.com/insistanan/api-proxy/internal/scheduler"
-	"github.com/insistanan/api-proxy/internal/types"
-	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
-	"github.com/insistanan/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/dialogue/rectifier"
+	"github.com/insistanan/api-proxy/internal/infra/utils"
+	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
+	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"github.com/insistanan/api-proxy/internal/safety/mediasanitizer"
 )
 
 // retryCompatibility 按既有顺序尝试协议自愈；中止时把错误交回主循环决定候选转移。

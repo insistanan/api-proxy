@@ -6,7 +6,7 @@
 // 行为约定：
 // - 仓库根 = scripts/ 所在目录的父级（按 import.meta.url 解析，与 cwd 无关）。
 // - 源：<repo>/frontend/dist（Vite build 产物）
-// - 目标：<repo>/backend-go/frontend/dist（被 backend-go/main.go 的 //go:embed all:frontend/dist 引用）
+// - 目标：<repo>/backend-go/frontend/dist（被 backend-go/webassets.go 的 //go:embed all:frontend/dist 引用）
 // - 先清空目标目录，再复制源目录的全部内容；旧产物和 .gitkeep 也会被替换。
 // - 源目录不存在时以状态码 2 退出，并提示先执行 cd frontend && npm run build。
 //

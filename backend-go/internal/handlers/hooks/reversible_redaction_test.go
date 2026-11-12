@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/infra/config"
 )
 
 func TestReversibleRedactionCoversAllRequestProtocolsAndResponseFields(t *testing.T) {

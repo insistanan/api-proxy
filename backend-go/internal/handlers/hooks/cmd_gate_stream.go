@@ -6,7 +6,7 @@ import (
 	"io"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/sensitive"
+	"github.com/insistanan/api-proxy/internal/safety/sensitive"
 )
 
 // StreamVetoGuard 是"AI 放行后的事后否决"信号：用户在否决窗口内加黑名单时

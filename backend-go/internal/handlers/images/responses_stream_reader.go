@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/infra/utils"
 )
 
 // readResponsesImageEvent 使用固定大小的 ReadSlice 缓冲逐片收集单个相关事件。

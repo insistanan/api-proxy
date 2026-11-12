@@ -7,10 +7,10 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/config"
-	"github.com/insistanan/api-proxy/internal/intent"
-	"github.com/insistanan/api-proxy/internal/scheduler"
-	"github.com/insistanan/api-proxy/internal/urlhealth"
+	"github.com/insistanan/api-proxy/internal/dialogue/intent"
+	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
+	"github.com/insistanan/api-proxy/internal/orchestration/urlhealth"
 )
 
 func prepareIntentRoute(c *gin.Context, cfg *config.ConfigManager, sched *scheduler.ChannelScheduler, kind scheduler.ChannelKind, body []byte, conversation, requestID string, explicit *int) (func(), error) {

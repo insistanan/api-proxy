@@ -10,9 +10,9 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/config"
-	"github.com/insistanan/api-proxy/internal/middleware"
-	"github.com/insistanan/api-proxy/internal/modelcatalog"
+	"github.com/insistanan/api-proxy/internal/admin/modelcatalog"
+	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/infra/middleware"
 	"github.com/stretchr/testify/require"
 )
 

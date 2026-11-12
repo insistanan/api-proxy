@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/conversation"
-	"github.com/insistanan/api-proxy/internal/types"
-	"github.com/insistanan/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
+	"github.com/insistanan/api-proxy/internal/infra/utils"
+	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
 func ExtractPromptsFromClaude(messages []types.ClaudeMessage) []string {

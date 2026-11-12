@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/sensitive"
+	"github.com/insistanan/api-proxy/internal/safety/sensitive"
 )
 
 func TestWriteAttachedContentSafetyErrorUsesProtocolJSONShape(t *testing.T) {

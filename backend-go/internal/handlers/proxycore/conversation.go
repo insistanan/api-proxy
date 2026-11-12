@@ -4,8 +4,8 @@ import (
 	"log"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/conversation"
-	"github.com/insistanan/api-proxy/internal/scheduler"
+	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
+	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
 )
 
 // ExtractConversationID 从请求中提取明确的对话标识。

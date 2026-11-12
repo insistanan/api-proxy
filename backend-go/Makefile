@@ -2,7 +2,7 @@
 
 # 变量定义
 BINARY_NAME=api-proxy-go
-MAIN_PATH=.
+MAIN_PATH=./cmd/server
 BUILD_DIR=../dist
 AIR_VERSION=v1.67.4
 GOLANGCI_VERSION=v2.15.0

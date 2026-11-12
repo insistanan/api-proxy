@@ -1,0 +1,107 @@
+package system
+
+import (
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/infra/config"
+)
+
+// HealthCheck 健康检查处理器
+func HealthCheck(envCfg *config.EnvConfig, cfgManager *config.ConfigManager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		config := cfgManager.GetConfig()
+
+		healthData := gin.H{
+			"status":    "healthy",
+			"timestamp": time.Now().Format(time.RFC3339),
+			"uptime":    time.Since(startTime).Seconds(),
+			"mode":      envCfg.Env,
+			"port":      envCfg.Port,
+			"version":   getVersion(),
+			"config": gin.H{
+				"upstreamCount":        len(config.Upstream),
+				"loadBalance":          config.LoadBalance,
+				"responsesLoadBalance": config.ResponsesLoadBalance,
+			},
+		}
+
+		c.JSON(200, healthData)
+	}
+}
+
+// getVersion 获取版本信息
+func getVersion() gin.H {
+	// main 将构建时注入的版本信息通过 SetVersionInfo 传入。
+	return gin.H{
+		"version":   getVersionString(),
+		"buildTime": getBuildTime(),
+		"gitCommit": getGitCommit(),
+	}
+}
+
+// 包内保存 main 注入的版本信息；默认值仅用于未装配的测试或开发场景。
+var (
+	versionString = "v0.0.0-dev"
+	buildTime     = "unknown"
+	gitCommit     = "unknown"
+)
+
+func getVersionString() string { return versionString }
+func getBuildTime() string     { return buildTime }
+func getGitCommit() string     { return gitCommit }
+
+// SetVersionInfo 设置版本信息（从 main 调用）
+func SetVersionInfo(version, build, commit string) {
+	versionString = version
+	buildTime = build
+	gitCommit = commit
+}
+
+// SaveConfigHandler 配置保存处理器
+func SaveConfigHandler(cfgManager *config.ConfigManager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if err := cfgManager.SaveConfig(); err != nil {
+			body := gin.H{
+				"status":    "error",
+				"message":   "配置保存失败",
+				"error":     err.Error(),
+				"timestamp": time.Now().Format(time.RFC3339),
+			}
+			// 已过提交点的保存失败：文件已是新内容，前端不得按未提交重试。
+			if config.IsCommittedError(err) {
+				body["code"] = "CONFIG_COMMITTED"
+				body["committed"] = true
+				body["message"] = "配置已写入但收尾失败，请刷新查看实际状态"
+			}
+			c.JSON(500, body)
+			return
+		}
+
+		config := cfgManager.GetConfig()
+		c.JSON(200, gin.H{
+			"status":    "success",
+			"message":   "配置已保存",
+			"timestamp": time.Now().Format(time.RFC3339),
+			"config": gin.H{
+				"upstreamCount":        len(config.Upstream),
+				"loadBalance":          config.LoadBalance,
+				"responsesLoadBalance": config.ResponsesLoadBalance,
+			},
+		})
+	}
+}
+
+// DevInfo 开发信息处理器
+func DevInfo(envCfg *config.EnvConfig, cfgManager *config.ConfigManager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"status":      "development",
+			"timestamp":   time.Now().Format(time.RFC3339),
+			"config":      cfgManager.GetConfig(),
+			"environment": envCfg,
+		})
+	}
+}
+
+var startTime = time.Now()

@@ -7,7 +7,7 @@ import type { EmbeddingProfile } from '@/services/datasets'
 
 const mocks = vi.hoisted(() => ({ load: vi.fn(), save: vi.fn(), options: vi.fn(), preview: vi.fn(), feedback: vi.fn() }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ apiKey: null, clearAuth: vi.fn() }) }))
-vi.mock('@/stores/channel', () => ({ useChannelStore: () => ({ channelPoolsMap: { responses: [{ id: 'code', name: '代码组' }] } }) }))
+vi.mock('@/stores/channel', () => ({ useChannelStore: () => ({ channelPoolsMap: { responses: [{ id: 'language', name: '语言组' }, { id: 'code', name: '代码组' }] } }) }))
 vi.mock('@/stores/intent', () => ({ useIntentStore: () => ({ configs: {}, load: mocks.load, save: mocks.save }) }))
 vi.mock('@/services/intent', () => ({ intentApi: { options: mocks.options, preview: mocks.preview, feedback: mocks.feedback }, intentErrorText: (error: Error) => error.message }))
 vi.mock('@/composables/useToast', () => ({ useToast: () => ({ showToast: vi.fn() }) }))
@@ -62,5 +62,25 @@ describe('意图匹配编辑器', () => {
     expect(mocks.preview).toHaveBeenCalledOnce()
     expect(mocks.save).not.toHaveBeenCalled()
     expect(mocks.feedback).not.toHaveBeenCalled()
+  })
+  it('保存和预览沿用现有渠道分组顺序，不受能力填写先后影响', async () => {
+    const original = config()
+    original.groups = [{ poolId: 'code', tasks: ['code_generation'], tiers: [1], cost: 0 }, { poolId: 'language', tasks: ['writing'], tiers: [1], cost: 0 }]
+    mocks.load.mockResolvedValue(original)
+    const state = await setup()
+    ;(state.previewText as Ref<string>).value = '编写一个函数'
+    await (state.preview as () => Promise<void>)()
+    await (state.save as () => Promise<void>)()
+    expect(mocks.preview.mock.calls[0]![1].groups.map((group: { poolId: string }) => group.poolId)).toEqual(['language', 'code'])
+    expect(mocks.save.mock.calls[0]![1].groups.map((group: { poolId: string }) => group.poolId)).toEqual(['language', 'code'])
+    expect(original.groups.map(group => group.poolId)).toEqual(['code', 'language'])
+  })
+  it('能力未填写完整时定位到分组并提示名称，不发送无效配置', async () => {
+    const state = await setup()
+    ;(state.groups as Ref<IntentConfig['groups']>).value = [{ poolId: 'code', tasks: ['debugging'], tiers: [], cost: 0 }]
+    await (state.save as () => Promise<void>)()
+    expect(mocks.save).not.toHaveBeenCalled()
+    expect(value<string>(state, 'tab')).toBe('groups')
+    expect(value<string>(state, 'error')).toContain('代码组')
   })
 })

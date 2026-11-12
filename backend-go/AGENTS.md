@@ -5,44 +5,58 @@
 ## 技术栈
 
 - Go 1.26（工具链 1.26.10，`go.mod`），module `github.com/insistanan/api-proxy`，`CGO_ENABLED=0` 纯静态构建
-- Web 框架：Gin（版本见 `go.mod`）；业务 SSE 解析与转发在 `utils/sse.go`、`handlers/streams` 和 `providers`，无 WebSocket 功能
+- Web 框架：Gin（版本见 `go.mod`）；业务 SSE 解析与转发在 `internal/infra/utils/sse.go`、`handlers/streams` 和 `internal/protocol/providers`，无 WebSocket 功能
 - 数据库：modernc.org/sqlite（纯 Go SQLite），`database/sql` 原生 SQL；各存储自行建表与升级列，无 ORM 或外部 migration 框架
 - 其他直接依赖：tidwall/gjson + sjson（JSON 操作）、fsnotify（配置热重载）、godotenv、go-toml、klauspost/compress + andybalholm/brotli（响应解压）、stretchr/testify（测试）
 
 ## 目录结构
 
-根目录 `package main` 按职责分文件：
+`backend-go/` 根目录只放模块元信息、构建脚本与嵌入声明，不放业务代码：
 
 | 文件 | 职责 |
 |---|---|
-| `main.go` | 定义 `app`，通过 `newApp()` 按依赖顺序创建组件，并处理监听与退出信号；资源创建成功后登记释放动作 |
-| `app_routes.go` | 路由装配（`/api` 管理组 + 代理端点：五大编排协议 + Embeddings/Decisions 透传） |
-| `app_lifecycle.go` | 启动横幅、脱敏模式热跟随、逆序 shutdown |
-| `version.go` | `Version`/`BuildTime`/`GitCommit`（由 ldflags 注入） |
+| `webassets.go` | `package apiproxy`，通过 `go:embed all:frontend/dist` 导出 `FrontendFS`。`go:embed` 只能引用声明文件所在目录及子目录内的文件，因此嵌入声明必须留在根目录 |
+| `Makefile` / `build.sh` / `.air.toml` | 构建、交叉编译与热重载入口，均指向 `./cmd/server` |
 
-`internal/` 按职能分组（多数包在主文件的包注释中声明职责与依赖方向）：
+`cmd/` 下的可执行程序：
 
-| 分组 | 包 |
+| 路径 | 职责 |
 |---|---|
-| 协议层（编排） | `handlers/messages`、`handlers/responses`、`handlers/chat`、`handlers/gemini`、`handlers/images`（五大编排协议 handler）、`handlers/proxycore`（共享编排与候选重试）、`handlers/streams`（Claude 流式链路）、`converters`（协议转换）、`providers`（上游请求构造与响应转换） |
-| 协议层（透传与目录） | `handlers/embeddings`（OpenAI Embeddings API 原样透传，不接内容安全管道）、`handlers/decisions`（Decisions API 原样透传，不接内容安全管道）、`handlers/modelapi`（统一模型目录转换为 OpenAI/Anthropic/Gemini 查询响应） |
-| 调度与稳定性 | `scheduler`（ChannelScheduler + ChannelPermit）、`circuit`（三态熔断）、`upstreamcontrol`（共享并发、FIFO 队列、429 冷却与请求预算）、`urlhealth`（多 BaseURL 健康管理）、`ratelimit`（旧滑动窗口限流实现，生产准入由 upstreamcontrol 负责）、`availability`（按真实请求结果采样渠道成败并汇总，不参与选渠和主动探测） |
-| 语义与意图路由 | `semantic`（可审核数据集、持久化向量快照与离线评测）、`intent`（意图分类、分组决策与会话切换保护，不修改主请求提示词；Windows 本地 embedding 在 `local_windows.go`） |
-| 观测 | `metrics`（按 ChannelKind 分组 + SQLite 持久化）、`session`（Responses 会话 + Trace/BaseURL 亲和）、`conversation`（对话注册表）、`logger`（SQLite 日志存储）、`cli`（`api-proxy logs` 子命令） |
-| 内容安全 | `sensitive`（检测/掩码/可逆脱敏）、`llmgate`（危险命令闸门与助手共用推理）、`handlers/hooks`（三阶段钩子）、`visionlayer`（图片理解） |
-| 请求体兼容 | `bodyfilter`（过滤请求体中下划线开头的私有参数）、`cacheinject`（Anthropic/Bedrock prompt caching 断点注入）、`copilotopt`（Copilot 请求识别与优化）、`mediasanitizer`（模型不支持图片时的模态降级占位）、`rectifier`（thinking budget / signature 契约整流） |
-| 管理界面支撑 | `assistant`（AI 配置助手）、`skills`（Agent Skill 目录管理）、`piagent`（pi-agent 的模型供应商配置管理）、`modelcatalog`（模型目录 + Chat 路由别名）、`mcpsync`（MCP 统一列表分发到各智能体配置文件）、`core/channelcrud`（协议无关渠道 CRUD） |
-| 基础设施 | `config`（EnvConfig + ConfigManager 热重载）、`httpclient`（推理请求发送出口）、`proxy`（框架无关重试状态与分类，有静态依赖断言）、`atomicfile`（原子写原语）、`sqlitedb`（统一业务库连接预算与打开封装）、`types`（跨协议共享结构体：Usage、会话、Gemini/Responses 类型）、`middleware`（auth/cors/logger）、`utils`（共用工具） |
-
-`cmd/` 下的独立可执行工具：
-
-| 文件 | 职责 |
-|---|---|
+| `cmd/server` | 主服务入口（`package main`）。`main.go` 定义 `app`，通过 `newApp()` 按依赖顺序装配组件并处理监听与退出信号；`app_routes.go` 路由装配（`/api` 管理组 + 代理端点：五大编排协议 + Embeddings/Decisions 透传）；`app_lifecycle.go` 启动横幅、脱敏模式热跟随、逆序 shutdown；`version.go` 定义 `Version`/`BuildTime`/`GitCommit`（由 ldflags 注入）。同目录的 `*_test.go` 为路由与生命周期测试 |
 | `cmd/stream_verify` | 对比验证流式响应 Token 统计与记录格式的调试工具 |
+
+`internal/` 按职能分组。分组目录本身不含业务代码，包名与目录名一致：
+
+| 分组目录 | 包 |
+|---|---|
+| `handlers/` | HTTP 适配层，按业务域分子包（见下表） |
+| `orchestration/` | 调度与稳定性：`scheduler`（ChannelScheduler + ChannelPermit）、`circuit`（三态熔断）、`upstreamcontrol`（共享并发、FIFO 队列、429 冷却与请求预算）、`urlhealth`（多 BaseURL 健康管理）、`ratelimit`（旧滑动窗口限流实现，生产准入由 upstreamcontrol 负责）、`availability`（按真实请求结果采样渠道成败，不参与选渠和主动探测）、`proxy`（框架无关的候选重试状态与错误分类，有静态依赖断言） |
+| `protocol/` | 协议层数据面：`converters`（协议转换）、`providers`（上游请求构造与响应转换）、`types`（跨协议共享结构体：Usage、会话、Gemini/Responses 类型） |
+| `dialogue/` | 会话与智能层：`conversation`（对话注册表）、`session`（Responses 会话 + Trace/BaseURL 亲和）、`semantic`（可审核数据集、持久化向量快照与离线评测）、`intent`（意图分类、分组决策与会话切换保护，不修改主请求提示词；Windows 本地 embedding 在 `local_windows.go`）、`cacheinject`（Anthropic/Bedrock prompt caching 断点注入）、`copilotopt`（Copilot 请求识别与优化）、`rectifier`（thinking budget / signature 契约整流） |
+| `safety/` | 内容安全与请求体兼容：`sensitive`（检测/掩码/可逆脱敏）、`llmgate`（危险命令闸门与助手共用推理）、`visionlayer`（图片理解）、`bodyfilter`（过滤请求体中下划线开头的私有参数）、`mediasanitizer`（模型不支持图片时的模态降级占位） |
+| `storage/` | 存储与观测：`sqlitedb`（统一业务库连接预算与打开封装）、`atomicfile`（原子写原语）、`metrics`（按 ChannelKind 分组 + SQLite 持久化）、`logger`（SQLite 日志存储） |
+| `infra/` | 基础设施：`config`（EnvConfig + ConfigManager 热重载）、`httpclient`（推理请求发送出口）、`middleware`（auth/cors/logger）、`utils`（共用工具）、`cli`（`api-proxy logs` 子命令） |
+| `admin/` | 管理界面支撑：`assistant`（AI 配置助手）、`skills`（Agent Skill 目录管理）、`piagent`（pi-agent 的模型供应商配置管理）、`modelcatalog`（模型目录 + Chat 路由别名）、`mcpsync`（MCP 统一列表分发到各智能体配置文件）、`channelcrud`（协议无关渠道 CRUD） |
+
+`internal/handlers/` 子包：
+
+| 子包 | 职责 |
+|---|---|
+| `handlers/messages`、`handlers/responses`、`handlers/chat`、`handlers/gemini`、`handlers/images` | 五大编排协议 handler |
+| `handlers/proxycore` | 共享编排与候选重试（`RunProxyRequest`、`ProtocolSpec`、上游尝试） |
+| `handlers/streams` | Claude 流式链路 |
+| `handlers/embeddings`、`handlers/decisions` | 原样透传端点，经 `RunProxyRequest` 选渠，不接内容安全管道 |
+| `handlers/modelapi` | 统一模型目录转换为 OpenAI/Anthropic/Gemini 查询响应 |
+| `handlers/hooks` | 三阶段钩子（请求前、响应后、命令闸门） |
+| `handlers/channels` | 渠道管理 API：渠道动作、日志、指标、性能、池、映射目标、熔断、免费渠道、模型可用性、全局统计、上游模型发现、促销路由 |
+| `handlers/clients` | 客户端伪装与一键配置：Claude Code、Codex、OpenCode、pi-agent、DSH、MCP、skills、工具版本、agentprompt |
+| `handlers/admin` | 管理后台：设置、ccs、意图配置、会话、数据集、AI 助手、安全闸门、请求/系统/拦截日志、客户端伪装自动同步 |
+| `handlers/system` | 健康检查、前端静态资源、版本信息、代理模型列表、配置保存与开发信息 |
+| `handlers/common` | 子包共享契约：`ConfigManager`（促销期接口）、`ReadLimitedBody`（限长读取响应体）。只收录被两个及以上子包使用的符号 |
 
 ## 架构核心（详见 docs/架构说明.md）
 
-- **装配**：`main.go` 的 `newApp()` 线性装配组件，初始化失败按 `registerCleanup` 逆序清理。
+- **装配**：`cmd/server/main.go` 的 `newApp()` 线性装配组件，初始化失败按 `registerCleanup` 逆序清理。
 - **五大编排协议统一入口**：`handlers/proxycore/protocol.go` 的 `RunProxyRequest` 负责认证、读体、解析、脱敏、会话观测、日志与渠道分派，协议差异通过 `ProtocolSpec` 注入；`handlers/embeddings` 与 `handlers/decisions` 是原样透传端点，同样经 `RunProxyRequest` 编排选渠，但不接内容安全管道。Responses compact 另有控制请求入口，复用上游尝试和选渠机制。
 - **调度**：`ChannelScheduler` 按 `ChannelKind`（messages/responses/gemini/chat/images/embeddings/decisions）区分入口和指标，`ServiceType` 表示上游服务类型。共享准入按实际 URL、上游协议和 API Key 分配名额，入口协议不能代替实际上游协议。
 - **鉴权三层**：WebAuthMiddleware 只管页面开关；管理路由必须在路由组上显式绑定 AdminAuthMiddleware（漏绑会打 `[Auth-Warn]`）；代理鉴权由 RunProxyRequest 或独立控制、模型目录入口调用。
@@ -66,7 +80,7 @@
 
 请求与响应日志、超时、请求体限制、指标保留期、CORS、日志路径和指标持久化开关保存在 `settings.gateway` 中。升级时只为缺失字段迁移旧环境变量值，之后以持久化设置为准。修改日志路径或指标持久化开关需要重启，其余策略支持热更新。客户端伪装版本由 `settings.disguise` 管理，配置发布后立即应用本地版本，npm 查询在后台独立执行。
 
-`config.json` 保存七组渠道配置（五大编排协议 + Embeddings/Decisions 透传池）和 settings。`internal/config/config_loader.go` 使用 fsnotify 监听变化，以 100ms 防抖和 SHA-256 摘要比较减少重复加载。写入通过 `internal/atomicfile` 原子完成，热重载只发布完整候选快照。
+`config.json` 保存七组渠道配置（五大编排协议 + Embeddings/Decisions 透传池）和 settings。`internal/infra/config/config_loader.go` 使用 fsnotify 监听变化，以 100ms 防抖和 SHA-256 摘要比较减少重复加载。写入通过 `internal/storage/atomicfile` 原子完成，热重载只发布完整候选快照。
 
 ## 数据存储
 

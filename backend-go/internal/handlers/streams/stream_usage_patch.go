@@ -9,7 +9,7 @@ import (
 	"log"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/infra/utils"
 )
 
 // PatchTokensInEventWithCache 修补事件中的 token 字段。

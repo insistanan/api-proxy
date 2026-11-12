@@ -8,7 +8,7 @@ import (
 	"log"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/infra/utils"
 )
 
 // updateCollectedUsage 更新收集的 usage 数据

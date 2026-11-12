@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/infra/utils"
 )
 
 // maxEnvelopeSniffBytes 是 2xx 错误信封检测的最大读取字节数。错误信封必然

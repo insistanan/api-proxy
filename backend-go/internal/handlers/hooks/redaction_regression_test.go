@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/infra/config"
 )
 
 func TestSafetySegmentsRetainVerificationForUnclassifiedSource(t *testing.T) {

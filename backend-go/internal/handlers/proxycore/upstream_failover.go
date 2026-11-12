@@ -14,12 +14,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/insistanan/api-proxy/internal/config"
-	"github.com/insistanan/api-proxy/internal/intent"
-	"github.com/insistanan/api-proxy/internal/scheduler"
-	"github.com/insistanan/api-proxy/internal/types"
-	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
-	"github.com/insistanan/api-proxy/internal/urlhealth"
+	"github.com/insistanan/api-proxy/internal/dialogue/intent"
+	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
+	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"github.com/insistanan/api-proxy/internal/orchestration/urlhealth"
+	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
 // TryWithModelMappingFailover 按模型映射执行上游故障转移。

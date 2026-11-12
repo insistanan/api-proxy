@@ -8,14 +8,14 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/dialogue/intent"
 	"github.com/insistanan/api-proxy/internal/handlers/hooks"
-	"github.com/insistanan/api-proxy/internal/intent"
-	"github.com/insistanan/api-proxy/internal/providers"
-	"github.com/insistanan/api-proxy/internal/proxy"
-	"github.com/insistanan/api-proxy/internal/types"
-	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
-	"github.com/insistanan/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/infra/utils"
+	"github.com/insistanan/api-proxy/internal/orchestration/proxy"
+	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"github.com/insistanan/api-proxy/internal/protocol/providers"
+	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
 // candidateAttempt 绑定已准备好的单次候选：兼容重试和响应交付共享同一记账身份。

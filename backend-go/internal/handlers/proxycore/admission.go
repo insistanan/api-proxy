@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
+	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
 )
 
 // 本地容量不足只排除当前 URL 的 Key，不更新持久化失败或渠道健康指标。

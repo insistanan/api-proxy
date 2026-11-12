@@ -9,7 +9,7 @@ tmp_dir = "tmp"
 # 构建配置
 [build]
   # 编译命令 (可以添加自定义参数)
-  cmd = "go build -o ./tmp/main ."
+  cmd = "go build -o ./tmp/main ./cmd/server"
   # 运行的二进制文件
   bin = "tmp/main"
   # 自定义运行时参数 (比如: ["run", "test", "-v"])

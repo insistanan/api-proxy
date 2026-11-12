@@ -9,8 +9,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/insistanan/api-proxy/internal/semantic"
-	"github.com/insistanan/api-proxy/internal/sensitive"
+	"github.com/insistanan/api-proxy/internal/dialogue/semantic"
+	"github.com/insistanan/api-proxy/internal/safety/sensitive"
 )
 
 // HookStage 表示代理请求生命周期中的 Hook 执行阶段。

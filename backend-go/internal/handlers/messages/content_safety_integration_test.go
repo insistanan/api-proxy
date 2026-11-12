@@ -14,15 +14,15 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/config"
-	rootHandlers "github.com/insistanan/api-proxy/internal/handlers"
+	"github.com/insistanan/api-proxy/internal/dialogue/session"
+	"github.com/insistanan/api-proxy/internal/handlers/admin"
 	"github.com/insistanan/api-proxy/internal/handlers/hooks"
-	"github.com/insistanan/api-proxy/internal/metrics"
-	"github.com/insistanan/api-proxy/internal/scheduler"
-	"github.com/insistanan/api-proxy/internal/sensitive"
-	"github.com/insistanan/api-proxy/internal/session"
-	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
-	"github.com/insistanan/api-proxy/internal/urlhealth"
+	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
+	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"github.com/insistanan/api-proxy/internal/orchestration/urlhealth"
+	"github.com/insistanan/api-proxy/internal/safety/sensitive"
+	"github.com/insistanan/api-proxy/internal/storage/metrics"
 )
 
 const (
@@ -270,7 +270,7 @@ func newContentSafetyTestRouter(t *testing.T) (*gin.Engine, *config.ConfigManage
 
 	router := gin.New()
 	router.POST("/v1/messages", Handler(envCfg, cfgManager, channelScheduler, pipeline))
-	router.GET("/api/blocked-logs", rootHandlers.GetBlockedLogs(store, nil))
+	router.GET("/api/blocked-logs", admin.GetBlockedLogs(store, nil))
 	return router, cfgManager, capture
 }
 

@@ -12,8 +12,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/config"
-	"github.com/insistanan/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/infra/utils"
 )
 
 // resolveImagesUpstreamModel 解析真正发给上游的生图模型。

@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/sensitive"
-	"github.com/insistanan/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/infra/utils"
+	"github.com/insistanan/api-proxy/internal/safety/sensitive"
 )
 
 func TestRestoreAttachedSSEEventAcrossChunksAndFlushesIncompletePrefix(t *testing.T) {

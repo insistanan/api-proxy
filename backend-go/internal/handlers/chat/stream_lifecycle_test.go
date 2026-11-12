@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/stretchr/testify/require"
 )
 

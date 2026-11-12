@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/availability"
-	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/orchestration/availability"
 	"github.com/stretchr/testify/require"
 )
 

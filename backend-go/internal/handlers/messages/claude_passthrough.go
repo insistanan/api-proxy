@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/insistanan/api-proxy/internal/types"
-	"github.com/insistanan/api-proxy/internal/utils"
+	"github.com/insistanan/api-proxy/internal/infra/utils"
+	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
 // claudeUsageRewrite 记录非流式 Claude 响应里，客户端 usage 相对上游原文改过的部分。

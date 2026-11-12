@@ -22,17 +22,16 @@
               <div class="intent-flow" aria-label="先识别任务类型，再判断难度，最后选择合适分组">
                 <span>① 识别任务类型</span><span>② 判断处理难度</span><span>③ 选择合适分组</span>
               </div>
-              <p class="text-body-2 text-medium-emphasis">不需要逐句编写规则。先声明分组适合的任务和难度，网关自动综合匹配；分组内沿用渠道顺序和模型映射。</p>
+              <p class="text-body-2 text-medium-emphasis">根据任务类型和难度，自动选择现有渠道分组。分组内沿用渠道顺序和模型映射。</p>
               <v-select v-model="draft.classifier" :items="classifiers" label="自动判断方式" />
               <p v-if="draft.classifier === 'heuristic'" class="text-caption text-medium-emphasis">内置规则识别明确任务，速度快、不调用额外模型；类型或难度不明确时按未命中策略处理。</p>
               <template v-if="draft.classifier !== 'heuristic'">
                 <v-select v-model="draft.classifierChannel" :items="classifierOptions" item-title="name" item-value="id" label="辅助判断渠道" clearable @update:model-value="draft.classifierChannel ||= ''" />
                 <v-text-field v-model="draft.classifierModel" label="辅助判断模型" hint="用于任务类型和难度判断；远程模式最多执行两次辅助分类，共享总超时" persistent-hint />
               </template>
-              <v-alert v-if="!draft.groups?.length" type="info" variant="tonal">请先在“分组能力”中声明适合的任务和难度。</v-alert>
               <div class="d-flex flex-wrap align-center ga-3">
                 <v-btn variant="tonal" @click="tab = 'groups'">设置分组能力</v-btn>
-                <span class="text-body-2 text-medium-emphasis">已配置 {{ draft.groups?.length ?? 0 }} 个分组</span>
+                <span class="text-body-2 text-medium-emphasis">当前 {{ pools.length }} 个渠道分组，{{ groups.filter(group => group.tasks.length && group.tiers.length).length }} 个已设置能力</span>
               </div>
               <p v-if="draft.taskMatcher === 'semantic'" class="text-body-2">任务类型使用数据集向量匹配，难度使用上方判断方式。向量配置在高级设置中管理。</p>
             </template>
@@ -76,7 +75,7 @@
             </template>
             <p class="text-caption text-medium-emphasis">显式渠道和人工会话固定优先。工具续轮、加密推理及服务端历史保留原来源；分类结果不会写入主请求提示词。</p>
           </div>
-          <IntentGroupCapabilities v-else-if="tab === 'groups'" v-model="groups" :pools="pools" :tasks="options.tasks ?? []" :disabled="saving" :use-feedback="!!draft.useFeedback" />
+          <IntentGroupCapabilities v-else-if="tab === 'groups'" v-model="groups" :pools="pools" :tasks="options.tasks ?? []" :disabled="saving || indexing" :use-feedback="!!draft.useFeedback" />
           <div v-else-if="tab === 'diagnostics'" class="intent-stack">
             <section class="intent-stack">
               <div><h3 class="text-subtitle-1">试一条任务</h3><p class="text-body-2 text-medium-emphasis mt-2">只测试当前草稿的分类结果，不向目标组生成回答、不切换真实会话。远程判断或向量匹配会调用辅助模型。</p></div>
@@ -111,7 +110,7 @@
               <h3 class="text-subtitle-1">任务识别与选组优化</h3>
               <v-select v-model="draft.taskMatcher" :items="[{ title: '按基础设置中的判断方式识别', value: 'builtin' }, { title: '使用数据集向量识别任务类型', value: 'semantic' }]" label="任务类型识别来源" />
               <v-switch v-model="draft.useFeedback" label="同能力分组参考任务反馈和相对成本" hide-details />
-              <p class="text-caption text-medium-emphasis">只在满足任务和难度的候选组内优化。关闭时按分组能力列表顺序选择；已固定会话不会因为一次反馈立即换组。</p>
+              <p class="text-caption text-medium-emphasis">只在满足任务和难度的候选组内优化。关闭时按渠道分组顺序选择；已固定会话不会因为一次反馈立即换组。</p>
             </template>
             <template v-if="usesEmbedding">
               <h3 class="text-subtitle-1">向量任务识别</h3>
@@ -150,7 +149,7 @@ import { computed, ref, watch } from 'vue'
 import { useChannelStore } from '@/stores/channel'
 import { useIntentStore } from '@/stores/intent'
 import { useToast } from '@/composables/useToast'
-import { intentApi, intentErrorText, type IntentConfig, type IntentDecision, type IntentEvent, type IntentOptions, type IntentProtocol } from '@/services/intent'
+import { intentApi, intentErrorText, type IntentConfig, type IntentDecision, type IntentEvent, type IntentGroupCapability, type IntentOptions, type IntentProtocol } from '@/services/intent'
 import type { EmbeddingProfile } from '@/services/datasets'
 import LocalEmbeddingSettings from './LocalEmbeddingSettings.vue'
 import DatasetPicker from './DatasetPicker.vue'
@@ -180,7 +179,7 @@ const pools = computed(() => channelStore.channelPoolsMap[props.protocol].filter
 const poolName = (id: string) => pools.value.find(pool => pool.id === id)?.name ?? (id || '沿用未命中策略')
 const taskName = (id: string) => options.value.tasks?.find(task => task.id === id)?.name ?? id
 const tierName = (tier: number) => tiers.find(item => item.value === tier)?.title ?? '未确定'
-const groups = computed({ get: () => draft.value?.groups ?? [], set: value => { if (draft.value) draft.value.groups = value } })
+const groups = computed({ get: () => orderGroups(draft.value?.groups ?? []), set: value => { if (draft.value) draft.value.groups = orderGroups(value) } })
 const usesEmbedding = computed(() => draft.value?.strategy === 'semantic' || draft.value?.strategy === 'auto' && draft.value.taskMatcher === 'semantic')
 const embeddingProfile = computed<EmbeddingProfile>({
   get: () => ({ source: draft.value!.embeddingSource, channel: draft.value!.embeddingChannel, model: draft.value!.embeddingModel, modelVersion: draft.value!.embeddingVersion ?? '', queryPrefix: draft.value!.queryPrefix, examplePrefix: draft.value!.examplePrefix, timeoutMs: draft.value!.timeoutMs }),
@@ -194,6 +193,18 @@ const tiers = [{ title: '简单', value: 0 }, { title: '常规', value: 1 }, { t
 const strategyHelp = computed(() => ({ regex: '只有这种方式需要手写正则，适合固定关键词或精确规则。', semantic: '自动匹配已发布的数据集，再按类别选择分组。向量模型在高级设置中配置。', complexity: '自动判断难度，你只需要把难度映射到分组，无需编写匹配句子。', adaptive: '自动判断难度，再从同难度候选组中参考质量反馈和相对成本选择。', auto: '' })[draft.value?.strategy ?? 'auto'])
 const lines = (text: string | null) => (text ?? '').split('\n').map(line => line.trim()).filter(Boolean)
 const report = (cause: unknown) => { error.value = intentErrorText(cause) }
+
+function orderGroups(value: IntentGroupCapability[]) {
+  const order = new Map(pools.value.map((pool, index) => [pool.id, index]))
+  return [...value].sort((a, b) => (order.get(a.poolId) ?? pools.value.length) - (order.get(b.poolId) ?? pools.value.length))
+}
+function validateGroups() {
+  const incomplete = groups.value.find(group => !group.tasks.length || !group.tiers.length)
+  if (!incomplete) return true
+  error.value = `请为“${poolName(incomplete.poolId)}”同时选择任务和难度，或将两项清空。`
+  tab.value = 'groups'
+  return false
+}
 
 async function load() {
   const protocol = props.protocol
@@ -225,22 +236,22 @@ function addRoute() {
   draft.value?.routes.push({ id: 'task_' + Date.now(), poolId: '', description: '', patterns: [], examples: [], tier: 1, cost: 0 })
 }
 async function save() {
-  if (!draft.value || saving.value || indexing.value) return
+  if (!draft.value || saving.value || indexing.value || !validateGroups()) return
   saving.value = true
   error.value = ''
-  try { await store.save(props.protocol, draft.value); showToast(props.protocol + ' 意图匹配配置已保存', 'success'); show.value = false }
+  try { await store.save(props.protocol, { ...draft.value, groups: groups.value }); showToast(props.protocol + ' 意图匹配配置已保存', 'success'); show.value = false }
   catch (cause) { report(cause) }
   finally { saving.value = false }
 }
 async function preview() {
-  if (!draft.value || previewing.value) return
+  if (!draft.value || previewing.value || !validateGroups()) return
   const snapshot = JSON.stringify(draft.value)
   const text = previewText.value
   previewing.value = true
   error.value = ''
   decision.value = undefined
   try {
-    const result = await intentApi.preview(props.protocol, draft.value, text)
+    const result = await intentApi.preview(props.protocol, { ...draft.value, groups: groups.value }, text)
     if (show.value && snapshot === JSON.stringify(draft.value) && text === previewText.value) decision.value = result
   } catch (cause) { if (snapshot === JSON.stringify(draft.value) && text === previewText.value) report(cause) }
   finally { previewing.value = false }
