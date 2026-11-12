@@ -280,38 +280,36 @@ func buildProtocolAttempt(
 	markURLSuccess func(url string),
 	allowContentPolicyChannelFailover bool,
 ) UpstreamAttempt {
-	attempt := NewAttemptBuilder(
+	attempt := NewUpstreamAttempt(
 		c, envCfg, cfgManager, channelScheduler,
 		spec.Kind, spec.LogName, upstream, model, bodyBytes, stream,
 		channelIndex, conversationID,
-	).
-		WithURLResults(urlResults).
-		WithNextAPIKey(func(up *config.UpstreamConfig, failedKeys map[string]bool) (string, error) {
-			return cfgManager.GetNextAPIKey(up, failedKeys, spec.LogName)
-		}).
-		WithBuildRequest(func(c *gin.Context, upstreamCopy *config.UpstreamConfig, apiKey string) (*http.Request, error) {
-			return spec.BuildUpstreamRequest(c, upstreamCopy, apiKey, bodyBytes)
-		}).
-		WithRequestTimeout(func() time.Duration {
-			if spec.RequestTimeoutOverride == nil {
-				return 0
-			}
-			return spec.RequestTimeoutOverride(bodyBytes)
-		}()).
-		WithDeprioritizeKey(func(apiKey string) {
-			if upstream.BuiltinProvider != "" {
-				return
-			}
-			if err := cfgManager.MoveAPIKeyToBottomForKind(string(deprioritizeKind), channelIndex, apiKey); err != nil {
-				log.Printf("[%s-Key] 警告: 密钥降级失败: %v", spec.LogName, err)
-			}
-		}).
-		WithMarkURL(markURLFailure, markURLSuccess).
-		WithAllowContentPolicyChannelFailover(allowContentPolicyChannelFailover).
-		WithHandleSuccess(func(c *gin.Context, resp *http.Response, upstreamCopy *config.UpstreamConfig, apiKey string) (*types.Usage, error) {
-			return spec.HandleSuccess(c, resp, upstreamCopy, apiKey, bodyBytes, startTime)
-		}).
-		Build()
+	)
+	attempt.URLResults = urlResults
+	attempt.NextAPIKey = func(up *config.UpstreamConfig, failedKeys map[string]bool) (string, error) {
+		return cfgManager.GetNextAPIKey(up, failedKeys, spec.LogName)
+	}
+	attempt.BuildRequest = func(c *gin.Context, upstreamCopy *config.UpstreamConfig, apiKey string) (*http.Request, error) {
+		return spec.BuildUpstreamRequest(c, upstreamCopy, apiKey, bodyBytes)
+	}
+	if spec.RequestTimeoutOverride != nil {
+		if timeout := spec.RequestTimeoutOverride(bodyBytes); timeout > 0 {
+			attempt.RequestTimeout = timeout
+		}
+	}
+	attempt.DeprioritizeKey = func(apiKey string) {
+		if upstream.BuiltinProvider != "" {
+			return
+		}
+		if err := cfgManager.MoveAPIKeyToBottomForKind(string(deprioritizeKind), channelIndex, apiKey); err != nil {
+			log.Printf("[%s-Key] 警告: 密钥降级失败: %v", spec.LogName, err)
+		}
+	}
+	attempt.MarkURLFailure, attempt.MarkURLSuccess = markURLFailure, markURLSuccess
+	attempt.LogContext.AllowContentPolicyChannelFailover = allowContentPolicyChannelFailover
+	attempt.HandleSuccess = func(c *gin.Context, resp *http.Response, upstreamCopy *config.UpstreamConfig, apiKey string) (*types.Usage, error) {
+		return spec.HandleSuccess(c, resp, upstreamCopy, apiKey, bodyBytes, startTime)
+	}
 	return attempt
 }
 
@@ -478,16 +476,16 @@ func handleMultiChannelProxy(
 		conversationID,
 		model,
 		cfgManager.GetFuzzyModeEnabledForProtocol(string(spec.Kind)),
-		func(selection *scheduler.SelectionResult) MultiChannelAttemptResult {
+		func(selection *scheduler.SelectionResult) UpstreamAttemptResult {
 			upstream := selection.Upstream
 			channelIndex := selection.ChannelIndex
 
 			if upstream == nil {
-				return MultiChannelAttemptResult{}
+				return UpstreamAttemptResult{}
 			}
 			if err := cfgManager.ValidateFreeRequest(string(spec.Kind), model, &channelIndex); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "FREE_CHANNEL_ROUTE"})
-				return MultiChannelAttemptResult{Handled: true, Health: channelHealthNeutral, LastError: err}
+				return UpstreamAttemptResult{Handled: true, Health: channelHealthNeutral, LastError: err}
 			}
 
 			baseURLs := upstream.GetAllBaseURLs()
@@ -505,19 +503,10 @@ func handleMultiChannelProxy(
 			attempt.Permit = selection.Permit
 			result := attempt.TryWithModelMappingFailover()
 
-			return MultiChannelAttemptResult{
-				Handled:           result.Handled,
-				Attempted:         true,
-				SuccessKey:        result.SuccessKey,
-				SuccessBaseURLIdx: result.SuccessBaseURLIdx,
-				FailoverError:     result.FailoverError,
-				Usage:             result.Usage,
-				LastError:         result.LastError,
-				Health:            result.Health,
-				AbortFailover:     result.AbortFailover,
-			}
+			result.Attempted = true
+			return result
 		},
-		func(selection *scheduler.SelectionResult, result MultiChannelAttemptResult) {
+		func(selection *scheduler.SelectionResult, result UpstreamAttemptResult) {
 			if selection == nil || selection.Upstream == nil {
 				return
 			}

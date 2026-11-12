@@ -122,30 +122,31 @@ func handleRoutedChat(
 	}
 
 	urlResults := proxycore.BuildDefaultURLResults([]string{route.BaseURL})
-	result := proxycore.NewAttemptBuilder(
+	attempt := proxycore.NewUpstreamAttempt(
 		c, envCfg, cfgManager, channelScheduler,
 		scheduler.ChannelKindChat, "Chat", upstream, model, routedBody, stream,
 		route.ChannelIndex, conversationID,
-	).
-		WithURLResults(urlResults).
-		WithNextAPIKey(func(upstream *config.UpstreamConfig, failedKeys map[string]bool) (string, error) {
-			if failedKeys[route.APIKey] {
-				return "", fmt.Errorf("路由模型 %s 指定的 API Key 已失败", route.Alias)
-			}
-			return route.APIKey, nil
-		}).
-		WithBuildRequest(func(c *gin.Context, upstreamCopy *config.UpstreamConfig, apiKey string) (*http.Request, error) {
-			return buildChatDirectRequest(c, upstreamCopy, apiKey, routedBody)
-		}).
-		WithMarkURL(func(url string) {
-			channelScheduler.MarkURLFailure(scheduler.ChannelKindChat, route.ChannelIndex, url)
-		}, func(url string) {
-			channelScheduler.MarkURLSuccess(scheduler.ChannelKindChat, route.ChannelIndex, url)
-		}).
-		WithHandleSuccess(func(c *gin.Context, resp *http.Response, upstreamCopy *config.UpstreamConfig, apiKey string) (*types.Usage, error) {
-			return handleSuccess(c, resp, envCfg, startTime, stream, routedBody)
-		}).
-		Build().TryWithModelMappingFailover()
+	)
+	attempt.URLResults = urlResults
+	attempt.NextAPIKey = func(upstream *config.UpstreamConfig, failedKeys map[string]bool) (string, error) {
+		if failedKeys[route.APIKey] {
+			return "", fmt.Errorf("路由模型 %s 指定的 API Key 已失败", route.Alias)
+		}
+		return route.APIKey, nil
+	}
+	attempt.BuildRequest = func(c *gin.Context, upstreamCopy *config.UpstreamConfig, apiKey string) (*http.Request, error) {
+		return buildChatDirectRequest(c, upstreamCopy, apiKey, routedBody)
+	}
+	attempt.MarkURLFailure = func(url string) {
+		channelScheduler.MarkURLFailure(scheduler.ChannelKindChat, route.ChannelIndex, url)
+	}
+	attempt.MarkURLSuccess = func(url string) {
+		channelScheduler.MarkURLSuccess(scheduler.ChannelKindChat, route.ChannelIndex, url)
+	}
+	attempt.HandleSuccess = func(c *gin.Context, resp *http.Response, upstreamCopy *config.UpstreamConfig, apiKey string) (*types.Usage, error) {
+		return handleSuccess(c, resp, envCfg, startTime, stream, routedBody)
+	}
+	result := attempt.TryWithModelMappingFailover()
 	if result.Handled {
 		if result.SuccessKey != "" {
 			proxycore.MarkConversationSuccess(channelScheduler, conversationID, scheduler.ChannelKindChat, route.ChannelIndex, route.ChannelName)

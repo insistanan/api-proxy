@@ -1,15 +1,4 @@
-// Package channelcrud 提供与协议无关的渠道管理 HTTP handler。
-//
-// 背景：messages/responses/gemini/chat/images 五个协议包各自复制了一份几乎相同的
-// channels.go（约 2900 行），仅配置方法名与 upstream 切片不同。本包把这些收敛为
-// 一份实现：具体协议包只需提供一组配置操作（Ops，闭包绑定自己的切片与 ChannelKind），
-// 其余逻辑（CRUD、key 管理、reorder/status/promotion、负载均衡、Ping）全部复用本包。
-//
-// 行为基准：统一采用五份实现中"最完整"的版本——
-//   - Ping 按 ServiceType 注入对应的客户端请求头（Codex / Claude CLI），
-//     避免简化版漏掉请求头导致上游误判；
-//   - 错误处理取各实现中最友好的分支（无效索引→404、密钥冲突→400 等）；
-//   - 成功文案统一为中文。
+// Package channelcrud 提供按渠道类型复用的渠道管理 HTTP handler。
 package channelcrud
 
 import (
@@ -22,58 +11,38 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/infra/httpclient"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
 )
 
-// Ops 描述某一种渠道类型所需的全部配置操作。
-// 由具体协议包构造（闭包绑定自己的 upstream 切片与 ChannelKind），
-// 使本包的实现完全不感知渠道类型的存在。
-type Ops struct {
-	// Kind 渠道类型，用于指标清理、trace 亲和性移除等调度器交互。
-	Kind scheduler.ChannelKind
-
-	// List 返回该渠道类型的上游列表（读取用）。
-	List func() []config.UpstreamConfig
-	// LoadBalance 返回当前负载均衡策略。
-	LoadBalance func() string
-	// GetClient 返回带超时/代理配置的标准 HTTP client（Ping 用）。
-	GetClient func(ch *config.UpstreamConfig, timeout time.Duration) (*http.Client, error)
-
-	// Add 添加上游，返回创建结果（含新渠道 ID 与索引）。
-	Add func(config.UpstreamConfig) (config.AddedUpstream, error)
-	// Update 部分更新上游，返回是否需要重置熔断指标。
-	// 已提交错误仍返回有效标记，以便完成提交后的清理。
-	Update func(int, config.UpstreamUpdate) (bool, error)
-	// Remove 删除上游，返回被删除的渠道（用于清理指标）。
-	// 已提交错误仍返回被删除渠道，普通错误不执行清理。
-	Remove func(int) (*config.UpstreamConfig, error)
-	// AddKey 为指定渠道添加 API 密钥。
-	AddKey func(int, string) error
-	// RemoveKey 从指定渠道移除 API 密钥。
-	RemoveKey func(int, string) error
-	// MoveKeyTop 将 API 密钥移到列表顶部。
-	MoveKeyTop func(int, string) error
-	// MoveKeyBottom 将 API 密钥移到列表底部。
-	MoveKeyBottom func(int, string) error
-	// Reorder 按给定顺序重排渠道。
-	Reorder func([]int) error
-	// SetStatus 设置渠道状态。
-	SetStatus func(int, string) error
-	// SetPromotion 设置渠道促销期。
-	SetPromotion func(int, time.Duration, int) error
-	// SetLoadBalance 设置负载均衡策略。
-	SetLoadBalance func(string) error
+type channelConfig interface {
+	GetChannelConfig(string) ([]config.UpstreamConfig, string, error)
+	AddChannel(string, config.UpstreamConfig) (config.AddedUpstream, error)
+	UpdateChannel(string, int, config.UpstreamUpdate) (bool, error)
+	RemoveChannel(string, int) (*config.UpstreamConfig, error)
+	AddChannelKey(string, int, string) error
+	RemoveChannelKey(string, int, string) error
+	MoveChannelKeyTop(string, int, string) error
+	MoveChannelKeyBottom(string, int, string) error
+	ReorderChannels(string, []int) error
+	SetChannelStatusFor(string, int, string) error
+	SetChannelPromotionFor(string, int, time.Duration, int) error
+	SetLoadBalanceFor(string, string) error
 }
 
 // Handlers 渠道管理 HTTP handler 集合，与协议无关。
 type Handlers struct {
-	ops *Ops
-	sch *scheduler.ChannelScheduler // 更新/删除后同步调度器状态用（Ping 不需要）
+	cfg       channelConfig
+	kind      scheduler.ChannelKind
+	getClient func(*config.UpstreamConfig, time.Duration) (*http.Client, error)
+	sch       *scheduler.ChannelScheduler // 更新/删除后同步调度器状态用（Ping 不需要）
 }
 
 // New 创建渠道管理 handler 集合。
-func New(ops Ops, sch *scheduler.ChannelScheduler) *Handlers {
-	return &Handlers{ops: &ops, sch: sch}
+func New(cfg *config.ConfigManager, sch *scheduler.ChannelScheduler, kind scheduler.ChannelKind) *Handlers {
+	return &Handlers{cfg: cfg, sch: sch, kind: kind, getClient: func(ch *config.UpstreamConfig, timeout time.Duration) (*http.Client, error) {
+		return httpclient.GetManager().GetStandardClientForUpstream(timeout, cfg, ch)
+	}}
 }
 
 // resetMetrics 更新渠道后，如配置判定需重置熔断指标，则同步重置。
@@ -81,7 +50,7 @@ func (h *Handlers) resetMetrics(index int) {
 	if h.sch == nil {
 		return
 	}
-	h.sch.ResetChannelMetrics(index, h.ops.Kind)
+	h.sch.ResetChannelMetrics(index, h.kind)
 }
 
 // respondConfigError 统一响应配置写操作失败（R3-c）：
@@ -105,9 +74,14 @@ func respondConfigError(c *gin.Context, err error) {
 
 // GetUpstreams 获取上游列表（兼容前端 channels 字段名）
 func (h *Handlers) GetUpstreams(c *gin.Context) {
+	list, strategy, err := h.cfg.GetChannelConfig(string(h.kind))
+	if err != nil {
+		respondConfigError(c, err)
+		return
+	}
 	c.JSON(200, gin.H{
-		"channels":    config.ChannelListToDTO(h.ops.List()),
-		"loadBalance": h.ops.LoadBalance(),
+		"channels":    config.ChannelListToDTO(list),
+		"loadBalance": strategy,
 	})
 }
 
@@ -119,7 +93,7 @@ func (h *Handlers) AddUpstream(c *gin.Context) {
 		return
 	}
 
-	created, err := h.ops.Add(upstream)
+	created, err := h.cfg.AddChannel(string(h.kind), upstream)
 	if err != nil {
 		respondConfigError(c, err)
 		return
@@ -147,7 +121,7 @@ func (h *Handlers) UpdateUpstream(c *gin.Context) {
 		return
 	}
 
-	shouldResetMetrics, err := h.ops.Update(id, updates)
+	shouldResetMetrics, err := h.cfg.UpdateChannel(string(h.kind), id, updates)
 	if shouldResetMetrics && (err == nil || config.IsCommittedError(err)) {
 		h.resetMetrics(id)
 	}
@@ -172,11 +146,11 @@ func (h *Handlers) DeleteUpstream(c *gin.Context) {
 		return
 	}
 
-	removed, err := h.ops.Remove(id)
+	removed, err := h.cfg.RemoveChannel(string(h.kind), id)
 	// 已提交错误表示删除已经生效，指标与亲和性也必须同步清理。
 	if h.sch != nil && (err == nil || config.IsCommittedError(err)) {
-		h.sch.DeleteChannelMetrics(removed, id, h.ops.Kind)
-		h.sch.GetTraceAffinityManager().RemoveByChannelForKind(string(h.ops.Kind), id)
+		h.sch.DeleteChannelMetrics(removed, id, h.kind)
+		h.sch.GetTraceAffinityManager().RemoveByChannelForKind(string(h.kind), id)
 	}
 	if err != nil {
 		if strings.Contains(err.Error(), "无效的上游索引") {
@@ -207,7 +181,7 @@ func (h *Handlers) AddApiKey(c *gin.Context) {
 		return
 	}
 
-	if err := h.ops.AddKey(id, req.APIKey); err != nil {
+	if err := h.cfg.AddChannelKey(string(h.kind), id, req.APIKey); err != nil {
 		switch {
 		case strings.Contains(err.Error(), "无效的上游索引"):
 			c.JSON(404, gin.H{"error": "Upstream not found"})
@@ -237,7 +211,7 @@ func (h *Handlers) DeleteApiKey(c *gin.Context) {
 		return
 	}
 
-	if err := h.ops.RemoveKey(id, apiKey); err != nil {
+	if err := h.cfg.RemoveChannelKey(string(h.kind), id, apiKey); err != nil {
 		switch {
 		case strings.Contains(err.Error(), "无效的上游索引"):
 			c.JSON(404, gin.H{"error": "Upstream not found"})
@@ -267,7 +241,7 @@ func (h *Handlers) MoveApiKeyToTop(c *gin.Context) {
 		return
 	}
 
-	if err := h.ops.MoveKeyTop(id, apiKey); err != nil {
+	if err := h.cfg.MoveChannelKeyTop(string(h.kind), id, apiKey); err != nil {
 		respondConfigError(c, err)
 		return
 	}
@@ -290,7 +264,7 @@ func (h *Handlers) MoveApiKeyToBottom(c *gin.Context) {
 		return
 	}
 
-	if err := h.ops.MoveKeyBottom(id, apiKey); err != nil {
+	if err := h.cfg.MoveChannelKeyBottom(string(h.kind), id, apiKey); err != nil {
 		respondConfigError(c, err)
 		return
 	}
@@ -308,7 +282,7 @@ func (h *Handlers) UpdateLoadBalance(c *gin.Context) {
 		return
 	}
 
-	if err := h.ops.SetLoadBalance(req.Strategy); err != nil {
+	if err := h.cfg.SetLoadBalanceFor(string(h.kind), req.Strategy); err != nil {
 		if strings.Contains(err.Error(), "无效的负载均衡策略") {
 			respondConfigError(c, err)
 			return
@@ -330,7 +304,7 @@ func (h *Handlers) ReorderChannels(c *gin.Context) {
 		return
 	}
 
-	if err := h.ops.Reorder(req.Order); err != nil {
+	if err := h.cfg.ReorderChannels(string(h.kind), req.Order); err != nil {
 		respondConfigError(c, err)
 		return
 	}
@@ -355,7 +329,7 @@ func (h *Handlers) SetChannelStatus(c *gin.Context) {
 		return
 	}
 
-	err = h.ops.SetStatus(id, req.Status)
+	err = h.cfg.SetChannelStatusFor(string(h.kind), id, req.Status)
 	if (err == nil || config.IsCommittedError(err)) &&
 		strings.EqualFold(strings.TrimSpace(req.Status), config.ChannelStatusActive) {
 		h.resetMetrics(id)
@@ -395,7 +369,7 @@ func (h *Handlers) SetChannelPromotion(c *gin.Context) {
 		return
 	}
 
-	if err := h.ops.SetPromotion(id, time.Duration(req.Duration)*time.Second, req.Count); err != nil {
+	if err := h.cfg.SetChannelPromotionFor(string(h.kind), id, time.Duration(req.Duration)*time.Second, req.Count); err != nil {
 		respondConfigError(c, err)
 		return
 	}
@@ -422,7 +396,11 @@ func (h *Handlers) PingChannel(c *gin.Context) {
 		return
 	}
 
-	list := h.ops.List()
+	list, _, err := h.cfg.GetChannelConfig(string(h.kind))
+	if err != nil {
+		respondConfigError(c, err)
+		return
+	}
 	if id < 0 || id >= len(list) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Channel not found"})
 		return
@@ -434,7 +412,11 @@ func (h *Handlers) PingChannel(c *gin.Context) {
 
 // PingAllChannels Ping 所有渠道
 func (h *Handlers) PingAllChannels(c *gin.Context) {
-	list := h.ops.List()
+	list, _, err := h.cfg.GetChannelConfig(string(h.kind))
+	if err != nil {
+		respondConfigError(c, err)
+		return
+	}
 	results := make(chan gin.H)
 	var wg sync.WaitGroup
 
@@ -495,7 +477,7 @@ func (h *Handlers) pingChannelWithAPIKey(ch *config.UpstreamConfig) gin.H {
 			// 所有上游都支持 /v1/models 作为连通性验证端点
 			endpoint := testURL + "/v1/models"
 
-			client, err := h.ops.GetClient(ch, 10*time.Second)
+			client, err := h.getClient(ch, 10*time.Second)
 			if err != nil {
 				results <- pingResult{url: testURL, latency: 0, success: false, err: err.Error()}
 				return
@@ -601,7 +583,7 @@ func (h *Handlers) pingChannelURLs(ch *config.UpstreamConfig) gin.H {
 			startTime := time.Now()
 			testURL = strings.TrimSuffix(testURL, "/")
 
-			client, err := h.ops.GetClient(ch, 5*time.Second)
+			client, err := h.getClient(ch, 5*time.Second)
 			if err != nil {
 				results <- pingResult{url: testURL, latency: 0, success: false, err: err.Error()}
 				return

@@ -30,7 +30,7 @@
 | 分组目录 | 包 |
 |---|---|
 | `handlers/` | HTTP 适配层，按业务域分子包（见下表） |
-| `orchestration/` | 调度与稳定性：`scheduler`（ChannelScheduler + ChannelPermit）、`circuit`（三态熔断）、`upstreamcontrol`（共享并发、FIFO 队列、429 冷却与请求预算）、`urlhealth`（多 BaseURL 健康管理）、`ratelimit`（旧滑动窗口限流实现，生产准入由 upstreamcontrol 负责）、`availability`（按真实请求结果采样渠道成败，不参与选渠和主动探测）、`proxy`（框架无关的候选重试状态与错误分类，有静态依赖断言） |
+| `orchestration/` | 调度与稳定性：`scheduler`（ChannelScheduler + ChannelPermit）、`circuit`（三态熔断）、`upstreamcontrol`（共享并发、FIFO 队列、429 冷却与请求预算）、`urlhealth`（多 BaseURL 健康管理）、`availability`（按真实请求结果采样渠道成败，不参与选渠和主动探测）、`proxy`（框架无关的候选重试状态与错误分类，有静态依赖断言） |
 | `protocol/` | 协议层数据面：`converters`（协议转换）、`providers`（上游请求构造与响应转换）、`types`（跨协议共享结构体：Usage、会话、Gemini/Responses 类型） |
 | `dialogue/` | 会话与智能层：`conversation`（对话注册表）、`session`（Responses 会话 + Trace/BaseURL 亲和）、`semantic`（可审核数据集、持久化向量快照与离线评测）、`intent`（意图分类、分组决策与会话切换保护，不修改主请求提示词；Windows 本地 embedding 在 `local_windows.go`）、`cacheinject`（Anthropic/Bedrock prompt caching 断点注入）、`copilotopt`（Copilot 请求识别与优化）、`rectifier`（thinking budget / signature 契约整流） |
 | `safety/` | 内容安全与请求体兼容：`sensitive`（检测/掩码/可逆脱敏）、`llmgate`（危险命令闸门与助手共用推理）、`visionlayer`（图片理解）、`bodyfilter`（过滤请求体中下划线开头的私有参数）、`mediasanitizer`（模型不支持图片时的模态降级占位） |
@@ -47,7 +47,7 @@
 | `handlers/streams` | Claude 流式链路 |
 | `handlers/embeddings`、`handlers/decisions` | 原样透传端点，经 `RunProxyRequest` 选渠，不接内容安全管道 |
 | `handlers/modelapi` | 统一模型目录转换为 OpenAI/Anthropic/Gemini 查询响应 |
-| `handlers/hooks` | 三阶段钩子（请求前、响应后、命令闸门） |
+| `handlers/hooks` | 请求前与响应后内容安全处理、流式命令闸门；内置处理器在构造时直接装配 |
 | `handlers/channels` | 渠道管理 API：渠道动作、日志、指标、性能、池、映射目标、熔断、免费渠道、模型可用性、全局统计、上游模型发现、促销路由 |
 | `handlers/clients` | 客户端伪装与一键配置：Claude Code、Codex、OpenCode、pi-agent、DSH、MCP、skills、工具版本、agentprompt |
 | `handlers/admin` | 管理后台：设置、ccs、意图配置、会话、数据集、AI 助手、安全闸门、请求/系统/拦截日志、客户端伪装自动同步 |
@@ -97,9 +97,9 @@
 ## 关键不变量（完整说明见 docs/规范与不变量.md）
 
 1. shutdown 逆序：先排空 HTTP 请求，再停数据生产者（scheduler）并等待后台任务退出，最后关闭存储；清理登记表是启动失败与正常关闭的唯一释放入口
-2. 生产选渠默认按配置顺序；健康促销渠道在所属分组内临时优先，仍受熔断准入限制。促销任一限制达到后恢复配置顺序，性能画像仅观测
+2. 生产选渠默认按配置顺序；健康促销渠道在所属分组内临时优先，仍受熔断准入限制。促销任一限制达到后恢复配置顺序；`storage/metrics/performance_profile.go` 保留画像采集和评分，供 `/api/performance/report` 展示，不参与选渠排序
 3. Provider 流式转换使用 `HandleStreamResponseCtx`，原生转发也须传播 context 并关闭上游 body，客户端断连停止读取
-4. `ChannelPermit`：defer 释放，结束时 RecordHealth 恰好一次再 Release，均可幂等
+4. `ChannelPermit`：defer 释放，正常结束先提交健康结果；预留释放与健康记账分别至多执行一次，未记账即释放按中性结束，结束后不接受迟到结果
 5. 调用 metrics 时必须传入 `apiType`，空串会按 messages 统计。可选存储先通过接口变量传递，避免 typed-nil
 6. Messages 转换为 Responses 时，构造请求与处理响应复用 Gin context 中的 Provider 实例，保留 previous_response_id 链
 7. 重启后遗留的 gate waiting 记录一律按拦截处理

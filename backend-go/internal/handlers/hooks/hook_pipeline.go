@@ -5,8 +5,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"net/http"
-	"sort"
-	"strings"
 	"sync"
 
 	"github.com/insistanan/api-proxy/internal/dialogue/semantic"
@@ -18,7 +16,6 @@ type HookStage string
 
 const (
 	HookStagePreRequest   HookStage = "pre_request"
-	HookStageRequestTime  HookStage = "request_time"
 	HookStagePostResponse HookStage = "post_response"
 )
 
@@ -36,6 +33,7 @@ type HookContext struct {
 	preRequestSnapshot *contentSafetySnapshot
 }
 
+// 独立执行处理器时可不提供请求级去重器；AttachHookPipeline 会为代理请求创建共享实例。
 type safetyEventDeduper struct {
 	mu         sync.Mutex
 	seen       map[[sha256.Size]byte]struct{}
@@ -56,7 +54,7 @@ func (d *safetyEventDeduper) contains(key string) bool {
 	return exists
 }
 
-func (d *safetyEventDeduper) mark(key string, unassigned ...bool) error {
+func (d *safetyEventDeduper) mark(key string, unassigned bool) error {
 	if d == nil {
 		return nil
 	}
@@ -67,7 +65,7 @@ func (d *safetyEventDeduper) mark(key string, unassigned ...bool) error {
 		return fmt.Errorf("单次请求的内容安全审计事件超过 8192 条上限")
 	}
 	d.seen[hash] = struct{}{}
-	if len(unassigned) > 0 && unassigned[0] {
+	if unassigned {
 		d.unassigned = true
 	}
 	return nil
@@ -112,15 +110,6 @@ type HookResult struct {
 	StreamFinal      bool
 }
 
-// Hook 是三阶段管道中的一个处理单元。Priority 数值越小越先执行；
-// 优先级相同时保持注册顺序。
-type Hook interface {
-	Name() string
-	Stage() HookStage
-	Priority() int
-	Run(context.Context, HookContext, HookResult) (HookResult, error)
-}
-
 // BlockedLogRecorder 是内容安全管道写入拦截事件所需的最小存储接口。
 // sensitive.BlockedStore 满足该接口，测试可注入轻量实现验证错误路径。
 type BlockedLogRecorder interface {
@@ -146,64 +135,21 @@ func (e *HookExecutionError) Unwrap() error {
 	return e.Err
 }
 
-type registeredHook struct {
-	name string
-	hook Hook
-}
-
-// Pipeline 管理三阶段 Hook。注册使用写时复制，使已开始执行的请求
-// 始终使用稳定快照，且不阻塞 Hook 的实际执行。
+// Pipeline 在构造时装配请求前和响应后两个内置处理器，供并发请求共享。
+// 处理器自行管理配置快照，管道不提供动态注册或优先级编排。
 type Pipeline struct {
-	mu                 sync.RWMutex
-	hooks              map[HookStage][]registeredHook
+	preRequest         *contentSafetyPreRequestHook
+	postResponse       *contentSafetyPostResponseHook
 	blockedLogRecorder BlockedLogRecorder
 	cmdGate            *CmdGate
 	semantic           *semantic.Service
 }
 
 func NewPipeline() *Pipeline {
-	return &Pipeline{hooks: make(map[HookStage][]registeredHook, 3)}
+	return &Pipeline{}
 }
 
-// Register 注册一个 Hook。相同阶段内的 Hook 名必须唯一。
-func (p *Pipeline) Register(hook Hook) error {
-	if p == nil {
-		return fmt.Errorf("Hook 管道不能为空")
-	}
-	if hook == nil {
-		return fmt.Errorf("Hook 不能为空")
-	}
-
-	name := strings.TrimSpace(hook.Name())
-	if name == "" {
-		return fmt.Errorf("Hook 名称不能为空")
-	}
-	stage := hook.Stage()
-	if !stage.valid() {
-		return fmt.Errorf("Hook %q 使用了无效阶段 %q", name, stage)
-	}
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	current := p.hooks[stage]
-	for _, entry := range current {
-		if entry.name == name {
-			return fmt.Errorf("%s 阶段已注册 Hook %q", stage, name)
-		}
-	}
-
-	next := make([]registeredHook, len(current), len(current)+1)
-	copy(next, current)
-	next = append(next, registeredHook{name: name, hook: hook})
-	sort.SliceStable(next, func(i, j int) bool {
-		return next[i].hook.Priority() < next[j].hook.Priority()
-	})
-	p.hooks[stage] = next
-	return nil
-}
-
-// Run 执行指定阶段的 Hook。发生错误时立即停止，并返回错误前已经产生的变更。
+// Run 执行指定阶段的内置处理器；失败时保留输入并返回带阶段信息的错误。
 func (p *Pipeline) Run(ctx context.Context, stage HookStage, metadata HookContext, initial HookResult) (HookResult, error) {
 	if p == nil {
 		return initial, fmt.Errorf("Hook 管道不能为空")
@@ -211,21 +157,29 @@ func (p *Pipeline) Run(ctx context.Context, stage HookStage, metadata HookContex
 	if ctx == nil {
 		return initial, fmt.Errorf("Hook 执行上下文不能为空")
 	}
-	if !stage.valid() {
+	var (
+		result HookResult
+		name   string
+		err    error
+	)
+	switch stage {
+	case HookStagePreRequest:
+		if p.preRequest == nil {
+			return initial, nil
+		}
+		name = "content-safety"
+		result, err = p.preRequest.Run(ctx, metadata, initial)
+	case HookStagePostResponse:
+		if p.postResponse == nil {
+			return initial, nil
+		}
+		name = "response-content-safety"
+		result, err = p.postResponse.Run(ctx, metadata, initial)
+	default:
 		return initial, fmt.Errorf("无效 Hook 阶段 %q", stage)
 	}
-
-	p.mu.RLock()
-	snapshot := p.hooks[stage]
-	p.mu.RUnlock()
-
-	result := initial
-	for _, entry := range snapshot {
-		next, err := entry.hook.Run(ctx, metadata, result)
-		if err != nil {
-			return result, &HookExecutionError{Stage: stage, Hook: entry.name, Err: err}
-		}
-		result = next
+	if err != nil {
+		return initial, &HookExecutionError{Stage: stage, Hook: name, Err: err}
 	}
 	return result, nil
 }
@@ -234,29 +188,6 @@ func (p *Pipeline) RunPreRequest(ctx context.Context, metadata HookContext, init
 	return p.Run(ctx, HookStagePreRequest, metadata, initial)
 }
 
-func (p *Pipeline) RunRequestTime(ctx context.Context, metadata HookContext, initial HookResult) (HookResult, error) {
-	return p.Run(ctx, HookStageRequestTime, metadata, initial)
-}
-
 func (p *Pipeline) RunPostResponse(ctx context.Context, metadata HookContext, initial HookResult) (HookResult, error) {
 	return p.Run(ctx, HookStagePostResponse, metadata, initial)
-}
-
-func (p *Pipeline) snapshot(stage HookStage) []registeredHook {
-	if p == nil {
-		return nil
-	}
-	p.mu.RLock()
-	snapshot := p.hooks[stage]
-	p.mu.RUnlock()
-	return snapshot
-}
-
-func (s HookStage) valid() bool {
-	switch s {
-	case HookStagePreRequest, HookStageRequestTime, HookStagePostResponse:
-		return true
-	default:
-		return false
-	}
 }

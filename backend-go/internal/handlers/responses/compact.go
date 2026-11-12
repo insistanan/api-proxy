@@ -146,22 +146,14 @@ func handleMultiChannelCompact(
 ) {
 	proxycore.HandleMultiChannelFailover(c, envCfg, channelScheduler, scheduler.ChannelKindResponses,
 		"Responses", conversationID, model, cfgManager.GetFuzzyModeEnabledForProtocol("responses"),
-		func(selection *scheduler.SelectionResult) proxycore.MultiChannelAttemptResult {
+		func(selection *scheduler.SelectionResult) proxycore.UpstreamAttemptResult {
 			result := compactAttempt(c, selection.Upstream, selection.ChannelIndex, selection.Permit,
 				cfgManager, sessionManager, channelScheduler, bodyBytes, conversationID, envCfg).
 				TryWithModelMappingFailover()
-			return proxycore.MultiChannelAttemptResult{
-				Handled:           result.Handled,
-				Attempted:         true,
-				SuccessKey:        result.SuccessKey,
-				SuccessBaseURLIdx: result.SuccessBaseURLIdx,
-				FailoverError:     result.FailoverError,
-				LastError:         result.LastError,
-				Health:            result.Health,
-				AbortFailover:     result.AbortFailover,
-			}
+			result.Attempted = true
+			return result
 		},
-		func(selection *scheduler.SelectionResult, result proxycore.MultiChannelAttemptResult) {
+		func(selection *scheduler.SelectionResult, result proxycore.UpstreamAttemptResult) {
 			if result.SuccessKey != "" {
 				channelScheduler.MarkConversationSuccess(conversationID, scheduler.ChannelKindResponses,
 					selection.ChannelIndex, selection.Upstream.Name)

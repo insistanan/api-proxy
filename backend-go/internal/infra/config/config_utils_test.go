@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 func TestDefaultContentSafetyConfigIsFullyDisabled(t *testing.T) {
@@ -232,6 +233,41 @@ func TestUpstreamConfigUnmarshalLegacyModelMapping(t *testing.T) {
 
 	assertStringSlice(t, upstream.ModelMapping["opus"], []string{"kimi-2.6"})
 	assertStringSlice(t, upstream.ModelMapping["sonnet"], []string{"gpt-4o", "gpt-4o-mini"})
+	if upstream.BaseURL != "https://api.example.com" || upstream.ServiceType != "openai" || upstream.MaxConcurrency != 5 || len(upstream.APIKeys) != 1 {
+		t.Fatalf("兼容映射解码覆盖了其他字段或默认值: %+v", upstream)
+	}
+}
+
+func TestGetNextAPIKeyPreservesFailoverOrder(t *testing.T) {
+	now := time.Now()
+	manager := &ConfigManager{
+		keyRecoveryTime: time.Minute,
+		maxFailureCount: 3,
+		failedKeysCache: map[string]*FailedKey{
+			"first":  {Timestamp: now.Add(-10 * time.Second), FailureCount: 1},
+			"second": {Timestamp: now.Add(-20 * time.Second), FailureCount: 1},
+			"third":  {Timestamp: now.Add(-90 * time.Second), FailureCount: 4},
+		},
+	}
+	upstream := &UpstreamConfig{APIKeys: []string{"first", "second", "third", "ready"}}
+	for _, test := range []struct {
+		failed map[string]bool
+		want   string
+	}{
+		{nil, "ready"},
+		{map[string]bool{"ready": true}, "third"},
+		{map[string]bool{"ready": true, "third": true}, "second"},
+		{map[string]bool{"ready": true, "third": true, "second": true, "first": true}, ""},
+	} {
+		key, err := manager.GetNextAPIKey(upstream, test.failed, "test")
+		if key != test.want || (err != nil) != (test.want == "") {
+			t.Fatalf("密钥顺序或请求内失败排除错误: key=%q want=%q err=%v", key, test.want, err)
+		}
+	}
+	manager.failedKeysCache["first"].Timestamp = now.Add(-2 * time.Minute)
+	if key, err := manager.GetNextAPIKey(upstream, nil, "test"); key != "first" || err != nil {
+		t.Fatalf("冷却结束后未恢复配置顺序: key=%q err=%v", key, err)
+	}
 }
 
 func TestUpstreamUpdateUnmarshalLegacyModelMapping(t *testing.T) {

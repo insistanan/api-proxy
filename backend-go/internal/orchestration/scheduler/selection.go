@@ -21,8 +21,8 @@ type SelectionResult struct {
 	// Kind 记录选择时的协议类型，便于调用方正确释放/转移在途预留。
 	Kind ChannelKind
 	// Permit 是本次选择取得的许可句柄（R2-b）：持有 in-flight 预留和
-	// 可能取得的半开探测名额。调用方必须在请求结束时 RecordHealth
-	// 记账一次 + Release 释放；两者均可安全重复调用（幂等）。
+	// 可能取得的半开探测名额。调用方在请求结束时先提交健康结果，
+	// 再 Release 释放；重复调用无副作用。
 	Permit *ChannelPermit
 
 	// probeIntent 内部标记：该候选来自需要正式探测占位的路径
@@ -30,163 +30,51 @@ type SelectionResult struct {
 	probeIntent bool
 }
 
-// Reserved 表示本次选择是否已占用 in-flight 预留（许可视图）。
-func (r *SelectionResult) Reserved() bool {
-	return r != nil && r.permitReserved()
-}
-
-// Probe 表示本次选择占用了渠道熔断器的 HalfOpen 探测名额（许可视图）。
-func (r *SelectionResult) Probe() bool {
-	return r != nil && r.permitProbe()
-}
-
-// permitReserved / permitProbe 供 SelectionResult 兼容视图读取。
-func (r *SelectionResult) permitReserved() bool {
-	return r != nil && r.Permit != nil && r.Permit.isReserved()
-}
-
-func (r *SelectionResult) permitProbe() bool {
-	return r != nil && r.Permit != nil && r.Permit.isProbe()
-}
-
-// permitNeedsProbe 表示该选择是否需要正式占用探测名额
-// （候选来自 priority / fallback 探测路径，Peek 预检已通过）。
-func (r *SelectionResult) permitNeedsProbe() bool {
-	return r != nil && r.probeIntent
-}
-
-// ChannelPermit 渠道许可句柄（R2-b）：聚合一次选渠取得的资源——
-// in-flight 预留与半开探测名额（后者绑定取得时的熔断器状态代次）。
-// 生命周期：取得后立即安排 defer 释放；正常结束先 RecordHealth（恰好
-// 一次），再 Release；异常退出仅 Release 自有资源。重复记账视为契约
-// 错误，会记录警告（测试可发现）。
+// ChannelPermit 持有一次选渠的资源。预留释放和健康记账分别通过
+// 标准库的一次性回调完成；Release 把尚未记账的结果按中性结束。
+// 创建后仅调用方法，不再修改回调；熔断代次由记账回调捕获。
 type ChannelPermit struct {
-	scheduler  *ChannelScheduler
-	kind       ChannelKind
-	index      int
-	generation uint64 // 取得探测名额时的熔断器状态代次
-
-	mu          sync.Mutex
-	reserved    bool // 持有 in-flight 预留
-	probe       bool // 持有半开探测名额
-	recorded    bool // 健康结果已记账
-	releasedRes bool // in-flight 已释放
+	releaseReservation func()
+	finishHealth       func(circuitOutcome)
 }
 
-// RecordHealth 按渠道健康结果记账（恰好一次；重复记录警告并跳过）。
-func (p *ChannelPermit) RecordHealth(success bool) {
-	if success {
-		p.RecordHealthSuccess()
-	} else {
-		p.RecordHealthFailure()
-	}
-}
-
-// RecordHealthSuccess 成功记账（恰好一次）。
-func (p *ChannelPermit) RecordHealthSuccess() {
-	p.recordHealth(circuitOutcomeSuccess)
-}
-
-// RecordHealthFailure 真实渠道故障记账（恰好一次）。
-func (p *ChannelPermit) RecordHealthFailure() {
-	p.recordHealth(circuitOutcomeFailure)
-}
-
-// RecordHealthNeutral 中性结束记账（恰好一次）：取消、审核拒绝、本地错误。
-func (p *ChannelPermit) RecordHealthNeutral() {
-	p.recordHealth(circuitOutcomeNeutral)
-}
+func (p *ChannelPermit) RecordHealthSuccess() { p.recordHealth(circuitOutcomeSuccess) }
+func (p *ChannelPermit) RecordHealthFailure() { p.recordHealth(circuitOutcomeFailure) }
+func (p *ChannelPermit) RecordHealthNeutral() { p.recordHealth(circuitOutcomeNeutral) }
 
 func (p *ChannelPermit) recordHealth(outcome circuitOutcome) {
-	if p == nil {
-		return
+	if p != nil && p.finishHealth != nil {
+		p.finishHealth(outcome)
 	}
-	p.mu.Lock()
-	if p.recorded {
-		p.mu.Unlock()
-		log.Printf("[Circuit-Permit] 警告: 渠道 [%d] 重复提交健康结果，忽略后续记账", p.index)
-		return
-	}
-	p.recorded = true
-	probe := p.probe
-	p.probe = false
-	generation := p.generation
-	p.mu.Unlock()
-
-	if p.scheduler == nil {
-		return
-	}
-	p.scheduler.recordCircuitResult(p.kind, p.index, generation, probe, outcome)
 }
 
-// Release 释放许可剩余资源（幂等）：in-flight 预留与未记账的探测名额。
-// 未记账即释放时探测名额按中性释放，不改变健康度。
+// Release 释放预留，并中性结束尚未记账的熔断许可；重复调用无副作用。
 func (p *ChannelPermit) Release() {
-	if p == nil {
-		return
-	}
-	p.mu.Lock()
-	reserved := p.reserved
-	p.reserved = false
-	probe := p.probe
-	p.probe = false
-	p.mu.Unlock()
-
-	if p.scheduler == nil {
-		return
-	}
-	if reserved {
-		p.scheduler.ReleaseChannelReservation(p.kind, p.index)
-	}
-	if probe {
-		p.scheduler.RecordCircuitNeutralGeneration(p.kind, p.index, p.generation)
-	}
+	p.ReleaseReservation()
+	p.RecordHealthNeutral()
 }
 
-// ReleaseReservation 仅释放 in-flight 预留（幂等），不影响探测名额——
-// 渠道失败继续 failover 时调用：预留立即归还，探测名额留给本次请求的
-// 健康记账。
+// ReleaseReservation 在渠道切换前归还预留，健康结果仍可随后记账。
 func (p *ChannelPermit) ReleaseReservation() {
-	if p == nil {
-		return
-	}
-	p.mu.Lock()
-	reserved := p.reserved
-	p.reserved = false
-	p.mu.Unlock()
-
-	if reserved && p.scheduler != nil {
-		p.scheduler.ReleaseChannelReservation(p.kind, p.index)
+	if p != nil && p.releaseReservation != nil {
+		p.releaseReservation()
 	}
 }
 
-func (p *ChannelPermit) isReserved() bool {
-	if p == nil {
-		return false
+func (s *ChannelScheduler) newChannelPermit(kind ChannelKind, index int, allow circuit.AllowResult, reserved bool) *ChannelPermit {
+	permit := &ChannelPermit{}
+	if reserved {
+		permit.releaseReservation = sync.OnceFunc(func() { s.ReleaseChannelReservation(kind, index) })
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.reserved
-}
-
-func (p *ChannelPermit) isProbe() bool {
-	if p == nil {
-		return false
+	var once sync.Once
+	permit.finishHealth = func(outcome circuitOutcome) {
+		once.Do(func() {
+			if allow.Allowed || outcome != circuitOutcomeNeutral {
+				s.recordCircuitResult(kind, index, allow.Generation, outcome)
+			}
+		})
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.probe
-}
-
-// setProbe 记录取得的探测名额及其状态代次。
-func (p *ChannelPermit) setProbe(generation uint64) {
-	if p == nil {
-		return
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.probe = true
-	p.generation = generation
+	return permit
 }
 
 type circuitOutcome uint8
@@ -198,7 +86,7 @@ const (
 )
 
 // recordCircuitResult 按代次记账的统一出口（scheduler 侧）。
-func (s *ChannelScheduler) recordCircuitResult(kind ChannelKind, channelIndex int, generation uint64, probe bool, outcome circuitOutcome) {
+func (s *ChannelScheduler) recordCircuitResult(kind ChannelKind, channelIndex int, generation uint64, outcome circuitOutcome) {
 	manager := s.CircuitManager()
 	if manager == nil {
 		return
@@ -214,7 +102,7 @@ func (s *ChannelScheduler) recordCircuitResult(kind ChannelKind, channelIndex in
 }
 
 // errCandidateUnavailable 表示选中的候选在正式准入（CircuitAllow）阶段
-// 被拒绝：调用方应归还本次在途预留后有界地继续选择，不得发送上游请求。
+// 被拒绝：调用方应有界地继续选择，不得发送上游请求。
 var errCandidateUnavailable = fmt.Errorf("选中的渠道在正式准入阶段被拒绝")
 
 // IsCandidateUnavailable 判断错误是否为"候选在正式准入阶段被拒绝"。
@@ -222,11 +110,8 @@ func IsCandidateUnavailable(err error) bool {
 	return err == errCandidateUnavailable
 }
 
-// reserveAndReturn 原子预留选中渠道的在途计数，避免并发选渠时都看到相同负载。
-// 选中渠道若处于熔断半开状态，同时以 CircuitAllow 正式占用探测名额并记录
-// 在许可句柄上（候选过滤阶段只做了 Peek 预判，未占位）。
-// 正式准入被拒绝时：立即归还本次在途预留，返回 errCandidateUnavailable，
-// 由 SelectChannel 有界重选——不发送未获准的请求（R2-b）。
+// reserveAndReturn 先取得熔断许可，再预留渠道在途计数。
+// 正式准入失败时返回 errCandidateUnavailable，由 SelectChannel 有界重选。
 func (s *ChannelScheduler) reserveAndReturn(result *SelectionResult, kind ChannelKind) (*SelectionResult, error) {
 	if result == nil {
 		return nil, nil
@@ -235,32 +120,19 @@ func (s *ChannelScheduler) reserveAndReturn(result *SelectionResult, kind Channe
 	if s == nil {
 		return result, nil
 	}
-	s.ReserveChannel(kind, result.ChannelIndex)
-	permit := &ChannelPermit{
-		scheduler: s,
-		kind:      kind,
-		index:     result.ChannelIndex,
-		reserved:  true,
-	}
-	result.Permit = permit
-
-	if result.permitNeedsProbe() {
-		// 候选过滤（allowByCircuitPeek）时已确认会放行；这里正式占位。
-		// 并发窗口内名额被抢时 Allow 返回 false：立即归还本次在途预留，
-		// 返回明确的候选不可用错误，由选渠逻辑有界地继续选择；
-		// 不能清掉 Probe 标记后继续发送。
+	allow := circuit.AllowResult{}
+	if result.probeIntent {
 		channelName := ""
 		if result.Upstream != nil {
 			channelName = result.Upstream.Name
 		}
-		if allow := s.CircuitAllow(kind, result.ChannelIndex, channelName); allow.Allowed {
-			permit.setProbe(allow.Generation)
-		} else {
-			permit.Release()
-			result.Permit = nil
+		allow = s.CircuitAllow(kind, result.ChannelIndex, channelName)
+		if !allow.Allowed {
 			return nil, errCandidateUnavailable
 		}
 	}
+	s.ReserveChannel(kind, result.ChannelIndex)
+	result.Permit = s.newChannelPermit(kind, result.ChannelIndex, allow, true)
 	return result, nil
 }
 
@@ -359,7 +231,7 @@ func (s *ChannelScheduler) SelectChannel(
 		for id, channels := range channelsByPool {
 			filtered := make([]ChannelInfo, 0, len(channels))
 			for _, ch := range channels {
-				up := s.getUpstreamByIndex(ch.Index, kind)
+				up := ch.upstream
 				if up != nil && up.ID == route.ChannelID {
 					filtered = append(filtered, ch)
 				}
@@ -374,7 +246,7 @@ func (s *ChannelScheduler) SelectChannel(
 	for _, pool := range poolRoute {
 		channels := channelsByPool[pool.ID]
 		routedChannels = append(routedChannels, channels...)
-		if !foundAttemptableGroup && s.hasAttemptableChannel(channels, failedChannels, kind, requestedModel) {
+		if !foundAttemptableGroup && s.hasAttemptableChannel(channels, failedChannels, requestedModel) {
 			selectedPool = pool
 			activeChannels = channels
 			foundAttemptableGroup = true
@@ -404,7 +276,7 @@ func (s *ChannelScheduler) SelectChannel(
 	if len(activeChannels) == 0 {
 		return nil, noActiveChannelError(kind)
 	}
-	activeChannels = s.preferIntentChannel(ctx, kind, activeChannels)
+	activeChannels = s.preferIntentChannel(ctx, activeChannels)
 
 	// 按分组内临时促销和配置优先级选择可用渠道。failedChannels 只记录本次请求已经
 	// 失败的渠道，因此外层 failover 会自然推进到下一个渠道。
@@ -467,7 +339,7 @@ func (s *ChannelScheduler) selectConversationRouteOverride(
 		if ch.Status != "active" {
 			return nil, true, fmt.Errorf("对话固定渠道 [%d] %s 当前状态为 %s", ch.Index, ch.Name, ch.Status)
 		}
-		upstream := s.getUpstreamByIndex(ch.Index, kind)
+		upstream := ch.upstream
 		if upstream == nil || len(upstream.APIKeys) == 0 {
 			return nil, true, fmt.Errorf("对话固定渠道 [%d] %s 没有可用 API 密钥", ch.Index, ch.Name)
 		}
@@ -520,7 +392,7 @@ func (s *ChannelScheduler) selectPriorityChannel(
 			continue
 		}
 
-		upstream := s.getUpstreamByIndex(ch.Index, kind)
+		upstream := ch.upstream
 		if upstream == nil || len(upstream.APIKeys) == 0 {
 			continue
 		}
@@ -566,14 +438,13 @@ func (s *ChannelScheduler) selectPriorityChannel(
 func (s *ChannelScheduler) hasAttemptableChannel(
 	channels []ChannelInfo,
 	failedChannels map[int]bool,
-	kind ChannelKind,
 	requestedModel string,
 ) bool {
 	for _, channel := range channels {
 		if failedChannels[channel.Index] || channel.Status != config.ChannelStatusActive {
 			continue
 		}
-		upstream := s.getUpstreamByIndex(channel.Index, kind)
+		upstream := channel.upstream
 		if upstream == nil || len(upstream.APIKeys) == 0 {
 			continue
 		}
@@ -597,7 +468,6 @@ func (s *ChannelScheduler) allowByCircuitPeek(kind ChannelKind, channelIndex int
 
 // CircuitAllow 正式占用熔断放行判定（可能占用 HalfOpen 探测名额）。
 // 选中渠道后调用；结果的 Probe 标记必须由调用方以 RecordCircuit* 记账释放。
-// 日志口径与 AllowChannelByCircuit 一致。
 func (s *ChannelScheduler) CircuitAllow(kind ChannelKind, channelIndex int, channelName string) circuit.AllowResult {
 	manager := s.CircuitManager()
 	if manager == nil {
@@ -616,55 +486,17 @@ func (s *ChannelScheduler) CircuitAllow(kind ChannelKind, channelIndex int, chan
 	return result
 }
 
-// AllowChannelByCircuit 供外部（如单渠道代理 handleSingleChannelProxy）调用渠道级熔断放行判定。
-func (s *ChannelScheduler) AllowChannelByCircuit(kind ChannelKind, channelIndex int, channelName string) bool {
-	manager := s.CircuitManager()
-	if manager == nil {
-		return true
-	}
-	result := manager.Allow(string(kind), channelIndex)
-	if result.Allowed {
-		if result.Probe {
-			log.Printf("[Circuit-Probe] 渠道 [%d] %s 处于半开状态，放行探测请求", channelIndex, channelName)
-		}
-		return true
-	}
-	prefix := kindSchedulerLogPrefix(kind)
-	snap := manager.SnapshotEntry(string(kind), channelIndex)
-	log.Printf("[%s-Circuit] 跳过熔断中的渠道: [%d] %s (冷却剩余: %ds)",
-		prefix, channelIndex, channelName, snap.CooldownRemainingSec)
-	return false
-}
-
 // NewCircuitProbePermit 为不经选渠编排的直查路径（如 llmgate 按 ID 选渠）
 // 构造只持有半开探测名额的许可句柄。调用方负责在调用结束/探测结束时
-// RecordHealth + Release。
+// 提交健康结果并 Release。
 func (s *ChannelScheduler) NewCircuitProbePermit(kind ChannelKind, channelIndex int, generation uint64) *ChannelPermit {
-	return &ChannelPermit{
-		scheduler:  s,
-		kind:       kind,
-		index:      channelIndex,
-		generation: generation,
-		probe:      true,
-	}
+	return s.newChannelPermit(kind, channelIndex, circuit.AllowResult{Allowed: true, Generation: generation}, false)
 }
 
 // NewReservationPermit 为已手动 ReserveChannel 的路径（如 visionlayer
 // 列表候选）构造只持有 in-flight 预留的许可句柄，统一释放出口。
 func (s *ChannelScheduler) NewReservationPermit(kind ChannelKind, channelIndex int) *ChannelPermit {
-	return &ChannelPermit{
-		scheduler: s,
-		kind:      kind,
-		index:     channelIndex,
-		reserved:  true,
-	}
-}
-
-// RecordCircuitNeutralGeneration 带状态代次的中性记账（许可句柄释放用）。
-func (s *ChannelScheduler) RecordCircuitNeutralGeneration(kind ChannelKind, channelIndex int, generation uint64) {
-	if manager := s.CircuitManager(); manager != nil {
-		manager.RecordNeutralGeneration(string(kind), channelIndex, generation)
-	}
+	return s.newChannelPermit(kind, channelIndex, circuit.AllowResult{}, true)
 }
 
 // RecordCircuitSuccess / RecordCircuitFailure / RecordCircuitNeutral 渠道级熔断记账。
@@ -750,7 +582,7 @@ func (s *ChannelScheduler) selectFallbackChannel(
 			continue
 		}
 
-		upstream := s.getUpstreamByIndex(ch.Index, kind)
+		upstream := ch.upstream
 		if upstream == nil || len(upstream.APIKeys) == 0 {
 			continue
 		}

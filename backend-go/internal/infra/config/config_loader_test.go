@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -30,7 +31,76 @@ func waitForConfig(t *testing.T, cm *ConfigManager, check func(Config) bool, des
 	t.Fatalf("等待配置生效超时: %s", desc)
 }
 
-// 连续原子替换（模拟自身保存与外部原子写）：watcher 不失效，最终加载有效版本。
+// 连续备份必须分别保留完整内容，不能因时间戳相同而覆盖。
+func TestConfigBackupsKeepEachSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	manager := &ConfigManager{configFile: filepath.Join(dir, "config.json")}
+	for _, content := range []string{`{"name":"first"}`, `{"name":"second"}`} {
+		if err := os.WriteFile(manager.configFile, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := manager.backupConfig(); err != nil {
+			t.Fatalf("备份失败: %v", err)
+		}
+	}
+	backupDir := filepath.Join(dir, "backups")
+	entries, err := os.ReadDir(backupDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("连续备份不能覆盖前一份: %d", len(entries))
+	}
+	contents := make(map[string]bool)
+	for _, entry := range entries {
+		data, err := os.ReadFile(filepath.Join(backupDir, entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		contents[string(data)] = true
+	}
+	if !contents[`{"name":"first"}`] || !contents[`{"name":"second"}`] {
+		t.Fatal("两次备份都应保留各自的完整配置")
+	}
+}
+
+// 清理仅操作配置备份，不能把用户文件或子目录计入删除范围。
+func TestBackupCleanupKeepsUnrelatedEntries(t *testing.T) {
+	dir := t.TempDir()
+	for index := 0; index < maxBackups+2; index++ {
+		name := "config-2026-11-" + strconv.Itoa(10+index) + ".json"
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(`{}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	unrelated := filepath.Join(dir, "aaa-user-notes.txt")
+	if err := os.WriteFile(unrelated, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(dir, "config-other.json")
+	if err := os.Mkdir(nested, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manager := &ConfigManager{}
+	if err := manager.cleanupOldBackups(dir); err != nil {
+		t.Fatalf("清理备份失败: %v", err)
+	}
+	for _, path := range []string{unrelated, nested, filepath.Join(dir, "config-2026-11-12.json")} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("非备份内容及保留范围内的备份不能删除: %s: %v", path, err)
+		}
+	}
+	for _, name := range []string{"config-2026-11-10.json", "config-2026-11-11.json"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Fatalf("应删除最旧的两个备份: %s: %v", name, err)
+		}
+	}
+	if err := manager.cleanupOldBackups(filepath.Join(dir, "missing")); err == nil {
+		t.Fatal("备份目录读取失败必须显式返回错误")
+	}
+}
+
+// 连续原子替换后，watcher 仍应持续工作并加载有效版本。
 func TestWatcherSurvivesAtomicReplacements(t *testing.T) {
 	dir := t.TempDir()
 	configFile := filepath.Join(dir, "config.json")

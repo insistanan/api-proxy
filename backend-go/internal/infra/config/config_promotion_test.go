@@ -13,7 +13,7 @@ func TestPromotionLimitsPersistAndEitherLimitEndsPromotion(t *testing.T) {
 	for _, kind := range []string{"messages", "responses", "gemini", "chat", "images"} {
 		t.Run(kind, func(t *testing.T) {
 			cm := newTransactionTestManager(t, kind)
-			require.NoError(t, cm.setChannelPromotionFor(kind, 0, time.Hour, 2))
+			require.NoError(t, cm.SetChannelPromotionFor(kind, 0, time.Hour, 2))
 			var persisted Config
 			raw, err := os.ReadFile(cm.configFile)
 			require.NoError(t, err)
@@ -36,7 +36,7 @@ func TestPromotionLimitsPersistAndEitherLimitEndsPromotion(t *testing.T) {
 			require.Nil(t, (*cs.upstreams)[0].PromotionUntil)
 			require.False(t, IsChannelInPromotion(&(*cs.upstreams)[0]))
 
-			require.NoError(t, cm.setChannelPromotionFor(kind, 0, time.Hour, 2))
+			require.NoError(t, cm.SetChannelPromotionFor(kind, 0, time.Hour, 2))
 			require.NoError(t, cm.runChannelLifecycle(time.Now().Add(2*time.Hour), false))
 			snapshot = cm.GetConfig()
 			cs, err = snapshot.channelSetFor(kind)
@@ -58,7 +58,7 @@ func TestExpiredPromotionDoesNotContinueByRemainingCount(t *testing.T) {
 func TestInvalidPromotionLimitsKeepPublishedConfig(t *testing.T) {
 	cm := newTransactionTestManager(t, "messages")
 	before := cm.GetConfig()
-	require.Error(t, cm.setChannelPromotionFor("messages", 0, -time.Second, 1))
-	require.Error(t, cm.setChannelPromotionFor("messages", 0, time.Second, -1))
+	require.Error(t, cm.SetChannelPromotionFor("messages", 0, -time.Second, 1))
+	require.Error(t, cm.SetChannelPromotionFor("messages", 0, time.Second, -1))
 	require.Equal(t, before, cm.GetConfig())
 }

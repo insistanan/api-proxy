@@ -24,18 +24,15 @@ type ChannelRouteDeps struct {
 //   - Dashboard：该渠道类型的 dashboard 实现（当前各协议共用按 kind 取快照的实现）
 //   - SchedulerStats：该渠道类型是否注册 /{kind}/channels/scheduler/stats 端点
 type ChannelRouteOptions struct {
-	Crud           *channelcrud.Handlers
-	LoadBalance    gin.HandlerFunc
+	LoadBalance    bool
 	Dashboard      gin.HandlerFunc
 	SchedulerStats gin.HandlerFunc
 }
 
 // RegisterChannelRoutes 注册某一渠道类型的全部渠道管理 API 路由。
-// 收敛前，messages/responses/gemini/chat/images 五段几乎逐字复制的路由注册
-// （合计约 130 行）被本函数 + 5 次调用取代。新增渠道类型只需实现
-// channelcrud.Ops + 导出一个 Crud 工厂，再调用本函数一次。
+// 各协议共用配置操作与 HTTP handler，只通过 kind 选择对应的渠道集合。
 func RegisterChannelRoutes(api *gin.RouterGroup, kind scheduler.ChannelKind, deps ChannelRouteDeps, opts ChannelRouteOptions) {
-	crud := opts.Crud
+	crud := channelcrud.New(deps.Cfg, deps.Scheduler, kind)
 	p := "/" + string(kind)
 	mm := deps.MetricsByKind(kind)
 
@@ -66,8 +63,8 @@ func RegisterChannelRoutes(api *gin.RouterGroup, kind scheduler.ChannelKind, dep
 	api.POST(p+"/channels/:id/promotion", crud.SetChannelPromotion)
 
 	// 协议特有端点（可选）
-	if opts.LoadBalance != nil {
-		api.PUT(p+"/loadbalance", opts.LoadBalance)
+	if opts.LoadBalance {
+		api.PUT(p+"/loadbalance", crud.UpdateLoadBalance)
 	}
 	if opts.Dashboard != nil {
 		api.GET(p+"/channels/dashboard", opts.Dashboard)

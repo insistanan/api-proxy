@@ -69,22 +69,7 @@ func PreferBaseURLInResults(results []urlhealth.URLLatencyResult, preferred stri
 // ConsumePromotionCount 消费促销请求次数
 // 在请求成功后调用，递减促销计数，到 0 时自动清除促销状态
 func (s *ChannelScheduler) ConsumePromotionCount(channelIndex int, kind ChannelKind) {
-	channelType := "messages"
-	switch kind {
-	case ChannelKindResponses:
-		channelType = "responses"
-	case ChannelKindGemini:
-		channelType = "gemini"
-	case ChannelKindChat:
-		channelType = "chat"
-	case ChannelKindImages:
-		channelType = "images"
-	case ChannelKindEmbeddings:
-		channelType = "embeddings"
-	case ChannelKindDecisions:
-		channelType = "decisions"
-	}
-	s.configManager.ConsumePromotionCount(channelIndex, channelType)
+	s.configManager.ConsumePromotionCount(channelIndex, string(kind))
 }
 
 func (s *ChannelScheduler) ValidateFixedChannel(conversationID string, kind ChannelKind, channelIndex int) error {

@@ -22,25 +22,9 @@ func GetModelAvailability(store *logger.Store, cfgManager *config.ConfigManager)
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "可用性观测存储或配置未初始化"})
 			return
 		}
-		cfg := cfgManager.GetConfig()
 		kind := c.Query("type")
-		var upstreams []config.UpstreamConfig
-		switch kind {
-		case "messages":
-			upstreams = cfg.Upstream
-		case "responses":
-			upstreams = cfg.ResponsesUpstream
-		case "gemini":
-			upstreams = cfg.GeminiUpstream
-		case "chat":
-			upstreams = cfg.ChatUpstream
-		case "images":
-			upstreams = cfg.ImagesUpstream
-		case "embeddings":
-			upstreams = cfg.EmbeddingsUpstream
-		case "decisions":
-			upstreams = cfg.DecisionsUpstream
-		default:
+		upstreams, _, err := cfgManager.GetChannelConfig(kind)
+		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的渠道协议类型"})
 			return
 		}

@@ -30,8 +30,11 @@ type MappingTargetChannelDTO struct {
 func ListMappingTargetChannels(cfgManager *config.ConfigManager, sch *scheduler.ChannelScheduler, kind scheduler.ChannelKind) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		excludeID := strings.TrimSpace(c.Query("excludeId"))
-		cfg := cfgManager.GetConfig()
-		upstreams := scheduler.UpstreamsOfKind(cfg, kind)
+		upstreams, _, err := cfgManager.GetChannelConfig(string(kind))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 		circuits := sch.GetCircuitSnapshotForKind(kind)
 
 		items := make([]MappingTargetChannelDTO, 0, len(upstreams))
@@ -75,8 +78,11 @@ func ListMappingTargetChannelModels(cfgManager *config.ConfigManager, kind sched
 			c.JSON(http.StatusBadRequest, gin.H{"error": "缺少目标渠道 ID"})
 			return
 		}
-		cfg := cfgManager.GetConfig()
-		upstreams := scheduler.UpstreamsOfKind(cfg, kind)
+		upstreams, _, err := cfgManager.GetChannelConfig(string(kind))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 
 		var target *config.UpstreamConfig
 		for index := range upstreams {

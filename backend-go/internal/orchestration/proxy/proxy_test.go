@@ -81,6 +81,9 @@ func TestRetrySameCandidateErrorChain(t *testing.T) {
 	if !errors.Is(err, inner) {
 		t.Fatal("应保留错误链")
 	}
+	if !IsRetrySameCandidateError(errors.Join(errors.New("other"), err)) {
+		t.Fatal("合并错误中也应识别同候选重试错误")
+	}
 	if IsRetrySameCandidateError(errors.New("plain")) {
 		t.Fatal("普通错误不得误判")
 	}

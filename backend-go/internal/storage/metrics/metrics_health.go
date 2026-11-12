@@ -5,21 +5,6 @@ import (
 	"time"
 )
 
-// IsKeyHealthy 判断单个 Key 是否健康
-func (m *MetricsManager) IsKeyHealthy(baseURL, apiKey string, channelIndex int) bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	metricsKey := generateMetricsKey(baseURL, apiKey, channelIndex)
-	metrics, exists := m.keyMetrics[metricsKey]
-	if !exists || len(metrics.recentResults) == 0 {
-		return true // 没有记录，默认健康
-	}
-
-	return m.calculateKeyFailureRateInternal(metrics) < m.failureThreshold
-}
-
-// IsChannelHealthy 判断渠道是否健康（基于当前活跃 Keys 聚合计算）
 // IsChannelHealthyWithKeys 判断渠道是否健康（逐 Key 独立判断）
 //
 // 改为逐 Key 独立判断而非简单聚合：
@@ -37,8 +22,6 @@ func (m *MetricsManager) IsChannelHealthyWithKeys(baseURL string, activeKeys []s
 	defer m.mu.RUnlock()
 
 	minRequests := max(3, m.windowSize/2)
-	hasAnyData := false
-	hasKeyWithEnoughData := false
 
 	for _, apiKey := range activeKeys {
 		metricsKey := generateMetricsKey(baseURL, apiKey, channelIndex)
@@ -46,13 +29,11 @@ func (m *MetricsManager) IsChannelHealthyWithKeys(baseURL string, activeKeys []s
 		if !exists || len(metrics.recentResults) == 0 {
 			continue
 		}
-		hasAnyData = true
 
 		// 单 Key 样本不足，跳过对该 Key 的健康判断
 		if len(metrics.recentResults) < minRequests {
 			continue
 		}
-		hasKeyWithEnoughData = true
 
 		// 计算该 Key 的失败率
 		failures := 0
@@ -67,42 +48,9 @@ func (m *MetricsManager) IsChannelHealthyWithKeys(baseURL string, activeKeys []s
 		}
 	}
 
-	// 没有任何数据或有数据但所有 Key 样本都不足 → 默认健康
-	if !hasAnyData || !hasKeyWithEnoughData {
-		return true
-	}
-
 	return true
 }
 
-// IsChannelHealthyMultiURL 判断多 BaseURL 渠道是否还有可用端点。
-func (m *MetricsManager) IsChannelHealthyMultiURL(baseURLs []string, activeKeys []string, channelIndex int) bool {
-	if len(baseURLs) == 0 || len(activeKeys) == 0 {
-		return false
-	}
-	for _, baseURL := range baseURLs {
-		if m.IsChannelHealthyWithKeys(baseURL, activeKeys, channelIndex) {
-			return true
-		}
-	}
-	return false
-}
-
-// CalculateKeyFailureRate 计算单个 Key 的失败率
-func (m *MetricsManager) CalculateKeyFailureRate(baseURL, apiKey string, channelIndex int) float64 {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	metricsKey := generateMetricsKey(baseURL, apiKey, channelIndex)
-	metrics, exists := m.keyMetrics[metricsKey]
-	if !exists || len(metrics.recentResults) == 0 {
-		return 0
-	}
-
-	return m.calculateKeyFailureRateInternal(metrics)
-}
-
-// CalculateChannelFailureRate 计算渠道聚合失败率
 // GetChannelRequestCount 获取渠道的总请求数（所有 Key 聚合）
 func (m *MetricsManager) GetChannelRequestCount(baseURL string, activeKeys []string, channelIndex int) int64 {
 	if len(activeKeys) == 0 {

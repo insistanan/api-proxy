@@ -37,6 +37,33 @@ func newTransactionTestManager(t *testing.T, kind string) *ConfigManager {
 	return cm
 }
 
+func TestGetChannelConfigReturnsIsolatedSnapshot(t *testing.T) {
+	for _, kind := range []string{"messages", "responses", "gemini", "chat", "images", "embeddings", "decisions"} {
+		t.Run(kind, func(t *testing.T) {
+			cm := newTransactionTestManager(t, kind)
+			list, strategy, err := cm.GetChannelConfig(kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(list) != 2 || strategy != "failover" {
+				t.Fatalf("读取了错误的渠道集合: list=%+v strategy=%s", list, strategy)
+			}
+			list[0].Name = "outside"
+			list[0].APIKeys[0] = "outside"
+			again, _, err := cm.GetChannelConfig(kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if again[0].Name != "first" || again[0].APIKeys[0] != "k1" {
+				t.Fatalf("返回值修改污染了配置快照: %+v", again[0])
+			}
+			if _, _, err := cm.GetChannelConfig("invalid"); err == nil {
+				t.Fatal("未知协议必须报错，不能退回 Messages")
+			}
+		})
+	}
+}
+
 func blockTransactionBackup(t *testing.T, cm *ConfigManager) {
 	t.Helper()
 	// 首次写入没有旧文件，无备份目录；用普通文件占位使下一次提交前备份失败。
@@ -53,26 +80,26 @@ func TestChannelTransactionsKeepSnapshotOnSaveFailure(t *testing.T) {
 		mutate  func(*ConfigManager, string) error
 	}{
 		{name: "add", mutate: func(cm *ConfigManager, kind string) error {
-			_, err := cm.addChannel(kind, UpstreamConfig{Name: "new", BaseURL: "https://new.example.com", APIKeys: []string{"new-key"}, ServiceType: "openai"})
+			_, err := cm.AddChannel(kind, UpstreamConfig{Name: "new", BaseURL: "https://new.example.com", APIKeys: []string{"new-key"}, ServiceType: "openai"})
 			return err
 		}},
 		{name: "update", mutate: func(cm *ConfigManager, kind string) error {
-			_, err := cm.updateChannel(kind, 0, UpstreamUpdate{Name: &name})
+			_, err := cm.UpdateChannel(kind, 0, UpstreamUpdate{Name: &name})
 			return err
 		}},
 		{name: "remove", mutate: func(cm *ConfigManager, kind string) error {
-			_, err := cm.removeChannel(kind, 0)
+			_, err := cm.RemoveChannel(kind, 0)
 			return err
 		}},
-		{name: "add-key", mutate: func(cm *ConfigManager, kind string) error { return cm.addChannelKey(kind, 0, "new-key") }},
-		{name: "remove-key", mutate: func(cm *ConfigManager, kind string) error { return cm.removeChannelKey(kind, 0, "k1") }},
-		{name: "move-key-top", mutate: func(cm *ConfigManager, kind string) error { return cm.moveChannelKeyTop(kind, 0, "k2") }},
+		{name: "add-key", mutate: func(cm *ConfigManager, kind string) error { return cm.AddChannelKey(kind, 0, "new-key") }},
+		{name: "remove-key", mutate: func(cm *ConfigManager, kind string) error { return cm.RemoveChannelKey(kind, 0, "k1") }},
+		{name: "move-key-top", mutate: func(cm *ConfigManager, kind string) error { return cm.MoveChannelKeyTop(kind, 0, "k2") }},
 		{name: "move-key-bottom", mutate: func(cm *ConfigManager, kind string) error { return cm.MoveAPIKeyToBottomForKind(kind, 0, "k1") }},
-		{name: "reorder", mutate: func(cm *ConfigManager, kind string) error { return cm.reorderChannels(kind, []int{1, 0}) }},
+		{name: "reorder", mutate: func(cm *ConfigManager, kind string) error { return cm.ReorderChannels(kind, []int{1, 0}) }},
 		{name: "status", mutate: func(cm *ConfigManager, kind string) error {
-			return cm.setChannelStatusFor(kind, 0, ChannelStatusSuspended)
+			return cm.SetChannelStatusFor(kind, 0, ChannelStatusSuspended)
 		}},
-		{name: "promotion", mutate: func(cm *ConfigManager, kind string) error { return cm.setChannelPromotionFor(kind, 0, time.Minute, 0) }},
+		{name: "promotion", mutate: func(cm *ConfigManager, kind string) error { return cm.SetChannelPromotionFor(kind, 0, time.Minute, 0) }},
 		{name: "duplicate", mutate: func(cm *ConfigManager, kind string) error { return cm.DuplicateChannel(kind, 0) }},
 		{name: "tidy", prepare: func(cm *ConfigManager, kind string) {
 			cs, _ := cm.config.channelSetFor(kind)
@@ -98,7 +125,7 @@ func TestChannelTransactionsKeepSnapshotOnSaveFailure(t *testing.T) {
 			(*cs.upstreams)[0].TemporaryUntil = &expired
 		}, mutate: func(cm *ConfigManager, _ string) error { return cm.runChannelLifecycle(time.Now(), true) }},
 	}
-	for _, kind := range []string{"messages", "responses", "gemini", "chat", "images"} {
+	for _, kind := range []string{"messages", "responses", "gemini", "chat", "images", "embeddings", "decisions"} {
 		for _, op := range ops {
 			t.Run(kind+"/"+op.name, func(t *testing.T) {
 				cm := newTransactionTestManager(t, kind)
@@ -178,6 +205,7 @@ func TestConfigSnapshotIsolatesSettingsSlices(t *testing.T) {
 	cm := newTransactionTestManager(t, "messages")
 	cm.config.Settings.ContentSafety.Allowlist.Entries = []string{"original"}
 	cm.config.Settings.ContentSafety.CustomRules.Rules = []CustomRuleItem{{Name: "original"}}
+	cm.config.Settings.ContentSafety.DangerousCmd.Semantic = &SemanticSafetyConfig{DatasetIDs: []string{"original"}}
 	cm.config.Settings.Prompts.Entries = []PromptEntry{{Version: "original"}}
 	before := cm.GetConfig()
 	snapshot := cm.GetConfig()
@@ -185,8 +213,41 @@ func TestConfigSnapshotIsolatesSettingsSlices(t *testing.T) {
 	snapshot.Settings.ContentSafety.CustomRules.Rules[0].Name = "changed"
 	snapshot.Settings.Prompts.Entries[0].Version = "changed"
 	snapshot.Upstream[0].APIKeys[0] = "changed"
+	safety := cm.GetContentSafetyConfig()
+	safety.Allowlist.Entries[0] = "changed"
+	safety.CustomRules.Rules[0].Name = "changed"
+	safety.DangerousCmd.Semantic.DatasetIDs[0] = "changed"
 	if !reflect.DeepEqual(before, cm.GetConfig()) {
 		t.Fatal("修改读取快照污染运行配置")
+	}
+}
+
+func TestInvalidPoolReloadKeepsPublishedSnapshot(t *testing.T) {
+	cm := newTransactionTestManager(t, "messages")
+	before := cm.GetConfig()
+	for _, kind := range []string{"messages", "responses", "gemini", "chat", "images", "embeddings", "decisions"} {
+		t.Run(kind, func(t *testing.T) {
+			candidate := cm.GetConfig()
+			set, err := candidate.channelSetFor(kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// 普通分组不能占用兜底分组的 * 规则。
+			*set.pools = append(*set.pools, ChannelPool{ID: "broken", Name: "broken", ModelMatcher: "*"})
+			data, err := json.Marshal(candidate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(cm.configFile, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := cm.reloadFromDisk(); err == nil {
+				t.Fatal("无效分组必须阻止候选发布")
+			}
+			if !reflect.DeepEqual(before, cm.GetConfig()) {
+				t.Fatal("分组校验失败污染当前配置")
+			}
+		})
 	}
 }
 
@@ -239,7 +300,7 @@ func TestChannelRemovalCommitsBeforeCleanup(t *testing.T) {
 	for _, kind := range []string{"messages", "responses", "gemini", "chat", "images"} {
 		t.Run(kind, func(t *testing.T) {
 			cm := newTransactionTestManager(t, kind)
-			removed, err := cm.removeChannel(kind, 0)
+			removed, err := cm.RemoveChannel(kind, 0)
 			if err != nil || removed == nil || removed.ID != "first" {
 				t.Fatalf("删除失败: %v", err)
 			}

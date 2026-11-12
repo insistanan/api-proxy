@@ -18,11 +18,6 @@ const maxStreamToolArgumentBytes = 4 << 20
 const maxStreamToolArguments = 128
 const defaultStreamToolArgumentKey = "default"
 
-type streamTextState struct {
-	scanner  *sensitive.StreamCmdScanner
-	finished bool
-}
-
 type streamToolArgumentState struct {
 	body     strings.Builder
 	name     string
@@ -97,43 +92,6 @@ func FeedAttachedStreamText(c requestContextGetter, text string) error {
 // FeedAttachedStreamTextForKey 只检查事后否决，普通正文可以直接流式下发。
 func FeedAttachedStreamTextForKey(c requestContextGetter, key, text string) error {
 	return AttachedStreamVetoError(c)
-}
-
-func (a *attachedHookPipeline) textStream(key string) (*streamTextState, error) {
-	if len(key) > 512 {
-		return nil, fmt.Errorf("响应候选标识超过长度上限")
-	}
-	if a.textStreams == nil {
-		a.textStreams = make(map[string]*streamTextState)
-	}
-	if state := a.textStreams[key]; state != nil {
-		return state, nil
-	}
-	if len(a.textStreams) >= maxStreamToolArguments {
-		return nil, fmt.Errorf("单次响应候选超过 %d 个上限", maxStreamToolArguments)
-	}
-	state := &streamTextState{scanner: sensitive.NewStreamCmdScanner(a.streamDetector)}
-	a.textStreams[key] = state
-	return state, nil
-}
-
-func (a *attachedHookPipeline) reviewStreamMatches(c requestContextGetter, scanner *sensitive.StreamCmdScanner, match *sensitive.CommandMatch, blocked bool) error {
-	if err := scanner.Err(); err != nil {
-		return wrapContentSafetyHookError(err)
-	}
-	for ; blocked; match, blocked = scanner.Allow() {
-		if safetyErr := gateReviewDangerousCommand(attachedRequestContext(c), c, a, a.currentMetadata(), *match); safetyErr != nil {
-			return a.recordContentSafetyError(attachedRequestContext(c), a.currentMetadata(), safetyErr)
-		}
-	}
-	return nil
-}
-
-func (a *attachedHookPipeline) flushStreamText(c requestContextGetter, scanner *sensitive.StreamCmdScanner) error {
-	previous := scanner.BufferedBytes()
-	match, blocked := scanner.Flush()
-	a.textStreamBytes += scanner.BufferedBytes() - previous
-	return a.reviewStreamMatches(c, scanner, match, blocked)
 }
 
 func (a *attachedHookPipeline) finishStreamBranch(c requestContextGetter, key string) error {
@@ -748,11 +706,7 @@ func ensureAttachedStreamScanner(attached *attachedHookPipeline) error {
 	if attached.stream != nil {
 		return nil
 	}
-	for _, entry := range attached.pipeline.snapshot(HookStagePostResponse) {
-		hook, ok := entry.hook.(*contentSafetyPostResponseHook)
-		if !ok {
-			continue
-		}
+	if hook := attached.pipeline.postResponse; hook != nil {
 		snapshot, err := hook.currentSnapshot()
 		if err != nil {
 			return err

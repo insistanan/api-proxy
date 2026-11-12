@@ -167,13 +167,3 @@ func consumePromotionOp(upstreams []UpstreamConfig, index int, label string) boo
 	}
 	return true
 }
-
-// getPromotedOp 获取处于促销期的渠道索引
-func getPromotedOp(upstreams []UpstreamConfig) (int, bool) {
-	for i := range upstreams {
-		if IsChannelInPromotion(&upstreams[i]) {
-			return i, true
-		}
-	}
-	return -1, false
-}

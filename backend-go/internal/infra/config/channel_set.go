@@ -12,33 +12,35 @@ import (
 //
 // 写操作只绑定候选配置，保存成功或已过提交点后由 saveConfigLocked 发布。
 type channelSet struct {
+	kind        string
 	name        string            // 日志文案，如 "Messages" / "Chat"
 	upstreams   *[]UpstreamConfig // 指向传入配置的对应切片
 	pools       *[]ChannelPool    // 指向传入配置的对应池列表
 	loadBalance *string           // 指向传入配置的对应负载均衡策略
 }
 
+// channelSets 是七组渠道字段的统一映射，供查找、迁移和快照复制复用。
+func (cfg *Config) channelSets() []channelSet {
+	return []channelSet{
+		{"messages", "Messages", &cfg.Upstream, &cfg.MessagePools, &cfg.LoadBalance},
+		{"responses", "Responses", &cfg.ResponsesUpstream, &cfg.ResponsesPools, &cfg.ResponsesLoadBalance},
+		{"gemini", "Gemini", &cfg.GeminiUpstream, &cfg.GeminiPools, &cfg.GeminiLoadBalance},
+		{"chat", "Chat", &cfg.ChatUpstream, &cfg.ChatPools, &cfg.ChatLoadBalance},
+		{"images", "Images", &cfg.ImagesUpstream, &cfg.ImagesPools, &cfg.ImagesLoadBalance},
+		{"embeddings", "Embeddings", &cfg.EmbeddingsUpstream, &cfg.EmbeddingsPools, &cfg.EmbeddingsLoadBalance},
+		{"decisions", "Decisions", &cfg.DecisionsUpstream, &cfg.DecisionsPools, &cfg.DecisionsLoadBalance},
+	}
+}
+
 // channelSetFor 返回指定渠道类型的存放位置。
 // 未知类型显式报错，避免误写入 Messages 配置。
 func (cfg *Config) channelSetFor(kind string) (*channelSet, error) {
-	switch kind {
-	case "messages":
-		return &channelSet{"Messages", &cfg.Upstream, &cfg.MessagePools, &cfg.LoadBalance}, nil
-	case "responses":
-		return &channelSet{"Responses", &cfg.ResponsesUpstream, &cfg.ResponsesPools, &cfg.ResponsesLoadBalance}, nil
-	case "gemini":
-		return &channelSet{"Gemini", &cfg.GeminiUpstream, &cfg.GeminiPools, &cfg.GeminiLoadBalance}, nil
-	case "chat":
-		return &channelSet{"Chat", &cfg.ChatUpstream, &cfg.ChatPools, &cfg.ChatLoadBalance}, nil
-	case "images":
-		return &channelSet{"Images", &cfg.ImagesUpstream, &cfg.ImagesPools, &cfg.ImagesLoadBalance}, nil
-	case "embeddings":
-		return &channelSet{"Embeddings", &cfg.EmbeddingsUpstream, &cfg.EmbeddingsPools, &cfg.EmbeddingsLoadBalance}, nil
-	case "decisions":
-		return &channelSet{"Decisions", &cfg.DecisionsUpstream, &cfg.DecisionsPools, &cfg.DecisionsLoadBalance}, nil
-	default:
-		return nil, fmt.Errorf("不支持的渠道类型: %s", kind)
+	for _, set := range cfg.channelSets() {
+		if set.kind == kind {
+			return &set, nil
+		}
 	}
+	return nil, fmt.Errorf("不支持的渠道类型: %s", kind)
 }
 
 // mutateChannelSet 统一无返回值的渠道写操作：只修改候选，提交后发布。
@@ -61,9 +63,9 @@ func (cm *ConfigManager) mutateChannelSet(kind string, mutate func(*channelSet) 
 // 通用 CRUD 方法（以 messages 版为行为基准，参数化 kind）
 // =============================================================================
 
-// addChannel 添加上游（通用版）。
+// AddChannel 添加指定协议的上游。
 // chat/images 版额外做了 DefaultModel TrimSpace，此处统一对所有 kind 做（对 messages 无害）。
-func (cm *ConfigManager) addChannel(kind string, up UpstreamConfig) (AddedUpstream, error) {
+func (cm *ConfigManager) AddChannel(kind string, up UpstreamConfig) (AddedUpstream, error) {
 	if up.BuiltinProvider != "" {
 		return AddedUpstream{}, fmt.Errorf("不能通过普通接口创建内置免费渠道")
 	}
@@ -106,8 +108,8 @@ func (cm *ConfigManager) addChannel(kind string, up UpstreamConfig) (AddedUpstre
 	return result, err
 }
 
-// updateChannel 部分更新上游（通用版）。
-func (cm *ConfigManager) updateChannel(kind string, index int, updates UpstreamUpdate) (bool, error) {
+// UpdateChannel 部分更新上游（通用版）。
+func (cm *ConfigManager) UpdateChannel(kind string, index int, updates UpstreamUpdate) (bool, error) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
@@ -154,8 +156,8 @@ func (cm *ConfigManager) updateChannel(kind string, index int, updates UpstreamU
 	return shouldReset, err
 }
 
-// removeChannel 删除上游（通用版）。
-func (cm *ConfigManager) removeChannel(kind string, index int) (*UpstreamConfig, error) {
+// RemoveChannel 删除上游（通用版）。
+func (cm *ConfigManager) RemoveChannel(kind string, index int) (*UpstreamConfig, error) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
@@ -181,8 +183,8 @@ func (cm *ConfigManager) removeChannel(kind string, index int) (*UpstreamConfig,
 	return removed, err
 }
 
-// addChannelKey 为指定渠道添加 API 密钥。
-func (cm *ConfigManager) addChannelKey(kind string, index int, apiKey string) error {
+// AddChannelKey 为指定渠道添加 API 密钥。
+func (cm *ConfigManager) AddChannelKey(kind string, index int, apiKey string) error {
 	return cm.mutateChannelSet(kind, func(cs *channelSet) error {
 		if err := rejectBuiltinChannel(*cs.upstreams, index); err != nil {
 			return err
@@ -191,8 +193,8 @@ func (cm *ConfigManager) addChannelKey(kind string, index int, apiKey string) er
 	})
 }
 
-// removeChannelKey 从指定渠道移除 API 密钥。
-func (cm *ConfigManager) removeChannelKey(kind string, index int, apiKey string) error {
+// RemoveChannelKey 从指定渠道移除 API 密钥。
+func (cm *ConfigManager) RemoveChannelKey(kind string, index int, apiKey string) error {
 	return cm.mutateChannelSet(kind, func(cs *channelSet) error {
 		if err := rejectBuiltinChannel(*cs.upstreams, index); err != nil {
 			return err
@@ -201,8 +203,8 @@ func (cm *ConfigManager) removeChannelKey(kind string, index int, apiKey string)
 	})
 }
 
-// moveChannelKeyTop 将 API 密钥移到列表顶部。
-func (cm *ConfigManager) moveChannelKeyTop(kind string, index int, apiKey string) error {
+// MoveChannelKeyTop 将 API 密钥移到列表顶部。
+func (cm *ConfigManager) MoveChannelKeyTop(kind string, index int, apiKey string) error {
 	return cm.mutateChannelSet(kind, func(cs *channelSet) error {
 		if err := rejectBuiltinChannel(*cs.upstreams, index); err != nil {
 			return err
@@ -211,8 +213,8 @@ func (cm *ConfigManager) moveChannelKeyTop(kind string, index int, apiKey string
 	})
 }
 
-// moveChannelKeyBottom 将 API 密钥移到底部。
-func (cm *ConfigManager) moveChannelKeyBottom(kind string, index int, apiKey string) error {
+// MoveChannelKeyBottom 将 API 密钥移到底部。
+func (cm *ConfigManager) MoveChannelKeyBottom(kind string, index int, apiKey string) error {
 	return cm.mutateChannelSet(kind, func(cs *channelSet) error {
 		if err := rejectBuiltinChannel(*cs.upstreams, index); err != nil {
 			return err
@@ -221,15 +223,15 @@ func (cm *ConfigManager) moveChannelKeyBottom(kind string, index int, apiKey str
 	})
 }
 
-// reorderChannels 按给定顺序重排渠道。
-func (cm *ConfigManager) reorderChannels(kind string, order []int) error {
+// ReorderChannels 按给定顺序重排渠道。
+func (cm *ConfigManager) ReorderChannels(kind string, order []int) error {
 	return cm.mutateChannelSet(kind, func(cs *channelSet) error {
 		return reorderOp(*cs.upstreams, order, cs.name)
 	})
 }
 
-// setChannelStatusFor 设置渠道状态。
-func (cm *ConfigManager) setChannelStatusFor(kind string, index int, status string) error {
+// SetChannelStatusFor 设置渠道状态。
+func (cm *ConfigManager) SetChannelStatusFor(kind string, index int, status string) error {
 	return cm.mutateChannelSet(kind, func(cs *channelSet) error {
 		if err := rejectBuiltinChannel(*cs.upstreams, index); err != nil {
 			return err
@@ -238,8 +240,8 @@ func (cm *ConfigManager) setChannelStatusFor(kind string, index int, status stri
 	})
 }
 
-// setChannelPromotionFor 设置渠道促销期。
-func (cm *ConfigManager) setChannelPromotionFor(kind string, index int, duration time.Duration, count int) error {
+// SetChannelPromotionFor 设置渠道促销期。
+func (cm *ConfigManager) SetChannelPromotionFor(kind string, index int, duration time.Duration, count int) error {
 	return cm.mutateChannelSet(kind, func(cs *channelSet) error {
 		if err := rejectBuiltinChannel(*cs.upstreams, index); err != nil {
 			return err
@@ -248,8 +250,8 @@ func (cm *ConfigManager) setChannelPromotionFor(kind string, index int, duration
 	})
 }
 
-// setLoadBalanceFor 设置负载均衡策略。
-func (cm *ConfigManager) setLoadBalanceFor(kind string, strategy string) error {
+// SetLoadBalanceFor 设置负载均衡策略。
+func (cm *ConfigManager) SetLoadBalanceFor(kind string, strategy string) error {
 	err := cm.mutateChannelSet(kind, func(cs *channelSet) error {
 		if err := validateLoadBalanceStrategy(strategy); err != nil {
 			return err
@@ -264,8 +266,8 @@ func (cm *ConfigManager) setLoadBalanceFor(kind string, strategy string) error {
 	return nil
 }
 
-// currentChannelForModel 返回当前活跃渠道（指定模型）。
-func (cm *ConfigManager) currentChannelForModel(kind string, model string) (*UpstreamConfig, int, error) {
+// CurrentChannelForModel 返回当前活跃渠道（指定模型）。
+func (cm *ConfigManager) CurrentChannelForModel(kind string, model string) (*UpstreamConfig, int, error) {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
 
@@ -278,10 +280,21 @@ func (cm *ConfigManager) currentChannelForModel(kind string, model string) (*Ups
 
 // MoveAPIKeyToBottomForKind 将指定渠道类型的 API 密钥移到底部。
 func (cm *ConfigManager) MoveAPIKeyToBottomForKind(kind string, index int, apiKey string) error {
-	return cm.moveChannelKeyBottom(kind, index, apiKey)
+	return cm.MoveChannelKeyBottom(kind, index, apiKey)
 }
 
 // GetCurrentUpstreamWithIndexForModelForKind 返回指定渠道类型的当前活跃渠道（指定模型）。
 func (cm *ConfigManager) GetCurrentUpstreamWithIndexForModelForKind(kind string, model string) (*UpstreamConfig, int, error) {
-	return cm.currentChannelForModel(kind, model)
+	return cm.CurrentChannelForModel(kind, model)
+}
+
+// GetChannelConfig 返回同一快照中的上游列表和负载均衡策略。
+func (cm *ConfigManager) GetChannelConfig(kind string) ([]UpstreamConfig, string, error) {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	cs, err := cm.config.channelSetFor(kind)
+	if err != nil {
+		return nil, "", err
+	}
+	return cloneUpstreamList(*cs.upstreams), *cs.loadBalance, nil
 }

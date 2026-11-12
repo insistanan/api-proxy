@@ -7,31 +7,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
-// MultiChannelAttemptResult 描述一次“选中渠道”的尝试结果（用于多渠道 failover 外壳复用）。
-type MultiChannelAttemptResult struct {
-	Handled           bool
-	Attempted         bool
-	SuccessKey        string
-	SuccessBaseURLIdx int
-	FailoverError     *FailoverError
-	Usage             *types.Usage
-	LastError         error
-	// Health 是本渠道的最终健康结果（R2-a）。渠道级熔断记账只消费该字段，
-	// 不得从 SuccessKey / LastError 推断。Unset 时外壳跳过记账并记录警告
-	// （重复或缺失记账都是契约错误）。
-	Health channelHealthResult
-	// AbortFailover 表示本渠道失败后不得转入下一渠道，外壳立即按 LastError 结束请求。
-	AbortFailover bool
-}
-
 // TrySelectedChannelFunc 尝试一次选中的渠道，返回该渠道的尝试结果。
-type TrySelectedChannelFunc func(selection *scheduler.SelectionResult) MultiChannelAttemptResult
+type TrySelectedChannelFunc func(selection *scheduler.SelectionResult) UpstreamAttemptResult
 
 // OnMultiChannelHandledFunc 在请求被“处理完成”时回调（成功或非 failover 错误都会触发）。
-type OnMultiChannelHandledFunc func(selection *scheduler.SelectionResult, result MultiChannelAttemptResult)
+type OnMultiChannelHandledFunc func(selection *scheduler.SelectionResult, result UpstreamAttemptResult)
 
 // HandleAllFailedFunc 处理“所有渠道都失败”的返回逻辑（不同入口可能有不同错误格式）。
 type HandleAllFailedFunc func(c *gin.Context, failoverErr *FailoverError, lastError error)

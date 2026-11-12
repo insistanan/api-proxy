@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/insistanan/api-proxy/internal/infra/config"
@@ -27,25 +28,9 @@ func (s *ChannelScheduler) SelectVisionChannel(ctx context.Context, kind Channel
 		return nil, fmt.Errorf("图片理解层未指定图片理解渠道")
 	}
 
-	cfg := s.configManager.GetConfig()
-	var upstreams []config.UpstreamConfig
-	switch kind {
-	case ChannelKindMessages:
-		upstreams = cfg.Upstream
-	case ChannelKindResponses:
-		upstreams = cfg.ResponsesUpstream
-	case ChannelKindGemini:
-		upstreams = cfg.GeminiUpstream
-	case ChannelKindChat:
-		upstreams = cfg.ChatUpstream
-	case ChannelKindImages:
-		upstreams = cfg.ImagesUpstream
-	case ChannelKindEmbeddings:
-		upstreams = cfg.EmbeddingsUpstream
-	case ChannelKindDecisions:
-		upstreams = cfg.DecisionsUpstream
-	default:
-		return nil, fmt.Errorf("不支持的图片理解渠道类型: %s", kind)
+	upstreams, _, err := s.configManager.GetChannelConfig(string(kind))
+	if err != nil {
+		return nil, err
 	}
 
 	for index := range upstreams {
@@ -70,7 +55,7 @@ func (s *ChannelScheduler) SelectVisionChannel(ctx context.Context, kind Channel
 		if !metricsManager.IsChannelHealthyWithKeys(upstream.BaseURL, upstream.APIKeys, index) {
 			return nil, fmt.Errorf("图片理解渠道 %q 当前不健康", upstream.Name)
 		}
-		return s.reserveAndReturnVision(&SelectionResult{
+		return s.reserveAndReturn(&SelectionResult{
 			Upstream:     upstream.Clone(),
 			ChannelIndex: index,
 			Reason:       "vision_layer",
@@ -78,13 +63,6 @@ func (s *ChannelScheduler) SelectVisionChannel(ctx context.Context, kind Channel
 	}
 
 	return nil, fmt.Errorf("图片理解渠道 %q 不存在", channelID)
-}
-
-// reserveAndReturnVision 预留图片理解渠道并适配旧的单返回值签名。
-// 图片理解渠道不标记 probeIntent（不经熔断探测路径），正式准入不会拒绝；
-// 防御性处理错误时返回 (nil, err)。
-func (s *ChannelScheduler) reserveAndReturnVision(result *SelectionResult, kind ChannelKind) (*SelectionResult, error) {
-	return s.reserveAndReturn(result, kind)
 }
 
 // ListPublicVisionChannels 按配置序号返回公共图片理解池中可用的渠道。
@@ -116,24 +94,9 @@ func (s *ChannelScheduler) listVisionChannels(ctx context.Context, kind ChannelK
 		}
 	}
 
-	cfg := s.configManager.GetConfig()
-	var upstreams []config.UpstreamConfig
-	switch kind {
-	case ChannelKindMessages:
-		upstreams = cfg.Upstream
-	case ChannelKindResponses:
-		upstreams = cfg.ResponsesUpstream
-	case ChannelKindGemini:
-		upstreams = cfg.GeminiUpstream
-	case ChannelKindChat:
-		upstreams = cfg.ChatUpstream
-	case ChannelKindImages:
-		upstreams = cfg.ImagesUpstream
-	case ChannelKindEmbeddings:
-		upstreams = cfg.EmbeddingsUpstream
-	case ChannelKindDecisions:
-		upstreams = cfg.DecisionsUpstream
-	default:
+	upstreams, _, err := s.configManager.GetChannelConfig(string(kind))
+	if err != nil {
+		log.Printf("[Scheduler-Config] 读取渠道配置失败: %v", err)
 		return nil
 	}
 

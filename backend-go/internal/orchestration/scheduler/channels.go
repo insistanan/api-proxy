@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"log"
 	"sort"
 	"strings"
 
@@ -15,6 +16,8 @@ type ChannelInfo struct {
 	Status   string
 	Score    float64 // 基于失败率的展示分数，不参与选渠排序
 	Promoted bool    // 促销仅临时调整所在分组的顺序，健康检查与熔断准入照常执行
+
+	upstream *config.UpstreamConfig // 本轮候选快照，筛选时不重复读取配置
 }
 
 // calculateChannelScore 计算展示分数：100 × (1 - 失败率)，不足 5 次请求时给 100 分。
@@ -57,25 +60,9 @@ func (s *ChannelScheduler) getActiveChannels(kind ChannelKind, poolIDs ...string
 // getActiveChannelsByPool 从同一份配置快照中收集多个分组的故障转移序列，
 // 避免一次选渠为了命中分组和兜底分组重复深拷贝完整配置。
 func (s *ChannelScheduler) getActiveChannelsByPool(kind ChannelKind, poolIDs []string) map[string][]ChannelInfo {
-	cfg := s.configManager.GetConfig()
-
-	var upstreams []config.UpstreamConfig
-	switch kind {
-	case ChannelKindMessages:
-		upstreams = cfg.Upstream
-	case ChannelKindResponses:
-		upstreams = cfg.ResponsesUpstream
-	case ChannelKindGemini:
-		upstreams = cfg.GeminiUpstream
-	case ChannelKindChat:
-		upstreams = cfg.ChatUpstream
-	case ChannelKindImages:
-		upstreams = cfg.ImagesUpstream
-	case ChannelKindEmbeddings:
-		upstreams = cfg.EmbeddingsUpstream
-	case ChannelKindDecisions:
-		upstreams = cfg.DecisionsUpstream
-	default:
+	upstreams, _, err := s.configManager.GetChannelConfig(string(kind))
+	if err != nil {
+		log.Printf("[Scheduler-Config] 读取渠道配置失败: %v", err)
 		return map[string][]ChannelInfo{}
 	}
 
@@ -119,8 +106,7 @@ func (s *ChannelScheduler) getActiveChannelsByPool(kind ChannelKind, poolIDs []s
 		}
 
 		// 计算渠道动态分数
-		upstreamCopy := upstream
-		score := s.calculateChannelScore(&upstreamCopy, i, kind)
+		score := s.calculateChannelScore(&upstream, i, kind)
 		channel := ChannelInfo{
 			Index:    i,
 			Name:     upstream.Name,
@@ -128,6 +114,7 @@ func (s *ChannelScheduler) getActiveChannelsByPool(kind ChannelKind, poolIDs []s
 			Status:   status,
 			Score:    score,
 			Promoted: config.IsChannelInPromotion(&upstream),
+			upstream: &upstreams[i],
 		}
 		if len(requestedPools) == 0 {
 			channelsByPool[""] = append(channelsByPool[""], channel)
@@ -155,49 +142,15 @@ func (s *ChannelScheduler) getActiveChannelsByPool(kind ChannelKind, poolIDs []s
 }
 
 func (s *ChannelScheduler) getChannelPools(kind ChannelKind) []config.ChannelPool {
-	cfg := s.configManager.GetConfig()
-	switch kind {
-	case ChannelKindMessages:
-		return cfg.MessagePools
-	case ChannelKindResponses:
-		return cfg.ResponsesPools
-	case ChannelKindGemini:
-		return cfg.GeminiPools
-	case ChannelKindChat:
-		return cfg.ChatPools
-	case ChannelKindImages:
-		return cfg.ImagesPools
-	case ChannelKindEmbeddings:
-		return cfg.EmbeddingsPools
-	case ChannelKindDecisions:
-		return cfg.DecisionsPools
-	default:
-		return nil
-	}
+	return s.configManager.GetChannelPools(string(kind))
 }
 
 // getUpstreamByIndex 根据索引获取上游配置
 // 注意：返回的是副本，避免指向 slice 元素的指针在 slice 重分配后失效
 func (s *ChannelScheduler) getUpstreamByIndex(index int, kind ChannelKind) *config.UpstreamConfig {
-	cfg := s.configManager.GetConfig()
-
-	var upstreams []config.UpstreamConfig
-	switch kind {
-	case ChannelKindMessages:
-		upstreams = cfg.Upstream
-	case ChannelKindResponses:
-		upstreams = cfg.ResponsesUpstream
-	case ChannelKindGemini:
-		upstreams = cfg.GeminiUpstream
-	case ChannelKindChat:
-		upstreams = cfg.ChatUpstream
-	case ChannelKindImages:
-		upstreams = cfg.ImagesUpstream
-	case ChannelKindEmbeddings:
-		upstreams = cfg.EmbeddingsUpstream
-	case ChannelKindDecisions:
-		upstreams = cfg.DecisionsUpstream
-	default:
+	upstreams, _, err := s.configManager.GetChannelConfig(string(kind))
+	if err != nil {
+		log.Printf("[Scheduler-Config] 读取渠道配置失败: %v", err)
 		return nil
 	}
 

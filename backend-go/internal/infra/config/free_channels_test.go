@@ -109,7 +109,8 @@ func TestFreeRequestsAndMutationsStayIsolated(t *testing.T) {
 func TestFreeOnlyConfigDoesNotBecomeImplicitDefault(t *testing.T) {
 	cfg := Config{FreeChannels: &FreeChannelsConfig{Kilo: KiloFreeConfig{Enabled: true, Models: []string{"kilo-auto/free"}}}}
 	require.NoError(t, materializeFreeChannels(&cfg))
-	require.Equal(t, -1, bestUpstreamIndex(cfg.Upstream, true))
-	_, _, err := getFirstActiveWithIndexForModel(cfg.Upstream, cfg.MessagePools, "Messages", "ordinary")
+	_, _, err := getFirstActiveWithIndexForModel(cfg.Upstream, cfg.MessagePools, "Messages", "")
+	require.Error(t, err)
+	_, _, err = getFirstActiveWithIndexForModel(cfg.Upstream, cfg.MessagePools, "Messages", "ordinary")
 	require.Error(t, err)
 }

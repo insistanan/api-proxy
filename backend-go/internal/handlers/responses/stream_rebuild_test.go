@@ -11,8 +11,109 @@ import (
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
-// TestResponsesEventRebuildPreservesLineStructure 锁定 Responses 侧两个事件改写函数的保真契约：
-// 收敛前它们逐行补写 "\n"，会让以 "\n\n" 结尾的事件多出一个换行。
+// 上游正值与全缓存输入不能因本地估算被覆盖。
+func TestResponsesUsagePreservesOneTokenCounts(t *testing.T) {
+	envCfg := &config.EnvConfig{}
+	request := []byte(`{"input":"a long input should not replace a valid upstream count"}`)
+	response := &types.ResponsesResponse{Usage: types.ResponsesUsage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2}}
+	patchResponsesUsage(response, request, envCfg)
+	if response.Usage.InputTokens != 1 || response.Usage.OutputTokens != 1 || response.Usage.TotalTokens != 2 {
+		t.Fatalf("有效的 1 token 不能被估算覆盖: %+v", response.Usage)
+	}
+	for _, usage := range []string{
+		`{"input_tokens":1,"output_tokens":1,"total_tokens":2}`,
+		`{"input_tokens":1,"output_tokens":1,"total_tokens":2,"input_tokens_details":{"cached_tokens":1}}`,
+	} {
+		event := "data: {\"type\":\"response.completed\",\"response\":{\"usage\":" + usage + "}}\n\n"
+		found, needsPatch, _ := checkResponsesEventUsage(event, false)
+		if !found || needsPatch {
+			t.Fatalf("有效统计无需补全，全部输入命中缓存也一样: %s", event)
+		}
+	}
+}
+
+func TestResponsesUsageOutputEstimateUpdatesTotal(t *testing.T) {
+	envCfg := &config.EnvConfig{}
+	response := &types.ResponsesResponse{
+		Usage:  types.ResponsesUsage{InputTokens: 42, TotalTokens: 42},
+		Output: []types.ResponsesItem{{Type: "message", Content: "hello world"}},
+	}
+	patchResponsesUsage(response, nil, envCfg)
+	if response.Usage.OutputTokens <= 0 || response.Usage.TotalTokens != 42+response.Usage.OutputTokens {
+		t.Fatalf("仅补输出时也必须更新总量: %+v", response.Usage)
+	}
+	for _, cached := range []int{0, 42} {
+		event := "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":42,\"output_tokens\":0,\"total_tokens\":42,\"input_tokens_details\":{\"cached_tokens\":" + strconv.Itoa(cached) + "}}}}\n\n"
+		_, _, collected := checkResponsesEventUsage(event, false)
+		patched := patchResponsesCompletedEventUsageWithTokens(event, []byte(`{"input":"do not estimate this input"}`), 7, &collected, envCfg)
+		assertResponsesUsage(t, patched, 42, 7)
+		payload := extractCompletedPayload(t, patched)
+		usage := payload["response"].(map[string]interface{})["usage"].(map[string]interface{})
+		if total, _ := usage["total_tokens"].(float64); total != 49 {
+			t.Fatalf("响应总量必须包含原始输入与补全输出: %v", total)
+		}
+		if collected.InputTokens != 42-cached || collected.TotalTokens != 49-cached {
+			t.Fatalf("上游输入与采集的未缓存输入不能混用: cached=%d collected=%+v", cached, collected)
+		}
+	}
+}
+
+func TestResponsesUsageKeepsCacheOnlyInput(t *testing.T) {
+	response := &types.ResponsesResponse{
+		Usage:  types.ResponsesUsage{CacheReadInputTokens: 100},
+		Output: []types.ResponsesItem{{Type: "message", Content: "hello world"}},
+	}
+	patchResponsesUsage(response, []byte(`{"input":"cached context"}`), &config.EnvConfig{})
+	if response.Usage.InputTokens != 0 || response.Usage.CacheReadInputTokens != 100 || response.Usage.TotalTokens != response.Usage.OutputTokens {
+		t.Fatalf("全缓存输入无需伪造未缓存输入: %+v", response.Usage)
+	}
+}
+
+func TestFinalizeResponsesUsageKeepsCollectionSeparate(t *testing.T) {
+	envCfg := &config.EnvConfig{CorrectResponsesInputTokens: true}
+	request := []byte(`{"input":"` + strings.Repeat("context ", 1000) + `"}`)
+	for _, multiline := range []bool{false, true} {
+		t.Run(strconv.FormatBool(multiline), func(t *testing.T) {
+			payload := `{"type":"response.completed","extension":"keep","response":{"id":"resp_1","custom":true,"usage":{"input_tokens":100,"output_tokens":0,"total_tokens":100,"input_tokens_details":{"cached_tokens":200},"context_details":{"input_tokens":50}}}}`
+			event := "id: event_1\nevent: response.completed\ndata: " + payload + "\n\n"
+			if multiline {
+				event = strings.Replace(event, `,"response":`, ",\ndata: \"response\":", 1)
+			}
+			collected := responsesStreamUsage{InputTokens: 100}
+			out := finalizeResponsesCompletedUsage(event, request, 7, &collected, true, true, true, envCfg)
+			data := extractCompletedPayload(t, out)
+			response := data["response"].(map[string]interface{})
+			usage := response["usage"].(map[string]interface{})
+			if usage["input_tokens"] != float64(50) || usage["output_tokens"] != float64(7) || usage["total_tokens"] != float64(57) {
+				t.Fatalf("补全后的 int 必须能被后续规则读取，明确上下文值最后生效: %v", usage)
+			}
+			if _, exists := usage["input_tokens_details"]; exists {
+				t.Fatal("累积缓存应从客户端副本剥离")
+			}
+			if collected.InputTokens != 100 || collected.OutputTokens != 7 || collected.TotalTokens != 107 {
+				t.Fatalf("客户端上下文修正不得回写采集值: %+v", collected)
+			}
+			if data["extension"] != "keep" || response["custom"] != true || !strings.HasPrefix(out, "id: event_1\nevent: response.completed\n") || !strings.HasSuffix(out, "\n\n") {
+				t.Fatalf("未知字段与 SSE 边界必须保留: %s", out)
+			}
+		})
+	}
+}
+
+func TestFinalizeResponsesUsagePreservesUnchangedEvents(t *testing.T) {
+	for _, event := range []string{
+		"id: 1\ndata:{\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2,\"input_tokens_details\":{\"audio_tokens\":1}}}}\n\n",
+		"event: response.failed\ndata: {\"type\":\"response.failed\"}\n\n",
+		"data: {broken\n\n",
+	} {
+		collected := responsesStreamUsage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2}
+		if out := finalizeResponsesCompletedUsage(event, nil, 9, &collected, true, false, true, &config.EnvConfig{}); out != event {
+			t.Fatalf("无需修正或无法解析的事件应原样透传: got=%q want=%q", out, event)
+		}
+	}
+}
+
+// SSE 事件改写应保留空行及事件边界。
 func TestResponsesEventRebuildPreservesLineStructure(t *testing.T) {
 	envCfg := &config.EnvConfig{}
 	requestBody := []byte(`{"model":"m","input":"hello"}`)

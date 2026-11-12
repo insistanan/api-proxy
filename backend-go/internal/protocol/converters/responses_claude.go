@@ -170,33 +170,6 @@ func buildClaudeToolSearchTool() types.ClaudeTool {
 	}
 }
 
-func buildClaudeWebSearchTool(tool map[string]interface{}) types.ClaudeTool {
-	description, _ := tool["description"].(string)
-	if strings.TrimSpace(description) == "" {
-		description = "Search the web for relevant information."
-	}
-
-	parameters := map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"query": map[string]interface{}{
-				"type":        "string",
-				"description": "Search query to run on the web.",
-			},
-		},
-		"required": []string{"query"},
-	}
-	if rawParameters, ok := tool["parameters"].(map[string]interface{}); ok && rawParameters != nil {
-		parameters = rawParameters
-	}
-
-	return types.ClaudeTool{
-		Name:        "web_search",
-		Description: description,
-		InputSchema: parameters,
-	}
-}
-
 func validateClaudeThinkingToolChoice(raw interface{}) error {
 	if raw == nil {
 		return nil

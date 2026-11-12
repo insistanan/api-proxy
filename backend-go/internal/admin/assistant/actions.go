@@ -154,18 +154,7 @@ func (e *executor) createChannel(action actionJSON) ActionRecord {
 	upstream.VisionLayerChannelID = strings.TrimSpace(action.VisionLayerChannelID)
 	upstream.VisionLayerModel = strings.TrimSpace(action.VisionLayerModel)
 
-	var result config.AddedUpstream
-	var err error
-	switch kind {
-	case "messages":
-		result, err = e.cfgManager.AddUpstreamWithResult(upstream)
-	case "responses":
-		result, err = e.cfgManager.AddResponsesUpstreamWithResult(upstream)
-	case "chat":
-		result, err = e.cfgManager.AddChatUpstreamWithResult(upstream)
-	case "gemini":
-		result, err = e.cfgManager.AddGeminiUpstreamWithResult(upstream)
-	}
+	result, err := e.cfgManager.AddChannel(kind, upstream)
 	if err != nil {
 		return ActionRecord{Action: action.Action, Success: false, Detail: "创建渠道失败: " + err.Error()}
 	}
@@ -290,17 +279,9 @@ func (e *executor) resolvePoolID(kind, poolName string) (string, bool) {
 }
 
 func (e *executor) channelIndexByID(kind, channelID string) (int, error) {
-	cfg := e.cfgManager.GetConfig()
-	var upstreams []config.UpstreamConfig
-	switch kind {
-	case "messages":
-		upstreams = cfg.Upstream
-	case "responses":
-		upstreams = cfg.ResponsesUpstream
-	case "chat":
-		upstreams = cfg.ChatUpstream
-	case "gemini":
-		upstreams = cfg.GeminiUpstream
+	upstreams, _, err := e.cfgManager.GetChannelConfig(string(kind))
+	if err != nil {
+		return -1, err
 	}
 	for index := range upstreams {
 		if upstreams[index].ID == channelID {
@@ -311,17 +292,7 @@ func (e *executor) channelIndexByID(kind, channelID string) (int, error) {
 }
 
 func (e *executor) updateChannelByKind(kind string, index int, updates config.UpstreamUpdate) error {
-	var err error
-	switch kind {
-	case "messages":
-		_, err = e.cfgManager.UpdateUpstream(index, updates)
-	case "responses":
-		_, err = e.cfgManager.UpdateResponsesUpstream(index, updates)
-	case "chat":
-		_, err = e.cfgManager.UpdateChatUpstream(index, updates)
-	case "gemini":
-		_, err = e.cfgManager.UpdateGeminiUpstream(index, updates)
-	}
+	_, err := e.cfgManager.UpdateChannel(kind, index, updates)
 	return err
 }
 

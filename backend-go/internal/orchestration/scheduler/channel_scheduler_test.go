@@ -87,6 +87,50 @@ func createTestScheduler(t *testing.T, cfg config.Config) (*ChannelScheduler, fu
 	}
 }
 
+func TestChannelSelectionKeepsCandidateSnapshot(t *testing.T) {
+	s, cleanup := createTestScheduler(t, config.Config{
+		Upstream: []config.UpstreamConfig{{
+			Name:    "before",
+			BaseURL: "https://before.example.com",
+			APIKeys: []string{"before-key"},
+		}},
+	})
+	defer cleanup()
+
+	candidates := s.getActiveChannels(ChannelKindMessages)
+	name := "after"
+	baseURL := "https://after.example.com"
+	keys := []string{"after-key"}
+	if _, err := s.configManager.UpdateChannel("messages", 0, config.UpstreamUpdate{
+		Name:    &name,
+		BaseURL: &baseURL,
+		APIKeys: keys,
+	}); err != nil {
+		t.Fatalf("更新渠道失败: %v", err)
+	}
+
+	selectFrom := func(channels []ChannelInfo) *config.UpstreamConfig {
+		t.Helper()
+		result := s.selectPriorityChannel(channels, nil, ChannelKindMessages, "", s.MetricsManager(ChannelKindMessages))
+		if result == nil || result.Upstream == nil {
+			t.Fatal("预期选中渠道")
+		}
+		return result.Upstream
+	}
+	previous := selectFrom(candidates)
+	if previous.Name != "before" || previous.BaseURL != "https://before.example.com" || previous.APIKeys[0] != "before-key" {
+		t.Fatalf("同轮选渠混入新配置: %+v", previous)
+	}
+	current := selectFrom(s.getActiveChannels(ChannelKindMessages))
+	if current.Name != name || current.BaseURL != baseURL || current.APIKeys[0] != keys[0] {
+		t.Fatalf("新一轮未读取最新配置: %+v", current)
+	}
+	current.APIKeys[0] = "local-change"
+	if next := selectFrom(s.getActiveChannels(ChannelKindMessages)); next.APIKeys[0] != keys[0] {
+		t.Fatal("候选快照修改污染了配置")
+	}
+}
+
 // 促销只临时优先，不健康时仍被过滤。
 func TestUnhealthyPromotedChannelIsSkipped(t *testing.T) {
 	// 设置促销截止时间为 5 分钟后
@@ -543,7 +587,7 @@ func TestSelectChannel_DuplicatePrioritiesNormalizeToFailoverOrder(t *testing.T)
 	if err != nil {
 		t.Fatalf("第一次选渠失败: %v", err)
 	}
-	if !first.Reserved() {
+	if first.Permit == nil || scheduler.GetChannelInFlight(ChannelKindMessages, first.ChannelIndex) != 1 {
 		t.Fatal("期望第一次选渠占用 in-flight 预留")
 	}
 

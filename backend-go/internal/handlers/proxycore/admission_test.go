@@ -36,9 +36,9 @@ func TestChannelFailoverRequiresFuzzy(t *testing.T) {
 			ctx := newAttemptTestContext(context.Background())
 			calls := 0
 			HandleMultiChannelFailover(ctx, env.envCfg, env.channelScheduler, scheduler.ChannelKindMessages, "Messages", "", "model", fuzzy,
-				func(*scheduler.SelectionResult) MultiChannelAttemptResult {
+				func(*scheduler.SelectionResult) UpstreamAttemptResult {
 					calls++
-					return MultiChannelAttemptResult{Attempted: true, Health: channelHealthNeutral, LastError: upstreamcontrol.ErrQueueFull}
+					return UpstreamAttemptResult{Attempted: true, Health: channelHealthNeutral, LastError: upstreamcontrol.ErrQueueFull}
 				}, nil, nil)
 			if fuzzy {
 				require.Equal(t, 2, calls)

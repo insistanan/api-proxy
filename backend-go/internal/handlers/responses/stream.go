@@ -303,7 +303,7 @@ func handleStreamSuccess(
 					hasUsage = true
 					needTokenPatch = needPatch
 					if envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug") && needPatch {
-						log.Printf("[Responses-Stream-Token] 检测到虚假值, 延迟到流结束修补")
+						log.Printf("[Responses-Stream-Token] 检测到缺失统计，延迟到流结束补全")
 					}
 				}
 				updateResponsesStreamUsage(&collectedUsage, usageData)
@@ -322,40 +322,10 @@ func handleStreamSuccess(
 				// response.completed JSON envelope 混成普通文本，否则无 usage
 				// 的上游会把 envelope 字段也算进输出，且大响应会额外占用内存。
 				estimatedOutputTokens := estimateResponsesOutputFromItems(sessionCollector.Items())
-				if !hasUsage {
-					// 上游完全没有 usage，注入本地估算
-					var injectedInput, injectedOutput int
-					eventToSend, injectedInput, injectedOutput = injectResponsesUsageToCompletedEventWithTokens(eventToSend, usageRequestJSON, estimatedOutputTokens, envCfg)
-					// 更新 collectedUsage 以便最终日志输出
-					collectedUsage.InputTokens = injectedInput
-					collectedUsage.OutputTokens = injectedOutput
-					collectedUsage.TotalTokens = injectedInput + injectedOutput
-					if envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug") {
-						log.Printf("[Responses-Stream-Token] 上游无usage, 注入本地估算: input=%d, output=%d", injectedInput, injectedOutput)
-					}
-				} else if needTokenPatch {
-					// 需要修补虚假值
-					eventToSend = patchResponsesCompletedEventUsageWithTokens(eventToSend, usageRequestJSON, estimatedOutputTokens, &collectedUsage, envCfg)
-				}
-				// 透传分支（上游本身就是 responses 协议）剥离累积式缓存统计：
-				// grok-4.6 等 OpenAI 兼容上游的 input_tokens_details.cached_tokens 是跨请求
-				// 单调递增的累积命中量，原样下发会让 Cursor 误判上下文一直满、反复触发压缩。
-				// 真正 Claude 上游的 cache_read_input_tokens 与携带 previous_response_id 的
-				// 链式增量请求不受影响（函数内按字段语义判断保留）。
-				if upstreamType == converters.ResponsesUpstreamResponses {
-					eventToSend = stripAccumulatedCacheFromCompletedEvent(eventToSend, usageRequestJSON)
-					// 剥离缓存字段后 input_tokens 成了客户端判断上下文占用的唯一依据，
-					// 校正上游对长上下文的错报值，否则 Cursor 会误判上下文为空、永不触发压缩。
-					// 只有仍处于真实链式增量模式时才跳过；压缩边界已经使用不带旧 ID 的
-					// usageRequestJSON，因此必须按新的完整历史重新校正。
-					eventToSend = correctUnderreportedInputTokensInCompletedEvent(eventToSend, usageRequestJSON, envCfg)
-					// 某些 OpenAI 兼容上游的 input_tokens 是累计计费用量；若回包
-					// 明确提供 context_details.input_tokens，最后优先使用该当前上下文值。
-					eventToSend = normalizeContextDetailsInputTokensInCompletedEvent(
-						eventToSend,
-						envCfg.Current().EnableResponseLogs,
-					)
-				}
+				eventToSend = finalizeResponsesCompletedUsage(
+					eventToSend, usageRequestJSON, estimatedOutputTokens, &collectedUsage,
+					hasUsage, needTokenPatch, upstreamType == converters.ResponsesUpstreamResponses, envCfg,
+				)
 			}
 			if streamResponseID == "" {
 				streamResponseID = extractResponsesStreamResponseID(eventToSend)
@@ -616,57 +586,6 @@ type responsesStreamUsage struct {
 	CacheCreation1hInputTokens int
 	CacheTTL                   string
 	HasClaudeCache             bool // 是否检测到 Claude 原生缓存字段（区别于 OpenAI cached_tokens）
-}
-
-// extractResponsesTextFromEvent 从 Responses SSE 事件中提取文本内容
-func extractResponsesTextFromEvent(event string, buf *bytes.Buffer) {
-	for _, line := range strings.Split(event, "\n") {
-		jsonStr, isData := utils.SSEDataJSON(line)
-		if !isData {
-			continue
-		}
-		var data map[string]interface{}
-		if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
-			continue
-		}
-
-		eventType, _ := data["type"].(string)
-
-		// 处理各种 delta 类型
-		switch eventType {
-		case "response.output_text.delta":
-			if delta, ok := data["delta"].(string); ok {
-				buf.WriteString(delta)
-			}
-		case "response.function_call_arguments.delta", "response.custom_tool_call_input.delta":
-			if delta, ok := data["delta"].(string); ok {
-				buf.WriteString(delta)
-			}
-		case "response.reasoning_summary_text.delta":
-			if delta, ok := data["delta"].(string); ok {
-				buf.WriteString(delta)
-			} else if text, ok := data["text"].(string); ok {
-				buf.WriteString(text)
-			}
-		case "response.output_json.delta":
-			// JSON 输出增量
-			if delta, ok := data["delta"].(string); ok {
-				buf.WriteString(delta)
-			}
-		case "response.content_part.delta":
-			// 内容块增量（通用）
-			if delta, ok := data["delta"].(string); ok {
-				buf.WriteString(delta)
-			} else if text, ok := data["text"].(string); ok {
-				buf.WriteString(text)
-			}
-		case "response.audio.delta", "response.audio_transcript.delta":
-			// 音频转录增量
-			if delta, ok := data["delta"].(string); ok {
-				buf.WriteString(delta)
-			}
-		}
-	}
 }
 
 type responsesStreamToolArgumentFragment struct {

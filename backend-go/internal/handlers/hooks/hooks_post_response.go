@@ -32,10 +32,6 @@ type contentSafetyPostResponseHook struct {
 	snapshot   atomic.Pointer[dangerousCmdSnapshot]
 }
 
-func (h *contentSafetyPostResponseHook) Name() string     { return "response-content-safety" }
-func (h *contentSafetyPostResponseHook) Stage() HookStage { return HookStagePostResponse }
-func (h *contentSafetyPostResponseHook) Priority() int    { return 100 }
-
 func (h *contentSafetyPostResponseHook) Run(ctx context.Context, metadata HookContext, result HookResult) (HookResult, error) {
 	if err := ctx.Err(); err != nil {
 		return result, err
@@ -170,7 +166,10 @@ func (h *contentSafetyPostResponseHook) reviewDangerousMatch(ctx context.Context
 }
 
 func (h *contentSafetyPostResponseHook) currentSnapshot() (*dangerousCmdSnapshot, error) {
-	settings := h.cfgManager.GetSettings().ContentSafety
+	if h.cfgManager == nil {
+		return nil, fmt.Errorf("响应安全 Hook 未绑定配置管理器")
+	}
+	settings := h.cfgManager.GetContentSafetyConfig()
 	current := h.snapshot.Load()
 	if current != nil && reflect.DeepEqual(current.settings, settings) {
 		return current, nil
@@ -309,33 +308,6 @@ func collectResponseToolCommands(value interface{}, vault *sensitive.Vault, scan
 		return nil, restoreErr
 	}
 	return matches, nil
-}
-
-func findDangerousCodeBlocks(detector *sensitive.CmdDetector, value interface{}) []sensitive.CommandMatch {
-	if detector == nil {
-		return nil
-	}
-	var matches []sensitive.CommandMatch
-	var walk func(interface{})
-	walk = func(current interface{}) {
-		switch typed := current.(type) {
-		case []interface{}:
-			for _, item := range typed {
-				walk(item)
-			}
-		case map[string]interface{}:
-			for _, key := range sortedMapKeys(typed) {
-				if isToolArgumentKey(key) || key == "args" || key == "function" {
-					continue
-				}
-				walk(typed[key])
-			}
-		case string:
-			matches = append(matches, detector.Find(typed)...)
-		}
-	}
-	walk(value)
-	return matches
 }
 
 func sortedMapKeys(value map[string]interface{}) []string {

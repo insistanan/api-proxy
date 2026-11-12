@@ -82,6 +82,8 @@ const (
 
 // UpstreamAttemptResult 是一次上游尝试的命名结果，避免调用方依赖位置返回值。
 type UpstreamAttemptResult struct {
+	// Attempted 表示已进入渠道内尝试，用于区分未选中渠道与未报告健康结果。
+	Attempted bool
 	// Handled 表示是否已向客户端写回响应（成功，或不值得故障转移的错误）。
 	Handled bool
 	// SuccessKey 是成功的 Key；匿名渠道成功时仍为空，以 Health 判定成功。

@@ -110,22 +110,7 @@ func NewRetrySameCandidateError(err error) error {
 // IsRetrySameCandidateError 判断错误是否为同候选重试类。
 func IsRetrySameCandidateError(err error) bool {
 	var target *RetrySameCandidateError
-	return asRetrySameCandidate(err, &target)
-}
-
-func asRetrySameCandidate(err error, target **RetrySameCandidateError) bool {
-	for err != nil {
-		if typed, ok := err.(*RetrySameCandidateError); ok {
-			*target = typed
-			return true
-		}
-		unwrapper, ok := err.(interface{ Unwrap() error })
-		if !ok {
-			return false
-		}
-		err = unwrapper.Unwrap()
-	}
-	return false
+	return errors.As(err, &target)
 }
 
 // IsUpstreamModelCapacityErrorBody 判断上游响应体是否为已知模型容量错误。

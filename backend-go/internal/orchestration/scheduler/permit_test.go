@@ -40,7 +40,7 @@ func TestPermitAcquireRecordReleaseLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("选渠失败: %v", err)
 	}
-	if !selection.Reserved() {
+	if selection.Permit == nil {
 		t.Fatal("选渠后应持有 in-flight 预留")
 	}
 	if inFlight := sch.GetChannelInFlight(ChannelKindMessages, selection.ChannelIndex); inFlight != 1 {
@@ -56,7 +56,7 @@ func TestPermitAcquireRecordReleaseLifecycle(t *testing.T) {
 	}
 }
 
-// 重复记账被识别：第二次记账不产生渠道级效果（仅警告日志）。
+// 第二次记账不产生渠道级效果。
 func TestPermitDuplicateRecordIsIgnored(t *testing.T) {
 	sch, _ := newPermitTestEnv(t)
 
@@ -79,6 +79,50 @@ func TestPermitDuplicateRecordIsIgnored(t *testing.T) {
 	}
 }
 
+func TestPermitConcurrentReleaseClosesLifecycle(t *testing.T) {
+	sch, _ := newPermitTestEnv(t)
+	selection, err := sch.SelectChannel(context.Background(), "", make(map[int]bool), ChannelKindMessages, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 同一渠道的另一请求仍持有预留，重复释放不能扣掉它的计数。
+	sch.ReserveChannel(ChannelKindMessages, 0)
+	defer sch.ReleaseChannelReservation(ChannelKindMessages, 0)
+	var wg sync.WaitGroup
+	for range 16 {
+		wg.Go(selection.Permit.Release)
+	}
+	wg.Wait()
+	selection.Permit.RecordHealthFailure()
+	if got := sch.GetChannelInFlight(ChannelKindMessages, 0); got != 1 {
+		t.Fatalf("重复释放影响其他请求的预留: %d", got)
+	}
+	if snap := sch.CircuitManager().SnapshotEntry("messages", 0); snap.ConsecutiveFailures != 0 {
+		t.Fatalf("许可结束后仍接受迟到结果: %+v", snap)
+	}
+}
+
+func TestPermitStaleResultKeepsNewProbe(t *testing.T) {
+	sch, manager := newPermitTestEnv(t)
+	manager.RecordFailure("messages", 0)
+	time.Sleep(25 * time.Millisecond)
+	old := manager.Allow("messages", 0)
+	permit := sch.NewCircuitProbePermit(ChannelKindMessages, 0, old.Generation)
+	manager.Reset("messages", 0)
+	manager.RecordFailure("messages", 0)
+	time.Sleep(25 * time.Millisecond)
+	current := manager.Allow("messages", 0)
+	if !old.Probe || !current.Probe || old.Generation == current.Generation {
+		t.Fatal("未取得不同代次的探测许可")
+	}
+	defer manager.RecordNeutralGeneration("messages", 0, current.Generation)
+	permit.RecordHealthSuccess()
+	permit.Release()
+	if snap := manager.SnapshotEntry("messages", 0); snap.State != circuit.StateHalfOpen || snap.HalfOpenInFlight != 1 {
+		t.Fatalf("旧请求结果影响了新探测: %+v", snap)
+	}
+}
+
 // ReleaseReservation 只释放 in-flight，不影响探测名额。
 func TestPermitReleaseReservationKeepsProbe(t *testing.T) {
 	sch, _ := newPermitTestEnv(t)
@@ -90,7 +134,7 @@ func TestPermitReleaseReservationKeepsProbe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("选渠失败: %v", err)
 	}
-	if !selection.Probe() {
+	if sch.CircuitManager().SnapshotEntry("messages", 0).HalfOpenInFlight != 1 {
 		t.Fatal("半开渠道选渠应取得探测名额")
 	}
 
@@ -99,7 +143,7 @@ func TestPermitReleaseReservationKeepsProbe(t *testing.T) {
 	if inFlight := sch.GetChannelInFlight(ChannelKindMessages, selection.ChannelIndex); inFlight != 0 {
 		t.Fatalf("预留应已释放，实际 %d", inFlight)
 	}
-	if !selection.Probe() {
+	if sch.CircuitManager().SnapshotEntry("messages", 0).HalfOpenInFlight != 1 {
 		t.Fatal("探测名额应保留到健康记账")
 	}
 
@@ -123,6 +167,8 @@ func TestConcurrentPrecheckAdmitsAtMostOneProbe(t *testing.T) {
 	permits := 0
 
 	var wg sync.WaitGroup
+	var selected sync.WaitGroup
+	selected.Add(concurrency)
 	for i := 0; i < concurrency; i++ {
 		wg.Add(1)
 		go func() {
@@ -130,13 +176,15 @@ func TestConcurrentPrecheckAdmitsAtMostOneProbe(t *testing.T) {
 			<-start
 			selection, err := sch.SelectChannel(context.Background(), "", make(map[int]bool), ChannelKindMessages, "")
 			if err != nil {
+				selected.Done()
 				return
 			}
-			if selection.Permit != nil && selection.Probe() {
+			if selection.Permit != nil {
 				mu.Lock()
 				permits++
 				mu.Unlock()
 			}
+			selected.Done()
 			// 持有许可等待统一检查后再释放（不提前归还名额）。
 			<-barrier
 			if selection.Permit != nil {
@@ -145,29 +193,14 @@ func TestConcurrentPrecheckAdmitsAtMostOneProbe(t *testing.T) {
 		}()
 	}
 	close(start)
-	// 等待全部选渠完成（成功或失败）。
-	waitFor := func() {
-		deadline := time.Now().Add(2 * time.Second)
-		for time.Now().Before(deadline) {
-			snap := sch.CircuitManagerSnapshot()
-			if len(snap) == 1 && snap[0].Snapshot.TotalRequests >= concurrency {
-				break
-			}
-			time.Sleep(2 * time.Millisecond)
-		}
-	}
-	_ = waitFor
-	// 轮询等待所有 goroutine 到达 barrier 前的状态：TotalRequests 不一定
-	// 增长（被拒绝的 Allow 不计数），改用固定等待 + permits 不超过 1 的
-	// 窗口内断言。
-	time.Sleep(50 * time.Millisecond)
+	selected.Wait()
 	mu.Lock()
 	held := permits
 	mu.Unlock()
 	close(barrier)
 	wg.Wait()
 
-	if held > 1 {
+	if held != 1 {
 		t.Fatalf("并发预检同时放行的探测应为 1，实际 %d", held)
 	}
 	// 全部释放后无 in-flight 残留。
@@ -187,13 +220,13 @@ func TestPermitHoldsProbeSlotUntilReleased(t *testing.T) {
 	if err != nil {
 		t.Fatalf("首次选渠失败: %v", err)
 	}
-	if !first.Probe() {
+	if sch.CircuitManager().SnapshotEntry("messages", 0).HalfOpenInFlight != 1 {
 		t.Fatal("首次选渠应取得探测名额")
 	}
 
 	// 未释放名额时，第二次选渠不能再次取得该渠道的探测名额。
 	second, err := sch.SelectChannel(context.Background(), "", map[int]bool{first.ChannelIndex: true}, ChannelKindMessages, "")
-	if err == nil && second.Permit != nil && second.Probe() && second.ChannelIndex == first.ChannelIndex {
+	if err == nil && second.Permit != nil && second.ChannelIndex == first.ChannelIndex {
 		t.Fatal("探测名额被占用期间不得再次取得同渠道名额")
 	}
 

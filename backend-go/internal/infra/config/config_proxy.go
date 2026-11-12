@@ -130,6 +130,13 @@ func (cm *ConfigManager) GetSettings() SettingsConfig {
 	return cloneSettingsConfig(cm.config.Settings)
 }
 
+// GetContentSafetyConfig 只复制安全策略，避免请求检查复制无关的提示词设置。
+func (cm *ConfigManager) GetContentSafetyConfig() ContentSafetyConfig {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	return cloneContentSafetyConfig(cm.config.Settings.ContentSafety)
+}
+
 // UpdateSettings 原子更新可由管理界面维护的全部全局设置。
 func (cm *ConfigManager) UpdateSettings(settings SettingsConfig) error {
 	if err := ValidateGatewaySettings(settings.Gateway); err != nil {
@@ -533,42 +540,24 @@ func NormalizePromptSettings(prompts, previous PromptSettings) PromptSettings {
 }
 
 func cloneSettingsConfig(settings SettingsConfig) SettingsConfig {
-	settings.ContentSafety.SensitiveWord.CustomWords = slices.Clone(settings.ContentSafety.SensitiveWord.CustomWords)
-	settings.ContentSafety.SensitiveInfo.EnabledRules = slices.Clone(settings.ContentSafety.SensitiveInfo.EnabledRules)
-	settings.ContentSafety.Credential.EnabledRules = slices.Clone(settings.ContentSafety.Credential.EnabledRules)
-	settings.ContentSafety.DangerousCmd.EnabledRules = slices.Clone(settings.ContentSafety.DangerousCmd.EnabledRules)
-	if settings.ContentSafety.DangerousCmd.Semantic != nil {
-		semantic := *settings.ContentSafety.DangerousCmd.Semantic
-		semantic.DatasetIDs = slices.Clone(semantic.DatasetIDs)
-		settings.ContentSafety.DangerousCmd.Semantic = &semantic
-	}
-	settings.ContentSafety.Whitelist.ToolNames = slices.Clone(settings.ContentSafety.Whitelist.ToolNames)
-	settings.ContentSafety.Allowlist.Entries = slices.Clone(settings.ContentSafety.Allowlist.Entries)
-	settings.ContentSafety.CustomRules.Rules = slices.Clone(settings.ContentSafety.CustomRules.Rules)
+	settings.ContentSafety = cloneContentSafetyConfig(settings.ContentSafety)
 	// 提示词条目含大段文本，按值拷贝 slice 会被共享修改污染，必须逐条复制。
 	settings.Prompts.Entries = slices.Clone(settings.Prompts.Entries)
 	return settings
 }
 
-func (cm *ConfigManager) validateProxyConfig() error {
-	if err := ValidateProxyURL(cm.config.Settings.Network.UpstreamProxyURL); err != nil {
-		return fmt.Errorf("全局上游代理配置无效: %w", err)
+func cloneContentSafetyConfig(settings ContentSafetyConfig) ContentSafetyConfig {
+	settings.SensitiveWord.CustomWords = slices.Clone(settings.SensitiveWord.CustomWords)
+	settings.SensitiveInfo.EnabledRules = slices.Clone(settings.SensitiveInfo.EnabledRules)
+	settings.Credential.EnabledRules = slices.Clone(settings.Credential.EnabledRules)
+	settings.DangerousCmd.EnabledRules = slices.Clone(settings.DangerousCmd.EnabledRules)
+	if settings.DangerousCmd.Semantic != nil {
+		semantic := *settings.DangerousCmd.Semantic
+		semantic.DatasetIDs = slices.Clone(semantic.DatasetIDs)
+		settings.DangerousCmd.Semantic = &semantic
 	}
-	groups := [][]UpstreamConfig{
-		cm.config.Upstream,
-		cm.config.ResponsesUpstream,
-		cm.config.GeminiUpstream,
-		cm.config.ChatUpstream,
-		cm.config.ImagesUpstream,
-		cm.config.EmbeddingsUpstream,
-		cm.config.DecisionsUpstream,
-	}
-	for _, upstreams := range groups {
-		for index := range upstreams {
-			if err := validateUpstreamProxyConfig(&upstreams[index]); err != nil {
-				return fmt.Errorf("渠道 %q 的代理配置无效: %w", upstreams[index].Name, err)
-			}
-		}
-	}
-	return nil
+	settings.Whitelist.ToolNames = slices.Clone(settings.Whitelist.ToolNames)
+	settings.Allowlist.Entries = slices.Clone(settings.Allowlist.Entries)
+	settings.CustomRules.Rules = slices.Clone(settings.CustomRules.Rules)
+	return settings
 }

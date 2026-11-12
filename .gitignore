@@ -246,8 +246,6 @@ refs/
 .codegraph/
 
 # 临时调查文档
-backend-go/cmd/
-!backend-go/cmd/stream_verify/
 docs/claude-code-investigation-*.md
 .ace-tool/
 

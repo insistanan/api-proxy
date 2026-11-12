@@ -294,36 +294,6 @@ func customChatToolDescription(tool map[string]interface{}) string {
 	return description + "\n\nOriginal tool definition:\n" + metadataText
 }
 
-func buildChatWebSearchTool(tool map[string]interface{}) map[string]interface{} {
-	description, _ := tool["description"].(string)
-	if strings.TrimSpace(description) == "" {
-		description = "Search the web for relevant information."
-	}
-
-	parameters := map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"query": map[string]interface{}{
-				"type":        "string",
-				"description": "Search query to run on the web.",
-			},
-		},
-		"required": []string{"query"},
-	}
-	if rawParameters, ok := tool["parameters"].(map[string]interface{}); ok && rawParameters != nil {
-		parameters = rawParameters
-	}
-
-	return map[string]interface{}{
-		"type": "function",
-		"function": map[string]interface{}{
-			"name":        chatWebSearchProxyName,
-			"description": description,
-			"parameters":  parameters,
-		},
-	}
-}
-
 func emptyOpenAIChatToolParameters() map[string]interface{} {
 	return map[string]interface{}{
 		"type":       "object",

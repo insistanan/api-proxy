@@ -41,24 +41,8 @@ func getChannelName(cfgManager *config.ConfigManager, kind scheduler.ChannelKind
 		return "", false
 	}
 
-	cfg := cfgManager.GetConfig()
-	var upstreams []config.UpstreamConfig
-	switch kind {
-	case scheduler.ChannelKindMessages:
-		upstreams = cfg.Upstream
-	case scheduler.ChannelKindResponses:
-		upstreams = cfg.ResponsesUpstream
-	case scheduler.ChannelKindGemini:
-		upstreams = cfg.GeminiUpstream
-	case scheduler.ChannelKindChat:
-		upstreams = cfg.ChatUpstream
-	case scheduler.ChannelKindImages:
-		upstreams = cfg.ImagesUpstream
-	case scheduler.ChannelKindEmbeddings:
-		upstreams = cfg.EmbeddingsUpstream
-	case scheduler.ChannelKindDecisions:
-		upstreams = cfg.DecisionsUpstream
-	default:
+	upstreams, _, err := cfgManager.GetChannelConfig(string(kind))
+	if err != nil {
 		return "", false
 	}
 

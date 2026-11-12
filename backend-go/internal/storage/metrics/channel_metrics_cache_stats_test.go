@@ -8,25 +8,28 @@ import (
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
-func TestToResponse_TimeWindowsIncludesCacheStats(t *testing.T) {
+func TestToResponseMultiURL_TimeWindowsIncludesCacheStats(t *testing.T) {
 	m := NewMetricsManagerWithConfig(10, 0.5)
 
-	baseURL := "https://example.com"
+	baseURLs := []string{"https://first.example.com", "https://second.example.com"}
 	key1 := "k1"
 	key2 := "k2"
 
-	m.RecordSuccessWithUsage(baseURL, key1, 0, &types.Usage{
+	m.RecordSuccessWithUsage(baseURLs[0], key1, 0, &types.Usage{
 		InputTokens:              100,
 		OutputTokens:             10,
 		CacheCreationInputTokens: 20,
 		CacheReadInputTokens:     50,
 	})
-	m.RecordSuccessWithUsage(baseURL, key2, 0, &types.Usage{
+	m.RecordSuccessWithUsage(baseURLs[1], key2, 0, &types.Usage{
 		InputTokens:  200,
 		OutputTokens: 20,
 	})
 
-	resp := m.ToResponse(0, baseURL, []string{key1, key2}, 0)
+	resp := m.ToResponseMultiURL(0, baseURLs, []string{key1, key2}, 0)
+	if resp.RequestCount != 2 || resp.SuccessCount != 2 || len(resp.KeyMetrics) != 2 {
+		t.Fatalf("多 URL 指标未完整聚合: %+v", resp)
+	}
 	stats, ok := resp.TimeWindows["15m"]
 	if !ok {
 		t.Fatalf("expected timeWindows[15m] to exist")
@@ -67,7 +70,7 @@ func TestRecordSuccessWithUsage_CacheCreationFallbackFromTTLBreakdown(t *testing
 		CacheReadInputTokens:       50,
 	})
 
-	resp := m.ToResponse(0, baseURL, []string{key}, 0)
+	resp := m.ToResponseMultiURL(0, []string{baseURL}, []string{key}, 0)
 	stats, ok := resp.TimeWindows["15m"]
 	if !ok {
 		t.Fatalf("expected timeWindows[15m] to exist")

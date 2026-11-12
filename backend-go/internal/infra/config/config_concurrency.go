@@ -19,15 +19,12 @@ type EffectiveConcurrencyLimit struct {
 }
 
 func upstreamLists(candidate *Config) [][]UpstreamConfig {
-	return [][]UpstreamConfig{
-		candidate.Upstream,
-		candidate.ResponsesUpstream,
-		candidate.GeminiUpstream,
-		candidate.ChatUpstream,
-		candidate.ImagesUpstream,
-		candidate.EmbeddingsUpstream,
-		candidate.DecisionsUpstream,
+	sets := candidate.channelSets()
+	lists := make([][]UpstreamConfig, 0, len(sets))
+	for _, set := range sets {
+		lists = append(lists, *set.upstreams)
 	}
+	return lists
 }
 
 func validateConcurrency(candidate *Config) error {

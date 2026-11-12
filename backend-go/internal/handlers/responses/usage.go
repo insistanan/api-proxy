@@ -96,12 +96,12 @@ func patchResponsesUsage(resp *types.ResponsesResponse, requestBody []byte, envC
 		resp.Usage.CacheCreation1hInputTokens > 0
 
 	// 检查是否需要补全
-	needInputPatch := resp.Usage.InputTokens <= 1 && !hasClaudeCache
-	needOutputPatch := resp.Usage.OutputTokens <= 1
+	needInputPatch := resp.Usage.InputTokens <= 0 && !hasClaudeCache
+	needOutputPatch := resp.Usage.OutputTokens <= 0
 
 	// 如果 usage 完全为空，只对可由请求体代表的完整上下文估算 input；链式/Codex
 	// 请求的 input 由服务端掌握，不能用单轮 body 覆盖。output 仍可按已返回内容估算。
-	if resp.Usage.InputTokens == 0 && resp.Usage.OutputTokens == 0 && resp.Usage.TotalTokens == 0 {
+	if resp.Usage.InputTokens == 0 && resp.Usage.OutputTokens == 0 && resp.Usage.TotalTokens == 0 && !hasClaudeCache {
 		estimatedInput, _ := estimateResponsesInputForClient(requestBody)
 		estimatedOutput := estimateResponsesOutputFromItems(resp.Output)
 		resp.Usage.InputTokens = estimatedInput
@@ -113,16 +113,14 @@ func patchResponsesUsage(resp *types.ResponsesResponse, requestBody []byte, envC
 		return
 	}
 
-	// 修补虚假值
+	// 只补全缺失统计，保留上游的有效正值（包括 1 token）。
 	originalInput := resp.Usage.InputTokens
 	originalOutput := resp.Usage.OutputTokens
 	patched := false
 
-	inputPatched := false
 	if needInputPatch {
 		if estimatedInput, ok := estimateResponsesInputForClient(requestBody); ok {
 			resp.Usage.InputTokens = estimatedInput
-			inputPatched = true
 			patched = true
 		}
 	}
@@ -132,13 +130,13 @@ func patchResponsesUsage(resp *types.ResponsesResponse, requestBody []byte, envC
 	}
 
 	// 重新计算 TotalTokens（修补时或 total_tokens 为 0 但 input/output 有效时）
-	if inputPatched || (resp.Usage.TotalTokens == 0 && (resp.Usage.InputTokens > 0 || resp.Usage.OutputTokens > 0)) {
+	if patched || (resp.Usage.TotalTokens == 0 && (resp.Usage.InputTokens > 0 || resp.Usage.OutputTokens > 0)) {
 		resp.Usage.TotalTokens = resp.Usage.InputTokens + resp.Usage.OutputTokens
 	}
 
 	if envCfg.Current().EnableResponseLogs {
 		if patched {
-			log.Printf("[Responses-Token] 虚假值修补: InputTokens=%d->%d, OutputTokens=%d->%d",
+			log.Printf("[Responses-Token] 缺失统计补全: InputTokens=%d->%d, OutputTokens=%d->%d",
 				originalInput, resp.Usage.InputTokens, originalOutput, resp.Usage.OutputTokens)
 		}
 		log.Printf("[Responses-Token] InputTokens=%d, OutputTokens=%d, TotalTokens=%d, CacheCreation=%d, CacheRead=%d, CacheCreation5m=%d, CacheCreation1h=%d, CacheTTL=%s",
@@ -247,13 +245,9 @@ func checkResponsesEventUsage(event string, enableLog bool) (bool, bool, respons
 			if response, ok := data["response"].(map[string]interface{}); ok {
 				if usage, ok := response["usage"].(map[string]interface{}); ok {
 					usageData := extractResponsesUsageFromMap(usage)
-					needPatch := usageData.InputTokens <= 1 || usageData.OutputTokens <= 1
-
-					// 仅当检测到 Claude 原生缓存字段时，才跳过 input_tokens 补全
-					// OpenAI 的 input_tokens_details.cached_tokens 不应阻止补全
-					if usageData.HasClaudeCache && usageData.InputTokens <= 1 {
-						needPatch = usageData.OutputTokens <= 1 // 有 Claude 缓存时只检查 output
-					}
+					// 拆分缓存后，未缓存输入可以合法地为 0；是否缺失应看上游原字段。
+					rawInput, _ := usage["input_tokens"].(float64)
+					needPatch := rawInput <= 0 && !usageData.HasClaudeCache || usageData.OutputTokens <= 0
 
 					// 检查 total_tokens 是否需要补全（有效 input/output 但 total=0）
 					if !needPatch && usageData.TotalTokens == 0 && (usageData.InputTokens > 0 || usageData.OutputTokens > 0) {
@@ -387,11 +381,7 @@ func openAICacheLooksAccumulated(cachedTokens, inputTokens int) bool {
 }
 
 func usageMapHasAccumulatedOpenAICache(usage map[string]interface{}) bool {
-	inputTokens := 0
-	if v, ok := usage["input_tokens"].(float64); ok {
-		inputTokens = int(v)
-	}
-	return openAICacheLooksAccumulated(openAICachedTokensFromUsageMap(usage), inputTokens)
+	return openAICacheLooksAccumulated(openAICachedTokensFromUsageMap(usage), usageTokenCount(usage, "input_tokens"))
 }
 
 func responsesUsageHasAccumulatedOpenAICache(usage *types.ResponsesUsage) bool {
@@ -433,307 +423,180 @@ func updateResponsesStreamUsage(collected *responsesStreamUsage, usageData respo
 	}
 }
 
-// injectResponsesUsageToCompletedEvent 向 response.completed 事件注入 usage
-// 返回: 修改后的事件字符串, 估算的 inputTokens, 估算的 outputTokens
+// rewriteResponsesCompletedEvent 统一处理结束事件的 JSON 解析、序列化与 SSE 保真。
+// 先处理独立 data 行；没有完整结束事件时，再合并连续 data 行中的 JSON 分片。
+func rewriteResponsesCompletedEvent(event string, mutate func(map[string]interface{}) bool) (string, bool) {
+	found := false
+	rewrite := func(payload string) (string, bool) {
+		var data map[string]interface{}
+		if json.Unmarshal([]byte(payload), &data) != nil || data["type"] != "response.completed" {
+			return "", false
+		}
+		found = true
+		response, ok := data["response"].(map[string]interface{})
+		if !ok {
+			return "", false
+		}
+		if !mutate(response) {
+			return "", false
+		}
+		encoded, err := json.Marshal(data)
+		if err != nil {
+			log.Printf("[Responses-Stream-Token] 序列化结束事件失败: %v", err)
+			return "", false
+		}
+		return string(encoded), true
+	}
+	rewritten, changed := utils.RewriteSSEDataLines(event, rewrite)
+	if found {
+		return rewritten, changed
+	}
+
+	lines := strings.Split(event, "\n")
+	for start := 0; start < len(lines); start++ {
+		if _, ok := utils.ParseSSEDataLine(lines[start]); !ok {
+			continue
+		}
+		end := start
+		var payload strings.Builder
+		for end < len(lines) {
+			part, ok := utils.ParseSSEDataLine(lines[end])
+			if !ok {
+				break
+			}
+			payload.WriteString(part)
+			end++
+		}
+		if end-start > 1 {
+			if encoded, ok := rewrite(payload.String()); ok {
+				rebuilt := append([]string{}, lines[:start]...)
+				rebuilt = append(rebuilt, utils.SSEDataLinePrefix+encoded)
+				rebuilt = append(rebuilt, lines[end:]...)
+				return strings.Join(rebuilt, "\n"), true
+			}
+		}
+		start = end - 1
+	}
+	return event, false
+}
+
 func injectResponsesUsageToCompletedEvent(event string, requestBody []byte, outputText string, envCfg *config.EnvConfig) (string, int, int) {
 	return injectResponsesUsageToCompletedEventWithTokens(event, requestBody, utils.EstimateTokens(outputText), envCfg)
 }
 
 func injectResponsesUsageToCompletedEventWithTokens(event string, requestBody []byte, outputTokens int, envCfg *config.EnvConfig) (string, int, int) {
-	// 仅对非链式、非 Codex 请求使用请求体估算；链式请求的 body 只是增量，Codex
-	// 还可能包含服务端注入内容，写入估算值会把客户端的上下文占用提示改错。
 	inputTokens, _ := estimateResponsesInputForClient(requestBody)
-	totalTokens := inputTokens + outputTokens
-
-	debugLog := envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug")
-
-	// 调试日志：记录估算开始
-	if debugLog {
-		log.Printf("[Responses-Stream-Token] injectUsage 开始: inputTokens=%d, outputTokens=%d, event长度=%d",
-			inputTokens, outputTokens, len(event))
+	rewritten, changed := injectUsageIntoMultiLineDataEvent(event, inputTokens, outputTokens, inputTokens+outputTokens)
+	if !changed && envCfg.Current().EnableResponseLogs {
+		log.Printf("[Responses-Stream-Token] 未能向结束事件注入缺失的 usage")
 	}
-
-	rewritten, injected := utils.RewriteSSEDataLines(event, func(payload string) (string, bool) {
-		var data map[string]interface{}
-		if err := json.Unmarshal([]byte(payload), &data); err != nil {
-			// 调试日志：JSON 解析失败
-			if debugLog {
-				log.Printf("[Responses-Stream-Token] JSON解析失败: %v, 内容前200字符: %.200s", err, utils.RedactSensitivePlaceholdersForLog(payload))
-			}
-			return "", false
-		}
-
-		if eventType, _ := data["type"].(string); eventType != "response.completed" {
-			return "", false
-		}
-
-		response, ok := data["response"].(map[string]interface{})
-		if !ok {
-			// response 字段缺失或类型错误，创建一个新的
-			if debugLog {
-				log.Printf("[Responses-Stream-Token] response字段缺失, 创建新的response对象")
-			}
-			response = make(map[string]interface{})
-			data["response"] = response
-		}
-
-		response["usage"] = map[string]interface{}{
-			"input_tokens":  inputTokens,
-			"output_tokens": outputTokens,
-			"total_tokens":  totalTokens,
-		}
-
-		patchedJSON, err := json.Marshal(data)
-		if err != nil {
-			if debugLog {
-				log.Printf("[Responses-Stream-Token] JSON序列化失败: %v", err)
-			}
-			return "", false
-		}
-
-		if debugLog {
-			log.Printf("[Responses-Stream-Token] 注入本地估算成功: InputTokens=%d, OutputTokens=%d, TotalTokens=%d",
-				inputTokens, outputTokens, totalTokens)
-		}
-		return string(patchedJSON), true
-	})
-
-	if injected {
-		return rewritten, inputTokens, outputTokens
-	}
-
-	// 逐行未命中：可能是 JSON 被拆到多个连续 data 行，合并后再试
-	if debugLog {
-		log.Printf("[Responses-Stream-Token] 逐行解析未找到, 尝试整体解析 event")
-	}
-
-	if merged, ok := injectUsageIntoMultiLineDataEvent(event, inputTokens, outputTokens, totalTokens); ok {
-		if debugLog {
-			log.Printf("[Responses-Stream-Token] 整体解析注入成功: InputTokens=%d, OutputTokens=%d",
-				inputTokens, outputTokens)
-		}
-		return merged, inputTokens, outputTokens
-	}
-
-	// 仍然没有成功注入，记录警告并打印 event 内容
-	if debugLog {
-		// 打印 event 的前500个字符帮助调试
-		eventPreview := event
-		if len(eventPreview) > 500 {
-			eventPreview = eventPreview[:500] + "..."
-		}
-		log.Printf("[Responses-Stream-Token] 警告: 未找到 response.completed 事件进行注入, event内容: %s", utils.RedactSensitivePlaceholdersForLog(eventPreview))
-	}
-	return event, inputTokens, outputTokens
+	return rewritten, inputTokens, outputTokens
 }
 
-// injectUsageIntoMultiLineDataEvent 处理 JSON 被拆到多个连续 data 行的 response.completed 事件：
-// 把这段连续 data 行的载荷拼成完整 JSON，注入 usage 后用一行 data 替换整段，其余行原样保留。
-// 返回 ok=false 表示事件不是这种形态（无 data 行 / 拼不出合法 JSON / 不是 response.completed），调用方应保留原事件。
 func injectUsageIntoMultiLineDataEvent(event string, inputTokens, outputTokens, totalTokens int) (string, bool) {
-	lines := strings.Split(event, "\n")
-
-	// 定位连续 data 行区间 [dataStart, dataEnd)
-	dataStart := -1
-	for i, line := range lines {
-		if _, isData := utils.ParseSSEDataLine(line); isData {
-			dataStart = i
-			break
+	return rewriteResponsesCompletedEvent(event, func(response map[string]interface{}) bool {
+		response["usage"] = map[string]interface{}{
+			"input_tokens": inputTokens, "output_tokens": outputTokens, "total_tokens": totalTokens,
 		}
-	}
-	if dataStart < 0 {
-		return "", false
-	}
-
-	dataEnd := len(lines)
-	var jsonBuilder strings.Builder
-	for i := dataStart; i < len(lines); i++ {
-		payload, isData := utils.ParseSSEDataLine(lines[i])
-		if !isData {
-			// 区间到首个非 data 行为止；dataEnd 保持 len(lines) 会把尾部行吞掉，必须显式记录
-			dataEnd = i
-			break
-		}
-		jsonBuilder.WriteString(payload)
-	}
-
-	fullJSON := jsonBuilder.String()
-	if fullJSON == "" {
-		return "", false
-	}
-
-	var data map[string]interface{}
-	if err := json.Unmarshal([]byte(fullJSON), &data); err != nil {
-		return "", false
-	}
-	if eventType, _ := data["type"].(string); eventType != "response.completed" {
-		return "", false
-	}
-
-	response, ok := data["response"].(map[string]interface{})
-	if !ok {
-		response = make(map[string]interface{})
-		data["response"] = response
-	}
-	response["usage"] = map[string]interface{}{
-		"input_tokens":  inputTokens,
-		"output_tokens": outputTokens,
-		"total_tokens":  totalTokens,
-	}
-
-	patchedJSON, err := json.Marshal(data)
-	if err != nil {
-		return "", false
-	}
-
-	rebuilt := make([]string, 0, len(lines))
-	rebuilt = append(rebuilt, lines[:dataStart]...)
-	rebuilt = append(rebuilt, utils.SSEDataLinePrefix+string(patchedJSON))
-	rebuilt = append(rebuilt, lines[dataEnd:]...)
-	return strings.Join(rebuilt, "\n"), true
+		return true
+	})
 }
 
-// patchResponsesCompletedEventUsage 修补 response.completed 事件中的 usage
 func patchResponsesCompletedEventUsage(event string, requestBody []byte, outputText string, collected *responsesStreamUsage, envCfg *config.EnvConfig) string {
 	return patchResponsesCompletedEventUsageWithTokens(event, requestBody, utils.EstimateTokens(outputText), collected, envCfg)
 }
 
 func patchResponsesCompletedEventUsageWithTokens(event string, requestBody []byte, outputTokens int, collected *responsesStreamUsage, envCfg *config.EnvConfig) string {
-	rewritten, _ := utils.RewriteSSEDataLines(event, func(payload string) (string, bool) {
-		var data map[string]interface{}
-		if err := json.Unmarshal([]byte(payload), &data); err != nil {
-			return "", false
-		}
-		if data["type"] != "response.completed" {
-			return "", false
-		}
-
-		if response, ok := data["response"].(map[string]interface{}); ok {
-			if usage, ok := response["usage"].(map[string]interface{}); ok {
-				originalInput := collected.InputTokens
-				originalOutput := collected.OutputTokens
-				patched := false
-				inputPatched := false
-
-				// 修补 input_tokens（仅当没有 Claude 原生缓存且请求体可代表完整上下文时）。
-				// OpenAI 的 cached_tokens 不应阻止 input_tokens 补全，但链式/Codex 请求
-				// 仍不能用本地 request body 估算全量上下文。
-				if collected.InputTokens <= 1 && !collected.HasClaudeCache {
-					if estimatedInput, ok := estimateResponsesInputForClient(requestBody); ok {
-						usage["input_tokens"] = estimatedInput
-						collected.InputTokens = estimatedInput
-						inputPatched = true
-						patched = true
-					}
-				}
-
-				// 修补 output_tokens
-				if collected.OutputTokens <= 1 {
-					estimatedOutput := outputTokens
-					usage["output_tokens"] = estimatedOutput
-					collected.OutputTokens = estimatedOutput
-					patched = true
-				}
-
-				// 重新计算 total_tokens（修补时或 total_tokens 为 0 但 input/output 有效时）
-				currentTotal := 0
-				if t, ok := usage["total_tokens"].(float64); ok {
-					currentTotal = int(t)
-				}
-				if inputPatched || (currentTotal == 0 && (collected.InputTokens > 0 || collected.OutputTokens > 0)) {
-					collected.TotalTokens = collected.InputTokens + collected.OutputTokens
-					usage["total_tokens"] = collected.TotalTokens
-				}
-
-				if envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug") && patched {
-					log.Printf("[Responses-Stream-Token] 虚假值修补: InputTokens=%d->%d, OutputTokens=%d->%d",
-						originalInput, collected.InputTokens, originalOutput, collected.OutputTokens)
-				}
-			}
-		}
-
-		patchedJSON, err := json.Marshal(data)
-		if err != nil {
-			return "", false
-		}
-		return string(patchedJSON), true
+	rewritten, _ := rewriteResponsesCompletedEvent(event, func(response map[string]interface{}) bool {
+		usage, ok := response["usage"].(map[string]interface{})
+		return ok && patchCompletedUsage(usage, requestBody, outputTokens, collected, envCfg)
 	})
 	return rewritten
 }
 
-// stripAccumulatedCacheFromCompletedEvent 从 response.completed 事件里剥离累积式缓存统计。
-//
-// 背景：上游 grok-4.6（OpenAI 兼容格式）返回的 input_tokens_details.cached_tokens 是
-// 跨请求单调递增的累积缓存命中统计（204800、205056 ...），不是"当前请求已缓存的上下文大小"。
-// responses 透传分支原样转发该字段，Cursor 把它当成当前已缓存上下文大小，误判上下文一直满
-// 200k，反复触发压缩、压不下去（日志证据：压缩后请求体仅 30KB，上游仍回 cached_tokens=204800）。
-//
-// 真正 Claude 上游的 cache_read_input_tokens 是本次请求的真实缓存命中，不在剥离范围。
-// 本函数只针对 OpenAI 格式的 input_tokens_details / prompt_tokens_details，以及由它
-// 派生的 cache_read_input_tokens：把这两类字段从下发给客户端的 usage 里删掉，让客户端
-// 用 input_tokens（已扣除缓存的 uncached 真实值）判断上下文大小。
-//
-// 注意：如果请求携带 previous_response_id，usage 可能包含服务端链上历史，
-// 此时不能凭本地请求体大小推断缓存语义。但 cached_tokens 超过本次 input_tokens
-// 是自证的累积式证据（OpenAI 语义下缓存必须是 input 的子集），这类请求仍然剥离——
-// 否则 Cursor 从第二轮起就一直看到满缓存，压缩后数字不降，压缩会无限循环。
-// client_metadata 只代表客户端身份，不能用来推断上游缓存字段的语义，不参与判断。
-func stripAccumulatedCacheFromCompletedEvent(event string, requestBody []byte) string {
-	chained := hasPreviousResponseID(requestBody)
-	if !strings.Contains(event, "cached_tokens") &&
-		!strings.Contains(event, "cache_read_input_tokens") {
-		return event
+func patchCompletedUsage(usage map[string]interface{}, requestBody []byte, outputTokens int, collected *responsesStreamUsage, envCfg *config.EnvConfig) bool {
+	originalInput, originalOutput := collected.InputTokens, collected.OutputTokens
+	rawInput := usageTokenCount(usage, "input_tokens")
+	patched := false
+	if rawInput <= 0 && collected.InputTokens <= 0 && !collected.HasClaudeCache {
+		if input, ok := estimateResponsesInputForClient(requestBody); ok {
+			usage["input_tokens"] = input
+			rawInput = input
+			collected.InputTokens = input
+			patched = true
+		}
 	}
-	rewritten, _ := utils.RewriteSSEDataLines(event, func(payload string) (string, bool) {
-		var data map[string]interface{}
-		if err := json.Unmarshal([]byte(payload), &data); err != nil {
-			return "", false
-		}
-		if data["type"] != "response.completed" {
-			return "", false
-		}
-		response, ok := data["response"].(map[string]interface{})
-		if !ok {
-			return "", false
-		}
+	if collected.OutputTokens <= 0 {
+		usage["output_tokens"] = outputTokens
+		collected.OutputTokens = outputTokens
+		patched = true
+	}
+	changed := patched || (usageTokenCount(usage, "total_tokens") == 0 && (collected.InputTokens > 0 || collected.OutputTokens > 0))
+	if changed {
+		collected.TotalTokens = collected.InputTokens + collected.OutputTokens
+		// 下发事件使用上游输入口径；采集值可能已拆分缓存，不能混用。
+		usage["total_tokens"] = rawInput + collected.OutputTokens
+	}
+	if patched && envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug") {
+		log.Printf("[Responses-Stream-Token] 缺失统计补全: InputTokens=%d->%d, OutputTokens=%d->%d",
+			originalInput, collected.InputTokens, originalOutput, collected.OutputTokens)
+	}
+	return changed
+}
+
+// usageTokenCount 同时读取 JSON 解码后的 float64 和本地补全写入的 int，
+// 让多个修正规则可共享同一份 map，避免每条规则之间重新编解码 JSON。
+func usageTokenCount(usage map[string]interface{}, key string) int {
+	switch value := usage[key].(type) {
+	case float64:
+		return int(value)
+	case int:
+		return value
+	default:
+		return 0
+	}
+}
+
+// stripAccumulatedCacheFromCompletedEvent 仅修改客户端副本，保留原始采集值。
+// 链式请求只剥离 cached_tokens 超过 input_tokens 的自证累积缓存；
+// Claude 原生缓存创建字段表示真实缓存语义，必须保留 cache_read_input_tokens。
+func stripAccumulatedCacheFromCompletedEvent(event string, requestBody []byte) string {
+	rewritten, _ := rewriteResponsesCompletedEvent(event, func(response map[string]interface{}) bool {
 		usage, ok := response["usage"].(map[string]interface{})
-		if !ok {
-			return "", false
-		}
-		if chained && !usageMapHasAccumulatedOpenAICache(usage) {
-			return "", false
-		}
-		changed := false
-		// 删除 OpenAI 累积式缓存统计字段
-		if _, exists := usage["input_tokens_details"]; exists {
-			delete(usage, "input_tokens_details")
-			changed = true
-		}
-		if _, exists := usage["prompt_tokens_details"]; exists {
-			delete(usage, "prompt_tokens_details")
-			changed = true
-		}
-		// 删除由 cached_tokens 派生的 cache_read_input_tokens（extractResponsesUsageFromMap 会把它
-		// 从 input_tokens_details.cached_tokens 拷贝过来，对累积式上游而言这个值是假大）。
-		// 仅当没有 Claude 原生缓存创建字段时才删（有 cache_creation_* 说明是 Claude 上游，保留）。
-		_, hasCacheCreation := usage["cache_creation_input_tokens"]
-		_, hasCacheCreation5m := usage["cache_creation_5m_input_tokens"]
-		_, hasCacheCreation1h := usage["cache_creation_1h_input_tokens"]
-		isClaudeNativeCache := hasCacheCreation || hasCacheCreation5m || hasCacheCreation1h
-		if _, exists := usage["cache_read_input_tokens"]; exists && !isClaudeNativeCache {
-			delete(usage, "cache_read_input_tokens")
-			changed = true
-		}
-		if !changed {
-			return "", false
-		}
-		patchedJSON, err := json.Marshal(data)
-		if err != nil {
-			return "", false
-		}
-		return string(patchedJSON), true
+		return ok && stripCompletedCache(usage, hasPreviousResponseID(requestBody))
 	})
 	return rewritten
+}
+
+func stripCompletedCache(usage map[string]interface{}, chained bool) bool {
+	_, hasCache := usage["cache_read_input_tokens"]
+	for _, key := range []string{"input_tokens_details", "prompt_tokens_details"} {
+		if details, ok := usage[key].(map[string]interface{}); ok {
+			_, cached := details["cached_tokens"]
+			hasCache = hasCache || cached
+		}
+	}
+	if !hasCache {
+		return false
+	}
+	if chained && !usageMapHasAccumulatedOpenAICache(usage) {
+		return false
+	}
+	changed := false
+	for _, key := range []string{"input_tokens_details", "prompt_tokens_details"} {
+		if _, exists := usage[key]; exists {
+			delete(usage, key)
+			changed = true
+		}
+	}
+	_, creation := usage["cache_creation_input_tokens"]
+	_, creation5m := usage["cache_creation_5m_input_tokens"]
+	_, creation1h := usage["cache_creation_1h_input_tokens"]
+	if _, exists := usage["cache_read_input_tokens"]; exists && !creation && !creation5m && !creation1h {
+		delete(usage, "cache_read_input_tokens")
+		changed = true
+	}
+	return changed
 }
 
 // contextDetailsInputTokensFromUsageMap 读取上游明确给出的当前上下文输入量。
@@ -757,41 +620,26 @@ func contextDetailsInputTokensFromUsageMap(usage map[string]interface{}) (int, b
 // 统计同步到客户端 usage。原始 upstreamUsage 在调用此函数前已经单独收集，
 // 因此这里只改变下发给客户端的副本。
 func normalizeContextDetailsInputTokensInCompletedEvent(event string, enableLog bool) string {
-	rewritten, _ := utils.RewriteSSEDataLines(event, func(payload string) (string, bool) {
-		var data map[string]interface{}
-		if err := json.Unmarshal([]byte(payload), &data); err != nil {
-			return "", false
-		}
-		if data["type"] != "response.completed" {
-			return "", false
-		}
-		response, ok := data["response"].(map[string]interface{})
-		if !ok {
-			return "", false
-		}
+	rewritten, _ := rewriteResponsesCompletedEvent(event, func(response map[string]interface{}) bool {
 		usage, ok := response["usage"].(map[string]interface{})
-		if !ok {
-			return "", false
-		}
-		contextInput, ok := contextDetailsInputTokensFromUsageMap(usage)
-		if !ok {
-			return "", false
-		}
-		upstreamInput, _ := usage["input_tokens"].(float64)
-		outputTokens, _ := usage["output_tokens"].(float64)
-		usage["input_tokens"] = contextInput
-		usage["total_tokens"] = contextInput + int(outputTokens)
-		if enableLog && int(upstreamInput) != contextInput {
-			log.Printf("[Responses-Stream-Token] 使用上游 context_details.input_tokens: %d -> %d（仅改下发值）",
-				int(upstreamInput), contextInput)
-		}
-		patchedJSON, err := json.Marshal(data)
-		if err != nil {
-			return "", false
-		}
-		return string(patchedJSON), true
+		return ok && normalizeCompletedContext(usage, enableLog)
 	})
 	return rewritten
+}
+
+func normalizeCompletedContext(usage map[string]interface{}, enableLog bool) bool {
+	contextInput, ok := contextDetailsInputTokensFromUsageMap(usage)
+	if !ok {
+		return false
+	}
+	upstreamInput := usageTokenCount(usage, "input_tokens")
+	usage["input_tokens"] = contextInput
+	usage["total_tokens"] = contextInput + usageTokenCount(usage, "output_tokens")
+	if enableLog && upstreamInput != contextInput {
+		log.Printf("[Responses-Stream-Token] 使用上游 context_details.input_tokens: %d -> %d（仅改下发值）",
+			upstreamInput, contextInput)
+	}
+	return true
 }
 
 // normalizeContextDetailsInputTokensInResponse 是非流式响应对应的客户端副本
@@ -861,48 +709,58 @@ func upstreamCachedTokensFromUsageMap(usage map[string]interface{}) int {
 //
 // 只改下发给客户端的 SSE，不动 collectedUsage——计费、熔断、性能画像仍用上游原值。
 func correctUnderreportedInputTokensInCompletedEvent(event string, requestBody []byte, envCfg *config.EnvConfig) string {
-	if envCfg == nil || !envCfg.CorrectResponsesInputTokens || hasPreviousResponseID(requestBody) || isCodexResponsesRequest(requestBody) {
-		return event
-	}
-	rewritten, _ := utils.RewriteSSEDataLines(event, func(payload string) (string, bool) {
-		var data map[string]interface{}
-		if err := json.Unmarshal([]byte(payload), &data); err != nil {
-			return "", false
-		}
-		if data["type"] != "response.completed" {
-			return "", false
-		}
-		response, ok := data["response"].(map[string]interface{})
-		if !ok {
-			return "", false
-		}
+	rewritten, _ := rewriteResponsesCompletedEvent(event, func(response map[string]interface{}) bool {
 		usage, ok := response["usage"].(map[string]interface{})
-		if !ok {
-			return "", false
+		return ok && correctCompletedInput(usage, requestBody, envCfg)
+	})
+	return rewritten
+}
+
+func correctCompletedInput(usage map[string]interface{}, requestBody []byte, envCfg *config.EnvConfig) bool {
+	if envCfg == nil || !envCfg.CorrectResponsesInputTokens || hasPreviousResponseID(requestBody) || isCodexResponsesRequest(requestBody) {
+		return false
+	}
+	upstreamInput := usageTokenCount(usage, "input_tokens")
+	corrected, need := correctedInputTokens(requestBody, upstreamInput, upstreamCachedTokensFromUsageMap(usage))
+	if !need {
+		return false
+	}
+	usage["input_tokens"] = corrected
+	usage["total_tokens"] = corrected + usageTokenCount(usage, "output_tokens")
+	if envCfg.Current().EnableResponseLogs {
+		log.Printf("[Responses-Stream-Token] 上游 input_tokens 错报校正: %d -> %d（本地估算，仅改下发值）",
+			upstreamInput, corrected)
+	}
+	return true
+}
+
+// finalizeResponsesCompletedUsage 按固定顺序修改客户端副本，只编解码一次 JSON。
+// 原始用量已由调用方采集；上下文校正只影响下发值，不回写计费与指标。
+func finalizeResponsesCompletedUsage(event string, requestBody []byte, outputTokens int, collected *responsesStreamUsage, hasUsage, needPatch, native bool, envCfg *config.EnvConfig) string {
+	rewritten, _ := rewriteResponsesCompletedEvent(event, func(response map[string]interface{}) bool {
+		usage, ok := response["usage"].(map[string]interface{})
+		changed := false
+		if !hasUsage {
+			inputTokens, _ := estimateResponsesInputForClient(requestBody)
+			usage = map[string]interface{}{
+				"input_tokens": inputTokens, "output_tokens": outputTokens, "total_tokens": inputTokens + outputTokens,
+			}
+			response["usage"] = usage
+			collected.InputTokens, collected.OutputTokens = inputTokens, outputTokens
+			collected.TotalTokens = inputTokens + outputTokens
+			changed = true
+		} else if ok && needPatch {
+			changed = patchCompletedUsage(usage, requestBody, outputTokens, collected, envCfg)
 		}
-		upstreamInput := 0
-		if v, ok := usage["input_tokens"].(float64); ok {
-			upstreamInput = int(v)
+		if usage == nil {
+			return changed
 		}
-		corrected, need := correctedInputTokens(requestBody, upstreamInput, upstreamCachedTokensFromUsageMap(usage))
-		if !need {
-			return "", false
+		if native {
+			changed = stripCompletedCache(usage, hasPreviousResponseID(requestBody)) || changed
+			changed = correctCompletedInput(usage, requestBody, envCfg) || changed
+			changed = normalizeCompletedContext(usage, envCfg.Current().EnableResponseLogs) || changed
 		}
-		outputTokens := 0
-		if v, ok := usage["output_tokens"].(float64); ok {
-			outputTokens = int(v)
-		}
-		usage["input_tokens"] = corrected
-		usage["total_tokens"] = corrected + outputTokens
-		if envCfg != nil && envCfg.Current().EnableResponseLogs {
-			log.Printf("[Responses-Stream-Token] 上游 input_tokens 错报校正: %d -> %d（本地估算，仅改下发值）",
-				upstreamInput, corrected)
-		}
-		patchedJSON, err := json.Marshal(data)
-		if err != nil {
-			return "", false
-		}
-		return string(patchedJSON), true
+		return changed
 	})
 	return rewritten
 }

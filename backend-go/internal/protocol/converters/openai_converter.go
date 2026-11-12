@@ -386,36 +386,6 @@ func buildOpenAIChatToolSearchTool() map[string]interface{} {
 	}
 }
 
-func buildOpenAIChatWebSearchTool(tool map[string]interface{}) map[string]interface{} {
-	description, _ := tool["description"].(string)
-	if strings.TrimSpace(description) == "" {
-		description = "Search the web for relevant information."
-	}
-
-	parameters := map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"query": map[string]interface{}{
-				"type":        "string",
-				"description": "Search query to run on the web.",
-			},
-		},
-		"required": []string{"query"},
-	}
-	if rawParameters, ok := tool["parameters"].(map[string]interface{}); ok && rawParameters != nil {
-		parameters = rawParameters
-	}
-
-	return map[string]interface{}{
-		"type": "function",
-		"function": map[string]interface{}{
-			"name":        openAIChatWebSearchName,
-			"description": description,
-			"parameters":  parameters,
-		},
-	}
-}
-
 func flattenNamespaceToolName(namespace string, name string) string {
 	namespace = strings.TrimSpace(namespace)
 	name = strings.TrimSpace(name)

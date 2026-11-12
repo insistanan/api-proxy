@@ -55,9 +55,9 @@ func (s *ChannelScheduler) poolRouteForRequest(ctx context.Context, kind Channel
 // IntentSingleChannel 保持单渠道模式的配置顺序，不取得或重复占用调度许可。
 func (s *ChannelScheduler) IntentSingleChannel(ctx context.Context, kind ChannelKind) (*config.UpstreamConfig, int, error) {
 	route := PoolConstraintFrom(ctx)
-	channels := s.preferIntentChannel(ctx, kind, s.getActiveChannels(kind, route.PoolID))
+	channels := s.preferIntentChannel(ctx, s.getActiveChannels(kind, route.PoolID))
 	for _, ch := range channels {
-		up := s.getUpstreamByIndex(ch.Index, kind)
+		up := ch.upstream
 		if ch.Status == "active" && up != nil && (route.ChannelID == "" || up.ID == route.ChannelID) {
 			return up, ch.Index, nil
 		}
@@ -65,13 +65,13 @@ func (s *ChannelScheduler) IntentSingleChannel(ctx context.Context, kind Channel
 	return nil, 0, fmt.Errorf("意图路由分组 %q 没有符合会话固定约束的活跃渠道", route.PoolID)
 }
 
-func (s *ChannelScheduler) preferIntentChannel(ctx context.Context, kind ChannelKind, channels []ChannelInfo) []ChannelInfo {
+func (s *ChannelScheduler) preferIntentChannel(ctx context.Context, channels []ChannelInfo) []ChannelInfo {
 	id := PoolConstraintFrom(ctx).PreferredChannelID
 	if id == "" {
 		return channels
 	}
 	for i, ch := range channels {
-		up := s.getUpstreamByIndex(ch.Index, kind)
+		up := ch.upstream
 		if up != nil && up.ID == id {
 			result := append([]ChannelInfo{ch}, channels[:i]...)
 			return append(result, channels[i+1:]...)

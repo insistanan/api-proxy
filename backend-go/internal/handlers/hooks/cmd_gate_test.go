@@ -681,8 +681,67 @@ func TestNormalizeGateCommandKey(t *testing.T) {
 	}
 }
 
+func TestGateReviewCacheInvalidationStaysWithinConversation(t *testing.T) {
+	h := newGateTestHarness(t, 10)
+	h.aiVerdict.Store("allow")
+	first := h.metadata()
+	second := first
+	second.ConversationID = "other-conversation"
+	for _, metadata := range []HookContext{first, second} {
+		if verdict := h.gate.Review(context.Background(), metadata, h.match(), nil); !verdict.Allow {
+			t.Fatalf("初次审核应放行: %+v", verdict)
+		}
+	}
+	h.gate.RemoveAIReview(first.ConversationID)
+	verdict := h.gate.Review(context.Background(), second, h.match(), nil)
+	if !verdict.Allow || verdict.AIReview == nil || !verdict.AIReview.Reused || h.aiCalls.Load() != 2 {
+		t.Fatalf("解除一个会话不应使其他会话重新审核: calls=%d verdict=%+v", h.aiCalls.Load(), verdict)
+	}
+	verdict = h.gate.Review(context.Background(), first, h.match(), nil)
+	if !verdict.Allow || verdict.AIReview == nil || verdict.AIReview.Reused || h.aiCalls.Load() != 3 {
+		t.Fatalf("已解除会话必须重新审核: calls=%d verdict=%+v", h.aiCalls.Load(), verdict)
+	}
+}
+
+func TestGateReviewInvalidationDoesNotReuseOldInflightCall(t *testing.T) {
+	gate := NewCmdGate(nil, nil, nil, nil)
+	first := gateReviewKey{conversationID: "first", command: "command"}
+	second := gateReviewKey{conversationID: "second", command: "command"}
+	oldFlight := &inflightGateReview{cacheable: true}
+	otherFlight := &inflightGateReview{cacheable: true}
+	gate.inflight[first] = oldFlight
+	gate.inflight[second] = otherFlight
+	gate.RemoveAIReview(first.conversationID)
+	if oldFlight.cacheable || gate.inflight[first] != nil {
+		t.Fatal("失效前的审核不能重新写缓存，也不能供新请求复用")
+	}
+	if !otherFlight.cacheable || gate.inflight[second] != otherFlight {
+		t.Fatal("其他会话的在途审核应继续正常缓存和复用")
+	}
+}
+
+func TestGateReviewCacheExpiresAndRemainsBounded(t *testing.T) {
+	gate := NewCmdGate(nil, nil, nil, nil)
+	expired := gateReviewKey{conversationID: "conversation", command: "expired"}
+	gate.aiReviews[expired] = cachedGateReview{expiresAt: time.Now().Add(-time.Second)}
+	if _, ok := gate.cachedAIReviewLocked(expired); ok {
+		t.Fatal("过期的授权结论不能复用")
+	}
+	for index := 0; index <= maxAIReviewEntries; index++ {
+		key := gateReviewKey{conversationID: "conversation", command: fmt.Sprint(index)}
+		gate.cacheAIReviewLocked(key, sensitive.CommandAIReview{Verdict: "allow"})
+	}
+	if len(gate.aiReviews) != maxAIReviewEntries {
+		t.Fatalf("缓存条数应受上限约束: %d", len(gate.aiReviews))
+	}
+	latest := gateReviewKey{conversationID: "conversation", command: fmt.Sprint(maxAIReviewEntries)}
+	if _, ok := gate.cachedAIReviewLocked(latest); !ok {
+		t.Fatal("缓存满时仍应保留最新审核结论")
+	}
+}
+
 // TestGateVetoWindowReleasesWaiter 锁定否决窗口结束后的资源清理：
-// waiters / vetoes 条目都必须注销，否则进程生命周期内无界增长。
+// 请求取消后监听必须注销，不能继续占用等待名额或触发否决。
 func TestGateVetoWindowReleasesWaiter(t *testing.T) {
 	h := newGateTestHarness(t, 10)
 	h.aiVerdict.Store("allow")
@@ -692,9 +751,9 @@ func TestGateVetoWindowReleasesWaiter(t *testing.T) {
 		t.Fatalf("AI 判安全应放行: %+v", verdict)
 	}
 	h.gate.mu.Lock()
-	waiters, vetoes := len(h.gate.waiters), len(h.gate.vetoes)
+	waiters := len(h.gate.waiters)
 	h.gate.mu.Unlock()
-	if waiters != 0 || vetoes != 0 {
+	if waiters != 0 {
 		t.Fatal("非流式放行不应创建后台否决监听")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -704,24 +763,23 @@ func TestGateVetoWindowReleasesWaiter(t *testing.T) {
 		t.Fatalf("AI 缓存放行应成功建立流式否决窗口: %+v", verdict)
 	}
 	h.gate.mu.Lock()
-	waiters, vetoes = len(h.gate.waiters), len(h.gate.vetoes)
+	waiters = len(h.gate.waiters)
 	h.gate.mu.Unlock()
-	if waiters != 1 || vetoes != 1 {
-		t.Fatalf("应存在一个否决监听: waiters=%d vetoes=%d", waiters, vetoes)
+	if waiters != 1 {
+		t.Fatalf("应存在一个否决监听: waiters=%d", waiters)
 	}
 	cancel()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		h.gate.mu.Lock()
 		waiters := len(h.gate.waiters)
-		vetoes := len(h.gate.vetoes)
 		h.gate.mu.Unlock()
-		if waiters == 0 && vetoes == 0 {
+		if waiters == 0 {
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatal("否决窗口结束后 waiters 与 vetoes 应全部清理")
+	t.Fatal("否决窗口结束后应归还等待名额")
 }
 
 func TestGateListDecisionNotifiesMatchingPendingOnly(t *testing.T) {
@@ -795,17 +853,18 @@ func TestSharedAIReviewCancellationIsScopedToWaiter(t *testing.T) {
 	shared, cancelShared := context.WithCancel(context.Background())
 	defer cancelShared()
 	flight := &inflightGateReview{done: make(chan struct{}), cancel: cancelShared, waiters: 2}
-	gate.inflight["shared"] = flight
+	key := gateReviewKey{conversationID: "conv-shared", command: "shared"}
+	gate.inflight[key] = flight
 	first, cancelFirst := context.WithCancel(context.Background())
 	defer cancelFirst()
 	firstResult := make(chan error, 1)
 	secondResult := make(chan GateVerdict, 1)
 	go func() {
-		_, err := gate.awaitAIReview(first, "shared", flight, false)
+		_, err := gate.awaitAIReview(first, key, flight, false)
 		firstResult <- err
 	}()
 	go func() {
-		review, err := gate.awaitAIReview(context.Background(), "shared", flight, true)
+		review, err := gate.awaitAIReview(context.Background(), key, flight, true)
 		secondResult <- GateVerdict{Allow: err == nil && review.Verdict == "allow", AIReview: &review}
 	}()
 	cancelFirst()

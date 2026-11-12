@@ -35,12 +35,10 @@ type CmdGate struct {
 
 	mu      sync.Mutex
 	waiters map[int64]chan string
-	vetoes  map[int64]*gateVeto
 
 	aiReviewMu  sync.Mutex
-	aiReviews   map[string]map[string]cachedGateReview
-	inflight    map[string]*inflightGateReview
-	cacheEpoch  uint64
+	aiReviews   map[gateReviewKey]cachedGateReview
+	inflight    map[gateReviewKey]*inflightGateReview
 	reviewSlots chan struct{}
 	activeSlots chan struct{}
 }
@@ -58,21 +56,20 @@ const (
 type cachedGateReview struct {
 	review    sensitive.CommandAIReview
 	expiresAt time.Time
-	usedAt    time.Time
+}
+
+type gateReviewKey struct {
+	conversationID string
+	command        string
 }
 
 type inflightGateReview struct {
-	done    chan struct{}
-	cancel  context.CancelFunc
-	waiters int
-	review  sensitive.CommandAIReview
-	err     error
-}
-
-// gateVeto 是放行后的事后否决监听。
-type gateVeto struct {
-	doneCh chan struct{}
-	cancel context.CancelFunc
+	done      chan struct{}
+	cancel    context.CancelFunc
+	waiters   int
+	cacheable bool
+	review    sensitive.CommandAIReview
+	err       error
 }
 
 // GateVerdict 是闸门对一次命中的最终裁决。
@@ -92,9 +89,8 @@ func NewCmdGate(cfgManager *config.ConfigManager, caller *llmgate.Caller, store 
 		store:       store,
 		recorder:    recorder,
 		waiters:     make(map[int64]chan string),
-		vetoes:      make(map[int64]*gateVeto),
-		aiReviews:   make(map[string]map[string]cachedGateReview),
-		inflight:    make(map[string]*inflightGateReview),
+		aiReviews:   make(map[gateReviewKey]cachedGateReview),
+		inflight:    make(map[gateReviewKey]*inflightGateReview),
 		reviewSlots: make(chan struct{}, 8),
 		activeSlots: make(chan struct{}, maxGateWaiters),
 	}
@@ -105,7 +101,7 @@ func (g *CmdGate) gateSettings() config.DangerousCmdAIGateConfig {
 	if g == nil || g.cfgManager == nil {
 		return config.DangerousCmdAIGateConfig{}
 	}
-	return g.cfgManager.GetSettings().ContentSafety.DangerousCmd.AIGate
+	return g.cfgManager.GetContentSafetyConfig().DangerousCmd.AIGate
 }
 
 // Enabled 报告闸门是否启用（危险命令检测本体 + AI 闸门都开着）。
@@ -113,7 +109,7 @@ func (g *CmdGate) Enabled() bool {
 	if g == nil || g.cfgManager == nil {
 		return false
 	}
-	settings := g.cfgManager.GetSettings().ContentSafety.DangerousCmd
+	settings := g.cfgManager.GetContentSafetyConfig().DangerousCmd
 	return settings.Enabled && settings.AIGate.Enabled
 }
 
@@ -389,30 +385,23 @@ func (g *CmdGate) armVetoWindow(ctx context.Context, metadata HookContext, match
 	if onVeto == nil {
 		return nil
 	}
-	vetoCtx, cancel := context.WithCancel(ctx)
-	veto := &gateVeto{doneCh: make(chan struct{}), cancel: cancel}
-	g.mu.Lock()
-	g.vetoes[pending.ID] = veto
-	g.mu.Unlock()
 	go func() {
 		timer := time.NewTimer(time.Until(pending.ExpiresAt))
 		defer timer.Stop()
 		defer g.unregisterWaiter(pending.ID)
-		defer g.closeVeto(pending.ID)
 		status := "expired"
 		select {
 		case decision := <-decisionCh:
-			if decision == sensitive.GateDecisionBlock && vetoCtx.Err() == nil {
+			if decision == sensitive.GateDecisionBlock && ctx.Err() == nil {
 				onVeto()
 			}
 			return
-		case <-vetoCtx.Done():
+		case <-ctx.Done():
 			status = "cancelled"
 		case <-timer.C:
 		}
 		// 先释放内存监听，再做有时限的数据库清理。
 		g.unregisterWaiter(pending.ID)
-		g.closeVeto(pending.ID)
 		resolved, err := g.resolvePending(pending.ID, status)
 		if err != nil {
 			log.Printf("[Gate-Veto] 结束否决窗口失败: %v", err)
@@ -423,17 +412,6 @@ func (g *CmdGate) armVetoWindow(ctx context.Context, metadata HookContext, match
 		}
 	}()
 	return nil
-}
-
-func (g *CmdGate) closeVeto(pendingID int64) {
-	g.mu.Lock()
-	veto := g.vetoes[pendingID]
-	delete(g.vetoes, pendingID)
-	g.mu.Unlock()
-	if veto != nil {
-		veto.cancel()
-		close(veto.doneCh)
-	}
 }
 
 // Decide 在一个事务中保存决定及命令名单，提交成功之后通知请求。
@@ -524,7 +502,7 @@ func (g *CmdGate) AddDecision(conversationID, decision, rule, command string, co
 
 // reviewWithCache 合并同会话同命令的首次 AI 调用，同时限制实际模型并发。
 func (g *CmdGate) reviewWithCache(ctx context.Context, metadata HookContext, match sensitive.CommandMatch) (sensitive.CommandAIReview, error) {
-	commandSettings := g.cfgManager.GetSettings().ContentSafety.DangerousCmd
+	commandSettings := g.cfgManager.GetContentSafetyConfig().DangerousCmd
 	settings := commandSettings.AIGate
 	policy, err := json.Marshal(commandSettings)
 	if err != nil {
@@ -532,17 +510,17 @@ func (g *CmdGate) reviewWithCache(ctx context.Context, metadata HookContext, mat
 	}
 	commandKey := sensitive.CommandIdentity(match) + "\x00" + metadata.APIType + "\x00" + metadata.Model + "\x00" + string(policy)
 	conversationID := strings.TrimSpace(metadata.ConversationID)
-	flightKey := conversationID + "\x00" + normalizeGateCommandKey(commandKey)
+	flightKey := gateReviewKey{conversationID: conversationID, command: normalizeGateCommandKey(commandKey)}
 	if conversationID == "" {
 		// 无会话标识时不能跨请求复用授权上下文。
-		flightKey = metadata.RequestID + "\x00" + flightKey
-		if metadata.RequestID == "" {
-			flightKey = logger.NewRequestID() + "\x00" + flightKey
+		requestID := metadata.RequestID
+		if requestID == "" {
+			requestID = logger.NewRequestID()
 		}
+		flightKey.command = requestID + "\x00" + flightKey.command
 	}
 	g.aiReviewMu.Lock()
-	flightKey = fmt.Sprintf("%d\x00%s", g.cacheEpoch, flightKey)
-	if cached, ok := g.cachedAIReviewLocked(conversationID, commandKey); ok {
+	if cached, ok := g.cachedAIReviewLocked(flightKey); ok {
 		g.aiReviewMu.Unlock()
 		cached.Reused = true
 		return cached, nil
@@ -561,8 +539,7 @@ func (g *CmdGate) reviewWithCache(ctx context.Context, metadata HookContext, mat
 	// 同组请求共同拥有模型调用；单个客户端取消只退出自己的等待。
 	// 最后一个等待者离开时取消共享调用；模型审批含排队和重试最多等待 10 秒。
 	callCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), gateModelTimeout)
-	flight := &inflightGateReview{done: make(chan struct{}), cancel: cancel, waiters: 1}
-	epoch := g.cacheEpoch
+	flight := &inflightGateReview{done: make(chan struct{}), cancel: cancel, waiters: 1, cacheable: conversationID != ""}
 	g.inflight[flightKey] = flight
 	g.aiReviewMu.Unlock()
 
@@ -576,8 +553,8 @@ func (g *CmdGate) reviewWithCache(ctx context.Context, metadata HookContext, mat
 		<-g.reviewSlots
 		g.aiReviewMu.Lock()
 		flight.review, flight.err = review, callErr
-		if callErr == nil && epoch == g.cacheEpoch && flight.waiters > 0 {
-			g.cacheAIReviewLocked(conversationID, commandKey, review)
+		if callErr == nil && flight.cacheable && flight.waiters > 0 {
+			g.cacheAIReviewLocked(flightKey, review)
 		}
 		if g.inflight[flightKey] == flight {
 			delete(g.inflight, flightKey)
@@ -588,7 +565,7 @@ func (g *CmdGate) reviewWithCache(ctx context.Context, metadata HookContext, mat
 	return g.awaitAIReview(ctx, flightKey, flight, false)
 }
 
-func (g *CmdGate) awaitAIReview(ctx context.Context, key string, flight *inflightGateReview, reused bool) (sensitive.CommandAIReview, error) {
+func (g *CmdGate) awaitAIReview(ctx context.Context, key gateReviewKey, flight *inflightGateReview, reused bool) (sensitive.CommandAIReview, error) {
 	defer func() {
 		g.aiReviewMu.Lock()
 		flight.waiters--
@@ -614,72 +591,63 @@ func (g *CmdGate) awaitAIReview(ctx context.Context, key string, flight *infligh
 	}
 }
 
-func (g *CmdGate) cacheAIReviewLocked(conversationID, command string, review sensitive.CommandAIReview) {
-	key := normalizeGateCommandKey(command)
-	if conversationID == "" || key == "" {
+// 缓存固定时长的结论；容量满时淘汰最早到期的条目，不维护访问顺序。
+func (g *CmdGate) cacheAIReviewLocked(key gateReviewKey, review sensitive.CommandAIReview) {
+	if key.conversationID == "" || key.command == "" {
 		return
 	}
 	now := time.Now()
-	total := 0
-	oldestConversation, oldestCommand := "", ""
+	var oldestKey gateReviewKey
 	var oldest time.Time
-	for conversation, commands := range g.aiReviews {
-		for command, entry := range commands {
-			if !entry.expiresAt.After(now) {
-				delete(commands, command)
-				continue
-			}
-			total++
-			if oldest.IsZero() || entry.usedAt.Before(oldest) {
-				oldest, oldestConversation, oldestCommand = entry.usedAt, conversation, command
-			}
+	for cachedKey, entry := range g.aiReviews {
+		if !entry.expiresAt.After(now) {
+			delete(g.aiReviews, cachedKey)
+			continue
 		}
-		if len(commands) == 0 {
-			delete(g.aiReviews, conversation)
+		if oldest.IsZero() || entry.expiresAt.Before(oldest) {
+			oldest, oldestKey = entry.expiresAt, cachedKey
 		}
 	}
-	if total >= maxAIReviewEntries {
-		delete(g.aiReviews[oldestConversation], oldestCommand)
-		if len(g.aiReviews[oldestConversation]) == 0 {
-			delete(g.aiReviews, oldestConversation)
-		}
+	if _, exists := g.aiReviews[key]; !exists && len(g.aiReviews) >= maxAIReviewEntries {
+		delete(g.aiReviews, oldestKey)
 	}
-	if g.aiReviews[conversationID] == nil {
-		g.aiReviews[conversationID] = make(map[string]cachedGateReview)
-	}
-	g.aiReviews[conversationID][key] = cachedGateReview{review: review, expiresAt: now.Add(gateReviewTTL), usedAt: now}
+	g.aiReviews[key] = cachedGateReview{review: review, expiresAt: now.Add(gateReviewTTL)}
 }
 
-func (g *CmdGate) cachedAIReviewLocked(conversationID, command string) (sensitive.CommandAIReview, bool) {
-	key := normalizeGateCommandKey(command)
-	if conversationID == "" || key == "" {
+func (g *CmdGate) cachedAIReviewLocked(key gateReviewKey) (sensitive.CommandAIReview, bool) {
+	if key.conversationID == "" || key.command == "" {
 		return sensitive.CommandAIReview{}, false
 	}
-	entry, ok := g.aiReviews[conversationID][key]
+	entry, ok := g.aiReviews[key]
 	if !ok {
 		return sensitive.CommandAIReview{}, false
 	}
 	if !entry.expiresAt.After(time.Now()) {
-		delete(g.aiReviews[conversationID], key)
-		if len(g.aiReviews[conversationID]) == 0 {
-			delete(g.aiReviews, conversationID)
-		}
+		delete(g.aiReviews, key)
 		return sensitive.CommandAIReview{}, false
 	}
-	entry.usedAt = time.Now()
-	g.aiReviews[conversationID][key] = entry
 	return entry.review, true
 }
 
-// RemoveAIReview 同时阻止已经在途的旧审核重新写回缓存。
+// RemoveAIReview 只失效指定会话，并阻止该会话在途的旧审核重新写回缓存。
 func (g *CmdGate) RemoveAIReview(conversationID string) {
 	if g == nil {
 		return
 	}
 	g.aiReviewMu.Lock()
 	defer g.aiReviewMu.Unlock()
-	delete(g.aiReviews, strings.TrimSpace(conversationID))
-	g.cacheEpoch++
+	conversationID = strings.TrimSpace(conversationID)
+	for key := range g.aiReviews {
+		if key.conversationID == conversationID {
+			delete(g.aiReviews, key)
+		}
+	}
+	for key, flight := range g.inflight {
+		if key.conversationID == conversationID {
+			flight.cacheable = false
+			delete(g.inflight, key)
+		}
+	}
 }
 
 // normalizeGateCommandKey 只散列完整输入，不折叠参数、路径、大小写、引号或操作符。

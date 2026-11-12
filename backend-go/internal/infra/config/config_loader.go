@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -68,37 +69,32 @@ func configDigest(data []byte) string {
 func (cm *ConfigManager) loadConfig() error {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
-
-	// 如果配置文件不存在，创建默认配置（仅启动路径；
-	// 运行期间文件短暂缺失不得触发该逻辑，见 reloadFromDisk）
-	if _, err := os.Stat(cm.configFile); os.IsNotExist(err) {
+	data, err := os.ReadFile(cm.configFile)
+	if os.IsNotExist(err) {
 		return cm.createDefaultConfig()
 	}
-
-	data, err := os.ReadFile(cm.configFile)
 	if err != nil {
 		return err
 	}
+	return cm.applyConfigDataLocked(data)
+}
 
+// applyConfigDataLocked 统一启动和热重载的校验、迁移回写与快照发布。
+// 摘要去重避免自身提交触发重复迁移；回写失败时保留旧快照。
+func (cm *ConfigManager) applyConfigDataLocked(data []byte) error {
+	digest := configDigest(data)
+	if digest == cm.persistedDigest {
+		return nil
+	}
 	candidate, needSave, err := cm.prepareCandidate(data)
 	if err != nil {
 		return err
 	}
-
-	// 启动迁移（补默认值/旧格式迁移/归一化/无 Key 自检）需要回写。
 	if needSave {
-		if err := cm.saveConfigLocked(candidate); err != nil {
-			log.Printf("[Config-Migration] 警告: 保存迁移后的配置失败: %v", err)
-			return err
-		}
-		if cm.migrated {
-			log.Printf("[Config-Migration] 配置迁移完成")
-		}
-	} else {
-		cm.publishConfigLocked(candidate)
-		cm.persistedDigest = configDigest(data)
+		return cm.saveConfigLocked(candidate)
 	}
-
+	cm.publishConfigLocked(candidate)
+	cm.persistedDigest = digest
 	return nil
 }
 
@@ -117,14 +113,16 @@ func (cm *ConfigManager) prepareCandidate(data []byte) (Config, bool, error) {
 		return Config{}, false, err
 	}
 
-	needSaveDefaults := applyConfigDefaultsTo(&candidate, data)
+	needSaveDefaults, err := applyConfigDefaultsTo(&candidate, data)
+	if err != nil {
+		return Config{}, false, err
+	}
 	needManagedMigration, err := migrateManagedSettings(&candidate, data)
 	if err != nil {
 		return Config{}, false, fmt.Errorf("迁移全局设置失败: %w", err)
 	}
 	needMigration := migrateOldFormatIn(&candidate)
 	if needMigration {
-		cm.migrated = true
 		log.Printf("[Config-Migration] 检测到旧格式配置，正在迁移到新格式...")
 	}
 	needNormalization := normalizeChannelListsIn(&candidate)
@@ -155,38 +153,16 @@ func (cm *ConfigManager) prepareCandidate(data []byte) (Config, bool, error) {
 func (cm *ConfigManager) reloadFromDisk() error {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
-
 	data, err := os.ReadFile(cm.configFile)
-	if err != nil {
-		if os.IsNotExist(err) {
-			log.Printf("[Config-Watcher] 警告: 配置文件暂时缺失，保留当前有效快照: %v", err)
-			return nil
-		}
-		return err
-	}
-
-	// 内容摘要去重：自身提交触发的重载事件直接跳过，
-	// 避免"保存 → 重载 → 迁移判定 → 再保存"的循环。
-	digest := configDigest(data)
-	if digest == cm.persistedDigest {
+	if os.IsNotExist(err) {
+		log.Printf("[Config-Watcher] 警告: 配置文件暂时缺失，保留当前有效快照: %v", err)
 		return nil
 	}
-
-	candidate, needSave, err := cm.prepareCandidate(data)
 	if err != nil {
-		log.Printf("[Config-Watcher] 警告: 配置重载失败（保留最后有效快照）: %v", err)
 		return err
 	}
-
-	// 需要迁移时先回写再发布；失败保留旧快照与摘要，后续重载仍可重试。
-	if needSave {
-		if err := cm.saveConfigLocked(candidate); err != nil {
-			log.Printf("[Config-Watcher] 警告: 保存重载后的迁移配置失败: %v", err)
-			return err
-		}
-	} else {
-		cm.publishConfigLocked(candidate)
-		cm.persistedDigest = digest
+	if err := cm.applyConfigDataLocked(data); err != nil {
+		return err
 	}
 	log.Printf("[Config-Watcher] 配置已重载")
 	return nil
@@ -195,38 +171,16 @@ func (cm *ConfigManager) reloadFromDisk() error {
 // createDefaultConfig 创建默认配置
 func (cm *ConfigManager) createDefaultConfig() error {
 	defaultConfig := Config{
-		Upstream:                  []UpstreamConfig{},
-		MessagePools:              []ChannelPool{defaultChannelPool()},
-		CurrentUpstream:           0,
-		LoadBalance:               "failover",
-		ResponsesUpstream:         []UpstreamConfig{},
-		ResponsesPools:            []ChannelPool{defaultChannelPool()},
-		CurrentResponsesUpstream:  0,
-		ResponsesLoadBalance:      "failover",
-		GeminiUpstream:            []UpstreamConfig{},
-		GeminiPools:               []ChannelPool{defaultChannelPool()},
-		GeminiLoadBalance:         "failover",
-		ChatUpstream:              []UpstreamConfig{},
-		ChatPools:                 []ChannelPool{defaultChannelPool()},
-		ChatLoadBalance:           "failover",
-		ImagesUpstream:            []UpstreamConfig{},
-		ImagesPools:               []ChannelPool{defaultChannelPool()},
-		ImagesLoadBalance:         "failover",
-		EmbeddingsUpstream:        []UpstreamConfig{},
-		EmbeddingsPools:           []ChannelPool{defaultChannelPool()},
-		EmbeddingsLoadBalance:     "failover",
-		DecisionsUpstream:         []UpstreamConfig{},
-		DecisionsPools:            []ChannelPool{defaultChannelPool()},
-		DecisionsLoadBalance:      "failover",
-		FuzzyModeEnabled:          true, // 默认启用 Fuzzy 模式
-		ClaudeCodeDisguiseEnabled: false,
-		CodexDisguiseEnabled:      false,
+		FuzzyModeEnabled: true,
 		Settings: SettingsConfig{
 			ContentSafety: DefaultContentSafetyConfig(),
-			Disguise: DisguiseSettings{
-				AutoUpdateFromRegistry: true,
-			},
+			Disguise:      DisguiseSettings{AutoUpdateFromRegistry: true},
 		},
+	}
+	for _, set := range defaultConfig.channelSets() {
+		*set.upstreams = []UpstreamConfig{}
+		*set.pools = []ChannelPool{defaultChannelPool()}
+		*set.loadBalance = "failover"
 	}
 
 	if _, err := migrateManagedSettings(&defaultConfig, []byte(`{}`)); err != nil {
@@ -241,150 +195,76 @@ func (cm *ConfigManager) createDefaultConfig() error {
 
 // applyConfigDefaultsTo 应用配置默认值到候选（在候选上进行，不触碰当前快照）。
 // rawJSON: 原始 JSON 数据，用于检测字段是否存在
-// 返回: 是否有字段需要迁移（需要保存配置）
-func applyConfigDefaultsTo(candidate *Config, rawJSON []byte) bool {
+// 返回是否需要保存迁移结果；格式或分组校验失败时不发布候选。
+func applyConfigDefaultsTo(candidate *Config, rawJSON []byte) (bool, error) {
 	needSave := false
 
-	if candidate.LoadBalance == "" {
-		candidate.LoadBalance = "failover"
-		needSave = true
-	} else if candidate.LoadBalance != "failover" {
-		candidate.LoadBalance = "failover"
-		needSave = true
-	}
-	if candidate.ResponsesLoadBalance == "" {
-		candidate.ResponsesLoadBalance = "failover"
-		needSave = true
-	} else if candidate.ResponsesLoadBalance != "failover" {
-		candidate.ResponsesLoadBalance = "failover"
-		needSave = true
-	}
-	if candidate.GeminiLoadBalance == "" {
-		candidate.GeminiLoadBalance = "failover"
-		needSave = true
-	} else if candidate.GeminiLoadBalance != "failover" {
-		candidate.GeminiLoadBalance = "failover"
-		needSave = true
-	}
-	if candidate.ChatLoadBalance == "" {
-		candidate.ChatLoadBalance = "failover"
-		needSave = true
-	} else if candidate.ChatLoadBalance != "failover" {
-		candidate.ChatLoadBalance = "failover"
-		needSave = true
-	}
-	if candidate.ImagesLoadBalance == "" {
-		candidate.ImagesLoadBalance = "failover"
-		needSave = true
-	} else if candidate.ImagesLoadBalance != "failover" {
-		candidate.ImagesLoadBalance = "failover"
-		needSave = true
-	}
-	if candidate.EmbeddingsLoadBalance == "" {
-		candidate.EmbeddingsLoadBalance = "failover"
-		needSave = true
-	} else if candidate.EmbeddingsLoadBalance != "failover" {
-		candidate.EmbeddingsLoadBalance = "failover"
-		needSave = true
-	}
-	if candidate.DecisionsLoadBalance == "" {
-		candidate.DecisionsLoadBalance = "failover"
-		needSave = true
-	} else if candidate.DecisionsLoadBalance != "failover" {
-		candidate.DecisionsLoadBalance = "failover"
-		needSave = true
-	}
-
-	// FuzzyModeEnabled 默认值处理：
-	// 由于 bool 零值是 false，无法区分"用户设为 false"和"字段不存在"
-	// 通过检查原始 JSON 是否包含该字段来判断
-	var rawMap map[string]json.RawMessage
-	if err := json.Unmarshal(rawJSON, &rawMap); err == nil {
-		if _, exists := rawMap["fuzzyModeEnabled"]; !exists {
-			// 字段不存在，设为默认值 true
-			candidate.FuzzyModeEnabled = true
+	// 七组渠道都按配置顺序故障转移，统一迁移历史上的其他模式。
+	for _, set := range candidate.channelSets() {
+		if *set.loadBalance != "failover" {
+			*set.loadBalance = "failover"
 			needSave = true
-			log.Printf("[Config-Migration] FuzzyModeEnabled 字段不存在，设为默认值 true")
-		}
-		if rawResponses, exists := rawMap["responsesUpstream"]; exists {
-			var responseItems []map[string]json.RawMessage
-			if err := json.Unmarshal(rawResponses, &responseItems); err == nil {
-				for index := range candidate.ResponsesUpstream {
-					if index >= len(responseItems) {
-						break
-					}
-					_, capabilityConfigured := responseItems[index]["visionCapable"]
-					_, layerConfigured := responseItems[index]["visionLayerEnabled"]
-					if !capabilityConfigured && !layerConfigured {
-						candidate.ResponsesUpstream[index].VisionCapable = true
-						candidate.ResponsesUpstream[index].VisionLayerEnabled = false
-						candidate.ResponsesUpstream[index].VisionLayerChannelID = ""
-						candidate.ResponsesUpstream[index].VisionLayerModel = ""
-						needSave = true
-						log.Printf("[Config-Migration] Responses 渠道 [%d] 默认启用图片理解", index)
-					}
-				}
-			}
-		}
-		if rawSettings, exists := rawMap["settings"]; !exists {
-			candidate.Settings.ContentSafety = DefaultContentSafetyConfig()
-			needSave = true
-			log.Printf("[Config-Migration] Settings.ContentSafety 字段不存在，已写入默认配置")
-		} else {
-			var settingsMap map[string]json.RawMessage
-			if err := json.Unmarshal(rawSettings, &settingsMap); err == nil {
-				if rawContentSafety, exists := settingsMap["contentSafety"]; !exists {
-					candidate.Settings.ContentSafety = DefaultContentSafetyConfig()
-					needSave = true
-					log.Printf("[Config-Migration] Settings.ContentSafety 字段不存在，已写入默认配置")
-				} else if migrateContentSafetyConfig(&candidate.Settings.ContentSafety, rawContentSafety) {
-					needSave = true
-					log.Printf("[Config-Migration] 内容安全配置已迁移到分离的 PII/凭据策略")
-				}
-				// 旧版全局代理配置只有代理地址没有启用开关（引入开关前的版本）：
-				// 地址非空表示此前一直生效，按“已启用”迁移，保持旧行为不因开关默认 false 而中断。
-				if rawNetwork, exists := settingsMap["network"]; exists {
-					var networkMap map[string]json.RawMessage
-					if err := json.Unmarshal(rawNetwork, &networkMap); err == nil {
-						if _, hasEnabled := networkMap["upstreamProxyEnabled"]; !hasEnabled &&
-							strings.TrimSpace(candidate.Settings.Network.UpstreamProxyURL) != "" {
-							candidate.Settings.Network.UpstreamProxyEnabled = true
-							needSave = true
-							log.Printf("[Config-Migration] 旧版全局代理配置缺少启用开关，按已启用迁移")
-						}
-					}
-				}
-			}
 		}
 	}
 
-	poolSets := []struct {
-		pools     *[]ChannelPool
-		upstreams []UpstreamConfig
-		label     string
-	}{
-		{&candidate.MessagePools, candidate.Upstream, "Messages"},
-		{&candidate.ResponsesPools, candidate.ResponsesUpstream, "Responses"},
-		{&candidate.GeminiPools, candidate.GeminiUpstream, "Gemini"},
-		{&candidate.ChatPools, candidate.ChatUpstream, "Chat"},
-		{&candidate.ImagesPools, candidate.ImagesUpstream, "Images"},
-		{&candidate.EmbeddingsPools, candidate.EmbeddingsUpstream, "Embeddings"},
-		{&candidate.DecisionsPools, candidate.DecisionsUpstream, "Decisions"},
+	// 只解码需要区分“缺失”和“零值”的字段，避免逐层重复解析同一份配置。
+	var fields struct {
+		FuzzyModeEnabled  json.RawMessage              `json:"fuzzyModeEnabled"`
+		ResponsesUpstream []map[string]json.RawMessage `json:"responsesUpstream"`
+		Settings          struct {
+			ContentSafety json.RawMessage            `json:"contentSafety"`
+			Network       map[string]json.RawMessage `json:"network"`
+		} `json:"settings"`
 	}
-	for _, set := range poolSets {
-		normalized, changed, err := ensurePoolsAndAssignments(*set.pools, set.upstreams)
+	if err := json.Unmarshal(rawJSON, &fields); err != nil {
+		return false, fmt.Errorf("解析配置迁移字段失败: %w", err)
+	}
+	if len(fields.FuzzyModeEnabled) == 0 {
+		candidate.FuzzyModeEnabled = true
+		needSave = true
+		log.Printf("[Config-Migration] FuzzyModeEnabled 字段不存在，设为默认值 true")
+	}
+	for index := range candidate.ResponsesUpstream {
+		if index >= len(fields.ResponsesUpstream) {
+			break
+		}
+		_, capabilityConfigured := fields.ResponsesUpstream[index]["visionCapable"]
+		_, layerConfigured := fields.ResponsesUpstream[index]["visionLayerEnabled"]
+		if !capabilityConfigured && !layerConfigured {
+			candidate.ResponsesUpstream[index].VisionCapable = true
+			candidate.ResponsesUpstream[index].VisionLayerEnabled = false
+			candidate.ResponsesUpstream[index].VisionLayerChannelID = ""
+			candidate.ResponsesUpstream[index].VisionLayerModel = ""
+			needSave = true
+			log.Printf("[Config-Migration] Responses 渠道 [%d] 默认启用图片理解", index)
+		}
+	}
+	if len(fields.Settings.ContentSafety) == 0 {
+		candidate.Settings.ContentSafety = DefaultContentSafetyConfig()
+		needSave = true
+		log.Printf("[Config-Migration] Settings.ContentSafety 字段不存在，已写入默认配置")
+	} else if migrateContentSafetyConfig(&candidate.Settings.ContentSafety, fields.Settings.ContentSafety) {
+		needSave = true
+		log.Printf("[Config-Migration] 内容安全配置已迁移到分离的 PII/凭据策略")
+	}
+	// 旧版代理地址非空即生效，仅在缺少开关时保持这个行为。
+	if _, hasEnabled := fields.Settings.Network["upstreamProxyEnabled"]; !hasEnabled &&
+		strings.TrimSpace(candidate.Settings.Network.UpstreamProxyURL) != "" {
+		candidate.Settings.Network.UpstreamProxyEnabled = true
+		needSave = true
+		log.Printf("[Config-Migration] 旧版全局代理配置缺少启用开关，按已启用迁移")
+	}
+
+	for _, set := range candidate.channelSets() {
+		normalized, changed, err := ensurePoolsAndAssignments(*set.pools, *set.upstreams)
 		if err != nil {
-			log.Printf("[Config-Migration] %s 分组配置验证失败，保留现有配置请手动修复: %v", set.label, err)
-			// 验证失败时不重置分组也不迁移渠道，避免数据丢失
-			// 保留现有配置，让用户通过管理界面手动修复
-			changed = false
-			normalized = *set.pools
+			return false, fmt.Errorf("%s 分组配置无效: %w", set.name, err)
 		}
 		*set.pools = normalized
 		needSave = needSave || changed
 	}
 
-	return needSave
+	return needSave, nil
 }
 
 func migrateContentSafetyConfig(settings *ContentSafetyConfig, rawJSON []byte) bool {
@@ -524,47 +404,23 @@ func containsString(values []string, target string) bool {
 
 // migrateOldFormatIn 在候选上迁移旧格式配置，返回是否有迁移。
 func migrateOldFormatIn(candidate *Config) bool {
-	needMigration := false
-
-	// 迁移 Messages 渠道
-	if migrateUpstreamsList(candidate.Upstream, candidate.CurrentUpstream, "Messages") {
-		needMigration = true
+	changed := false
+	for _, set := range candidate.channelSets() {
+		current := 0
+		switch set.kind {
+		case "messages":
+			current = candidate.CurrentUpstream
+		case "responses":
+			current = candidate.CurrentResponsesUpstream
+		}
+		changed = migrateUpstreamsList(*set.upstreams, current, set.name) || changed
 	}
-
-	// 迁移 Responses 渠道
-	if migrateUpstreamsList(candidate.ResponsesUpstream, candidate.CurrentResponsesUpstream, "Responses") {
-		needMigration = true
-	}
-	if migrateUpstreamsList(candidate.GeminiUpstream, 0, "Gemini") {
-		needMigration = true
-	}
-	if migrateUpstreamsList(candidate.ChatUpstream, 0, "Chat") {
-		needMigration = true
-	}
-	if migrateUpstreamsList(candidate.ImagesUpstream, 0, "Images") {
-		needMigration = true
-	}
-	if migrateUpstreamsList(candidate.EmbeddingsUpstream, 0, "Embeddings") {
-		needMigration = true
-	}
-	if migrateUpstreamsList(candidate.DecisionsUpstream, 0, "Decisions") {
-		needMigration = true
-	}
-
-	return needMigration
+	return changed
 }
 
 func normalizeChannelListsIn(candidate *Config) bool {
 	changed := false
-	lists := [][]UpstreamConfig{
-		candidate.Upstream,
-		candidate.ResponsesUpstream,
-		candidate.GeminiUpstream,
-		candidate.ChatUpstream,
-		candidate.ImagesUpstream,
-		candidate.EmbeddingsUpstream,
-		candidate.DecisionsUpstream,
-	}
+	lists := upstreamLists(candidate)
 	for _, upstreams := range lists {
 		changed = ensureUpstreamIDs(upstreams) || changed
 		changed = normalizeUpstreamPriorities(upstreams) || changed
@@ -582,21 +438,17 @@ func normalizeChannelListsIn(candidate *Config) bool {
 // 这些协议没有伪装能力，设置不会生效；清除后配置文件、界面与运行时行为保持一致。
 func clearUnsupportedClientIdentityIn(candidate *Config) bool {
 	changed := false
-	lists := [][]UpstreamConfig{
-		candidate.GeminiUpstream,
-		candidate.ChatUpstream,
-		candidate.ImagesUpstream,
-		candidate.EmbeddingsUpstream,
-		candidate.DecisionsUpstream,
-	}
-	for _, upstreams := range lists {
-		for index := range upstreams {
-			if upstreams[index].ClientIdentityMode == "" {
-				continue
+	for _, set := range candidate.channelSets() {
+		if set.kind == "messages" || set.kind == "responses" {
+			continue
+		}
+		for index := range *set.upstreams {
+			upstream := &(*set.upstreams)[index]
+			if upstream.ClientIdentityMode != "" {
+				log.Printf("[Config-Migration] 渠道 %q 所属协议不支持客户端伪装，已清除身份模式设置", upstream.Name)
+				upstream.ClientIdentityMode = ""
+				changed = true
 			}
-			log.Printf("[Config-Migration] 渠道 %q 所属协议不支持客户端伪装，已清除身份模式设置", upstreams[index].Name)
-			upstreams[index].ClientIdentityMode = ""
-			changed = true
 		}
 	}
 	return changed
@@ -638,16 +490,11 @@ func migrateUpstreamsList(upstreams []UpstreamConfig, currentIdx int, name strin
 // 没有配置 API key 的渠道，即使状态为 active 也应暂停。
 // 返回 true 表示有配置被修改，需要保存。
 func validateChannelKeysIn(candidate *Config) bool {
-	modified := false
-	modified = validateUpstreamKeys(candidate.Upstream, "Messages") || modified
-	modified = validateUpstreamKeys(candidate.ResponsesUpstream, "Responses") || modified
-	modified = validateUpstreamKeys(candidate.GeminiUpstream, "Gemini") || modified
-	modified = validateUpstreamKeys(candidate.ChatUpstream, "Chat") || modified
-	modified = validateUpstreamKeys(candidate.ImagesUpstream, "Images") || modified
-	modified = validateUpstreamKeys(candidate.EmbeddingsUpstream, "Embeddings") || modified
-	modified = validateUpstreamKeys(candidate.DecisionsUpstream, "Decisions") || modified
-
-	return modified
+	changed := false
+	for _, set := range candidate.channelSets() {
+		changed = validateUpstreamKeys(*set.upstreams, set.name) || changed
+	}
+	return changed
 }
 
 func validateUpstreamKeys(upstreams []UpstreamConfig, label string) bool {
@@ -671,15 +518,7 @@ func validateProxyConfigOf(candidate *Config) error {
 	if err := ValidateProxyURL(candidate.Settings.Network.UpstreamProxyURL); err != nil {
 		return fmt.Errorf("全局上游代理配置无效: %w", err)
 	}
-	groups := [][]UpstreamConfig{
-		candidate.Upstream,
-		candidate.ResponsesUpstream,
-		candidate.GeminiUpstream,
-		candidate.ChatUpstream,
-		candidate.ImagesUpstream,
-		candidate.EmbeddingsUpstream,
-		candidate.DecisionsUpstream,
-	}
+	groups := upstreamLists(candidate)
 	for _, upstreams := range groups {
 		for index := range upstreams {
 			if err := validateUpstreamProxyConfig(&upstreams[index]); err != nil {
@@ -725,25 +564,15 @@ func (cm *ConfigManager) saveConfigLocked(config Config) error {
 	}
 
 	// 原子替换（唯一提交点）
-	if err := atomicfile.Write(cm.configFile, data, atomicfile.Options{
+	err = atomicfile.Write(cm.configFile, data, atomicfile.Options{
 		TempPrefix: ".config-",
-		Mode:       0600, // 配置含密钥：受限权限
-	}); err != nil {
-		if atomicfile.IsCommitted(err) {
-			// 文件已是新内容：发布快照保持内存与磁盘一致，
-			// 错误带"已提交"标记返回，调用方不得伪装未提交。
-			cm.publishConfigLocked(config)
-			cm.persistedDigest = configDigest(data)
-			return err
-		}
-		// 提交点前失败：不发布，当前快照保持原样。
-		return err
+		Mode:       0600, // 配置含密钥，限制文件权限。
+	})
+	if err == nil || atomicfile.IsCommitted(err) {
+		cm.publishConfigLocked(config)
+		cm.persistedDigest = configDigest(data)
 	}
-
-	// 提交成功：发布新快照并记录摘要（watcher 重载去重用）。
-	cm.publishConfigLocked(config)
-	cm.persistedDigest = configDigest(data)
-	return nil
+	return err
 }
 
 // SaveConfig 保存配置
@@ -772,32 +601,41 @@ func (cm *ConfigManager) backupConfig() error {
 	}
 
 	// 创建备份文件
-	timestamp := time.Now().Format("2006-01-02T15-04-05")
-	backupFile := filepath.Join(backupDir, fmt.Sprintf("config-%s.json", timestamp))
-	if err := os.WriteFile(backupFile, data, 0644); err != nil {
+	timestamp := time.Now().Format("2006-01-02T15-04-05.000000000")
+	backup, err := os.CreateTemp(backupDir, "config-"+timestamp+"-*.json")
+	if err != nil {
+		return fmt.Errorf("创建配置备份失败: %w", err)
+	}
+	_, writeErr := backup.Write(data)
+	if err := errors.Join(writeErr, backup.Close()); err != nil {
 		return fmt.Errorf("写入备份文件失败: %w", err)
 	}
 
 	// 清理旧备份
-	cm.cleanupOldBackups(backupDir)
-	return nil
+	return cm.cleanupOldBackups(backupDir)
 }
 
 // cleanupOldBackups 清理旧备份
-func (cm *ConfigManager) cleanupOldBackups(backupDir string) {
+func (cm *ConfigManager) cleanupOldBackups(backupDir string) error {
 	entries, err := os.ReadDir(backupDir)
 	if err != nil {
-		return
+		return fmt.Errorf("读取配置备份目录失败: %w", err)
 	}
 
-	if len(entries) <= maxBackups {
-		return
+	backups := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasPrefix(entry.Name(), "config-") && strings.HasSuffix(entry.Name(), ".json") {
+			backups = append(backups, entry.Name())
+		}
 	}
 
 	// 删除最旧的备份
-	for i := 0; i < len(entries)-maxBackups; i++ {
-		os.Remove(filepath.Join(backupDir, entries[i].Name()))
+	for _, name := range backups[:max(0, len(backups)-maxBackups)] {
+		if err := os.Remove(filepath.Join(backupDir, name)); err != nil {
+			return fmt.Errorf("清理旧配置备份失败: %w", err)
+		}
 	}
+	return nil
 }
 
 // watcherTargetPath 目标配置文件的规范化绝对路径（事件过滤基准）。

@@ -19,6 +19,31 @@ import (
 	"github.com/insistanan/api-proxy/internal/storage/metrics"
 )
 
+// 仅替换故障注入所需的写操作，其余契约由真实配置管理器提供。
+type stubChannelConfig struct {
+	*config.ConfigManager
+	update  func(string, int, config.UpstreamUpdate) (bool, error)
+	remove  func(string, int) (*config.UpstreamConfig, error)
+	status  func(string, int, string) error
+	promote func(string, int, time.Duration, int) error
+}
+
+func (s *stubChannelConfig) UpdateChannel(kind string, index int, update config.UpstreamUpdate) (bool, error) {
+	return s.update(kind, index, update)
+}
+
+func (s *stubChannelConfig) RemoveChannel(kind string, index int) (*config.UpstreamConfig, error) {
+	return s.remove(kind, index)
+}
+
+func (s *stubChannelConfig) SetChannelStatusFor(kind string, index int, status string) error {
+	return s.status(kind, index, status)
+}
+
+func (s *stubChannelConfig) SetChannelPromotionFor(kind string, index int, duration time.Duration, count int) error {
+	return s.promote(kind, index, duration, count)
+}
+
 func TestPromotionInputValidationBeforeWrite(t *testing.T) {
 	for _, input := range []struct {
 		body   string
@@ -32,7 +57,7 @@ func TestPromotionInputValidationBeforeWrite(t *testing.T) {
 	} {
 		t.Run(input.body, func(t *testing.T) {
 			called := false
-			h := New(Ops{SetPromotion: func(_ int, duration time.Duration, count int) error {
+			h := &Handlers{cfg: &stubChannelConfig{promote: func(_ string, _ int, duration time.Duration, count int) error {
 				called = true
 				requireDuration := time.Duration(0)
 				if input.body == `{"duration":60,"count":2}` {
@@ -45,7 +70,7 @@ func TestPromotionInputValidationBeforeWrite(t *testing.T) {
 					t.Fatalf("时长 = %v", duration)
 				}
 				return nil
-			}}, nil)
+			}}}
 			rr := httptest.NewRecorder()
 			ctx, _ := gin.CreateTestContext(rr)
 			ctx.Params = gin.Params{{Key: "id", Value: "0"}}
@@ -95,12 +120,11 @@ func TestCommittedOperationsFinishSchedulerCleanup(t *testing.T) {
 				breaker.RecordFailure("responses", 0)
 				mm.RecordFailure(up.BaseURL, up.APIKeys[0], 0)
 				trace.SetPreferredChannelForKind("messages", "conversation", 0)
-				h := New(Ops{
-					Kind:      scheduler.ChannelKindMessages,
-					Update:    func(int, config.UpstreamUpdate) (bool, error) { return true, tc.err },
-					Remove:    func(int) (*config.UpstreamConfig, error) { return &up, tc.err },
-					SetStatus: func(int, string) error { return tc.err },
-				}, sch)
+				h := &Handlers{cfg: &stubChannelConfig{
+					update: func(string, int, config.UpstreamUpdate) (bool, error) { return true, tc.err },
+					remove: func(string, int) (*config.UpstreamConfig, error) { return &up, tc.err },
+					status: func(string, int, string) error { return tc.err },
+				}, sch: sch, kind: scheduler.ChannelKindMessages}
 				rr := httptest.NewRecorder()
 				ctx, _ := gin.CreateTestContext(rr)
 				ctx.Params = gin.Params{{Key: "id", Value: "0"}}

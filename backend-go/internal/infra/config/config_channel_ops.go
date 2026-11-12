@@ -92,54 +92,6 @@ func (cm *ConfigManager) MarkReasoningContentRequired(channelType, upstreamID st
 	return fmt.Errorf("未找到渠道 ID: %s", upstreamID)
 }
 
-// getFirstActive 从上游列表中选择第一个 active 且可调度的渠道
-func getFirstActive(upstreams []UpstreamConfig, label string) (*UpstreamConfig, error) {
-	if len(upstreams) == 0 {
-		return nil, fmt.Errorf("未配置任何%s渠道", label)
-	}
-	if index := bestUpstreamIndex(upstreams, true); index >= 0 {
-		return &upstreams[index], nil
-	}
-	if index := bestUpstreamIndex(upstreams, false); index >= 0 {
-		return &upstreams[index], nil
-	}
-	return nil, fmt.Errorf("没有可用的%s渠道", label)
-}
-
-// getFirstActiveWithIndex 从上游列表中选择第一个 active 且可调度的渠道（带索引）
-func getFirstActiveWithIndex(upstreams []UpstreamConfig, label string) (*UpstreamConfig, int, error) {
-	if len(upstreams) == 0 {
-		return nil, -1, fmt.Errorf("未配置任何%s渠道", label)
-	}
-	if index := bestUpstreamIndex(upstreams, true); index >= 0 {
-		return &upstreams[index], index, nil
-	}
-	if index := bestUpstreamIndex(upstreams, false); index >= 0 {
-		return &upstreams[index], index, nil
-	}
-	return nil, -1, fmt.Errorf("没有可用的%s渠道", label)
-}
-
-func bestUpstreamIndex(upstreams []UpstreamConfig, activeOnly bool) int {
-	bestIndex := -1
-	bestPriority := 0
-	for index := range upstreams {
-		upstream := &upstreams[index]
-		if !IsChannelSchedulable(upstream) || upstream.ExcludeFromConversation || upstream.BuiltinProvider != "" {
-			continue
-		}
-		if activeOnly && GetChannelStatus(upstream) != ChannelStatusActive {
-			continue
-		}
-		priority := GetChannelPriority(upstream, index)
-		if bestIndex < 0 || priority < bestPriority || (priority == bestPriority && index < bestIndex) {
-			bestIndex = index
-			bestPriority = priority
-		}
-	}
-	return bestIndex
-}
-
 // prepareNewUpstream 准备新增渠道的公共字段
 func prepareNewUpstream(upstream *UpstreamConfig) {
 	if upstream.MaxConcurrency == 0 {

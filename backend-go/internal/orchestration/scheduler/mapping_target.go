@@ -20,7 +20,10 @@ func (s *ChannelScheduler) SelectMappedChannel(kind ChannelKind, channelID strin
 		return nil, fmt.Errorf("映射目标渠道 ID 为空")
 	}
 
-	upstreams := UpstreamsOfKind(s.configManager.GetConfig(), kind)
+	upstreams, _, err := s.configManager.GetChannelConfig(string(kind))
+	if err != nil {
+		return nil, err
+	}
 	index := -1
 	for i := range upstreams {
 		if upstreams[i].ID == channelID {
@@ -46,15 +49,7 @@ func (s *ChannelScheduler) SelectMappedChannel(kind ChannelKind, channelID strin
 	}
 
 	s.ReserveChannel(kind, index)
-	permit := &ChannelPermit{
-		scheduler: s,
-		kind:      kind,
-		index:     index,
-		reserved:  true,
-	}
-	if allow.Probe {
-		permit.setProbe(allow.Generation)
-	}
+	permit := s.newChannelPermit(kind, index, allow, true)
 	return &SelectionResult{
 		Upstream:     upstream.Clone(),
 		ChannelIndex: index,
@@ -62,27 +57,4 @@ func (s *ChannelScheduler) SelectMappedChannel(kind ChannelKind, channelID strin
 		Kind:         kind,
 		Permit:       permit,
 	}, nil
-}
-
-// UpstreamsOfKind 返回指定协议在配置快照中的渠道列表（只读，调用方不得修改元素）。
-// 供调度器与管理接口共用，避免各处各自维护协议到渠道列表的 switch。
-func UpstreamsOfKind(cfg config.Config, kind ChannelKind) []config.UpstreamConfig {
-	switch kind {
-	case ChannelKindMessages:
-		return cfg.Upstream
-	case ChannelKindResponses:
-		return cfg.ResponsesUpstream
-	case ChannelKindGemini:
-		return cfg.GeminiUpstream
-	case ChannelKindChat:
-		return cfg.ChatUpstream
-	case ChannelKindImages:
-		return cfg.ImagesUpstream
-	case ChannelKindEmbeddings:
-		return cfg.EmbeddingsUpstream
-	case ChannelKindDecisions:
-		return cfg.DecisionsUpstream
-	default:
-		return nil
-	}
 }

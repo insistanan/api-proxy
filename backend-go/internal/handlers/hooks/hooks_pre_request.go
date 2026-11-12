@@ -41,16 +41,10 @@ type ContentSafetyHookError struct {
 }
 
 func (e *ContentSafetyHookError) Error() string {
-	if e == nil || e.Err == nil {
-		return "内容安全检查失败"
-	}
 	return fmt.Sprintf("内容安全检查失败: %v", e.Err)
 }
 
 func (e *ContentSafetyHookError) Unwrap() error {
-	if e == nil {
-		return nil
-	}
 	return e.Err
 }
 
@@ -122,8 +116,6 @@ type attachedHookPipeline struct {
 	metadata            HookContext
 	streamMu            sync.Mutex
 	stream              *sensitive.StreamCmdScanner
-	textStreams         map[string]*streamTextState
-	textStreamBytes     int
 	toolArgs            map[string]*streamToolArgumentState
 	toolArgBytes        int
 	toolDelivery        []string
@@ -199,17 +191,13 @@ func (a *attachedHookPipeline) preparePreRequest() (bool, error) {
 		return a.preRequestEnabled, nil
 	}
 	enabled := false
-	for _, entry := range a.pipeline.snapshot(HookStagePreRequest) {
-		if hook, ok := entry.hook.(*contentSafetyPreRequestHook); ok {
-			snapshot, err := hook.currentSnapshot()
-			if err != nil {
-				return false, err
-			}
-			a.preRequestSnapshot = snapshot
-			enabled = enabled || snapshot.requestEnabled()
-		} else {
-			enabled = true
+	if hook := a.pipeline.preRequest; hook != nil {
+		snapshot, err := hook.currentSnapshot()
+		if err != nil {
+			return false, err
 		}
+		a.preRequestSnapshot = snapshot
+		enabled = snapshot.requestEnabled()
 	}
 	a.preRequestPrepared, a.preRequestEnabled = true, enabled
 	return enabled, nil
@@ -445,12 +433,8 @@ func NewContentSafetyPipelineWithSemantic(cfgManager *config.ConfigManager, reco
 	pipeline.blockedLogRecorder = recorder
 	pipeline.cmdGate = cmdGate
 	pipeline.semantic = datasets
-	if err := pipeline.Register(&contentSafetyPreRequestHook{cfgManager: cfgManager, recorder: recorder}); err != nil {
-		panic(fmt.Sprintf("注册内置内容安全 Hook 失败: %v", err))
-	}
-	if err := pipeline.Register(&contentSafetyPostResponseHook{cfgManager: cfgManager, recorder: recorder, gate: pipeline.cmdGate, semantic: datasets}); err != nil {
-		panic(fmt.Sprintf("注册内置响应安全 Hook 失败: %v", err))
-	}
+	pipeline.preRequest = &contentSafetyPreRequestHook{cfgManager: cfgManager, recorder: recorder}
+	pipeline.postResponse = &contentSafetyPostResponseHook{cfgManager: cfgManager, recorder: recorder, gate: cmdGate, semantic: datasets}
 	return pipeline
 }
 
@@ -554,8 +538,6 @@ func ClearAttachedSensitiveData(c requestContextGetter) {
 	attached.toolDelivery = nil
 	attached.toolDeliveryBytes = 0
 	attached.stream = nil
-	attached.textStreams = nil
-	attached.textStreamBytes = 0
 	attached.streamCredential = nil
 	attached.streamMaskMode = ""
 	attached.streamSettings = config.ContentSafetyConfig{}
@@ -588,8 +570,6 @@ func ResetAttachedStreamRestoration(c requestContextGetter) error {
 	attached.toolDelivery = nil
 	attached.toolDeliveryBytes = 0
 	attached.stream = nil
-	attached.textStreams = nil
-	attached.textStreamBytes = 0
 	attached.streamDetector = nil
 	attached.streamCredential = nil
 	attached.allowedCommands = nil
@@ -670,10 +650,6 @@ type contentSafetyPreRequestHook struct {
 	mu         sync.Mutex
 	snapshot   atomic.Pointer[contentSafetySnapshot]
 }
-
-func (h *contentSafetyPreRequestHook) Name() string     { return "content-safety" }
-func (h *contentSafetyPreRequestHook) Stage() HookStage { return HookStagePreRequest }
-func (h *contentSafetyPreRequestHook) Priority() int    { return 100 }
 
 func (h *contentSafetyPreRequestHook) Run(ctx context.Context, metadata HookContext, result HookResult) (HookResult, error) {
 	if err := ctx.Err(); err != nil {
@@ -758,7 +734,10 @@ func (h *contentSafetyPreRequestHook) Run(ctx context.Context, metadata HookCont
 }
 
 func (h *contentSafetyPreRequestHook) currentSnapshot() (*contentSafetySnapshot, error) {
-	settings := h.cfgManager.GetSettings().ContentSafety
+	if h.cfgManager == nil {
+		return nil, fmt.Errorf("内容安全 Hook 未绑定配置管理器")
+	}
+	settings := h.cfgManager.GetContentSafetyConfig()
 	current := h.snapshot.Load()
 	if current != nil && reflect.DeepEqual(current.settings, settings) {
 		return current, nil

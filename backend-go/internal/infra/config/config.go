@@ -102,44 +102,24 @@ type UpstreamConfig struct {
 //	"modelMapping": { "opus": ["gpt-4o"] }
 func (u *UpstreamConfig) UnmarshalJSON(data []byte) error {
 	type upstreamConfigAlias UpstreamConfig
-
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
+	alias := upstreamConfigAlias{MaxConcurrency: upstreamcontrol.DefaultConcurrency}
+	decoded := struct {
+		*upstreamConfigAlias
+		ModelMapping json.RawMessage `json:"modelMapping"`
+	}{upstreamConfigAlias: &alias}
+	if err := json.Unmarshal(data, &decoded); err != nil {
 		return err
 	}
-
-	var modelMapping map[string][]string
-	if rawModelMapping, ok := raw["modelMapping"]; ok {
-		delete(raw, "modelMapping")
-		parsed, err := decodeModelMapping(rawModelMapping)
-		if err != nil {
-			return fmt.Errorf("modelMapping: %w", err)
-		}
-		modelMapping = parsed
-	}
-
-	withoutModelMapping, err := json.Marshal(raw)
+	mapping, err := decodeModelMapping(decoded.ModelMapping)
 	if err != nil {
-		return err
-	}
-
-	var alias upstreamConfigAlias
-	alias.MaxConcurrency = upstreamcontrol.DefaultConcurrency
-	if err := json.Unmarshal(withoutModelMapping, &alias); err != nil {
-		return err
+		return fmt.Errorf("modelMapping: %w", err)
 	}
 	if alias.MaxConcurrency < 1 && alias.Status != ChannelStatusDeleted {
 		return fmt.Errorf("maxConcurrency 必须是正整数")
 	}
-
 	*u = UpstreamConfig(alias)
-	if err := ValidateReasoningOptions(u); err != nil {
-		return err
-	}
-	if modelMapping != nil {
-		u.ModelMapping = modelMapping
-	}
-	return nil
+	u.ModelMapping = mapping
+	return ValidateReasoningOptions(u)
 }
 
 // ValidateReasoningOptions 拒绝未知思考输出模式；空值明确等价于 preserve。
@@ -214,36 +194,20 @@ type UpstreamUpdate struct {
 
 func (u *UpstreamUpdate) UnmarshalJSON(data []byte) error {
 	type upstreamUpdateAlias UpstreamUpdate
-
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-
-	var modelMapping map[string][]string
-	if rawModelMapping, ok := raw["modelMapping"]; ok {
-		delete(raw, "modelMapping")
-		parsed, err := decodeModelMapping(rawModelMapping)
-		if err != nil {
-			return fmt.Errorf("modelMapping: %w", err)
-		}
-		modelMapping = parsed
-	}
-
-	withoutModelMapping, err := json.Marshal(raw)
-	if err != nil {
-		return err
-	}
-
 	var alias upstreamUpdateAlias
-	if err := json.Unmarshal(withoutModelMapping, &alias); err != nil {
+	decoded := struct {
+		*upstreamUpdateAlias
+		ModelMapping json.RawMessage `json:"modelMapping"`
+	}{upstreamUpdateAlias: &alias}
+	if err := json.Unmarshal(data, &decoded); err != nil {
 		return err
 	}
-
-	*u = UpstreamUpdate(alias)
-	if modelMapping != nil {
-		u.ModelMapping = modelMapping
+	mapping, err := decodeModelMapping(decoded.ModelMapping)
+	if err != nil {
+		return fmt.Errorf("modelMapping: %w", err)
 	}
+	*u = UpstreamUpdate(alias)
+	u.ModelMapping = mapping
 	return nil
 }
 
@@ -635,8 +599,6 @@ type ConfigManager struct {
 	// 仅用于 watcher 重载去重（避免自身提交触发“保存→重载→再保存”循环），
 	// 不用于输出配置原文。
 	persistedDigest string
-	// migrated 标记本次进程内发生过旧格式迁移（仅日志用途）。
-	migrated bool
 }
 
 // ============== 核心共享方法 ==============
@@ -657,20 +619,10 @@ func cloneConfig(current Config) Config {
 		free.Kilo.Models = slices.Clone(free.Kilo.Models)
 		cloned.FreeChannels = &free
 	}
-	cloned.Upstream = cloneUpstreamList(current.Upstream)
-	cloned.ResponsesUpstream = cloneUpstreamList(current.ResponsesUpstream)
-	cloned.GeminiUpstream = cloneUpstreamList(current.GeminiUpstream)
-	cloned.ChatUpstream = cloneUpstreamList(current.ChatUpstream)
-	cloned.ImagesUpstream = cloneUpstreamList(current.ImagesUpstream)
-	cloned.EmbeddingsUpstream = cloneUpstreamList(current.EmbeddingsUpstream)
-	cloned.DecisionsUpstream = cloneUpstreamList(current.DecisionsUpstream)
-	cloned.MessagePools = slices.Clone(current.MessagePools)
-	cloned.ResponsesPools = slices.Clone(current.ResponsesPools)
-	cloned.GeminiPools = slices.Clone(current.GeminiPools)
-	cloned.ChatPools = slices.Clone(current.ChatPools)
-	cloned.ImagesPools = slices.Clone(current.ImagesPools)
-	cloned.EmbeddingsPools = slices.Clone(current.EmbeddingsPools)
-	cloned.DecisionsPools = slices.Clone(current.DecisionsPools)
+	for _, set := range cloned.channelSets() {
+		*set.upstreams = cloneUpstreamList(*set.upstreams)
+		*set.pools = slices.Clone(*set.pools)
+	}
 	cloned.Settings = cloneSettingsConfig(current.Settings)
 	cloned.IntentRouting = cloneIntentRouting(current.IntentRouting)
 	return cloned
@@ -682,58 +634,33 @@ func (cm *ConfigManager) GetNextAPIKey(upstream *UpstreamConfig, failedKeys map[
 	if len(upstream.APIKeys) == 0 {
 		return "", fmt.Errorf("上游 %s 没有可用的API密钥", upstream.Name)
 	}
-
-	// 单 Key 直接返回
 	if len(upstream.APIKeys) == 1 {
 		return upstream.APIKeys[0], nil
 	}
 
-	// 筛选可用密钥：排除临时失败密钥和内存中的失败密钥
-	availableKeys := []string{}
-	for _, key := range upstream.APIKeys {
-		if !failedKeys[key] && !cm.isKeyFailed(key) {
-			availableKeys = append(availableKeys, key)
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	now := time.Now()
+	oldestTime := now
+	oldestKey := ""
+	for index, key := range upstream.APIKeys {
+		if failedKeys[key] {
+			continue
+		}
+		failure := cm.failedKeysCache[key]
+		if failure == nil || now.Sub(failure.Timestamp) >= cm.failureRecoveryTime(failure) {
+			log.Printf("[%s-Key] 故障转移选择密钥 %s (%d/%d)", apiType, utils.MaskAPIKey(key), index+1, len(upstream.APIKeys))
+			return key, nil
+		}
+		if failure.Timestamp.Before(oldestTime) {
+			oldestTime, oldestKey = failure.Timestamp, key
 		}
 	}
-
-	if len(availableKeys) == 0 {
-		// 如果所有密钥都失效，尝试选择失败时间最早的密钥（恢复尝试）
-		var oldestFailedKey string
-		oldestTime := time.Now()
-
-		cm.mu.RLock()
-		for _, key := range upstream.APIKeys {
-			if !failedKeys[key] { // 排除本次请求已经尝试过的密钥
-				if failure, exists := cm.failedKeysCache[key]; exists {
-					if failure.Timestamp.Before(oldestTime) {
-						oldestTime = failure.Timestamp
-						oldestFailedKey = key
-					}
-				}
-			}
-		}
-		cm.mu.RUnlock()
-
-		if oldestFailedKey != "" {
-			log.Printf("[%s-Key] 警告: 所有密钥都失效，尝试最早失败的密钥: %s", apiType, utils.MaskAPIKey(oldestFailedKey))
-			return oldestFailedKey, nil
-		}
-
+	if oldestKey == "" {
 		return "", fmt.Errorf("上游 %s 的所有API密钥都暂时不可用", upstream.Name)
 	}
-
-	// 纯 failover：按优先级顺序选择第一个可用密钥
-	selectedKey := availableKeys[0]
-	// 获取该密钥在原始列表中的索引
-	keyIndex := 0
-	for i, key := range upstream.APIKeys {
-		if key == selectedKey {
-			keyIndex = i + 1
-			break
-		}
-	}
-	log.Printf("[%s-Key] 故障转移选择密钥 %s (%d/%d)", apiType, utils.MaskAPIKey(selectedKey), keyIndex, len(upstream.APIKeys))
-	return selectedKey, nil
+	log.Printf("[%s-Key] 警告: 所有密钥都失效，尝试最早失败的密钥: %s", apiType, utils.MaskAPIKey(oldestKey))
+	return oldestKey, nil
 }
 
 // MarkKeyAsFailed 标记密钥失败
@@ -753,36 +680,16 @@ func (cm *ConfigManager) MarkKeyAsFailed(apiKey string, apiType string) {
 	}
 
 	failure := cm.failedKeysCache[apiKey]
-	recoveryTime := cm.keyRecoveryTime
-	if failure.FailureCount > cm.maxFailureCount {
-		recoveryTime = cm.keyRecoveryTime * 2
-	}
-
 	log.Printf("[%s-Key] 标记API密钥失败: %s (失败次数: %d, 恢复时间: %v)",
-		apiType, utils.MaskAPIKey(apiKey), failure.FailureCount, recoveryTime)
+		apiType, utils.MaskAPIKey(apiKey), failure.FailureCount, cm.failureRecoveryTime(failure))
 }
 
-// isKeyFailed 检查密钥是否失败
-func (cm *ConfigManager) isKeyFailed(apiKey string) bool {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
-
-	failure, exists := cm.failedKeysCache[apiKey]
-	if !exists {
-		return false
-	}
-
-	recoveryTime := cm.keyRecoveryTime
+// failureRecoveryTime 在持有配置锁时读取失败次数对应的冷却窗口。
+func (cm *ConfigManager) failureRecoveryTime(failure *FailedKey) time.Duration {
 	if failure.FailureCount > cm.maxFailureCount {
-		recoveryTime = cm.keyRecoveryTime * 2
+		return cm.keyRecoveryTime * 2
 	}
-
-	return time.Since(failure.Timestamp) < recoveryTime
-}
-
-// IsKeyFailed 检查 Key 是否在冷却期（公开方法）
-func (cm *ConfigManager) IsKeyFailed(apiKey string) bool {
-	return cm.isKeyFailed(apiKey)
+	return cm.keyRecoveryTime
 }
 
 // clearFailedKeysForUpstream 清理指定渠道的所有失败 key 记录
@@ -811,12 +718,7 @@ func (cm *ConfigManager) cleanupExpiredFailures() {
 			cm.mu.Lock()
 			now := time.Now()
 			for key, failure := range cm.failedKeysCache {
-				recoveryTime := cm.keyRecoveryTime
-				if failure.FailureCount > cm.maxFailureCount {
-					recoveryTime = cm.keyRecoveryTime * 2
-				}
-
-				if now.Sub(failure.Timestamp) > recoveryTime {
+				if now.Sub(failure.Timestamp) > cm.failureRecoveryTime(failure) {
 					delete(cm.failedKeysCache, key)
 					log.Printf("[Config-Key] API密钥 %s 已从失败列表中恢复", utils.MaskAPIKey(key))
 				}

@@ -12,32 +12,14 @@ import (
 	"github.com/insistanan/api-proxy/internal/storage/metrics"
 )
 
-func upstreamsByKind(cfg config.Config, kind scheduler.ChannelKind) ([]config.UpstreamConfig, string) {
-	switch kind {
-	case scheduler.ChannelKindMessages:
-		return cfg.Upstream, cfg.LoadBalance
-	case scheduler.ChannelKindResponses:
-		return cfg.ResponsesUpstream, cfg.ResponsesLoadBalance
-	case scheduler.ChannelKindGemini:
-		return cfg.GeminiUpstream, cfg.GeminiLoadBalance
-	case scheduler.ChannelKindChat:
-		return cfg.ChatUpstream, cfg.ChatLoadBalance
-	case scheduler.ChannelKindImages:
-		return cfg.ImagesUpstream, cfg.ImagesLoadBalance
-	case scheduler.ChannelKindEmbeddings:
-		return cfg.EmbeddingsUpstream, cfg.EmbeddingsLoadBalance
-	case scheduler.ChannelKindDecisions:
-		return cfg.DecisionsUpstream, cfg.DecisionsLoadBalance
-	default:
-		return nil, ""
-	}
-}
-
 // GetChannelMetricsWithKind 获取指定一等公民渠道类型的指标
 func GetChannelMetricsWithKind(metricsManager *metrics.MetricsManager, cfgManager *config.ConfigManager, kind scheduler.ChannelKind) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		cfg := cfgManager.GetConfig()
-		upstreams, _ := upstreamsByKind(cfg, kind)
+		upstreams, _, err := cfgManager.GetChannelConfig(string(kind))
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
 
 		result := make([]gin.H, 0, len(upstreams))
 		for i, upstream := range upstreams {
@@ -322,8 +304,11 @@ func GetChannelMetricsHistoryByKind(metricsManager *metrics.MetricsManager, cfgM
 			}
 		}
 
-		cfg := cfgManager.GetConfig()
-		upstreams, _ := upstreamsByKind(cfg, kind)
+		upstreams, _, err := cfgManager.GetChannelConfig(string(kind))
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
 
 		result := make([]MetricsHistoryResponse, 0, len(upstreams))
 		for i, upstream := range upstreams {
@@ -430,8 +415,11 @@ func GetChannelKeyMetricsHistoryByKind(metricsManager *metrics.MetricsManager, c
 			return
 		}
 
-		cfg := cfgManager.GetConfig()
-		upstreams, _ := upstreamsByKind(cfg, kind)
+		upstreams, _, err := cfgManager.GetChannelConfig(string(kind))
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
 
 		// 检查 channel ID 是否有效
 		if channelID < 0 || channelID >= len(upstreams) {
@@ -488,8 +476,11 @@ func truncateKeyMask(keyMask string, maxLen int) string {
 // 通过 kind 参数直接指定渠道类型，不再依赖 ?type= 查询参数
 func GetChannelDashboard(cfgManager *config.ConfigManager, sch *scheduler.ChannelScheduler, kind scheduler.ChannelKind) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		cfg := cfgManager.GetConfig()
-		upstreams, loadBalance := upstreamsByKind(cfg, kind)
+		upstreams, loadBalance, err := cfgManager.GetChannelConfig(string(kind))
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
 		metricsManager := sch.MetricsManager(kind)
 
 		// 1. 构建 channels 数据（统一使用 ChannelListToDTO）
