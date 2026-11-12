@@ -4,7 +4,7 @@
 
 **api-proxy**（v3.3.0 起由 claude-proxy 更名，MIT 协议）：自托管 LLM API 代理网关。
 
-- 多渠道池化调度与故障转移，五协议统一入口（Claude Messages / OpenAI Responses / Gemini / OpenAI Chat / Images）；协议转换受上游能力限制
+- 多渠道池化调度与故障转移，五大编排协议统一入口（Claude Messages / OpenAI Responses / Gemini / OpenAI Chat / Images）+ 原样透传端点（OpenAI Embeddings / Decisions）；协议转换受上游能力限制
 - 客户端伪装与一键配置页（Claude Code / Codex / OpenCode / pi-agent / DSH / GPT）
 - 内容安全：敏感数据检测、可逆脱敏、危险命令 AI 闸门
 - Go 后端 + Vue 3 前端，前端产物 `go:embed` 嵌入，单二进制单端口（默认 3000）一体化部署
@@ -20,6 +20,8 @@
 | `docs/` | 全部详细文档（见下方导航），新增文档一律放这里 |
 | `scripts/` | 门禁与构建脚本：`check.mjs` 执行全量门禁，`copy-frontend.mjs` 统一复制前端产物，`eol.mjs` 维护行尾规则 |
 | `.githooks/` | pre-commit 钩子（暂存区行尾规范化） |
+| `.github/` | release workflow（tag 推送后产出三平台 draft release） |
+| `.claude/` | 项目技能（`version-bump`、`github-release` 等） |
 | `dist/` | 本地构建产物（不入仓） |
 | `CHANGELOG.md` | 中文维护的唯一功能史料，写版本相关内容时以它为准 |
 | `VERSION` | 当前版本号的唯一文件入口 |
@@ -49,8 +51,12 @@
 
 ## 硬性约定
 
-1. **本地门禁**：提交前 `npm run check`（或 `make check`）必须全绿——行尾 / 嵌套 dist / gofmt / go vet / go test / 前端 type-check / 图标扫描 / Vitest / ESLint `--max-warnings 0`。仓库没有分支 push 或 PR 触发的检查 CI，门禁依赖本地执行。
+1. **本地门禁**：提交前 `npm run check`（或 `make check`）必须全绿——行尾 / 嵌套 dist / AGENTS.md 目录登记 / gofmt / go vet / go test / 前端 type-check / 图标扫描 / Vitest / ESLint `--max-warnings 0`。仓库没有分支 push 或 PR 触发的检查 CI，门禁依赖本地执行。
 2. **行尾策略**：Windows 工作区 CRLF，Go/shell/`.githooks`/`scripts/*.mjs` 例外强制 LF，由 `.gitattributes` + pre-commit 钩子 + `scripts/eol.mjs` 三层保障，不要手动绕过。
 3. **前端产物链路**：`frontend/dist` → `scripts/copy-frontend.mjs` → `backend-go/frontend/dist` → `go:embed`。产物统一由复制脚本处理，不要手工复制 dist。历史上错误的相对路径曾产生嵌套目录并导致构建事故，`.gitignore` 和门禁保留了对应的防御检查。
 4. **发布流程**：`version-bump` 项目技能升版本并提交 → push tag `v*` → 三平台（linux/macos/windows × amd64/arm64）release workflow 产出 draft release → `github-release` 项目技能从 CHANGELOG 生成发布公告。
 5. **敏感信息**：`.config/`（运行时数据）、`.ccb_config/` 等目录含密钥，绝不能提交或写入文档。
+
+---
+
+最后核对：v3.3.16（升级版本时核对本文件与实际目录、协议口径是否一致，`scripts/check.mjs` 会校验目录登记）
