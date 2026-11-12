@@ -1,12 +1,13 @@
 // 执行全量门禁：先检查行尾和嵌套 dist，再校验目录在 AGENTS.md 中的登记，
-// 然后运行后端 gofmt、vet、test，以及前端类型检查、图标扫描、Vitest 和 ESLint。
+// 然后运行后端和前端检查，最后从 Git 暂存区隔离构建服务入口。
 // 根 Makefile 的 check 目标也调用本脚本，未安装 make 时可直接使用 npm run check。
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import process from "node:process";
 
 const isWin = process.platform === "win32";
-const npmCmd = isWin ? "npm.cmd" : "npm";
 
 function ensureHooksPath() {
   const r = spawnSync("git", ["config", "--local", "--get", "core.hooksPath"], { encoding: "utf8" });
@@ -41,6 +42,15 @@ function run(name, cmd, args, cwd, opts = {}) {
 }
 
 ensureHooksPath();
+
+// 不传 --exclude-standard：被 ignore 的源码也必须检查，否则本地测试会掩盖提交缺件。
+runValidated(
+  "后端源码跟踪校验（含被忽略文件）",
+  "git",
+  ["ls-files", "--others", "-z", "--", ":(top,glob)backend-go/*.go", "backend-go/cmd/", "backend-go/internal/"],
+  ".",
+  (out) => out && `以下后端文件未进入 Git 暂存区，请检查忽略规则并显式 git add：\n${out.split("\0").filter(Boolean).join("\n")}`,
+);
 
 runValidated(
   "工作区换行校验",
@@ -142,5 +152,31 @@ run(
   "frontend",
   isWin ? { shell: true } : {}
 );
+
+// 只导出暂存区文件，避免工作区中未提交的文件补齐了实际缺失的入口或依赖。
+// node_modules 是唯一复用的本机目录；前端产物在隔离目录重新生成并经统一脚本复制。
+console.log("\n==> Git 暂存区隔离构建（前端 + cmd/server）");
+const snapshot = fs.mkdtempSync(path.join(os.tmpdir(), "api-proxy-check-"));
+let snapshotError;
+try {
+  const buildStep = (cmd, args, cwd = snapshot, options = {}) => {
+    const result = spawnSync(cmd, args, { cwd, stdio: "inherit", ...options });
+    if (result.error) throw result.error;
+    if (result.status !== 0) throw new Error(`${cmd} 失败（退出码 ${result.status}，信号 ${result.signal}）`);
+  };
+  buildStep("git", ["checkout-index", "--all", `--prefix=${snapshot.replaceAll("\\", "/")}/`], process.cwd());
+  fs.symlinkSync(path.resolve("frontend/node_modules"), path.join(snapshot, "frontend/node_modules"), isWin ? "junction" : "dir");
+  buildStep(isWin ? "npm run build" : "npm", isWin ? [] : ["run", "build"], path.join(snapshot, "frontend"), isWin ? { shell: true } : {});
+  buildStep(process.execPath, ["scripts/copy-frontend.mjs"]);
+  buildStep("go", ["build", "-mod=readonly", "-o", path.join(snapshot, isWin ? "api-proxy.exe" : "api-proxy"), "./cmd/server"], path.join(snapshot, "backend-go"), {
+    env: { ...process.env, CGO_ENABLED: "0", GOWORK: "off" },
+  });
+} catch (error) {
+  snapshotError = error;
+} finally {
+  fs.rmSync(snapshot, { recursive: true, force: true });
+}
+if (snapshotError) fail("Git 暂存区隔离构建", snapshotError.message);
+console.log("[check] OK（只验证暂存区内容；提交前请暂存全部待提交修改）");
 
 console.log("\n[check] 全量门禁通过");
