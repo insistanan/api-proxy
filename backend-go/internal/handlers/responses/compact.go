@@ -15,6 +15,7 @@ import (
 	"github.com/insistanan/api-proxy/internal/converters"
 	"github.com/insistanan/api-proxy/internal/handlers/hooks"
 	"github.com/insistanan/api-proxy/internal/handlers/proxycore"
+	"github.com/insistanan/api-proxy/internal/intent"
 	"github.com/insistanan/api-proxy/internal/middleware"
 	"github.com/insistanan/api-proxy/internal/providers"
 	"github.com/insistanan/api-proxy/internal/scheduler"
@@ -87,7 +88,16 @@ func CompactHandler(
 		}
 
 		// 检查是否为多渠道模式
-		isMultiChannel := cfgManager.GetFuzzyModeEnabledForProtocol("responses") && channelScheduler.IsMultiChannelModeForModel(scheduler.ChannelKindResponses, model)
+		if service := intent.FromContext(c.Request.Context()); service != nil && cfgManager.GetIntentRouting("responses").Enabled {
+			ctx, release, err := service.BeginControl(c.Request.Context(), conversationID, requestID, bodyBytes)
+			if err != nil {
+				c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "INTENT_COMPACT_BLOCKED"})
+				return
+			}
+			defer release()
+			c.Request = c.Request.WithContext(ctx)
+		}
+		isMultiChannel := cfgManager.GetFuzzyModeEnabledForProtocol("responses") && channelScheduler.ActiveChannelCountForRequest(c.Request.Context(), scheduler.ChannelKindResponses, model) > 1
 
 		if isMultiChannel {
 			handleMultiChannelCompact(c, envCfg, cfgManager, sessionManager, channelScheduler, bodyBytes, conversationID, model)
@@ -109,8 +119,11 @@ func handleSingleChannelCompact(
 	model string,
 ) {
 	upstream, channelIndex, err := cfgManager.GetCurrentResponsesUpstreamWithIndexForModel(model)
+	if scheduler.PoolConstraintFrom(c.Request.Context()).PoolID != "" {
+		upstream, channelIndex, err = channelScheduler.IntentSingleChannel(c.Request.Context(), scheduler.ChannelKindResponses)
+	}
 	if err != nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "未配置任何 Responses 渠道"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 		return
 	}
 	result := compactAttempt(c, upstream, channelIndex, nil, cfgManager, sessionManager,

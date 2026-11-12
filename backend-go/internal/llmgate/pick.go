@@ -135,6 +135,8 @@ func protocolKinds(protocol string) ([]scheduler.ChannelKind, error) {
 }
 
 func pickChannelForProtocol(ctx context.Context, cfgManager *config.ConfigManager, channelScheduler *scheduler.ChannelScheduler, channelID, model string, failedChannels map[scheduler.ChannelKind]map[int]bool, protocol string) (*SelectedChannel, error) {
+	// 辅助推理保留取消和共享预算，但不继承主请求选择的业务分组。
+	ctx = scheduler.WithPoolConstraint(ctx, scheduler.PoolConstraint{})
 	if cfgManager == nil {
 		return nil, fmt.Errorf("内部调用未绑定配置管理器")
 	}

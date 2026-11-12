@@ -210,6 +210,15 @@ func RunProxyRequest(
 	if hasRequestedChannel {
 		explicitIndex = &requestedChannelIndex
 	}
+	if !config.IsFreeModel(model) && !IsQuickTestRequest(c, bodyBytes) {
+		releaseIntent, routeErr := prepareIntentRoute(c, cfgManager, channelScheduler, spec.Kind, bodyBytes, conversationID, requestID, explicitIndex)
+		if routeErr != nil {
+			MarkConversationFailure(channelScheduler, conversationID, spec.Kind, routeErr)
+			intentRouteError(c, routeErr)
+			return
+		}
+		defer releaseIntent()
+	}
 	if err := cfgManager.ValidateFreeRequest(string(spec.Kind), model, explicitIndex); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "FREE_CHANNEL_ROUTE"})
 		return
@@ -228,14 +237,14 @@ func RunProxyRequest(
 	}
 
 	// 7. PreRoute（协议特有前置路由，如 chat 的 modelcatalog 路由）
-	if spec.PreRoute != nil && !config.IsFreeModel(model) {
+	if spec.PreRoute != nil && !config.IsFreeModel(model) && scheduler.PoolConstraintFrom(c.Request.Context()).PoolID == "" {
 		if spec.PreRoute(c, bodyBytes, model, conversationID, startTime) {
 			return
 		}
 	}
 
 	// 8. 多渠道/单渠道分派
-	if cfgManager.GetFuzzyModeEnabledForProtocol(string(spec.Kind)) && channelScheduler.IsMultiChannelModeForModel(spec.Kind, model) {
+	if cfgManager.GetFuzzyModeEnabledForProtocol(string(spec.Kind)) && channelScheduler.ActiveChannelCountForRequest(c.Request.Context(), spec.Kind, model) > 1 {
 		handleMultiChannelProxy(c, envCfg, cfgManager, channelScheduler, spec, bodyBytes, model, stream, conversationID, startTime)
 	} else {
 		handleSingleChannelProxy(c, envCfg, cfgManager, channelScheduler, spec, bodyBytes, model, stream, conversationID, nil, 0, startTime)
@@ -325,7 +334,11 @@ func handleSingleChannelProxy(
 	// 未指定渠道时，从配置获取
 	if upstream == nil {
 		var err error
-		upstream, channelIndex, err = cfgManager.GetCurrentUpstreamWithIndexForModelForKind(string(spec.Kind), model)
+		if scheduler.PoolConstraintFrom(c.Request.Context()).PoolID != "" {
+			upstream, channelIndex, err = channelScheduler.IntentSingleChannel(c.Request.Context(), spec.Kind)
+		} else {
+			upstream, channelIndex, err = cfgManager.GetCurrentUpstreamWithIndexForModelForKind(string(spec.Kind), model)
+		}
 		if err != nil {
 			c.JSON(503, gin.H{
 				"error": err.Error(),

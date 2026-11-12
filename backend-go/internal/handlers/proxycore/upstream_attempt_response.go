@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/config"
 	"github.com/insistanan/api-proxy/internal/handlers/hooks"
+	"github.com/insistanan/api-proxy/internal/intent"
 	"github.com/insistanan/api-proxy/internal/providers"
 	"github.com/insistanan/api-proxy/internal/proxy"
 	"github.com/insistanan/api-proxy/internal/types"
@@ -96,7 +97,29 @@ func (step candidateAttempt) deliverResponse(resp *http.Response) (UpstreamAttem
 	failoverState := step.failover
 	retryState := step.retries
 
+	turn := intent.TurnFrom(c.Request.Context())
+	if turn != nil {
+		if err := turn.CommitTarget(upstreamCopy, apiKey, config.ResolveUpstreamModel(a.RequestedModel, upstreamCopy)); err != nil {
+			_ = resp.Body.Close()
+			lifecycle.finalizeNeutral()
+			intentRouteError(c, err)
+			return newUpstreamAttemptResult(true, "", 0, nil, nil, err).withHealth(channelHealthNeutral), false
+		}
+	}
 	usage, err := a.HandleSuccess(c, resp, upstreamCopy, apiKey)
+	if turn != nil {
+		if err != nil && !c.Writer.Written() {
+			if saveErr := turn.AbortUndelivered(); saveErr != nil {
+				_ = resp.Body.Close()
+				lifecycle.finalizeNeutral()
+				intentRouteError(c, saveErr)
+				recordAttemptLog(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", http.StatusInternalServerError, false, attemptStart, "intent_state", saveErr.Error(), false, isStream, usage)
+				return newUpstreamAttemptResult(true, "", 0, nil, usage, saveErr).withHealth(channelHealthNeutral), false
+			}
+		} else if saveErr := turn.Complete(err == nil); saveErr != nil {
+			log.Printf("[Intent-Record] requestId=%s 记录交付结果失败: %v", requestLogID, saveErr)
+		}
+	}
 	if streamFailure, ok := providers.IsUpstreamStreamFailed(err); ok {
 		if observation := currentAvailabilityObservation(c); observation != nil {
 			observation.evidence = streamFailure.Payload

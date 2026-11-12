@@ -22,6 +22,7 @@ import (
 	"github.com/insistanan/api-proxy/internal/conversation"
 	"github.com/insistanan/api-proxy/internal/handlers"
 	"github.com/insistanan/api-proxy/internal/handlers/hooks"
+	"github.com/insistanan/api-proxy/internal/intent"
 	"github.com/insistanan/api-proxy/internal/llmgate"
 	"github.com/insistanan/api-proxy/internal/logger"
 	"github.com/insistanan/api-proxy/internal/metrics"
@@ -39,6 +40,7 @@ var frontendFS embed.FS
 // app 聚合一次进程运行的全部组件。
 // 资源在创建成功后登记清理；启动失败与正常关闭均由同一登记表逆序释放。
 type app struct {
+	intentService         *intent.Service
 	envCfg                *config.EnvConfig
 	cfgManager            *config.ConfigManager
 	logStore              *logger.Store
@@ -268,8 +270,18 @@ func newApp() (_ *app, err error) {
 		RequestLogStore:  a.requestLogStore, // R4-b 装配层注入，不经调度器定位器
 	}
 	a.cmdGate = hooks.NewCmdGate(a.cfgManager, gateCaller, a.gateStore, a.blockedStore)
+	localEmbedding, err := intent.NewLocal(".config/intent-embedding")
+	if err != nil {
+		return nil, err
+	}
+	a.intentService, err = intent.New(a.cfgManager, gateCaller, ".config/intent.db", localEmbedding)
+	if err != nil {
+		return nil, err
+	}
+	a.registerCleanup("意图会话存储", a.intentService.Close)
+	a.registerCleanup("本地向量助手", localEmbedding.Stop)
 	// 内容安全管道注入闸门；未启用时保持"命中即拦截"的既有行为。
-	a.contentSafetyPipeline = hooks.NewContentSafetyPipelineWithRecorder(a.cfgManager, a.blockedStore, a.cmdGate)
+	a.contentSafetyPipeline = hooks.NewContentSafetyPipelineWithSemantic(a.cfgManager, a.blockedStore, a.cmdGate, a.intentService.Datasets)
 	log.Printf("[Gate-Init] 危险命令 AI 闸门已装配")
 
 	// 持久映射库在启动时初始化，以便运行中切换脱敏模式（Veil ADR 0004）。
@@ -358,6 +370,10 @@ func newApp() (_ *app, err error) {
 	r := gin.New()
 	r.Use(middleware.FilteredLogger(a.envCfg))
 	r.Use(gin.Recovery())
+	r.Use(func(c *gin.Context) {
+		c.Request = c.Request.WithContext(intent.WithService(c.Request.Context(), a.intentService))
+		c.Next()
+	})
 
 	// 配置 CORS
 	r.Use(middleware.CORSMiddleware(a.envCfg))

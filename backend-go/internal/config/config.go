@@ -443,6 +443,7 @@ type CredentialConfig struct {
 
 // DangerousCmdConfig 响应方向的危险命令检测设置。
 type DangerousCmdConfig struct {
+	Semantic     *SemanticSafetyConfig    `json:"semantic,omitempty"`
 	Enabled      bool                     `json:"enabled"`
 	EnabledRules []string                 `json:"enabledRules"`
 	AIGate       DangerousCmdAIGateConfig `json:"aiGate"`
@@ -559,8 +560,9 @@ func DefaultContentSafetyConfig() ContentSafetyConfig {
 
 // Config 配置结构
 type Config struct {
-	FreeChannels *FreeChannelsConfig `json:"freeChannels,omitempty"`
-	Settings     SettingsConfig      `json:"settings"`
+	IntentRouting map[string]IntentRoutingConfig `json:"intentRouting,omitempty"`
+	FreeChannels  *FreeChannelsConfig            `json:"freeChannels,omitempty"`
+	Settings      SettingsConfig                 `json:"settings"`
 
 	Upstream        []UpstreamConfig `json:"upstream"`
 	MessagePools    []ChannelPool    `json:"messagePools,omitempty"`
@@ -670,6 +672,7 @@ func cloneConfig(current Config) Config {
 	cloned.EmbeddingsPools = slices.Clone(current.EmbeddingsPools)
 	cloned.DecisionsPools = slices.Clone(current.DecisionsPools)
 	cloned.Settings = cloneSettingsConfig(current.Settings)
+	cloned.IntentRouting = cloneIntentRouting(current.IntentRouting)
 	return cloned
 }
 

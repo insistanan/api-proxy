@@ -256,6 +256,9 @@ func ValidateContentSafetyConfig(settings ContentSafetyConfig) error {
 	if err := validateDangerousCmdAIGate(settings.DangerousCmd); err != nil {
 		return err
 	}
+	if err := validateSemanticSafety(settings.DangerousCmd); err != nil {
+		return err
+	}
 	if err := validateAllowlistConfig(settings.Allowlist); err != nil {
 		return err
 	}
@@ -534,6 +537,11 @@ func cloneSettingsConfig(settings SettingsConfig) SettingsConfig {
 	settings.ContentSafety.SensitiveInfo.EnabledRules = slices.Clone(settings.ContentSafety.SensitiveInfo.EnabledRules)
 	settings.ContentSafety.Credential.EnabledRules = slices.Clone(settings.ContentSafety.Credential.EnabledRules)
 	settings.ContentSafety.DangerousCmd.EnabledRules = slices.Clone(settings.ContentSafety.DangerousCmd.EnabledRules)
+	if settings.ContentSafety.DangerousCmd.Semantic != nil {
+		semantic := *settings.ContentSafety.DangerousCmd.Semantic
+		semantic.DatasetIDs = slices.Clone(semantic.DatasetIDs)
+		settings.ContentSafety.DangerousCmd.Semantic = &semantic
+	}
 	settings.ContentSafety.Whitelist.ToolNames = slices.Clone(settings.ContentSafety.Whitelist.ToolNames)
 	settings.ContentSafety.Allowlist.Entries = slices.Clone(settings.ContentSafety.Allowlist.Entries)
 	settings.ContentSafety.CustomRules.Rules = slices.Clone(settings.ContentSafety.CustomRules.Rules)

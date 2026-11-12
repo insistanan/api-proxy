@@ -28,7 +28,7 @@
         :class="{ 'is-default': pool.id === 'default', 'is-collapsed': collapsedPools.has(pool.id) }"
         :style="{ order }"
       >
-        <FreeChannelPool v-if="pool.id === FREE_POOL_ID" :channel-type="channelType">
+        <FreeChannelPool v-if="pool.id === FREE_POOL_ID">
           <template #activity>
             <slot v-for="channel in pool.channels" :key="channel.id || channel.index" name="free-activity" :channel="channel"></slot>
           </template>

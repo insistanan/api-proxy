@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/insistanan/api-proxy/internal/semantic"
 	"github.com/insistanan/api-proxy/internal/sensitive"
 )
 
@@ -157,6 +158,7 @@ type Pipeline struct {
 	hooks              map[HookStage][]registeredHook
 	blockedLogRecorder BlockedLogRecorder
 	cmdGate            *CmdGate
+	semantic           *semantic.Service
 }
 
 func NewPipeline() *Pipeline {

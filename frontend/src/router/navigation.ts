@@ -40,6 +40,7 @@ export const navigationGroups: Array<{ key: string; label: string; items: Naviga
   {
     key: 'extensions', label: '工具与扩展',
     items: [
+      { label: '数据集', to: '/datasets', description: '审核意图和工具风险样本，构建、发布并评测向量索引。' },
       { label: 'Skills', to: '/skills', description: '发现、安装并管理各客户端使用的技能。' },
       { label: 'MCP', to: '/mcp', description: '集中管理 MCP 服务器，按客户端启用与分发。' }
     ]

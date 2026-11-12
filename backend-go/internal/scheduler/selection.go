@@ -343,7 +343,7 @@ func (s *ChannelScheduler) SelectChannel(
 	registry := s.conversationRegistry
 	s.mu.RUnlock()
 
-	poolRoute, err := config.SelectChannelPoolRoute(s.getChannelPools(kind), requestedModel)
+	poolRoute, err := s.poolRouteForRequest(ctx, kind, requestedModel)
 	if err != nil {
 		return nil, fmt.Errorf("选择 %s 分组失败: %w", kind, err)
 	}
@@ -355,6 +355,18 @@ func (s *ChannelScheduler) SelectChannel(
 		poolIDs = append(poolIDs, pool.ID)
 	}
 	channelsByPool := s.getActiveChannelsByPool(kind, poolIDs)
+	if route := PoolConstraintFrom(ctx); route.ChannelID != "" {
+		for id, channels := range channelsByPool {
+			filtered := make([]ChannelInfo, 0, len(channels))
+			for _, ch := range channels {
+				up := s.getUpstreamByIndex(ch.Index, kind)
+				if up != nil && up.ID == route.ChannelID {
+					filtered = append(filtered, ch)
+				}
+			}
+			channelsByPool[id] = filtered
+		}
+	}
 	selectedPool := poolRoute[len(poolRoute)-1]
 	var activeChannels []ChannelInfo
 	var routedChannels []ChannelInfo
@@ -392,6 +404,7 @@ func (s *ChannelScheduler) SelectChannel(
 	if len(activeChannels) == 0 {
 		return nil, noActiveChannelError(kind)
 	}
+	activeChannels = s.preferIntentChannel(ctx, kind, activeChannels)
 
 	// 按分组内临时促销和配置优先级选择可用渠道。failedChannels 只记录本次请求已经
 	// 失败的渠道，因此外层 failover 会自然推进到下一个渠道。

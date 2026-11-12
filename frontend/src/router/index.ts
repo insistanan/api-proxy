@@ -2,6 +2,12 @@ import { createRouter, createWebHistory } from 'vue-router'
 
 const routes = [
   {
+    path: '/datasets',
+    name: 'datasets',
+    component: () => import('@/views/DatasetsView.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
     path: '/',
     redirect: '/channels/messages'  // 默认跳转到 Messages
   },

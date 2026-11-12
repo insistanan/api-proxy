@@ -25,6 +25,7 @@ const (
 	// BlockTypeDangerousCmdAllow 危险命令经 AI 闸门放行的审计事件
 	//（语义对齐 BlockTypeWhitelist 的"已放行"条目）。
 	BlockTypeDangerousCmdAllow = "dangerous_cmd_allow"
+	BlockTypeSemanticObserve   = "semantic_observe"
 	// BlockTypeAllowlist 字符串级放行字面量命中的审计事件（整段相等跳过检测）。
 	BlockTypeAllowlist = "allowlist"
 	// BlockTypeCustomRule 自定义规则可逆脱敏的审计事件（占位符已替换）。
@@ -79,7 +80,7 @@ type BlockedLog struct {
 const BlockCategoryDangerousCmd = "dangerous_cmd"
 
 var blockCategoryTypes = map[string][]string{
-	BlockCategoryDangerousCmd: {BlockTypeDangerousCmd, BlockTypeDangerousCmdAI, BlockTypeDangerousCmdAllow},
+	BlockCategoryDangerousCmd: {BlockTypeDangerousCmd, BlockTypeDangerousCmdAI, BlockTypeDangerousCmdAllow, BlockTypeSemanticObserve},
 }
 
 // BlockedLogListOptions 描述拦截记录的筛选与分页参数。
@@ -837,7 +838,7 @@ func ValidBlockType(value string) bool {
 func validBlockType(value string) bool {
 	switch value {
 	case BlockTypeSensitiveWord, BlockTypeSensitiveInfo, BlockTypeCredential, BlockTypeDangerousCmd, BlockTypeWhitelist,
-		BlockTypeDangerousCmdAI, BlockTypeDangerousCmdAllow, BlockTypeAllowlist, BlockTypeCustomRule, BlockTypeRestoreMiss:
+		BlockTypeDangerousCmdAI, BlockTypeDangerousCmdAllow, BlockTypeSemanticObserve, BlockTypeAllowlist, BlockTypeCustomRule, BlockTypeRestoreMiss:
 		return true
 	default:
 		return false

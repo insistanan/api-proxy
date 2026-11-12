@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 
 	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/semantic"
 	"github.com/insistanan/api-proxy/internal/sensitive"
 )
 
@@ -26,6 +27,7 @@ type contentSafetyPostResponseHook struct {
 	cfgManager *config.ConfigManager
 	recorder   BlockedLogRecorder
 	gate       *CmdGate
+	semantic   *semantic.Service
 	mu         sync.Mutex
 	snapshot   atomic.Pointer[dangerousCmdSnapshot]
 }
@@ -75,6 +77,23 @@ func (h *contentSafetyPostResponseHook) Run(ctx context.Context, metadata HookCo
 			}
 			if safetyErr := reviewMatches(matches); safetyErr != nil {
 				return result, safetyErr
+			}
+			if policy := snapshot.settings.DangerousCmd.Semantic; policy != nil && policy.Enabled {
+				commands, err := collectResponseToolCommands(value, metadata.redactionVault, sensitive.ExtractToolCommands)
+				if err != nil {
+					return result, err
+				}
+				pending := commands[:0]
+				for _, command := range commands {
+					if _, done := reviewed[sensitive.CommandIdentity(command)]; !done {
+						pending = append(pending, command)
+					}
+				}
+				if err := reviewSemanticCommands(ctx, h.semantic, h.recorder, snapshot.settings.DangerousCmd, metadata, pending, func(match sensitive.CommandMatch) *ContentSafetyError {
+					return h.reviewDangerousMatch(ctx, metadata, match)
+				}); err != nil {
+					return result, err
+				}
 			}
 		}
 		if root, ok := value.(map[string]interface{}); ok {
@@ -193,6 +212,15 @@ func findDangerousToolArguments(detector *sensitive.CmdDetector, value interface
 	if detector == nil {
 		return nil, nil
 	}
+	return collectResponseToolCommands(value, vault, func(name string, arguments any, raw bool) []sensitive.CommandMatch {
+		if raw {
+			return detector.FindInRawToolInput(name, arguments.(string))
+		}
+		return detector.FindInNamedToolArguments(name, arguments)
+	})
+}
+
+func collectResponseToolCommands(value interface{}, vault *sensitive.Vault, scan func(string, any, bool) []sensitive.CommandMatch) ([]sensitive.CommandMatch, error) {
 	var matches []sensitive.CommandMatch
 	var restoreErr error
 	// 只还原执行工具的参数，不重复解析和复制整个响应，也不改动凭据检查使用的原值。
@@ -247,7 +275,7 @@ func findDangerousToolArguments(detector *sensitive.CmdDetector, value interface
 							return
 						}
 					}
-					matches = append(matches, detector.FindInRawToolInput(stringValue(typed["name"]), input)...)
+					matches = append(matches, scan(stringValue(typed["name"]), input, true)...)
 				} else {
 					matches = append(matches, sensitive.CommandMatch{Rule: "invalid_tool_arguments", Context: "tool", ToolName: stringValue(typed["name"])})
 				}
@@ -264,7 +292,7 @@ func findDangerousToolArguments(detector *sensitive.CmdDetector, value interface
 						if restoreErr != nil {
 							return
 						}
-						matches = append(matches, detector.FindInNamedToolArguments(stringValue(typed["name"]), arguments)...)
+						matches = append(matches, scan(stringValue(typed["name"]), arguments, false)...)
 						return
 					}
 				}

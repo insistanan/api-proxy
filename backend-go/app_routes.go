@@ -20,6 +20,8 @@ import (
 
 // setupAdminAPI 注册 Web 管理界面 API 路由（/api 组）。
 func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
+	handlers.RegisterIntentAPI(apiGroup, a.intentService)
+	handlers.RegisterDatasetAPI(apiGroup, a.intentService.Datasets)
 	apiGroup.GET("/free-channels", handlers.GetFreeChannels(a.cfgManager))
 	apiGroup.PUT("/free-channels/kilo", handlers.UpdateKiloFreeChannel(a.cfgManager))
 	apiGroup.POST("/free-channels/kilo/models/sync", handlers.SyncKiloFreeModels(a.cfgManager))

@@ -16,6 +16,7 @@ package atomicfile
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 )
@@ -67,6 +68,15 @@ type Options struct {
 // → 目录同步。替换前任何失败都清理临时文件并返回普通错误（未提交）；
 // 替换后的目录同步失败返回 *CommittedError。
 func Write(path string, data []byte, opts Options) error {
+	return WriteFunc(path, func(w io.Writer) error {
+		_, err := w.Write(data)
+		return err
+	}, opts)
+}
+
+// WriteFunc 流式写入同目录临时文件；回调完成写入与校验后才原子替换目标。
+// 回调不得保留 writer；失败的提交语义与 Write 一致。
+func WriteFunc(path string, write func(io.Writer) error, opts Options) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("创建目录失败: %w", err)
@@ -92,7 +102,7 @@ func Write(path string, data []byte, opts Options) error {
 		temp.Close()
 		return fmt.Errorf("设置临时文件权限失败: %w", err)
 	}
-	if _, err := temp.Write(data); err != nil {
+	if err := write(temp); err != nil {
 		temp.Close()
 		return fmt.Errorf("写入临时文件失败: %w", err)
 	}

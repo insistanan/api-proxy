@@ -791,6 +791,7 @@ func buildGatePrompt(metadata HookContext, match sensitive.CommandMatch) (llmgat
 		"request_model":     metadata.Model,
 		"command":           sensitive.RedactAuditText(match.Command),
 		"tool_arguments":    sensitive.RedactAuditText(match.ExecutionContext),
+		"semantic_evidence": sensitive.RedactAuditText(match.SemanticEvidence),
 		"environment_state": "代理未验证客户端执行环境与授权状态",
 	})
 	if err != nil {

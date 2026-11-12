@@ -69,7 +69,7 @@ func HandleMultiChannelFailover(
 	var lastError error
 	var lastFailoverError *FailoverError
 
-	maxChannelAttempts := channelScheduler.GetActiveChannelCountForModel(kind, requestedModel)
+	maxChannelAttempts := channelScheduler.ActiveChannelCountForRequest(c.Request.Context(), kind, requestedModel)
 	// 只有 fuzzy 多渠道允许跨渠道；其他调用入口也不得绕过此边界。
 	if !fuzzyMode && maxChannelAttempts > 1 {
 		maxChannelAttempts = 1

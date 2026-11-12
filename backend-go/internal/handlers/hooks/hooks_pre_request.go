@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 
 	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/semantic"
 	"github.com/insistanan/api-proxy/internal/sensitive"
 	"github.com/insistanan/api-proxy/internal/utils"
 )
@@ -432,15 +433,22 @@ func ResolveContentSafetyPipeline(cfgManager *config.ConfigManager, pipelines ..
 // NewContentSafetyPipelineWithRecorder 创建内容安全管道并注入统一拦截记录器。
 // 可选注入危险命令 AI 闸门（CmdGate）：nil 或未启用时保持"命中即拦截"的既有行为。
 func NewContentSafetyPipelineWithRecorder(cfgManager *config.ConfigManager, recorder BlockedLogRecorder, cmdGate ...*CmdGate) *Pipeline {
+	var gate *CmdGate
+	if len(cmdGate) > 0 {
+		gate = cmdGate[0]
+	}
+	return NewContentSafetyPipelineWithSemantic(cfgManager, recorder, gate, nil)
+}
+
+func NewContentSafetyPipelineWithSemantic(cfgManager *config.ConfigManager, recorder BlockedLogRecorder, cmdGate *CmdGate, datasets *semantic.Service) *Pipeline {
 	pipeline := NewPipeline()
 	pipeline.blockedLogRecorder = recorder
-	if len(cmdGate) > 0 {
-		pipeline.cmdGate = cmdGate[0]
-	}
+	pipeline.cmdGate = cmdGate
+	pipeline.semantic = datasets
 	if err := pipeline.Register(&contentSafetyPreRequestHook{cfgManager: cfgManager, recorder: recorder}); err != nil {
 		panic(fmt.Sprintf("注册内置内容安全 Hook 失败: %v", err))
 	}
-	if err := pipeline.Register(&contentSafetyPostResponseHook{cfgManager: cfgManager, recorder: recorder, gate: pipeline.cmdGate}); err != nil {
+	if err := pipeline.Register(&contentSafetyPostResponseHook{cfgManager: cfgManager, recorder: recorder, gate: pipeline.cmdGate, semantic: datasets}); err != nil {
 		panic(fmt.Sprintf("注册内置响应安全 Hook 失败: %v", err))
 	}
 	return pipeline

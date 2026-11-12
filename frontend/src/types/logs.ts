@@ -148,6 +148,7 @@ export type BlockedLogType =
   | 'whitelist'
   | 'dangerous_cmd_ai'
   | 'dangerous_cmd_allow'
+  | 'semantic_observe'
   | 'allowlist'
   | 'custom_rule'
   | 'restore_miss'

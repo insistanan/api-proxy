@@ -23,6 +23,7 @@ import (
 )
 
 func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
+	a = a.pinIntentCredentials()
 	c := a.Context
 	envCfg := a.EnvConfig
 	cfgManager := a.ConfigManager

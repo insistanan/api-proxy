@@ -45,6 +45,9 @@ func (a UpstreamAttempt) buildPreparedAttemptRequest(
 	upstreamCopy *config.UpstreamConfig,
 	apiKey string,
 ) (*http.Request, string, error) {
+	if err := a.checkIntentCandidate(upstreamCopy, apiKey); err != nil {
+		return nil, "build_request", err
+	}
 	a.beginAvailabilityObservation(upstreamCopy, apiKey)
 	if err := a.Context.Request.Context().Err(); err != nil {
 		return nil, "client_cancelled", err

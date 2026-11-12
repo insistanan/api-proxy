@@ -112,6 +112,7 @@ export interface ContentSafetySettings {
     enabledRules: CredentialRule[]
   }
   dangerousCmd: {
+    semantic?: import('@/services/datasets').SemanticSafetyConfig
     enabled: boolean
     enabledRules: DangerousCommandRule[]
     aiGate: DangerousCmdAIGateSettings

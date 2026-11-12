@@ -352,6 +352,7 @@
                       class="ai-gate-wait"
                     />
                   </div>
+                  <SemanticSafetySettings v-if="contentSafety.dangerousCmd.semantic" v-model="contentSafety.dangerousCmd.semantic" :dangerous-enabled="contentSafety.dangerousCmd.enabled" :gate-enabled="contentSafety.dangerousCmd.aiGate.enabled" />
                   <div v-if="contentSafety.dangerousCmd.aiGate.enabled" class="text-body-2 text-medium-emphasis mt-2">
                     {{ gateProtocolHint }}
                   </div>
@@ -560,6 +561,7 @@ import { usePromptSettings } from '@/composables/settings/usePromptSettings'
 import AssistantSettingsSection from '@/components/settings/AssistantSettingsSection.vue'
 import { useAssistantSettings } from '@/composables/settings/useAssistantSettings'
 import { defaultContentSafety, normalizeContentSafety } from '@/utils/contentSafetyForm'
+import SemanticSafetySettings from '@/components/settings/SemanticSafetySettings.vue'
 import type { SettingsSection, SettingsNotice as Notice } from '@/composables/settings/types'
 
 type SensitiveWordToggle =
@@ -713,7 +715,10 @@ const integrationNotice = ref<Notice>(null)
 watch(
   () => contentSafety.value.dangerousCmd.enabled,
   enabled => {
-    if (!enabled) contentSafety.value.dangerousCmd.aiGate.enabled = false
+    if (!enabled) {
+      contentSafety.value.dangerousCmd.aiGate.enabled = false
+      if (contentSafety.value.dangerousCmd.semantic) contentSafety.value.dangerousCmd.semantic.enabled = false
+    }
   }
 )
 

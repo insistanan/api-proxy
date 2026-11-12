@@ -451,6 +451,7 @@ const blockTypeItems: Array<{ title: string; value: BlockedLogType | '' }> = [
   { title: '危险命令', value: 'dangerous_cmd' },
   { title: '危险命令（AI 闸门拦截）', value: 'dangerous_cmd_ai' },
   { title: '危险命令（AI 闸门放行）', value: 'dangerous_cmd_allow' },
+  { title: '工具语义检测（观察）', value: 'semantic_observe' },
   { title: '白名单放行', value: 'whitelist' },
   { title: '放行字面量', value: 'allowlist' },
   { title: '自定义规则脱敏', value: 'custom_rule' },
@@ -674,6 +675,7 @@ const blockTypeLabel = (value: BlockedLogType) =>
     whitelist: '白名单放行',
     dangerous_cmd_ai: '危险命令·AI 拦截',
     dangerous_cmd_allow: '危险命令·AI 放行',
+    semantic_observe: '工具语义·观察',
     allowlist: '放行字面量',
     custom_rule: '自定义规则脱敏',
     restore_miss: '还原未命中'
@@ -688,6 +690,7 @@ const blockTypeColor = (value: BlockedLogType) =>
     whitelist: 'success',
     dangerous_cmd_ai: 'error',
     dangerous_cmd_allow: 'success',
+    semantic_observe: 'info',
     allowlist: 'success',
     custom_rule: 'warning',
     restore_miss: 'warning'

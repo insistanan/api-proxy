@@ -23,13 +23,18 @@ type CommandMatch struct {
 	Context          string `json:"context"`
 	ToolName         string `json:"toolName,omitempty"`
 	ExecutionContext string `json:"-"`
+	SemanticEvidence string `json:"semanticEvidence,omitempty"`
 	Start            int    `json:"start"`
 	End              int    `json:"end"`
 }
 
 // CommandIdentity 保留完整命令、工具与参数语义；参数、路径、引号或管道变化均不能复用授权。
 func CommandIdentity(match CommandMatch) string {
-	encoded, _ := json.Marshal([]string{match.Context, match.ToolName, match.Command, match.ExecutionContext})
+	parts := []string{match.Context, match.ToolName, match.Command, match.ExecutionContext}
+	if match.SemanticEvidence != "" {
+		parts = append(parts, match.SemanticEvidence)
+	}
+	encoded, _ := json.Marshal(parts)
 	return fmt.Sprintf("%x", sha256.Sum256(encoded))
 }
 
@@ -89,6 +94,30 @@ func (d *CmdDetector) findInToolArguments(toolName string, value any) []CommandM
 	if d == nil || !d.enabled || len(d.rules) == 0 {
 		return nil
 	}
+	return collectToolCommands(toolName, value, func(command string) []CommandMatch { return d.findInSegment(command, "tool", 0) })
+}
+
+// ExtractToolCommands 提取完整可执行字段，与正则是否命中无关；无效输入保留显式错误命中。
+func ExtractToolCommands(toolName string, value any, raw bool) []CommandMatch {
+	if !IsExecutionTool(toolName) {
+		return nil
+	}
+	if raw {
+		text, ok := value.(string)
+		if !ok {
+			return []CommandMatch{{Rule: "invalid_tool_arguments", Context: "tool", ToolName: toolName}}
+		}
+		if len(text) > MaxCommandBytes {
+			return []CommandMatch{{Rule: "command_size_limit", Context: "tool", ToolName: toolName}}
+		}
+		return []CommandMatch{{Context: "tool", ToolName: toolName, Command: text, ExecutionContext: "raw_input:\n" + text}}
+	}
+	return collectToolCommands(toolName, value, func(command string) []CommandMatch {
+		return []CommandMatch{{Command: command, Context: "tool", End: len(command)}}
+	})
+}
+
+func collectToolCommands(toolName string, value any, scan func(string) []CommandMatch) []CommandMatch {
 	if encoded, ok := value.(string); ok {
 		if len(encoded) > MaxCommandBytes {
 			return []CommandMatch{{Rule: "command_size_limit", Context: "tool", ToolName: toolName, Command: "工具执行上下文超过检查容量上限"}}
@@ -125,7 +154,7 @@ func (d *CmdDetector) findInToolArguments(toolName string, value any) []CommandM
 		switch typed := current.(type) {
 		case string:
 			if commandField {
-				matches = append(matches, d.findInSegment(typed, "tool", 0)...)
+				matches = append(matches, scan(typed)...)
 				limited = len(matches) > 256
 			}
 		case []any:

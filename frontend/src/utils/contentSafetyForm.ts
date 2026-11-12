@@ -1,5 +1,6 @@
 // 内容安全表单的默认草稿与旧配置规范化；不访问网络或组件状态。
 import type { ContentSafetySettings, CustomRuleItem, SensitiveInfoRule } from '@/types'
+import { defaultSemanticSafety } from '@/utils/semanticDefaults'
 
 export const defaultContentSafety = (): ContentSafetySettings => ({
   sensitiveData: {
@@ -29,6 +30,7 @@ export const defaultContentSafety = (): ContentSafetySettings => ({
     enabledRules: []
   },
   dangerousCmd: {
+    semantic: defaultSemanticSafety(),
     enabled: false,
     enabledRules: [],
     aiGate: {
@@ -105,6 +107,12 @@ export const normalizeContentSafety = (
     dangerousCmd: {
       ...defaults.dangerousCmd,
       ...(dangerousCmd || {}),
+      semantic: {
+        ...defaultSemanticSafety(),
+        ...dangerousCmd?.semantic,
+        datasetIds: [...(dangerousCmd?.semantic?.datasetIds ?? [])],
+        embedding: { ...defaultSemanticSafety().embedding, ...dangerousCmd?.semantic?.embedding }
+      },
       enabledRules: Array.isArray(dangerousCmd?.enabledRules)
         ? [...dangerousCmd.enabledRules]
         : dangerousCmd

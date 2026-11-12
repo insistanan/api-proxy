@@ -38,6 +38,7 @@
       </dl>
 
       <div class="overview-modes">
+        <IntentRoutingControl v-if="intentProtocol" :key="intentProtocol" :protocol="intentProtocol" />
         <v-tooltip v-for="mode in modes" :key="mode.key" location="bottom" content-class="status-tooltip">
           <template #activator="{ props: tooltipProps }">
             <v-btn
@@ -117,6 +118,8 @@ import ChannelOrchestration from '@/components/ChannelOrchestration.vue'
 import ChannelTableDrawer from '@/components/channel/ChannelTableDrawer.vue'
 import AddChannelModal from '@/components/AddChannelModal.vue'
 import AssistantWidget from '@/components/AssistantWidget.vue'
+import IntentRoutingControl from '@/components/channel/IntentRoutingControl.vue'
+import { isIntentProtocol } from '@/services/intent'
 import { useAuthFlow } from '@/composables/useAuthFlow'
 import { useChannelActions } from '@/composables/useChannelActions'
 import { useCountUp } from '@/composables/useCountUp'
@@ -139,6 +142,7 @@ const { handleAuthError } = useAuthFlow(showToast)
 
 // 协议类型以 store 中经过校验的 activeTab 为准，非法路由参数回落到 Messages。
 const channelType = computed(() => channelStore.activeTab)
+const intentProtocol = computed(() => isIntentProtocol(channelType.value) ? channelType.value : null)
 const navigation = computed(() => findNavigation(`/channels/${channelType.value}`))
 const channels = computed(() => channelStore.currentChannelsData.channels)
 

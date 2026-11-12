@@ -327,6 +327,24 @@ func (a *attachedHookPipeline) scanStreamToolArguments(c requestContextGetter, k
 			return a.recordContentSafetyError(attachedRequestContext(c), a.currentMetadata(), safetyErr)
 		}
 	}
+	if policy := a.streamSettings.DangerousCmd.Semantic; policy != nil && policy.Enabled {
+		commands := sensitive.ExtractToolCommands(state.name, reviewArgs, state.rawInput)
+		covered := make(map[string]bool, len(matches))
+		for _, match := range matches {
+			covered[sensitive.CommandIdentity(match)] = true
+		}
+		pending := commands[:0]
+		for _, command := range commands {
+			if !covered[sensitive.CommandIdentity(command)] {
+				pending = append(pending, command)
+			}
+		}
+		if err := reviewSemanticCommands(attachedRequestContext(c), a.pipeline.semantic, a.pipeline.blockedLogRecorder, a.streamSettings.DangerousCmd, a.currentMetadata(), pending, func(match sensitive.CommandMatch) *ContentSafetyError {
+			return gateReviewDangerousCommand(attachedRequestContext(c), c, a, a.currentMetadata(), match)
+		}); err != nil {
+			return a.recordContentSafetyError(attachedRequestContext(c), a.currentMetadata(), err)
+		}
+	}
 	if a.streamSettings.Credential.Enabled {
 		segments := make([]SafetySegment, 0)
 		appendImmutableJSONSegmentWithTool(&segments, a.currentMetadata().APIType, safetySourceToolArgument, fmt.Sprintf("stream.tool_arguments[%q]", key), value, state.name)

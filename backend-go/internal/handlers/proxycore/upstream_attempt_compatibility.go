@@ -114,7 +114,7 @@ func (step candidateAttempt) retryCompatibility(
 
 	// Thinking Signature 整流自愈：当上游报错提示 signature 校验失败或块结构不合规时，
 	// 清理历史消息中的非法 signature 与 thinking 块，并在同一渠道就地重试一次。
-	if !retrySucceeded && rectifier.ShouldRectifyThinkingSignature(respBodyBytes) {
+	if !retrySucceeded && !intentHistoryProtected(c) && rectifier.ShouldRectifyThinkingSignature(respBodyBytes) {
 		rectifiedBody, applied, stats := rectifier.RectifyThinkingSignature(requestBody)
 		if applied {
 			log.Printf("[%s-Rectifier] 触发 Thinking 签名整流重试 (移除了 %d 个 thinking 块, %d 个 redacted_thinking 块, %d 个 signature 字段, topLevelThinkingRemoved=%v)",

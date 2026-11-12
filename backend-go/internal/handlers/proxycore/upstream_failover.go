@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/insistanan/api-proxy/internal/config"
+	"github.com/insistanan/api-proxy/internal/intent"
 	"github.com/insistanan/api-proxy/internal/scheduler"
 	"github.com/insistanan/api-proxy/internal/types"
 	"github.com/insistanan/api-proxy/internal/upstreamcontrol"
@@ -44,6 +45,26 @@ func (a UpstreamAttempt) TryWithModelMappingFailover() UpstreamAttemptResult {
 func (a UpstreamAttempt) tryWithModelMappingFailover() UpstreamAttemptResult {
 	// 目标模型与目标渠道来自同一条映射规则，保证二者始终对应
 	targetModels, targetChannelIDs := config.ResolveUpstreamModelTargets(a.RequestedModel, a.Upstream)
+	if turn := intent.TurnFrom(a.Context.Request.Context()); turn != nil && a.Upstream != nil {
+		previous := turn.PinnedModel(a.Upstream.ID)
+		found := false
+		for i, target := range targetModels {
+			if previous != "" && target == previous && targetChannelIDs[i] == "" {
+				targetModels = append([]string(nil), targetModels...)
+				targetChannelIDs = append([]string(nil), targetChannelIDs...)
+				copy(targetModels[1:i+1], targetModels[:i])
+				copy(targetChannelIDs[1:i+1], targetChannelIDs[:i])
+				targetModels[0], targetChannelIDs[0] = previous, ""
+				found = true
+				break
+			}
+		}
+		// 上轮可能由其他渠道的模型映射转入本渠道，实际模型不一定出现在本渠道映射中。
+		if previous != "" && !found {
+			targetModels = append([]string{previous}, targetModels...)
+			targetChannelIDs = append([]string{""}, targetChannelIDs...)
+		}
+	}
 
 	if len(targetModels) == 0 {
 		// 没有映射，直接使用原始模型
@@ -57,6 +78,12 @@ func (a UpstreamAttempt) tryWithModelMappingFailover() UpstreamAttemptResult {
 
 	// 只有一个本地目标：直接调用原有逻辑
 	if len(targetModels) == 1 && targetChannelIDs[0] == "" {
+		if intent.TurnFrom(a.Context.Request.Context()) != nil {
+			a.Upstream = a.Upstream.Clone()
+			a.Upstream.DefaultModel = targetModels[0]
+			a.Upstream.ModelMapping = nil
+			a.Upstream.ModelMappingChannels = nil
+		}
 		return a.tryWithAllKeys()
 	}
 
@@ -103,6 +130,7 @@ func (a UpstreamAttempt) tryWithModelMappingFailover() UpstreamAttemptResult {
 			// 创建上游副本，临时覆盖模型映射为当前尝试的单一模型。
 			// 渠道登记同样清空：本地候选不再解析映射登记（单跳）。
 			upstreamCopy := a.Upstream.Clone()
+			upstreamCopy.DefaultModel = ""
 			upstreamCopy.ModelMapping = map[string][]string{
 				a.RequestedModel: {targetModel},
 			}

@@ -665,6 +665,9 @@ func validateUpstreamKeys(upstreams []UpstreamConfig, label string) bool {
 
 // validateProxyConfigOf 校验候选配置的代理设置（不触碰当前快照）。
 func validateProxyConfigOf(candidate *Config) error {
+	if err := validateIntentRouting(candidate); err != nil {
+		return err
+	}
 	if err := ValidateProxyURL(candidate.Settings.Network.UpstreamProxyURL); err != nil {
 		return fmt.Errorf("全局上游代理配置无效: %w", err)
 	}
@@ -693,6 +696,9 @@ func validateProxyConfigOf(candidate *Config) error {
 //   - 提交点后失败（目录同步等）：文件已是新内容，快照同样发布，
 //     返回 *atomicfile.CommittedError（调用方不得按未提交重试）。
 func (cm *ConfigManager) saveConfigLocked(config Config) error {
+	if err := validateIntentRouting(&config); err != nil {
+		return err
+	}
 	if err := validateFuzzyModeProtocols(&config); err != nil {
 		return err
 	}

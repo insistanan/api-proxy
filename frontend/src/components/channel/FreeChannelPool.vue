@@ -1,8 +1,8 @@
 <template>
   <div class="free-pool">
-    <slot name="activity"></slot>
     <div class="free-pool-content">
       <header class="free-pool-header">
+        <slot name="activity"></slot>
         <div>
           <div class="free-pool-title">
             <h3 class="text-subtitle-1 font-weight-bold">免费分组</h3>
@@ -15,17 +15,6 @@
           </div>
         </div>
         <div class="free-pool-actions">
-          <v-menu :close-on-content-click="false" max-width="320">
-            <template #activator="{ props: menuProps }">
-              <v-btn v-bind="menuProps" icon="mdi-information" size="small" variant="text" aria-label="免费分组说明" />
-            </template>
-            <v-card class="pa-4 text-body-2 free-pool-help">
-              <p>{{ protocolHint }}，四个协议共享启停与模型清单。</p>
-              <p><code>free</code> 按健康度自动选择；<code>free/模型ID</code> 优先指定模型，失败后在免费池内切换。</p>
-              <p>免注册、免 Key，不转付费兜底。Kilo 可能记录请求内容。</p>
-              <p class="text-medium-emphasis">{{ syncTime }}。同步只读取模型目录。</p>
-            </v-card>
-          </v-menu>
           <v-btn size="small" variant="text" :disabled="loading || !free.config" :loading="free.busy" @click="syncModels">同步模型</v-btn>
           <v-switch
             :model-value="free.config?.kilo.enabled ?? false" label="启用"
@@ -55,22 +44,18 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import type { ApiTab } from '@/services/channel-api'
 import { ApiError } from '@/services/http'
 import { useFreeChannelsStore } from '@/stores/freeChannels'
 import { useChannelStore } from '@/stores/channel'
 import { useToast } from '@/composables/useToast'
 
-const props = defineProps<{ channelType: ApiTab }>()
 const free = useFreeChannelsStore()
 const channelStore = useChannelStore()
 const { showToast } = useToast()
 const loading = ref(false)
 const error = ref('')
 const search = ref<string | null>('')
-const protocolHint = computed(() => props.channelType === 'chat' ? 'Chat 原生转发' : `${props.channelType === 'messages' ? 'Messages' : props.channelType === 'responses' ? 'Responses' : 'Gemini'} ↔ Chat 转换`)
 const visibleModels = computed(() => (free.config?.kilo.models ?? []).filter(model => model.toLowerCase().includes((search.value ?? '').trim().toLowerCase())))
-const syncTime = computed(() => free.config?.kilo.syncedAt ? `上次同步 ${new Date(free.config.kilo.syncedAt).toLocaleString()}` : '使用内置清单，尚未同步')
 const message = (cause: unknown) => cause instanceof Error ? cause.message : String(cause)
 
 async function load() {
@@ -111,12 +96,11 @@ onMounted(() => void load())
 .free-pool { position: relative; isolation: isolate; overflow: hidden; border-radius: inherit; padding: 12px 18px; min-width: 0; }
 .free-pool-content { position: relative; z-index: 1; }
 .free-pool-header, .free-pool-title, .free-pool-actions { display: flex; align-items: center; gap: 8px; }
-.free-pool-header { justify-content: space-between; flex-wrap: wrap; }
+.free-pool-header { position: relative; justify-content: space-between; flex-wrap: wrap; }
+.free-pool-header > div { position: relative; z-index: 1; }
 .free-pool-title { flex-wrap: wrap; }
 .free-pool-actions { margin-left: auto; }
 .free-pool-actions .v-switch { flex: none; margin-left: 4px; }
-.free-pool-help { line-height: 1.7; }
-.free-pool-help p + p { margin-top: 12px; }
 .free-models { padding: 0; margin-top: 8px; list-style: none; max-height: 220px; overflow: auto; border-top: 1px solid rgba(var(--v-theme-outline), 0.18); }
 .free-models li { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 40px; padding-block: 2px; }
 .free-models li + li { border-top: 1px solid rgba(var(--v-theme-outline), 0.12); }
