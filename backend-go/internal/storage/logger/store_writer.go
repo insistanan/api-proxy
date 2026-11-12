@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"time"
@@ -264,6 +265,22 @@ func applyLogWrite(ctx context.Context, tx *sql.Tx, statements map[writeKind]*sq
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, item.request.UnixMilli, sample.Kind,
 			sample.ChannelID, sample.Model, sample.CandidateID, sample.Outcome, sample.Reason, sample.CooldownUntil); err != nil {
 			return fmt.Errorf("写入可用性样本失败: %w", err)
+		}
+	}
+	if item.kind == writeTraffic && len(item.traffic.toolObservations) > 0 {
+		id, err := result.LastInsertId()
+		if err != nil {
+			return fmt.Errorf("读取工具关联流量 ID 失败: %w", err)
+		}
+		for ordinal, observation := range item.traffic.toolObservations {
+			body, err := json.Marshal(observation)
+			if err != nil {
+				return fmt.Errorf("编码工具关联失败: %w", err)
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO log_tool_observations (traffic_id, ordinal, request_id, call_id, payload_json) VALUES (?, ?, ?, ?, ?)`,
+				id, ordinal, item.traffic.RequestID, observation.CallID, string(body)); err != nil {
+				return fmt.Errorf("写入工具关联失败: %w", err)
+			}
 		}
 	}
 	return nil

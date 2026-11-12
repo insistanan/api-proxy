@@ -3,11 +3,11 @@
     <div class="timeline-actions">
       <v-btn v-if="shownCount < requests.length || logs.nextRequestCursor" size="small" variant="text" :loading="logs.roundsLoading" @click="loadEarlier">加载更早的请求</v-btn>
       <v-btn v-if="logs.anchored" size="small" variant="tonal" @click="logs.loadRounds({ latest: true })">回到最新请求</v-btn>
-      <v-btn size="small" variant="text" prepend-icon="mdi-unfold-more-horizontal" :disabled="!rows.length" @click="expandAll">展开全部轮次</v-btn>
+      <v-btn size="small" variant="text" prepend-icon="mdi-unfold-more-horizontal" :disabled="!rows.length" @click="expandAll">展开当前调用</v-btn>
       <v-btn size="small" variant="text" prepend-icon="mdi-chevron-up" :disabled="!opened.size" @click="collapseAll">全部收起</v-btn>
-      <span class="text-caption text-medium-emphasis">显示 {{ visible.length }} 个轮次</span>
+      <span class="text-caption text-medium-emphasis">显示 {{ visible.length }} 次调用；一次用户轮次可能包含多次调用</span>
     </div>
-    <div v-if="!requests.length" class="pa-4 text-medium-emphasis">{{ logs.roundsLoading ? '正在加载轮次…' : '此会话没有可用的请求记录。' }}</div>
+    <div v-if="!requests.length" class="pa-4 text-medium-emphasis">{{ logs.roundsLoading ? '正在加载调用…' : '此会话没有可用的请求记录。' }}</div>
     <details
       v-for="row in rows"
       :id="`log-round-${row.summary.requestId}`"
@@ -18,7 +18,7 @@
       @toggle="toggleRound(row.summary, $event)"
     >
       <summary class="round-header">
-        <span class="round-index">第 {{ row.roundNumber }} 轮</span>
+        <span class="round-index" :title="row.summary.requestId">调用 #{{ row.summary.requestId.slice(0, 8) }}</span>
         <span class="round-time">{{ new Date(row.summary.startedAt || row.summary.unixMilli).toLocaleString() }}</span>
         <v-chip size="x-small" :color="row.status.color" variant="tonal">{{ row.status.label }}</v-chip>
         <span v-if="row.summary.model" class="round-meta">{{ row.summary.model }}</span>
@@ -34,6 +34,8 @@
         <v-alert v-if="logs.detailErrors[row.summary.requestId]" type="error" variant="tonal" density="compact">{{ logs.detailErrors[row.summary.requestId] }}</v-alert>
         <v-btn v-if="!row.detail || logs.detailErrors[row.summary.requestId]" size="small" variant="text" @click="loadOpened">加载本轮内容</v-btn>
         <template v-if="row.detail">
+          <ContextSnapshotPanel v-if="row.context && row.input" :snapshot="row.context" :body="row.input.body || ''" />
+          <ToolTraceLinks v-if="row.detail.toolLinks" :links="row.detail.toolLinks" @locate="emit('inspect', $event)" />
           <div v-if="row.delta" class="delta-notice">{{ row.delta.notice }}</div>
           <details v-if="row.delta?.top" class="round-config">
             <summary>请求配置</summary>
@@ -67,11 +69,13 @@
 <script setup lang="ts">
 // 轮次摘要可分页；仅展开轮次和它的前一轮需要正文，增量始终来自实际请求。
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { useLogsStore, summaryVersion } from '@/stores/logs'
+import { conversationVersion, useLogsStore, summaryVersion } from '@/stores/logs'
 import type { SystemLogSummary } from '@/types/logs'
 import { getLogAttempts, getRequestDelta, logStatus, requestInputLog } from '@/utils/logConversation'
 import JsonBodyPane from './JsonBodyPane.vue'
 import SessionInspector from './SessionInspector.vue'
+import ContextSnapshotPanel from './ContextSnapshotPanel.vue'
+import ToolTraceLinks from './ToolTraceLinks.vue'
 
 const props = defineProps<{ groupKey: string; requests: SystemLogSummary[]; highlightRequestId?: string }>()
 const emit = defineEmits<{ inspect: [requestId: string] }>()
@@ -82,12 +86,6 @@ let generation = 0
 let loadedGroupKey = ''
 let latestRequestId = ''
 const visible = computed(() => props.requests.slice(-shownCount.value))
-// 会话通常只加载最近 20 条，轮次编号按会话总请求数校正，避免长会话从“第 1 轮”重新计数。
-const roundOffset = computed(() => {
-  const total = logs.selectedConversation?.requestCount || 0
-  if (logs.anchored || !logs.nextRequestCursor || total <= props.requests.length) return 0
-  return total - props.requests.length
-})
 const rows = computed(() => visible.value.map(summary => {
   const detail = logs.details[summary.requestId]
   const index = props.requests.findIndex(item => item.requestId === summary.requestId)
@@ -99,10 +97,11 @@ const rows = computed(() => visible.value.map(summary => {
   return {
     summary,
     detail,
+    input,
+    context: detail?.contexts?.find(snapshot => snapshot.phase === 'client_input' || snapshot.phase === 'client_request'),
     attempts,
     output: synthesized || finalAttempt?.response,
     delta: opened.value.has(summary.requestId) && input ? getRequestDelta(previous ? requestInputLog(previous.trafficLogs) : undefined, input) : undefined,
-    roundNumber: roundOffset.value + index + 1,
     status: logStatus(detail?.summary || summary)
   }
 }))
@@ -151,7 +150,7 @@ async function revealHighlight() {
   await nextTick()
   document.getElementById(`log-round-${props.highlightRequestId}`)?.scrollIntoView({ block: 'nearest' })
 }
-watch(() => `${props.groupKey}:${props.requests.map(summary => `${summary.requestId}:${summaryVersion(summary)}`).join(',')}`, () => {
+watch(() => `${props.groupKey}:${conversationVersion(logs.selectedConversation)}:${props.requests.map(summary => `${summary.requestId}:${summaryVersion(summary)}`).join(',')}`, () => {
   const changed = loadedGroupKey !== props.groupKey
   if (changed) { generation++; shownCount.value = 3; opened.value = new Set(); loadedGroupKey = props.groupKey; latestRequestId = '' }
   const latest = props.requests[props.requests.length - 1]

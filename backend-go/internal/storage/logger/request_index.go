@@ -21,11 +21,13 @@ type LogConversationSummary struct {
 	Key          string           `json:"key"`
 	Latest       SystemLogSummary `json:"latest"`
 	RequestCount int64            `json:"requestCount"`
+	Title        string           `json:"title,omitempty"`
 }
 
 type LogConversationsPage struct {
 	Conversations []LogConversationSummary `json:"conversations"`
 	NextCursor    string                   `json:"nextCursor,omitempty"`
+	Total         int64                    `json:"total"`
 }
 
 type LogConversationRequestsPage struct {
@@ -37,6 +39,10 @@ type LogConversationListOptions struct {
 	APIType string
 	Cursor  string
 	Limit   int
+	Search  string
+	Status  string
+	From    int64
+	To      int64
 }
 
 type LogConversationRequestOptions struct {
@@ -93,6 +99,8 @@ func initRequestIndex(db *sql.DB) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_log_request_latest ON log_request_index(last_unix DESC, last_id DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_log_request_api_latest ON log_request_index(api_type, last_unix DESC, last_id DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_log_request_started ON log_request_index(started_at DESC, request_id DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_log_request_api_started ON log_request_index(api_type, started_at DESC, request_id DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_log_request_group_order ON log_request_index(group_key, started_at DESC, request_id DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_log_request_group_latest ON log_request_index(group_key, last_unix DESC, last_id DESC)`,
 		`CREATE TABLE IF NOT EXISTS log_index_state (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), traffic_id INTEGER NOT NULL, request_id INTEGER NOT NULL)`,
@@ -150,6 +158,38 @@ func initRequestIndex(db *sql.DB) error {
 	if _, err := db.Exec(`UPDATE log_index_state SET traffic_id = ?, request_id = ? WHERE singleton = 1`, trafficEnd, requestEnd); err != nil {
 		return fmt.Errorf("保存日志索引回填进度失败: %w", err)
 	}
+	// 旧索引曾跳过只有尝试指标的请求；分批补齐，不改写正文或已存在的摘要。
+	lastKey = ""
+	for {
+		rows, err := db.Query(`SELECT DISTINCT r.request_id FROM request_logs r
+			WHERE r.request_id != '' AND r.request_id > ?
+			AND NOT EXISTS (SELECT 1 FROM log_request_index i WHERE i.request_id = r.request_id)
+			ORDER BY r.request_id LIMIT 256`, lastKey)
+		if err != nil {
+			return fmt.Errorf("读取缺失的调用索引失败: %w", err)
+		}
+		ids := make([]string, 0, 256)
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			ids = append(ids, id)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
+		if len(ids) == 0 {
+			break
+		}
+		if err := backfillRequestIndex(db, ids); err != nil {
+			return err
+		}
+		lastKey = ids[len(ids)-1]
+	}
 	return nil
 }
 
@@ -193,12 +233,19 @@ func refreshRequestIndex(ctx context.Context, tx *sql.Tx, ids []string) error {
 	}
 	for _, id := range ids {
 		rows := metas[id]
-		if len(rows) == 0 {
+		meta := requestMetas[id]
+		if len(rows) == 0 && meta == nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM log_request_index WHERE request_id = ?`, id); err != nil {
+				return fmt.Errorf("删除已清理的调用索引失败: %w", err)
+			}
 			continue
 		}
 		summary := buildSystemLogSummary(id, rows, requestMetas[id])
 		startedAt := summary.StartedAt
 		var lastID int64
+		if len(rows) == 0 {
+			lastID = meta.LogID
+		}
 		bootID := ""
 		for _, row := range rows {
 			lastID = max(lastID, row.ID)
@@ -323,6 +370,45 @@ func (s *Store) listIndexedSummaries(ctx context.Context, opts SystemLogListOpti
 	return summaries, rows.Err()
 }
 
+func requestIndexPredicate(opts LogConversationListOptions, bootID string) (string, []any) {
+	query := ""
+	args := []any{}
+	if apiType := strings.ToLower(strings.TrimSpace(opts.APIType)); apiType != "" {
+		query += ` AND api_type = ?`
+		args = append(args, apiType)
+	}
+	if search := strings.TrimSpace(opts.Search); search != "" {
+		query += ` AND instr(lower(request_id || ' ' || group_key || ' ' ||
+			COALESCE(json_extract(summary_json, '$.promptPreview'), '') || ' ' ||
+			COALESCE(json_extract(summary_json, '$.model'), '') || ' ' ||
+			COALESCE(json_extract(summary_json, '$.channelName'), '') || ' ' ||
+			COALESCE(json_extract(summary_json, '$.client'), '') || ' ' ||
+			COALESCE(json_extract(summary_json, '$.clientFamily'), '') || ' ' ||
+			COALESCE(json_extract(summary_json, '$.errorMessage'), '')), lower(?)) > 0`
+		args = append(args, search)
+	}
+	if opts.Status != "" {
+		if bootID == "" {
+			query += ` AND json_extract(summary_json, '$.status') = ?`
+			args = append(args, opts.Status)
+		} else {
+			query += ` AND CASE WHEN json_extract(summary_json, '$.status') IN ('processing', 'retrying')
+				AND boot_id != '' AND boot_id != ? THEN 'interrupted'
+				ELSE json_extract(summary_json, '$.status') END = ?`
+			args = append(args, bootID, opts.Status)
+		}
+	}
+	if opts.From > 0 {
+		query += ` AND started_at >= ?`
+		args = append(args, opts.From)
+	}
+	if opts.To > 0 {
+		query += ` AND started_at <= ?`
+		args = append(args, opts.To)
+	}
+	return query, args
+}
+
 func (s *Store) ListLogConversations(ctx context.Context, opts LogConversationListOptions) (LogConversationsPage, error) {
 	page := LogConversationsPage{Conversations: []LogConversationSummary{}}
 	if s == nil || !s.requestIndex {
@@ -333,13 +419,18 @@ func (s *Store) ListLogConversations(ctx context.Context, opts LogConversationLi
 		limit = 50
 	}
 	limit = min(limit, 100)
-	query := `WITH grouped AS (SELECT group_key, MAX(last_unix) AS last_unix, COUNT(*) AS request_count FROM log_request_index`
-	args := []any{}
-	if apiType := strings.ToLower(strings.TrimSpace(opts.APIType)); apiType != "" {
-		query += ` WHERE api_type = ?`
-		args = append(args, apiType)
-	}
-	query += ` GROUP BY group_key) SELECT g.group_key, g.request_count, i.summary_json, i.boot_id
+	filter, args := requestIndexPredicate(opts, s.bootID)
+	query := `WITH matched AS (SELECT DISTINCT group_key FROM log_request_index WHERE 1 = 1` + filter
+	query += `), grouped AS (
+		SELECT group_key, MAX(last_unix) AS last_unix, COUNT(*) AS request_count
+		FROM log_request_index WHERE group_key IN (SELECT group_key FROM matched) GROUP BY group_key
+	)`
+	countQuery := query + ` SELECT COUNT(*) FROM grouped`
+	countArgs := append([]any(nil), args...)
+	query += ` SELECT g.group_key, g.request_count, i.summary_json, i.boot_id,
+		COALESCE((SELECT json_extract(title.summary_json, '$.promptPreview') FROM log_request_index title
+			WHERE title.group_key = g.group_key AND COALESCE(json_extract(title.summary_json, '$.promptPreview'), '') != ''
+			ORDER BY title.started_at, title.request_id LIMIT 1), ''), (SELECT COUNT(*) FROM grouped)
 		FROM grouped g JOIN log_request_index i ON i.request_id = (
 			SELECT request_id FROM log_request_index WHERE group_key = g.group_key
 			ORDER BY last_unix DESC, last_id DESC LIMIT 1)`
@@ -361,7 +452,7 @@ func (s *Store) ListLogConversations(ctx context.Context, opts LogConversationLi
 	for rows.Next() {
 		var entry LogConversationSummary
 		var body, bootID string
-		if err := rows.Scan(&entry.Key, &entry.RequestCount, &body, &bootID); err != nil {
+		if err := rows.Scan(&entry.Key, &entry.RequestCount, &body, &bootID, &entry.Title, &page.Total); err != nil {
 			return page, err
 		}
 		entry.Latest, err = s.decodeIndexedSummary(body, bootID)
@@ -372,6 +463,11 @@ func (s *Store) ListLogConversations(ctx context.Context, opts LogConversationLi
 	}
 	if err := rows.Err(); err != nil {
 		return page, err
+	}
+	if len(page.Conversations) == 0 && opts.Cursor != "" {
+		if err := s.readDB.QueryRowContext(ctx, countQuery, countArgs...).Scan(&page.Total); err != nil {
+			return page, fmt.Errorf("统计日志会话失败: %w", err)
+		}
 	}
 	if len(page.Conversations) > limit {
 		page.Conversations = page.Conversations[:limit]

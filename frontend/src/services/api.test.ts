@@ -7,6 +7,21 @@ vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ apiKey: null, clearAuth
 beforeEach(() => { setActivePinia(createPinia()) })
 afterEach(() => { vi.unstubAllGlobals() })
 
+describe('调用聚合 API', () => {
+  it('传递服务端筛选和游标，尝试接口只携带调用标识', async () => {
+    const fetch = vi.fn().mockImplementation(() => Promise.resolve(new Response('{"calls":[]}', { status: 200 })))
+    vi.stubGlobal('fetch', fetch)
+    await api.getLogCalls({ type: 'responses', q: '日志_100%', status: 'failed', from: '2026-11-01T00:00:00Z', cursor: 'cursor+value', limit: 50 })
+    const params = new URL(String(fetch.mock.calls[0][0]), 'http://localhost').searchParams
+    expect(params.get('q')).toBe('日志_100%')
+    expect(params.get('status')).toBe('failed')
+    expect(params.get('cursor')).toBe('cursor+value')
+    expect(params.get('from')).toBe('2026-11-01T00:00:00Z')
+    await api.getLogCallAttempts('request/id+value')
+    expect(fetch.mock.calls[1][0]).toBe('/api/log-call-attempts?requestId=request%2Fid%2Bvalue')
+  })
+})
+
 describe('本代理模型目录', () => {
   it('向后端传递入口协议，省略时保留全量目录', async () => {
     const fetch = vi.fn().mockImplementation(() => Promise.resolve(new Response('{"object":"list","data":[]}', { status: 200 })))

@@ -1,9 +1,11 @@
 <template>
   <div class="system-logs-panel">
     <div class="system-toolbar">
-      <span class="text-medium-emphasis">{{ logs.conversations.length }} 个会话</span>
-      <v-text-field v-model="search" label="搜索当前会话列表" prepend-inner-icon="mdi-magnify" hide-details density="compact" clearable class="search-field" />
+      <span class="text-medium-emphasis">{{ logs.conversations.length }} / {{ logs.totalConversations ?? '—' }} 个会话</span>
+      <v-text-field v-model="search" label="搜索历史会话、任务、模型、渠道或请求 ID" maxlength="200" prepend-inner-icon="mdi-magnify" hide-details density="compact" clearable class="search-field" />
       <v-select v-model="logs.typeFilter" :items="typeItems" label="协议" hide-details density="compact" class="type-field" />
+      <v-select v-model="logs.statusFilter" :items="statusItems" label="包含调用状态" hide-details density="compact" class="type-field" />
+      <v-select v-model="days" :items="dateItems" label="调用时间" hide-details density="compact" class="type-field" />
       <v-btn variant="tonal" prepend-icon="mdi-refresh" :loading="logs.listLoading" @click="logs.refresh()">刷新</v-btn>
     </div>
     <v-alert v-if="logs.listError" type="error" variant="tonal" density="compact">{{ logs.listError }}</v-alert>
@@ -11,15 +13,16 @@
     <div class="system-layout">
       <aside class="system-list" aria-label="日志会话列表">
         <div v-if="!logs.conversations.length" class="system-empty">{{ logs.listLoading ? '正在加载会话…' : '暂无会话日志' }}</div>
-        <button v-for="group in filteredGroups" :key="group.key" type="button" class="conversation-entry" :class="{ selected: group.key === logs.selectedKey }" :aria-pressed="group.key === logs.selectedKey" @click="logs.selectConversation(group)">
+        <button v-for="group in logs.conversations" :key="group.key" type="button" class="conversation-entry" :class="{ selected: group.key === logs.selectedKey }" :aria-pressed="group.key === logs.selectedKey" @click="logs.selectConversation(group)">
           <div class="entry-heading">
-            <span>{{ group.latest.channelName || clientLabel(group.latest.client) }}</span>
+            <span :title="group.title || group.key">{{ conversationTitle(group) }}</span>
             <span class="entry-time">{{ timeLabel(group.latest.timestamp) }}</span>
           </div>
-          <div class="entry-model">{{ group.latest.model || entryLabel(group.latest.apiType) }}</div>
+          <div class="entry-model">{{ clientLabel(group.latest.clientFamily || group.latest.client) }} · {{ group.latest.model || entryLabel(group.latest.apiType) }}</div>
+          <div class="entry-channel">{{ group.latest.channelName || '渠道未知' }} · {{ group.key.slice(-12) }}</div>
           <div class="entry-meta">
-            <span>{{ group.requestCount }} 次请求</span>
-            <span :class="`text-${logStatus(group.latest).color}`">{{ logStatus(group.latest).label }}</span>
+            <span>{{ group.requestCount }} 次调用</span>
+            <span :class="`text-${logStatus(group.latest).color}`">最近：{{ logStatus(group.latest).label }}</span>
           </div>
         </button>
         <v-btn v-if="logs.nextConversationCursor" block variant="text" :loading="logs.listLoading" @click="logs.loadConversations(true)">加载更多会话</v-btn>
@@ -29,13 +32,15 @@
         <template v-else>
           <div class="conversation-heading">
             <div>
-              <strong>{{ logs.selectedConversation?.latest.model || '会话日志' }}</strong>
-              <div class="text-caption text-medium-emphasis">{{ clientLabel(logs.selectedConversation?.latest.client) }} · {{ entryLabel(logs.selectedConversation?.latest.apiType) }} · {{ logs.selectedConversation?.requestCount }} 次请求</div>
+              <strong>{{ logs.selectedConversation ? conversationTitle(logs.selectedConversation) : '会话轨迹' }}</strong>
+              <div class="text-caption text-medium-emphasis">{{ clientLabel(logs.selectedConversation?.latest.clientFamily || logs.selectedConversation?.latest.client) }} · {{ entryLabel(logs.selectedConversation?.latest.apiType) }} · {{ logs.selectedConversation?.requestCount }} 次调用</div>
+              <div class="text-caption text-medium-emphasis">{{ identityLabel(logs.selectedConversation?.latest.identitySource) }}；调用完成不代表整个会话结束</div>
             </div>
             <v-btn v-if="highlightRequestId" size="small" variant="text" prepend-icon="mdi-arrow-left" @click="emit('back')">返回请求日志</v-btn>
           </div>
           <v-alert v-if="logs.roundsError" type="error" variant="tonal" density="compact">{{ logs.roundsError }}</v-alert>
           <v-alert v-if="!logs.selectedConversation?.latest.conversationId" type="info" variant="tonal" density="compact">此请求没有可靠的会话标识，单独保留。</v-alert>
+          <ContextTrend :group-key="logs.selectedKey" :version="conversationVersion(logs.selectedConversation)" @locate="emit('select', $event)" />
           <ConversationLogTimeline :group-key="logs.selectedKey" :requests="logs.requests" :highlight-request-id="highlightRequestId || requestId" @inspect="inspectRequest" />
         </template>
       </main>
@@ -54,17 +59,19 @@
 
 <script setup lang="ts">
 // 页面只编排选择、筛选和可见期间的刷新；日志状态由 store 统一持有。
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import ConversationLogTimeline from './ConversationLogTimeline.vue'
 import RequestLogDetail from './RequestLogDetail.vue'
-import { useLogsStore } from '@/stores/logs'
+import ContextTrend from './ContextTrend.vue'
+import { conversationVersion, useLogsStore } from '@/stores/logs'
 import { logStatus } from '@/utils/logConversation'
-import type { LogAPIType } from '@/types/logs'
+import type { LogAPIType, LogConversationSummary } from '@/types/logs'
 
 const props = defineProps<{ requestId?: string; highlightRequestId?: string }>()
 const emit = defineEmits<{ select: [requestId: string]; back: [] }>()
 const logs = useLogsStore()
-const search = ref('')
+const search = ref(logs.searchFilter)
+const days = ref(0)
 const locateError = ref('')
 const detailOpen = ref(false)
 const inspectedRequestId = ref('')
@@ -80,18 +87,29 @@ const typeItems: { title: string; value: LogAPIType | '' }[] = [
   { title: '命令 AI 复核', value: 'cmd_gate' }, { title: '内部 AI 调用', value: 'llmgate' }
 ]
 const entryLabel = (kind?: string) => typeItems.find(item => item.value === kind?.toLowerCase())?.title || kind || '未知协议'
+const statusItems = [
+  { title: '全部状态', value: '' }, { title: '有失败调用', value: 'failed' },
+  { title: '有进行中调用', value: 'processing' }, { title: '有重试调用', value: 'retrying' },
+  { title: '有已完成调用', value: 'completed' }, { title: '有取消调用', value: 'cancelled' },
+  { title: '有中断调用', value: 'interrupted' }, { title: '有拦截调用', value: 'blocked' }
+]
+const dateItems = [{ title: '全部历史', value: 0 }, { title: '最近 24 小时', value: 1 }, { title: '最近 7 天', value: 7 }]
+const conversationTitle = (group: LogConversationSummary) => group.title || group.latest.promptPreview || `会话 ${group.key.slice(-12)}`
+const identityLabels: Record<string, string> = {
+  conversation_header: '会话请求头', claude_code_session: 'Claude Code 会话', conversation_query: '会话查询参数',
+  session_header: '会话请求头', codex_thread: 'Codex 线程', request_conversation: '请求会话字段',
+  metadata_conversation: '元数据会话字段', previous_response: '前序响应引用', request_session: '请求会话字段',
+  structured_user_session: '客户端用户会话字段'
+}
+const identityLabel = (source?: string) => source ? `会话标识来源：${identityLabels[source] || source}` : '会话标识来源未记录'
 const clientLabel = (client?: string) => {
   if (!client) return '未知客户端'
   if (/codex/i.test(client)) return 'Codex'
-  if (/claude-cli/i.test(client)) return 'Claude Code'
+  if (/claude-cli|claude-code/i.test(client)) return 'Claude Code'
   if (/opencode/i.test(client)) return 'OpenCode'
   return client
 }
 const timeLabel = (timestamp: string) => new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-const filteredGroups = computed(() => {
-  const needle = (search.value || '').trim().toLowerCase()
-  return logs.conversations.filter(group => !needle || [group.latest.model, group.latest.channelName, group.latest.client, group.key].some(value => value?.toLowerCase().includes(needle)))
-})
 
 async function locate(id?: string) {
   const revision = ++locateRevision
@@ -111,9 +129,30 @@ function scheduleRefresh() {
 }
 
 watch(() => props.requestId, id => { void locate(id) })
-watch(() => logs.typeFilter, () => { logs.reset(); void logs.loadConversations() })
+watch(search, (value, _previous, onCleanup) => {
+  logs.searchFilter = (value || '').trim()
+  logs.reset()
+  const pending = setTimeout(() => { void logs.loadConversations() }, 300)
+  onCleanup(() => clearTimeout(pending))
+})
+watch([() => logs.typeFilter, () => logs.statusFilter, days], () => {
+  logs.reset()
+  logs.searchFilter = (search.value || '').trim()
+  logs.fromFilter = days.value ? new Date(Date.now() - days.value * 86400000).toISOString() : ''
+  logs.toFilter = ''
+  void logs.loadConversations()
+})
 onMounted(async () => { await logs.loadConversations(); if (!disposed) await locate(props.requestId); scheduleRefresh() })
-onBeforeUnmount(() => { disposed = true; locateRevision++; if (timer) clearTimeout(timer); logs.reset() })
+onBeforeUnmount(() => {
+  disposed = true
+  locateRevision++
+  if (timer) clearTimeout(timer)
+  logs.reset()
+  logs.searchFilter = ''
+  logs.statusFilter = ''
+  logs.fromFilter = ''
+  logs.toFilter = ''
+})
 </script>
 
 <style scoped>
@@ -131,6 +170,7 @@ onBeforeUnmount(() => { disposed = true; locateRevision++; if (timer) clearTimeo
 .entry-heading, .entry-meta { display: flex; justify-content: space-between; gap: 12px; }
 .entry-heading > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .entry-time, .entry-meta { font-size: 12px; }
+.entry-channel { font-size: 12px; color: rgba(var(--v-theme-on-surface), 0.55); margin-bottom: 8px; }
 .entry-time { flex-shrink: 0; }
 .entry-model { margin: 6px 0 10px; overflow-wrap: anywhere; }
 .entry-time, .entry-model, .entry-meta { color: rgba(var(--v-theme-on-surface), 0.75); }

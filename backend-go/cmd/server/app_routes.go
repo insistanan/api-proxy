@@ -28,11 +28,15 @@ func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
 	apiGroup.PUT("/free-channels/kilo", channels.UpdateKiloFreeChannel(a.cfgManager))
 	apiGroup.POST("/free-channels/kilo/models/sync", channels.SyncKiloFreeModels(a.cfgManager))
 	apiGroup.GET("/request-logs", admin.GetRequestLogs(a.requestLogStore))
+	apiGroup.GET("/log-calls", admin.GetLogCalls(a.logStore))
+	apiGroup.GET("/log-call-attempts", admin.GetLogCallAttempts(a.logStore))
 	apiGroup.GET("/model-availability", channels.GetModelAvailability(a.logStore, a.cfgManager))
 	apiGroup.GET("/system-logs", admin.GetSystemLogs(a.logStore))
 	apiGroup.GET("/system-logs/:requestId", admin.GetSystemLog(a.logStore))
 	apiGroup.GET("/log-conversations", admin.GetLogConversations(a.logStore))
 	apiGroup.GET("/log-conversation-requests", admin.GetLogConversationRequests(a.logStore))
+	apiGroup.GET("/log-context-overview", admin.GetLogContextOverview(a.logStore))
+	apiGroup.GET("/runtime-logs", admin.GetRuntimeLogs(a.logStore))
 	// 会话注册表直接注入（R4-b：scheduler 退出服务定位器角色，
 	// 装配层持有实例并显式传参）。
 	apiGroup.GET("/blocked-logs", admin.GetBlockedLogs(a.blockedStore, a.conversationRegistry))

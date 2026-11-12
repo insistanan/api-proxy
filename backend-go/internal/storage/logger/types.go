@@ -44,22 +44,23 @@ type AppLog struct {
 
 // TrafficLog 是一次请求或响应的结构化正文。
 type TrafficLog struct {
-	ID            int64  `json:"id,omitempty"`
-	Timestamp     string `json:"timestamp"`
-	UnixMilli     int64  `json:"unixMilli,omitempty"`
-	RequestID     string `json:"requestId"`
-	AttemptID     string `json:"attemptId,omitempty"`
-	Phase         string `json:"phase"`
-	APIType       string `json:"apiType,omitempty"`
-	Method        string `json:"method,omitempty"`
-	URL           string `json:"url,omitempty"`
-	StatusCode    int    `json:"statusCode,omitempty"`
-	Stream        bool   `json:"stream,omitempty"`
-	HeadersJSON   string `json:"headers,omitempty"`
-	Body          string `json:"body,omitempty"`
-	Truncated     bool   `json:"truncated,omitempty"`
-	OriginalBytes int    `json:"originalBytes,omitempty"`
-	bodyPrepared  bool
+	ID               int64  `json:"id,omitempty"`
+	Timestamp        string `json:"timestamp"`
+	UnixMilli        int64  `json:"unixMilli,omitempty"`
+	RequestID        string `json:"requestId"`
+	AttemptID        string `json:"attemptId,omitempty"`
+	Phase            string `json:"phase"`
+	APIType          string `json:"apiType,omitempty"`
+	Method           string `json:"method,omitempty"`
+	URL              string `json:"url,omitempty"`
+	StatusCode       int    `json:"statusCode,omitempty"`
+	Stream           bool   `json:"stream,omitempty"`
+	HeadersJSON      string `json:"headers,omitempty"`
+	Body             string `json:"body,omitempty"`
+	Truncated        bool   `json:"truncated,omitempty"`
+	OriginalBytes    int    `json:"originalBytes,omitempty"`
+	bodyPrepared     bool
+	toolObservations []ToolObservation
 }
 
 // WithPreparedBody 绑定 PrepareBody 或 OmittedBody 的结果，避免入队前重复清洗。
@@ -101,47 +102,58 @@ type SystemLogListOptions struct {
 
 // SystemLogSummary 是一次大模型请求的流量摘要（不含正文）。
 type SystemLogSummary struct {
-	RequestID      string   `json:"requestId"`
-	Timestamp      string   `json:"timestamp"`
-	UnixMilli      int64    `json:"unixMilli"`
-	APIType        string   `json:"apiType,omitempty"`
-	Phases         []string `json:"phases"`
-	MissingPhases  []string `json:"missingPhases,omitempty"`
-	StatusCode     int      `json:"statusCode,omitempty"`
-	Stream         bool     `json:"stream"`
-	Truncated      bool     `json:"truncated"`
-	ChannelName    string   `json:"channelName,omitempty"`
-	Model          string   `json:"model,omitempty"`
-	Status         string   `json:"status,omitempty"`
-	ConversationID string   `json:"conversationId,omitempty"`
-	RequestHash    string   `json:"requestHash,omitempty"`
-	Client         string   `json:"client,omitempty"`
-	ErrorType      string   `json:"errorType,omitempty"`
-	ErrorMessage   string   `json:"errorMessage,omitempty"`
-	StartedAt      int64    `json:"startedAt,omitempty"`
+	RequestID      string           `json:"requestId"`
+	Timestamp      string           `json:"timestamp"`
+	UnixMilli      int64            `json:"unixMilli"`
+	APIType        string           `json:"apiType,omitempty"`
+	Phases         []string         `json:"phases"`
+	MissingPhases  []string         `json:"missingPhases,omitempty"`
+	StatusCode     int              `json:"statusCode,omitempty"`
+	Stream         bool             `json:"stream"`
+	Truncated      bool             `json:"truncated"`
+	ChannelName    string           `json:"channelName,omitempty"`
+	Model          string           `json:"model,omitempty"`
+	Status         string           `json:"status,omitempty"`
+	ConversationID string           `json:"conversationId,omitempty"`
+	RequestHash    string           `json:"requestHash,omitempty"`
+	Client         string           `json:"client,omitempty"`
+	ErrorType      string           `json:"errorType,omitempty"`
+	ErrorMessage   string           `json:"errorMessage,omitempty"`
+	StartedAt      int64            `json:"startedAt,omitempty"`
+	PromptPreview  string           `json:"promptPreview,omitempty"`
+	ClientFamily   string           `json:"clientFamily,omitempty"`
+	IdentitySource string           `json:"identitySource,omitempty"`
+	Context        *ContextSnapshot `json:"context,omitempty"`
 }
 
 // RequestLifecycle 只记录身份和结果，不重复保存请求正文。
 type RequestLifecycle struct {
-	Stream         bool   `json:"stream"`
-	ConversationID string `json:"conversationId,omitempty"`
-	RequestHash    string `json:"requestHash,omitempty"`
-	Client         string `json:"client,omitempty"`
-	BootID         string `json:"bootId,omitempty"`
-	Model          string `json:"model,omitempty"`
-	Status         string `json:"status,omitempty"`
-	StatusCode     int    `json:"statusCode,omitempty"`
-	ErrorType      string `json:"errorType,omitempty"`
-	ErrorMessage   string `json:"errorMessage,omitempty"`
-	StartedAt      int64  `json:"startedAt"`
+	Stream         bool             `json:"stream"`
+	ConversationID string           `json:"conversationId,omitempty"`
+	RequestHash    string           `json:"requestHash,omitempty"`
+	Client         string           `json:"client,omitempty"`
+	BootID         string           `json:"bootId,omitempty"`
+	Model          string           `json:"model,omitempty"`
+	Status         string           `json:"status,omitempty"`
+	StatusCode     int              `json:"statusCode,omitempty"`
+	ErrorType      string           `json:"errorType,omitempty"`
+	ErrorMessage   string           `json:"errorMessage,omitempty"`
+	StartedAt      int64            `json:"startedAt"`
+	PromptPreview  string           `json:"promptPreview,omitempty"`
+	ClientFamily   string           `json:"clientFamily,omitempty"`
+	IdentitySource string           `json:"identitySource,omitempty"`
+	Context        *ContextSnapshot `json:"context,omitempty"`
 }
 
 // SystemLogDetail 是一次请求的流量正文详情。
 type SystemLogDetail struct {
-	RequestID   string            `json:"requestId"`
-	Summary     SystemLogSummary  `json:"summary"`
-	TrafficLogs []TrafficLog      `json:"trafficLogs"`
-	RequestLogs []json.RawMessage `json:"requestLogs,omitempty"`
+	RequestID     string             `json:"requestId"`
+	Summary       SystemLogSummary   `json:"summary"`
+	TrafficLogs   []TrafficLog       `json:"trafficLogs"`
+	RequestLogs   []json.RawMessage  `json:"requestLogs,omitempty"`
+	Contexts      []*ContextSnapshot `json:"contexts,omitempty"`
+	ContextChange *ContextChange     `json:"contextChange,omitempty"`
+	ToolLinks     *ToolLinks         `json:"toolLinks,omitempty"`
 }
 
 // QueryResult 是 CLI `logs query` 的 stdout JSON。

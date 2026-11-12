@@ -53,6 +53,31 @@ export interface RequestLogsResponse {
   limit: number
 }
 
+export interface LogCallSummary {
+  summary: SystemLogSummary
+  attemptCount: number
+  attemptsVersion?: number
+}
+
+export interface LogCallsResponse {
+  calls: LogCallSummary[]
+  nextCursor?: string
+}
+
+export interface LogCallAttempts {
+  attempts: RequestLogEntry[]
+  limited: boolean
+  notice: string
+}
+
+export interface LogCallFilters {
+  type?: LogAPIType | ''
+  q?: string
+  status?: string
+  from?: string
+  to?: string
+}
+
 export type TrafficLogPhase = 'client_request' | 'upstream_request' | 'upstream_response' | 'stream_synth'
 
 export interface TrafficLog {
@@ -92,6 +117,83 @@ export interface SystemLogSummary {
   errorType?: string
   errorMessage?: string
   startedAt?: number
+  promptPreview?: string
+  clientFamily?: string
+  identitySource?: string
+  context?: ContextSnapshot
+}
+
+export interface ContextPart {
+  kind: string
+  items: number
+  bytes: number
+  estimatedTokens: number
+}
+
+export interface ContextItem {
+  path: string
+  kind: string
+  hash: string
+  estimatedTokens: number
+}
+
+export interface ContextSnapshot {
+  trafficId?: number
+  phase?: string
+  attemptId?: string
+  completeness: 'captured' | 'summary' | 'unavailable'
+  notice?: string
+  previousResponseId?: string
+  messageCount: number
+  originalMessages: number
+  estimatedTokens: number
+  parts: ContextPart[]
+  items?: ContextItem[]
+  itemsLimited?: boolean
+  inputChange?: ContextChange
+}
+
+export interface ContextChange {
+  previousRequestId: string
+  added: number
+  removed: number
+  estimatedDelta: number
+  comparable: boolean
+  orderChanged: boolean
+  notice: string
+}
+
+export interface ContextTrendPoint {
+  firstAt: number
+  lastAt: number
+  requestId?: string
+  calls: number
+  knownCalls: number
+  peak?: ContextSnapshot
+}
+
+export interface ContextOverview {
+  calls: number
+  knownCalls: number
+  bucketSize: number
+  points: ContextTrendPoint[]
+}
+
+export interface ToolObservation {
+  callId: string
+  role: 'call' | 'result'
+  name?: string
+  source: 'input_history' | 'model_output'
+  path: string
+  requestId: string
+  attemptId?: string
+  isError?: boolean
+}
+
+export interface ToolLinks {
+  observations: ToolObservation[]
+  limited: boolean
+  notice: string
 }
 
 export interface SystemLogsResponse {
@@ -103,15 +205,30 @@ export interface LogConversationSummary {
   key: string
   latest: SystemLogSummary
   requestCount: number
+  title?: string
 }
 
 export interface LogConversationsResponse {
   conversations: LogConversationSummary[]
   nextCursor?: string
+  total?: number
 }
 
 export interface LogConversationRequestsResponse {
   logs: SystemLogSummary[]
+  nextCursor?: string
+}
+
+export interface RuntimeLogEntry {
+  id: number
+  timestamp: string
+  unixMilli: number
+  tag?: string
+  message: string
+}
+
+export interface RuntimeLogsResponse {
+  logs: RuntimeLogEntry[]
   nextCursor?: string
 }
 
@@ -120,6 +237,9 @@ export interface SystemLogDetail {
   summary: SystemLogSummary
   trafficLogs: TrafficLog[]
   requestLogs?: RequestLogEntry[]
+  contexts?: ContextSnapshot[]
+  contextChange?: ContextChange
+  toolLinks?: ToolLinks
 }
 
 /** 一个存在日志记录的本地日历日（清理入口用）。 */

@@ -34,6 +34,24 @@ describe('日志详情缓存', () => {
     expect(store.details.one!.summary.unixMilli).toBe(2)
   })
 
+  it('会话在同一毫秒新增调用时重新查询工具关联，晚到结果不能覆盖缓存', async () => {
+    let resolve!: (_detail: SystemLogDetail) => void
+    const old = new Promise<SystemLogDetail>(done => { resolve = done })
+    const updated = { ...detail('one'), toolLinks: { observations: [], limited: false, notice: '已包含后续结果' } }
+    const fetch = vi.spyOn(api, 'getSystemLog').mockReturnValueOnce(old).mockResolvedValueOnce(updated)
+    const store = useLogsStore()
+    store.selectedKey = 'responses:one'
+    store.selectedConversation = { key: 'responses:one', latest: summary('one'), requestCount: 1 }
+    const pending = store.loadDetail('one', summary('one'))
+    store.selectedConversation = { key: 'responses:one', latest: summary('two'), requestCount: 2 }
+    await store.loadDetail('one', summary('one'))
+    resolve(detail('one'))
+    await pending
+    await store.loadDetail('one', summary('one'))
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(store.details.one!.toolLinks?.notice).toBe('已包含后续结果')
+  })
+
   it('重置后晚到请求不能重新填入缓存', async () => {
     let resolve!: (_detail: SystemLogDetail) => void
     vi.spyOn(api, 'getSystemLog').mockImplementation(() => new Promise(done => { resolve = done }))
@@ -70,6 +88,25 @@ describe('日志详情缓存', () => {
 })
 
 describe('会话选择与分页', () => {
+  it('筛选参数交给服务端，较早搜索的晚到结果不能覆盖新搜索', async () => {
+    let resolve!: (_page: { conversations: []; total: number }) => void
+    const old = new Promise<{ conversations: []; total: number }>(done => { resolve = done })
+    const fetch = vi.spyOn(api, 'getLogConversations').mockReturnValueOnce(old).mockResolvedValueOnce({ conversations: [{ key: 'responses:one', latest: summary('new'), requestCount: 3 }], total: 1 })
+    const store = useLogsStore()
+    store.searchFilter = '旧任务'
+    const pending = store.loadConversations()
+    store.searchFilter = '搜索_100%'
+    store.statusFilter = 'failed'
+    store.fromFilter = '2026-11-01T00:00:00Z'
+    store.toFilter = '2026-11-12T00:00:00Z'
+    await store.loadConversations()
+    resolve({ conversations: [], total: 0 })
+    await pending
+    expect(fetch).toHaveBeenLastCalledWith(expect.objectContaining({ q: '搜索_100%', status: 'failed', from: store.fromFilter, to: store.toFilter }))
+    expect(store.conversations[0]?.latest.requestId).toBe('new')
+    expect(store.totalConversations).toBe(1)
+  })
+
   it('首屏为空时清除已删除的会话、轮次及正文', async () => {
     vi.spyOn(api, 'getSystemLog').mockResolvedValue(detail('old'))
     vi.spyOn(api, 'getLogConversationRequests').mockResolvedValue({ logs: [summary('old')] })

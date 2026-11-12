@@ -61,6 +61,7 @@ type Store struct {
 	readOnly     bool
 	bodyRefs     bool
 	requestIndex bool
+	toolIndex    bool
 	closeErr     error
 
 	queueMu        sync.Mutex
@@ -163,6 +164,13 @@ func initLogSchema(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_request_logs_unix ON request_logs(unix_milli, id)`,
 		`CREATE INDEX IF NOT EXISTS idx_request_logs_api ON request_logs(api_type, unix_milli, id)`,
 		`CREATE INDEX IF NOT EXISTS idx_request_logs_request ON request_logs(request_id, unix_milli, id)`,
+		`CREATE TABLE IF NOT EXISTS log_tool_observations (
+			traffic_id INTEGER NOT NULL, ordinal INTEGER NOT NULL, request_id TEXT NOT NULL,
+			call_id TEXT NOT NULL, payload_json TEXT NOT NULL, PRIMARY KEY(traffic_id, ordinal)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_log_tools_call ON log_tool_observations(call_id, request_id)`,
+		`CREATE TRIGGER IF NOT EXISTS delete_log_tools AFTER DELETE ON traffic_logs
+			BEGIN DELETE FROM log_tool_observations WHERE traffic_id = OLD.id; END`,
 		`CREATE TABLE IF NOT EXISTS availability_samples (
 			request_log_id INTEGER PRIMARY KEY,
 			unix_milli INTEGER NOT NULL,
@@ -219,6 +227,7 @@ func Open(path string) (*Store, error) {
 		bootID:       NewRequestID(),
 		bodyRefs:     true,
 		requestIndex: true,
+		toolIndex:    true,
 		queue:        make(chan queuedWrite, writeQueueSize),
 		done:         make(chan struct{}),
 		spaceReady:   make(chan struct{}),
@@ -269,6 +278,11 @@ func OpenReadOnly(path string) (*Store, error) {
 		return nil, fmt.Errorf("读取日志摘要索引结构失败: %w", err)
 	}
 	store.requestIndex = count > 0
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'log_tool_observations'`).Scan(&count); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("读取工具关联索引结构失败: %w", err)
+	}
+	store.toolIndex = store.requestIndex && count > 0
 	return store, nil
 }
 
@@ -291,7 +305,7 @@ func queuedWriteBytes(item queuedWrite) int {
 	return 512 + len(item.app.Timestamp) + len(item.app.Tag) + len(item.app.Message) +
 		len(item.traffic.Timestamp) + len(item.traffic.RequestID) + len(item.traffic.AttemptID) +
 		len(item.traffic.Phase) + len(item.traffic.APIType) + len(item.traffic.Method) +
-		len(item.traffic.URL) + len(item.traffic.HeadersJSON) + len(item.traffic.Body) +
+		len(item.traffic.URL) + len(item.traffic.HeadersJSON) + len(item.traffic.Body) + len(item.traffic.toolObservations)*2048 +
 		len(item.request.Timestamp) + len(item.request.RequestID) + len(item.request.APIType) + len(item.request.Payload)
 }
 
@@ -312,6 +326,7 @@ func (s *Store) RecordAppLog(entry AppLog) error {
 
 func (s *Store) RecordTraffic(entry TrafficLog) error {
 	entry = normalizeTrafficLog(entry)
+	entry.toolObservations = extractToolObservations(entry)
 	// 索引依赖生命周期 JSON；非法输入在入队前拒绝，避免永久重试阻塞后续日志。
 	if _, err := parseTrafficLifecycle(entry.Phase, entry.Body); err != nil {
 		s.reportError(err)

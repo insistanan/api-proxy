@@ -33,15 +33,87 @@ func writeLogPageError(c *gin.Context, err error) {
 	c.JSON(status, gin.H{"error": err.Error()})
 }
 
+func logListOptions(c *gin.Context) (logger.LogConversationListOptions, bool) {
+	var opts logger.LogConversationListOptions
+	limit, ok := logPageLimit(c, 50)
+	if !ok {
+		return opts, false
+	}
+	search := strings.TrimSpace(c.Query("q"))
+	if len([]rune(search)) > 200 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "搜索内容不能超过 200 个字符"})
+		return opts, false
+	}
+	status := c.Query("status")
+	switch status {
+	case "", "completed", "failed", "processing", "retrying", "cancelled", "interrupted", "blocked":
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的调用状态"})
+		return opts, false
+	}
+	from, ok := parseRequestLogTime(c, "from")
+	if !ok {
+		return opts, false
+	}
+	to, ok := parseRequestLogTime(c, "to")
+	if !ok {
+		return opts, false
+	}
+	if !from.IsZero() && !to.IsZero() && from.After(to) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "开始时间不能晚于结束时间"})
+		return opts, false
+	}
+	var fromMilli, toMilli int64
+	if !from.IsZero() {
+		fromMilli = from.UnixMilli()
+	}
+	if !to.IsZero() {
+		toMilli = to.UnixMilli()
+	}
+	return logger.LogConversationListOptions{
+		APIType: c.Query("type"), Cursor: c.Query("cursor"), Limit: limit,
+		Search: search, Status: status, From: fromMilli, To: toMilli,
+	}, true
+}
+
 func GetLogConversations(store *logger.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		limit, ok := logPageLimit(c, 50)
+		opts, ok := logListOptions(c)
 		if !ok {
 			return
 		}
-		page, err := store.ListLogConversations(c.Request.Context(), logger.LogConversationListOptions{
-			APIType: c.Query("type"), Cursor: c.Query("cursor"), Limit: limit,
-		})
+		page, err := store.ListLogConversations(c.Request.Context(), opts)
+		if err != nil {
+			writeLogPageError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, page)
+	}
+}
+
+func GetLogCalls(store *logger.Store) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		opts, ok := logListOptions(c)
+		if !ok {
+			return
+		}
+		page, err := store.ListLogCalls(c.Request.Context(), opts)
+		if err != nil {
+			writeLogPageError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, page)
+	}
+}
+
+func GetLogCallAttempts(store *logger.Store) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		requestID := strings.TrimSpace(c.Query("requestId"))
+		if requestID == "" || len(requestID) > 2048 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "缺少或无效的调用标识"})
+			return
+		}
+		page, err := store.GetLogCallAttempts(c.Request.Context(), requestID)
 		if err != nil {
 			writeLogPageError(c, err)
 			return
@@ -59,6 +131,42 @@ func GetLogConversationRequests(store *logger.Store) gin.HandlerFunc {
 		page, err := store.ListLogConversationRequests(c.Request.Context(), logger.LogConversationRequestOptions{
 			Key: c.Query("key"), Before: c.Query("before"), Anchor: c.Query("anchor"), Limit: limit,
 		})
+		if err != nil {
+			writeLogPageError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, page)
+	}
+}
+
+func GetLogContextOverview(store *logger.Store) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		key := strings.TrimSpace(c.Query("key"))
+		if key == "" || len(key) > 2048 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "缺少或无效的会话标识"})
+			return
+		}
+		overview, err := store.GetContextOverview(c.Request.Context(), key)
+		if err != nil {
+			writeLogPageError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, overview)
+	}
+}
+
+func GetRuntimeLogs(store *logger.Store) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		limit, ok := logPageLimit(c, 100)
+		if !ok {
+			return
+		}
+		search := strings.TrimSpace(c.Query("q"))
+		if len([]rune(search)) > 200 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "搜索内容不能超过 200 个字符"})
+			return
+		}
+		page, err := store.ListRuntimeLogs(c.Request.Context(), logger.RuntimeLogOptions{Search: search, Before: c.Query("before"), Limit: limit})
 		if err != nil {
 			writeLogPageError(c, err)
 			return

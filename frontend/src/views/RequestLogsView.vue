@@ -1,15 +1,20 @@
 <template>
   <div class="request-logs-view" :class="{ 'system-tab-active': activeTab === 'system' }">
-    <PageHeader title="请求与系统日志" description="筛选最近 50 条请求，查看正文、耗时和对应的运行日志。" />
+    <PageHeader title="请求与会话观测" description="查看上游尝试、会话轨迹，以及模型每次调用的上下文与变化。" />
     <div class="logs-toolbar">
       <v-tabs v-model="activeTab" color="primary" density="comfortable" class="logs-tabs">
-        <v-tab value="request">请求日志</v-tab>
-        <v-tab value="system">系统日志</v-tab>
+        <v-tab value="request">模型调用</v-tab>
+        <v-tab value="system">会话轨迹</v-tab>
+        <v-tab value="runtime">运行日志</v-tab>
       </v-tabs>
     </div>
 
     <div v-show="activeTab === 'request'" class="request-tab-panel">
       <div class="logs-actions mb-4">
+        <v-btn-toggle v-model="requestMode" mandatory density="compact" variant="outlined" divided aria-label="请求日志展示方式">
+          <v-btn value="calls" size="small">按调用聚合</v-btn>
+          <v-btn value="attempts" size="small">逐次尝试</v-btn>
+        </v-btn-toggle>
         <v-select
           v-model="datePreset"
           :items="datePresetItems"
@@ -26,13 +31,13 @@
           <v-text-field v-model="toTime" type="datetime-local" label="结束时间" density="compact" hide-details />
         </template>
         <v-select v-model="typeFilter" :items="typeItems" label="入口类型" density="compact" hide-details class="type-filter-select" />
-        <span class="logs-count text-body-2 text-medium-emphasis" role="status">{{ requestLogs.length }} / 50 条</span>
+        <span class="logs-count text-body-2 text-medium-emphasis" role="status">{{ requestMode === 'calls' ? `已加载 ${callStore.calls.length} 次调用` : `最近 ${requestLogs.length} / 50 次尝试` }}</span>
         <v-btn
           color="primary"
           variant="tonal"
           size="small"
           prepend-icon="mdi-refresh"
-          :loading="loading"
+          :loading="requestMode === 'calls' ? callStore.loading : loading"
           @click="loadLogs"
         >
           刷新
@@ -57,7 +62,8 @@
         <span v-if="requestLogs.length">；下方保留上次成功加载的结果。</span>
       </v-alert>
 
-      <v-card variant="flat" class="logs-table-card" :aria-busy="loading">
+      <RequestCallsPanel v-if="activeTab === 'request' && requestMode === 'calls' && callFilters" :filters="callFilters" @inspect="openCallDetail" @locate="openSystemLog" @failure="selectedFailure = $event" />
+      <v-card v-if="requestMode === 'attempts'" variant="flat" class="logs-table-card" :aria-busy="loading">
         <v-progress-linear :active="loading" :indeterminate="loading" color="primary" height="2" />
         <v-table density="comfortable" class="request-logs-table" fixed-header>
           <thead>
@@ -166,6 +172,12 @@
 
     <PromptBodyDialog v-model="bodyDialogVisible" :request-id="bodyRequestId" />
     <RequestFailureDialog v-model="selectedFailure" @locate="openSystemLog" />
+    <v-dialog v-model="callDetailOpen" max-width="1200" scrollable>
+      <v-card>
+        <v-card-title class="d-flex align-center">调用正文详情<v-spacer /><v-btn icon="mdi-close" size="small" variant="text" aria-label="关闭正文详情" @click="callDetailOpen = false" /></v-card-title>
+        <v-card-text><RequestLogDetail v-if="callDetailOpen" :request-id="callDetailId" :source-version="callDetailVersion" @locate="locateFromDetail" /></v-card-text>
+      </v-card>
+    </v-dialog>
 
     <SystemLogsPanel
       v-if="activeTab === 'system'"
@@ -174,6 +186,7 @@
       @select="openSystemLog"
       @back="backToRequestTab"
     />
+    <RuntimeLogsPanel v-if="activeTab === 'runtime'" />
 
     <v-dialog v-model="purgeDialog" max-width="480" persistent>
       <v-card>
@@ -229,10 +242,16 @@ import { useRoute, useRouter } from 'vue-router'
 import PromptBodyDialog from '@/components/PromptBodyDialog.vue'
 import RequestFailureDialog from '@/components/RequestFailureDialog.vue'
 import SystemLogsPanel from '@/components/SystemLogsPanel.vue'
+import RuntimeLogsPanel from '@/components/RuntimeLogsPanel.vue'
+import RequestCallsPanel from '@/components/RequestCallsPanel.vue'
+import RequestLogDetail from '@/components/RequestLogDetail.vue'
+import { callVersion, useLogCallsStore } from '@/stores/logCalls'
+import { useLogsStore } from '@/stores/logs'
+import type { LogCallFilters } from '@/types/logs'
 import { api, type LogAPIType, type LogAvailableDate, type RequestLogEntry } from '@/services/api'
 
 type TypeFilter = LogAPIType | ''
-type LogsTab = 'request' | 'system'
+type LogsTab = 'request' | 'system' | 'runtime'
 type DatePreset = 'today' | 'yesterday' | 'all' | 'custom'
 
 const typeLabelMap: Record<LogAPIType, string> = {
@@ -260,6 +279,16 @@ const datePresetItems: Array<{ title: string; value: DatePreset }> = [
 ]
 
 const typeFilter = ref<TypeFilter>('')
+const requestMode = ref<'calls' | 'attempts'>('calls')
+const callFilters = shallowRef<LogCallFilters | null>(null)
+const callStore = useLogCallsStore()
+const logsStore = useLogsStore()
+const callDetailOpen = ref(false)
+const callDetailId = ref('')
+const callDetailVersion = computed(() => {
+  const call = callStore.calls.find(item => item.summary.requestId === callDetailId.value)
+  return call ? callVersion(call) : undefined
+})
 const datePreset = ref<DatePreset>('all')
 const fromTime = ref('')
 const toTime = ref('')
@@ -284,11 +313,12 @@ const route = useRoute()
 const router = useRouter()
 
 const activeTab = computed({
-  get: (): LogsTab => (route.query.tab === 'system' ? 'system' : 'request'),
+  get: (): LogsTab => (route.query.tab === 'system' ? 'system' : route.query.tab === 'runtime' ? 'runtime' : 'request'),
   set: (tab: LogsTab) => {
     const query = { ...route.query }
-    if (tab === 'system') {
-      query.tab = 'system'
+    if (tab !== 'request') {
+      query.tab = tab
+      if (tab === 'runtime') delete query.id
     } else {
       delete query.tab
       delete query.id
@@ -320,6 +350,15 @@ const openBodyDialog = (requestId: string) => {
   if (!requestId) return
   bodyRequestId.value = requestId
   bodyDialogVisible.value = true
+}
+
+const openCallDetail = (requestId: string) => {
+  callDetailId.value = requestId
+  callDetailOpen.value = true
+}
+const locateFromDetail = (requestId: string) => {
+  callDetailOpen.value = false
+  openSystemLog(requestId)
 }
 
 type DateRange = { from: string; to: string }
@@ -363,6 +402,12 @@ const loadLogs = async () => {
   const range = resolveDateRange()
   if (!range) {
     loading.value = false
+    return
+  }
+  if (requestMode.value === 'calls') {
+    loading.value = false
+    error.value = ''
+    callFilters.value = { type: typeFilter.value, from: range.from, to: range.to }
     return
   }
   loading.value = true
@@ -418,6 +463,9 @@ const confirmPurge = async () => {
     purgeDialog.value = false
     purgeDates.value = []
     purgeDate.value = ''
+    callStore.reset()
+    logsStore.reset()
+    callDetailOpen.value = false
     await loadLogs()
     purgeNotice.value = `清理完成，共删除 ${total.toLocaleString()} 条日志记录`
   } catch (err) {
@@ -510,23 +558,26 @@ const formatCacheHitRate = (log: RequestLogEntry) => {
 }
 
 watch(typeFilter, () => {
-  loadLogs()
+  if (activeTab.value === 'request') void loadLogs()
 })
 
 watch(datePreset, () => {
   if (datePreset.value === 'custom') return
-  loadLogs()
+  if (activeTab.value === 'request') void loadLogs()
 })
 
 watch([fromTime, toTime], () => {
-  if (datePreset.value === 'custom') {
-    loadLogs()
+  if (activeTab.value === 'request' && datePreset.value === 'custom') {
+    void loadLogs()
   }
 })
 
-onMounted(() => {
-  loadLogs()
+watch(activeTab, tab => { if (tab === 'request') void loadLogs() })
+watch(requestMode, () => {
+  logRequestSequence++
+  if (activeTab.value === 'request') void loadLogs()
 })
+onMounted(() => { if (activeTab.value === 'request') void loadLogs() })
 onBeforeUnmount(() => { logRequestSequence++ })
 </script>
 

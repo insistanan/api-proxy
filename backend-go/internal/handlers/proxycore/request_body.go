@@ -80,6 +80,9 @@ func LogOriginalRequest(c *gin.Context, bodyBytes []byte, envCfg *config.EnvConf
 	requestID := BindRequestLogID(c)
 	log.Printf("[Request-Receive] requestId=%s 收到%s请求: %s %s", requestID, apiType, c.Request.Method, c.Request.URL.Path)
 	preparedBody, originalBytes, truncated := logger.PrepareBody(bodyBytes)
+	if state := requestLifecycle(c); state != nil {
+		state.Context = logger.ContextHead(logger.AnalyzeContext(logger.TrafficLog{Phase: logger.PhaseClientRequest, Body: preparedBody, Truncated: truncated}))
+	}
 
 	if envCfg.ShouldLog("debug") {
 		var formattedBody string
@@ -123,6 +126,9 @@ func LogOriginalRequest(c *gin.Context, bodyBytes []byte, envCfg *config.EnvConf
 		if err != nil {
 			log.Printf("[Request-Log] requestId=%s 提取结构化输入失败: %v", requestID, err)
 			return
+		}
+		if state := requestLifecycle(c); state != nil {
+			state.Context = logger.ContextHead(logger.AnalyzeContext(logger.TrafficLog{Phase: logger.PhaseClientInput, Body: structuredBody}))
 		}
 		logger.RecordTraffic(logger.TrafficLog{
 			RequestID: requestID, Phase: logger.PhaseClientInput, APIType: apiType,

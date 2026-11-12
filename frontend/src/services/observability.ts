@@ -8,18 +8,37 @@ import type {
   ConversationEntry,
   ConversationKind,
   ConversationRouteOptionsResponse,
+  ContextOverview,
   ConversationsResponse,
   LogAPIType,
+  LogCallAttempts,
+  LogCallFilters,
+  LogCallsResponse,
   LogDatesResponse,
   LogConversationsResponse,
   LogConversationRequestsResponse,
   PurgeLogsResult,
   RequestLogsResponse,
+  RuntimeLogsResponse,
   SystemLogDetail,
   SystemLogsResponse
 } from '@/types'
 
 export const observabilityApi = {
+  async getLogCalls(params: LogCallFilters & { cursor?: string; limit?: number } = {}): Promise<LogCallsResponse> {
+    const search = new URLSearchParams()
+    for (const key of ['type', 'q', 'status', 'from', 'to', 'cursor'] as const) {
+      const value = params[key]
+      if (value) search.set(key, value)
+    }
+    if (params.limit) search.set('limit', String(params.limit))
+    return apiRequest(`/log-calls?${search}`)
+  },
+
+  async getLogCallAttempts(requestId: string): Promise<LogCallAttempts> {
+    return apiRequest(`/log-call-attempts?${new URLSearchParams({ requestId })}`)
+  },
+
   async getRequestLogs(
     params: { type?: LogAPIType | ''; limit?: number; from?: string; to?: string } = {}
   ): Promise<RequestLogsResponse> {
@@ -44,10 +63,14 @@ export const observabilityApi = {
     return apiRequest(`/system-logs/${encodeURIComponent(requestId)}`)
   },
 
-  async getLogConversations(params: { type?: LogAPIType | ''; cursor?: string; limit?: number } = {}): Promise<LogConversationsResponse> {
+  async getLogConversations(params: { type?: LogAPIType | ''; cursor?: string; limit?: number; q?: string; status?: string; from?: string; to?: string } = {}): Promise<LogConversationsResponse> {
     const search = new URLSearchParams()
     if (params.type) search.set('type', params.type)
     if (params.cursor) search.set('cursor', params.cursor)
+    if (params.q) search.set('q', params.q)
+    if (params.status) search.set('status', params.status)
+    if (params.from) search.set('from', params.from)
+    if (params.to) search.set('to', params.to)
     if (params.limit) search.set('limit', String(params.limit))
     return apiRequest(`/log-conversations?${search}`)
   },
@@ -58,6 +81,17 @@ export const observabilityApi = {
     if (params.anchor) search.set('anchor', params.anchor)
     if (params.limit) search.set('limit', String(params.limit))
     return apiRequest(`/log-conversation-requests?${search}`)
+  },
+
+  async getLogContextOverview(key: string): Promise<ContextOverview> {
+    return apiRequest(`/log-context-overview?${new URLSearchParams({ key })}`)
+  },
+
+  async getRuntimeLogs(params: { q?: string; before?: string } = {}): Promise<RuntimeLogsResponse> {
+    const search = new URLSearchParams()
+    if (params.q) search.set('q', params.q)
+    if (params.before) search.set('before', params.before)
+    return apiRequest(`/runtime-logs?${search}`)
   },
 
   async getBlockedLogs(params: BlockedLogFilters = {}): Promise<BlockedLogsResponse> {

@@ -124,6 +124,8 @@ func RunProxyRequest(
 		c.Set(utils.ContextKeyCodexDisguise, cfgManager.GetCodexDisguiseEnabled())
 	}
 	identity := ResolveConversationIdentity(c, bodyBytes)
+	requestState.ClientFamily = identity.ClientFamily
+	requestState.IdentitySource = identity.Source
 	requestState.Model = model
 	requestState.Stream = stream
 	transcript := BuildConversationTranscript(string(spec.Kind), bodyBytes)
@@ -194,6 +196,9 @@ func RunProxyRequest(
 
 	// 5. 记录原始请求
 	requestState.ConversationID = conversationID
+	if len(prompts) > 0 {
+		requestState.PromptPreview = logger.LogPreview(prompts[0], 160)
+	}
 	recordRequestLifecycle(c, envCfg, spec.LogName, logger.PhaseRequestStart, requestState)
 	LogOriginalRequest(c, bodyBytes, envCfg, spec.LogName)
 

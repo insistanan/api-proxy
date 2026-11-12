@@ -9,12 +9,21 @@ const MAX_CACHE_BYTES = 16 * 1024 * 1024
 const MAX_CACHE_ENTRIES = 40
 
 export function summaryVersion(summary: SystemLogSummary): string {
-  return JSON.stringify([summary.unixMilli, summary.status, summary.statusCode, summary.phases, summary.missingPhases, summary.stream, summary.truncated, summary.channelName, summary.model, summary.client, summary.apiType, summary.conversationId, summary.requestHash, summary.errorType, summary.errorMessage])
+  return JSON.stringify([summary.unixMilli, summary.status, summary.statusCode, summary.phases, summary.missingPhases, summary.stream, summary.truncated, summary.channelName, summary.model, summary.client, summary.apiType, summary.conversationId, summary.requestHash, summary.errorType, summary.errorMessage, summary.promptPreview, summary.clientFamily, summary.identitySource, summary.context])
+}
+
+export function conversationVersion(group: LogConversationSummary | null): string {
+  return group ? JSON.stringify([group.latest.requestId, group.requestCount, summaryVersion(group.latest)]) : ''
 }
 
 export const useLogsStore = defineStore('logs', () => {
   // ===== 状态 =====
   const typeFilter = ref<LogAPIType | ''>('')
+  const searchFilter = ref('')
+  const statusFilter = ref('')
+  const fromFilter = ref('')
+  const toFilter = ref('')
+  const totalConversations = ref<number | null>(null)
   const conversations = shallowRef<LogConversationSummary[]>([])
   const nextConversationCursor = ref('')
   const selectedKey = ref('')
@@ -29,8 +38,9 @@ export const useLogsStore = defineStore('logs', () => {
   const details = shallowRef<Record<string, SystemLogDetail>>({})
   const detailErrors = ref<Record<string, string>>({})
   // 非响应式的请求句柄与缓存记账，不承载 UI 状态。
-  const pending = new Map<string, { version: string; promise: Promise<SystemLogDetail> }>()
+  const pending = new Map<string, { version: string; relatedVersion: string; promise: Promise<SystemLogDetail> }>()
   const sizes = new Map<string, number>()
+  const relatedVersions = new Map<string, string>()
   let listRevision = 0
   let roundsRevision = 0
   let selectionRevision = 0
@@ -42,7 +52,7 @@ export const useLogsStore = defineStore('logs', () => {
   function cacheDetail(detail: SystemLogDetail) {
     const id = detail.requestId
     // 按 UTF-16 字符保守估算正文与头部占用，不为计数重新序列化整个详情。
-    const bytes = 2048 + detail.trafficLogs.reduce((sum, log) => sum + 2 * ((log.body?.length || 0) + (log.headers?.length || 0)), 0)
+    const bytes = 2048 + 2 * (JSON.stringify(detail.contexts || []).length + JSON.stringify(detail.toolLinks || {}).length) + detail.trafficLogs.reduce((sum, log) => sum + 2 * ((log.body?.length || 0) + (log.headers?.length || 0)), 0)
     if (bytes > MAX_CACHE_BYTES) throw new Error('单次请求详情超过 16 MiB 浏览器缓存预算，请使用 CLI 查询。')
     sizes.delete(id)
     sizes.set(id, bytes)
@@ -53,6 +63,7 @@ export const useLogsStore = defineStore('logs', () => {
       if (key === id) continue
       delete next[key]
       sizes.delete(key)
+      relatedVersions.delete(key)
       total -= size
     }
     details.value = next
@@ -61,15 +72,18 @@ export const useLogsStore = defineStore('logs', () => {
   async function loadDetail(id: string, summary?: SystemLogSummary, force = false): Promise<SystemLogDetail> {
     const cached = details.value[id]
     const version = summary ? summaryVersion(summary) : ''
-    if (!force && cached && (summary ? summaryVersion(cached.summary) === version : !['processing', 'retrying'].includes(cached.summary.status || ''))) {
+    const knownSummary = summary || cached?.summary
+    const relatedVersion = knownSummary && logConversationKey(knownSummary) === selectedKey.value ? conversationVersion(selectedConversation.value) : ''
+    if (!force && cached && relatedVersions.get(id) === relatedVersion && (summary ? summaryVersion(cached.summary) === version : !['processing', 'retrying'].includes(cached.summary.status || ''))) {
       return cached
     }
     const inFlight = pending.get(id)
-    if (inFlight && (!version || inFlight.version === version)) return inFlight.promise
+    if (inFlight && inFlight.relatedVersion === relatedVersion && (!version || inFlight.version === version)) return inFlight.promise
     const epoch = lifetime
     const promise: Promise<SystemLogDetail> = api.getSystemLog(id).then(detail => {
       if (epoch === lifetime && pending.get(id)?.promise === promise) {
         cacheDetail(detail)
+        relatedVersions.set(id, relatedVersion)
         delete detailErrors.value[id]
       }
       return detail
@@ -77,7 +91,7 @@ export const useLogsStore = defineStore('logs', () => {
       if (epoch === lifetime && pending.get(id)?.promise === promise) detailErrors.value[id] = error instanceof Error ? error.message : '读取请求详情失败'
       throw error
     }).finally(() => { if (pending.get(id)?.promise === promise) pending.delete(id) })
-    pending.set(id, { version, promise })
+    pending.set(id, { version, relatedVersion, promise })
     return promise
   }
 
@@ -86,13 +100,14 @@ export const useLogsStore = defineStore('logs', () => {
     listLoading.value = true
     listError.value = ''
     try {
-      const page = await api.getLogConversations({ type: typeFilter.value, cursor: more ? nextConversationCursor.value : undefined, limit: 50 })
+      const page = await api.getLogConversations({ type: typeFilter.value, q: searchFilter.value, status: statusFilter.value, from: fromFilter.value, to: toFilter.value, cursor: more ? nextConversationCursor.value : undefined, limit: 50 })
       if (revision !== listRevision) return
       // 首屏明确为空时，清掉已删除日志的选择与正文，避免继续钉住旧会话。
-      if (!more && page.conversations.length === 0 && !page.nextCursor) { reset(); return }
+      if (!more && page.conversations.length === 0 && !page.nextCursor) { reset(); totalConversations.value = page.total ?? 0; return }
+      if (!more || page.conversations.length) totalConversations.value = page.total ?? null
       const merged = new Map((more ? conversations.value : []).map(group => [group.key, group]))
       page.conversations.forEach(group => merged.set(group.key, group))
-      if (!more && selectedConversation.value && !merged.has(selectedKey.value)) merged.set(selectedKey.value, selectedConversation.value)
+      if (!more && !searchFilter.value && !statusFilter.value && !fromFilter.value && !toFilter.value && selectedConversation.value && !merged.has(selectedKey.value)) merged.set(selectedKey.value, selectedConversation.value)
       conversations.value = Array.from(merged.values()).sort((a, b) => b.latest.unixMilli - a.latest.unixMilli || a.key.localeCompare(b.key))
       nextConversationCursor.value = page.nextCursor || ''
       selectedConversation.value = merged.get(selectedKey.value) || selectedConversation.value
@@ -124,6 +139,7 @@ export const useLogsStore = defineStore('logs', () => {
           if (logConversationKey(detail.summary) !== key) continue
           delete remaining[id]
           sizes.delete(id)
+          relatedVersions.delete(id)
           pending.delete(id)
           delete detailErrors.value[id]
         }
@@ -138,7 +154,7 @@ export const useLogsStore = defineStore('logs', () => {
       if (options.anchor) anchored.value = true
       if (options.latest) anchored.value = false
     } catch (error) {
-      if (revision === roundsRevision) roundsError.value = error instanceof Error ? error.message : '加载会话轮次失败'
+      if (revision === roundsRevision) roundsError.value = error instanceof Error ? error.message : '加载会话调用失败'
     } finally { if (revision === roundsRevision) roundsLoading.value = false }
   }
 
@@ -182,6 +198,7 @@ export const useLogsStore = defineStore('logs', () => {
     roundsRevision++
     pending.clear()
     sizes.clear()
+    relatedVersions.clear()
     details.value = {}
     detailErrors.value = {}
     conversations.value = []
@@ -189,6 +206,7 @@ export const useLogsStore = defineStore('logs', () => {
     selectedKey.value = ''
     selectedConversation.value = null
     nextConversationCursor.value = ''
+    totalConversations.value = null
     nextRequestCursor.value = ''
     listLoading.value = false
     roundsLoading.value = false
@@ -197,5 +215,5 @@ export const useLogsStore = defineStore('logs', () => {
     anchored.value = false
   }
 
-  return { typeFilter, conversations, nextConversationCursor, selectedKey, selectedConversation, requests, nextRequestCursor, anchored, listLoading, roundsLoading, listError, roundsError, details, detailErrors, active, loadDetail, loadConversations, loadRounds, selectConversation, locateRequest, refresh, reset }
+  return { typeFilter, searchFilter, statusFilter, fromFilter, toFilter, totalConversations, conversations, nextConversationCursor, selectedKey, selectedConversation, requests, nextRequestCursor, anchored, listLoading, roundsLoading, listError, roundsError, details, detailErrors, active, loadDetail, loadConversations, loadRounds, selectConversation, locateRequest, refresh, reset }
 })

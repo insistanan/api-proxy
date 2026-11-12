@@ -38,6 +38,12 @@ type trafficRowMeta struct {
 }
 
 type requestLogMeta struct {
+	LogID          int64  `json:"-"`
+	UnixMilli      int64  `json:"-"`
+	FirstAt        int64  `json:"-"`
+	Timestamp      string `json:"-"`
+	APIType        string `json:"-"`
+	Stream         bool   `json:"stream"`
 	ChannelName    string `json:"channelName"`
 	Model          string `json:"model"`
 	ResolvedModel  string `json:"resolvedModel"`
@@ -164,12 +170,12 @@ func (s *Store) GetSystemLogDetail(ctx context.Context, requestID string) (*Syst
 	if err != nil {
 		return nil, err
 	}
-	if len(trafficLogs) == 0 {
-		return nil, nil
-	}
 	requestLogs, err := s.QueryRequestLogs(ctx, QueryOptions{RequestID: requestID, Ascending: true})
 	if err != nil {
 		return nil, err
+	}
+	if len(trafficLogs) == 0 && len(requestLogs) == 0 {
+		return nil, nil
 	}
 	metas := make([]trafficRowMeta, 0, len(trafficLogs))
 	for _, entry := range trafficLogs {
@@ -190,20 +196,40 @@ func (s *Store) GetSystemLogDetail(ctx context.Context, requestID string) (*Syst
 			Lifecycle:  lifecycle,
 		})
 	}
-	var latestRequestMeta *requestLogMeta
-	if len(requestLogs) > 0 {
-		latestRequestMeta, err = parseRequestLogMeta(requestLogs[len(requestLogs)-1])
-		if err != nil {
-			return nil, err
+	requestMetas, err := s.loadRequestLogMeta(ctx, []string{requestID})
+	if err != nil {
+		return nil, err
+	}
+	summary := buildSystemLogSummary(requestID, metas, requestMetas[requestID])
+	s.adjustLifecycleStatus(&summary, metas)
+	contexts := make([]*ContextSnapshot, 0, 3)
+	input := inputContext(trafficLogs)
+	if input != nil {
+		contexts = append(contexts, input)
+	}
+	for _, entry := range trafficLogs {
+		if entry.Phase == PhaseUpstreamRequest {
+			snapshot := AnalyzeContext(entry)
+			snapshot.InputChange = CompareContexts(requestID, input, snapshot)
+			contexts = append(contexts, snapshot)
 		}
 	}
-	summary := buildSystemLogSummary(requestID, metas, latestRequestMeta)
-	s.adjustLifecycleStatus(&summary, metas)
+	change, err := s.contextChange(ctx, summary, input)
+	if err != nil {
+		return nil, err
+	}
+	links, err := s.toolLinks(ctx, summary, trafficLogs)
+	if err != nil {
+		return nil, err
+	}
 	return &SystemLogDetail{
-		RequestID:   requestID,
-		Summary:     summary,
-		TrafficLogs: trafficLogs,
-		RequestLogs: requestLogs,
+		RequestID:     requestID,
+		Summary:       summary,
+		TrafficLogs:   trafficLogs,
+		RequestLogs:   requestLogs,
+		Contexts:      contexts,
+		ContextChange: change,
+		ToolLinks:     links,
 	}, nil
 }
 
@@ -255,7 +281,7 @@ func (s *Store) loadRequestLogMeta(ctx context.Context, requestIDs []string) (ma
 
 func loadRequestLogMetaFrom(ctx context.Context, db logQuerier, requestIDs []string) (map[string]*requestLogMeta, error) {
 	placeholders, args := sqlInPlaceholders(requestIDs)
-	query := `SELECT request_id, payload_json FROM request_logs
+	query := `SELECT id, request_id, unix_milli, timestamp, api_type, payload_json FROM request_logs
 		WHERE request_id IN (` + placeholders + `)
 		ORDER BY unix_milli DESC, id DESC`
 	rows, err := db.QueryContext(ctx, query, args...)
@@ -267,23 +293,29 @@ func loadRequestLogMetaFrom(ctx context.Context, db logQuerier, requestIDs []str
 	result := make(map[string]*requestLogMeta, len(requestIDs))
 	for rows.Next() {
 		var requestID, payload string
-		if err := rows.Scan(&requestID, &payload); err != nil {
+		var id, stamp int64
+		var timestamp, apiType string
+		if err := rows.Scan(&id, &requestID, &stamp, &timestamp, &apiType, &payload); err != nil {
 			return nil, err
 		}
-		if _, exists := result[requestID]; exists {
+		if meta, exists := result[requestID]; exists {
+			meta.FirstAt = min(meta.FirstAt, stamp)
 			continue
 		}
 		result[requestID], err = parseRequestLogMeta(json.RawMessage(payload))
 		if err != nil {
 			return nil, err
 		}
+		meta := result[requestID]
+		meta.LogID, meta.UnixMilli, meta.FirstAt = id, stamp, stamp
+		meta.Timestamp, meta.APIType = timestamp, apiType
 	}
 	return result, rows.Err()
 }
 
 func parseRequestLogMeta(payload json.RawMessage) (*requestLogMeta, error) {
 	if len(payload) == 0 {
-		return nil, nil
+		return nil, fmt.Errorf("请求日志元数据不能为空")
 	}
 	var meta requestLogMeta
 	if err := json.Unmarshal(payload, &meta); err != nil {
@@ -341,6 +373,11 @@ func buildSystemLogSummary(requestID string, rows []trafficRowMeta, meta *reques
 		}
 	}
 	if meta != nil {
+		// 有流量记录时沿用旧索引口径；只有尝试指标的调用才补齐时间与入口。
+		if len(rows) == 0 {
+			summary.UnixMilli, summary.Timestamp = meta.UnixMilli, meta.Timestamp
+			summary.APIType, summary.Stream, summary.StatusCode = meta.APIType, meta.Stream, meta.StatusCode
+		}
 		summary.ConversationID = meta.ConversationID
 		summary.ErrorType = meta.ErrorType
 		summary.ErrorMessage = meta.ErrorMessage
@@ -352,6 +389,10 @@ func buildSystemLogSummary(requestID string, rows []trafficRowMeta, meta *reques
 		}
 	}
 	if started != nil {
+		summary.PromptPreview = started.PromptPreview
+		summary.ClientFamily = started.ClientFamily
+		summary.IdentitySource = started.IdentitySource
+		summary.Context = started.Context
 		if started.ConversationID != "" {
 			summary.ConversationID = started.ConversationID
 		}
@@ -367,6 +408,10 @@ func buildSystemLogSummary(requestID string, rows []trafficRowMeta, meta *reques
 		}
 	}
 	if ended != nil {
+		summary.PromptPreview = ended.PromptPreview
+		summary.ClientFamily = ended.ClientFamily
+		summary.IdentitySource = ended.IdentitySource
+		summary.Context = ended.Context
 		if summary.ConversationID == "" {
 			summary.ConversationID = ended.ConversationID
 		}
@@ -384,6 +429,9 @@ func buildSystemLogSummary(requestID string, rows []trafficRowMeta, meta *reques
 	summary.APIType = strings.ToLower(summary.APIType)
 	if summary.StartedAt == 0 && len(rows) > 0 {
 		summary.StartedAt = rows[0].UnixMilli
+	}
+	if summary.StartedAt == 0 && meta != nil {
+		summary.StartedAt = meta.FirstAt
 	}
 	return summary
 }
@@ -530,6 +578,11 @@ func (s *Store) Purge(ctx context.Context, opts PurgeOptions) (PurgeResult, erro
 			return result, fmt.Errorf("读取 %s 清理结果失败: %w", table, err)
 		}
 		*counters[i] = deleted
+	}
+	if opts.All {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM log_request_index`); err != nil {
+			return result, fmt.Errorf("清理调用摘要索引失败: %w", err)
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM traffic_bodies WHERE NOT EXISTS (SELECT 1 FROM traffic_body_refs r WHERE r.body_hash = traffic_bodies.body_hash)`); err != nil {
 		return result, fmt.Errorf("清理无引用正文失败: %w", err)
