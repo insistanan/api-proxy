@@ -59,6 +59,31 @@ func TestIntentConfigProtocolIsolationAndReferences(t *testing.T) {
 	}
 }
 
+func TestFreeGroupCanDeclareCapabilitiesForEverySupportedProtocol(t *testing.T) {
+	cm := newTransactionTestManager(t, "messages")
+	require.NoError(t, cm.EnsureFreeChannels())
+	for _, kind := range []string{"messages", "responses", "chat", "gemini"} {
+		cfg := DefaultIntentRouting()
+		cfg.Enabled, cfg.Strategy = true, "auto"
+		cfg.Groups = []IntentGroupCapability{{PoolID: FreeChannelPoolID, Tasks: []string{"architecture"}, Tiers: []int{0, 1, 2}}}
+		require.NoError(t, cm.UpdateIntentRouting(kind, cfg))
+		require.Equal(t, cfg.Groups, cm.GetIntentRouting(kind).Groups)
+		cfg.Unmatched, cfg.FallbackPoolID = "fallback", FreeChannelPoolID
+		require.NoError(t, cm.UpdateIntentRouting(kind, cfg))
+		cfg.Strategy = "regex"
+		cfg.Routes = []IntentRoute{{ID: "free-task", PoolID: FreeChannelPoolID, Patterns: []string{"任务"}}}
+		require.NoError(t, cm.UpdateIntentRouting(kind, cfg))
+	}
+}
+
+func TestSystemOneIntentConfigNormalizesToDecisions(t *testing.T) {
+	cm := newTransactionTestManager(t, "messages")
+	cfg := DefaultIntentRouting()
+	cfg.Classifier = "systemone"
+	require.NoError(t, cm.UpdateIntentRouting("messages", cfg))
+	require.Equal(t, "decisions", cm.GetIntentRouting("messages").Classifier)
+}
+
 func TestIntentConfigSaveFailureKeepsOldSnapshot(t *testing.T) {
 	cm := newTransactionTestManager(t, "messages")
 	blockTransactionBackup(t, cm)

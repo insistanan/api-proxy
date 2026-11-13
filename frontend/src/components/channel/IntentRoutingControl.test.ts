@@ -7,9 +7,9 @@ import type { EmbeddingProfile } from '@/services/datasets'
 
 const mocks = vi.hoisted(() => ({ load: vi.fn(), save: vi.fn(), options: vi.fn(), preview: vi.fn(), feedback: vi.fn() }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ apiKey: null, clearAuth: vi.fn() }) }))
-vi.mock('@/stores/channel', () => ({ useChannelStore: () => ({ channelPoolsMap: { responses: [{ id: 'language', name: '语言组' }, { id: 'code', name: '代码组' }] } }) }))
+vi.mock('@/stores/channel', () => ({ useChannelStore: () => ({ channelPoolsMap: { responses: [{ id: 'language', name: '语言组' }, { id: 'code', name: '代码组' }, { id: 'builtin-free', name: '免费分组' }] } }) }))
 vi.mock('@/stores/intent', () => ({ useIntentStore: () => ({ configs: {}, load: mocks.load, save: mocks.save }) }))
-vi.mock('@/services/intent', () => ({ intentApi: { options: mocks.options, preview: mocks.preview, feedback: mocks.feedback }, intentErrorText: (error: Error) => error.message }))
+vi.mock('@/services/intent', () => ({ intentApi: { options: mocks.options, preview: mocks.preview, feedback: mocks.feedback }, intentErrorText: (error: Error) => error.message, intentPreviewFailure: () => undefined }))
 vi.mock('@/composables/useToast', () => ({ useToast: () => ({ showToast: vi.fn() }) }))
 
 const config = (): IntentConfig => ({ enabled: false, strategy: 'regex', classifier: 'heuristic', classifierChannel: '', classifierModel: '', embeddingChannel: '', embeddingModel: '', embeddingSource: 'remote', queryPrefix: '', examplePrefix: '', threshold: 0.75, timeoutMs: 2000, minResidenceSeconds: 300, minTurns: 4, switchMargin: 0.15, unmatched: 'original', fallbackPoolId: '', failurePolicy: 'error', observeOnly: true, routes: [] })
@@ -30,6 +30,18 @@ beforeEach(() => {
 })
 
 describe('意图匹配编辑器', () => {
+  it('免费组显示在能力列表中，旧 System One 草稿改用 Decisions', async () => {
+    const original = config()
+    original.classifier = 'systemone'
+    mocks.load.mockResolvedValue(original)
+    const state = await setup()
+    expect(value<{ id: string }[]>(state, 'pools').map(pool => pool.id)).toContain('builtin-free')
+    expect(value<IntentConfig>(state, 'draft').classifier).toBe('decisions')
+    expect(original.classifier).toBe('systemone')
+    ;(state.groups as Ref<IntentConfig['groups']>).value = [{ poolId: 'builtin-free', tasks: ['architecture'], tiers: [2], cost: 0 }]
+    await (state.save as () => Promise<void>)()
+    expect(mocks.save).toHaveBeenCalledWith('responses', expect.objectContaining({ classifier: 'decisions', groups: [{ poolId: 'builtin-free', tasks: ['architecture'], tiers: [2], cost: 0 }] }))
+  })
   it('只给空配置推荐综合模式，保留已有正则规则', async () => {
     const blank = config()
     mocks.load.mockResolvedValue(blank)

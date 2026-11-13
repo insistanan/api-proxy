@@ -57,12 +57,11 @@ func TestAutomaticRemoteClassificationUsesTwoOrderedStages(t *testing.T) {
 					case "llm":
 						assert.Equal(t, "/v1/chat/completions", r.URL.Path)
 						payload = gjson.GetBytes(body, `messages.#(role=="user").content`).String()
-					case "decisions":
+					case "decisions", "systemone":
 						assert.Equal(t, "/v1/decisions", r.URL.Path)
-						payload = gjson.GetBytes(body, "input").String()
-					case "systemone":
-						assert.Equal(t, "/v1/systemone", r.URL.Path)
 						payload = gjson.GetBytes(body, "state").Raw
+						assert.True(t, gjson.GetBytes(body, "questions").IsObject())
+						assert.False(t, gjson.GetBytes(body, "input").Exists())
 					}
 					assert.Equal(t, "实现一个普通函数", gjson.Get(payload, "text").String())
 					stage := calls.Add(1)
@@ -81,9 +80,7 @@ func TestAutomaticRemoteClassificationUsesTwoOrderedStages(t *testing.T) {
 					switch protocol {
 					case "llm":
 						response = map[string]any{"choices": []any{map[string]any{"message": map[string]string{"role": "assistant", "content": label}, "finish_reason": "stop"}}}
-					case "decisions":
-						response = map[string]any{"answers": []any{map[string]string{"name": "intent", "type": "choice", "choice": label}}}
-					case "systemone":
+					case "decisions", "systemone":
 						response = map[string]any{"answers": map[string]any{"intent": map[string]string{"type": "choice", "choice": label}}}
 					}
 					assert.NoError(t, json.NewEncoder(w).Encode(response))

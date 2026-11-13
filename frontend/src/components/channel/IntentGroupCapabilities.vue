@@ -1,6 +1,6 @@
 <template>
   <div class="capabilities">
-    <p class="text-body-2 text-medium-emphasis">直接设置当前协议已有分组的任务和难度。两项都留空的分组不参与自动匹配。</p>
+    <p class="text-body-2 text-medium-emphasis">直接设置当前协议已有分组的任务和难度，免费分组也按相同条件参与，不会被强制优先或限制为简单任务。两项都留空的分组不参与自动匹配；停用的免费服务不会参与选组。</p>
     <p v-if="!pools.length" class="text-body-2 text-medium-emphasis">当前协议暂无可配置的渠道分组。</p>
     <section v-for="row in rows" :key="row.poolId" class="capability-row" :aria-label="row.name + '的任务能力'">
       <h3 class="capability-name text-subtitle-2">{{ row.name }}</h3>

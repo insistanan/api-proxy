@@ -64,18 +64,14 @@ func TestCallDecisionProtocolsUseSelectedChannelAndModel(t *testing.T) {
 		t.Run(protocol, func(t *testing.T) {
 			var received map[string]json.RawMessage
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path != "/v1/"+protocol || r.Header.Get("Authorization") != "Bearer decision-test-key" {
+				if r.URL.Path != "/v1/decisions" || r.Header.Get("Authorization") != "Bearer decision-test-key" {
 					t.Errorf("决策请求路径或鉴权不正确: %s", r.URL.Path)
 				}
 				if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
 					t.Error(err)
 				}
 				w.Header().Set("Content-Type", "application/json")
-				if protocol == "decisions" {
-					_, _ = io.WriteString(w, `{"answers":[{"name":"command_safety","type":"choice","choice":"allow"}],"usage":{"input_tokens":18,"output_tokens":0}}`)
-				} else {
-					_, _ = io.WriteString(w, `{"answers":{"command_safety":{"type":"choice","choice":"allow"}},"usage":{"input_tokens":18,"output_tokens":0}}`)
-				}
+				_, _ = io.WriteString(w, `{"answers":{"command_safety":{"type":"choice","choice":"allow"}},"usage":{"input_tokens":18,"output_tokens":0}}`)
 			}))
 			t.Cleanup(upstream.Close)
 			cfgManager, sch := newGateTestEnv(t)
@@ -102,11 +98,8 @@ func TestCallDecisionProtocolsUseSelectedChannelAndModel(t *testing.T) {
 			if string(received["model"]) != `"selected-decision-model"` || received["messages"] != nil || received["max_tokens"] != nil {
 				t.Fatalf("决策请求不应被转为聊天请求，且应优先使用显式审批模型: %s", received)
 			}
-			if protocol == "decisions" && (received["input"] == nil || received["state"] != nil || !strings.HasPrefix(string(received["questions"]), "[")) {
-				t.Fatalf("Decisions 请求格式不正确: %s", received)
-			}
-			if protocol == "systemone" && (received["state"] == nil || received["input"] != nil || !strings.HasPrefix(string(received["questions"]), "{")) {
-				t.Fatalf("System One 请求格式不正确: %s", received)
+			if received["state"] == nil || received["input"] != nil || !strings.HasPrefix(string(received["questions"]), "{") {
+				t.Fatalf("Decisions 及旧配置别名应使用相同对象格式: %s", received)
 			}
 			if _, err := caller.Call(context.Background(), "decision-1", Prompt{}); err == nil {
 				t.Fatal("对话调用不能误用 Decisions 渠道")
@@ -122,9 +115,10 @@ func TestDecisionResponseRejectsMissingOrInvalidAnswers(t *testing.T) {
 		body     string
 	}{
 		{"decisions", `{"answers":[]}`},
-		{"decisions", `{"answers":[{"name":"other","type":"choice","choice":"allow"}]}`},
-		{"decisions", `{"answers":[{"name":"command_safety","type":"choice","choice":"allow"},{"name":"command_safety","type":"choice","choice":"block"}]}`},
-		{"decisions", `{"answers":[{"name":"command_safety","type":"choice","choice":"unknown"}]}`},
+		{"decisions", `{"answers":{}}`},
+		{"decisions", `{"answers":{"other":{"type":"choice","choice":"allow"}}}`},
+		{"decisions", `{"answers":{"command_safety":{"type":"choice","choice":"unknown"}}}`},
+		{"decisions", `{"answers":{"command_safety":{"type":"noul","noul":1}}}`},
 		{"systemone", `{"answers":{"command_safety":{"type":"noul","noul":1}}}`},
 		{"systemone", `{"answers":[{"name":"command_safety","type":"choice","choice":"allow"}]}`},
 	} {

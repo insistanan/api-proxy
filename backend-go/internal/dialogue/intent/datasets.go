@@ -94,7 +94,11 @@ func (s *Service) semantic(ctx context.Context, cfg config.IntentRoutingConfig, 
 	if err != nil {
 		return Decision{}, err
 	}
-	best := Decision{Reason: "语义相似度或正反例差值未达到阈值", PoolScores: map[string]float64{}}
+	recordSemanticTrace(ctx, cfg, result)
+	if trace := traceFrom(ctx); trace != nil {
+		trace.Selection = "按数据集相似度、命中阈值与正反例差值选择映射分组"
+	}
+	best := Decision{Tier: -1, Reason: "语义相似度或正反例差值未达到阈值", PoolScores: map[string]float64{}}
 	// 切换收益需要同时比较当前分组；低于召回阈值的分数也必须保留。
 	for _, hit := range result.Hits {
 		if hit.Sample.Negative {

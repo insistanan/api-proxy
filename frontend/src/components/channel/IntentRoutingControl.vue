@@ -81,11 +81,8 @@
               <div><h3 class="text-subtitle-1">试一条任务</h3><p class="text-body-2 text-medium-emphasis mt-2">只测试当前草稿的分类结果，不向目标组生成回答、不切换真实会话。远程判断或向量匹配会调用辅助模型。</p></div>
               <v-textarea v-model="previewText" label="模拟用户任务" rows="3" placeholder="例如：排查并修复 Go 服务中的并发死锁" />
               <div><v-btn variant="tonal" :loading="previewing" :disabled="!previewText.trim()" @click="preview">测试匹配</v-btn></div>
-              <v-alert v-if="decision" type="info" variant="tonal">
-                <div v-if="decision.task">{{ taskName(decision.task) }} · {{ decision.tier >= 0 ? tierName(decision.tier) : '难度未确定' }}</div>
-                <div>{{ poolName(decision.poolId) }} · {{ decision.reason }} · {{ decision.durationMs }} ms</div>
-                <div class="text-caption mt-2">真实会话还会执行驻留、轮次和历史连续性检查，最终分组可能不同。</div>
-              </v-alert>
+              <v-progress-linear v-if="previewing" indeterminate color="primary" aria-label="正在请求辅助分类，尚未获得匹配结果" />
+              <IntentMatchTrace v-if="decision" :decision="decision" :tasks="options.tasks ?? []" preview />
             </section>
             <v-divider class="my-2" />
             <section class="intent-stack">
@@ -93,10 +90,11 @@
               <p class="text-body-2 text-medium-emphasis">记录真实请求的实际分组、模型、原因和判断耗时。“已交付”表示请求完成，不代表回答质量；满意度由你评价，不会自动训练模型或更改数据集。已分类任务按类型和难度分别统计，驻留期未分类的新任务只保留评价。</p>
               <p v-if="!events.length" class="text-body-2 text-medium-emphasis">暂无记录；先保存并启用意图匹配，再发送新任务。</p>
               <div v-for="event in events" :key="event.requestId" class="intent-event">
-                <div>{{ poolName(event.target.poolId) }} · {{ event.target.model }} · {{ event.success ? '已交付' : '未完成' }}</div>
+                <div>{{ event.target.poolId ? event.decision.trace?.groups.find(group => group.poolId === event.target.poolId)?.name ?? poolName(event.target.poolId) : '未确认执行目标' }} · {{ event.target.model || '未记录模型' }} · {{ event.success ? '已交付' : event.status === 'pending' ? '已确认目标，未记录完成' : '未完成' }}</div>
                 <div v-if="event.decision.task" class="text-body-2">{{ taskName(event.decision.task) }} · {{ tierName(event.decision.tier) }}</div>
-                <div class="text-caption text-medium-emphasis">{{ event.decision.reason }} · {{ event.decision.durationMs }} ms</div>
-                <div class="text-caption text-medium-emphasis">{{ event.requestId }}</div>
+                <div class="text-caption text-medium-emphasis">{{ event.decision.trace?.classified ? '已执行分类' : event.decision.trace ? '本轮未分类' : '旧记录未保存分类过程' }} · {{ event.decision.reason }}<template v-if="event.decision.trace?.classified"> · {{ event.decision.durationMs }} ms</template></div>
+                <div class="text-caption text-medium-emphasis">{{ event.requestId }} · {{ new Date(event.at).toLocaleString() }}</div>
+                <details class="intent-event-detail" @toggle="toggleEvent(event.requestId, $event)"><summary>查看输入与匹配过程</summary><IntentMatchTrace v-if="expandedEvents.has(event.requestId)" :decision="event.decision" :tasks="options.tasks ?? []" :target="event.target" /></details>
                 <div v-if="event.success && !event.control && event.feedback === undefined" class="d-flex ga-2 mt-2">
                   <v-btn size="small" variant="text" :disabled="feedbackBusy" @click="feedback(event, true)">效果满意</v-btn>
                   <v-btn size="small" variant="text" :disabled="feedbackBusy" @click="feedback(event, false)">效果不满意</v-btn>
@@ -149,12 +147,13 @@ import { computed, ref, watch } from 'vue'
 import { useChannelStore } from '@/stores/channel'
 import { useIntentStore } from '@/stores/intent'
 import { useToast } from '@/composables/useToast'
-import { intentApi, intentErrorText, type IntentConfig, type IntentDecision, type IntentEvent, type IntentGroupCapability, type IntentOptions, type IntentProtocol } from '@/services/intent'
+import { intentApi, intentErrorText, intentPreviewFailure, type IntentConfig, type IntentDecision, type IntentEvent, type IntentGroupCapability, type IntentOptions, type IntentProtocol } from '@/services/intent'
 import type { EmbeddingProfile } from '@/services/datasets'
 import LocalEmbeddingSettings from './LocalEmbeddingSettings.vue'
 import DatasetPicker from './DatasetPicker.vue'
 import EmbeddingProfileFields from './EmbeddingProfileFields.vue'
 import IntentGroupCapabilities from './IntentGroupCapabilities.vue'
+import IntentMatchTrace from './IntentMatchTrace.vue'
 
 const props = defineProps<{ protocol: IntentProtocol }>()
 const store = useIntentStore()
@@ -172,10 +171,15 @@ const previewing = ref(false)
 const indexing = ref(false)
 const decision = ref<IntentDecision>()
 const events = ref<IntentEvent[]>([])
+const expandedEvents = ref(new Set<string>())
+function toggleEvent(id: string, event: Event) {
+  if ((event.currentTarget as HTMLElement).hasAttribute('open')) expandedEvents.value.add(id)
+  else expandedEvents.value.delete(id)
+}
 const eventsLoading = ref(false)
 const feedbackBusy = ref(false)
 const saved = computed(() => store.configs[props.protocol])
-const pools = computed(() => channelStore.channelPoolsMap[props.protocol].filter(pool => pool.id !== 'builtin-free'))
+const pools = computed(() => channelStore.channelPoolsMap[props.protocol])
 const poolName = (id: string) => pools.value.find(pool => pool.id === id)?.name ?? (id || '沿用未命中策略')
 const taskName = (id: string) => options.value.tasks?.find(task => task.id === id)?.name ?? id
 const tierName = (tier: number) => tiers.find(item => item.value === tier)?.title ?? '未确定'
@@ -188,7 +192,7 @@ const embeddingProfile = computed<EmbeddingProfile>({
 const classifierOptions = computed(() => options.value.classifiers.filter(option =>
   draft.value?.classifier === 'decisions' || draft.value?.classifier === 'systemone' ? option.kind === 'decisions' : option.kind !== 'decisions'))
 const strategies = [{ title: '自动综合匹配 · 类型 + 难度（推荐）', value: 'auto' }, { title: '数据集语义匹配', value: 'semantic' }, { title: '仅按难度分级', value: 'complexity' }, { title: '按难度与反馈自适应选择', value: 'adaptive' }, { title: '手动正则匹配', value: 'regex' }]
-const classifiers = [{ title: '内置规则 · 不调用额外模型', value: 'heuristic' }, { title: '普通 LLM 自动判断', value: 'llm' }, { title: 'Decisions 决策模型', value: 'decisions' }, { title: 'System One 决策模型', value: 'systemone' }, { title: '混合 · 明确信号用规则，其余交 LLM', value: 'hybrid' }]
+const classifiers = [{ title: '内置规则 · 不调用额外模型', value: 'heuristic' }, { title: '普通 LLM 自动判断', value: 'llm' }, { title: 'Decisions 决策模型', value: 'decisions' }, { title: '混合 · 明确信号用规则，其余交 LLM', value: 'hybrid' }]
 const tiers = [{ title: '简单', value: 0 }, { title: '常规', value: 1 }, { title: '复杂', value: 2 }]
 const strategyHelp = computed(() => ({ regex: '只有这种方式需要手写正则，适合固定关键词或精确规则。', semantic: '自动匹配已发布的数据集，再按类别选择分组。向量模型在高级设置中配置。', complexity: '自动判断难度，你只需要把难度映射到分组，无需编写匹配句子。', adaptive: '自动判断难度，再从同难度候选组中参考质量反馈和相对成本选择。', auto: '' })[draft.value?.strategy ?? 'auto'])
 const lines = (text: string | null) => (text ?? '').split('\n').map(line => line.trim()).filter(Boolean)
@@ -228,6 +232,7 @@ async function open() {
     if (!copy.enabled && !copy.routes.length && !copy.groups?.length) copy.strategy = 'auto'
     copy.groups ??= []
     copy.taskMatcher ??= 'builtin'
+    if (copy.classifier === 'systemone') copy.classifier = 'decisions'
     draft.value = copy
     options.value = choices
   } catch (cause) { if (protocol === props.protocol && show.value) report(cause) }
@@ -253,7 +258,12 @@ async function preview() {
   try {
     const result = await intentApi.preview(props.protocol, { ...draft.value, groups: groups.value }, text)
     if (show.value && snapshot === JSON.stringify(draft.value) && text === previewText.value) decision.value = result
-  } catch (cause) { if (snapshot === JSON.stringify(draft.value) && text === previewText.value) report(cause) }
+  } catch (cause) {
+    if (snapshot === JSON.stringify(draft.value) && text === previewText.value) {
+      decision.value = intentPreviewFailure(cause)
+      report(cause)
+    }
+  }
   finally { previewing.value = false }
 }
 async function buildIndex() {
@@ -278,7 +288,7 @@ async function feedback(event: IntentEvent, good: boolean) {
   catch (cause) { report(cause) }
   finally { feedbackBusy.value = false }
 }
-watch(() => props.protocol, () => { show.value = false; draft.value = undefined; events.value = []; void load() }, { immediate: true })
+watch(() => props.protocol, () => { show.value = false; draft.value = undefined; events.value = []; expandedEvents.value.clear(); void load() }, { immediate: true })
 watch([draft, previewText], () => { decision.value = undefined }, { deep: true })
 </script>
 
@@ -287,6 +297,8 @@ watch([draft, previewText], () => { decision.value = undefined }, { deep: true }
 .intent-stack { display: grid; gap: 22px; }
 .intent-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 20px; }
 .intent-flow { display: flex; flex-wrap: wrap; gap: 12px 28px; padding: 16px 0; border-block: 1px solid rgba(var(--v-theme-outline), 0.2); }
+.intent-event-detail { min-width: 0; }
+.intent-event-detail > summary { cursor: pointer; padding: 12px 0; min-height: 44px; }
 .intent-event { display: grid; gap: 6px; padding: 16px 0; border-bottom: 1px solid rgba(var(--v-theme-outline), 0.2); overflow-wrap: anywhere; }
 @media (max-width: 650px) { .intent-fields { grid-template-columns: minmax(0, 1fr); } .intent-dialog-body { padding: 16px; } }
 </style>

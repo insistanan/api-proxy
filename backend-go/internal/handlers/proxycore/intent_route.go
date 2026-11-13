@@ -122,4 +122,12 @@ func intentRouteError(c *gin.Context, err error) {
 	c.JSON(status, gin.H{"error": gin.H{"message": err.Error(), "type": "intent_route_error", "code": code}})
 }
 
+// validateFreeRoute 保留显式免费请求边界，只允许服务端意图决策把普通请求送入免费池。
+func validateFreeRoute(c *gin.Context, cfg *config.ConfigManager, kind scheduler.ChannelKind, model string, index *int) error {
+	if turn := intent.TurnFrom(c.Request.Context()); turn != nil && turn.AllowsFreePool() && !config.IsFreeModel(model) {
+		model = config.FreeModelID
+	}
+	return cfg.ValidateFreeRequest(string(kind), model, index)
+}
+
 func intentHistoryProtected(c *gin.Context) bool { return intent.TurnFrom(c.Request.Context()) != nil }

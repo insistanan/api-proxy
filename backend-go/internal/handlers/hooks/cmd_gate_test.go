@@ -416,9 +416,7 @@ func TestGateDecisionReviewUsesConfiguredProtocolAndModel(t *testing.T) {
 				switch protocol {
 				case "chat":
 					_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"{\"verdict\":\"allow\",\"reason\":\"命令目标明确\"}"}]}`))
-				case "decisions":
-					_, _ = w.Write([]byte(`{"answers":[{"name":"command_safety","type":"choice","choice":"allow"}]}`))
-				case "systemone":
+				case "decisions", "systemone":
 					_, _ = w.Write([]byte(`{"answers":{"command_safety":{"type":"choice","choice":"allow"}}}`))
 				}
 			}))

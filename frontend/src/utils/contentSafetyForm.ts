@@ -121,7 +121,7 @@ export const normalizeContentSafety = (
       aiGate: {
         ...defaults.dangerousCmd.aiGate,
         ...(dangerousCmd?.aiGate || {}),
-        protocol: dangerousCmd?.aiGate?.protocol ?? 'chat',
+        protocol: dangerousCmd?.aiGate?.protocol === 'systemone' ? 'decisions' : dangerousCmd?.aiGate?.protocol ?? 'chat',
         model: typeof dangerousCmd?.aiGate?.model === 'string' ? dangerousCmd.aiGate.model : '',
         channelId: typeof dangerousCmd?.aiGate?.channelId === 'string' ? dangerousCmd.aiGate.channelId : '',
         waitSeconds:

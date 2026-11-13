@@ -421,7 +421,7 @@ type DangerousCmdAIGateConfig struct {
 	Enabled bool `json:"enabled"`
 	// ChannelID 指定判断渠道的稳定 ID；为空时在所选协议的渠道池内自动选择。
 	ChannelID string `json:"channelId"`
-	// Protocol 为空或 chat 时使用对话渠道；decisions/systemone 使用 Decisions 池及对应原生格式。
+	// Protocol 为空或 chat 时使用对话渠道；decisions 使用 Decisions 池及原生格式，systemone 仅兼容旧配置。
 	Protocol string `json:"protocol,omitempty"`
 	// Model 为空时沿用渠道默认模型；非空时按渠道映射解析，覆盖渠道默认模型。
 	Model string `json:"model,omitempty"`

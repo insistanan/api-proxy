@@ -9,6 +9,7 @@ import (
 
 type Input struct {
 	Text             string
+	Truncated        bool
 	ToolContinuation bool
 	Opaque           bool
 	History          bool
@@ -71,13 +72,17 @@ func ParseInput(body []byte) (Input, error) {
 		}
 	}
 	result.History = result.History || userCount > 1
-	// 有界输入；按 rune 截断，避免中文 UTF-8 半字符。
-	chars := []rune(strings.TrimSpace(result.Text))
-	if len(chars) > 4000 {
-		chars = chars[:4000]
-	}
-	result.Text = string(chars)
+	result.Text, result.Truncated = normalizeInput(result.Text)
 	return result, nil
+}
+
+// normalizeInput 让预览和真实请求使用相同的有界文本，不截断 UTF-8 半字符。
+func normalizeInput(text string) (string, bool) {
+	chars := []rune(strings.TrimSpace(text))
+	if len(chars) > 4000 {
+		return string(chars[:4000]), true
+	}
+	return string(chars), false
 }
 
 func opaqueBlocks(v any) bool {

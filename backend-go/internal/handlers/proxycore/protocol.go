@@ -224,7 +224,7 @@ func RunProxyRequest(
 		}
 		defer releaseIntent()
 	}
-	if err := cfgManager.ValidateFreeRequest(string(spec.Kind), model, explicitIndex); err != nil {
+	if err := validateFreeRoute(c, cfgManager, spec.Kind, model, explicitIndex); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "FREE_CHANNEL_ROUTE"})
 		return
 	}
@@ -412,7 +412,7 @@ func handleSingleChannelProxy(
 		return
 	}
 
-	if err := cfgManager.ValidateFreeRequest(string(spec.Kind), model, &channelIndex); err != nil {
+	if err := validateFreeRoute(c, cfgManager, spec.Kind, model, &channelIndex); err != nil {
 		if singlePermit != nil {
 			singlePermit.RecordHealthNeutral()
 		}
@@ -488,7 +488,7 @@ func handleMultiChannelProxy(
 			if upstream == nil {
 				return UpstreamAttemptResult{}
 			}
-			if err := cfgManager.ValidateFreeRequest(string(spec.Kind), model, &channelIndex); err != nil {
+			if err := validateFreeRoute(c, cfgManager, spec.Kind, model, &channelIndex); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "FREE_CHANNEL_ROUTE"})
 				return UpstreamAttemptResult{Handled: true, Health: channelHealthNeutral, LastError: err}
 			}

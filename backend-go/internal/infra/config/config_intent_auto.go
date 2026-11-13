@@ -48,7 +48,7 @@ func validateIntentGroups(value IntentRoutingConfig, validPool func(string) bool
 	seen := map[string]bool{}
 	for _, group := range value.Groups {
 		if !validPool(group.PoolID) || seen[group.PoolID] {
-			return fmt.Errorf("分组能力引用不存在、免费或重复的分组 %s，请先解除引用", group.PoolID)
+			return fmt.Errorf("分组能力引用不存在或重复的分组 %s，请先解除引用", group.PoolID)
 		}
 		seen[group.PoolID] = true
 		if len(group.Tasks) == 0 || len(group.Tasks) > 32 || len(group.Tiers) == 0 || len(group.Tiers) > 3 {

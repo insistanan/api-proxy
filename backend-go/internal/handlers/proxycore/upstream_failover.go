@@ -60,7 +60,7 @@ func (a UpstreamAttempt) tryWithModelMappingFailover() UpstreamAttemptResult {
 			}
 		}
 		// 上轮可能由其他渠道的模型映射转入本渠道，实际模型不一定出现在本渠道映射中。
-		if previous != "" && !found {
+		if previous != "" && !found && !a.isFreeAttempt() {
 			targetModels = append([]string{previous}, targetModels...)
 			targetChannelIDs = append([]string{""}, targetChannelIDs...)
 		}

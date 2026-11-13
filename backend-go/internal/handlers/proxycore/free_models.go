@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/insistanan/api-proxy/internal/dialogue/intent"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/orchestration/availability"
 )
@@ -23,7 +24,17 @@ type freeModelCandidate struct {
 }
 
 func (a UpstreamAttempt) isFreeAttempt() bool {
-	return a.Upstream != nil && a.Upstream.BuiltinProvider == "kilo" && config.IsFreeModel(a.RequestedModel)
+	if a.Upstream == nil || a.Upstream.BuiltinProvider != "kilo" {
+		return false
+	}
+	if config.IsFreeModel(a.RequestedModel) {
+		return true
+	}
+	if a.Context == nil || a.Context.Request == nil {
+		return false
+	}
+	turn := intent.TurnFrom(a.Context.Request.Context())
+	return turn != nil && turn.AllowsFreePool()
 }
 
 // prepareFreeModels 对四个入口使用同一选模策略；入口协议的转换结果仍分别计入健康记录。
@@ -42,7 +53,25 @@ func (a UpstreamAttempt) prepareFreeModels() (UpstreamAttempt, error) {
 	} else {
 		log.Printf("[%s-FreeModels] 未启用请求日志存储，免费模型按未知健康状态选择", a.APIType)
 	}
-	candidates := rankFreeModels(a.Upstream, a.RequestedModel, aggregates, now)
+	selector := a.RequestedModel
+	if !config.IsFreeModel(selector) {
+		selector = config.FreeModelID
+	}
+	candidates := rankFreeModels(a.Upstream, selector, aggregates, now)
+	if turn := intent.TurnFrom(a.Context.Request.Context()); turn != nil {
+		previous := turn.PinnedModel(a.Upstream.ID)
+		found := false
+		for i, candidate := range candidates {
+			if previous != "" && candidate.model == previous {
+				copy(candidates[1:i+1], candidates[:i])
+				candidates[0], found = candidate, true
+				break
+			}
+		}
+		if turn.Strict() && !found {
+			return a, &intent.HistoryError{Message: "免费池原会话模型已移除或不可用，不能切换工具或加密历史的来源"}
+		}
+	}
 	if len(candidates) == 0 {
 		return a, fmt.Errorf("免费池没有可尝试的模型：候选正在冷却或近期明确不支持，请稍后重试或同步模型")
 	}

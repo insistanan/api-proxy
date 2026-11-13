@@ -15,7 +15,7 @@
 
 ## 2. 目录结构与分层架构
 
-### 2.1 入口与装配（cmd/server/）
+### 2.1 入口与装配（`cmd/server/`）
 
 | 文件 | 核心职责 |
 |---|---|
@@ -23,14 +23,16 @@
 | `cmd/server/app_routes.go` | 路由装配：注册 `/api` 管理路由组、公开健康检查 `/health` 及各协议代理端点 |
 | `cmd/server/app_lifecycle.go` | 启动控制台横幅打印、脱敏模式热更新跟随、优雅停机（Graceful Shutdown）流程 |
 | `cmd/server/version.go` | 编译期由 ldflags 注入的 `Version`、`BuildTime` 与 `GitCommit` 元数据 |
+| `cmd/stream_verify/` | 独立流式响应验证工具，对比 Token 统计与 SSE 事件格式 |
 
 ### 2.2 核心业务包（internal/ 9 大领域模块）
 
 - **`handlers/`（协议端点处理层）**：
-  - `proxycore/`：跨协议统一请求流水线（`RunProxyRequest`），负责代理通用鉴权、读体、脱敏、会话观测与重试驱动；
-  - `messages/`、`responses/`、`chat/`、`gemini/`、`images/`：五大编排协议端点实现；
-  - `embeddings/`、`decisions/`：原样透传端点；
-  - `streams/`、`hooks/`、`admin/`、`channels/`、`clients/`、`modelapi/`、`system/`：流式转发、生命周期钩子与管理控制端点。
+  - `handlers/proxycore/`：跨协议统一请求流水线（`RunProxyRequest`），负责代理通用鉴权、读体、脱敏、会话观测与重试驱动；
+  - `handlers/messages/`、`handlers/responses/`、`handlers/chat/`、`handlers/gemini/`、`handlers/images/`：五大编排协议端点实现；
+  - `handlers/embeddings/`、`handlers/decisions/`：原样透传端点；
+  - `handlers/streams/`、`handlers/hooks/`、`handlers/admin/`、`handlers/channels/`、`handlers/clients/`、`handlers/modelapi/`、`handlers/system/`：流式转发、生命周期钩子与管理控制端点；
+  - `handlers/common/`：处理层共享类型与工具入口。
 - **`orchestration/`（调度与稳定性控制）**：
   - `scheduler/`：多渠道调度核心（`ChannelScheduler`），支持配置顺序轮询、促销优先机制与选渠许可句柄（`ChannelPermit`）；
   - `circuit/`：渠道级三态熔断器（Closed / Open / HalfOpen），防止向上游故障节点持续发压；

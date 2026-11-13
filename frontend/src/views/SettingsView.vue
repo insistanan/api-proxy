@@ -608,8 +608,7 @@ const dangerousCommandRules: Array<{ value: DangerousCommandRule; label: string 
 // 审批使用独立渠道候选，不读取 AI 助手的模型和渠道筛选结果。
 const gateProtocolItems = [
   { title: '大模型对话 API', value: 'chat' },
-  { title: 'Decisions API（OpenAI 格式）', value: 'decisions' },
-  { title: 'System One API（Jev 原生格式）', value: 'systemone' }
+  { title: 'Decisions API（原生决策格式）', value: 'decisions' }
 ]
 const gateChannels = ref<Awaited<ReturnType<typeof api.getGateChannels>>['channels']>([])
 const gateChannelsLoading = ref(false)
@@ -650,8 +649,8 @@ const gateModelItems = computed(() => {
 })
 const gateProtocolHint = computed(() => {
   switch (contentSafety.value.dangerousCmd.aiGate.protocol) {
-    case 'decisions': return '使用 Decisions 渠道调用 /v1/decisions，发送 input 和问题数组。Jev 经 LiteLLM 等兼容网关接入时也可选此格式。'
-    case 'systemone': return '使用 Decisions 渠道调用 /v1/systemone，发送 state 和具名问题。适用于 Jev 原生 API；渠道启用完整 URL 时按配置地址发送。'
+    case 'systemone':
+    case 'decisions': return '使用 Decisions 渠道调用 /v1/decisions，复用 state 和具名 questions 的原生决策格式；渠道启用完整 URL 时按配置地址发送。'
     default: return '使用 Messages、Responses、Chat 或 Gemini 渠道；只将命中本地规则的执行工具命令送审。'
   }
 })

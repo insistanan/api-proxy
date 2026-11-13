@@ -153,6 +153,8 @@ func TestUnknownHistoryAndFailedPersistence(t *testing.T) {
 	if !errors.As(err, &historyErr) {
 		t.Fatalf("未知来源历史应明确阻止: %v", err)
 	}
+	eventsBefore := s.Events("messages")
+	require.Len(t, eventsBefore, 1, "来源未知的路由失败也应保留诊断")
 	ctx, release, err := s.Begin(context.Background(), "messages", "fresh", "r2", []byte(`{"input":"翻译"}`), "")
 	if err != nil {
 		t.Fatal(err)
@@ -164,9 +166,9 @@ func TestUnknownHistoryAndFailedPersistence(t *testing.T) {
 	if err := TurnFrom(ctx).CommitTarget(&config.UpstreamConfig{ID: "c", PoolID: "default"}, "k", "m"); err == nil {
 		t.Fatal("应返回持久化失败")
 	}
-	if len(s.state.Sessions) != 0 || len(s.state.Events) != 0 {
-		t.Fatal("保存失败污染了会话或路由事件")
-	}
+	require.Empty(t, s.state.Sessions)
+	require.Empty(t, TurnFrom(ctx).event.Target.ChannelID, "保存失败不能把候选目标记作已确认来源")
+	require.Equal(t, eventsBefore, s.Events("messages"), "保存失败不能污染原有路由事件")
 }
 
 func TestClassifierHasNoSyntheticEasyDefault(t *testing.T) {

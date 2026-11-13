@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
 	"strings"
 
 	"github.com/insistanan/api-proxy/internal/infra/config"
@@ -38,22 +37,8 @@ func buildDecisionRequestBody(model string, prompt Prompt) ([]byte, error) {
 	}
 	request := map[string]any{"model": model}
 	switch prompt.Protocol {
-	case "decisions":
-		labels := make([]string, 0, len(question.Criteria))
-		for label := range question.Criteria {
-			labels = append(labels, label)
-		}
-		sort.Strings(labels)
-		choices := make([]map[string]string, 0, len(labels))
-		for _, label := range labels {
-			choices = append(choices, map[string]string{"value": label, "description": question.Criteria[label]})
-		}
-		// OpenAI 的 input 为字符串/消息数组，结构化审核数据保留为 JSON 字符串。
-		request["input"] = prompt.Messages[0].Content
-		request["questions"] = []any{map[string]any{
-			"type": "choice", "name": question.Name, "instructions": question.Instructions, "choices": choices,
-		}}
-	case "systemone":
+	// systemone 仅兼容旧配置，复用同一份 Decisions 对象格式。
+	case "decisions", "systemone":
 		request["state"] = state
 		request["questions"] = map[string]any{question.Name: map[string]any{
 			"type": "choice", "instructions": question.Instructions, "criteria": question.Criteria,
@@ -68,11 +53,10 @@ func buildDecisionRequest(ctx context.Context, upstream *config.UpstreamConfig, 
 	if err := config.ValidateDecisionsUpstream(upstream); err != nil {
 		return nil, err
 	}
-	endpoint := "/decisions"
-	if protocol == "systemone" {
-		endpoint = "/systemone"
+	if protocol != "decisions" && protocol != "systemone" {
+		return nil, fmt.Errorf("决策请求协议无效: %q", protocol)
 	}
-	url := utils.BuildUpstreamURL(upstream.GetEffectiveBaseURL(), "/v1", endpoint, upstream.UseFullURL)
+	url := utils.BuildUpstreamURL(upstream.GetEffectiveBaseURL(), "/v1", "/decisions", upstream.UseFullURL)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("创建决策审批请求失败: %w", err)
@@ -100,28 +84,10 @@ func decodeDecisionResponse(body []byte, prompt Prompt) (*types.ClaudeResponse, 
 	}
 	var selected answer
 	switch prompt.Protocol {
-	case "decisions":
-		var answers []answer
-		if err := json.Unmarshal(envelope.Answers, &answers); err != nil {
-			return nil, fmt.Errorf("Decisions answers 必须为数组: %w", err)
-		}
-		found := false
-		for _, item := range answers {
-			if item.Name != prompt.Decision.Name {
-				continue
-			}
-			if found {
-				return nil, fmt.Errorf("决策响应包含重复的审核答案")
-			}
-			selected, found = item, true
-		}
-		if !found {
-			return nil, fmt.Errorf("决策响应缺少问题 %q 的答案", prompt.Decision.Name)
-		}
-	case "systemone":
+	case "decisions", "systemone":
 		var answers map[string]answer
 		if err := json.Unmarshal(envelope.Answers, &answers); err != nil {
-			return nil, fmt.Errorf("System One answers 必须为对象: %w", err)
+			return nil, fmt.Errorf("Decisions answers 必须为对象: %w", err)
 		}
 		var found bool
 		selected, found = answers[prompt.Decision.Name]

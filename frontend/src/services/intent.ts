@@ -50,9 +50,47 @@ export interface IntentConfig {
 }
 export interface IntentGroupCapability { poolId: string; tasks: string[]; tiers: number[]; cost: number }
 export interface IntentTask { id: string; name: string; description: string }
-export interface IntentDecision { task?: string; poolId: string; routeId: string; reason: string; score: number; tier: number; durationMs: number }
+export interface IntentGroupMatch {
+  poolId: string
+  name: string
+  tasks: string[] | null
+  tiers: number[] | null
+  status: 'skipped' | 'disabled' | 'unconfigured' | 'excluded' | 'candidate' | 'selected'
+  reason: string
+  cost: number
+  selectionScore?: number
+  good?: number
+  bad?: number
+}
+export interface IntentTrace {
+  input: string
+  truncated: boolean
+  classified: boolean
+  strategy: string
+  taskSource?: string
+  tierSource?: string
+  taskEvidence?: string
+  tierEvidence?: string
+  suggestedPoolId?: string
+  selection?: string
+  error?: string
+  groups: IntentGroupMatch[]
+  semantic?: { datasetId: string; revision: number; sampleId: string; label: string; negative: boolean; score: number }[]
+  threshold?: number
+  switchMargin?: number
+}
+export interface IntentDecision { trace?: IntentTrace; task?: string; poolId: string; routeId: string; reason: string; score: number; tier: number; durationMs: number }
+
+// 失败仍保留后端返回的诊断快照，不在前端重跑匹配。
+export function intentPreviewFailure(cause: unknown): IntentDecision | undefined {
+  if (cause instanceof ApiError && cause.code === 'INTENT_CLASSIFIER_FAILED' && cause.details && typeof cause.details === 'object' && 'decision' in cause.details) {
+    return cause.details.decision as IntentDecision
+  }
+  return undefined
+}
 export interface IntentEvent {
-	control?: boolean
+  status?: 'pending' | 'failed' | 'delivered'
+  control?: boolean
   requestId: string
   protocol: IntentProtocol
   conversationId: string

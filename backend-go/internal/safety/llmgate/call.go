@@ -215,7 +215,7 @@ type Prompt struct {
 	Metadata CallMetadata
 	// MaxTokens 为 0 时取 DefaultMaxTokens。
 	MaxTokens int
-	// Protocol 为空/chat 时使用对话 API；decisions/systemone 使用原生决策格式。
+	// Protocol 为空/chat 时使用对话 API；decisions 使用原生决策格式，systemone 仅兼容旧配置。
 	Protocol string
 	// OverrideModel 允许审批配置显式覆盖渠道默认模型，不改变助手原有模型优先级。
 	OverrideModel bool

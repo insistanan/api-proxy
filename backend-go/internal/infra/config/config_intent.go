@@ -65,6 +65,9 @@ func cloneIntentRouting(source map[string]IntentRoutingConfig) map[string]Intent
 	}
 	out := make(map[string]IntentRoutingConfig, len(source))
 	for kind, value := range source {
+		if value.Classifier == "systemone" {
+			value.Classifier = "decisions"
+		}
 		value.Groups = slices.Clone(value.Groups)
 		for i := range value.Groups {
 			value.Groups[i].Tasks = slices.Clone(value.Groups[i].Tasks)
@@ -179,13 +182,13 @@ func ValidateIntentRouting(value IntentRoutingConfig, pools []ChannelPool) error
 		}
 	}
 	validPool := func(id string) bool {
-		return id != FreeChannelPoolID && slices.ContainsFunc(pools, func(p ChannelPool) bool { return p.ID == id })
+		return slices.ContainsFunc(pools, func(p ChannelPool) bool { return p.ID == id })
 	}
 	if err := validateIntentGroups(value, validPool); err != nil {
 		return err
 	}
 	if value.Unmatched == "fallback" && !validPool(value.FallbackPoolID) {
-		return fmt.Errorf("未命中目标分组不存在或为免费分组")
+		return fmt.Errorf("未命中目标分组不存在")
 	}
 	if len(value.Routes) > 100 || (value.Enabled && value.Strategy != "auto" && len(value.Routes) == 0) {
 		return fmt.Errorf("启用时需配置 1–100 条规则")

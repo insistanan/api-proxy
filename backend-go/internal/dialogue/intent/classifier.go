@@ -1,10 +1,12 @@
 package intent
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -14,6 +16,7 @@ import (
 )
 
 type Decision struct {
+	Trace      *DecisionTrace     `json:"trace,omitempty"`
 	Task       string             `json:"task,omitempty"`
 	PoolScores map[string]float64 `json:"poolScores,omitempty"`
 	PoolID     string             `json:"poolId"`
@@ -26,19 +29,47 @@ type Decision struct {
 
 func (s *Service) Classify(ctx context.Context, cfg config.IntentRoutingConfig, input Input, parent string) (decision Decision, err error) {
 	started := time.Now()
-	defer func() { decision.DurationMS = time.Since(started).Milliseconds() }()
+	text, truncated := normalizeInput(input.Text)
+	input.Text, input.Truncated = text, input.Truncated || truncated
+	trace := s.newTrace(ctx, cfg, input)
+	snapshot := cfg
+	defer func() {
+		decision.DurationMS = time.Since(started).Milliseconds()
+		if err != nil {
+			decision.Tier = -1
+			if decision.Reason == "" {
+				decision.Reason = "辅助分类失败，未完成选组"
+			}
+		}
+		s.finishTrace(trace, snapshot, decision, err)
+		decision.Trace = trace
+	}()
+	ctx = context.WithValue(ctx, traceKey{}, trace)
+	if !trace.freeActive {
+		cfg.Groups = slices.DeleteFunc(slices.Clone(cfg.Groups), func(group config.IntentGroupCapability) bool { return group.PoolID == config.FreeChannelPoolID })
+		cfg.Routes = slices.DeleteFunc(slices.Clone(cfg.Routes), func(route config.IntentRoute) bool { return route.PoolID == config.FreeChannelPoolID })
+	}
 	if input.ToolContinuation || input.Text == "" {
 		return Decision{Tier: -1, Reason: "没有新的用户文本"}, nil
 	}
 	ctx, cancel := context.WithTimeout(scheduler.WithPoolConstraint(ctx, scheduler.PoolConstraint{}), time.Duration(cfg.TimeoutMS)*time.Millisecond)
 	defer cancel()
+	trace.Classified = true
 	if cfg.Strategy == "auto" {
+		order := make(map[string]int, len(trace.Groups))
+		for index, group := range trace.Groups {
+			order[group.PoolID] = index
+		}
+		cfg.Groups = slices.Clone(cfg.Groups)
+		slices.SortStableFunc(cfg.Groups, func(a, b config.IntentGroupCapability) int { return cmp.Compare(order[a.PoolID], order[b.PoolID]) })
 		return s.classifyAutomatic(ctx, cfg, input.Text, parent)
 	}
 	if cfg.Strategy == "semantic" {
 		return s.semantic(ctx, cfg, input.Text, parent)
 	}
 	if cfg.Strategy == "regex" {
+		trace.TaskSource = "regex"
+		trace.Selection = "按映射顺序选择首条命中的正则规则"
 		for _, route := range cfg.Routes {
 			for _, pattern := range route.Patterns {
 				re, compileErr := regexp.Compile(pattern)
@@ -46,19 +77,22 @@ func (s *Service) Classify(ctx context.Context, cfg config.IntentRoutingConfig, 
 					return Decision{}, fmt.Errorf("规则 %s 无效: %w", route.ID, compileErr)
 				}
 				if re.MatchString(input.Text) {
+					trace.TaskEvidence = "正则命中：" + safeTraceText(re.FindString(input.Text))
 					return routeDecision(route, 1, "正则命中"), nil
 				}
 			}
 		}
-		return Decision{Reason: "正则未命中"}, nil
+		return Decision{Tier: -1, Reason: "正则未命中"}, nil
 	}
 	// 规则分级只在明确出现信号时返回等级；没有信号不是“确定简单”。
 	tier, known := complexity(input.Text)
+	recordTierEvidence(ctx, "", input.Text, tier, known)
+	trace.Selection = "按映射顺序选择首个满足难度的分组"
 	if cfg.Classifier != "heuristic" && !(cfg.Classifier == "hybrid" && known) {
 		return s.remoteClassify(ctx, cfg, input.Text, parent)
 	}
 	if !known {
-		return Decision{Reason: "本地复杂度信号不足"}, nil
+		return Decision{Tier: -1, Reason: "本地复杂度信号不足"}, nil
 	}
 	var candidates []config.IntentRoute
 	for _, route := range cfg.Routes {
@@ -71,7 +105,7 @@ func (s *Service) Classify(ctx context.Context, cfg config.IntentRoutingConfig, 
 	}
 	chosen := candidates[0]
 	if cfg.Strategy == "adaptive" {
-		chosen = s.adaptiveChoice(protocolFrom(ctx), "", candidates)
+		chosen = s.adaptiveChoiceWithTrace(protocolFrom(ctx), "", candidates, trace)
 	}
 	return routeDecision(chosen, 1, "本地复杂度分级"), nil
 }
@@ -98,6 +132,14 @@ func complexity(text string) (int, bool) {
 }
 
 func (s *Service) remoteClassify(ctx context.Context, cfg config.IntentRoutingConfig, text, parent string) (Decision, error) {
+	if s.Caller == nil {
+		return Decision{}, fmt.Errorf("意图分类未绑定辅助推理服务")
+	}
+	trace := traceFrom(ctx)
+	if trace != nil {
+		trace.TierSource = cfg.Classifier
+		trace.TierEvidence = "辅助模型选择映射类别，不提供自由文本推理"
+	}
 	criteria := map[string]string{"unmatched": "没有足够信息或没有合适任务类别"}
 	for _, route := range cfg.Routes {
 		criteria[route.ID] = fmt.Sprintf("等级 %d；%s", route.Tier, route.Description)
@@ -111,7 +153,7 @@ func (s *Service) remoteClassify(ctx context.Context, cfg config.IntentRoutingCo
 		Messages: []llmgate.PromptMessage{{Role: "user", Content: string(payload)}},
 		Metadata: llmgate.CallMetadata{ParentRequestID: parent, APIType: "intent_classifier"}}
 	if cfg.Classifier == "decisions" || cfg.Classifier == "systemone" {
-		prompt.Protocol = cfg.Classifier
+		prompt.Protocol = "decisions"
 		prompt.Decision = &llmgate.DecisionQuestion{Name: "intent", Instructions: instruction, Criteria: criteria}
 	}
 	result, err := s.Caller.Call(ctx, cfg.ClassifierChannel, prompt)
@@ -120,7 +162,7 @@ func (s *Service) remoteClassify(ctx context.Context, cfg config.IntentRoutingCo
 	}
 	label := strings.TrimSpace(result.Text)
 	if label == "unmatched" {
-		return Decision{Reason: "分类器未命中"}, nil
+		return Decision{Tier: -1, Reason: "分类器未命中"}, nil
 	}
 	for _, route := range cfg.Routes {
 		if route.ID == label {
@@ -132,7 +174,7 @@ func (s *Service) remoteClassify(ctx context.Context, cfg config.IntentRoutingCo
 						candidates = append(candidates, candidate)
 					}
 				}
-				route = s.adaptiveChoice(protocolFrom(ctx), "", candidates)
+				route = s.adaptiveChoiceWithTrace(protocolFrom(ctx), "", candidates, trace)
 			}
 			return routeDecision(route, 1, "分类器选择标签"), nil
 		}

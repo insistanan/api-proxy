@@ -89,7 +89,7 @@ func RegisterIntentAPI(api *gin.RouterGroup, service *intent.Service) {
 		}
 		decision, err := service.Classify(intent.WithProtocol(c.Request.Context(), c.Param("protocol")), req.Config, intent.Input{Text: req.Text}, "intent-preview")
 		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadGateway, gin.H{"error": "辅助分类失败", "code": "INTENT_CLASSIFIER_FAILED", "decision": decision})
 			return
 		}
 		c.JSON(http.StatusOK, decision)

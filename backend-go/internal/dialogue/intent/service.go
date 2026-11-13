@@ -39,6 +39,7 @@ type sessionState struct {
 }
 
 type Event struct {
+	Status         string    `json:"status,omitempty"`
 	Control        bool      `json:"control,omitempty"`
 	RequestID      string    `json:"requestId"`
 	Protocol       string    `json:"protocol"`
@@ -119,6 +120,7 @@ type Turn struct {
 	event     Event
 	strict    bool
 	committed bool
+	finished  bool
 	accepted  Target
 }
 
@@ -142,7 +144,12 @@ func (t *Turn) PinnedIdentity(channelID string) string {
 	return ""
 }
 func (t *Turn) HasOpaqueHistory() bool { return t.input.Opaque }
-func (t *Turn) Strict() bool           { return t.strict }
+
+// AllowsFreePool 仅由服务端本轮决策授权，不读取客户端提供的标记。
+func (t *Turn) AllowsFreePool() bool {
+	return !t.manual && t.event.Decision.PoolID == config.FreeChannelPoolID
+}
+func (t *Turn) Strict() bool { return t.strict }
 func (t *Turn) PinnedModel(channelID string) string {
 	if t.manual && !t.strict {
 		return ""
@@ -192,11 +199,28 @@ func (s *Service) begin(ctx context.Context, kind, conversation, requestID strin
 	release := func() { s.mu.Lock(); delete(s.busy, key); s.mu.Unlock() }
 	t := &Turn{service: s, key: key, previous: previous, input: input, digest: digest(input.Text), strict: input.Opaque || input.ToolContinuation, epoch: cfg.SessionEpoch, manual: manualPool != "",
 		event: Event{RequestID: requestID, Protocol: kind, ConversationID: conversation, At: time.Now(), Control: control}}
+	t.event.Decision = Decision{Tier: -1, Reason: "沿用原分组规则", Trace: s.newTrace(ctx, cfg, input)}
+	unlock := release
+	release = func() {
+		defer unlock()
+		if !t.finished {
+			t.event.Status = "failed"
+			s.mu.Lock()
+			candidate := s.cloneStateLocked()
+			candidate.putEvent(t.event)
+			err := s.saveLocked(candidate)
+			s.mu.Unlock()
+			if err != nil {
+				log.Printf("[Intent-Record] requestId=%s 记录未交付路由失败: %v", requestID, err)
+			}
+		}
+	}
 	if t.strict && previous.Target.ChannelID == "" {
+		t.event.Decision.Reason = "工具或加密历史来源未知，已阻止自动路由"
 		release()
 		return ctx, func() {}, &HistoryError{"无法确认工具或加密历史的来源，已阻止自动路由；请在原渠道完成当前任务，或以完整可读上下文新建会话"}
 	}
-	decision := Decision{Tier: -1, Reason: "沿用原分组规则"}
+	decision := t.event.Decision
 	if manualPool != "" {
 		decision.PoolID = manualPool
 		decision.Reason = "显式渠道或人工会话固定优先"
@@ -205,12 +229,14 @@ func (s *Service) begin(ctx context.Context, kind, conversation, requestID strin
 		decision.Reason = "会话驻留或连续性保护"
 	} else if !input.History || previous.Target.PoolID != "" {
 		decision, err = s.Classify(ctx, cfg, input, requestID)
+		t.event.Decision = decision
 		if err != nil {
 			if cfg.FailurePolicy != "keep" {
 				release()
 				return ctx, func() {}, &RoutingError{Code: "INTENT_CLASSIFIER_FAILED", Err: err}
 			}
-			decision = Decision{PoolID: previous.Target.PoolID, Tier: -1, Reason: "分类失败，按显式配置保留原路由: " + err.Error()}
+			decision.PoolID, decision.Tier = previous.Target.PoolID, -1
+			decision.Reason = "分类失败，按显式配置保留原路由: " + safeTraceText(err.Error())
 		} else if decision.PoolID == "" {
 			switch cfg.Unmatched {
 			case "error":
@@ -253,7 +279,14 @@ func (s *Service) begin(ctx context.Context, kind, conversation, requestID strin
 			decision.Task, decision.Tier = previous.Task, previous.Tier
 		}
 	}
+	if decision.PoolID == config.FreeChannelPoolID && !s.freeEnabled() {
+		decision.Reason += "；免费服务已停用或未初始化"
+		t.event.Decision = decision
+		release()
+		return ctx, func() {}, &RoutingError{Code: "INTENT_UNMATCHED", Err: fmt.Errorf("意图目标免费服务已停用或未初始化")}
+	}
 	t.event.Decision = decision
+	t.event.Status = "pending"
 	route := scheduler.PoolConstraint{PoolID: decision.PoolID}
 	if previous.Target.PoolID != "" && previous.Target.PoolID == decision.PoolID && manualPool == "" {
 		if t.strict {
@@ -330,12 +363,14 @@ func (t *Turn) CommitTarget(up *config.UpstreamConfig, key, model string) error 
 		}
 	}
 	candidate.Sessions[t.key] = next
-	t.event.Target = target
-	t.event.Target.Identity = "" // 管理界面不暴露凭据指纹。
-	candidate.putEvent(t.event)
+	event := t.event
+	event.Target = target
+	event.Target.Identity = "" // 管理界面不暴露凭据指纹。
+	candidate.putEvent(event)
 	if err := s.saveLocked(candidate); err != nil {
 		return err
 	}
+	t.event = event
 	t.committed = true
 	t.accepted = target
 	log.Printf("[Intent-Route] requestId=%s protocol=%s pool=%s channel=%s model=%s reason=%s durationMs=%d", t.event.RequestID, t.event.Protocol, target.PoolID, target.ChannelID, model, t.event.Decision.Reason, t.event.Decision.DurationMS)
@@ -352,8 +387,16 @@ func (t *Turn) Complete(success bool) error {
 	candidate := s.cloneStateLocked()
 	event := t.event
 	event.Success = success
+	event.Status = "failed"
+	if success {
+		event.Status = "delivered"
+	}
 	candidate.putEvent(event)
-	return s.saveLocked(candidate)
+	if err := s.saveLocked(candidate); err != nil {
+		return err
+	}
+	t.event, t.finished = event, true
+	return nil
 }
 
 // AbortUndelivered 仅供尚未向客户端输出的失败调用，恢复来源后才允许换候选。
@@ -461,6 +504,10 @@ func qualityPrefix(kind, task string, tier int, pool string) string {
 }
 
 func (s *Service) adaptiveChoice(kind, task string, routes []config.IntentRoute) config.IntentRoute {
+	return s.adaptiveChoiceWithTrace(kind, task, routes, nil)
+}
+
+func (s *Service) adaptiveChoiceWithTrace(kind, task string, routes []config.IntentRoute, trace *DecisionTrace) config.IntentRoute {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	chosen, best := routes[0], math.Inf(-1)
@@ -479,6 +526,15 @@ func (s *Service) adaptiveChoice(kind, task string, routes []config.IntentRoute)
 		}
 		// 平滑质量估计 + 有界探索奖励 − 归一化成本。已有会话仍受切换保护。
 		score := (q.Good+1)/(q.Good+q.Bad+2) + 0.1/math.Sqrt(q.Good+q.Bad+1) - 0.1*route.Cost/maxCost
+		if trace != nil {
+			trace.Selection = "平滑质量估计 + 有界探索奖励 − 归一化相对成本；此值不是匹配概率"
+			for i := range trace.Groups {
+				if trace.Groups[i].PoolID == route.PoolID {
+					trace.Groups[i].SelectionScore = &score
+					trace.Groups[i].Good, trace.Groups[i].Bad = q.Good, q.Bad
+				}
+			}
+		}
 		if score > best {
 			chosen, best = route, score
 		}
