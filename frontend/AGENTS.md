@@ -1,60 +1,65 @@
 # frontend AGENTS.md
 
-本目录实现 api-proxy 的 Vue 3 管理界面，构建产物通过 `go:embed` 嵌入 Go 程序。前后端如何协作见 [架构说明](../docs/架构说明.md)，代码规范见 [规范与不变量](../docs/规范与不变量.md)。
+本目录为 **api-proxy** 的管理后台前端实现，采用 Vue 3 + Vuetify 3 构建，编译产物在发布时内嵌至 Go 后端。全景系统架构见 [架构说明](../docs/架构说明.md)，交互设计与编码规范见 [规范与不变量](../docs/规范与不变量.md)。
 
-## 技术栈
+---
 
-- Vue 3（^3.5）+ TypeScript 5.9（strict）+ Vite 7 + vue-tsc
-- UI：Vuetify 3（全量组件注册，`@mdi/js` 按需 SVG 图标），SCSS
-- 状态：Pinia 3 + pinia-plugin-persistedstate（localStorage 持久化）；路由 vue-router 4（History 模式，全部懒加载）
-- HTTP 使用原生 fetch，统一封装在 `src/services/http.ts` 的 `apiRequest<T>` 中；`api.ts` 保留原有导入入口。
-- 图表 apexcharts + vue3-apexcharts；拖拽 vuedraggable；测试 Vitest
-- 依赖可通过 Bun 或 npm 安装。发布 workflow 使用 `bun.lock`，Docker 构建使用 `package-lock.json`，修改依赖后需要核对两份锁文件。
-- Node 24.16.0 与 Bun 1.4.4 分别由根 `.node-version`、`.bun-version` 固定。
+## 1. 技术栈与环境版本
 
-## 目录结构（src/）
+- **核心框架**：Vue 3 (^3.5) + TypeScript 5.9（开启 strict 严格模式）+ Vite 7。
+- **UI 与样式**：Vuetify 3，采用全量组件注册与按需引入的 `@mdi/js` SVG 图标；支持明暗双主题切换（基于“砚与铜”雅致配色）。
+- **状态与路由**：Pinia 3（集成 `pinia-plugin-persistedstate` 本地持久化）；vue-router 4（采用 History 模式，全页面路由懒加载）。
+- **网络通信**：原生 `fetch` 统一封装于 `src/services/http.ts` 的 `apiRequest<T>` 中；流式数据通过 `src/utils/sse.ts` 的 `readSSEStream` 鉴权读取。
+- **调用观测与上下文快照**：支持请求聚合（LogCalls）、上下文快照（ContextSnapshotPanel）与趋势分析（ContextTrend）。
+- **工具链要求**：Node.js `24.16.0`（见根目录 `.node-version`）与 Bun `1.4.4`（见根目录 `.bun-version`）。仓库内同时维护 `bun.lock` 与 `package-lock.json`，修改依赖时需保持两份锁文件同步。
 
-| 目录 | 职责 |
+---
+
+## 2. 源码目录结构（src/）
+
+| 目录/文件 | 核心职责 |
 |---|---|
-| `views/` | 路由页面，如 ChannelsView、SettingsView、RequestLogsView、ConversationsView 及客户端配置页；完整列表见 `router/index.ts` |
-| `components/` | 可复用组件；`channel/` 放渠道表单与弹窗，`settings/` 放设置分区 |
-| `composables/` | 编排异步操作，并持有局部编辑草稿、查询状态和校验结果；已保存的共享领域数据由 store 管理（R5/方案 8.1） |
-| `stores/` | Pinia store：auth / channel / preferences / dialog / system / assistant / logs；日志详情缓存由 logs store 管理 |
-| `services/` | `http.ts` 统一鉴权与解析，领域模块声明业务端点，`api.ts` 组合并保留原导入入口；`version.ts` 检查 Release 版本 |
-| `types/` | 按领域拆分类型（channel / client-config / conversation / logs / metrics / model / security / settings / skill / assistant），`types/index.ts` 统一再导出 |
-| `utils/` | sse.ts（SSE 流读取）/ quickInputParser/ ccsDeepLink / platform / uuid 等 |
-| `plugins/vuetify.ts` | 全量组件注册 + 自定义 SVG iconSet + 双主题（"砚与铜"配色）+ 全局组件默认值 |
-| `router/` | History 模式，`/` 重定向 `/channels/messages`，动态路由 `/channels/:type` |
+| `views/` | 页面视图（如渠道概览 `ChannelsView`、全局设置 `SettingsView`、请求日志 `RequestLogsView`、对话详情 `ConversationsView` 及各客户端配置页） |
+| `components/` | 可复用 UI 组件库；`channel/` 存放渠道编辑表单与快速添加弹窗，`settings/` 存放网关、日志、安全等分类设置面板，包含调用聚合与上下文快照组件 |
+| `composables/` | 编排页面异步逻辑，持有局部的表单编辑草稿、查询过滤参数及临时校验提示；已保存的全局共享数据统一由 Store 管理 |
+| `stores/` | Pinia 状态层：`auth`（鉴权秘钥）、`channel`（渠道分组管理）、`preferences`（用户偏好）、`dialog`、`system`、`assistant`、`logs` 与 `logCalls`（聚合调用） |
+| `services/` | 领域接口封装：`http.ts` 负责注入 `x-api-key` 与统一错误解析，`channel-api.ts` 提供 7 大协议通用的 CRUD 操作，`observability.ts` 承接上下文与调用观测 |
+| `types/` | 严格 TypeScript 类型声明（按 channel、settings、logs、conversation 等领域细分） |
+| `utils/` | 工具库：`sse.ts`（流式事件解析）、`contextPresentation.ts`（上下文呈现辅助）、`quickInputParser.ts` 等 |
+| `plugins/vuetify.ts` | Vuetify 插件配置：包含全量组件注册、自定义 SVG 图标映射表（iconMap）与主题声明 |
+| `router/` | 路由映射定义：根路径 `/` 默认重定向至 `/channels/messages` |
 
-## 架构要点
+---
 
-- 认证由 App.vue 的全局密钥对话框处理，流程在 `composables/useAuthFlow.ts` 中。路由 meta 虽带 `requiresAuth: true`，但没有 `beforeEach` 守卫。认证失败 5 次会锁定 5 分钟，只有 401 响应会使密钥失效，网络错误会保留密钥。
-- `ApiTab` 由 `services/channel-api.ts` 的 `API_TABS` 常量派生，目前包含 messages、responses、gemini、chat、images、embeddings 和 decisions 七种协议。channel store 按 `API_TABS` 生成 `Record<ApiTab, ...>` 分组数据并校验路由参数，`channelApi(type)` 按协议返回共用操作方法。新增协议时，需要同步修改 `API_TABS`、API 工厂、`router/navigation.ts` 和后端端点。
-- App.vue 只是应用壳：认证、顶栏导航（`components/layout/AppNavigation.vue`，入口全部平铺、无二级菜单，配置在 `router/navigation.ts`）、主题和全局消息。渠道页的概览、路由开关、渠道弹窗和 2 秒自动刷新都在 `views/ChannelsView.vue`，离开渠道页即停止刷新。
-- 领域服务共用 `apiRequest<T>`，由 HTTP 层注入 `x-api-key` 并统一处理响应。收到 401 时清除认证状态并抛出 `ApiError`，错误携带 status、details、code 和 committed 等信息。`committed` 表示配置已经提交，但后续处理失败；此时不自动重试，提示用户刷新并查看实际状态，处理逻辑见 `useChannelActions.ts`。
-- 需要鉴权的 SSE 通过 fetch 和 `utils/sse.ts` 中的 `readSSEStream` 读取，以便携带访问密钥。
-- Dashboard 与图表历史数据使用 `shallowRef` 保存只读快照，更新必须替换根对象。渠道配置继续保持深层响应式，并复用未变对象；分组监听仅覆盖成员与排序字段。波形由 `ChannelActivityChart` 接收稳定派生数组，图表只通过 series props 更新，不重复调用 `updateSeries`。
-- **dev 代理**（vite.config.ts）：`/api`、`/v1`、`/v1beta`、`/health` 转发到 `VITE_PROXY_TARGET`（默认 http://localhost:3000）；生产环境 baseURL 固定 `/api`（同域，Go 嵌入部署）。
-- 构建分包：manualChunks 拆 charts-vendor / vuetify-vendor / mdi-icons / vue-vendor；路径别名 `@` → src。
+## 3. 核心设计与交互约定
 
-## 命令
+1. **状态唯一真理源与草稿隔离**：
+   - 全局共享的领域数据（如渠道列表、全局设置）由 Pinia Store 独占管理；
+   - 渠道编辑弹窗或设置页面的修改操作仅变更本地 Composable 草稿；用户保存成功后才向 Store 同步最新数据，点击取消则直接丢弃草稿，避免污染全局状态。
+2. **图标显式按需注册**：
+   - 为减少生产包体积，`plugins/vuetify.ts` 设置了 `autoImport: false`；
+   - 在模板中使用任何新的 `mdi-*` 图标前，**必须先在 `iconMap` 中显式登记导入**，本地门禁 `npm run check:icons` 会严格扫描拦截未注册的图标。
+3. **视图根节点单 DOM 元素约束**：
+   - 根组件包含路由切换过渡动画 `<transition mode="out-in">`；
+   - **所有路由页面（`views/*.vue`）的最外层必须是单个真实的 HTML DOM 容器元素**（如 `<div>`），严禁使用多根节点或 Fragment，否则会导致路由切换时页面彻底变白。
+4. **全栈贯穿的 7 大渠道类型（ApiTab）**：
+   - `ApiTab` 常量定义于 `services/channel-api.ts`，涵盖 `messages`、`responses`、`gemini`、`chat`、`images`、`embeddings` 和 `decisions`；
+   - Store、API 工厂与路由参数校验均与该枚举对齐。
+5. **已提交错误（`committed: true`）的处理策略**：
+   - 当后端返回的错误标记了 `committed: true` 时，说明配置已经原子落盘但在收尾热重载广播时发生异常；
+   - 前端**绝不发起自动重试**，而是给出明确提示，建议用户刷新页面核对最新状态。
+
+---
+
+## 4. 常用开发命令
 
 | 命令 | 说明 |
 |---|---|
-| `npm run dev` | Vite 开发服务器（端口 `VITE_FRONTEND_PORT`，默认 5173） |
-| `npm run build` / `preview` | 构建 / 预览 |
-| `npm run type-check` | vue-tsc --noEmit |
-| `npm run lint` / `lint:fix` | ESLint（门禁要求 `--max-warnings 0`） |
-| `npm run check:icons` | 校验所有 `mdi-*` 图标已在 vuetify.ts 的 iconMap 注册（未注册 exit 1） |
-| `npm run check` | 本目录的 type-check + check:icons；全量门禁在根目录运行 `npm run check` |
-| `npm test` | vitest run |
-| `npm run format` | prettier --write src/** |
-
-## 约定与坑
-
-1. **图标必须先注册**：vuetify.ts 中设置了 `autoImport: false`，使用新的 `mdi-*` 图标前，需要在 iconMap 中手动注册，否则 `check:icons` 会失败。
-2. **路由视图单根元素**：**视图根节点必须是单个真实 DOM 元素**，否则给 router-view 加过渡或透传属性时会整块空白。
-3. 注释使用自然、完整的中文，解释状态由谁持有、错误如何处理，以及需要保持的交互约束。保留有效的设计背景和 store 分节风格，去掉失效计划与重复说明，避免过度压缩成术语短句。
-4. ESLint 9 flat config：`no-explicit-any: warn`、生产环境 `no-console: warn` / `no-debugger: error`、未用变量忽略 `^_` 前缀。
-5. UI 文案全中文（`index.html` lang="zh-CN"，标题"API Proxy · 管理面板"）。
-6. 构建产物不要手工处理：`frontend/dist` 由根目录 `scripts/copy-frontend.mjs` 统一复制到 `backend-go/frontend/dist`。
+| `npm run dev` | 启动 Vite 开发服务器（默认端口 5173，自动代理 API 请求至 3000 端口） |
+| `npm run build` | 编译前端生产静态资源至 `dist/` |
+| `npm run type-check` | 执行 `vue-tsc` 类型安全检查 |
+| `npm run check:icons` | 检查模板中所用的 MDI 图标是否全部已在 `vuetify.ts` 中注册 |
+| `npm run check` | 本目录门禁：执行 `type-check` + `check:icons` |
+| `npm test` | 执行 Vitest 前端自动化单元测试 |
+| `npm run lint` / `lint:fix` | 执行 ESLint 校验与自动修复（门禁严格要求 `--max-warnings 0`） |
+| `npm run format` | 调用 Prettier 格式化 `src/` 源码 |
