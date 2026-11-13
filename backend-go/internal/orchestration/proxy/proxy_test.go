@@ -11,12 +11,12 @@ import (
 	"testing"
 )
 
-// TestNoForbiddenDependencies 静态断言本包不导入 gin / handlers / SQLite 驱动
+// TestNoForbiddenDependencies 静态断言本包不导入 gin / api / SQLite 驱动
 // （方案 7.3：以导入规则约束拟议 internal/orchestration/proxy 的依赖方向）。
 func TestNoForbiddenDependencies(t *testing.T) {
 	forbidden := map[string]string{
 		"github.com/gin-gonic/gin": "不得依赖 HTTP 框架",
-		"internal/handlers":        "不得反向依赖 HTTP 适配层",
+		"internal/api":             "不得反向依赖 HTTP 适配层",
 		"modernc.org/sqlite":       "不得直接依赖 SQLite 驱动",
 	}
 

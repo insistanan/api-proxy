@@ -13,9 +13,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/dialogue/session"
-	"github.com/insistanan/api-proxy/internal/handlers/hooks"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/infra/httpclient"
+	"github.com/insistanan/api-proxy/internal/safety/pipeline"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -50,7 +50,7 @@ func TestConvertedRequestIdentityFollowsUpstream(t *testing.T) {
 					`{"name":"official","baseUrl":"https://upstream.example/v1/%s","useFullUrl":true,"apiKeys":["fixture-key"],"serviceType":%q,"clientIdentityMode":%q}`,
 					target, upstream, mode.identity), http.StatusOK)
 				app.envCfg = &config.EnvConfig{ProxyAccessKey: "test-admin", LogLevel: "error", MaxRequestBodySize: 1024 * 1024, RequestTimeout: 5502}
-				app.contentSafetyPipeline = hooks.NewContentSafetyPipeline(app.cfgManager)
+				app.contentSafetyPipeline = pipeline.NewContentSafetyPipeline(app.cfgManager)
 				manager, err := session.NewPersistentSessionManager(filepath.Join(t.TempDir(), "sessions.db"), time.Hour, 0, 0)
 				require.NoError(t, err)
 				t.Cleanup(manager.Stop)

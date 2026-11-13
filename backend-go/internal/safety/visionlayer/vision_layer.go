@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 	"io"
 	"net/http"
 	"strings"
@@ -15,7 +18,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/infra/httpclient"
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
 	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
 	"github.com/insistanan/api-proxy/internal/protocol/providers"
@@ -58,7 +60,7 @@ func PrepareRequest(
 	}
 	images, err := collectImagesForUpstream(payload, targetUpstream.ServiceType)
 	if err != nil {
-		if !utils.ValueHasVisionContent(payload) {
+		if !visionmedia.ValueHasVisionContent(payload) {
 			return nil
 		}
 		return err
@@ -94,7 +96,7 @@ func PrepareRequest(
 	waitingImages := make([]visionWaiter, 0, len(images))
 	pendingFingerprints := make(map[string]struct{}, len(images))
 	for _, image := range images {
-		fingerprint := utils.ImageFingerprintForBlock(image)
+		fingerprint := visionmedia.ImageFingerprintForBlock(image)
 		if fingerprint == "" {
 			return fmt.Errorf("无法为图片理解层中的图片生成指纹")
 		}
@@ -204,7 +206,7 @@ func PrepareRequest(
 	if err != nil {
 		return wrapRequestError(http.StatusInternalServerError, "VISION_LAYER_INTERNAL_ERROR", err)
 	}
-	transformedBody, err := utils.MarshalJSONNoEscape(transformed)
+	transformedBody, err := codec.MarshalJSONNoEscape(transformed)
 	if err != nil {
 		return wrapRequestError(http.StatusInternalServerError, "VISION_LAYER_INTERNAL_ERROR", fmt.Errorf("序列化图片理解层请求失败: %w", err))
 	}
@@ -435,7 +437,7 @@ func describeImagesOnChannel(
 				}
 				continue
 			}
-			body = utils.DecompressGzipIfNeeded(response, body)
+			body = codec.DecompressGzipIfNeeded(response, body)
 			if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 				if response.StatusCode == http.StatusTooManyRequests {
 					channelScheduler.MetricsManager(kind).RecordRequestFinalizeNeutral(baseURL, apiKey, selection.ChannelIndex, metricsRequestID)
@@ -550,7 +552,7 @@ func validateConvertedVisionRequest(request *http.Request, images []visionImage)
 	request.Body = io.NopCloser(bytes.NewReader(body))
 
 	actual := make(map[string]struct{})
-	for _, fingerprint := range utils.ExtractImageFingerprints(body) {
+	for _, fingerprint := range visionmedia.ExtractImageFingerprints(body) {
 		actual[fingerprint] = struct{}{}
 	}
 	for _, image := range images {
@@ -562,15 +564,15 @@ func validateConvertedVisionRequest(request *http.Request, images []visionImage)
 }
 
 // shouldRetryVisionAttempt 判断图片理解渠道的失败响应是否值得换 Key/URL 重试。
-// 状态码分类与主链路 failover 共用 utils.ClassifyUpstreamStatus（唯一出处）；
+// 状态码分类与主链路 failover 共用 upstreamreq.ClassifyUpstreamStatus（唯一出处）；
 // 在此之上必须再过响应体谓词：内容审核拦截、请求内容非法这类错误换 Key 不会
 // 改变结果，重试只是空转，还会把无辜的 Key 标记为失败（调用方在 retry==true
 // 时会 MarkKeyAsFailed）。收敛前这里只看状态码，审核类 403 会被误判为可重试。
 func shouldRetryVisionAttempt(statusCode int, bodyBytes []byte) bool {
-	if utils.IsNonRetryableUpstreamErrorBody(bodyBytes) {
+	if upstreamreq.IsNonRetryableUpstreamErrorBody(bodyBytes) {
 		return false
 	}
-	retryable, _ := utils.ClassifyUpstreamStatus(statusCode)
+	retryable, _ := upstreamreq.ClassifyUpstreamStatus(statusCode)
 	return retryable
 }
 
@@ -614,7 +616,7 @@ func recordVisionAttempt(
 		ChannelIndex: selection.ChannelIndex,
 		ChannelName:  upstream.Name,
 		BaseURL:      baseURL,
-		KeyMask:      utils.MaskAPIKey(apiKey),
+		KeyMask:      codec.MaskAPIKey(apiKey),
 		ErrorType:    errorType,
 		ErrorMessage: truncateErrorBody([]byte(errorMessage)),
 		Retried:      retried,

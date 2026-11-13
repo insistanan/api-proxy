@@ -3,12 +3,13 @@ package logger
 import (
 	"context"
 	"encoding/json"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/storage/logbody"
 	"io"
 	"net/http"
 	"sync"
 
 	"github.com/google/uuid"
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 )
 
 type requestIDContextKey struct{}
@@ -82,7 +83,7 @@ func MaskedHeaderJSON(header http.Header) string {
 			plain[key] = values[0]
 		}
 	}
-	masked := utils.MaskSensitiveHeaders(plain)
+	masked := codec.MaskSensitiveHeaders(plain)
 	encoded, err := json.Marshal(masked)
 	if err != nil {
 		return ""
@@ -94,7 +95,7 @@ func CaptureResponseBody(inner io.ReadCloser, entry TrafficLog) io.ReadCloser {
 	if inner == nil {
 		return inner
 	}
-	limit := MaxBodyBytes
+	limit := logbody.MaxBodyBytes
 	if entry.capture != nil {
 		limit = entry.capture.BodyLimit
 		if entry.capture.BodyState(true) != "" {

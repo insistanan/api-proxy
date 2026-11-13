@@ -17,17 +17,18 @@ package providers
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"log"
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
 // parseGeminiSSEDataLine 提取一行 SSE 的 data JSON 载荷；非 data 行返回 false。
 func parseGeminiSSEDataLine(line string) (string, bool) {
-	return utils.SSEDataJSON(strings.TrimSpace(line))
+	return codec.SSEDataJSON(strings.TrimSpace(line))
 }
 
 // geminiToClaudeStreamState 聚合一次 Gemini 上游流的全部转换状态。
@@ -101,7 +102,7 @@ func (s *geminiToClaudeStreamState) captureUsage(chunk map[string]interface{}) {
 	}
 	if v, ok := meta["promptTokenCount"].(float64); ok {
 		// promptTokenCount 含 cachedContentTokenCount，扣除后才是新增输入。
-		// 与非流式 ConvertResponse、handlers/gemini 两条路径、converters
+		// 与非流式 ConvertResponse、api/gemini 两条路径、converters
 		// responses_stream 同一口径，含 <0 钳制防上游异常回包污染指标。
 		s.usageInput = int(v) - s.usageCacheRead
 		if s.usageInput < 0 {
@@ -187,7 +188,7 @@ func (s *geminiToClaudeStreamState) ProcessChunk(jsonStr string) []string {
 		return nil
 	}
 	if upstreamError, exists := chunk["error"]; exists && upstreamError != nil {
-		s.streamError = NewUpstreamStreamFailedError(utils.IsUpstreamModelCapacityErrorBody([]byte(jsonStr)), jsonStr)
+		s.streamError = NewUpstreamStreamFailedError(upstreamreq.IsUpstreamModelCapacityErrorBody([]byte(jsonStr)), jsonStr)
 		return nil
 	}
 	// 定稿后仍可接收纯 usage 尾包，不再接收正文或工具调用。

@@ -3,9 +3,8 @@ package mediasanitizer
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"strings"
-
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 )
 
 // UnsupportedImageMarker 是图片被降级为纯文本时的占位提示符。
@@ -152,7 +151,7 @@ func SanitizeImagesWithMarker(requestBodyBytes []byte) ([]byte, bool, int) {
 		return requestBodyBytes, false, 0
 	}
 
-	modifiedBytes, err := utils.MarshalJSONNoEscape(payload)
+	modifiedBytes, err := codec.MarshalJSONNoEscape(payload)
 	if err != nil {
 		return requestBodyBytes, false, 0
 	}

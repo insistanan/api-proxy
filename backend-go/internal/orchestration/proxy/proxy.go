@@ -3,15 +3,14 @@
 // proxycore 调用本包记录 BaseURL 和 API Key 候选的失败情况、同一候选的重试次数，
 // 并判断请求是否由客户端取消。HTTP 请求、渠道许可和结果记录仍由 proxycore 负责。
 //
-// 依赖约束（go_test 静态断言）：不导入 gin、internal/handlers、SQLite 驱动。
+// 依赖约束（go_test 静态断言）：不导入 gin、internal/api、SQLite 驱动。
 package proxy
 
 import (
 	"context"
 	"errors"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"strings"
-
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 )
 
 // CandidateRetryState 保存一个 BaseURL 下的失败 Key 和同候选重试次数。
@@ -116,7 +115,7 @@ func IsRetrySameCandidateError(err error) bool {
 // IsUpstreamModelCapacityErrorBody 判断上游响应体是否为已知模型容量错误。
 // 判据唯一出处 utils（R4-a 收敛）。
 func IsUpstreamModelCapacityErrorBody(body []byte) bool {
-	return utils.IsUpstreamModelCapacityErrorBody(body)
+	return upstreamreq.IsUpstreamModelCapacityErrorBody(body)
 }
 
 // IsClientSideCancel 判断错误是否为客户端明确取消。

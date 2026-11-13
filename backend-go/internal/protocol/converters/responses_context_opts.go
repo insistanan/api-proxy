@@ -1,9 +1,9 @@
 package converters
 
 import (
+	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
@@ -58,7 +58,7 @@ func ExtractResponsesReasoningText(item types.ResponsesItem) string {
 // 展示摘要和不透明 encrypted_content 不能作为 Chat 推理历史的原文。
 func ExtractResponsesOriginalReasoningText(item types.ResponsesItem) string {
 	var original strings.Builder
-	for _, block := range utils.NormalizeContentBlocks(item.Content) {
+	for _, block := range visionmedia.NormalizeContentBlocks(item.Content) {
 		if block["type"] == "reasoning_text" {
 			if text, ok := block["text"].(string); ok {
 				original.WriteString(text)

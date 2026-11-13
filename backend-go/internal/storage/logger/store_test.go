@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/insistanan/api-proxy/internal/storage/logbody"
 )
 
 func TestRetentionCutoffKeepsTodayAndYesterday(t *testing.T) {
@@ -590,5 +592,13 @@ func TestResponseCaptureConcurrentCloseUnblocksReadOnce(t *testing.T) {
 	wg.Wait()
 	if closes := inner.closes.Load(); closes != 1 {
 		t.Fatalf("底层响应体关闭 %d 次，预期 1 次", closes)
+	}
+}
+
+func TestNormalizeTrafficLogPreservesPreparedBodyMetadata(t *testing.T) {
+	prepared := TrafficLog{}.WithPreparedBody(logbody.OmittedBody(0), 0, true)
+	normalized := normalizeTrafficLog(prepared)
+	if normalized.Body != prepared.Body || normalized.OriginalBytes != 0 || !normalized.Truncated {
+		t.Fatalf("未知原始长度被替换成省略说明长度: %+v", normalized)
 	}
 }

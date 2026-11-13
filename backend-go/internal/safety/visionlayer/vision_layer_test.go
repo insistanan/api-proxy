@@ -3,13 +3,13 @@ package visionlayer
 import (
 	"bytes"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
 )
 
@@ -98,8 +98,8 @@ func TestReplaceImagesUsesEachImageOwnDescription(t *testing.T) {
 		}},
 	}
 	descriptions := map[string]string{
-		utils.ImageFingerprintForBlock(first):  "第一张图片：你好",
-		utils.ImageFingerprintForBlock(second): "第二张图片：世界",
+		visionmedia.ImageFingerprintForBlock(first):  "第一张图片：你好",
+		visionmedia.ImageFingerprintForBlock(second): "第二张图片：世界",
 	}
 
 	transformed, err := transformImagesForUpstream(payload, "claude", descriptions)
@@ -211,7 +211,7 @@ func TestTransformImagesForTargetProtocols(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			payload := tt.payload(tt.image)
-			fingerprint := utils.ImageFingerprintForBlock(tt.image)
+			fingerprint := visionmedia.ImageFingerprintForBlock(tt.image)
 			transformed, err := transformImagesForUpstream(payload, tt.serviceType, map[string]string{
 				fingerprint: "稳定的图片描述",
 			})

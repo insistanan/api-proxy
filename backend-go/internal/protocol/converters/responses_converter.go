@@ -3,9 +3,9 @@ package converters
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/protocol/items"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
@@ -23,9 +23,9 @@ func ResponsesToClaudeMessagesWithOptions(sess *types.Session, newInput interfac
 	// 能证明“这是历史重放”的身份信息。
 	mergedItems := newItems
 	if sess != nil && len(sess.Messages) > 0 {
-		mergedItems = utils.MergeResponsesItemsDedup(sess.Messages, newItems)
+		mergedItems = respitems.MergeResponsesItemsDedup(sess.Messages, newItems)
 	}
-	if utils.ResponsesItemsContainCompaction(mergedItems) {
+	if respitems.ResponsesItemsContainCompaction(mergedItems) {
 		return nil, "", &types.UnsupportedProtocolError{Err: fmt.Errorf("Responses compaction item 只能由 Responses 原生上游处理，无法转换为 Claude Messages")}
 	}
 
@@ -162,9 +162,9 @@ func ResponsesToOpenAIChatMessages(sess *types.Session, newInput interface{}, in
 
 	mergedItems := newItems
 	if sess != nil && len(sess.Messages) > 0 {
-		mergedItems = utils.MergeResponsesItemsDedup(sess.Messages, newItems)
+		mergedItems = respitems.MergeResponsesItemsDedup(sess.Messages, newItems)
 	}
-	if utils.ResponsesItemsContainCompaction(mergedItems) {
+	if respitems.ResponsesItemsContainCompaction(mergedItems) {
 		return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("Responses compaction item 只能由 Responses 原生上游处理，无法转换为 OpenAI Chat")}
 	}
 

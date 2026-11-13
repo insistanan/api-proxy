@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"io"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
@@ -36,7 +36,7 @@ func (p *OpenAIProvider) ConvertToProviderRequest(c *gin.Context, upstream *conf
 		Path:           "/v1/chat/completions",
 		Header:         c.Request.Header,
 		Body:           originalBodyBytes,
-		ConversationID: c.GetString(utils.ContextKeyConversationUserID),
+		ConversationID: c.GetString(upstreamreq.ContextKeyConversationUserID),
 	}, upstream, apiKey)
 	if err != nil {
 		return nil, originalBodyBytes, err
@@ -115,8 +115,8 @@ func (p *OpenAIProvider) BuildRequest(input RequestInput, upstream *config.Upstr
 		return nil, fmt.Errorf("序列化OpenAI请求体失败: %w", err)
 	}
 
-	// 构建URL（"#"后缀与版本前缀约定见 utils.BuildUpstreamURL）
-	url := utils.BuildUpstreamURL(upstream.GetEffectiveBaseURL(), "/v1", "/chat/completions", upstream.UseFullURL)
+	// 构建URL（"#"后缀与版本前缀约定见 upstreamreq.BuildUpstreamURL）
+	url := upstreamreq.BuildUpstreamURL(upstream.GetEffectiveBaseURL(), "/v1", "/chat/completions", upstream.UseFullURL)
 
 	req, err := http.NewRequestWithContext(input.Ctx, http.MethodPost, url, bytes.NewReader(reqBodyBytes))
 	if err != nil {
@@ -125,7 +125,7 @@ func (p *OpenAIProvider) BuildRequest(input RequestInput, upstream *config.Upstr
 
 	// 使用统一的头部处理逻辑（透明代理）
 	// 保留客户端的大部分 headers，只移除/替换必要的认证和代理相关 headers
-	req.Header = utils.PrepareUpstreamHeadersFromHeader(input.Header, req.URL.Host)
+	req.Header = upstreamreq.PrepareUpstreamHeadersFromHeader(input.Header, req.URL.Host)
 
 	// 删除开发测试注入的客户端请求头，避免上游严格验证报错。
 	req.Header.Del("X-Codex-Window-Id")
@@ -143,8 +143,8 @@ func (p *OpenAIProvider) BuildRequest(input RequestInput, upstream *config.Upstr
 	req.Header.Del("X-Stainless-Timeout")
 	req.Header.Del("X-App")
 
-	utils.SetAuthenticationHeader(req.Header, apiKey)
-	utils.PrepareTargetIdentity(req.Header, "openai", false)
+	upstreamreq.SetAuthenticationHeader(req.Header, apiKey)
+	upstreamreq.PrepareTargetIdentity(req.Header, "openai", false)
 
 	return &RequestOutcome{Request: req, OriginalBody: originalBodyBytes}, nil
 }

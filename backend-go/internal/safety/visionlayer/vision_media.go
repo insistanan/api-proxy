@@ -2,9 +2,8 @@ package visionlayer
 
 import (
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 	"strings"
-
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 )
 
 type upstreamImageAdapter struct {
@@ -120,7 +119,7 @@ func isImageBlock(block map[string]interface{}) bool {
 }
 
 func toClaudeImageBlock(block map[string]interface{}) (map[string]interface{}, bool) {
-	if image, ok := utils.ToClaudeImageContentBlock(block); ok {
+	if image, ok := visionmedia.ToClaudeImageContentBlock(block); ok {
 		return image, true
 	}
 	if fileData, ok := block["fileData"].(map[string]interface{}); ok {
@@ -145,7 +144,7 @@ func toClaudeImageBlock(block map[string]interface{}) (map[string]interface{}, b
 		return nil, false
 	}
 	if mimeType == "" {
-		mimeType = utils.DefaultImageMediaType
+		mimeType = visionmedia.DefaultImageMediaType
 	}
 	return map[string]interface{}{
 		"type": "image",
@@ -255,7 +254,7 @@ func replaceImageBlock(
 	replacement func(string) map[string]interface{},
 	descriptions map[string]string,
 ) (interface{}, int, error) {
-	fingerprint := utils.ImageFingerprintForBlock(image)
+	fingerprint := visionmedia.ImageFingerprintForBlock(image)
 	result, ok := descriptions[fingerprint]
 	if fingerprint == "" || !ok {
 		return image, 0, fmt.Errorf("未找到图片指纹对应的理解结果")

@@ -3,9 +3,11 @@ package converters
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/items"
+	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
@@ -15,9 +17,9 @@ func ConvertResponsesToGeminiRequest(model string, sess *types.Session, req *typ
 		return nil, err
 	}
 	if sess != nil && len(sess.Messages) > 0 {
-		items = utils.MergeResponsesItemsDedup(sess.Messages, items)
+		items = respitems.MergeResponsesItemsDedup(sess.Messages, items)
 	}
-	if utils.ResponsesItemsContainCompaction(items) {
+	if respitems.ResponsesItemsContainCompaction(items) {
 		return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("Responses compaction item 只能由 Responses 原生上游处理，无法转换为 Gemini")}
 	}
 	callNames := buildFunctionCallNameMap(items)
@@ -81,7 +83,7 @@ func ConvertResponsesToGeminiRequest(model string, sess *types.Session, req *typ
 		geminiReq.GenerationConfig = genCfg
 	}
 
-	return utils.MarshalJSONNoEscape(geminiReq)
+	return codec.MarshalJSONNoEscape(geminiReq)
 }
 
 func ConvertGeminiResponseToResponses(originalRequestJSON []byte, upstreamResponseJSON []byte) (*types.ResponsesResponse, error) {
@@ -390,10 +392,10 @@ func responsesContentToGeminiParts(content interface{}) ([]types.GeminiPart, err
 	if text, ok := content.(string); ok && text != "" {
 		return []types.GeminiPart{{Text: text}}, nil
 	}
-	blocks := utils.NormalizeContentBlocks(content)
+	blocks := visionmedia.NormalizeContentBlocks(content)
 	parts := make([]types.GeminiPart, 0, len(blocks))
 	for _, block := range blocks {
-		if text, ok := utils.ExtractTextFromBlock(block); ok {
+		if text, ok := visionmedia.ExtractTextFromBlock(block); ok {
 			parts = append(parts, types.GeminiPart{Text: text})
 			continue
 		}
@@ -417,12 +419,12 @@ func geminiInlineDataFromBlock(block map[string]interface{}) (*types.GeminiInlin
 		if data, ok := source["data"].(string); ok && data != "" {
 			mime, _ := source["media_type"].(string)
 			if mime == "" {
-				mime = utils.DefaultImageMediaType
+				mime = visionmedia.DefaultImageMediaType
 			}
 			return &types.GeminiInlineData{MimeType: mime, Data: data}, true
 		}
 	}
-	if mime, data, ok := utils.ParseImageDataURL(imageURIFromBlock(block)); ok {
+	if mime, data, ok := visionmedia.ParseImageDataURL(imageURIFromBlock(block)); ok {
 		return &types.GeminiInlineData{MimeType: mime, Data: data}, true
 	}
 	return nil, false
@@ -435,7 +437,7 @@ func geminiFileDataFromBlock(block map[string]interface{}) (*types.GeminiFileDat
 	}
 
 	uri := imageURIFromBlock(block)
-	mime := utils.DefaultImageMediaType
+	mime := visionmedia.DefaultImageMediaType
 	if source, ok := block["source"].(map[string]interface{}); ok {
 		if mediaType, _ := source["media_type"].(string); mediaType != "" {
 			mime = mediaType

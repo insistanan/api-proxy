@@ -4,7 +4,7 @@ const routes = [
   {
     path: '/datasets',
     name: 'datasets',
-    component: () => import('@/views/DatasetsView.vue'),
+    component: () => import('@/features/extensions/datasets/views/DatasetsView.vue'),
     meta: { requiresAuth: true }
   },
   {
@@ -14,73 +14,73 @@ const routes = [
   {
     path: '/conversations',
     name: 'conversations',
-    component: () => import('@/views/ConversationsView.vue'),
+    component: () => import('@/features/observability/views/ConversationsView.vue'),
     meta: { requiresAuth: true }
   },
   {
     path: '/logs',
     name: 'request-logs',
-    component: () => import('@/views/RequestLogsView.vue'),
+    component: () => import('@/features/observability/views/RequestLogsView.vue'),
     meta: { requiresAuth: true }
   },
   {
     path: '/blocked-logs',
     name: 'blocked-logs',
-    component: () => import('@/views/BlockedLogsView.vue'),
+    component: () => import('@/features/observability/views/BlockedLogsView.vue'),
     meta: { requiresAuth: true }
   },
   {
     path: '/skills',
     name: 'skills',
-    component: () => import('@/views/SkillsView.vue'),
+    component: () => import('@/features/extensions/skills/views/SkillsView.vue'),
     meta: { requiresAuth: true }
   },
   {
     path: '/mcp',
     name: 'mcp',
-    component: () => import('@/views/McpView.vue'),
+    component: () => import('@/features/extensions/mcp/views/McpView.vue'),
     meta: { requiresAuth: true }
   },
   {
     path: '/opencode',
     name: 'opencode',
-    component: () => import('@/views/OpenCodeView.vue'),
+    component: () => import('@/features/clients/views/OpenCodeView.vue'),
     meta: { requiresAuth: true }
   },
   {
     path: '/claude-code',
     name: 'claude-code',
-    component: () => import('@/views/ClaudeCodeView.vue'),
+    component: () => import('@/features/clients/views/ClaudeCodeView.vue'),
     meta: { requiresAuth: true }
   },
   {
     path: '/gpt',
     name: 'gpt',
-    component: () => import('@/views/GptView.vue'),
+    component: () => import('@/features/clients/views/GptView.vue'),
     meta: { requiresAuth: true }
   },
   {
     path: '/pi-agent',
     name: 'pi-agent',
-    component: () => import('@/views/PiAgentView.vue'),
+    component: () => import('@/features/clients/views/PiAgentView.vue'),
     meta: { requiresAuth: true }
   },
   {
     path: '/dsh',
     name: 'dsh',
-    component: () => import('@/views/DshView.vue'),
+    component: () => import('@/features/clients/views/DshView.vue'),
     meta: { requiresAuth: true }
   },
   {
     path: '/settings',
     name: 'settings',
-    component: () => import('@/views/SettingsView.vue'),
+    component: () => import('@/features/settings/views/SettingsView.vue'),
     meta: { requiresAuth: true }
   },
   {
     path: '/channels/:type',  // 协议参数由 ChannelsView 校验，包含 images
     name: 'channels',
-    component: () => import('@/views/ChannelsView.vue'),  // 懒加载
+    component: () => import('@/features/channels/views/ChannelsView.vue'),  // 懒加载
     props: true,  // 将路由参数作为 props 传递
     meta: { requiresAuth: true }
   }

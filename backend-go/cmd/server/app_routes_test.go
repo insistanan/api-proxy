@@ -11,10 +11,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/dialogue/session"
-	"github.com/insistanan/api-proxy/internal/handlers/hooks"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/infra/middleware"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
+	"github.com/insistanan/api-proxy/internal/safety/pipeline"
 	"github.com/insistanan/api-proxy/internal/storage/metrics"
 	"github.com/stretchr/testify/require"
 )
@@ -27,7 +27,7 @@ var channelAdminKinds = []scheduler.ChannelKind{
 func TestModelCatalogRoutesCoexistWithProxyEndpoints(t *testing.T) {
 	r, a := newChannelAdminTestRouter(t)
 	a.envCfg = &config.EnvConfig{ProxyAccessKey: "test-admin"}
-	a.contentSafetyPipeline = hooks.NewContentSafetyPipeline(a.cfgManager)
+	a.contentSafetyPipeline = pipeline.NewContentSafetyPipeline(a.cfgManager)
 	require.NoError(t, a.cfgManager.EnsureFreeChannels())
 	a.setupProxyEndpoints(r)
 	paths := make(map[string]bool)

@@ -7,6 +7,7 @@ package providers
 import (
 	"context"
 	"encoding/json"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -19,7 +20,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/dialogue/session"
 	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -192,7 +192,7 @@ func assertRequestBodyReplay(t *testing.T, req *http.Request) []byte {
 }
 
 func TestResponsesProviderBuildRequest_CodexDisguiseBodyIsReplayable(t *testing.T) {
-	_, codexVersion, _, _ := utils.GetEffectiveDisguiseVersions()
+	_, codexVersion, _, _ := upstreamreq.GetEffectiveDisguiseVersions()
 	body := `{"model":"gpt-5","input":"你好","stream":true,"prompt_cache_key":"old-key","prompt_cache_retention":"24h"}`
 	for _, disguise := range []bool{false, true} {
 		name := "关闭伪装"

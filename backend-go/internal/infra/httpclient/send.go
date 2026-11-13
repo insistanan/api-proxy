@@ -7,13 +7,13 @@ package httpclient
 
 import (
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
 	"github.com/insistanan/api-proxy/internal/storage/logger"
 )
@@ -98,14 +98,14 @@ func PrepareInferenceHeaders(req *http.Request, stream bool) {
 	if !bound {
 		return
 	}
-	req.Header = utils.PrepareUpstreamHeadersFromHeader(req.Header, req.URL.Host)
-	utils.PrepareTargetIdentity(req.Header, candidate.Identity.Protocol, candidate.Compatibility)
+	req.Header = upstreamreq.PrepareUpstreamHeadersFromHeader(req.Header, req.URL.Host)
+	upstreamreq.PrepareTargetIdentity(req.Header, candidate.Identity.Protocol, candidate.Compatibility)
 	if candidate.Compatibility {
 		switch candidate.Identity.Protocol {
 		case "claude":
-			utils.ApplyClaudeCodeDisguise(req.Header, stream)
+			upstreamreq.ApplyClaudeCodeDisguise(req.Header, stream)
 		case "responses":
-			utils.ApplyCodexDisguise(req.Header, stream)
+			upstreamreq.ApplyCodexDisguise(req.Header, stream)
 		}
 	}
 	// 下游留下的其他认证头一律剥除；已有上游认证按目标协议保留。

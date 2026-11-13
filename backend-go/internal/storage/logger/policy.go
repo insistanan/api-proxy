@@ -3,6 +3,7 @@ package logger
 import (
 	"context"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/storage/logbody"
 	"time"
 )
 
@@ -103,7 +104,7 @@ func applyCapture(entry TrafficLog) TrafficLog {
 		return entry
 	}
 	if !entry.bodyPrepared {
-		body, original, truncated := PrepareBodyWithLimit([]byte(entry.Body), entry.capture.BodyLimit)
+		body, original, truncated := logbody.PrepareBodyWithLimit([]byte(entry.Body), entry.capture.BodyLimit)
 		entry.Body = body
 		if entry.OriginalBytes == 0 {
 			entry.OriginalBytes = original
@@ -111,7 +112,7 @@ func applyCapture(entry TrafficLog) TrafficLog {
 		entry.Truncated = entry.Truncated || truncated
 		entry.bodyPrepared = true
 	} else if len(entry.Body) > entry.capture.BodyLimit {
-		entry.Body = OmittedBodyWithLimit(entry.OriginalBytes, entry.capture.BodyLimit)
+		entry.Body = logbody.OmittedBodyWithLimit(entry.OriginalBytes, entry.capture.BodyLimit)
 		entry.Truncated = true
 	}
 	if entry.BodyState == "" && entry.Truncated {

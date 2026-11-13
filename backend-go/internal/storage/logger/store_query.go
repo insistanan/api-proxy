@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/storage/logbody"
 	"time"
 )
 
@@ -158,7 +159,7 @@ func normalizeTrafficLog(entry TrafficLog) TrafficLog {
 		entry.Timestamp = now.UTC().Format(time.RFC3339Nano)
 	}
 	if entry.Body != "" && !entry.bodyPrepared {
-		prepared, originalBytes, truncated := PrepareBody([]byte(entry.Body))
+		prepared, originalBytes, truncated := logbody.PrepareBody([]byte(entry.Body))
 		entry.Body = prepared
 		if entry.OriginalBytes == 0 {
 			entry.OriginalBytes = originalBytes

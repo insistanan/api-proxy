@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
 )
@@ -71,7 +72,7 @@ func (s *responsesToClaudeStreamState) processLine(line string) []string {
 	if strings.HasPrefix(line, "event:") {
 		return nil
 	}
-	data, isData := utils.SSEDataJSON(line)
+	data, isData := codec.SSEDataJSON(line)
 	if !isData {
 		return nil
 	}
@@ -241,12 +242,12 @@ func (s *responsesToClaudeStreamState) finish() []string {
 	return out
 }
 
-// proxycoreIsModelCapacity 委托 utils.IsUpstreamModelCapacityMessage：
+// proxycoreIsModelCapacity 委托 upstreamreq.IsUpstreamModelCapacityMessage：
 // 容量错误判据的唯一出处（R4-a 收敛），消除 providers 与 proxycore 的
 // 重复实现（providers 不能 import proxycore：proxycore→visionlayer→providers
 // 会成环；utils 是双方共同依赖）。
 func proxycoreIsModelCapacity(payload string) bool {
-	return utils.IsUpstreamModelCapacityMessage(payload)
+	return upstreamreq.IsUpstreamModelCapacityMessage(payload)
 }
 
 // UpstreamStreamFailedError 表示上游流内失败，包括错误事件和正常结束却仅有思考的无效回复。

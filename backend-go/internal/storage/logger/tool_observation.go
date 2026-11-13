@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/storage/logbody"
 	"strings"
 
 	"github.com/tidwall/gjson"
@@ -40,7 +41,7 @@ func extractToolObservations(entry TrafficLog) []ToolObservation {
 	default:
 		return nil
 	}
-	if entry.Truncated || len(entry.Body) > MaxBodyBytes || !gjson.Valid(entry.Body) {
+	if entry.Truncated || len(entry.Body) > logbody.MaxBodyBytes || !gjson.Valid(entry.Body) {
 		return nil
 	}
 	root := gjson.Parse(entry.Body)

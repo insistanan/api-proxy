@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"log"
 	"strings"
 
@@ -28,7 +29,7 @@ func applyAPIKeysUpdate(upstream *UpstreamConfig, index int, newAPIKeys []string
 			}
 			if !alreadyInHistory {
 				upstream.HistoricalAPIKeys = append(upstream.HistoricalAPIKeys, key)
-				log.Printf("[Config-Upstream] %s渠道 [%d] %s: Key %s 已移入历史列表", label, index, upstream.Name, utils.MaskAPIKey(key))
+				log.Printf("[Config-Upstream] %s渠道 [%d] %s: Key %s 已移入历史列表", label, index, upstream.Name, codec.MaskAPIKey(key))
 			}
 		}
 	}
@@ -38,7 +39,7 @@ func applyAPIKeysUpdate(upstream *UpstreamConfig, index int, newAPIKeys []string
 		if !newKeys[hk] {
 			newHistoricalKeys = append(newHistoricalKeys, hk)
 		} else {
-			log.Printf("[Config-Upstream] %s渠道 [%d] %s: Key %s 已从历史列表恢复", label, index, upstream.Name, utils.MaskAPIKey(hk))
+			log.Printf("[Config-Upstream] %s渠道 [%d] %s: Key %s 已从历史列表恢复", label, index, upstream.Name, codec.MaskAPIKey(hk))
 		}
 	}
 	upstream.HistoricalAPIKeys = newHistoricalKeys
@@ -99,7 +100,7 @@ func addAPIKeyOp(upstreams []UpstreamConfig, index int, apiKey string, label str
 		if hk != apiKey {
 			newHistoricalKeys = append(newHistoricalKeys, hk)
 		} else {
-			log.Printf("[%s-Key] 上游 [%d] %s: Key %s 已从历史列表恢复", label, index, upstreams[index].Name, utils.MaskAPIKey(hk))
+			log.Printf("[%s-Key] 上游 [%d] %s: Key %s 已从历史列表恢复", label, index, upstreams[index].Name, codec.MaskAPIKey(hk))
 		}
 	}
 	upstreams[index].HistoricalAPIKeys = newHistoricalKeys
@@ -135,7 +136,7 @@ func removeAPIKeyOp(upstreams []UpstreamConfig, index int, apiKey string, label 
 	}
 	if !alreadyInHistory {
 		upstreams[index].HistoricalAPIKeys = append(upstreams[index].HistoricalAPIKeys, apiKey)
-		log.Printf("[%s-Key] 上游 [%d] %s: Key %s 已移入历史列表", label, index, upstreams[index].Name, utils.MaskAPIKey(apiKey))
+		log.Printf("[%s-Key] 上游 [%d] %s: Key %s 已移入历史列表", label, index, upstreams[index].Name, codec.MaskAPIKey(apiKey))
 	}
 
 	log.Printf("[%s-Key] 已从上游 [%d] %s 删除API密钥", label, index, upstreams[index].Name)

@@ -10,9 +10,6 @@ const (
 	// DefaultDBPath 与 conversations.db 一样落在 .config。
 	DefaultDBPath = ".config/logs.db"
 
-	// MaxBodyBytes 日志正文的解析输入与最终输出上限。
-	MaxBodyBytes = 1 << 20
-
 	PhaseClientRequest     = "client_request"
 	PhaseClientInput       = "client_input"
 	PhaseUpstreamRequest   = "upstream_request"

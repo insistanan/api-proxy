@@ -5,13 +5,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/dialogue/session"
 	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
@@ -96,7 +97,7 @@ func applyPreviousResponseIDChain(
 		}
 		if state.MessageFingerprint != "" {
 			currentPrefix := claudeReq.Messages[:state.MessageCount]
-			if utils.CanonicalJSON(currentPrefix) != state.MessageFingerprint {
+			if codec.CanonicalJSON(currentPrefix) != state.MessageFingerprint {
 				// 消息正文发生变化（包括客户端压缩/分支重写），旧的
 				// Responses 链已经不能代表当前前缀，必须回退全量请求。
 				session.DefaultResponseChainManager().Clear(conversationID)
@@ -116,7 +117,7 @@ func applyPreviousResponseIDChain(
 		return
 	}
 	systemFingerprint := extractSystemText(claudeReq.System)
-	toolsFingerprint := utils.CanonicalJSON(normalizeToolsForPromptCacheKey(claudeReq.Tools))
+	toolsFingerprint := codec.CanonicalJSON(normalizeToolsForPromptCacheKey(claudeReq.Tools))
 	if state.SystemFingerprint != systemFingerprint || state.ToolsFingerprint != toolsFingerprint {
 		session.DefaultResponseChainManager().Clear(conversationID)
 		return
@@ -230,9 +231,9 @@ func rememberResponsesChain(conversationID string, claudeReq *types.ClaudeReques
 		ResponseID:         responseID,
 		MessageCount:       len(claudeReq.Messages),
 		OutputFingerprint:  outputFingerprint,
-		MessageFingerprint: utils.CanonicalJSON(claudeReq.Messages),
+		MessageFingerprint: codec.CanonicalJSON(claudeReq.Messages),
 		SystemFingerprint:  extractSystemText(claudeReq.System),
-		ToolsFingerprint:   utils.CanonicalJSON(normalizeToolsForPromptCacheKey(claudeReq.Tools)),
+		ToolsFingerprint:   codec.CanonicalJSON(normalizeToolsForPromptCacheKey(claudeReq.Tools)),
 		BaseURL:            responseChainBaseURL(upstream),
 		Model:              model,
 	})
@@ -315,7 +316,7 @@ func responsesAssistantOutputFingerprint(items []types.ResponsesItem) string {
 			"content": normalizeResponsesAssistantContent(item.Content),
 		})
 	}
-	sum := sha256.Sum256([]byte(utils.CanonicalJSON(normalized)))
+	sum := sha256.Sum256([]byte(codec.CanonicalJSON(normalized)))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -324,8 +325,8 @@ func responsesAssistantText(content interface{}) string {
 		return text
 	}
 	var parts []string
-	for _, block := range utils.NormalizeContentBlocks(content) {
-		if text, ok := utils.ExtractTextFromBlock(block); ok {
+	for _, block := range visionmedia.NormalizeContentBlocks(content) {
+		if text, ok := visionmedia.ExtractTextFromBlock(block); ok {
 			parts = append(parts, text)
 		}
 	}
@@ -347,13 +348,13 @@ func normalizeResponsesAssistantContent(content interface{}) interface{} {
 	if text, ok := content.(string); ok {
 		return []interface{}{map[string]interface{}{"type": "output_text", "text": text}}
 	}
-	blocks := utils.NormalizeContentBlocks(content)
+	blocks := visionmedia.NormalizeContentBlocks(content)
 	if len(blocks) == 0 {
 		return content
 	}
 	normalized := make([]interface{}, 0, len(blocks))
 	for _, block := range blocks {
-		if text, ok := utils.ExtractTextFromBlock(block); ok {
+		if text, ok := visionmedia.ExtractTextFromBlock(block); ok {
 			normalized = append(normalized, map[string]interface{}{
 				"type": "output_text", "text": text,
 			})

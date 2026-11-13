@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
+	"github.com/insistanan/api-proxy/internal/storage/logbody"
 	"strings"
 	"unicode/utf8"
 
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/tidwall/gjson"
 )
 
@@ -58,7 +60,7 @@ type ContextChange struct {
 }
 
 func LogPreview(text string, limit int) string {
-	text = strings.Join(strings.Fields(utils.RedactSensitivePlaceholdersForLog(text)), " ")
+	text = strings.Join(strings.Fields(codec.RedactSensitivePlaceholdersForLog(text)), " ")
 	if utf8.RuneCountInString(text) <= limit {
 		return text
 	}
@@ -92,7 +94,7 @@ func AnalyzeContext(entry TrafficLog) *ContextSnapshot {
 		TrafficID: entry.ID, Phase: entry.Phase, AttemptID: entry.AttemptID,
 		Completeness: "unavailable", Parts: []ContextPart{},
 	}
-	if entry.Truncated || len(entry.Body) > MaxBodyBytes || !gjson.Valid(entry.Body) {
+	if entry.Truncated || len(entry.Body) > logbody.MaxBodyBytes || !gjson.Valid(entry.Body) {
 		snapshot.Notice = "正文缺失、截断或不是完整 JSON，无法统计上下文"
 		return snapshot
 	}
@@ -144,7 +146,7 @@ func AnalyzeContext(entry TrafficLog) *ContextSnapshot {
 			owner := owners[0]
 			fingerprint = owner.Get("role").String() + "\x00" + owner.Get("tool_call_id").String() + "\x00" + owner.Get("name").String() + "\x00" + canonical
 		}
-		tokens := utils.EstimateTokens(canonical)
+		tokens := tokenusage.EstimateTokens(canonical)
 		index, exists := partIndex[kind]
 		if !exists {
 			index = len(snapshot.Parts)
@@ -157,7 +159,7 @@ func AnalyzeContext(entry TrafficLog) *ContextSnapshot {
 		part.EstimatedTokens += tokens
 		snapshot.EstimatedTokens += tokens
 		if len(snapshot.Items) < maxContextItems {
-			snapshot.Items = append(snapshot.Items, ContextItem{Path: path, Kind: kind, Hash: hashLogText(fingerprint), EstimatedTokens: tokens})
+			snapshot.Items = append(snapshot.Items, ContextItem{Path: path, Kind: kind, Hash: logbody.HashLogText(fingerprint), EstimatedTokens: tokens})
 		} else {
 			snapshot.ItemsLimited = true
 		}

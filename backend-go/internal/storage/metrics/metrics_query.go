@@ -1,10 +1,9 @@
 package metrics
 
 import (
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"sort"
 	"time"
-
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 )
 
 // GetKeyMetrics 获取单个 Key 的指标
@@ -82,7 +81,7 @@ func (m *MetricsManager) GetChannelKeyUsageInfoMultiURL(baseURLs []string, apiKe
 
 		if !hasMetrics {
 			// Key 还没有指标记录，使用默认脱敏
-			keyMask = utils.MaskAPIKey(apiKey)
+			keyMask = codec.MaskAPIKey(apiKey)
 			requestCount = 0
 		}
 

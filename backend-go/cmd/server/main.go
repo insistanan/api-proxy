@@ -15,21 +15,21 @@ import (
 
 	"github.com/gin-gonic/gin"
 	apiproxy "github.com/insistanan/api-proxy"
-	"github.com/insistanan/api-proxy/internal/admin/assistant"
+	"github.com/insistanan/api-proxy/internal/api/admin"
+	"github.com/insistanan/api-proxy/internal/api/system"
+	"github.com/insistanan/api-proxy/internal/clients"
 	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
-	"github.com/insistanan/api-proxy/internal/dialogue/intent"
+	"github.com/insistanan/api-proxy/internal/dialogue/routing/intent"
 	"github.com/insistanan/api-proxy/internal/dialogue/session"
-	"github.com/insistanan/api-proxy/internal/handlers/admin"
-	"github.com/insistanan/api-proxy/internal/handlers/clients"
-	"github.com/insistanan/api-proxy/internal/handlers/hooks"
-	"github.com/insistanan/api-proxy/internal/handlers/system"
 	"github.com/insistanan/api-proxy/internal/infra/cli"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/infra/middleware"
+	"github.com/insistanan/api-proxy/internal/management/assistant"
 	"github.com/insistanan/api-proxy/internal/orchestration/circuit"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
 	"github.com/insistanan/api-proxy/internal/orchestration/urlhealth"
 	"github.com/insistanan/api-proxy/internal/safety/llmgate"
+	"github.com/insistanan/api-proxy/internal/safety/pipeline"
 	"github.com/insistanan/api-proxy/internal/safety/sensitive"
 	"github.com/insistanan/api-proxy/internal/storage/logger"
 	"github.com/insistanan/api-proxy/internal/storage/metrics"
@@ -49,8 +49,8 @@ type app struct {
 	mappingStore          *sensitive.MappingStore
 	mappingWatchStop      chan struct{}
 	mappingWatchDone      chan struct{}
-	cmdGate               *hooks.CmdGate
-	contentSafetyPipeline *hooks.Pipeline
+	cmdGate               *pipeline.CmdGate
+	contentSafetyPipeline *pipeline.Pipeline
 	sessionManager        *session.SessionManager
 	conversationRegistry  *conversation.Registry
 	metricsStore          *metrics.SQLiteStore
@@ -262,7 +262,7 @@ func newApp() (_ *app, err error) {
 		ChannelScheduler: a.channelScheduler,
 		RequestLogStore:  a.requestLogStore, // R4-b 装配层注入，不经调度器定位器
 	}
-	a.cmdGate = hooks.NewCmdGate(a.cfgManager, gateCaller, a.gateStore, a.blockedStore)
+	a.cmdGate = pipeline.NewCmdGate(a.cfgManager, gateCaller, a.gateStore, a.blockedStore)
 	localEmbedding, err := intent.NewLocal(".config/intent-embedding")
 	if err != nil {
 		return nil, err
@@ -274,7 +274,7 @@ func newApp() (_ *app, err error) {
 	a.registerCleanup("意图会话存储", a.intentService.Close)
 	a.registerCleanup("本地向量助手", localEmbedding.Stop)
 	// 内容安全管道注入闸门；未启用时保持"命中即拦截"的既有行为。
-	a.contentSafetyPipeline = hooks.NewContentSafetyPipelineWithSemantic(a.cfgManager, a.blockedStore, a.cmdGate, a.intentService.Datasets)
+	a.contentSafetyPipeline = pipeline.NewContentSafetyPipelineWithSemantic(a.cfgManager, a.blockedStore, a.cmdGate, a.intentService.Datasets)
 	log.Printf("[Gate-Init] 危险命令 AI 闸门已装配")
 
 	// 持久映射库在启动时初始化，以便运行中切换脱敏模式（Veil ADR 0004）。

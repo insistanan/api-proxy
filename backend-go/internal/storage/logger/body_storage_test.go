@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/storage/logbody"
 	"math"
 	"path/filepath"
 	"strings"
@@ -34,7 +35,7 @@ func TestSharedBodyRoundTripAndPurge(t *testing.T) {
 	require.NoError(t, store.readDB.QueryRow(`SELECT COUNT(*) FROM traffic_body_refs`).Scan(&references))
 	require.Equal(t, 1, bodies)
 	require.Equal(t, 2, references)
-	normalized, _, _ := PrepareBody(body)
+	normalized, _, _ := logbody.PrepareBody(body)
 	rows, err := store.QueryTrafficLogs(context.Background(), QueryOptions{To: math.MaxInt64})
 	require.NoError(t, err)
 	require.Len(t, rows, 2)
@@ -162,7 +163,7 @@ func TestWebDetailRejectsOversizedBodiesButCLIQueryStillWorks(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	for range 5 {
-		require.NoError(t, store.RecordTraffic(TrafficLog{RequestID: "large", Phase: PhaseUpstreamResponse, Body: strings.Repeat("x", MaxBodyBytes)}))
+		require.NoError(t, store.RecordTraffic(TrafficLog{RequestID: "large", Phase: PhaseUpstreamResponse, Body: strings.Repeat("x", logbody.MaxBodyBytes)}))
 	}
 	require.NoError(t, store.Flush())
 	_, err = store.GetSystemLogDetail(context.Background(), "large")

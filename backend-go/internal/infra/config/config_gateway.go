@@ -3,12 +3,11 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
-
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 )
 
 // GatewaySettings 将有部署差异的策略从 env 迁移到持久化设置。
@@ -97,10 +96,10 @@ func ValidateGatewaySettings(settings GatewaySettings) error {
 }
 
 func ValidateDisguiseSettings(settings DisguiseSettings) error {
-	if err := utils.ValidateDisguiseVersion(settings.ClaudeCodeVersion); err != nil {
+	if err := upstreamreq.ValidateDisguiseVersion(settings.ClaudeCodeVersion); err != nil {
 		return fmt.Errorf("Claude Code %w", err)
 	}
-	if err := utils.ValidateDisguiseVersion(settings.CodexVersion); err != nil {
+	if err := upstreamreq.ValidateDisguiseVersion(settings.CodexVersion); err != nil {
 		return fmt.Errorf("Codex %w", err)
 	}
 	return nil

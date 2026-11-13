@@ -93,7 +93,7 @@ function checkDocRegistry(gateName, baseDir, docPath, ignore, prefix) {
 }
 
 // 已物理删除的 internal 顶层模块。文档再出现这些名字会误导人和 AI。
-const REMOVED_INTERNAL_MODULES = ["eval"];
+const REMOVED_INTERNAL_MODULES = ["eval", "handlers", "admin"];
 const INTERNAL_MODULE_DOCS = ["backend-go/AGENTS.md", "docs/架构说明.md", "docs/技术栈.md"];
 
 function checkInternalModuleDocs() {
@@ -136,15 +136,22 @@ checkDocRegistry(
   "后端 internal 包目录登记校验",
   "backend-go/internal",
   "backend-go/AGENTS.md",
-  new Set(["handlers"]),
+  new Set(),
   "",
 );
 checkDocRegistry(
-  "后端 handlers 包目录登记校验",
-  "backend-go/internal/handlers",
+  "后端 api 包目录登记校验",
+  "backend-go/internal/api",
   "backend-go/AGENTS.md",
   new Set(),
-  "handlers/",
+  "api/",
+);
+checkDocRegistry(
+  "后端 clients 包目录登记校验",
+  "backend-go/internal/clients",
+  "backend-go/AGENTS.md",
+  new Set(),
+  "clients/",
 );
 checkDocRegistry(
   "后端 cmd 目录登记校验",

@@ -6,12 +6,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/protocol/items"
+	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 	"log"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
@@ -430,7 +431,7 @@ func (sm *SessionManager) AppendMessage(sessionID string, item types.ResponsesIt
 	session.Messages = append(session.Messages, item)
 	session.TotalTokens += tokensUsed
 	session.LastAccessAt = time.Now()
-	if utils.ResponsesItemHasVisionContent(item) {
+	if visionmedia.ResponsesItemHasVisionContent(item) {
 		session.HasVisionContent = true
 	}
 	if sm.store == nil {
@@ -453,7 +454,7 @@ func (sm *SessionManager) CommitTurn(sessionID string, items []types.ResponsesIt
 	previousResponseID := session.LastResponseID
 	previousLastAccess := session.LastAccessAt
 	previousVision := session.HasVisionContent
-	compactionRoot := utils.ResponsesItemsContainCompaction(items)
+	compactionRoot := respitems.ResponsesItemsContainCompaction(items)
 	if len(items) > 0 {
 		if compactionRoot {
 			// 包含 compaction 的规范窗口整体成为新历史根。压缩项之前
@@ -465,15 +466,15 @@ func (sm *SessionManager) CommitTurn(sessionID string, items []types.ResponsesIt
 			session.TotalTokens = 0
 			session.HasVisionContent = false
 			for _, item := range session.Messages {
-				if utils.ResponsesItemHasVisionContent(item) {
+				if visionmedia.ResponsesItemHasVisionContent(item) {
 					session.HasVisionContent = true
 					break
 				}
 			}
 		} else {
-			session.Messages = utils.MergeResponsesItemsDedup(session.Messages, items)
+			session.Messages = respitems.MergeResponsesItemsDedup(session.Messages, items)
 			for _, item := range items {
-				if utils.ResponsesItemHasVisionContent(item) {
+				if visionmedia.ResponsesItemHasVisionContent(item) {
 					session.HasVisionContent = true
 				}
 			}
@@ -559,7 +560,7 @@ func (sm *SessionManager) ReplaceSessionAfterBoundary(sessionID string, items []
 	session.HasVisionContent = hasVision
 	if !hasVision {
 		for _, item := range session.Messages {
-			if utils.ResponsesItemHasVisionContent(item) {
+			if visionmedia.ResponsesItemHasVisionContent(item) {
 				session.HasVisionContent = true
 				break
 			}
@@ -641,7 +642,7 @@ func (sm *SessionManager) ReplaceSessionAfterCompact(previousResponseID, respons
 	current.LastAccessAt = time.Now()
 	current.HasVisionContent = false
 	for _, item := range current.Messages {
-		if utils.ResponsesItemHasVisionContent(item) {
+		if visionmedia.ResponsesItemHasVisionContent(item) {
 			current.HasVisionContent = true
 			break
 		}

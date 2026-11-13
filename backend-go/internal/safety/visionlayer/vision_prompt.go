@@ -3,10 +3,9 @@ package visionlayer
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"strconv"
 	"strings"
-
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 )
 
 func buildVisionRequest(model string, profile visionAnalysisProfile, images []visionImage) ([]byte, error) {
@@ -34,7 +33,7 @@ func buildVisionRequest(model string, profile visionAnalysisProfile, images []vi
 	if maxTokens > 8192 {
 		maxTokens = 8192
 	}
-	return utils.MarshalJSONNoEscape(map[string]interface{}{
+	return codec.MarshalJSONNoEscape(map[string]interface{}{
 		"model":      model,
 		"max_tokens": maxTokens,
 		"messages": []interface{}{map[string]interface{}{

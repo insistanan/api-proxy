@@ -2,11 +2,11 @@ package converters
 
 import (
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/protocol/items"
 	"log"
 	"maps"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/sjson"
 )
@@ -27,7 +27,7 @@ func downgradeResponsesHostedSearch(serviceType string, body []byte, sess *types
 		}
 	}
 	if sess != nil {
-		items = utils.MergeResponsesItemsDedup(sess.Messages, items)
+		items = respitems.MergeResponsesItemsDedup(sess.Messages, items)
 	}
 	input, inputChanged, err := filterResponsesHostedSearchItems(items)
 	if err != nil {

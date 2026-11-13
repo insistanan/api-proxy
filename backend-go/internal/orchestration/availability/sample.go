@@ -3,12 +3,11 @@ package availability
 
 import (
 	"encoding/json"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 )
 
 const (
@@ -77,7 +76,7 @@ func Classify(success bool, status int, errorType, message string) (string, stri
 				case "rate_limit_exceeded", "rate_limit_error", "resource_exhausted":
 					return RateLimited, "rate_limited"
 				}
-				if utils.IsNonRetryableUpstreamErrorCode(code) {
+				if upstreamreq.IsNonRetryableUpstreamErrorCode(code) {
 					return Ignored, "request_rejected"
 				}
 			}

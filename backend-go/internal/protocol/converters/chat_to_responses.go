@@ -3,10 +3,10 @@ package converters
 import (
 	"context"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"strings"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -103,14 +103,14 @@ func ConvertOpenAIChatToResponses(ctx context.Context, modelName string, origina
 	}
 
 	// 期望 `data: {..}` 格式（冒号后空格可选，判定走 utils 单一出处）
-	payload, isData := utils.ParseSSEDataLineBytes(rawJSON)
+	payload, isData := codec.ParseSSEDataLineBytes(rawJSON)
 	if !isData {
 		return []string{}
 	}
 	rawJSON = payload
 
 	// 检查 [DONE] 标记
-	if string(rawJSON) == utils.SSEDoneMarker {
+	if string(rawJSON) == codec.SSEDoneMarker {
 		// 生成完成事件
 		return st.generateCompletedEvents(originalRequestRawJSON)
 	}

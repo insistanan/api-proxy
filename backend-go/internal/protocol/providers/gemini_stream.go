@@ -2,10 +2,9 @@ package providers
 
 import (
 	"context"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"io"
 	"strings"
-
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 )
 
 // HandleStreamResponse 处理流式响应
@@ -26,7 +25,7 @@ func (p *GeminiProvider) HandleStreamResponseCtx(ctx context.Context, body io.Re
 	go func() {
 		defer close(eventChan)
 		defer close(errChan)
-		defer utils.BindStreamBody(ctx, body)()
+		defer codec.BindStreamBody(ctx, body)()
 
 		send := pump.send
 		fail := pump.fail
@@ -36,7 +35,7 @@ func (p *GeminiProvider) HandleStreamResponseCtx(ctx context.Context, body io.Re
 
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
-			if payload, isData := utils.ParseSSEDataLine(line); isData && payload == utils.SSEDoneMarker {
+			if payload, isData := codec.ParseSSEDataLine(line); isData && payload == codec.SSEDoneMarker {
 				break
 			}
 			jsonStr, isData := parseGeminiSSEDataLine(line)

@@ -7,13 +7,12 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"io"
 	"net/http"
 	"os"
 	"strings"
 	"time"
-
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 )
 
 type UsageInfo struct {
@@ -145,7 +144,7 @@ func verifyStream(name, baseURL, apiKey, model, prompt string, verbose bool) *Ve
 			firstByte = true
 		}
 
-		jsonStr, isData := utils.SSEDataJSON(line)
+		jsonStr, isData := codec.SSEDataJSON(line)
 		if !isData {
 			continue
 		}

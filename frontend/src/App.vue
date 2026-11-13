@@ -132,13 +132,13 @@
 import { computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useDisplay, useTheme } from 'vuetify'
-import AppNavigation from './components/layout/AppNavigation.vue'
-import VersionBadge from './components/layout/VersionBadge.vue'
-import GatePendingNotification from './components/GatePendingNotification.vue'
-import { useAuthFlow } from './composables/useAuthFlow'
-import { toastIcons, useToast } from './composables/useToast'
-import { useAuthStore } from './stores/auth'
-import { usePreferencesStore, type ThemePreference } from './stores/preferences'
+import AppNavigation from '@/shared/components/layout/AppNavigation.vue'
+import VersionBadge from '@/shared/components/layout/VersionBadge.vue'
+import GatePendingNotification from '@/features/observability/components/GatePendingNotification.vue'
+import { useAuthFlow } from '@/app/useAuthFlow'
+import { toastIcons, useToast } from '@/shared/composables/useToast'
+import { useAuthStore } from '@/shared/stores/auth'
+import { usePreferencesStore, type ThemePreference } from '@/shared/stores/preferences'
 
 const route = useRoute()
 const theme = useTheme()

@@ -2,8 +2,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import router from './index'
-import { usePreferencesStore } from '@/stores/preferences'
-import { channelMenuActions } from '@/components/ChannelQuickMenu.vue'
+import { usePreferencesStore } from '@/shared/stores/preferences'
+import { channelMenuActions } from '@/features/channels/components/dashboard/ChannelQuickMenu.vue'
 
 vi.mock('vue-router', () => ({
   createWebHistory: () => ({}),

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"io"
 	"log"
 	"net/http"
@@ -19,7 +20,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/orchestration/circuit"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
 	"github.com/insistanan/api-proxy/internal/storage/logger"
@@ -175,7 +175,7 @@ func TestReadBoundedResponseLimitsCompressedAndDecodedBodies(t *testing.T) {
 		t.Fatal(err)
 	}
 	response := &http.Response{Body: io.NopCloser(bytes.NewReader(compressed.Bytes()))}
-	if _, err := readBoundedResponse(response); !errors.Is(err, utils.ErrDecompressedBodyTooLarge) {
+	if _, err := readBoundedResponse(response); !errors.Is(err, codec.ErrDecompressedBodyTooLarge) {
 		t.Fatalf("小压缩体展开超过上限时必须保留错误类型: %v", err)
 	}
 }

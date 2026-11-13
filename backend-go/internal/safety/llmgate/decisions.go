@@ -5,11 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"net/http"
 	"strings"
 
 	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
@@ -46,7 +47,7 @@ func buildDecisionRequestBody(model string, prompt Prompt) ([]byte, error) {
 	default:
 		return nil, fmt.Errorf("决策请求协议无效: %q", prompt.Protocol)
 	}
-	return utils.MarshalJSONNoEscape(request)
+	return codec.MarshalJSONNoEscape(request)
 }
 
 func buildDecisionRequest(ctx context.Context, upstream *config.UpstreamConfig, apiKey string, body []byte, protocol string) (*http.Request, error) {
@@ -56,13 +57,13 @@ func buildDecisionRequest(ctx context.Context, upstream *config.UpstreamConfig, 
 	if protocol != "decisions" && protocol != "systemone" {
 		return nil, fmt.Errorf("决策请求协议无效: %q", protocol)
 	}
-	url := utils.BuildUpstreamURL(upstream.GetEffectiveBaseURL(), "/v1", "/decisions", upstream.UseFullURL)
+	url := upstreamreq.BuildUpstreamURL(upstream.GetEffectiveBaseURL(), "/v1", "/decisions", upstream.UseFullURL)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("创建决策审批请求失败: %w", err)
 	}
 	request.Header.Set("Content-Type", "application/json")
-	utils.SetAuthenticationHeader(request.Header, apiKey)
+	upstreamreq.SetAuthenticationHeader(request.Header, apiKey)
 	return request, nil
 }
 

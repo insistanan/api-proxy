@@ -1,4 +1,5 @@
 // 应用设置与内容安全类型。
+import type { SemanticSafetyConfig } from './datasets'
 
 export interface AppSettings {
   network: {
@@ -114,7 +115,7 @@ export interface ContentSafetySettings {
     enabledRules: CredentialRule[]
   }
   dangerousCmd: {
-    semantic?: import('@/services/datasets').SemanticSafetyConfig
+    semantic?: SemanticSafetyConfig
     enabled: boolean
     enabledRules: DangerousCommandRule[]
     aiGate: DangerousCmdAIGateSettings

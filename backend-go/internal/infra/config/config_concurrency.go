@@ -3,10 +3,10 @@ package config
 import (
 	"context"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"slices"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
 )
 
@@ -100,7 +100,7 @@ func (cm *ConfigManager) publishConfigLocked(candidate Config) {
 	gateway := candidate.Settings.Gateway
 	activeGatewaySettings.Store(&gateway)
 	disguise := candidate.Settings.Disguise
-	utils.SetDisguiseSettings(disguise.ClaudeCodeVersion, disguise.CodexVersion, disguise.AutoUpdateFromRegistry)
+	upstreamreq.SetDisguiseSettings(disguise.ClaudeCodeVersion, disguise.CodexVersion, disguise.AutoUpdateFromRegistry)
 	if disguise != previousDisguise {
 		select {
 		case cm.settingsChanged <- struct{}{}:

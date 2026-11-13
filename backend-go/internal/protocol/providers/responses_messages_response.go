@@ -3,9 +3,9 @@ package providers
 
 import (
 	"encoding/json"
+	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/protocol/converters"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
@@ -22,8 +22,8 @@ func responsesResponseToClaude(resp *types.ResponsesResponse) *types.ClaudeRespo
 	for _, item := range resp.Output {
 		switch item.Type {
 		case "message":
-			for _, block := range utils.NormalizeContentBlocks(item.Content) {
-				if text, ok := utils.ExtractTextFromBlock(block); ok && text != "" {
+			for _, block := range visionmedia.NormalizeContentBlocks(item.Content) {
+				if text, ok := visionmedia.ExtractTextFromBlock(block); ok && text != "" {
 					textParts = append(textParts, text)
 				}
 			}

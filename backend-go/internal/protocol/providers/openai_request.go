@@ -6,11 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 	"log"
 	"strings"
 
 	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
@@ -32,7 +33,7 @@ func (p *OpenAIProvider) convertMessages(claudeReq *types.ClaudeRequest, forceRe
 	for index, msg := range claudeReq.Messages {
 		openaiMsg := p.convertMessage(msg)
 		requiresOriginal := forceReasoningContent
-		for _, block := range utils.NormalizeContentBlocks(msg.Content) {
+		for _, block := range visionmedia.NormalizeContentBlocks(msg.Content) {
 			if block["type"] == "redacted_thinking" {
 				requiresOriginal = true
 			}
@@ -71,7 +72,7 @@ func (p *OpenAIProvider) convertMessage(msg types.ClaudeMessage) []types.OpenAIM
 		return messages
 	}
 
-	contents := utils.NormalizeContentBlocks(msg.Content)
+	contents := visionmedia.NormalizeContentBlocks(msg.Content)
 	if len(contents) == 0 {
 		return messages
 	}
@@ -146,7 +147,7 @@ func (p *OpenAIProvider) convertMessage(msg types.ClaudeMessage) []types.OpenAIM
 				})
 			}
 		case "image", "image_url", "input_image":
-			if imageBlock, ok := utils.ToOpenAIImageContentBlock(content); ok {
+			if imageBlock, ok := visionmedia.ToOpenAIImageContentBlock(content); ok {
 				hasVisionContent = true
 				multimodalContents = append(multimodalContents, imageBlock)
 			}
@@ -420,7 +421,7 @@ func buildClaudeChatPromptCacheKey(claudeReq *types.ClaudeRequest, upstream *con
 		"system":   extractSystemText(claudeReq.System),
 		"tools":    normalizeToolsForPromptCacheKey(claudeReq.Tools),
 	}
-	sum := sha256.Sum256([]byte(utils.CanonicalJSON(stableParts)))
+	sum := sha256.Sum256([]byte(codec.CanonicalJSON(stableParts)))
 	return "claude-chat-" + hex.EncodeToString(sum[:])[:24]
 }
 

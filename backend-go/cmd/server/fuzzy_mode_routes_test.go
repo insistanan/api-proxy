@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/handlers/admin"
+	"github.com/insistanan/api-proxy/internal/api/admin"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/infra/middleware"
 	"github.com/stretchr/testify/require"

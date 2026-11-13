@@ -3,6 +3,7 @@ package providers
 import (
 	"bufio"
 	"context"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"io"
 
 	"github.com/insistanan/api-proxy/internal/infra/utils"
@@ -14,7 +15,7 @@ import (
 // 留在各自的循环体内。
 //
 // 约定：pump goroutine 必须 defer close 双通道。消费方
-// （handlers/streams.ProcessStreamEvents）对 errChan 关闭有专门分支；
+// （api/streams.ProcessStreamEvents）对 errChan 关闭有专门分支；
 // close 不清除已缓冲的错误，fail 先入队的错误仍会被消费。
 type streamPump struct {
 	ctx       context.Context
@@ -62,7 +63,7 @@ func (p *streamPump) newScanner(body io.Reader) *bufio.Scanner {
 
 // finishRead 验证协议完成状态；取消不伪造成功，也不记录上游故障。
 func (p *streamPump) finishRead(completed bool, readErr error) bool {
-	if err := utils.CheckStreamCompletion(p.ctx, completed, readErr); err != nil {
+	if err := codec.CheckStreamCompletion(p.ctx, completed, readErr); err != nil {
 		if p.ctx.Err() == nil {
 			p.fail(err)
 		}

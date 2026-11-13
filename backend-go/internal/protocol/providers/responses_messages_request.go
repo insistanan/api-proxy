@@ -6,11 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 	"net/url"
 	"strings"
 
 	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
 	"github.com/insistanan/api-proxy/internal/protocol/converters"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
@@ -99,7 +100,7 @@ func buildClaudeResponsesPromptCacheKey(claudeReq *types.ClaudeRequest, upstream
 		"system":   extractSystemText(claudeReq.System),
 		"tools":    normalizeToolsForPromptCacheKey(claudeReq.Tools),
 	}
-	sum := sha256.Sum256([]byte(utils.CanonicalJSON(stableParts)))
+	sum := sha256.Sum256([]byte(codec.CanonicalJSON(stableParts)))
 	return "claude-resp-" + hex.EncodeToString(sum[:])[:24]
 }
 
@@ -138,7 +139,7 @@ func claudeMessagesToResponsesInput(messages []types.ClaudeMessage, includeHisto
 }
 
 func claudeUserMessageToResponsesItems(msg types.ClaudeMessage) []interface{} {
-	blocks := utils.NormalizeContentBlocks(msg.Content)
+	blocks := visionmedia.NormalizeContentBlocks(msg.Content)
 	if len(blocks) == 0 {
 		if text, ok := msg.Content.(string); ok && text != "" {
 			return []interface{}{map[string]interface{}{
@@ -171,7 +172,7 @@ func claudeUserMessageToResponsesItems(msg types.ClaudeMessage) []interface{} {
 			})
 			continue
 		}
-		if text, ok := utils.ExtractTextFromBlock(block); ok {
+		if text, ok := visionmedia.ExtractTextFromBlock(block); ok {
 			textBlocks = append(textBlocks, map[string]interface{}{"type": "input_text", "text": text})
 			continue
 		}
@@ -190,7 +191,7 @@ func claudeUserMessageToResponsesItems(msg types.ClaudeMessage) []interface{} {
 }
 
 func claudeAssistantMessageToResponsesItems(msg types.ClaudeMessage, includeHistoryThinking bool) []interface{} {
-	blocks := utils.NormalizeContentBlocks(msg.Content)
+	blocks := visionmedia.NormalizeContentBlocks(msg.Content)
 	if len(blocks) == 0 {
 		if text, ok := msg.Content.(string); ok && text != "" {
 			return []interface{}{map[string]interface{}{
@@ -252,7 +253,7 @@ func claudeAssistantMessageToResponsesItems(msg types.ClaudeMessage, includeHist
 }
 
 func claudeToolMessageToResponsesItems(msg types.ClaudeMessage) []interface{} {
-	blocks := utils.NormalizeContentBlocks(msg.Content)
+	blocks := visionmedia.NormalizeContentBlocks(msg.Content)
 	items := make([]interface{}, 0, len(blocks))
 	for _, block := range blocks {
 		if blockType, _ := block["type"].(string); blockType != "tool_result" {
@@ -291,10 +292,10 @@ func responsesToolOutput(content interface{}) string {
 	if str, ok := content.(string); ok {
 		return str
 	}
-	if blocks := utils.NormalizeContentBlocks(content); len(blocks) > 0 {
+	if blocks := visionmedia.NormalizeContentBlocks(content); len(blocks) > 0 {
 		texts := make([]string, 0, len(blocks))
 		for _, block := range blocks {
-			if text, ok := utils.ExtractTextFromBlock(block); ok {
+			if text, ok := visionmedia.ExtractTextFromBlock(block); ok {
 				texts = append(texts, text)
 			}
 		}
@@ -302,7 +303,7 @@ func responsesToolOutput(content interface{}) string {
 			return strings.Join(texts, "\n")
 		}
 	}
-	contentJSON, err := utils.MarshalJSONNoEscape(content)
+	contentJSON, err := codec.MarshalJSONNoEscape(content)
 	if err != nil {
 		return fmt.Sprint(content)
 	}
@@ -310,7 +311,7 @@ func responsesToolOutput(content interface{}) string {
 }
 
 func toResponsesImageContentBlock(block map[string]interface{}) (map[string]interface{}, bool) {
-	imageBlock, ok := utils.ToOpenAIImageContentBlock(block)
+	imageBlock, ok := visionmedia.ToOpenAIImageContentBlock(block)
 	if !ok {
 		return nil, false
 	}

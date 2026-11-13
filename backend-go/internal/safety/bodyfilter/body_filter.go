@@ -3,9 +3,8 @@ package bodyfilter
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"strings"
-
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 )
 
 // FilterPrivateParams 递归过滤 JSON 请求体中所有以下划线 `_` 开头的内部私有字段，
@@ -40,7 +39,7 @@ func FilterPrivateParamsWithWhitelist(requestBodyBytes []byte, whitelist []strin
 		return requestBodyBytes, false, nil
 	}
 
-	filteredBytes, err := utils.MarshalJSONNoEscape(filteredPayload)
+	filteredBytes, err := codec.MarshalJSONNoEscape(filteredPayload)
 	if err != nil {
 		return requestBodyBytes, false, nil
 	}

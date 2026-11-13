@@ -4,9 +4,10 @@ package converters
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
@@ -297,10 +298,10 @@ func stringifyResponsesToolOutput(content interface{}) string {
 	if text, ok := content.(string); ok {
 		return text
 	}
-	if blocks := utils.NormalizeContentBlocks(content); len(blocks) > 0 {
+	if blocks := visionmedia.NormalizeContentBlocks(content); len(blocks) > 0 {
 		texts := make([]string, 0, len(blocks))
 		for _, block := range blocks {
-			if text, ok := utils.ExtractTextFromBlock(block); ok {
+			if text, ok := visionmedia.ExtractTextFromBlock(block); ok {
 				texts = append(texts, text)
 			}
 		}
@@ -308,7 +309,7 @@ func stringifyResponsesToolOutput(content interface{}) string {
 			return strings.Join(texts, "\n")
 		}
 	}
-	contentJSON, err := utils.MarshalJSONNoEscape(content)
+	contentJSON, err := codec.MarshalJSONNoEscape(content)
 	if err != nil {
 		return fmt.Sprint(content)
 	}

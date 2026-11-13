@@ -4,15 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"io"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/dialogue/cacheinject"
-	"github.com/insistanan/api-proxy/internal/dialogue/copilotopt"
+	"github.com/insistanan/api-proxy/internal/dialogue/prompt/cacheinject"
+	"github.com/insistanan/api-proxy/internal/dialogue/prompt/copilotopt"
 	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
@@ -44,7 +45,7 @@ func redirectModelInBody(bodyBytes []byte, upstream *config.UpstreamConfig) []by
 	data["model"] = newModel
 
 	// 使用 Encoder 并禁用 HTML 转义，保持原始格式
-	newBytes, err := utils.MarshalJSONNoEscape(data)
+	newBytes, err := codec.MarshalJSONNoEscape(data)
 	if err != nil {
 		return bodyBytes // 编码失败，返回原始数据
 	}
@@ -67,8 +68,8 @@ func (p *ClaudeProvider) ConvertToProviderRequest(c *gin.Context, upstream *conf
 		RawQuery:           c.Request.URL.RawQuery,
 		Header:             c.Request.Header,
 		Body:               bodyBytes,
-		ConversationID:     c.GetString(utils.ContextKeyConversationUserID),
-		ClaudeCodeDisguise: c.GetBool(utils.ContextKeyClaudeCodeDisguise),
+		ConversationID:     c.GetString(upstreamreq.ContextKeyConversationUserID),
+		ClaudeCodeDisguise: c.GetBool(upstreamreq.ContextKeyClaudeCodeDisguise),
 	}, upstream, apiKey)
 	if err != nil {
 		return nil, bodyBytes, err
@@ -94,9 +95,9 @@ func (p *ClaudeProvider) BuildRequest(input RequestInput, upstream *config.Upstr
 		bodyBytes = injectedBytes
 	}
 
-	// 构建目标URL（"#"后缀与版本前缀约定见 utils.BuildUpstreamURL）
+	// 构建目标URL（"#"后缀与版本前缀约定见 upstreamreq.BuildUpstreamURL）
 	endpoint := strings.TrimPrefix(input.Path, "/v1")
-	targetURL := utils.BuildUpstreamURL(upstream.GetEffectiveBaseURL(), "/v1", endpoint, upstream.UseFullURL)
+	targetURL := upstreamreq.BuildUpstreamURL(upstream.GetEffectiveBaseURL(), "/v1", endpoint, upstream.UseFullURL)
 
 	if input.RawQuery != "" {
 		targetURL += "?" + input.RawQuery
@@ -109,26 +110,26 @@ func (p *ClaudeProvider) BuildRequest(input RequestInput, upstream *config.Upstr
 	}
 
 	// 使用统一的头部处理逻辑
-	req.Header = utils.PrepareUpstreamHeadersFromHeader(input.Header, req.URL.Host)
+	req.Header = upstreamreq.PrepareUpstreamHeadersFromHeader(input.Header, req.URL.Host)
 
 	compatibility := upstream.UseClientCompatibility(input.ClaudeCodeDisguise)
-	utils.PrepareTargetIdentity(req.Header, "claude", compatibility)
+	upstreamreq.PrepareTargetIdentity(req.Header, "claude", compatibility)
 	if compatibility {
-		utils.SeedDisguiseSession(req.Header, input.ConversationID, "claude")
+		upstreamreq.SeedDisguiseSession(req.Header, input.ConversationID, "claude")
 		var streamRequest struct {
 			Stream bool `json:"stream"`
 		}
 		_ = json.Unmarshal(bodyBytes, &streamRequest)
-		utils.ApplyClaudeCodeDisguise(req.Header, streamRequest.Stream)
+		upstreamreq.ApplyClaudeCodeDisguise(req.Header, streamRequest.Stream)
 
-		bodyBytes = utils.ApplyClaudeCodeBodyDisguise(
+		bodyBytes = upstreamreq.ApplyClaudeCodeBodyDisguise(
 			bodyBytes,
 			req.Header.Get("X-Claude-Code-Session-Id"),
 		)
 	}
 
 	// 设置认证头（会覆盖客户端的认证头）
-	utils.SetAuthenticationHeader(req.Header, apiKey)
+	upstreamreq.SetAuthenticationHeader(req.Header, apiKey)
 
 	// Copilot 请求优化：如果上游为 Copilot / Github 兼容渠道，自动计算交互分类并附带 x-initiator / x-interaction-type 请求头
 	hasBeta := req.Header.Get("anthropic-beta") != ""
@@ -178,7 +179,7 @@ func (p *ClaudeProvider) HandleStreamResponseCtx(ctx context.Context, body io.Re
 	go func() {
 		defer close(eventChan)
 		defer close(errChan)
-		defer utils.BindStreamBody(ctx, body)()
+		defer codec.BindStreamBody(ctx, body)()
 
 		trySend := pump.send
 
@@ -200,7 +201,7 @@ func (p *ClaudeProvider) HandleStreamResponseCtx(ctx context.Context, body io.Re
 			terminal := false
 			if strings.Contains(event, "message_stop") {
 				for _, line := range strings.Split(event, "\n") {
-					payload, isData := utils.SSEDataJSON(line)
+					payload, isData := codec.SSEDataJSON(line)
 					if !isData {
 						continue
 					}

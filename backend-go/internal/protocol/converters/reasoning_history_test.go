@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"strings"
 	"testing"
 
 	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
 )
@@ -124,7 +124,7 @@ func TestChatToResponses_StreamCompletedRetainsOriginalReasoning(t *testing.T) {
 		events := ConvertOpenAIChatToResponses(context.Background(), "test", []byte(`{"model":"test"}`), nil, []byte(line), &state)
 		for _, event := range events {
 			for _, eventLine := range strings.Split(event, "\n") {
-				payload, ok := utils.SSEDataJSON(eventLine)
+				payload, ok := codec.SSEDataJSON(eventLine)
 				if !ok || gjson.Get(payload, "type").String() != "response.completed" {
 					continue
 				}

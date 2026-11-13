@@ -2,6 +2,9 @@
 
 import type { ChannelRecentActivity } from './metrics'
 
+/** 渠道入口协议，与后端 scheduler.ChannelKind 及管理路由前缀对齐。 */
+export type ApiTab = 'messages' | 'responses' | 'gemini' | 'chat' | 'images' | 'embeddings' | 'decisions'
+
 // 渠道状态枚举
 export type ChannelStatus = 'active' | 'suspended' | 'disabled' | 'deprecated' | 'deleted'
 

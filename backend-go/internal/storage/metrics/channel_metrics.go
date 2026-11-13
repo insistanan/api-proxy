@@ -4,10 +4,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"log"
 	"time"
-
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 )
 
 // NewMetricsManager 创建指标管理器
@@ -192,7 +191,7 @@ func (m *MetricsManager) getOrCreateKey(baseURL, apiKey string, channelIndex int
 	metrics := &KeyMetrics{
 		MetricsKey:        metricsKey,
 		BaseURL:           baseURL,
-		KeyMask:           utils.MaskAPIKey(apiKey),
+		KeyMask:           codec.MaskAPIKey(apiKey),
 		recentResults:     make([]bool, 0, m.windowSize),
 		pendingHistoryIdx: make(map[uint64]int),
 	}

@@ -3,9 +3,9 @@ package providers
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/protocol/items"
 
 	"github.com/insistanan/api-proxy/internal/dialogue/session"
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
@@ -74,7 +74,7 @@ func restoreNativeResponseHistory(manager *session.SessionManager, sess *session
 			return nil, false, &ResponseHistoryError{Message: "Responses 当前输入格式不支持恢复完整历史"}
 		}
 	}
-	full := utils.MergeResponsesItemsDedup(sess.Messages, current)
+	full := respitems.MergeResponsesItemsDedup(sess.Messages, current)
 	for i := range full {
 		// 本地存储把字符串 input 记为 text；原生 API 重放需要 message 结构。
 		if full[i].Type == "text" && full[i].Role == "" {

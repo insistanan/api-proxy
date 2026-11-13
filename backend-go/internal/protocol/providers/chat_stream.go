@@ -15,11 +15,12 @@ package providers
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"sort"
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
@@ -83,11 +84,11 @@ func (s *chatToClaudeStreamState) ProcessLine(line string) []string {
 	if line == "" {
 		return nil
 	}
-	jsonStr, isData := utils.ParseSSEDataLine(line)
+	jsonStr, isData := codec.ParseSSEDataLine(line)
 	if !isData || jsonStr == "" {
 		return nil
 	}
-	if jsonStr == utils.SSEDoneMarker {
+	if jsonStr == codec.SSEDoneMarker {
 		s.doneSeen = true
 		return s.Finish()
 	}
@@ -112,7 +113,7 @@ func (s *chatToClaudeStreamState) ProcessLine(line string) []string {
 	// BuildStreamErrorEvent 会按协议补终止序列）。不再伪造 message_stop。
 	if upstreamError, ok := chunk["error"]; ok && upstreamError != nil {
 		s.streamFailed = true
-		s.streamError = NewUpstreamStreamFailedError(utils.IsUpstreamModelCapacityErrorBody([]byte(jsonStr)), jsonStr)
+		s.streamError = NewUpstreamStreamFailedError(upstreamreq.IsUpstreamModelCapacityErrorBody([]byte(jsonStr)), jsonStr)
 		return nil
 	}
 	// finish_reason 后只吸收 usage，不能重新打开正文或工具块。

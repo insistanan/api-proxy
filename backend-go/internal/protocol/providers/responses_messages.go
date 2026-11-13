@@ -5,13 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"io"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
@@ -53,7 +54,7 @@ func (p *MessagesResponsesProvider) ConvertToProviderRequest(c *gin.Context, ups
 
 	// 主流程已经把经过 registry 解析的内部 conversation ID 写入 context。
 	conversationID := ""
-	if value, exists := c.Get(utils.ContextKeyConversationUserID); exists {
+	if value, exists := c.Get(upstreamreq.ContextKeyConversationUserID); exists {
 		conversationID, _ = value.(string)
 	}
 
@@ -65,7 +66,7 @@ func (p *MessagesResponsesProvider) ConvertToProviderRequest(c *gin.Context, ups
 		Body:           originalBodyBytes,
 		Query:          func(key string) string { return c.Query(key) },
 		ConversationID: conversationID,
-		CodexDisguise:  c.GetBool(utils.ContextKeyCodexDisguise),
+		CodexDisguise:  c.GetBool(upstreamreq.ContextKeyCodexDisguise),
 	}, upstream, apiKey)
 	if err != nil {
 		return nil, originalBodyBytes, err
@@ -100,23 +101,23 @@ func (p *MessagesResponsesProvider) BuildRequest(input RequestInput, upstream *c
 	if err != nil {
 		return nil, err
 	}
-	reqBodyBytes, err := utils.MarshalJSONNoEscape(responsesReq)
+	reqBodyBytes, err := codec.MarshalJSONNoEscape(responsesReq)
 	if err != nil {
 		return nil, fmt.Errorf("序列化Responses请求体失败: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(input.Ctx, http.MethodPost, utils.BuildUpstreamURL(upstream.GetEffectiveBaseURL(), "/v1", "/responses", upstream.UseFullURL), bytes.NewReader(reqBodyBytes))
+	req, err := http.NewRequestWithContext(input.Ctx, http.MethodPost, upstreamreq.BuildUpstreamURL(upstream.GetEffectiveBaseURL(), "/v1", "/responses", upstream.UseFullURL), bytes.NewReader(reqBodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("创建Responses请求失败: %w", err)
 	}
-	req.Header = utils.PrepareUpstreamHeadersFromHeader(input.Header, req.URL.Host)
+	req.Header = upstreamreq.PrepareUpstreamHeadersFromHeader(input.Header, req.URL.Host)
 	compatibility := upstream.UseClientCompatibility(input.CodexDisguise)
-	utils.PrepareTargetIdentity(req.Header, "responses", compatibility)
+	upstreamreq.PrepareTargetIdentity(req.Header, "responses", compatibility)
 	if compatibility {
-		utils.SeedDisguiseSession(req.Header, conversationID, "responses")
-		utils.ApplyCodexDisguise(req.Header, claudeReq.Stream)
+		upstreamreq.SeedDisguiseSession(req.Header, conversationID, "responses")
+		upstreamreq.ApplyCodexDisguise(req.Header, claudeReq.Stream)
 	}
-	utils.SetAuthenticationHeader(req.Header, apiKey)
+	upstreamreq.SetAuthenticationHeader(req.Header, apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	return &RequestOutcome{Request: req, OriginalBody: originalBodyBytes}, nil
@@ -151,7 +152,7 @@ func (p *MessagesResponsesProvider) HandleStreamResponseCtx(ctx context.Context,
 	go func() {
 		defer close(eventChan)
 		defer close(errChan)
-		defer utils.BindStreamBody(ctx, body)()
+		defer codec.BindStreamBody(ctx, body)()
 
 		send := pump.send
 		fail := pump.fail
@@ -166,7 +167,7 @@ func (p *MessagesResponsesProvider) HandleStreamResponseCtx(ctx context.Context,
 			default:
 			}
 			line := strings.TrimSpace(scanner.Text())
-			if payload, isData := utils.ParseSSEDataLine(line); isData && payload == utils.SSEDoneMarker {
+			if payload, isData := codec.ParseSSEDataLine(line); isData && payload == codec.SSEDoneMarker {
 				break
 			}
 			if line == "" {

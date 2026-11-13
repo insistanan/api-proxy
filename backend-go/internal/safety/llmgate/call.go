@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"io"
 	"net/http"
 	"strings"
@@ -12,7 +14,6 @@ import (
 
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/infra/httpclient"
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/orchestration/availability"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
 	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
@@ -397,10 +398,10 @@ func isRetryable(err error) bool {
 	if gateErr.StatusCode == 0 {
 		return true
 	}
-	if utils.IsNonRetryableUpstreamErrorBody(gateErr.Body) {
+	if upstreamreq.IsNonRetryableUpstreamErrorBody(gateErr.Body) {
 		return false
 	}
-	retryable, _ := utils.ClassifyUpstreamStatus(gateErr.StatusCode)
+	retryable, _ := upstreamreq.ClassifyUpstreamStatus(gateErr.StatusCode)
 	return retryable
 }
 
@@ -571,7 +572,7 @@ func readBoundedResponse(response *http.Response) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	encoding := utils.GetContentEncoding(response.Header)
+	encoding := codec.GetContentEncoding(response.Header)
 	if encoding == "" && len(body) >= 2 && body[0] == 0x1f && body[1] == 0x8b {
 		// 兼容漏写 gzip 响应头的上游，同时保留其他已支持的编码。
 		encoding = "gzip"
@@ -579,7 +580,7 @@ func readBoundedResponse(response *http.Response) ([]byte, error) {
 	if encoding == "" {
 		return body, nil
 	}
-	decoded, _, err := utils.DecompressBodyWithLimit(encoding, body, maxResponseBodyBytes)
+	decoded, _, err := codec.DecompressBodyWithLimit(encoding, body, maxResponseBodyBytes)
 	if err != nil {
 		return nil, fmt.Errorf("解压内部调用响应失败: %w", err)
 	}
@@ -640,7 +641,7 @@ func buildClaudeRequestBody(model string, prompt Prompt) ([]byte, error) {
 		})
 	}
 	request["messages"] = messages
-	return utils.MarshalJSONNoEscape(request)
+	return codec.MarshalJSONNoEscape(request)
 }
 
 // extractText 从 Claude 响应中拼接全部 text 块（与 visionlayer.extractResponseText 同口径，
@@ -689,7 +690,7 @@ func (c *Caller) recordAttempt(
 		ChannelIndex: selection.ChannelIndex,
 		ChannelName:  upstream.Name,
 		BaseURL:      baseURL,
-		KeyMask:      utils.MaskAPIKey(apiKey),
+		KeyMask:      codec.MaskAPIKey(apiKey),
 		ErrorType:    errorType,
 		ErrorMessage: truncateBody([]byte(redactCallText(errorMessage, apiKey))),
 		Retried:      retried,
@@ -769,7 +770,7 @@ func truncateBody(body []byte) string {
 
 func redactCallText(text, apiKey string) string {
 	if apiKey != "" {
-		text = strings.ReplaceAll(text, apiKey, utils.MaskAPIKey(apiKey))
+		text = strings.ReplaceAll(text, apiKey, codec.MaskAPIKey(apiKey))
 	}
-	return sensitive.RedactAuditText(utils.RedactSensitivePlaceholdersForLog(text))
+	return sensitive.RedactAuditText(codec.RedactSensitivePlaceholdersForLog(text))
 }

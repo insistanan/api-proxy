@@ -4,10 +4,11 @@ package converters
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 	"strings"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
@@ -77,7 +78,7 @@ func parseResponsesInput(input interface{}) ([]types.ResponsesItem, error) {
 			arguments, _ := itemMap["arguments"].(string)
 			if arguments == "" {
 				if rawArguments, ok := itemMap["arguments"]; ok && rawArguments != nil {
-					if encoded, err := utils.MarshalJSONNoEscape(rawArguments); err == nil {
+					if encoded, err := codec.MarshalJSONNoEscape(rawArguments); err == nil {
 						arguments = string(encoded)
 					}
 				}
@@ -159,14 +160,14 @@ func buildClaudeMessageContent(content interface{}) []map[string]interface{} {
 		}
 	}
 
-	blocks := utils.NormalizeContentBlocks(content)
+	blocks := visionmedia.NormalizeContentBlocks(content)
 	if len(blocks) == 0 {
 		return nil
 	}
 
 	claudeBlocks := make([]map[string]interface{}, 0, len(blocks))
 	for _, block := range blocks {
-		if text, ok := utils.ExtractTextFromBlock(block); ok {
+		if text, ok := visionmedia.ExtractTextFromBlock(block); ok {
 			claudeBlocks = append(claudeBlocks, map[string]interface{}{
 				"type": "text",
 				"text": text,
@@ -174,7 +175,7 @@ func buildClaudeMessageContent(content interface{}) []map[string]interface{} {
 			continue
 		}
 
-		if imageBlock, ok := utils.ToClaudeImageContentBlock(block); ok {
+		if imageBlock, ok := visionmedia.ToClaudeImageContentBlock(block); ok {
 			claudeBlocks = append(claudeBlocks, imageBlock)
 		}
 	}
@@ -187,7 +188,7 @@ func buildOpenAIMessageContent(content interface{}) interface{} {
 		return text
 	}
 
-	blocks := utils.NormalizeContentBlocks(content)
+	blocks := visionmedia.NormalizeContentBlocks(content)
 	if len(blocks) == 0 {
 		return nil
 	}
@@ -197,7 +198,7 @@ func buildOpenAIMessageContent(content interface{}) interface{} {
 	hasVisionContent := false
 
 	for _, block := range blocks {
-		if text, ok := utils.ExtractTextFromBlock(block); ok {
+		if text, ok := visionmedia.ExtractTextFromBlock(block); ok {
 			textParts = append(textParts, text)
 			openAIBlocks = append(openAIBlocks, map[string]interface{}{
 				"type": "text",
@@ -206,7 +207,7 @@ func buildOpenAIMessageContent(content interface{}) interface{} {
 			continue
 		}
 
-		if imageBlock, ok := utils.ToOpenAIImageContentBlock(block); ok {
+		if imageBlock, ok := visionmedia.ToOpenAIImageContentBlock(block); ok {
 			hasVisionContent = true
 			openAIBlocks = append(openAIBlocks, imageBlock)
 		}

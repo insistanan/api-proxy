@@ -6,11 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/items"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/dialogue/cacheinject"
+	"github.com/insistanan/api-proxy/internal/dialogue/prompt/cacheinject"
 	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -91,7 +92,7 @@ func ConvertUpstreamResponseToResponses(serviceType string, originalRequestJSON 
 
 // ConvertUpstreamStreamLineToResponses 将单行上游 SSE 转换为 Responses SSE。
 func ConvertUpstreamStreamLineToResponses(ctx context.Context, serviceType string, model string, originalRequestJSON []byte, line []byte, state *any) ([]string, error) {
-	if payload, isData := utils.ParseSSEDataLineBytes(line); isData && len(payload) > 0 && string(payload) != utils.SSEDoneMarker {
+	if payload, isData := codec.ParseSSEDataLineBytes(line); isData && len(payload) > 0 && string(payload) != codec.SSEDoneMarker {
 		root := gjson.ParseBytes(payload)
 		if !gjson.ValidBytes(payload) || !root.IsObject() {
 			return nil, fmt.Errorf("上游 %s SSE 数据不是有效 JSON 对象", serviceType)
@@ -168,10 +169,10 @@ func ResponsesInputRerootsSession(sess *types.Session, input interface{}) bool {
 	if !ok {
 		return false
 	}
-	if prefixEnd, matched := utils.ResponsesItemsPrefixMatchRaw(sess.Messages, rawItems); matched && prefixEnd > 0 {
+	if prefixEnd, matched := respitems.ResponsesItemsPrefixMatchRaw(sess.Messages, rawItems); matched && prefixEnd > 0 {
 		return false
 	}
-	return utils.ResponsesRawItemsReplayHistory(sess.Messages, rawItems)
+	return respitems.ResponsesRawItemsReplayHistory(sess.Messages, rawItems)
 }
 
 // responsesInputRawItems 把 ResponsesRequest.Input 还原成原始 item 数组。
@@ -260,7 +261,7 @@ func trimResponsesPassthroughInput(bodyBytes []byte, req *types.ResponsesRequest
 	if len(rawItems) == 0 {
 		return bodyBytes, nil
 	}
-	if utils.ResponsesRawItemsContainCompaction(rawItems) {
+	if respitems.ResponsesRawItemsContainCompaction(rawItems) {
 		// compaction item 已经是新的上下文根。继续携带旧的
 		// previous_response_id 会把压缩前的服务端链和压缩 item 叠加发送，
 		// 这是压缩后上下文迅速恢复到旧长度的直接原因。
@@ -288,7 +289,7 @@ func trimResponsesPassthroughInput(bodyBytes []byte, req *types.ResponsesRequest
 		return dropPreviousResponseIDIfSelfContained(bodyBytes, rawItems)
 	}
 
-	prefixEnd, ok := utils.ResponsesItemsPrefixMatchRaw(sess.Messages, rawItems)
+	prefixEnd, ok := respitems.ResponsesItemsPrefixMatchRaw(sess.Messages, rawItems)
 	if !ok || prefixEnd <= 0 || prefixEnd > len(rawItems) {
 		// 前缀无法确认时，不能把“看起来像完整历史”的 input 与旧服务端
 		// 链同时发送。那会让同一轮历史被计费两次，并把 Cursor 的上下文
@@ -306,7 +307,7 @@ func trimResponsesPassthroughInput(bodyBytes []byte, req *types.ResponsesRequest
 		// 而重叠不会：合法增量只发链上还没有的 item。漏掉这里会让压缩后的请求继续
 		// 携带旧链，上游把压缩前的服务端历史整段前置，上下文立刻回到压缩前的规模，
 		// 客户端读到的 usage 不降反升，于是压缩后立刻又要压缩。
-		if utils.ResponsesRawItemsReplayHistory(sess.Messages, rawItems) {
+		if respitems.ResponsesRawItemsReplayHistory(sess.Messages, rawItems) {
 			trimmed, err := sjson.DeleteBytes(bodyBytes, "previous_response_id")
 			if err != nil {
 				return nil, fmt.Errorf("透传模式下删除被重写历史的 previous_response_id 失败: %w", err)
@@ -424,7 +425,7 @@ func convertResponsesRequestToOpenAIChat(model string, bodyBytes []byte, stream 
 	if err := ValidateResponsesToOpenAIChatRequest(bodyBytes); err != nil {
 		return nil, err
 	}
-	if req != nil && utils.ResponsesItemsContainCompactionFromInput(req.Input) {
+	if req != nil && respitems.ResponsesItemsContainCompactionFromInput(req.Input) {
 		return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("Responses compaction item 只能由 Responses 原生上游处理，无法转换为 OpenAI Chat")}
 	}
 
@@ -437,8 +438,8 @@ func convertResponsesRequestToOpenAIChat(model string, bodyBytes []byte, stream 
 		if err != nil {
 			return nil, fmt.Errorf("解析 Responses input 失败: %w", err)
 		}
-		mergedItems = utils.MergeResponsesItemsDedup(sess.Messages, currentItems)
-		if utils.ResponsesItemsContainCompaction(mergedItems) {
+		mergedItems = respitems.MergeResponsesItemsDedup(sess.Messages, currentItems)
+		if respitems.ResponsesItemsContainCompaction(mergedItems) {
 			return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("Responses compaction item 只能由 Responses 原生上游处理，无法转换为 OpenAI Chat")}
 		}
 		conversionBody, err = sjson.SetBytes(bodyBytes, "input", mergedItems)
@@ -505,7 +506,7 @@ func convertResponsesRequestToOpenAIChat(model string, bodyBytes []byte, stream 
 		delete(chatReq, "prompt_cache_key")
 	}
 
-	out, err := utils.MarshalJSONNoEscape(chatReq)
+	out, err := codec.MarshalJSONNoEscape(chatReq)
 	if err != nil {
 		return nil, fmt.Errorf("序列化 OpenAI Chat 请求失败: %w", err)
 	}
@@ -542,7 +543,7 @@ func buildResponsesChatPromptCacheKey(model string, chatReq map[string]interface
 		"instructions": instructions,
 		"tools":        chatReq["tools"],
 	}
-	sum := sha256.Sum256([]byte(utils.CanonicalJSON(stableParts)))
+	sum := sha256.Sum256([]byte(codec.CanonicalJSON(stableParts)))
 	return "resp-chat-" + hex.EncodeToString(sum[:])[:24]
 }
 
@@ -559,7 +560,7 @@ func convertResponsesRequestWithStructConverter(serviceType string, sess *types.
 	if err != nil {
 		return nil, fmt.Errorf("转换请求失败: %w", err)
 	}
-	convertedBytes, err := utils.MarshalJSONNoEscape(convertedReq)
+	convertedBytes, err := codec.MarshalJSONNoEscape(convertedReq)
 	if err != nil {
 		return nil, fmt.Errorf("序列化Claude请求失败: %w", err)
 	}

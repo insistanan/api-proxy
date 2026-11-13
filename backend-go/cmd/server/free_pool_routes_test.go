@@ -14,10 +14,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/dialogue/session"
-	"github.com/insistanan/api-proxy/internal/handlers/hooks"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/infra/httpclient"
 	"github.com/insistanan/api-proxy/internal/orchestration/availability"
+	"github.com/insistanan/api-proxy/internal/safety/pipeline"
 	"github.com/insistanan/api-proxy/internal/storage/logger"
 	"github.com/insistanan/api-proxy/internal/storage/metrics"
 	"github.com/stretchr/testify/require"
@@ -64,7 +64,7 @@ func TestFreePoolRoutesAllProtocolsThroughChat(t *testing.T) {
 					app.channelScheduler.SetRequestLogStore(metrics.NewRequestLogStore(nil))
 				}
 				app.envCfg = &config.EnvConfig{ProxyAccessKey: "test-admin", LogLevel: "error", MaxRequestBodySize: 1024 * 1024, RequestTimeout: 5501, StreamIdleTimeout: 5}
-				app.contentSafetyPipeline = hooks.NewContentSafetyPipeline(app.cfgManager)
+				app.contentSafetyPipeline = pipeline.NewContentSafetyPipeline(app.cfgManager)
 				app.sessionManager, err = session.NewPersistentSessionManager(filepath.Join(t.TempDir(), "sessions.db"), time.Hour, 0, 0)
 				require.NoError(t, err)
 				t.Cleanup(app.sessionManager.Stop)

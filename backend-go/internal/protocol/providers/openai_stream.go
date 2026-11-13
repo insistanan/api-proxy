@@ -5,10 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"io"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
@@ -28,7 +28,7 @@ func (p *OpenAIProvider) HandleStreamResponseCtx(ctx context.Context, body io.Re
 	go func() {
 		defer close(eventChan)
 		defer close(errChan)
-		defer utils.BindStreamBody(ctx, body)()
+		defer codec.BindStreamBody(ctx, body)()
 
 		send := pump.send
 		fail := pump.fail

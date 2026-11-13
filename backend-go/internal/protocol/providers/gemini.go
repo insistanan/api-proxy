@@ -6,6 +6,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 	"io"
 	"net/http"
 	"strings"
@@ -13,7 +16,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/protocol/converters"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
@@ -93,7 +95,7 @@ func (p *GeminiProvider) BuildRequest(input RequestInput, upstream *config.Upstr
 
 	// 使用统一的头部处理逻辑（透明代理）
 	// 保留客户端的大部分 headers，只移除/替换必要的认证和代理相关 headers
-	req.Header = utils.PrepareUpstreamHeadersFromHeader(input.Header, req.URL.Host)
+	req.Header = upstreamreq.PrepareUpstreamHeadersFromHeader(input.Header, req.URL.Host)
 
 	// 删除开发测试注入的客户端请求头，避免上游严格验证报错。
 	req.Header.Del("X-Codex-Window-Id")
@@ -111,7 +113,7 @@ func (p *GeminiProvider) BuildRequest(input RequestInput, upstream *config.Upstr
 	req.Header.Del("X-Stainless-Timeout")
 	req.Header.Del("X-App")
 
-	utils.SetGeminiAuthenticationHeader(req.Header, apiKey)
+	upstreamreq.SetGeminiAuthenticationHeader(req.Header, apiKey)
 
 	return &RequestOutcome{Request: req, OriginalBody: originalBodyBytes}, nil
 }
@@ -127,8 +129,8 @@ func buildGeminiGenerateContentURL(baseURL string, model string, stream bool, us
 		action = "streamGenerateContent?alt=sse"
 	}
 
-	// "#"后缀与版本前缀约定见 utils.BuildUpstreamURL；Gemini 默认版本段为 /v1beta
-	return utils.BuildUpstreamURL(baseURL, "/v1beta", fmt.Sprintf("/%s:%s", modelPath, action), useFullURL...)
+	// "#"后缀与版本前缀约定见 upstreamreq.BuildUpstreamURL；Gemini 默认版本段为 /v1beta
+	return upstreamreq.BuildUpstreamURL(baseURL, "/v1beta", fmt.Sprintf("/%s:%s", modelPath, action), useFullURL...)
 }
 
 func buildGeminiShadowProviderID(upstream *config.UpstreamConfig) string {
@@ -294,13 +296,13 @@ func extractClaudeMessageText(content interface{}) string {
 	if str, ok := content.(string); ok {
 		return str
 	}
-	blocks := utils.NormalizeContentBlocks(content)
+	blocks := visionmedia.NormalizeContentBlocks(content)
 	if len(blocks) == 0 {
 		return ""
 	}
 	texts := make([]string, 0, len(blocks))
 	for _, block := range blocks {
-		if text, ok := utils.ExtractTextFromBlock(block); ok {
+		if text, ok := visionmedia.ExtractTextFromBlock(block); ok {
 			texts = append(texts, text)
 		}
 	}
@@ -397,7 +399,7 @@ func buildClaudeToolNameMap(messages []types.ClaudeMessage) map[string]string {
 		if strings.ToLower(msg.Role) != "assistant" {
 			continue
 		}
-		for _, block := range utils.NormalizeContentBlocks(msg.Content) {
+		for _, block := range visionmedia.NormalizeContentBlocks(msg.Content) {
 			blockType, _ := block["type"].(string)
 			if blockType != "tool_use" {
 				continue
@@ -496,7 +498,7 @@ func findMatchingGeminiShadowTurnForAssistantMessage(content interface{}, shadow
 func extractAssistantToolUseKeys(content interface{}) (map[string]bool, map[string]bool) {
 	ids := map[string]bool{}
 	names := map[string]bool{}
-	for _, block := range utils.NormalizeContentBlocks(content) {
+	for _, block := range visionmedia.NormalizeContentBlocks(content) {
 		if blockType, _ := block["type"].(string); blockType != "tool_use" {
 			continue
 		}
@@ -574,7 +576,7 @@ func (p *GeminiProvider) convertMessage(msg types.ClaudeMessage, toolNameByID ma
 		}, nil
 	}
 
-	contents := utils.NormalizeContentBlocks(msg.Content)
+	contents := visionmedia.NormalizeContentBlocks(msg.Content)
 	if len(contents) == 0 {
 		return nil, nil
 	}
@@ -661,7 +663,7 @@ func normalizeGeminiFunctionResponse(content interface{}) map[string]interface{}
 		if blocks, ok := content.([]map[string]interface{}); ok && len(blocks) > 0 {
 			texts := make([]string, 0, len(blocks))
 			for _, block := range blocks {
-				if text, ok := utils.ExtractTextFromBlock(block); ok {
+				if text, ok := visionmedia.ExtractTextFromBlock(block); ok {
 					texts = append(texts, text)
 				}
 			}
@@ -671,10 +673,10 @@ func normalizeGeminiFunctionResponse(content interface{}) map[string]interface{}
 			return map[string]interface{}{"content": content}
 		}
 	}
-	if blocks := utils.NormalizeContentBlocks(content); len(blocks) > 0 {
+	if blocks := visionmedia.NormalizeContentBlocks(content); len(blocks) > 0 {
 		texts := make([]string, 0, len(blocks))
 		for _, block := range blocks {
-			if text, ok := utils.ExtractTextFromBlock(block); ok {
+			if text, ok := visionmedia.ExtractTextFromBlock(block); ok {
 				texts = append(texts, text)
 			}
 		}
@@ -756,7 +758,7 @@ func geminiFunctionCallKey(functionCall map[string]interface{}, name string, arg
 	if id, _ := functionCall["id"].(string); strings.TrimSpace(id) != "" {
 		return "id:" + strings.TrimSpace(id)
 	}
-	return "value:" + strings.TrimSpace(name) + ":" + utils.CanonicalJSON(args)
+	return "value:" + strings.TrimSpace(name) + ":" + codec.CanonicalJSON(args)
 }
 
 func rectifyGeminiFunctionCallIDs(parts []interface{}) {
@@ -901,7 +903,7 @@ func claudeBlockToGeminiInlineData(block map[string]interface{}) (map[string]int
 				return nil, false
 			}
 			if mimeType == "" {
-				mimeType = utils.DefaultImageMediaType
+				mimeType = visionmedia.DefaultImageMediaType
 			}
 			return map[string]interface{}{
 				"inlineData": map[string]interface{}{
@@ -929,17 +931,17 @@ func extractGeminiInlineBase64(block map[string]interface{}) (string, string, bo
 	if data == "" {
 		if nested, ok := block["image_url"].(map[string]interface{}); ok {
 			url, _ := nested["url"].(string)
-			if mt, payload, ok := utils.ParseImageDataURL(url); ok {
+			if mt, payload, ok := visionmedia.ParseImageDataURL(url); ok {
 				return mt, payload, true
 			}
 		}
 		if url, _ := block["image_url"].(string); url != "" {
-			if mt, payload, ok := utils.ParseImageDataURL(url); ok {
+			if mt, payload, ok := visionmedia.ParseImageDataURL(url); ok {
 				return mt, payload, true
 			}
 		}
 		if url, _ := block["url"].(string); url != "" {
-			if mt, payload, ok := utils.ParseImageDataURL(url); ok {
+			if mt, payload, ok := visionmedia.ParseImageDataURL(url); ok {
 				return mt, payload, true
 			}
 		}
@@ -948,7 +950,7 @@ func extractGeminiInlineBase64(block map[string]interface{}) (string, string, bo
 		return "", "", false
 	}
 	if mediaType == "" {
-		mediaType = utils.DefaultImageMediaType
+		mediaType = visionmedia.DefaultImageMediaType
 	}
 	return mediaType, data, true
 }

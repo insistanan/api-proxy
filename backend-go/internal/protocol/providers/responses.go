@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	"github.com/insistanan/api-proxy/internal/protocol/items"
 	"io"
 	"net/http"
 	"strings"
@@ -12,7 +14,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/dialogue/session"
 	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/protocol/converters"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
@@ -34,8 +35,8 @@ func (p *ResponsesProvider) ConvertToProviderRequest(
 ) (*http.Request, []byte, error) {
 	// 同一请求可能在多个渠道/Key 间 failover；不能让前一个候选设置的
 	// “已移除 previous_response_id”状态污染后续候选。
-	c.Set(utils.ContextKeyResponsesPreviousIDDropped, false)
-	c.Set(utils.ContextKeyResponsesHistoryBoundary, false)
+	c.Set(upstreamreq.ContextKeyResponsesPreviousIDDropped, false)
+	c.Set(upstreamreq.ContextKeyResponsesHistoryBoundary, false)
 	// 读取原始请求体
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -44,7 +45,7 @@ func (p *ResponsesProvider) ConvertToProviderRequest(
 	c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 
 	conversationID := ""
-	if value, exists := c.Get(utils.ContextKeyConversationUserID); exists {
+	if value, exists := c.Get(upstreamreq.ContextKeyConversationUserID); exists {
 		conversationID, _ = value.(string)
 	}
 
@@ -55,18 +56,18 @@ func (p *ResponsesProvider) ConvertToProviderRequest(
 		Header:             c.Request.Header,
 		Body:               bodyBytes,
 		ConversationID:     conversationID,
-		CodexDisguise:      c.GetBool(utils.ContextKeyCodexDisguise),
-		ClaudeCodeDisguise: c.GetBool(utils.ContextKeyClaudeCodeDisguise),
+		CodexDisguise:      c.GetBool(upstreamreq.ContextKeyCodexDisguise),
+		ClaudeCodeDisguise: c.GetBool(upstreamreq.ContextKeyClaudeCodeDisguise),
 	}, upstream, apiKey)
 	if err != nil {
 		if outcome != nil {
-			c.Set(utils.ContextKeyResponsesPreviousIDDropped, outcome.PreviousIDDropped)
-			c.Set(utils.ContextKeyResponsesHistoryBoundary, outcome.HistoryBoundary)
+			c.Set(upstreamreq.ContextKeyResponsesPreviousIDDropped, outcome.PreviousIDDropped)
+			c.Set(upstreamreq.ContextKeyResponsesHistoryBoundary, outcome.HistoryBoundary)
 		}
 		return nil, bodyBytes, err
 	}
-	c.Set(utils.ContextKeyResponsesPreviousIDDropped, outcome.PreviousIDDropped)
-	c.Set(utils.ContextKeyResponsesHistoryBoundary, outcome.HistoryBoundary)
+	c.Set(upstreamreq.ContextKeyResponsesPreviousIDDropped, outcome.PreviousIDDropped)
+	c.Set(upstreamreq.ContextKeyResponsesHistoryBoundary, outcome.HistoryBoundary)
 	return outcome.Request, outcome.OriginalBody, nil
 }
 
@@ -207,21 +208,21 @@ func (p *ResponsesProvider) BuildRequest(input RequestInput, upstream *config.Up
 
 	// 设置请求头（透明代理）
 	// 使用统一的头部处理逻辑，保留客户端的大部分 headers
-	req.Header = utils.PrepareUpstreamHeadersFromHeader(input.Header, req.URL.Host)
+	req.Header = upstreamreq.PrepareUpstreamHeadersFromHeader(input.Header, req.URL.Host)
 
 	inherited := input.CodexDisguise
 	if upstream.ServiceType == "claude" {
 		inherited = input.ClaudeCodeDisguise
 	}
 	compatibility := upstream.UseClientCompatibility(inherited) && (upstream.ServiceType == "responses" || upstream.ServiceType == "claude")
-	utils.PrepareTargetIdentity(req.Header, upstream.ServiceType, compatibility)
+	upstreamreq.PrepareTargetIdentity(req.Header, upstream.ServiceType, compatibility)
 	if compatibility {
-		utils.SeedDisguiseSession(req.Header, input.ConversationID, upstream.ServiceType)
+		upstreamreq.SeedDisguiseSession(req.Header, input.ConversationID, upstream.ServiceType)
 		if upstream.ServiceType == "claude" {
-			utils.ApplyClaudeCodeDisguise(req.Header, isStream)
-			reqBody = utils.ApplyClaudeCodeBodyDisguise(reqBody, req.Header.Get("X-Claude-Code-Session-Id"))
+			upstreamreq.ApplyClaudeCodeDisguise(req.Header, isStream)
+			reqBody = upstreamreq.ApplyClaudeCodeBodyDisguise(reqBody, req.Header.Get("X-Claude-Code-Session-Id"))
 		} else {
-			utils.ApplyCodexDisguise(req.Header, isStream)
+			upstreamreq.ApplyCodexDisguise(req.Header, isStream)
 		}
 	}
 	// 伪装会改写正文；首次发送、Content-Length 和失败重试必须使用同一份最终载荷。
@@ -234,10 +235,10 @@ func (p *ResponsesProvider) BuildRequest(input RequestInput, upstream *config.Up
 	switch upstream.ServiceType {
 	case "gemini":
 		// 只有 Gemini 使用特殊的认证头
-		utils.SetGeminiAuthenticationHeader(req.Header, apiKey)
+		upstreamreq.SetGeminiAuthenticationHeader(req.Header, apiKey)
 	default:
 		// claude, responses, openai 等都使用 Authorization: Bearer
-		utils.SetAuthenticationHeader(req.Header, apiKey)
+		upstreamreq.SetAuthenticationHeader(req.Header, apiKey)
 	}
 
 	// 确保 Content-Type 正确
@@ -251,7 +252,7 @@ func responsesRequestStartsNewHistoryBoundary(req *types.ResponsesRequest) bool 
 	if req == nil {
 		return false
 	}
-	return utils.ResponsesItemsContainCompactionFromInput(req.Input) ||
+	return respitems.ResponsesItemsContainCompactionFromInput(req.Input) ||
 		converters.ResponsesInputCarriesOwnHistory(req.Input)
 }
 
@@ -297,8 +298,8 @@ func (p *ResponsesProvider) buildTargetURLWithModel(upstream *config.UpstreamCon
 		endpoint = "/chat/completions"
 	}
 
-	// "#"后缀与版本前缀约定见 utils.BuildUpstreamURL
-	return utils.BuildUpstreamURL(upstream.GetEffectiveBaseURL(), "/v1", endpoint, upstream.UseFullURL)
+	// "#"后缀与版本前缀约定见 upstreamreq.BuildUpstreamURL
+	return upstreamreq.BuildUpstreamURL(upstream.GetEffectiveBaseURL(), "/v1", endpoint, upstream.UseFullURL)
 }
 
 // ConvertToClaudeResponse 将上游响应转换为 Responses 格式（实际上不再需要 Claude 格式）

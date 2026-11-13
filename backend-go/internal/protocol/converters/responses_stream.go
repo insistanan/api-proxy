@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
 )
@@ -41,7 +41,7 @@ func ConvertClaudeStreamToResponses(_ context.Context, model string, originalReq
 	if st.Completed {
 		return nil, nil
 	}
-	data, isData := utils.SSEDataJSON(strings.TrimSpace(string(line)))
+	data, isData := codec.SSEDataJSON(strings.TrimSpace(string(line)))
 	if !isData {
 		return nil, nil
 	}
@@ -92,7 +92,7 @@ func ConvertGeminiStreamToResponses(_ context.Context, model string, originalReq
 	if st.Completed {
 		return nil, nil
 	}
-	data, isData := utils.SSEDataJSON(strings.TrimSpace(string(line)))
+	data, isData := codec.SSEDataJSON(strings.TrimSpace(string(line)))
 	if !isData {
 		return nil, nil
 	}

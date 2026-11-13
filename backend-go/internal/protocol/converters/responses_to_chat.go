@@ -3,9 +3,9 @@ package converters
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -524,12 +524,12 @@ func convertResponsesContentArrayToOpenAIContent(content gjson.Result) interface
 		if err := json.Unmarshal([]byte(contentItem.Raw), &block); err != nil {
 			return true
 		}
-		if text, ok := utils.ExtractTextFromBlock(block); ok {
+		if text, ok := visionmedia.ExtractTextFromBlock(block); ok {
 			texts = append(texts, text)
 			blocks = append(blocks, map[string]interface{}{"type": "text", "text": text})
 			return true
 		}
-		if imageBlock, ok := utils.ToOpenAIImageContentBlock(block); ok {
+		if imageBlock, ok := visionmedia.ToOpenAIImageContentBlock(block); ok {
 			hasImage = true
 			blocks = append(blocks, imageBlock)
 		}

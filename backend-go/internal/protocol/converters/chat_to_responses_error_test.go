@@ -3,8 +3,8 @@ package converters
 import (
 	"context"
 	"encoding/json"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"strings"
 	"testing"
 )
@@ -25,7 +25,7 @@ func TestConvertOpenAIChatToResponses_UpstreamErrorBecomesResponseFailed(t *test
 	// 事件是 SSE 格式（event: + data: 行），取 data 行解析。
 	var payload map[string]interface{}
 	for _, line := range strings.Split(joined, "\n") {
-		data, ok := utils.SSEDataJSON(strings.TrimSpace(line))
+		data, ok := codec.SSEDataJSON(strings.TrimSpace(line))
 		if !ok {
 			continue
 		}

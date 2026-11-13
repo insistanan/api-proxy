@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"log"
 	"maps"
 	"slices"
 	"sync"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
 
 	"github.com/fsnotify/fsnotify"
@@ -641,7 +641,7 @@ func (cm *ConfigManager) GetNextAPIKey(upstream *UpstreamConfig, failedKeys map[
 		}
 		failure := cm.failedKeysCache[key]
 		if failure == nil || now.Sub(failure.Timestamp) >= cm.failureRecoveryTime(failure) {
-			log.Printf("[%s-Key] 故障转移选择密钥 %s (%d/%d)", apiType, utils.MaskAPIKey(key), index+1, len(upstream.APIKeys))
+			log.Printf("[%s-Key] 故障转移选择密钥 %s (%d/%d)", apiType, codec.MaskAPIKey(key), index+1, len(upstream.APIKeys))
 			return key, nil
 		}
 		if failure.Timestamp.Before(oldestTime) {
@@ -651,7 +651,7 @@ func (cm *ConfigManager) GetNextAPIKey(upstream *UpstreamConfig, failedKeys map[
 	if oldestKey == "" {
 		return "", fmt.Errorf("上游 %s 的所有API密钥都暂时不可用", upstream.Name)
 	}
-	log.Printf("[%s-Key] 警告: 所有密钥都失效，尝试最早失败的密钥: %s", apiType, utils.MaskAPIKey(oldestKey))
+	log.Printf("[%s-Key] 警告: 所有密钥都失效，尝试最早失败的密钥: %s", apiType, codec.MaskAPIKey(oldestKey))
 	return oldestKey, nil
 }
 
@@ -673,7 +673,7 @@ func (cm *ConfigManager) MarkKeyAsFailed(apiKey string, apiType string) {
 
 	failure := cm.failedKeysCache[apiKey]
 	log.Printf("[%s-Key] 标记API密钥失败: %s (失败次数: %d, 恢复时间: %v)",
-		apiType, utils.MaskAPIKey(apiKey), failure.FailureCount, cm.failureRecoveryTime(failure))
+		apiType, codec.MaskAPIKey(apiKey), failure.FailureCount, cm.failureRecoveryTime(failure))
 }
 
 // failureRecoveryTime 在持有配置锁时读取失败次数对应的冷却窗口。
@@ -691,7 +691,7 @@ func (cm *ConfigManager) clearFailedKeysForUpstream(upstream *UpstreamConfig, ap
 	for _, key := range upstream.APIKeys {
 		if _, exists := cm.failedKeysCache[key]; exists {
 			delete(cm.failedKeysCache, key)
-			log.Printf("[%s-Key] 已清理被删除渠道 %s 的失败密钥记录: %s", apiType, upstream.Name, utils.MaskAPIKey(key))
+			log.Printf("[%s-Key] 已清理被删除渠道 %s 的失败密钥记录: %s", apiType, upstream.Name, codec.MaskAPIKey(key))
 		}
 	}
 }
@@ -712,7 +712,7 @@ func (cm *ConfigManager) cleanupExpiredFailures() {
 			for key, failure := range cm.failedKeysCache {
 				if now.Sub(failure.Timestamp) > cm.failureRecoveryTime(failure) {
 					delete(cm.failedKeysCache, key)
-					log.Printf("[Config-Key] API密钥 %s 已从失败列表中恢复", utils.MaskAPIKey(key))
+					log.Printf("[Config-Key] API密钥 %s 已从失败列表中恢复", codec.MaskAPIKey(key))
 				}
 			}
 			cm.mu.Unlock()

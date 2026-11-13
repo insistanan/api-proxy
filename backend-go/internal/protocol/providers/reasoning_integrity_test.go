@@ -3,13 +3,13 @@ package providers
 import (
 	"context"
 	"encoding/json"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
@@ -19,7 +19,7 @@ var reasoningTestScope = ReasoningCacheScope("reasoning-test", &config.UpstreamC
 
 func newReasoningContext(method, url string, body []byte, ctx context.Context) *gin.Context {
 	c := newGinContext(method, url, body, ctx)
-	c.Set(utils.ContextKeyConversationUserID, "reasoning-test")
+	c.Set(upstreamreq.ContextKeyConversationUserID, "reasoning-test")
 	return c
 }
 
