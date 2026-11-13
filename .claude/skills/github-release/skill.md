@@ -1,194 +1,32 @@
 ---
 name: github-release
-description: 发布 GitHub Release，从 CHANGELOG 生成发布公告并更新 Draft Release (project)
+description: 从 CHANGELOG 整理 GitHub Release 公告、更新发布草稿或正式发布。用于发布说明、编辑 Draft 或发布 Release；不负责升级版本号。
 version: 1.2.0
 author: https://github.com/insistanan/api-proxy/
 allowed-tools: Bash, Read
 context: fork
 ---
 
-# GitHub Release 发布技能
+# GitHub Release
 
-## 触发条件
+## 流程
 
-当用户输入包含以下关键词时触发：
+1. 核对 Git 远程仓库、目标 tag、Release 状态及 `gh` 登录权限。未指定版本时选择最新版本，不以提交顺序猜测版本先后。
+2. 找到目标版本之前最近的公开发布版本，从 `CHANGELOG.md` 汇总两者之间的全部变更，包括中间未公开版本；不以上一个 Draft 作为公告起点。
+3. 按下方约定生成公告。仅要求发布说明时交付正文；要求更新 Draft 时保留草稿状态；已明确授权正式发布时执行发布，无需重复确认。
+4. 发布前核对三个平台的构建已成功、目标 Release 产物齐备。优先编辑现有 Draft；缺少 Draft 时先查明构建与产物状态，不创建空 Release 冒充完整发布。
+5. 操作后重新读取 Release 状态；只报告已核实的版本、草稿或公开状态、链接，以及实际清理的 Draft。
 
-- "发布公告"、"发布说明"、"release notes"
-- "发布 release"、"publish release"
-- "更新 draft"、"编辑 release"
+## 公告约定
 
-## 执行步骤
+- 面向最终用户，中文简述可感知的变化，省略文件路径、内部类型和实现细节；内容以 CHANGELOG 为准。
+- 按 `✨ 新功能`、`🐛 修复`、`🔧 改进` 分组，无内容的分组省略；合并重复条目。
+- 末尾用 `---` 分隔，并附 `**Full Changelog**: <仓库 URL>/compare/<上次公开 tag>...<目标 tag>`；仓库 URL 从实际远程确定。
+- 首次公开发布没有比较起点时，明确说明，不编造旧 tag 或 compare 链接。
+- 公告正文写入临时文件，通过 `--notes-file` 传给 `gh release edit/create`，避免多行文本的 shell 转义问题。
 
-### 1. 获取最新 tag 和检查所有 Draft Release
+## 操作边界
 
-```bash
-# 获取最新 tag
-git describe --tags --abbrev=0
-
-# 获取所有 tag 列表
-git tag --sort=-v:refname | head -10
-
-# 获取所有 release 列表（包含 draft 状态）
-gh release list --limit 10
-```
-
-**多 Draft 处理策略**：
-
-- 如果存在多个 Draft Release，只发布最新版本
-- 删除中间版本的 Draft Release（快速迭代场景下的合理做法）
-- 合并所有中间版本的 changelog 到最新版本的发布公告
-
-### 2. 清理中间版本的 Draft Release
-
-如果检测到多个 Draft：
-
-```bash
-# 列出所有 draft release
-gh release list --limit 20 | grep -i draft
-
-# 删除中间版本的 draft（保留最新的）
-gh release delete <old-tag> --yes
-```
-
-**注意**：删除 draft 不会删除对应的 git tag，只是移除 GitHub Release 页面的条目。
-
-### 3. 获取版本间的变更日志
-
-```bash
-# 从 CHANGELOG.md 中提取相关版本的内容
-cat CHANGELOG.md
-```
-
-解析 CHANGELOG.md，提取从上次**公开发布**版本到当前版本的所有变更内容。
-
-### 4. 生成发布公告
-
-根据 CHANGELOG 内容生成简洁的发布公告。
-
-> ⚠️ **【必须】发布公告格式要求**：
->
-> 1. 必须按类型分组（✨ 新功能 / 🐛 修复 / 🔧 改进）
-> 2. **必须在末尾包含 Full Changelog 链接**（从上次公开发布版本到最新版本）
-> 3. Full Changelog 链接前必须加 `---` 分隔线
-
-**标准格式**：
-
-```markdown
-### ✨ 新功能
-
-- 功能点 1
-- 功能点 2
-
-### 🐛 修复
-
-- 修复点 1
-- 修复点 2
-
-### 🔧 改进
-
-- 改进点 1
-
----
-
-**Full Changelog**: https://github.com/insistanan/api-proxy/compare/v2.3.5...v2.3.7
-```
-
-**注意事项**：
-
-- 合并多个小版本的内容到一个公告
-- 保持简洁，每个点一行
-- **【必须】Full Changelog 链接必须从上次公开发布版本到最新版本**（不是从上一个 Draft 版本）
-
-**内容精简规则（重要）**：
-
-发布公告面向最终用户，必须移除技术实现细节，只保留用户可感知的变化：
-
-| 应移除的内容                              | 应保留的内容                  |
-| ----------------------------------------- | ----------------------------- |
-| 具体文件路径（`internal/types/types.go`） | 功能名称                      |
-| 代码结构（`ClaudeRequest` 结构体）        | 问题现象（返回 403）          |
-| 字段名称（`metadata` 字段）               | 用户操作（配置 modelMapping） |
-| 实现方式（JSON 反序列化）                 | 修复结果                      |
-
-**精简示例**：
-
-CHANGELOG 原文：
-
-```
-- **修复 ModelMapping 导致请求字段丢失** - 解决使用模型重定向时 Claude API 返回 403 的问题：
-  - 原因：`ClaudeRequest` 结构体缺少 `metadata` 字段，JSON 反序列化时该字段被丢弃
-  - 表现：配置 `modelMapping` 后请求被上游拒绝（如 `opus` → `claude-opus-4-5-20251101`）
-  - 修复：在 `ClaudeRequest` 中添加 `Metadata map[string]interface{}` 字段
-  - 涉及文件：`backend-go/internal/types/types.go`
-```
-
-发布公告精简后：
-
-```
-- **修复模型映射功能** - 解决配置 `modelMapping` 后请求被上游拒绝（返回 403）的问题
-```
-
-### 5. 更新 Draft Release 并发布
-
-```bash
-# 编辑 release 内容并发布
-gh release edit <tag> \
-  --title "<tag>" \
-  --notes "发布公告内容" \
-  --draft=false
-```
-
-或者如果没有 draft，直接创建：
-
-```bash
-gh release create <tag> \
-  --title "<tag>" \
-  --notes "发布公告内容" \
-  --latest
-```
-
-### 6. 确认发布成功
-
-```bash
-gh release view <tag> --json url,publishedAt
-```
-
-输出发布链接供用户确认。
-
-## 输出格式
-
-> ⚠️ **【必须】严格按照以下格式输出，不可省略任何部分**
-
-```
-📦 Release 发布完成！
-
-版本: v2.3.7
-状态: ✅ 已发布
-链接: https://github.com/insistanan/api-proxy/releases/tag/v2.3.7
-
-已清理的 Draft: v2.3.5, v2.3.6（已合并到 v2.3.7 发布公告）
-
-发布内容:
----
-### ✨ 新功能
-- 功能点
-
-### 🐛 修复
-- 修复点
-
-### 🔧 改进
-- 改进点
-
----
-
-**Full Changelog**: https://github.com/insistanan/api-proxy/compare/v2.3.5...v2.3.7
----
-```
-
-## 注意事项
-
-- 确保 `gh` CLI 已登录并有仓库权限
-- 发布前会显示完整公告内容供用户确认
-- 支持多版本合并发布（如 v2.3.5 ~ v2.3.7）
-- 多个 Draft 时只发布最新版本，删除中间版本的 Draft
-- 删除 Draft 不影响 git tag，仅清理 GitHub Release 页面
+- 已有 Draft 用 `gh release edit` 更新；只有授权正式发布时才设置 `--draft=false`。新建草稿时显式使用 `--draft`。
+- 多个 Draft 的变更可以汇总到目标版本公告，但仅在用户要求清理并确认删除范围后删除旧 Draft；不删除对应 Git tag。
+- 失败时说明实际错误和已完成步骤，不宣称发布成功。版本升级与 tag 构建链路见 [开发说明](../../../docs/开发说明.md)。
