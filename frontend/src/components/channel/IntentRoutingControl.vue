@@ -93,7 +93,7 @@
                 <div>{{ event.target.poolId ? event.decision.trace?.groups.find(group => group.poolId === event.target.poolId)?.name ?? poolName(event.target.poolId) : '未确认执行目标' }} · {{ event.target.model || '未记录模型' }} · {{ event.success ? '已交付' : event.status === 'pending' ? '已确认目标，未记录完成' : '未完成' }}</div>
                 <div v-if="event.decision.task" class="text-body-2">{{ taskName(event.decision.task) }} · {{ tierName(event.decision.tier) }}</div>
                 <div class="text-caption text-medium-emphasis">{{ event.decision.trace?.classified ? '已执行分类' : event.decision.trace ? '本轮未分类' : '旧记录未保存分类过程' }} · {{ event.decision.reason }}<template v-if="event.decision.trace?.classified"> · {{ event.decision.durationMs }} ms</template></div>
-                <div class="text-caption text-medium-emphasis">{{ event.requestId }} · {{ new Date(event.at).toLocaleString() }}</div>
+                <div class="text-caption text-medium-emphasis">{{ event.requestId }} · {{ formatDateTime(event.at) }}</div>
                 <details class="intent-event-detail" @toggle="toggleEvent(event.requestId, $event)"><summary>查看输入与匹配过程</summary><IntentMatchTrace v-if="expandedEvents.has(event.requestId)" :decision="event.decision" :tasks="options.tasks ?? []" :target="event.target" /></details>
                 <div v-if="event.success && !event.control && event.feedback === undefined" class="d-flex ga-2 mt-2">
                   <v-btn size="small" variant="text" :disabled="feedbackBusy" @click="feedback(event, true)">效果满意</v-btn>
@@ -154,6 +154,7 @@ import DatasetPicker from './DatasetPicker.vue'
 import EmbeddingProfileFields from './EmbeddingProfileFields.vue'
 import IntentGroupCapabilities from './IntentGroupCapabilities.vue'
 import IntentMatchTrace from './IntentMatchTrace.vue'
+import { formatDateTime } from '../../utils/datetime'
 
 const props = defineProps<{ protocol: IntentProtocol }>()
 const store = useIntentStore()

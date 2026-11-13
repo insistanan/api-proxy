@@ -16,7 +16,7 @@
         <button v-for="group in logs.conversations" :key="group.key" type="button" class="conversation-entry" :class="{ selected: group.key === logs.selectedKey }" :aria-pressed="group.key === logs.selectedKey" @click="logs.selectConversation(group)">
           <div class="entry-heading">
             <span :title="group.title || group.key">{{ conversationTitle(group) }}</span>
-            <span class="entry-time">{{ timeLabel(group.latest.timestamp) }}</span>
+            <span class="entry-time">{{ formatClockTime(group.latest.timestamp) }}</span>
           </div>
           <div class="entry-model">{{ clientLabel(group.latest.clientFamily || group.latest.client) }} · {{ group.latest.model || entryLabel(group.latest.apiType) }}</div>
           <div class="entry-channel">{{ group.latest.channelName || '渠道未知' }} · {{ group.key.slice(-12) }}</div>
@@ -65,6 +65,7 @@ import RequestLogDetail from './RequestLogDetail.vue'
 import ContextTrend from './ContextTrend.vue'
 import { conversationVersion, useLogsStore } from '@/stores/logs'
 import { logStatus } from '@/utils/logConversation'
+import { formatClockTime } from '../utils/datetime'
 import type { LogAPIType, LogConversationSummary } from '@/types/logs'
 
 const props = defineProps<{ requestId?: string; highlightRequestId?: string }>()
@@ -109,7 +110,6 @@ const clientLabel = (client?: string) => {
   if (/opencode/i.test(client)) return 'OpenCode'
   return client
 }
-const timeLabel = (timestamp: string) => new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
 async function locate(id?: string) {
   const revision = ++locateRevision

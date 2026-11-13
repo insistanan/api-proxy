@@ -24,6 +24,7 @@ import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { api } from '@/services/api'
 import type { ContextOverview, ContextTrendPoint } from '@/types/logs'
 import { contextKind, estimatedLabel } from '@/utils/contextPresentation'
+import { formatDateTime } from '../utils/datetime'
 
 const props = defineProps<{ groupKey: string; version: string }>()
 const emit = defineEmits<{ locate: [requestId: string] }>()
@@ -33,7 +34,7 @@ const error = ref('')
 let revision = 0
 let loadedKey = ''
 const peak = computed(() => Math.max(1, ...(overview.value?.points.map(point => point.peak?.estimatedTokens || 0) || [])))
-const pointLabel = (point: ContextTrendPoint) => `${new Date(point.firstAt).toLocaleString()}～${new Date(point.lastAt).toLocaleString()} · ${point.calls} 次调用 · ${point.knownCalls} 次有快照 · ${point.peak ? estimatedLabel(point.peak.estimatedTokens) : '上下文未知'}`
+const pointLabel = (point: ContextTrendPoint) => `${formatDateTime(point.firstAt)}～${formatDateTime(point.lastAt)} · ${point.calls} 次调用 · ${point.knownCalls} 次有快照 · ${point.peak ? estimatedLabel(point.peak.estimatedTokens) : '上下文未知'}`
 async function load() {
   const version = ++revision
   if (loadedKey !== props.groupKey) { overview.value = null; loadedKey = props.groupKey }

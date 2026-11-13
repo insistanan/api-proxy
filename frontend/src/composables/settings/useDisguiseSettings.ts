@@ -4,6 +4,7 @@ import { api } from '@/services/api'
 import { usePreferencesStore } from '@/stores/preferences'
 import type { ClientDisguiseStatus } from '@/types'
 import type { SettingsNotice as Notice, SettingsSection } from './types'
+import { formatDateTime } from '../../utils/datetime'
 
 export function useDisguiseSettings(saving: Ref<boolean>, activeSection: Ref<SettingsSection>) {
   // 全局伪装开关与渠道页顶部快捷开关共用同一 Pinia 状态，任一处切换后另一处即时同步。
@@ -24,7 +25,7 @@ export function useDisguiseSettings(saving: Ref<boolean>, activeSection: Ref<Set
     const version = value.trim()
     return !version || (version.length <= 64 && /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$/.test(version)) || '请输入版本号，例如 2.1.238 或 0.150.1-beta.1'
   }
-  const formatSyncTime = (timestamp?: number) => timestamp ? new Date(timestamp).toLocaleString('zh-CN') : '尚未成功查询'
+  const formatSyncTime = (timestamp?: number) => timestamp ? formatDateTime(timestamp) : '尚未成功查询'
 
   const disguiseDirty = computed(() =>
     disguiseClaudeVersion.value.trim() !== savedDisguiseClaudeVersion.value ||

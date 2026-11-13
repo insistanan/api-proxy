@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"sort"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -278,8 +277,7 @@ func buildConversationLaneHash(root map[string]interface{}) string {
 	if tools, ok := root["tools"]; ok {
 		names := make([]string, 0, 16)
 		collectToolNames(tools, &names)
-		sort.Strings(names)
-		lane["tools"] = uniqueStrings(names)
+		lane["tools"] = utils.DedupeSortedStrings(names)
 	}
 	if len(lane) == 0 {
 		return ""
@@ -306,16 +304,6 @@ func collectToolNames(value interface{}, names *[]string) {
 			collectToolNames(current[key], names)
 		}
 	}
-}
-
-func uniqueStrings(values []string) []string {
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		if len(result) == 0 || result[len(result)-1] != value {
-			result = append(result, value)
-		}
-	}
-	return result
 }
 
 func detectConversationClient(c *gin.Context, bodyBytes []byte) string {

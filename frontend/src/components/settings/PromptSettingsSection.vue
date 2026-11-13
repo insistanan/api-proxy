@@ -47,7 +47,7 @@
         color="error"
         prepend-icon="mdi-delete"
         :disabled="!selectedPromptEntry"
-        @click="removePromptVersion"
+        @click="askRemovePromptVersion"
       >
         删除版本
       </v-btn>
@@ -108,12 +108,25 @@
       </v-btn>
     </div>
   </section>
+  <ConfirmDialog
+    :model-value="pendingConfirm !== null"
+    :message="pendingConfirm?.message ?? ''"
+    :title="pendingConfirm?.title"
+    :confirm-text="pendingConfirm?.confirmText"
+    :cancel-text="pendingConfirm?.cancelText"
+    :confirm-color="pendingConfirm?.confirmColor"
+    @update:model-value="cancelConfirm"
+    @confirm="acceptConfirm"
+  />
 </template>
 
 <script setup lang="ts">
 import type { usePromptSettings } from '@/composables/settings/usePromptSettings'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import { useConfirm } from '@/composables/useConfirm'
 
 const props = defineProps<{ editor: ReturnType<typeof usePromptSettings> }>()
+const { pending: pendingConfirm, askConfirm, acceptConfirm, cancelConfirm } = useConfirm()
 const {
   promptEntries,
   promptActiveVersion,
@@ -123,11 +136,21 @@ const {
   promptsDirty,
   formatPromptTime,
   addPromptVersion,
-  removePromptVersion,
   setActivePromptVersion,
   savePromptSettings,
   saving
 } = props.editor
+
+// 删除版本属于不可恢复操作，确认弹窗由组件统一渲染，composable 只负责状态变更。
+const askRemovePromptVersion = () => {
+  const entry = selectedPromptEntry.value
+  if (!entry) return
+  askConfirm({
+    message: `删除版本「${entry.version || '（未命名）'}」？删除后不可恢复。`,
+    confirmText: '删除',
+    action: () => props.editor.removePromptVersion()
+  })
+}
 </script>
 
 <style scoped src="../../styles/settings.css"></style>

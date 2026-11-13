@@ -228,6 +228,16 @@
 
     <AgentPromptCard agent="opencode" class="mt-5" />
   </div>
+  <ConfirmDialog
+    :model-value="pendingConfirm !== null"
+    :message="pendingConfirm?.message ?? ''"
+    :title="pendingConfirm?.title"
+    :confirm-text="pendingConfirm?.confirmText"
+    :cancel-text="pendingConfirm?.cancelText"
+    :confirm-color="pendingConfirm?.confirmColor"
+    @update:model-value="cancelConfirm"
+    @confirm="acceptConfirm"
+  />
 </template>
 
 <script setup lang="ts">
@@ -236,6 +246,7 @@ import AgentConfigHeader from '@/components/AgentConfigHeader.vue'
 import AgentConfigLocation from '@/components/AgentConfigLocation.vue'
 import AgentPromptCard from '@/components/AgentPromptCard.vue'
 import ToolInstallBanner from '@/components/ToolInstallBanner.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import { api, type OpenCodeConfig, type OpenCodeProtocol, type OpenCodeProvider, type OpenCodeVariant, type SaveOpenCodeProvider, type ApiTab } from '@/services/api'
 import { useProxyProtocolPick, defaultQuickPickTypeOptions } from '@/composables/useChannelQuickPick'
 import { filterProxyModelsByKind, importProxyModels, buildOpenCodeModel } from '@/composables/useChannelModelImport'
@@ -243,8 +254,10 @@ import { PROTOCOL_DEFAULTS } from '@/composables/channelDefaults'
 import { useAuthStore } from '@/stores/auth'
 import { useToast } from '@/composables/useToast'
 import { parseJSONObject } from '@/utils/parseJSONObject'
+import { useConfirm } from '@/composables/useConfirm'
 
 const { showToast } = useToast()
+const { pending: pendingConfirm, askConfirm, acceptConfirm, cancelConfirm } = useConfirm()
 
 interface EditableVariant {
   name: string
@@ -470,9 +483,15 @@ const addProvider = () => {
 
 const removeProvider = (id: string) => {
   const provider = providers.value.find(item => item.id === id)
-  if (!provider || !window.confirm(`删除提供商“${provider.name || provider.id}”及其模型？`)) return
-  providers.value = providers.value.filter(item => item !== provider)
-  selectedProviderId.value = providers.value[0]?.id ?? ''
+  if (!provider) return
+  askConfirm({
+    message: `删除提供商“${provider.name || provider.id}”及其模型？`,
+    confirmText: '删除',
+    action: () => {
+      providers.value = providers.value.filter(item => item !== provider)
+      selectedProviderId.value = providers.value[0]?.id ?? ''
+    }
+  })
 }
 
 // 新增模型默认值：用 channelDefaults 的 chat 协议默认值（未选渠道时的合理兜底）

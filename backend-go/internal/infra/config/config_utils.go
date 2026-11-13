@@ -27,22 +27,6 @@ const (
 	deprecatedCleanupInterval = 12 * time.Hour
 )
 
-// deduplicateStrings 去重字符串切片，保持原始顺序
-func deduplicateStrings(items []string) []string {
-	if len(items) <= 1 {
-		return items
-	}
-	seen := make(map[string]struct{}, len(items))
-	result := make([]string, 0, len(items))
-	for _, item := range items {
-		if _, exists := seen[item]; !exists {
-			seen[item] = struct{}{}
-			result = append(result, item)
-		}
-	}
-	return result
-}
-
 // deduplicateBaseURLs 去重 BaseURLs；完整请求地址按原文比较，保留末尾路径差异。
 func deduplicateBaseURLs(urls []string, useFullURL ...bool) []string {
 	if len(urls) <= 1 {

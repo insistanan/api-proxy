@@ -186,8 +186,10 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { api, fetchUpstreamModels, channelApiByType, type Channel, type ManagedSkill, type RemoteSkillPreview, type SkillLocation, type SkillSearchResult } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import { useToast } from '@/composables/useToast'
+import { useClipboard } from '../composables/useClipboard'
 
 const { showToast } = useToast()
+const { copyText } = useClipboard()
 
 const PROXY_BASE = import.meta.env.PROD
   ? ''
@@ -703,14 +705,7 @@ const deleteSelected = async () => {
 }
 
 const fileToBase64 = (file: File) => new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onerror = () => reject(new Error('读取文件失败')); reader.onload = () => { const value = String(reader.result || ''); resolve(value.substring(value.indexOf(',') + 1)) }; reader.readAsDataURL(file) })
-const copySkillPath = async (path: string) => {
-  try {
-    await navigator.clipboard.writeText(path)
-    showToast('路径已复制', 'success')
-  } catch {
-    showToast('复制路径失败，请检查浏览器权限', 'error')
-  }
-}
+const copySkillPath = (path: string) => { void copyText(path, '路径已复制') }
 const installCountFormatter = new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 1 })
 const formatInstalls = (value: number) => installCountFormatter.format(value || 0).replace(/\s+/g, '')
 const formatBytes = (value: number) => value < 1024 ? `${value} B` : value < 1024 * 1024 ? `${(value / 1024).toFixed(1)} KB` : `${(value / (1024 * 1024)).toFixed(1)} MB`

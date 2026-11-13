@@ -421,6 +421,7 @@
 
 <script setup lang="ts">
 import PageHeader from '@/components/common/PageHeader.vue'
+import { formatDateTime } from '../utils/datetime'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import {
   blockedLogSnippetPreview as snippetPreview,
@@ -858,7 +859,7 @@ const removeGateDecision = async (entry: BlockedLogEntry) => {
 const formatTime = (value?: string) => {
   if (!value) return '--'
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
+  return Number.isNaN(date.getTime()) ? value : formatDateTime(date)
 }
 
 watch(page, loadLogs)

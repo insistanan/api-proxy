@@ -19,7 +19,7 @@
     >
       <summary class="round-header">
         <span class="round-index" :title="row.summary.requestId">调用 #{{ row.summary.requestId.slice(0, 8) }}</span>
-        <span class="round-time">{{ new Date(row.summary.startedAt || row.summary.unixMilli).toLocaleString() }}</span>
+        <span class="round-time">{{ formatDateTime(row.summary.startedAt || row.summary.unixMilli) }}</span>
         <v-chip size="x-small" :color="row.status.color" variant="tonal">{{ row.status.label }}</v-chip>
         <span v-if="row.summary.model" class="round-meta">{{ row.summary.model }}</span>
         <span v-if="row.summary.channelName" class="round-meta">{{ row.summary.channelName }}</span>
@@ -76,6 +76,7 @@ import JsonBodyPane from './JsonBodyPane.vue'
 import SessionInspector from './SessionInspector.vue'
 import ContextSnapshotPanel from './ContextSnapshotPanel.vue'
 import ToolTraceLinks from './ToolTraceLinks.vue'
+import { formatDateTime } from '../utils/datetime'
 
 const props = defineProps<{ groupKey: string; requests: SystemLogSummary[]; highlightRequestId?: string }>()
 const emit = defineEmits<{ inspect: [requestId: string] }>()

@@ -324,13 +324,13 @@
             <v-col cols="12" sm="6">
               <div class="info-card">
                 <span class="info-label">首次看到时间</span>
-                <span class="info-value text-caption">{{ selectedConversation?.firstSeenAt ? new Date(selectedConversation.firstSeenAt).toLocaleString() : '--' }}</span>
+                <span class="info-value text-caption">{{ selectedConversation?.firstSeenAt ? formatDateTime(selectedConversation.firstSeenAt) : '--' }}</span>
               </div>
             </v-col>
             <v-col cols="12" sm="6">
               <div class="info-card">
                 <span class="info-label">最近活动时间</span>
-                <span class="info-value text-caption">{{ selectedConversation?.lastSeenAt ? new Date(selectedConversation.lastSeenAt).toLocaleString() : '--' }}</span>
+                <span class="info-value text-caption">{{ selectedConversation?.lastSeenAt ? formatDateTime(selectedConversation.lastSeenAt) : '--' }}</span>
               </div>
             </v-col>
             <v-col cols="12" sm="4">
@@ -475,8 +475,12 @@ import CommandSafetyHistory from '@/components/CommandSafetyHistory.vue'
 import { api, type ConversationEntry, type ConversationKind, type ConversationRouteOptionChannel } from '@/services/api'
 import { API_TABS } from '@/services/channel-api'
 import { useToast } from '@/composables/useToast'
+import { useClipboard } from '../composables/useClipboard'
+import { formatDateTime } from '../utils/datetime'
 
 const { showToast } = useToast()
+const { copyText: copyToClipboard } = useClipboard()
+const copyText = (text: string) => copyToClipboard(text, '已复制到剪贴板')
 
 const headers = [
   { title: '对话', key: 'identity', sortable: false, width: 180 },
@@ -636,15 +640,6 @@ const openRouteOverrideFromDetail = () => {
   if (!selectedConversation.value) return
   detailDialog.value = false
   openRouteDialog(selectedConversation.value)
-}
-
-const copyText = async (text: string) => {
-  try {
-    await navigator.clipboard.writeText(text)
-    showToast('已复制到剪贴板', 'success')
-  } catch {
-    showToast('复制失败，请手动选择复制', 'error')
-  }
 }
 
 const timestampOf = (value?: string): number => {

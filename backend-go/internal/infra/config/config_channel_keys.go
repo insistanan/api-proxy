@@ -50,7 +50,7 @@ func applyAPIKeysUpdate(upstream *UpstreamConfig, index int, newAPIKeys []string
 			log.Printf("[Config-Upstream] %s渠道 [%d] %s 已从暂停状态自动激活（单 key 更换）", label, index, upstream.Name)
 		}
 	}
-	upstream.APIKeys = deduplicateStrings(newAPIKeys)
+	upstream.APIKeys = utils.DedupeStrings(newAPIKeys)
 	return shouldResetMetrics
 }
 

@@ -168,6 +168,16 @@
       </v-dialog>
     </v-card-text>
   </v-card>
+  <ConfirmDialog
+    :model-value="pendingConfirm !== null"
+    :message="pendingConfirm?.message ?? ''"
+    :title="pendingConfirm?.title"
+    :confirm-text="pendingConfirm?.confirmText"
+    :cancel-text="pendingConfirm?.cancelText"
+    :confirm-color="pendingConfirm?.confirmColor"
+    @update:model-value="cancelConfirm"
+    @confirm="acceptConfirm"
+  />
 </template>
 
 <script setup lang="ts">
@@ -182,8 +192,11 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { api, type CodexCatalogModel, type CodexSettings, type SaveCodexModelCatalog } from '@/services/api'
 import { useToast } from '@/composables/useToast'
+import ConfirmDialog from './common/ConfirmDialog.vue'
+import { useConfirm } from '../composables/useConfirm'
 
 const { showToast } = useToast()
+const { pending: pendingConfirm, askConfirm, acceptConfirm, cancelConfirm } = useConfirm()
 
 const props = defineProps<{ settings: CodexSettings | null }>()
 const emit = defineEmits<{ saved: [] }>()
@@ -339,8 +352,15 @@ const saveDefault = async () => {
   }
 }
 
-const deleteModel = async (model: CodexCatalogModel) => {
-  if (!window.confirm(`删除模型“${model.slug}”？若目录删空将自动回退 config.toml 的模型目录配置。`)) return
+const deleteModel = (model: CodexCatalogModel) => {
+  askConfirm({
+    message: `删除模型“${model.slug}”？若目录删空将自动回退 config.toml 的模型目录配置。`,
+    confirmText: '删除',
+    action: () => removeModel(model)
+  })
+}
+
+const removeModel = async (model: CodexCatalogModel) => {
   deletingSlug.value = model.slug
   try {
     const response = await api.saveCodexModelCatalog({ action: 'delete', slug: model.slug })

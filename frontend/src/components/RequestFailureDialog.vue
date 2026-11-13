@@ -28,6 +28,7 @@
 // 展示列表中当前尝试的原始错误，正文与复制操作共用同一份快照。
 import { computed, ref, watch } from 'vue'
 import type { RequestLogEntry } from '@/types/logs'
+import { useClipboard } from '../composables/useClipboard'
 
 const log = defineModel<RequestLogEntry | null>({ default: null })
 const emit = defineEmits<{ locate: [requestId: string] }>()
@@ -37,6 +38,7 @@ const visible = computed({
 })
 const copied = ref(false)
 const copyError = ref('')
+const { copyText } = useClipboard()
 
 watch(log, () => {
   copied.value = false
@@ -48,11 +50,10 @@ async function copyMessage() {
   if (!selected?.errorMessage) return
   copyError.value = ''
   copied.value = false
-  try {
-    await navigator.clipboard.writeText(selected.errorMessage)
-    if (log.value === selected) copied.value = true
-  } catch (error) {
-    if (log.value === selected) copyError.value = error instanceof Error ? `复制失败：${error.message}` : '复制失败，请手动选择正文复制。'
+  const ok = await copyText(selected.errorMessage)
+  if (log.value === selected) {
+    if (ok) copied.value = true
+    else copyError.value = '复制失败，请手动选择正文复制。'
   }
 }
 

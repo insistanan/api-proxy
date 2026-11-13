@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
 )
 
@@ -107,7 +108,7 @@ func prepareNewUpstream(upstream *UpstreamConfig) {
 		upstream.PoolID = DefaultChannelPoolID
 	}
 	prepareUpstreamLifecycle(upstream, time.Now())
-	upstream.APIKeys = deduplicateStrings(upstream.APIKeys)
+	upstream.APIKeys = utils.DedupeStrings(upstream.APIKeys)
 	upstream.BaseURLs = deduplicateBaseURLs(upstream.BaseURLs, upstream.UseFullURL)
 	upstream.ModelMapping = normalizeModelMapping(upstream.ModelMapping)
 	upstream.ModelMappingChannels = normalizeModelMappingChannels(upstream.ModelMappingChannels, upstream.ModelMapping)

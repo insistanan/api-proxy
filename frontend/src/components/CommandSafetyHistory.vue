@@ -13,7 +13,7 @@
       <v-expansion-panel v-for="entry in entries" :key="entry.id">
         <v-expansion-panel-title>
           <div class="d-flex flex-wrap align-center ga-2">
-            <span class="text-caption">{{ new Date(entry.timestamp).toLocaleString() }}</span>
+            <span class="text-caption">{{ formatDateTime(entry.timestamp) }}</span>
             <v-chip size="x-small" :color="entry.blockType === 'dangerous_cmd_allow' ? 'success' : 'error'">
               {{ entry.blockType === 'dangerous_cmd_allow' ? '已放行' : '已拦截' }}
             </v-chip>
@@ -71,6 +71,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { api, type BlockedLogEntry, type CommandAIReview } from '@/services/api'
+import { formatDateTime } from '../utils/datetime'
 
 const props = defineProps<{ conversationId: string }>()
 const pageSize = 20

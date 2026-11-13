@@ -2,6 +2,7 @@
 // ChannelOrchestration 的展示辅助逻辑收敛）。
 // 纯函数：输入指标输出展示文本/等级，不持有状态。
 import type { Channel, TimeWindowStats } from '@/services/api'
+import { formatDateTime as formatDateTimeValue } from './datetime'
 
 /** 缓存命中率等级（用于着色）。 */
 export function getCacheRateLevel(rate?: number): string {
@@ -75,7 +76,7 @@ export function formatDateTime(value?: string): string {
   if (!value) return '--'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleString()
+  return formatDateTimeValue(date)
 }
 
 /** 格式化统计数据：有请求显示 "N 请求 (X%)"，无请求显示 "--"。 */

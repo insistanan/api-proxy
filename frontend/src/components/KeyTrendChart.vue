@@ -55,6 +55,7 @@ import { useAutoRefresh } from '../composables/useAutoRefresh'
 import { useChartPreference, type ChartDuration } from '../composables/useChartPreference'
 import { useToast } from '../composables/useToast'
 import { CHART_PALETTE, CHART_SERIES_COLORS, cacheHitRateColor, chartThemeColors } from '../utils/chartPalette'
+import { formatShortDateTime } from '../utils/datetime'
 
 const apexchart = VueApexCharts
 
@@ -220,8 +221,7 @@ const escapeHtml = (str: string): string =>
 const buildTrafficTooltip = ({ seriesIndex, dataPointIndex, w }: any): string => {
   if (!historyData.value?.keys) return ''
   const timestamp = w.globals.seriesX[seriesIndex][dataPointIndex]
-  const date = new Date(timestamp)
-  const timeStr = date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+  const timeStr = formatShortDateTime(timestamp)
   const interval = getAggregationInterval(selectedDuration.value)
   const alignedTimestamp = alignToBucket(timestamp, interval)
 
@@ -260,7 +260,7 @@ const buildTrafficTooltip = ({ seriesIndex, dataPointIndex, w }: any): string =>
     const hasKeyFailure = stat.failure > 0
     html += `<div style="display: flex; align-items: center; margin: 5px 0; gap: 6px;">`
     html += `<span style="width: 8px; height: 8px; border-radius: 50%; background: ${stat.color}; flex-shrink: 0;"></span>`
-    html += `<span style="flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${stat.keyMask}${stat.model ? ` <span style="font-size: 10px; color: #888;">(${stat.model})</span>` : ''}</span>`
+    html += `<span style="flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${stat.keyMask}${stat.model ? ` <span style="font-size: 10px; color: rgba(var(--v-theme-on-surface), 0.6);">(${stat.model})</span>` : ''}</span>`
     html += `<span style="font-weight: 600;">${stat.total}</span>`
     if (hasKeyFailure) {
       html += `<span style="color: ${CHART_PALETTE.danger}; font-size: 11px; margin-left: 4px;">${stat.failure}失(${failureRate}%)</span>`
@@ -280,8 +280,7 @@ const buildTrafficTooltip = ({ seriesIndex, dataPointIndex, w }: any): string =>
 const buildDualTooltip = ({ seriesIndex, dataPointIndex, w }: any): string => {
   if (!historyData.value?.keys) return ''
   const timestamp = w.globals.seriesX[seriesIndex][dataPointIndex]
-  const date = new Date(timestamp)
-  const timeStr = date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+  const timeStr = formatShortDateTime(timestamp)
   const mode = selectedView.value
   const interval = getAggregationInterval(selectedDuration.value)
   const alignedTimestamp = alignToBucket(timestamp, interval)
@@ -324,9 +323,9 @@ const buildDualTooltip = ({ seriesIndex, dataPointIndex, w }: any): string => {
     html += `<div style="margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px dashed rgba(128,128,128,0.1);">`
     html += `<div style="display: flex; align-items: center; gap: 6px; font-weight: 500; margin-bottom: 3px;">`
     html += `<span style="width: 8px; height: 8px; border-radius: 50%; background: ${stat.color}; flex-shrink: 0;"></span>`
-    html += `<span style="flex: 1;">${stat.keyMask}${stat.model ? ` <span style="font-size: 10px; color: #888; font-weight: normal;">(${stat.model})</span>` : ''}</span>`
+    html += `<span style="flex: 1;">${stat.keyMask}${stat.model ? ` <span style="font-size: 10px; color: rgba(var(--v-theme-on-surface), 0.6); font-weight: normal;">(${stat.model})</span>` : ''}</span>`
     html += `</div>`
-    html += `<div style="padding-left: 14px; display: flex; gap: 16px; font-size: 11px; color: #888;">`
+    html += `<div style="padding-left: 14px; display: flex; gap: 16px; font-size: 11px; color: rgba(var(--v-theme-on-surface), 0.6);">`
     html += `<span>${label1}: <b style="color: rgb(var(--v-theme-on-surface));">${formatNumber(stat.val1)}</b></span>`
     html += `<span>${label2}: <b style="color: rgb(var(--v-theme-on-surface));">${formatNumber(stat.val2)}</b></span>`
     html += `</div>`

@@ -103,6 +103,7 @@ import { getModelAvailability } from '@/services/model-availability'
 import { useModelAvailabilityStore } from '@/stores/modelAvailability'
 import { useChannelStore } from '@/stores/channel'
 import type { AvailabilityCounts, AvailabilityState, ModelAvailabilityRow } from '@/types/model-availability'
+import { formatDateTime } from '../../utils/datetime'
 
 const props = defineProps<{ channelType: ApiTab; channels: Channel[] }>()
 const store = useModelAvailabilityStore()
@@ -183,7 +184,7 @@ function successRate(counts: AvailabilityCounts) {
   return total ? `${(100 * counts.success / total).toFixed(1)}%` : '—'
 }
 function formatTime(timestamp: number) {
-  return timestamp ? new Date(timestamp).toLocaleString('zh-CN', { hour12: false }) : '尚未观测'
+  return timestamp ? formatDateTime(timestamp) : '尚未观测'
 }
 function rowKey(row: ModelAvailabilityRow) {
   return JSON.stringify([row.channelId, row.model])

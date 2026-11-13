@@ -79,6 +79,7 @@ import { computed, ref, watch } from 'vue'
 import { buildTraceBlocks, parseSessionBody } from '@/utils/sessionPresentation'
 import ClampText from './ClampText.vue'
 import JsonBodyPane from './JsonBodyPane.vue'
+import { useClipboard } from '../composables/useClipboard'
 
 const props = withDefaults(
   defineProps<{
@@ -105,6 +106,7 @@ const viewMode = ref<'structured' | 'raw'>('structured')
 const curlCopied = ref(false)
 const rawCopied = ref(false)
 const copyError = ref('')
+const { copyText } = useClipboard()
 
 const structuredExpanded = ref(false)
 const LARGE_BODY_CHARS = 64 * 1024
@@ -124,23 +126,25 @@ const canReplay = computed(() => Boolean(props.body && props.body.trim()))
 async function copyRawBody() {
   if (!props.body) return
   copyError.value = ''
-  try {
-    await navigator.clipboard.writeText(props.body)
-    rawCopied.value = true
-    setTimeout(() => { rawCopied.value = false }, 2000)
-  } catch (error) { copyError.value = error instanceof Error ? error.message : '复制正文失败' }
+  if (!await copyText(props.body)) {
+    copyError.value = '复制正文失败'
+    return
+  }
+  rawCopied.value = true
+  setTimeout(() => { rawCopied.value = false }, 2000)
 }
 
 async function copyCurlCommand() {
   if (!props.body) return
   copyError.value = ''
-  try {
-    const url = new URL(props.url || '/v1/messages', window.location.origin).href
-    const curl = `curl -X ${props.method || 'POST'} "${url}" \\\n  -H "Content-Type: application/json" \\\n  -d '${props.body.replace(/'/g, "'\\''")}'`
-    await navigator.clipboard.writeText(curl)
-    curlCopied.value = true
-    setTimeout(() => { curlCopied.value = false }, 2000)
-  } catch (error) { copyError.value = error instanceof Error ? error.message : '复制 cURL 失败' }
+  const url = new URL(props.url || '/v1/messages', window.location.origin).href
+  const curl = `curl -X ${props.method || 'POST'} "${url}" \\\n  -H "Content-Type: application/json" \\\n  -d '${props.body.replace(/'/g, "'\\''")}'`
+  if (!await copyText(curl)) {
+    copyError.value = '复制 cURL 失败'
+    return
+  }
+  curlCopied.value = true
+  setTimeout(() => { curlCopied.value = false }, 2000)
 }
 </script>
 

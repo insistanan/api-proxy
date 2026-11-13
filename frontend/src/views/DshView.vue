@@ -295,6 +295,16 @@
 
     <AgentPromptCard agent="dsh" class="mt-5" />
   </div>
+  <ConfirmDialog
+    :model-value="pendingConfirm !== null"
+    :message="pendingConfirm?.message ?? ''"
+    :title="pendingConfirm?.title"
+    :confirm-text="pendingConfirm?.confirmText"
+    :cancel-text="pendingConfirm?.cancelText"
+    :confirm-color="pendingConfirm?.confirmColor"
+    @update:model-value="cancelConfirm"
+    @confirm="acceptConfirm"
+  />
 </template>
 
 <script setup lang="ts">
@@ -303,13 +313,16 @@ import AgentConfigHeader from '@/components/AgentConfigHeader.vue'
 import AgentConfigLocation from '@/components/AgentConfigLocation.vue'
 import AgentPromptCard from '@/components/AgentPromptCard.vue'
 import ToolInstallBanner from '@/components/ToolInstallBanner.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import { api, type DSHSettings, type DSHProvider, type DSHModel, type SaveDSHSettings, type ApiTab } from '@/services/api'
 import { useProxyProtocolPick, defaultQuickPickTypeOptions } from '@/composables/useChannelQuickPick'
 import { filterProxyModelsByKind, importProxyModels, buildDSHModel } from '@/composables/useChannelModelImport'
 import { useAuthStore } from '@/stores/auth'
 import { useToast } from '@/composables/useToast'
+import { useConfirm } from '@/composables/useConfirm'
 
 const { showToast } = useToast()
+const { pending: pendingConfirm, askConfirm, acceptConfirm, cancelConfirm } = useConfirm()
 
 // ---- 常量 ----
 
@@ -548,14 +561,19 @@ const removeProvider = (key: string) => {
   if (!key) return
   const provider = providers.value[key]
   const name = provider?.displayName || key
-  if (!window.confirm(`删除提供商"${name}"及其所有模型？`)) return
-  delete providers.value[key]
-  providerKeys.value = providerKeys.value.filter(k => k !== key)
-  if (defaultModelProvider.value === key) {
-    defaultModelProvider.value = ''
-    defaultModelModel.value = ''
-  }
-  selectedProviderKey.value = providerKeys.value[0] ?? ''
+  askConfirm({
+    message: `删除提供商“${name}”及其所有模型？`,
+    confirmText: '删除',
+    action: () => {
+      delete providers.value[key]
+      providerKeys.value = providerKeys.value.filter(k => k !== key)
+      if (defaultModelProvider.value === key) {
+        defaultModelProvider.value = ''
+        defaultModelModel.value = ''
+      }
+      selectedProviderKey.value = providerKeys.value[0] ?? ''
+    }
+  })
 }
 
 const addModel = (provider: DSHProvider) => {

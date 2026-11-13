@@ -110,7 +110,7 @@ func discoverModelsForKey(
 				attemptErrors = append(attemptErrors, fmt.Sprintf("%s@%s: %v", method.Name, shortenURLForLog(baseURL), err))
 				continue
 			}
-			models = dedupeStrings(models)
+			models = utils.DedupeSortedStrings(models)
 			if len(models) > 0 {
 				log.Printf("[Models-Discover] 渠道 %s key=%s baseURL=%s method=%s 获取模型 %d 个",
 					upstream.Name, keyFingerprint(apiKey), baseURL, method.Name, len(models))
@@ -259,7 +259,7 @@ func fetchAnthropicModelsPaginated(
 		afterID = meta.LastID
 	}
 
-	return dedupeStrings(allModels), nil
+	return utils.DedupeSortedStrings(allModels), nil
 }
 
 func fetchGeminiModelsPaginated(
@@ -300,7 +300,7 @@ func fetchGeminiModelsPaginated(
 		pageToken = meta.NextPageToken
 	}
 
-	return dedupeStrings(allModels), nil
+	return utils.DedupeSortedStrings(allModels), nil
 }
 
 func parseBodyByKind(kind string, body []byte) ([]string, error) {

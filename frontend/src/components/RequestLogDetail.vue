@@ -52,10 +52,12 @@ import SessionInspector from './SessionInspector.vue'
 import JsonBodyPane from './JsonBodyPane.vue'
 import ContextSnapshotPanel from './ContextSnapshotPanel.vue'
 import ToolTraceLinks from './ToolTraceLinks.vue'
+import { useClipboard } from '../composables/useClipboard'
 
 const props = defineProps<{ requestId: string; sourceVersion?: string }>()
 const emit = defineEmits<{ locate: [requestId: string] }>()
 const logs = useLogsStore()
+const { copyText } = useClipboard()
 const detail = shallowRef<SystemLogDetail | null>(null)
 const loading = ref(false)
 const error = ref('')
@@ -95,8 +97,7 @@ async function load(force = false) {
   finally { if (version === revision) loading.value = false }
 }
 async function copyId() {
-  try { await navigator.clipboard.writeText(props.requestId) }
-  catch (failure) { error.value = failure instanceof Error ? failure.message : '复制请求 ID 失败' }
+  if (!await copyText(props.requestId)) error.value = '复制请求 ID 失败'
 }
 watch(() => [props.requestId, props.sourceVersion], () => {
   detail.value = null

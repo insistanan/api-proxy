@@ -250,6 +250,7 @@ import RequestLogDetail from '@/components/RequestLogDetail.vue'
 import { callVersion, useLogCallsStore } from '@/stores/logCalls'
 import { useLogsStore } from '@/stores/logs'
 import type { LogCallFilters } from '@/types/logs'
+import { formatDateTime } from '../utils/datetime'
 import { api, type LogAPIType, type LogAvailableDate, type RequestLogEntry } from '@/services/api'
 
 type TypeFilter = LogAPIType | ''
@@ -525,7 +526,7 @@ const formatTime = (value?: string) => {
   if (!value) return '--'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleString()
+  return formatDateTime(date)
 }
 
 const numberFormatter = new Intl.NumberFormat()

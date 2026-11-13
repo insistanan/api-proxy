@@ -271,6 +271,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { api, ApiError, channelApiByType, type ApiTab, type Channel, type ChannelMetrics, type ChannelStatus, type ChannelRecentActivity } from '../services/api'
 import { useChannelActivity } from '../composables/useChannelActivity'
+import { useClipboard } from '../composables/useClipboard'
 import { defineLazyChart } from '@/utils/lazyChart'
 import { channelServiceLabel } from '@/utils/imagesChannelProtocol'
 import {
@@ -318,6 +319,8 @@ const emit = defineEmits<{
 const showQuickTestModal = ref(false)
 const quickTestChannel = ref<Channel | null>(null)
 
+const { copyText } = useClipboard()
+
 const logsViewer = useChannelLogs(props)
 const { openLogsDialog } = logsViewer
 
@@ -353,24 +356,23 @@ const handleQuickTest = (channel: Channel) => {
 const copiedChannelIndex = ref<number | null>(null)
 let copyStatusTimer: ReturnType<typeof setTimeout> | undefined
 const copyChannelConfig = async (channel: Channel) => {
-  try {
-    // 获取第一个密钥
-    const firstKey = channel.apiKeys.length > 0 ? channel.apiKeys[0] : ''
-    // 构建配置文本
-    const configText = `名称: ${channel.name}
+  // 获取第一个密钥
+  const firstKey = channel.apiKeys.length > 0 ? channel.apiKeys[0] : ''
+  // 构建配置文本
+  const configText = `名称: ${channel.name}
 URL: ${channel.baseUrl}
 密钥: ${firstKey}`
-    // 复制到剪贴板
-    await navigator.clipboard.writeText(configText)
-    // 显示已复制状态
-    copiedChannelIndex.value = channel.index
-    if (copyStatusTimer) clearTimeout(copyStatusTimer)
-    copyStatusTimer = setTimeout(() => {
-      copiedChannelIndex.value = null
-    }, 2000)
-  } catch (error) {
-    emit('error', `复制配置失败：${error instanceof Error ? error.message : '无法访问剪贴板'}`)
+  // 复制到剪贴板
+  if (!await copyText(configText)) {
+    emit('error', '复制配置失败：无法访问剪贴板')
+    return
   }
+  // 显示已复制状态
+  copiedChannelIndex.value = channel.index
+  if (copyStatusTimer) clearTimeout(copyStatusTimer)
+  copyStatusTimer = setTimeout(() => {
+    copiedChannelIndex.value = null
+  }, 2000)
 }
 
 // 计算属性：非活跃渠道 - 仅 disabled 状态

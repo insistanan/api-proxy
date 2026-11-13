@@ -9,7 +9,7 @@
     <div class="runtime-lines" :aria-busy="loading">
       <div v-if="!entries.length" class="pa-4 text-medium-emphasis">{{ loading ? '正在读取日志…' : '暂无匹配的运行日志' }}</div>
       <div v-for="entry in entries" :key="entry.id" class="runtime-line">
-        <span class="runtime-time">{{ new Date(entry.timestamp).toLocaleString() }}</span>
+        <span class="runtime-time">{{ formatDateTime(entry.timestamp) }}</span>
         <span class="runtime-tag">{{ entry.tag || '未分类' }}</span>
         <pre>{{ entry.message }}</pre>
       </div>
@@ -22,6 +22,7 @@
 import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { api } from '@/services/api'
 import type { RuntimeLogEntry } from '@/types/logs'
+import { formatDateTime } from '../utils/datetime'
 
 const search = ref('')
 const entries = shallowRef<RuntimeLogEntry[]>([])

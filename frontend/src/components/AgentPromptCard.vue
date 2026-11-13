@@ -112,6 +112,16 @@
       </template>
     </v-card-text>
   </v-card>
+  <ConfirmDialog
+    :model-value="pendingConfirm !== null"
+    :message="pendingConfirm?.message ?? ''"
+    :title="pendingConfirm?.title"
+    :confirm-text="pendingConfirm?.confirmText"
+    :cancel-text="pendingConfirm?.cancelText"
+    :confirm-color="pendingConfirm?.confirmColor"
+    @update:model-value="cancelConfirm"
+    @confirm="acceptConfirm"
+  />
 </template>
 
 <script setup lang="ts">
@@ -123,6 +133,9 @@
 // 状态自管（同 ToolInstallBanner 的先例），不进 store——数据只服务于本卡片。
 import { computed, onMounted, ref } from 'vue'
 import { api, ApiError, type AgentPromptAgent, type AgentPromptFile, type PromptEntry } from '@/services/api'
+import { formatDateTime } from '../utils/datetime'
+import ConfirmDialog from './common/ConfirmDialog.vue'
+import { useConfirm } from '../composables/useConfirm'
 
 const props = defineProps<{
   /** 智能体标识，须在后端白名单内：claude-code / codex / opencode / pi / dsh */
@@ -131,6 +144,7 @@ const props = defineProps<{
 
 const loading = ref(false)
 const saving = ref(false)
+const { pending: pendingConfirm, askConfirm, acceptConfirm, cancelConfirm } = useConfirm()
 const info = ref<AgentPromptFile | null>(null)
 const loadError = ref('')
 const saveError = ref('')
@@ -184,7 +198,7 @@ const formatSize = (bytes: number): string => {
 
 const formatTime = (millis: number): string => {
   if (!millis) return '未知'
-  return new Date(millis).toLocaleString('zh-CN', { hour12: false })
+  return formatDateTime(millis)
 }
 
 /** 从 ApiError 提取后端 detail 字段（保存失败的具体原因，如权限不足） */
@@ -259,15 +273,21 @@ const save = async () => {
   }
 }
 
-const applyPromptVersion = async () => {
+const applyPromptVersion = () => {
   const entry = promptEntries.value.find(item => item.version === selectedVersion.value)
   if (!entry) return
   if (info.value?.exists && info.value.content) {
-    const confirmed = window.confirm(
-      `将用通用提示词「${entry.version}」整体替换当前提示词文件，原内容会自动保存 .bak 备份。继续？`
-    )
-    if (!confirmed) return
+    askConfirm({
+      message: `将用通用提示词「${entry.version}」整体替换当前提示词文件，原内容会自动保存 .bak 备份。继续？`,
+      confirmText: '替换',
+      action: () => writePromptEntry(entry)
+    })
+    return
   }
+  void writePromptEntry(entry)
+}
+
+const writePromptEntry = async (entry: PromptEntry) => {
   applying.value = true
   applyError.value = ''
   applyDetail.value = ''

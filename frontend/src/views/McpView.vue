@@ -172,17 +172,30 @@
       </v-card>
     </v-dialog>
   </div>
+  <ConfirmDialog
+    :model-value="pendingConfirm !== null"
+    :message="pendingConfirm?.message ?? ''"
+    :title="pendingConfirm?.title"
+    :confirm-text="pendingConfirm?.confirmText"
+    :cancel-text="pendingConfirm?.cancelText"
+    :confirm-color="pendingConfirm?.confirmColor"
+    @update:model-value="cancelConfirm"
+    @confirm="acceptConfirm"
+  />
 </template>
 
 <script setup lang="ts">
 import PageHeader from '@/components/common/PageHeader.vue'
 import DisclosureSection from '@/components/common/DisclosureSection.vue'
 import { computed, onMounted, reactive, ref } from 'vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import { useConfirm } from '@/composables/useConfirm'
 import { api, ApiError } from '@/services/api'
 import { formatMcpCommand, parseMcpCommand } from '@/utils/mcpCommand'
 import type { AgentResult, AgentStatus, DetectedMcpServer, McpAdoption, McpAgentKey, McpConnection, McpServer, McpTransport } from '@/types'
 
 // 智能体顺序与展示名固定。保存时 agents 按此顺序输出，使草稿与服务端快照可直接比较。
+const { pending: pendingConfirm, askConfirm, acceptConfirm, cancelConfirm } = useConfirm()
 const AGENT_OPTIONS: { key: McpAgentKey; label: string }[] = [
   { key: 'claude-code', label: 'Claude Code' },
   { key: 'codex', label: 'Codex' },
@@ -676,8 +689,15 @@ const loadList = async () => {
 }
 
 const reloadList = async () => {
-  if (dirty.value && !window.confirm('刷新会丢弃未保存的修改，是否继续？')) return
-  await loadList()
+  if (!dirty.value) {
+    await loadList()
+    return
+  }
+  askConfirm({
+    message: '刷新会丢弃未保存的修改，是否继续？',
+    confirmText: '继续刷新',
+    action: () => loadList()
+  })
 }
 
 const saveList = async () => {

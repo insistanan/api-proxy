@@ -3,10 +3,6 @@ import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from
 import type { Channel, ChannelPool, ChannelStatus } from '../services/api'
 import { api, channelApiByType } from '../services/api'
 import { imagesModelOptions, imagesProtocolLabel, isImagesServiceType, validateImagesOutputSettings } from '@/utils/imagesChannelProtocol'
-import {
-  isValidApiKey as _isValidApiKey,
-  isValidUrl as _isValidQuickInputUrl
-} from '../utils/quickInputParser'
 import { useChannelEditor, buildImagesOutputSettings, EMBEDDINGS_DIMENSIONS_DEFAULT, validateEmbeddingsDimensions, supportsChannelClientIdentity } from '../composables/useChannelEditor'
 import { compileImagesExtraParams } from '@/utils/imagesExtraParams'
 
@@ -14,6 +10,7 @@ import { useQuickChannelDraft } from './useQuickChannelDraft'
 import { useChannelModels } from './useChannelModels'
 import { isConversationProtocol, type ApiTab } from '@/services/channel-api'
 import { resolveChannelPreset, type ChannelPreset, type ChannelPresetEndpoint } from '@/utils/channelPresets'
+import { useClipboard } from './useClipboard'
 
 export interface ChannelModalProps {
   show: boolean
@@ -31,6 +28,7 @@ export interface ChannelModalEmit {
 export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit) {
   // 表单引用
   const formRef = ref()
+  const { copyText } = useClipboard()
   const detailedSections = reactive({ connection: false, compatibility: false, advanced: false })
   const submitError = ref('')
 
@@ -711,34 +709,16 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
   // 复制失败保留明确反馈，不把未成功的复制显示为成功。
   const copyApiKey = async (key: string, index: number) => {
     copyNotice.value = ''
-    try {
-      if (navigator.clipboard) {
-        await navigator.clipboard.writeText(key)
-      } else {
-        // 普通 HTTP 部署可能没有 Clipboard API，保留原有的兼容复制能力并明确反馈。
-        const previousFocus = document.activeElement as HTMLElement | null
-        const input = document.createElement('textarea')
-        input.value = key
-        input.style.cssText = 'position:fixed;left:-9999px;top:0'
-        document.body.appendChild(input)
-        try {
-          input.select()
-          if (!document.execCommand('copy')) throw new Error('浏览器未能完成兼容复制')
-          copyNotice.value = '当前连接不支持 Clipboard API，已使用浏览器兼容方式复制。'
-        } finally {
-          input.remove()
-          previousFocus?.focus({ preventScroll: true })
-        }
-      }
-      copiedKeyIndex.value = index
-
-      if (copyResetTimer) clearTimeout(copyResetTimer)
-      copyResetTimer = setTimeout(() => {
-        copiedKeyIndex.value = null
-      }, 2000)
-    } catch (err) {
-      apiKeyError.value = `复制密钥失败，请检查浏览器剪贴板权限：${err instanceof Error ? err.message : String(err)}`
+    if (!await copyText(key)) {
+      apiKeyError.value = '复制密钥失败，请检查浏览器剪贴板权限'
+      return
     }
+    copiedKeyIndex.value = index
+
+    if (copyResetTimer) clearTimeout(copyResetTimer)
+    copyResetTimer = setTimeout(() => {
+      copiedKeyIndex.value = null
+    }, 2000)
   }
 
   // Vuetify 字段错误与自定义参数错误共用展开和定位流程。

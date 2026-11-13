@@ -63,6 +63,8 @@
 // 本地装了抢先/预发布版（current >= latest）时显示"已最新"而非误报。
 import { computed, onMounted, ref } from 'vue'
 import { api, type ToolVersionInfo } from '@/services/api'
+import { formatClockTime } from '../utils/datetime'
+import { useClipboard } from '../composables/useClipboard'
 
 const props = defineProps<{
   /** 工具标识，须在后端白名单内：claude / codex / opencode / pi */
@@ -74,6 +76,7 @@ const checking = ref(false)
 const copied = ref(false)
 const loadError = ref('')
 const copyError = ref('')
+const { copyText } = useClipboard()
 
 /** 解析 x.y.z[-pre] 为可比较的三段数字 + 预发布段；解析失败返回 null */
 const parseSemver = (version: string): { core: number[]; pre: string } | null => {
@@ -143,7 +146,7 @@ const statusBadge = computed(() => {
 
 const detectedAtText = computed(() => {
   if (!info.value?.detectedAt) return '未知'
-  return new Date(info.value.detectedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  return formatClockTime(info.value.detectedAt)
 })
 
 // 后端缓存返回的 detectedAt 距今超过 1 分钟即视为复用（TTL 是 1 小时，
@@ -169,14 +172,13 @@ const check = async (force: boolean) => {
 const copyInstallCmd = async () => {
   if (!info.value) return
   copyError.value = ''
-  try {
-    await navigator.clipboard.writeText(info.value.installCmd)
-    copied.value = true
-    setTimeout(() => { copied.value = false }, 2000)
-  } catch {
-    // 剪贴板被浏览器策略拒绝时不静默吞掉，给出可见反馈
+  if (!await copyText(info.value.installCmd)) {
+    // 剪贴板被浏览器策略拒绝时保留可见反馈
     copyError.value = '复制失败，请检查浏览器剪贴板权限'
+    return
   }
+  copied.value = true
+  setTimeout(() => { copied.value = false }, 2000)
 }
 
 onMounted(() => check(false))

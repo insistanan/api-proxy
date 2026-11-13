@@ -7,7 +7,7 @@
       <details v-for="call in store.calls" :key="call.summary.requestId" class="call-row" :open="opened.has(call.summary.requestId)" @toggle="toggle(call, $event)">
         <summary class="call-heading">
           <span class="call-chevron" aria-hidden="true">▸</span>
-          <span class="call-time">{{ formatTime(call.summary.startedAt || call.summary.unixMilli) }}</span>
+          <span class="call-time">{{ formatDateTime(call.summary.startedAt || call.summary.unixMilli) }}</span>
           <span class="call-title"><strong>{{ call.summary.promptPreview || `调用 #${call.summary.requestId.slice(0, 8)}` }}</strong><span>{{ call.summary.apiType || '未知入口' }} · {{ call.summary.model || '模型未记录' }}</span></span>
           <v-chip size="x-small" :color="outcome(call).color" variant="tonal">{{ outcome(call).label }}</v-chip>
           <span>{{ call.attemptCount }} 条尝试</span>
@@ -30,7 +30,7 @@
             <ol class="attempt-chain">
               <li v-for="(attempt, index) in store.attempts[call.summary.requestId]!.attempts" :key="attempt.attemptId || index">
                 <div class="attempt-heading"><strong>记录 {{ index + 1 }} · {{ attempt.channelName || (attempt.channelIndex != null ? `渠道 #${attempt.channelIndex}` : '渠道未记录') }}</strong><span :class="`text-${attempt.status === 'completed' ? 'success' : attempt.status === 'cancelled' || attempt.status === 'blocked' ? 'warning' : 'error'}`">{{ attemptStatus(attempt) }}</span><span>{{ attempt.durationMs != null ? `${attempt.durationMs.toLocaleString()} ms` : '耗时未记录' }}</span></div>
-                <div class="text-caption text-medium-emphasis"><span v-if="attempt.startedAt">{{ formatTime(attempt.startedAt) }} · </span>{{ attempt.upstreamSent === true ? '已发起上游 HTTP 发送' : attempt.upstreamSent === false ? '未发起上游 HTTP 发送' : '发送状态未记录' }}<span v-if="attempt.responseHeadersMs != null"> · 响应头 {{ attempt.responseHeadersMs.toLocaleString() }} ms</span><span v-if="attempt.firstTokenMs && attempt.firstTokenMs > 0"> · 首内容 {{ attempt.firstTokenMs.toLocaleString() }} ms</span></div>
+                <div class="text-caption text-medium-emphasis"><span v-if="attempt.startedAt">{{ formatDateTime(attempt.startedAt) }} · </span>{{ attempt.upstreamSent === true ? '已发起上游 HTTP 发送' : attempt.upstreamSent === false ? '未发起上游 HTTP 发送' : '发送状态未记录' }}<span v-if="attempt.responseHeadersMs != null"> · 响应头 {{ attempt.responseHeadersMs.toLocaleString() }} ms</span><span v-if="attempt.firstTokenMs && attempt.firstTokenMs > 0"> · 首内容 {{ attempt.firstTokenMs.toLocaleString() }} ms</span></div>
                 <div class="text-caption text-medium-emphasis">{{ attempt.transform || attempt.resolvedModel || attempt.model || '模型未记录' }} · {{ attempt.baseUrl || '地址未记录' }} · {{ attempt.attemptId || '旧记录：尝试 ID 缺失' }}</div>
                 <div class="text-caption">输入 {{ attempt.inputTokens ?? '未知' }} / 输出 {{ attempt.outputTokens ?? '未知' }} Token · {{ attempt.stream ? '流式' : '非流式' }}</div>
                 <button v-if="attempt.errorType || attempt.errorMessage" type="button" class="attempt-error" @click="emit('failure', attempt)">{{ attempt.errorType || '终止原因' }} · {{ attempt.errorMessage || '查看详情' }}</button>
@@ -51,6 +51,7 @@ import { onBeforeUnmount, ref, watch } from 'vue'
 import type { LogCallFilters, LogCallSummary, RequestLogEntry } from '@/types/logs'
 import { callVersion, useLogCallsStore } from '@/stores/logCalls'
 import { logStatus } from '@/utils/logConversation'
+import { formatDateTime } from '../utils/datetime'
 
 const props = defineProps<{ filters: LogCallFilters }>()
 const emit = defineEmits<{ inspect: [requestId: string]; locate: [requestId: string]; failure: [attempt: RequestLogEntry] }>()
@@ -58,7 +59,6 @@ const store = useLogCallsStore()
 const opened = ref(new Set<string>())
 const hasLifecycle = (call: LogCallSummary) => call.summary.phases.includes('request_end') || ['processing', 'retrying', 'interrupted'].includes(call.summary.status || '') && call.summary.phases.includes('request_start')
 const outcome = (call: LogCallSummary) => hasLifecycle(call) ? logStatus(call.summary) : { label: '生命周期未记录', color: 'warning' }
-const formatTime = (stamp: number) => new Date(stamp).toLocaleString()
 const attemptStatus = (attempt: RequestLogEntry) => `${attempt.status === 'completed' ? '已完成' : attempt.status === 'cancelled' ? '已取消' : attempt.status === 'blocked' ? '已拦截' : attempt.status === 'failed' ? '失败' : '状态未知'}${attempt.upstreamStatusCode ? ` · 上游 HTTP ${attempt.upstreamStatusCode}` : ''}${attempt.statusCode && attempt.statusCode !== attempt.upstreamStatusCode ? ` · 结果码 ${attempt.statusCode}` : ''}`
 const attemptPath = (attempts: RequestLogEntry[]) => attempts.map(attempt => attempt.channelName || (attempt.channelIndex != null ? `渠道 #${attempt.channelIndex}` : '渠道未知')).join(' → ')
 

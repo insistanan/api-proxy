@@ -3,6 +3,7 @@ import { computed, ref, type Ref } from 'vue'
 import { api } from '@/services/api'
 import type { PromptEntry } from '@/types'
 import type { SettingsNotice as Notice } from './types'
+import { formatDateTime } from '../../utils/datetime'
 
 export function usePromptSettings(saving: Ref<boolean>) {
   // ===== 通用提示词（版本库：各智能体配置页"一键配置提示词"的数据源） =====
@@ -21,7 +22,7 @@ export function usePromptSettings(saving: Ref<boolean>) {
 
   const formatPromptTime = (millis: number): string => {
     if (!millis) return '从未保存'
-    return new Date(millis).toLocaleString('zh-CN', { hour12: false })
+    return formatDateTime(millis)
   }
 
   const addPromptVersion = () => {
@@ -33,7 +34,6 @@ export function usePromptSettings(saving: Ref<boolean>) {
   const removePromptVersion = () => {
     const entry = selectedPromptEntry.value
     if (!entry) return
-    if (!window.confirm(`删除版本「${entry.version || '（未命名）'}」？删除后不可恢复。`)) return
     promptEntries.value = promptEntries.value.filter(item => item !== entry)
     if (promptActiveVersion.value === entry.version) promptActiveVersion.value = ''
     selectedPromptEntry.value = promptEntries.value[0] ?? null

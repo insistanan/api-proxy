@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import type { ApexOptions } from 'apexcharts'
 import { api, type ApiTab, type Channel, type ChannelLogEntry } from '@/services/api'
 import { CHART_PALETTE } from '@/utils/chartPalette'
+import { formatDateTime } from '../utils/datetime'
 
 export function useChannelLogs(props: { channelType: ApiTab }) {
   const showLogsDialog = ref(false)
@@ -136,7 +137,7 @@ export function useChannelLogs(props: { channelType: ApiTab }) {
     if (!value) return '--'
     const date = new Date(value)
     if (Number.isNaN(date.getTime())) return value
-    return date.toLocaleString()
+    return formatDateTime(date)
   }
 
   const getLogStatusColor = (status: string): string => {

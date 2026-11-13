@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/insistanan/api-proxy/internal/infra/utils"
 )
 
 // parseModelsFlexible extracts model IDs from a wide range of real-world list-models
@@ -23,7 +25,7 @@ func parseModelsFlexible(body []byte) ([]string, error) {
 	}
 
 	models := extractModelIDs(raw, 0)
-	models = dedupeStrings(models)
+	models = utils.DedupeSortedStrings(models)
 	if len(models) == 0 {
 		return nil, fmt.Errorf("no model ids found in response")
 	}
@@ -68,7 +70,7 @@ func parseGeminiModels(body []byte) ([]string, error) {
 	if len(models) == 0 {
 		return nil, fmt.Errorf("gemini models response contained no generateContent models")
 	}
-	return dedupeStrings(models), nil
+	return utils.DedupeSortedStrings(models), nil
 }
 
 func parseOllamaModels(body []byte) ([]string, error) {
@@ -94,7 +96,7 @@ func parseOllamaModels(body []byte) ([]string, error) {
 	if len(models) == 0 {
 		return parseModelsFlexible(body)
 	}
-	return dedupeStrings(models), nil
+	return utils.DedupeSortedStrings(models), nil
 }
 
 func supportsGeminiGeneration(methods []string) bool {
@@ -140,7 +142,7 @@ func parseAnthropicPage(body []byte) ([]string, anthropicPageMeta, error) {
 			models = append(models, id)
 		}
 	}
-	return dedupeStrings(models), anthropicPageMeta{HasMore: page.HasMore, LastID: page.LastID}, nil
+	return utils.DedupeSortedStrings(models), anthropicPageMeta{HasMore: page.HasMore, LastID: page.LastID}, nil
 }
 
 // geminiPageMeta captures Gemini list pagination fields.
@@ -175,7 +177,7 @@ func parseGeminiPage(body []byte) ([]string, geminiPageMeta, error) {
 		flexModels, flexErr := parseModelsFlexible(body)
 		return flexModels, geminiPageMeta{}, flexErr
 	}
-	return dedupeStrings(models), geminiPageMeta{NextPageToken: page.NextPageToken}, nil
+	return utils.DedupeSortedStrings(models), geminiPageMeta{NextPageToken: page.NextPageToken}, nil
 }
 
 func trimJSONNoise(body []byte) []byte {

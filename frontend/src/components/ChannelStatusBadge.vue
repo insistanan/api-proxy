@@ -31,6 +31,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { ChannelStatus, ChannelMetrics } from '../services/api'
+import { formatDateTime } from '../utils/datetime'
 
 const props = withDefaults(defineProps<{
   status: ChannelStatus | 'healthy' | 'error' | 'unknown'
@@ -84,7 +85,7 @@ const formatTime = (dateStr: string): string => {
   if (diff < 60000) return '刚刚'
   if (diff < 3600000) return `${Math.floor(diff / 60000)} 分钟前`
   if (diff < 86400000) return `${Math.floor(diff / 3600000)} 小时前`
-  return date.toLocaleDateString()
+  return formatDateTime(date)
 }
 </script>
 

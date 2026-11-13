@@ -49,10 +49,12 @@ import { useFreeChannelsStore } from '@/stores/freeChannels'
 import { useChannelStore } from '@/stores/channel'
 import { INTENT_PROTOCOLS } from '@/services/intent'
 import { useToast } from '@/composables/useToast'
+import { useClipboard } from '../../composables/useClipboard'
 
 const free = useFreeChannelsStore()
 const channelStore = useChannelStore()
 const { showToast } = useToast()
+const { copyText } = useClipboard()
 const loading = ref(false)
 const error = ref('')
 const search = ref<string | null>('')
@@ -87,8 +89,9 @@ function setEnabled(value: boolean | null) {
 }
 function syncModels() { void update(() => free.syncModels(), '免费模型清单已同步') }
 async function copyModel(model?: string) {
-  try { await navigator.clipboard.writeText(model ? `free/${model}` : 'free'); showToast('模型名称已复制', 'success') }
-  catch (cause) { error.value = `复制失败，请手动选择模型名称：${message(cause)}` }
+  if (!await copyText(model ? `free/${model}` : 'free', '模型名称已复制')) {
+    error.value = '复制失败，请手动选择模型名称'
+  }
 }
 onMounted(() => void load())
 </script>

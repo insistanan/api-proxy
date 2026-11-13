@@ -61,7 +61,7 @@
               <tbody><tr v-for="index in published" :key="index.space + JSON.stringify(index.profile)">
                 <td>{{ index.profile.model }} · {{ index.profile.modelVersion || '未指定版本' }}</td>
                 <td>{{ index.revision }} {{ index.revision === draft.revision ? '（当前）' : '（有待发布修改）' }}</td>
-                <td>{{ index.count }} / {{ index.dimension }}</td><td>{{ new Date(index.builtAt).toLocaleString() }}</td>
+                <td>{{ index.count }} / {{ index.dimension }}</td><td>{{ formatDateTime(index.builtAt) }}</td>
                 <td><v-btn variant="text" size="small" :disabled="busy" @click="profile = clone(index.profile)">使用此配置</v-btn><v-btn variant="text" size="small" color="error" :disabled="busy" @click="removeIndex(index)">删除索引</v-btn></td>
               </tr></tbody>
             </v-table>
@@ -87,6 +87,16 @@
       <v-alert v-if="sampleError" type="error" variant="tonal">{{ sampleError }}</v-alert>
     </v-card-text><v-card-actions><v-btn v-if="editingID" color="error" variant="text" @click="removeSample">移除样本</v-btn><v-spacer /><v-btn @click="sampleDialog = false">取消</v-btn><v-btn color="primary" @click="applySample">应用到草稿</v-btn></v-card-actions></v-card></v-dialog>
     <v-dialog v-model="builtinDialog" max-width="620"><v-card><v-card-title>内置起步样本</v-card-title><v-card-text><p class="mb-4">这些是合成样本，不含真实用户日志，默认待审核。导入后审核所需样本，再构建索引。</p><v-list><v-list-item v-for="item in builtins" :key="item.id" :title="item.name" :subtitle="`${item.samples.length} 条 · ${item.kind}`"><template #append><v-btn variant="tonal" @click="importBuiltin(item)">导入草稿</v-btn></template></v-list-item></v-list></v-card-text><v-card-actions><v-spacer /><v-btn @click="builtinDialog = false">关闭</v-btn></v-card-actions></v-card></v-dialog>
+    <ConfirmDialog
+      :model-value="pendingConfirm !== null"
+      :message="pendingConfirm?.message ?? ''"
+      :title="pendingConfirm?.title"
+      :confirm-text="pendingConfirm?.confirmText"
+      :cancel-text="pendingConfirm?.cancelText"
+      :confirm-color="pendingConfirm?.confirmColor"
+      @update:model-value="cancelConfirm"
+      @confirm="acceptConfirm"
+    />
   </div>
 </template>
 
@@ -99,7 +109,11 @@ import { useDatasetsStore } from '@/stores/datasets'
 import { parseDatasetImport } from '@/utils/datasetImport'
 import type { IndexStatus } from '@/services/datasets'
 import EmbeddingProfileFields from '@/components/channel/EmbeddingProfileFields.vue'
+import { formatDateTime } from '../utils/datetime'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import { useConfirm } from '@/composables/useConfirm'
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
+const { pending: pendingConfirm, askConfirm, acceptConfirm, cancelConfirm } = useConfirm()
 const store = useDatasetsStore()
 const draft = ref<Dataset>()
 const saved = ref('')
@@ -128,7 +142,17 @@ const kinds = [{ title: '意图路由', value: 'intent' }, { title: '工具安�
 const splits = [{ title: '索引样本', value: 'index' }, { title: '独立评测', value: 'eval' }]
 const headers = [{ title: '类别', key: 'label' }, { title: '文本', key: 'text', sortable: false }, { title: '正反例', key: 'negative' }, { title: '集合', key: 'split' }, { title: '审核', key: 'approved' }, { title: '操作', key: 'actions', sortable: false }]
 const evaluationHeaders = [{ title: '样本', key: 'id' }, { title: '期望', key: 'expected' }, { title: '实际', key: 'actual' }, { title: '相似度', key: 'score' }, { title: '结果', key: 'correct' }]
-function mayDiscard() { return !dirty.value || window.confirm('当前草稿尚未保存，确定放弃这些修改吗？') }
+function mayDiscard(): Promise<boolean> {
+  if (!dirty.value) return Promise.resolve(true)
+  return new Promise(resolve => {
+    askConfirm({
+      message: '当前草稿尚未保存，确定放弃这些修改吗？',
+      confirmText: '放弃修改',
+      action: () => resolve(true),
+      onCancel: () => resolve(false)
+    })
+  })
+}
 onBeforeRouteLeave(() => !busy.value && mayDiscard())
 async function run(name: string, work: () => Promise<void>) {
   if (busy.value) return
@@ -136,14 +160,14 @@ async function run(name: string, work: () => Promise<void>) {
   try { await work() } catch (cause) { error.value = intentErrorText(cause) } finally { action.value = '' }
 }
 function setDraft(value: Dataset, persisted: boolean) { draft.value = clone(value); saved.value = persisted ? JSON.stringify(value) : ''; selected.value = []; result.value = undefined; evaluation.value = undefined; tab.value = 'samples' }
-async function selectDataset(id: string) { if (!id || !mayDiscard()) return; await run('load', async () => { setDraft(await datasetsApi.get(id), true); const current = published.value[published.value.length - 1]; if (current) profile.value = clone(current.profile) }) }
-function create() { if (!busy.value && mayDiscard()) setDraft({ id: '', name: '', kind: 'intent', description: '', revision: 0, samples: [] }, false) }
+async function selectDataset(id: string) { if (!id || !(await mayDiscard())) return; await run('load', async () => { setDraft(await datasetsApi.get(id), true); const current = published.value[published.value.length - 1]; if (current) profile.value = clone(current.profile) }) }
+async function create() { if (!busy.value && await mayDiscard()) setDraft({ id: '', name: '', kind: 'intent', description: '', revision: 0, samples: [] }, false) }
 async function save() { if (!draft.value) return; const value = clone(draft.value); await run('save', async () => { setDraft(await datasetsApi.save(value), true); notice.value = '数据集已保存，已发布索引保持不变。'; await store.load() }) }
 async function showBuiltin() { await run('builtin', async () => { builtins.value = await datasetsApi.builtin(); builtinDialog.value = true }) }
-function importBuiltin(value: Dataset) { if (busy.value || !mayDiscard()) return; setDraft(value, false); builtinDialog.value = false }
+async function importBuiltin(value: Dataset) { if (busy.value || !(await mayDiscard())) return; setDraft(value, false); builtinDialog.value = false }
 async function importFile(value: File | File[] | null) {
   const file = Array.isArray(value) ? value[0] : value
-  if (!file || !mayDiscard()) return
+  if (!file || !(await mayDiscard())) return
   await run('import', async () => {
     if (file.size > 16 * 1024 * 1024) throw new Error('导入文件不能超过 16 MiB')
     const imported = parseDatasetImport(await file.text())
@@ -161,17 +185,36 @@ function applySample() {
   if (index < 0) draft.value.samples.push(clone(sample.value)); else draft.value.samples[index] = clone(sample.value)
   sampleDialog.value = false
 }
-function removeSample() { if (!draft.value || !window.confirm('将从草稿移除此样本，保存并发布后才影响匹配。继续吗？')) return; draft.value.samples = draft.value.samples.filter(row => row.id !== editingID.value); sampleDialog.value = false }
+function removeSample() {
+  const current = draft.value
+  if (!current) return
+  askConfirm({
+    message: '将从草稿移除此样本，保存并发布后才影响匹配。继续吗？',
+    confirmText: '移除',
+    action: () => {
+      current.samples = current.samples.filter(row => row.id !== editingID.value)
+      sampleDialog.value = false
+    }
+  })
+}
 function approve(value: boolean) { if (busy.value || !draft.value) return; const ids = new Set(selected.value); for (const row of draft.value.samples) if (ids.has(row.id)) row.approved = value }
 async function removeDataset() {
-  if (!draft.value || busy.value || dirty.value || !window.confirm('将删除此数据集及全部索引。仍引用它的路由或安全策略将按检查失败处理，请先解除引用。确定删除吗？')) return
+  if (!draft.value || busy.value || dirty.value) return
   const current = draft.value
-  await run('delete', async () => { await datasetsApi.remove(current.id, current.revision); draft.value = undefined; saved.value = ''; await store.load(); notice.value = '数据集已删除。' })
+  askConfirm({
+    message: '将删除此数据集及全部索引。仍引用它的路由或安全策略将按检查失败处理，请先解除引用。确定删除吗？',
+    confirmText: '删除',
+    action: () => run('delete', async () => { await datasetsApi.remove(current.id, current.revision); draft.value = undefined; saved.value = ''; await store.load(); notice.value = '数据集已删除。' })
+  })
 }
 async function removeIndex(index: IndexStatus) {
-  if (!draft.value || busy.value || !window.confirm('删除此模型的已发布索引后，仍使用该配置的请求将按检查失败处理。确定删除吗？')) return
-  const id = draft.value.id
-  await run('delete-index', async () => { await datasetsApi.removeIndex(id, index); result.value = undefined; evaluation.value = undefined; await store.load(); notice.value = '索引已删除，样本保留。' })
+  if (!draft.value || busy.value) return
+  const current = draft.value
+  askConfirm({
+    message: '删除此模型的已发布索引后，仍使用该配置的请求将按检查失败处理。确定删除吗？',
+    confirmText: '删除',
+    action: () => run('delete-index', async () => { await datasetsApi.removeIndex(current.id, index); result.value = undefined; evaluation.value = undefined; await store.load(); notice.value = '索引已删除，样本保留。' })
+  })
 }
 async function build() { if (!draft.value) return; const current = draft.value; await run('build', async () => { const built = await datasetsApi.build(current.id, current.revision, profile.value); notice.value = `已发布修订 ${built.revision}：${built.count} 条向量，其中 ${built.reused} 条复用。`; await store.load() }) }
 async function preview() { if (!draft.value) return; const id = draft.value.id; await run('search', async () => { result.value = await datasetsApi.search(id, query.value, profile.value) }) }

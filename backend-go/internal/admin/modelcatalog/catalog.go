@@ -499,21 +499,6 @@ func shortHash(value string, n int) string {
 	return encoded[:n]
 }
 
-func dedupeStrings(items []string) []string {
-	seen := make(map[string]bool, len(items))
-	result := make([]string, 0, len(items))
-	for _, item := range items {
-		item = strings.TrimSpace(item)
-		if item == "" || seen[item] {
-			continue
-		}
-		seen[item] = true
-		result = append(result, item)
-	}
-	sort.Strings(result)
-	return result
-}
-
 func cloneModels(models []ModelEntry) []ModelEntry {
 	if models == nil {
 		return nil
