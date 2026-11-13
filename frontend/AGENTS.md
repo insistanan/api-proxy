@@ -21,6 +21,8 @@ Vue 3 + TypeScript strict + Vuetify 3 管理台。构建产物由 Go 嵌入；�
 
 业务文件跟随所属 feature，只创建实际需要的 views / components / services 等子目录。shared 不依赖 features、app 或业务 API 门面；跨模块编排放应用入口或 app。业务服务调用 shared HTTP 层，契约类型从 `@/types` 获取。
 
+跨业务静态导入走模块公开出口（index.ts；数据集组件走 datasets/ui.ts），由 ESLint 检查。模块内部、测试和应用装配可直引实现；新增业务模块同步 eslint.config.js 的模块列表。
+
 ## 日常约定
 
 - 全局数据用 Pinia；弹窗和设置页维护草稿，保存成功再同步 Store。

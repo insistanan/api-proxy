@@ -1,5 +1,5 @@
-import type { ApiTab, ModelEntry } from '@/api'
-import { PROTOCOL_DEFAULTS } from '@/features/channels/composables/channelDefaults'
+import type { ApiTab, ModelEntry } from '@/types'
+import { PROTOCOL_DEFAULTS } from '@/features/clients/utils/protocolDefaults'
 
 /**
  * "一键导入本代理模型"共享逻辑。

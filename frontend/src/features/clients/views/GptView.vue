@@ -112,7 +112,7 @@ import AgentConfigLocation from '@/features/clients/components/AgentConfigLocati
 import AgentPromptCard from '@/features/clients/components/AgentPromptCard.vue'
 import CodexModelCatalog from '@/features/clients/components/CodexModelCatalog.vue'
 import ToolInstallBanner from '@/features/clients/components/ToolInstallBanner.vue'
-import { fetchProxyBaseUrl } from '@/features/channels/composables/useChannelQuickPick'
+import { fetchProxyBaseUrl } from '@/features/clients/composables/useProxyProtocolPick'
 import { api, type CodexSettings } from '@/api'
 import { useAuthStore } from '@/shared/stores/auth'
 import { useToast } from '@/shared/composables/useToast'

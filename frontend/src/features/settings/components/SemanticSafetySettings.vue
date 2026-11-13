@@ -18,8 +18,7 @@
 </template>
 <script setup lang="ts">
 import type { SemanticSafetyConfig } from '@/types'
-import DatasetPicker from '@/features/extensions/datasets/components/DatasetPicker.vue'
-import EmbeddingProfileFields from '@/features/extensions/datasets/components/EmbeddingProfileFields.vue'
+import { DatasetPicker, EmbeddingProfileFields } from '@/features/extensions/datasets/ui'
 defineProps<{ dangerousEnabled: boolean; gateEnabled: boolean }>()
 const model = defineModel<SemanticSafetyConfig>({ required: true })
 const modes = [{ title: '观察并记录', value: 'observe' }, { title: '交给 AI 闸门核验', value: 'review' }, { title: '满足确定性条件时直接阻断', value: 'block' }]

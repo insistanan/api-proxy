@@ -247,9 +247,9 @@ import ToolInstallBanner from '@/features/clients/components/ToolInstallBanner.v
 import ConfirmDialog from '@/shared/components/common/ConfirmDialog.vue'
 import EmptyState from '@/shared/components/common/EmptyState.vue'
 import { api, type OpenCodeConfig, type OpenCodeProtocol, type OpenCodeProvider, type OpenCodeVariant, type SaveOpenCodeProvider, type ApiTab } from '@/api'
-import { useProxyProtocolPick, defaultQuickPickTypeOptions } from '@/features/channels/composables/useChannelQuickPick'
-import { filterProxyModelsByKind, importProxyModels, buildOpenCodeModel } from '@/features/channels/composables/useChannelModelImport'
-import { PROTOCOL_DEFAULTS } from '@/features/channels/composables/channelDefaults'
+import { useProxyProtocolPick, defaultQuickPickTypeOptions } from '@/features/clients/composables/useProxyProtocolPick'
+import { filterProxyModelsByKind, importProxyModels, buildOpenCodeModel } from '@/features/clients/utils/proxyModelImport'
+import { PROTOCOL_DEFAULTS } from '@/features/clients/utils/protocolDefaults'
 import { useAuthStore } from '@/shared/stores/auth'
 import { useToast } from '@/shared/composables/useToast'
 import { parseJSONObject } from '@/shared/utils/parseJSONObject'
@@ -493,7 +493,7 @@ const removeProvider = (id: string) => {
   })
 }
 
-// 新增模型默认值：用 channelDefaults 的 chat 协议默认值（未选渠道时的合理兜底）
+// 新增模型默认值：用 protocolDefaults 的 chat 协议默认值（未选渠道时的合理兜底）
 const addModel = (provider: EditableProvider) => {
   const defaults = PROTOCOL_DEFAULTS.chat
   provider.models.push({

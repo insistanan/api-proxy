@@ -1,7 +1,7 @@
 // assistant 设置的草稿与操作编排；草稿仅供本设置页使用，保存以服务端响应回填。
 import { computed, ref, type Ref } from 'vue'
 import { api } from '@/api'
-import { CONVERSATION_PROTOCOLS } from '@/features/channels/services/channel-api'
+import { CONVERSATION_PROTOCOLS } from '@/features/channels'
 import type { AssistantStatusResponse } from '@/types'
 import type { SettingsNotice as Notice } from '@/features/settings/composables/types'
 

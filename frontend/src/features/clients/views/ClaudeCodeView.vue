@@ -107,9 +107,9 @@ import AgentConfigLocation from '@/features/clients/components/AgentConfigLocati
 import AgentPromptCard from '@/features/clients/components/AgentPromptCard.vue'
 import ToolInstallBanner from '@/features/clients/components/ToolInstallBanner.vue'
 import { api, type ClaudeCodeModelDefault, type ClaudeCodeSettings } from '@/api'
-import { buildClaudeCodeModelDefaults } from '@/features/channels/composables/useChannelModelImport'
-import { fetchProxyBaseUrl } from '@/features/channels/composables/useChannelQuickPick'
-import { filterProxyModelsByKind } from '@/features/channels/composables/useChannelModelImport'
+import { buildClaudeCodeModelDefaults } from '@/features/clients/utils/proxyModelImport'
+import { fetchProxyBaseUrl } from '@/features/clients/composables/useProxyProtocolPick'
+import { filterProxyModelsByKind } from '@/features/clients/utils/proxyModelImport'
 import { useAuthStore } from '@/shared/stores/auth'
 import { useToast } from '@/shared/composables/useToast'
 

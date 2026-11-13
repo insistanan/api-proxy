@@ -7,7 +7,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useDatasetsStore } from '@/features/extensions/datasets/stores/datasets'
-import { intentErrorText } from '@/features/channels/services/intent'
+import { intentErrorText } from '@/features/channels'
 const props = defineProps<{ kind: 'intent' | 'safety' }>()
 const model = defineModel<string[]>({ default: () => [] })
 const store = useDatasetsStore()

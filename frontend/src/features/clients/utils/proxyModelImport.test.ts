@@ -1,13 +1,13 @@
 // 本代理模型导入回归：保留同名分组，并按实际入口协议过滤。
 import { describe, expect, it } from 'vitest'
-import type { ApiTab, ModelEntry } from '@/api'
+import type { ApiTab, ModelEntry } from '@/types'
 import {
   buildDSHModel,
   buildOpenCodeModel,
   buildPiAgentModel,
   filterProxyModelsByKind,
   importProxyModels
-} from '@/features/channels/composables/useChannelModelImport'
+} from '@/features/clients/utils/proxyModelImport'
 
 const entry = (id: string, ownedBy: string): ModelEntry => ({
   id,

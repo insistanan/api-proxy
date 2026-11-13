@@ -1,6 +1,6 @@
 import { ref, watch } from 'vue'
-import { fetchHealth } from '@/api'
-import type { ApiTab } from '@/api'
+import { fetchHealth } from '@/shared/services/health'
+import type { ApiTab } from '@/types'
 
 /**
  * 为客户端配置页提供「连接本代理」的共用逻辑。

@@ -3,7 +3,7 @@ import { computed, ref, type Ref } from 'vue'
 import { api } from '@/api'
 import type { GatewaySettings } from '@/types'
 import type { SettingsNotice as Notice } from '@/features/settings/composables/types'
-import { useLogsStore } from '@/features/observability/stores/logs'
+import { useLogsStore } from '@/features/observability'
 
 export function useGatewaySettings(saving: Ref<boolean>) {
   const logs = useLogsStore()

@@ -8,7 +8,7 @@ import OpenCodeView from '@/features/clients/views/OpenCodeView.vue'
 import PiAgentView from '@/features/clients/views/PiAgentView.vue'
 
 vi.mock('@/shared/stores/auth', () => ({ useAuthStore: () => ({ apiKey: null, clearAuth: vi.fn() }) }))
-vi.mock('@/features/channels/composables/useChannelQuickPick', () => ({
+vi.mock('@/features/clients/composables/useProxyProtocolPick', () => ({
   defaultQuickPickTypeOptions: [],
   useProxyProtocolPick: () => ({ selectedType: ref(null), defaultBaseUrl: ref('') })
 }))

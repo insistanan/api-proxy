@@ -1,4 +1,4 @@
-import type { ApiTab } from '@/api'
+import type { ApiTab } from '@/types'
 
 /**
  * 客户端配置"连接本代理 + 一键导入模型"的统一默认值表。

@@ -5,7 +5,29 @@ import tsParser from '@typescript-eslint/parser'
 import tsPlugin from '@typescript-eslint/eslint-plugin'
 import prettierConfig from 'eslint-config-prettier'
 
+const featureModules = [
+  'channels', 'clients', 'settings', 'observability', 'assistant',
+  'extensions/datasets', 'extensions/mcp', 'extensions/skills'
+]
+
+// 业务模块之间的静态导入使用公开出口；测试可直接访问被测实现。
+const featureImportRules = featureModules.map(feature => ({
+  files: [`src/features/${feature}/**/*.{ts,vue}`],
+  ignores: ['**/*.test.ts'],
+  rules: {
+    'no-restricted-imports': ['error', {
+      patterns: featureModules.filter(other => other !== feature).map(other => ({
+        regex: other === 'extensions/datasets'
+          ? '^@/features/extensions/datasets/(?!ui$)'
+          : `^@/features/${other}/`,
+        message: '跨业务模块请使用该模块的公开出口，不直接引用内部文件。'
+      }))
+    }]
+  }
+}))
+
 export default [
+  ...featureImportRules,
   // 基础 JavaScript 推荐规则
   js.configs.recommended,
 

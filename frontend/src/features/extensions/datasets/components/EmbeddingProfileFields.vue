@@ -13,7 +13,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import type { EmbeddingProfile } from '@/types'
-import { intentApi, intentErrorText } from '@/features/channels/services/intent'
+import { intentApi, intentErrorText } from '@/features/channels'
 defineProps<{ hideTimeout?: boolean }>()
 const model = defineModel<EmbeddingProfile>({ required: true })
 function update<K extends keyof EmbeddingProfile>(key: K, value: EmbeddingProfile[K]) { model.value = { ...model.value, [key]: value } }

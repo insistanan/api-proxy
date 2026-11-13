@@ -1,6 +1,6 @@
 // 内容安全表单的默认草稿与旧配置规范化；不访问网络或组件状态。
 import type { ContentSafetySettings, CustomRuleItem, SensitiveInfoRule } from '@/types'
-import { defaultSemanticSafety } from '@/features/extensions/datasets/utils/semanticDefaults'
+import { defaultSemanticSafety } from '@/features/extensions/datasets'
 
 export const defaultContentSafety = (): ContentSafetySettings => ({
   sensitiveData: {

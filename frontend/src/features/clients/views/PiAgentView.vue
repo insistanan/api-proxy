@@ -286,8 +286,8 @@ import ToolInstallBanner from '@/features/clients/components/ToolInstallBanner.v
 import ConfirmDialog from '@/shared/components/common/ConfirmDialog.vue'
 import EmptyState from '@/shared/components/common/EmptyState.vue'
 import { api, type ApiError, type PiAgentProvider, type PiAgentStatus, type ApiTab } from '@/api'
-import { useProxyProtocolPick, defaultQuickPickTypeOptions } from '@/features/channels/composables/useChannelQuickPick'
-import { filterProxyModelsByKind, importProxyModels, buildPiAgentModel } from '@/features/channels/composables/useChannelModelImport'
+import { useProxyProtocolPick, defaultQuickPickTypeOptions } from '@/features/clients/composables/useProxyProtocolPick'
+import { filterProxyModelsByKind, importProxyModels, buildPiAgentModel } from '@/features/clients/utils/proxyModelImport'
 import { useAuthStore } from '@/shared/stores/auth'
 import { parseJSONObject } from '@/shared/utils/parseJSONObject'
 

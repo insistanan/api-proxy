@@ -101,7 +101,7 @@
 
 <script setup lang="ts">
 import type { useGatewaySettings } from '@/features/settings/composables/useGatewaySettings'
-import LogStorageStatus from '@/features/observability/components/log-panels/LogStorageStatus.vue'
+import { LogStorageStatus } from '@/features/observability'
 
 const props = defineProps<{ editor: ReturnType<typeof useGatewaySettings> }>()
 const {
