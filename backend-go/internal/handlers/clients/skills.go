@@ -16,7 +16,8 @@ import (
 // SkillsAPI 聚合 skills 管理的互斥锁，由 main.go 构造并注入路由，
 // 替代包级全局状态；互斥锁串行化对多个 agent 技能目录的读写操作。
 type SkillsAPI struct {
-	mu sync.Mutex
+	mu          sync.Mutex
+	remoteCache remoteSkillCache
 }
 
 // NewSkillsAPI 创建 skills 管理 API。
@@ -280,6 +281,7 @@ func (s *SkillsAPI) Import() gin.HandlerFunc {
 			return
 		}
 		targets := skills.EnsureProjectTarget(req.Targets)
+		targetLocations := make([]skills.Location, 0, len(targets))
 		for _, target := range targets {
 			location, exists := locationByKey[target]
 			if !exists {
@@ -290,10 +292,11 @@ func (s *SkillsAPI) Import() gin.HandlerFunc {
 				c.JSON(400, gin.H{"error": fmt.Sprintf("安装目标 %s 为只读目录，请选择用户 Skill 目录", location.Agent)})
 				return
 			}
-			if err := skills.WriteFilesForLocation(location, skillName, files); err != nil {
-				c.JSON(500, gin.H{"error": fmt.Sprintf("安装到 %s 失败: %v", location.Agent, err)})
-				return
-			}
+			targetLocations = append(targetLocations, location)
+		}
+		if err := skills.InstallFiles(targetLocations, skillName, files); err != nil {
+			c.JSON(500, gin.H{"error": fmt.Sprintf("安装失败: %v", err)})
+			return
 		}
 		c.JSON(200, gin.H{"success": true, "name": skillName})
 	}

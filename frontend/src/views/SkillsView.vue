@@ -83,6 +83,10 @@
     <v-dialog v-model="discoverDialog" max-width="1100" persistent>
       <v-card class="discover-card">
         <div class="d-flex align-center justify-space-between px-5 py-4">
+          <div>
+            <div class="text-h6">发现 Skill</div>
+            <div class="text-caption text-medium-emphasis">从 skills.sh 搜索并安装到本机</div>
+          </div>
           <!-- 发现 Skill 数据来自 skills.sh，安装前会从 GitHub 校验 SKILL.md 和文件清单 -->
           <v-btn icon="mdi-close" variant="text" @click="discoverDialog = false" />
         </div>
@@ -122,6 +126,7 @@
           <div v-if="remotePreview" class="d-flex flex-wrap ga-2 mb-4">
             <v-chip size="small" label>{{ remotePreview.files.length }} 个文件</v-chip>
             <v-chip v-if="remotePreview.license" size="small" label>许可证：{{ remotePreview.license }}</v-chip>
+            <v-chip v-if="remotePreview.commit" size="small" label :title="remotePreview.commit">提交 {{ remotePreview.commit.slice(0, 7) }}</v-chip>
             <v-chip v-if="remotePreview.containsScripts" size="small" color="warning" label>包含 scripts/，请先审阅</v-chip>
             <v-btn v-if="remotePreview.repositoryUrl" :href="remotePreview.repositoryUrl" target="_blank" rel="noreferrer" size="small" variant="text" prepend-icon="mdi-open-in-new">GitHub 仓库</v-btn>
           </div>

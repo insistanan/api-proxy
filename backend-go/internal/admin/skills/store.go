@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -137,16 +138,164 @@ func cleanDirPreservingBackups(destination string) error {
 	return nil
 }
 
-func writeFiles(destination string, files map[string][]byte) error {
-	if err := os.RemoveAll(destination); err != nil {
-		return err
+// InstallFiles 把同一份 Skill 文件原子写入多个目标目录：先全部暂存，再逐个替换；
+// 任一目标替换失败时回滚已替换的目标，避免留下半套文件。
+func InstallFiles(locations []Location, name string, files map[string][]byte) error {
+	staged := make([]*stagedInstall, 0, len(locations))
+	defer func() {
+		for _, item := range staged {
+			item.abort()
+		}
+	}()
+	for _, location := range locations {
+		item, err := stageFiles(location, name, files)
+		if err != nil {
+			return err
+		}
+		staged = append(staged, item)
 	}
-	if err := os.MkdirAll(destination, 0700); err != nil {
-		return err
+
+	committed := make([]*stagedInstall, 0, len(staged))
+	for _, item := range staged {
+		if err := item.commit(); err != nil {
+			for index := len(committed) - 1; index >= 0; index-- {
+				if rollbackErr := committed[index].rollback(); rollbackErr != nil {
+					return fmt.Errorf("%w；回滚 %s 失败: %v", err, committed[index].label(), rollbackErr)
+				}
+			}
+			return err
+		}
+		committed = append(committed, item)
 	}
+	for _, item := range committed {
+		item.cleanup()
+	}
+	return nil
+}
+
+// stageFiles 把 Skill 文件写入目标目录同级的临时目录，不触碰现有安装。
+func stageFiles(location Location, name string, files map[string][]byte) (*stagedInstall, error) {
+	destination := filepath.Join(location.Path, name)
+	if err := os.MkdirAll(location.Path, 0700); err != nil {
+		return nil, fmt.Errorf("创建 %s 目录失败: %w", location.Agent, err)
+	}
+	staging, err := os.MkdirTemp(location.Path, ".skill-stage-*")
+	if err != nil {
+		return nil, fmt.Errorf("暂存 %s 失败: %w", location.Agent, err)
+	}
+	if err := writeFilesTo(staging, files); err != nil {
+		_ = os.RemoveAll(staging)
+		return nil, fmt.Errorf("暂存 %s 失败: %w", location.Agent, err)
+	}
+	if location.Key == "project" {
+		if err := copyPreservedBackups(destination, staging); err != nil {
+			_ = os.RemoveAll(staging)
+			return nil, fmt.Errorf("保留 %s 的翻译备份失败: %w", location.Agent, err)
+		}
+	}
+	return &stagedInstall{location: location, destination: destination, staging: staging}, nil
+}
+
+// stagedInstall 表示一个已暂存、等待替换的目标目录。
+type stagedInstall struct {
+	location    Location
+	destination string
+	staging     string
+	old         string
+	committed   bool
+}
+
+func (s *stagedInstall) label() string {
+	if s.location.Agent != "" {
+		return s.location.Agent
+	}
+	return s.destination
+}
+
+// commit 用暂存目录替换目标目录；旧目录保留到 cleanup 或 rollback。
+func (s *stagedInstall) commit() error {
+	if s.committed {
+		return fmt.Errorf("安装目标 %s 已提交", s.label())
+	}
+	if _, err := os.Lstat(s.destination); err == nil {
+		old, err := reserveSiblingPath(filepath.Dir(s.destination), ".skill-old-*")
+		if err != nil {
+			return fmt.Errorf("准备替换 %s 失败: %w", s.label(), err)
+		}
+		if err := os.Rename(s.destination, old); err != nil {
+			return fmt.Errorf("替换 %s 失败: %w", s.label(), err)
+		}
+		s.old = old
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("检查 %s 失败: %w", s.label(), err)
+	}
+	if err := os.Rename(s.staging, s.destination); err != nil {
+		if s.old != "" {
+			if restoreErr := os.Rename(s.old, s.destination); restoreErr != nil {
+				return fmt.Errorf("替换 %s 失败: %w；恢复旧目录失败: %v", s.label(), err, restoreErr)
+			}
+			s.old = ""
+		}
+		return fmt.Errorf("替换 %s 失败: %w", s.label(), err)
+	}
+	s.committed = true
+	return nil
+}
+
+// rollback 撤销已提交的替换，恢复旧目录。
+func (s *stagedInstall) rollback() error {
+	if !s.committed {
+		return nil
+	}
+	if err := os.RemoveAll(s.destination); err != nil {
+		return fmt.Errorf("回滚 %s 失败: %w", s.label(), err)
+	}
+	if s.old != "" {
+		if err := os.Rename(s.old, s.destination); err != nil {
+			return fmt.Errorf("恢复 %s 旧目录失败: %w", s.label(), err)
+		}
+		s.old = ""
+	}
+	s.committed = false
+	return nil
+}
+
+// cleanup 删除替换后遗留的旧目录；清理失败不影响已完成的安装。
+func (s *stagedInstall) cleanup() {
+	if s.old == "" {
+		return
+	}
+	if err := os.RemoveAll(s.old); err != nil {
+		log.Printf("[Skills-Write] 清理旧目录失败: %v", err)
+	}
+	s.old = ""
+}
+
+// abort 清理尚未提交的暂存目录；已提交的安装不受影响。
+func (s *stagedInstall) abort() {
+	if s.staging == "" {
+		return
+	}
+	_ = os.RemoveAll(s.staging)
+	s.staging = ""
+}
+
+func reserveSiblingPath(parent, pattern string) (string, error) {
+	path, err := os.MkdirTemp(parent, pattern)
+	if err != nil {
+		return "", err
+	}
+	if err := os.Remove(path); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func writeFilesTo(directory string, files map[string][]byte) error {
+	cleanDir := filepath.Clean(directory)
 	for name, content := range files {
-		path := filepath.Join(destination, filepath.FromSlash(name))
-		if !strings.HasPrefix(filepath.Clean(path), filepath.Clean(destination)+string(os.PathSeparator)) {
+		path := filepath.Join(cleanDir, filepath.FromSlash(name))
+		if !strings.HasPrefix(path, cleanDir+string(os.PathSeparator)) {
 			return errors.New("Skill 文件路径无效")
 		}
 		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
@@ -159,45 +308,81 @@ func writeFiles(destination string, files map[string][]byte) error {
 	return nil
 }
 
-func WriteFilesForLocation(location Location, name string, files map[string][]byte) error {
-	destination := filepath.Join(location.Path, name)
-	if location.Key == "project" {
-		return WriteFilesPreserving(destination, files)
-	}
-	return writeFiles(destination, files)
-}
-
-// WriteFilesPreserving 更新项目 Skill 的主体文件，并保留专用翻译备份目录。
+// WriteFilesPreserving 原子更新项目 Skill 的主体文件，并保留专用翻译备份目录。
 func WriteFilesPreserving(destination string, files map[string][]byte) error {
-	if err := os.MkdirAll(destination, 0700); err != nil {
+	parent := filepath.Dir(destination)
+	if err := os.MkdirAll(parent, 0700); err != nil {
 		return err
 	}
+	staging, err := os.MkdirTemp(parent, ".skill-stage-*")
+	if err != nil {
+		return err
+	}
+	if err := writeFilesTo(staging, files); err != nil {
+		_ = os.RemoveAll(staging)
+		return err
+	}
+	if err := copyPreservedBackups(destination, staging); err != nil {
+		_ = os.RemoveAll(staging)
+		return err
+	}
+	install := &stagedInstall{destination: destination, staging: staging}
+	if err := install.commit(); err != nil {
+		install.abort()
+		return err
+	}
+	install.cleanup()
+	return nil
+}
+
+// copyPreservedBackups 把目标目录中的翻译备份复制到暂存目录，随新 Skill 一起替换。
+func copyPreservedBackups(destination, staging string) error {
 	entries, err := os.ReadDir(destination)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
 	for _, entry := range entries {
-		// 保留新旧格式的翻译备份，其余文件必须与当前 Skill 包完全一致。
-		if entry.Name() == backupsDirName || backupDirPattern.MatchString(entry.Name()) {
+		if entry.Name() != backupsDirName && !backupDirPattern.MatchString(entry.Name()) {
 			continue
 		}
-		if err := os.RemoveAll(filepath.Join(destination, entry.Name())); err != nil {
-			return err
-		}
-	}
-	for name, content := range files {
-		path := filepath.Join(destination, filepath.FromSlash(name))
-		if !strings.HasPrefix(filepath.Clean(path), filepath.Clean(destination)+string(os.PathSeparator)) {
-			return errors.New("Skill 文件路径无效")
-		}
-		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-			return err
-		}
-		if err := os.WriteFile(path, content, 0600); err != nil {
+		if err := copyTree(filepath.Join(destination, entry.Name()), filepath.Join(staging, entry.Name())); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func copyTree(source, destination string) error {
+	return filepath.WalkDir(source, func(current string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(source, current)
+		if err != nil {
+			return err
+		}
+		target := destination
+		if relative != "." {
+			target = filepath.Join(destination, relative)
+		}
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0700)
+		}
+		if entry.Type()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("不支持复制符号链接: %s", current)
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.Size() > maxCopyFileBytes {
+			return fmt.Errorf("备份文件过大: %s", current)
+		}
+		return copyFile(current, target)
+	})
 }
 
 func EnsureProjectTarget(targets []string) []string {

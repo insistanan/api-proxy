@@ -46,7 +46,7 @@ export const skillsApi = {
   async installRemoteSkill(
     id: string,
     targets: string[]
-  ): Promise<{ success: boolean; name: string; source: string; repositoryUrl: string }> {
+  ): Promise<{ success: boolean; name: string; source: string; repositoryUrl: string; commit: string }> {
     return apiRequest('/skills/remote/install', { method: 'POST', body: JSON.stringify({ id, targets }) })
   },
 

@@ -1,11 +1,14 @@
 package clients
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/insistanan/api-proxy/internal/handlers/common"
+	"io"
 	"net/http"
 	"net/url"
 	pathpkg "path"
@@ -19,17 +22,31 @@ import (
 )
 
 const (
-	skillsSearchEndpoint     = "https://skills.sh/api/search"
-	githubAPIEndpoint        = "https://api.github.com"
-	remoteSkillHTTPTimeout   = 30 * time.Second
+	skillsSearchEndpoint        = "https://skills.sh/api/search"
+	githubAPIEndpoint           = "https://api.github.com"
+	githubCodeloadEndpoint      = "https://codeload.github.com"
+	remoteSkillAPITimeout       = 30 * time.Second
+	remoteSkillArchiveTimeout   = 120 * time.Second
+	remoteSkillDownloadAttempts = 3
+	// skills.sh 实测响应 10~25 秒且偶发 TLS 中断，30 秒单次超时过紧。
+	skillsSearchTimeout      = 45 * time.Second
+	skillsSearchAttempts     = 2
 	maxSkillSearchResponse   = 2 << 20
 	maxGitHubTreeResponse    = 12 << 20
+	maxRemoteArchiveBytes    = 128 << 20
 	maxRemoteSkillFiles      = 128
 	maxRemoteSkillTotalBytes = 20 << 20
 	maxRemoteSkillFileBytes  = 5 << 20
 )
 
-var githubSegmentPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+var (
+	githubSegmentPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+	commitSHAPattern     = regexp.MustCompile(`^[0-9a-fA-F]{40,64}$`)
+	// remoteSkillHTTPClient 复用连接池，超时由每次请求的 context 控制。
+	remoteSkillHTTPClient = &http.Client{}
+	// remoteSkillRetryBaseDelay 是归档下载重试的起始退避，测试可覆盖。
+	remoteSkillRetryBaseDelay = 500 * time.Millisecond
+)
 
 type skillSearchResult struct {
 	ID            string `json:"id"`
@@ -68,6 +85,7 @@ type remoteSkillPreview struct {
 	Source          string                `json:"source"`
 	RepositoryURL   string                `json:"repositoryUrl"`
 	SkillURL        string                `json:"skillUrl"`
+	Commit          string                `json:"commit"`
 	License         string                `json:"license,omitempty"`
 	Files           []remoteSkillFileInfo `json:"files"`
 	ContainsScripts bool                  `json:"containsScripts"`
@@ -80,6 +98,7 @@ type remoteSkillPackage struct {
 	Source          string
 	RepositoryURL   string
 	SkillURL        string
+	Commit          string
 	License         string
 	Files           map[string][]byte
 	FileInfo        []remoteSkillFileInfo
@@ -93,6 +112,10 @@ type githubRepositoryResponse struct {
 		Name   string `json:"name"`
 		SPDXID string `json:"spdx_id"`
 	} `json:"license"`
+}
+
+type githubCommitResponse struct {
+	SHA string `json:"sha"`
 }
 
 type githubTreeResponse struct {
@@ -127,8 +150,8 @@ func (s *SkillsAPI) Search() gin.HandlerFunc {
 
 		endpoint := skillsSearchEndpoint + "?q=" + url.QueryEscape(query)
 		var payload skillSearchAPIResponse
-		if err := fetchJSON(c.Request.Context(), endpoint, maxSkillSearchResponse, &payload); err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("skills.sh 搜索失败: %v", err)})
+		if err := fetchJSONWithRetry(c.Request.Context(), endpoint, maxSkillSearchResponse, &payload, skillsSearchTimeout, skillsSearchAttempts); err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": skillsSearchErrorMessage(err)})
 			return
 		}
 		for index := range payload.Skills {
@@ -150,7 +173,7 @@ func (s *SkillsAPI) InspectRemote() gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "远程 Skill 请求无效"})
 			return
 		}
-		pkg, err := loadRemoteSkill(c.Request.Context(), req.ID)
+		pkg, err := s.loadRemoteSkill(c.Request.Context(), req.ID)
 		if err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("读取远程 Skill 失败: %v", err)})
 			return
@@ -162,6 +185,7 @@ func (s *SkillsAPI) InspectRemote() gin.HandlerFunc {
 			Source:          pkg.Source,
 			RepositoryURL:   pkg.RepositoryURL,
 			SkillURL:        pkg.SkillURL,
+			Commit:          pkg.Commit,
 			License:         pkg.License,
 			Files:           pkg.FileInfo,
 			ContainsScripts: pkg.ContainsScripts,
@@ -181,7 +205,7 @@ func (s *SkillsAPI) InstallRemote() gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "至少选择一个安装目标"})
 			return
 		}
-		pkg, err := loadRemoteSkill(c.Request.Context(), req.ID)
+		pkg, err := s.loadRemoteSkill(c.Request.Context(), req.ID)
 		if err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("读取远程 Skill 失败: %v", err)})
 			return
@@ -199,6 +223,7 @@ func (s *SkillsAPI) InstallRemote() gin.HandlerFunc {
 			locationByKey[location.Key] = location
 		}
 		targets := skills.EnsureProjectTarget(req.Targets)
+		targetLocations := make([]skills.Location, 0, len(targets))
 		for _, target := range targets {
 			location, exists := locationByKey[target]
 			if !exists {
@@ -209,19 +234,18 @@ func (s *SkillsAPI) InstallRemote() gin.HandlerFunc {
 				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("安装目标 %s 为只读目录，请选择用户 Skill 目录", location.Agent)})
 				return
 			}
+			targetLocations = append(targetLocations, location)
 		}
-		for _, target := range targets {
-			location := locationByKey[target]
-			if err := skills.WriteFilesForLocation(location, pkg.Name, pkg.Files); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("安装到 %s 失败: %v", location.Agent, err)})
-				return
-			}
+		if err := skills.InstallFiles(targetLocations, pkg.Name, pkg.Files); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("安装失败: %v", err)})
+			return
 		}
 		c.JSON(http.StatusOK, gin.H{
 			"success":       true,
 			"name":          pkg.Name,
 			"source":        pkg.Source,
 			"repositoryUrl": pkg.RepositoryURL,
+			"commit":        pkg.Commit,
 		})
 	}
 }
@@ -240,12 +264,26 @@ func remoteSkillLinks(id, source string) (string, string) {
 	return "https://github.com/" + source, "https://skills.sh/" + strings.Trim(id, "/")
 }
 
-func loadRemoteSkill(ctx context.Context, id string) (*remoteSkillPackage, error) {
+// loadRemoteSkill 读取远程 Skill 并缓存完整文件包：预览与安装共用同一份
+// 已固定 commit 的内容，避免重复下载，也避免两次请求之间仓库更新导致版本漂移。
+func (s *SkillsAPI) loadRemoteSkill(ctx context.Context, id string) (*remoteSkillPackage, error) {
 	owner, repository, requestedPath, err := parseRemoteSkillID(id)
 	if err != nil {
 		return nil, err
 	}
+	cacheKey := owner + "/" + repository + "/" + requestedPath
+	if pkg, ok := s.remoteCache.get(cacheKey); ok {
+		return pkg, nil
+	}
+	pkg, err := loadRemoteSkillFromGitHub(ctx, owner, repository, requestedPath, strings.Trim(id, "/"))
+	if err != nil {
+		return nil, err
+	}
+	s.remoteCache.put(cacheKey, pkg)
+	return pkg, nil
+}
 
+func loadRemoteSkillFromGitHub(ctx context.Context, owner, repository, requestedPath, id string) (*remoteSkillPackage, error) {
 	var repositoryInfo githubRepositoryResponse
 	if err := fetchJSON(ctx, githubAPIPath("repos", owner, repository), maxSkillSearchResponse, &repositoryInfo); err != nil {
 		return nil, fmt.Errorf("读取 GitHub 仓库信息失败: %w", err)
@@ -255,8 +293,18 @@ func loadRemoteSkill(ctx context.Context, id string) (*remoteSkillPackage, error
 		return nil, errors.New("GitHub 仓库没有默认分支")
 	}
 
+	// 先固定 commit，再用同一 commit 读取文件树和归档，保证预览内容与安装内容一致。
+	var commitInfo githubCommitResponse
+	if err := fetchJSON(ctx, githubAPIPath("repos", owner, repository, "commits", branch), maxSkillSearchResponse, &commitInfo); err != nil {
+		return nil, fmt.Errorf("读取 GitHub 提交信息失败: %w", err)
+	}
+	commit := strings.TrimSpace(commitInfo.SHA)
+	if !commitSHAPattern.MatchString(commit) {
+		return nil, fmt.Errorf("GitHub 返回的提交哈希无效: %q", commit)
+	}
+
 	var tree githubTreeResponse
-	if err := fetchJSON(ctx, githubAPIPath("repos", owner, repository, "git", "trees", branch)+"?recursive=1", maxGitHubTreeResponse, &tree); err != nil {
+	if err := fetchJSON(ctx, githubAPIPath("repos", owner, repository, "git", "trees", commit)+"?recursive=1", maxGitHubTreeResponse, &tree); err != nil {
 		return nil, fmt.Errorf("读取 GitHub 文件树失败: %w", err)
 	}
 	if tree.Truncated {
@@ -278,24 +326,28 @@ func loadRemoteSkill(ctx context.Context, id string) (*remoteSkillPackage, error
 		return nil, fmt.Errorf("远程 Skill 文件数量超过 %d 个", maxRemoteSkillFiles)
 	}
 
-	files := make(map[string][]byte, len(fileEntries))
-	fileInfo := make([]remoteSkillFileInfo, 0, len(fileEntries))
-	var totalSize int64
-	containsScripts := false
+	wanted := make(map[string]string, len(fileEntries))
 	for _, file := range fileEntries {
-		relative := file.relative
 		if file.entry.Size > maxRemoteSkillFileBytes {
-			return nil, fmt.Errorf("远程 Skill 文件过大: %s", relative)
+			return nil, fmt.Errorf("远程 Skill 文件过大: %s", file.relative)
 		}
-		content, err := fetchRemoteFile(ctx, owner, repository, branch, file.entry.Path)
-		if err != nil {
-			return nil, fmt.Errorf("下载远程文件 %s 失败: %w", relative, err)
-		}
+		wanted[file.entry.Path] = file.relative
+	}
+
+	// 一次下载仓库归档，只保留 Skill 子树内的文件；避免逐文件请求的累计延迟与单文件超时。
+	files, err := downloadRemoteSkillArchive(ctx, remoteSkillArchiveURL(owner, repository, commit), wanted)
+	if err != nil {
+		return nil, err
+	}
+
+	var totalSize int64
+	fileInfo := make([]remoteSkillFileInfo, 0, len(files))
+	containsScripts := false
+	for relative, content := range files {
 		totalSize += int64(len(content))
 		if totalSize > maxRemoteSkillTotalBytes {
 			return nil, fmt.Errorf("远程 Skill 总大小超过 %d MB", maxRemoteSkillTotalBytes/(1<<20))
 		}
-		files[relative] = content
 		fileInfo = append(fileInfo, remoteSkillFileInfo{Path: relative, Size: int64(len(content))})
 		lower := strings.ToLower(relative)
 		if strings.HasPrefix(lower, "scripts/") || strings.Contains(lower, "/scripts/") {
@@ -314,7 +366,7 @@ func loadRemoteSkill(ctx context.Context, id string) (*remoteSkillPackage, error
 	if repositoryURL == "" {
 		repositoryURL = "https://github.com/" + owner + "/" + repository
 	}
-	skillURL := remoteSkillTreeURL(repositoryURL, branch, skillRoot)
+	skillURL := remoteSkillTreeURL(repositoryURL, commit, skillRoot)
 	license := ""
 	if repositoryInfo.License != nil {
 		license = strings.TrimSpace(repositoryInfo.License.SPDXID)
@@ -324,17 +376,194 @@ func loadRemoteSkill(ctx context.Context, id string) (*remoteSkillPackage, error
 	}
 	sort.Slice(fileInfo, func(i, j int) bool { return fileInfo[i].Path < fileInfo[j].Path })
 	return &remoteSkillPackage{
-		ID:              strings.Trim(id, "/"),
+		ID:              id,
 		Name:            name,
 		Description:     description,
 		Source:          owner + "/" + repository,
 		RepositoryURL:   repositoryURL,
 		SkillURL:        skillURL,
+		Commit:          commit,
 		License:         license,
 		Files:           files,
 		FileInfo:        fileInfo,
 		ContainsScripts: containsScripts,
 	}, nil
+}
+
+func remoteSkillArchiveURL(owner, repository, commit string) string {
+	return strings.TrimSuffix(githubCodeloadEndpoint, "/") + "/" + escapeURLPath(owner) + "/" + escapeURLPath(repository) + "/tar.gz/" + escapeURLPath(commit)
+}
+
+// downloadRemoteSkillArchive 下载 GitHub 仓库归档并只提取 Skill 需要的文件。
+// 网络错误、5xx 与 429 会重试；4xx 直接失败。
+func downloadRemoteSkillArchive(ctx context.Context, endpoint string, wanted map[string]string) (map[string][]byte, error) {
+	var lastErr error
+	for attempt := 1; attempt <= remoteSkillDownloadAttempts; attempt++ {
+		files, err := downloadRemoteSkillArchiveOnce(ctx, endpoint, wanted)
+		if err == nil {
+			return files, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if !retryableRemoteSkillError(err) {
+			return nil, err
+		}
+		if attempt == remoteSkillDownloadAttempts {
+			break
+		}
+		delay := remoteSkillRetryBaseDelay * time.Duration(1<<(attempt-1))
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(delay):
+		}
+	}
+	return nil, fmt.Errorf("下载 GitHub 归档失败（已重试 %d 次）: %w", remoteSkillDownloadAttempts, lastErr)
+}
+
+func downloadRemoteSkillArchiveOnce(ctx context.Context, endpoint string, wanted map[string]string) (map[string][]byte, error) {
+	attemptCtx, cancel := context.WithTimeout(ctx, remoteSkillArchiveTimeout)
+	defer cancel()
+	request, err := http.NewRequestWithContext(attemptCtx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("User-Agent", "api-proxy-skill-manager")
+	response, err := remoteSkillHTTPClient.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, &remoteHTTPStatusError{StatusCode: response.StatusCode}
+	}
+
+	counter := &countingReader{reader: response.Body}
+	files, err := extractRemoteSkillArchive(io.LimitReader(counter, maxRemoteArchiveBytes+1), wanted)
+	if counter.read > maxRemoteArchiveBytes {
+		return nil, fmt.Errorf("GitHub 仓库归档超过 %d MB", maxRemoteArchiveBytes/(1<<20))
+	}
+	if err != nil {
+		return nil, err
+	}
+	return files, nil
+}
+
+// extractRemoteSkillArchive 从 GitHub 归档中提取 wanted 指定的文件。
+// wanted 的键是仓库内路径，值是相对 Skill 根目录的路径；归档顶层目录会被剥离。
+func extractRemoteSkillArchive(reader io.Reader, wanted map[string]string) (map[string][]byte, error) {
+	gzipReader, err := gzip.NewReader(reader)
+	if err != nil {
+		return nil, fmt.Errorf("归档不是有效的 gzip: %w", err)
+	}
+	defer gzipReader.Close()
+
+	files := make(map[string][]byte, len(wanted))
+	var totalSize int64
+	tarReader := tar.NewReader(gzipReader)
+	for {
+		header, err := tarReader.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("读取归档失败: %w", err)
+		}
+		repositoryPath, ok := archiveRepositoryPath(header.Name)
+		if !ok {
+			continue
+		}
+		relative, needed := wanted[repositoryPath]
+		if !needed {
+			continue
+		}
+		if _, exists := files[relative]; exists {
+			return nil, fmt.Errorf("归档中存在重复文件: %s", relative)
+		}
+
+		var content []byte
+		switch header.Typeflag {
+		case tar.TypeReg, tar.TypeRegA:
+			if header.Size > maxRemoteSkillFileBytes {
+				return nil, fmt.Errorf("远程 Skill 文件过大: %s", relative)
+			}
+			content, err = common.ReadLimitedBody(tarReader, maxRemoteSkillFileBytes)
+			if err != nil {
+				return nil, fmt.Errorf("读取归档文件 %s 失败: %w", relative, err)
+			}
+		case tar.TypeSymlink:
+			// GitHub 归档把符号链接保留为链接本身；与 raw 下载一致，安装链接文本而不是目标内容。
+			content = []byte(header.Linkname)
+		default:
+			return nil, fmt.Errorf("远程 Skill 包含不支持的文件类型: %s", relative)
+		}
+		totalSize += int64(len(content))
+		if totalSize > maxRemoteSkillTotalBytes {
+			return nil, fmt.Errorf("远程 Skill 总大小超过 %d MB", maxRemoteSkillTotalBytes/(1<<20))
+		}
+		files[relative] = content
+		if len(files) == len(wanted) {
+			break
+		}
+	}
+
+	missing := make([]string, 0)
+	for _, relative := range wanted {
+		if _, exists := files[relative]; !exists {
+			missing = append(missing, relative)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return nil, fmt.Errorf("GitHub 归档缺少文件: %s", strings.Join(missing, ", "))
+	}
+	return files, nil
+}
+
+// archiveRepositoryPath 剥离 GitHub 归档的顶层目录（{repo}-{sha}/），返回仓库内路径。
+func archiveRepositoryPath(name string) (string, bool) {
+	cleaned := pathpkg.Clean(strings.ReplaceAll(name, "\\", "/"))
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") || strings.HasPrefix(cleaned, "/") {
+		return "", false
+	}
+	parts := strings.SplitN(cleaned, "/", 2)
+	if len(parts) != 2 || parts[1] == "" {
+		return "", false
+	}
+	return parts[1], true
+}
+
+type remoteHTTPStatusError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *remoteHTTPStatusError) Error() string {
+	if e.Message != "" {
+		return fmt.Sprintf("HTTP %d: %s", e.StatusCode, e.Message)
+	}
+	return fmt.Sprintf("HTTP %d", e.StatusCode)
+}
+
+func retryableRemoteSkillError(err error) bool {
+	var statusErr *remoteHTTPStatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.StatusCode == http.StatusTooManyRequests || statusErr.StatusCode >= 500
+	}
+	return true
+}
+
+type countingReader struct {
+	reader io.Reader
+	read   int64
+}
+
+func (r *countingReader) Read(buffer []byte) (int, error) {
+	count, err := r.reader.Read(buffer)
+	r.read += int64(count)
+	return count, err
 }
 
 func parseRemoteSkillID(raw string) (string, string, string, error) {
@@ -458,14 +687,49 @@ func githubAPIPath(parts ...string) string {
 }
 
 func fetchJSON(ctx context.Context, endpoint string, maxBytes int64, target interface{}) error {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	return fetchJSONWithRetry(ctx, endpoint, maxBytes, target, remoteSkillAPITimeout, 1)
+}
+
+// fetchJSONWithRetry 发起 JSON GET 请求；网络错误、超时、429 与 5xx 按指数退避重试。
+func fetchJSONWithRetry(ctx context.Context, endpoint string, maxBytes int64, target interface{}, timeout time.Duration, attempts int) error {
+	if attempts < 1 {
+		attempts = 1
+	}
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		lastErr = fetchJSONOnce(ctx, endpoint, maxBytes, target, timeout)
+		if lastErr == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if !retryableJSONRequestError(lastErr) || attempt == attempts {
+			break
+		}
+		delay := remoteSkillRetryBaseDelay * time.Duration(1<<(attempt-1))
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+	}
+	if attempts > 1 && retryableJSONRequestError(lastErr) {
+		return fmt.Errorf("请求失败（已尝试 %d 次）: %w", attempts, lastErr)
+	}
+	return lastErr
+}
+
+func fetchJSONOnce(ctx context.Context, endpoint string, maxBytes int64, target interface{}, timeout time.Duration) error {
+	requestCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return err
 	}
 	request.Header.Set("Accept", "application/vnd.github+json")
 	request.Header.Set("User-Agent", "api-proxy-skill-manager")
-	client := &http.Client{Timeout: remoteSkillHTTPTimeout}
-	response, err := client.Do(request)
+	response, err := remoteSkillHTTPClient.Do(request)
 	if err != nil {
 		return err
 	}
@@ -478,10 +742,8 @@ func fetchJSON(ctx context.Context, endpoint string, maxBytes int64, target inte
 		var detail struct {
 			Message string `json:"message"`
 		}
-		if json.Unmarshal(body, &detail) == nil && strings.TrimSpace(detail.Message) != "" {
-			return fmt.Errorf("HTTP %d: %s", response.StatusCode, detail.Message)
-		}
-		return fmt.Errorf("HTTP %d", response.StatusCode)
+		_ = json.Unmarshal(body, &detail)
+		return &remoteHTTPStatusError{StatusCode: response.StatusCode, Message: strings.TrimSpace(detail.Message)}
 	}
 	if err := json.Unmarshal(body, target); err != nil {
 		return fmt.Errorf("响应格式无效: %w", err)
@@ -489,27 +751,24 @@ func fetchJSON(ctx context.Context, endpoint string, maxBytes int64, target inte
 	return nil
 }
 
-func fetchRemoteFile(ctx context.Context, owner, repository, branch, filePath string) ([]byte, error) {
-	endpoint := "https://raw.githubusercontent.com/" + escapeURLPath(owner) + "/" + escapeURLPath(repository) + "/" + escapeURLPath(branch) + "/" + escapeURLPath(filePath)
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, err
+// retryableJSONRequestError 只重试可能瞬时恢复的失败，响应格式错误不重试。
+func retryableJSONRequestError(err error) bool {
+	var statusErr *remoteHTTPStatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.StatusCode == http.StatusTooManyRequests || statusErr.StatusCode >= 500
 	}
-	request.Header.Set("User-Agent", "api-proxy-skill-manager")
-	client := &http.Client{Timeout: remoteSkillHTTPTimeout}
-	response, err := client.Do(request)
-	if err != nil {
-		return nil, err
+	var urlErr *url.Error
+	return errors.As(err, &urlErr) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.ErrUnexpectedEOF)
+}
+
+func skillsSearchErrorMessage(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "skills.sh 响应超时，请稍后重试"
 	}
-	defer response.Body.Close()
-	body, err := common.ReadLimitedBody(response.Body, maxRemoteSkillFileBytes)
-	if err != nil {
-		return nil, err
+	if errors.Is(err, context.Canceled) {
+		return "skills.sh 搜索已取消"
 	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, fmt.Errorf("HTTP %d", response.StatusCode)
-	}
-	return body, nil
+	return fmt.Sprintf("skills.sh 搜索失败: %v", err)
 }
 
 func escapeURLPath(value string) string {

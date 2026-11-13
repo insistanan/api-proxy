@@ -153,3 +153,87 @@ func TestCopySkillDirRejectsOversizedFile(t *testing.T) {
 		t.Fatalf("期望超大文件报错，得到: %v", err)
 	}
 }
+
+// TestInstallFilesReplacesAllTargetsAndKeepsBackups 验证多目标安装先暂存再替换，
+// 清理旧文件、保留项目翻译备份，且不留下临时目录。
+func TestInstallFilesReplacesAllTargetsAndKeepsBackups(t *testing.T) {
+	root := t.TempDir()
+	agents := Location{Key: "agents", Agent: "Agents 目录", Path: filepath.Join(root, "agents")}
+	project := Location{Key: "project", Agent: "项目目录", Path: filepath.Join(root, "project")}
+	agentsDestination := filepath.Join(agents.Path, "demo")
+	projectDestination := filepath.Join(project.Path, "demo")
+	backup := filepath.Join(projectDestination, backupsDirName, "20260801-120000.000000000", "translated.zh-CN.md")
+	stale := filepath.Join(agentsDestination, "obsolete.md")
+
+	for _, directory := range []string{filepath.Dir(backup), agentsDestination} {
+		if err := os.MkdirAll(directory, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(backup, []byte("旧译文"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stale, []byte("旧文件"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	files := map[string][]byte{
+		"SKILL.md":              []byte("---\nname: demo\ndescription: 示例\n---\n"),
+		"references/current.md": []byte("当前资源"),
+	}
+	if err := InstallFiles([]Location{agents, project}, "demo", files); err != nil {
+		t.Fatalf("安装失败: %v", err)
+	}
+
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("过期文件未清理，err=%v", err)
+	}
+	if content, err := os.ReadFile(backup); err != nil || string(content) != "旧译文" {
+		t.Fatalf("翻译备份未保留，content=%q err=%v", content, err)
+	}
+	for _, destination := range []string{agentsDestination, projectDestination} {
+		if content, err := os.ReadFile(filepath.Join(destination, "references", "current.md")); err != nil || string(content) != "当前资源" {
+			t.Fatalf("目标 %s 未写入当前资源，content=%q err=%v", destination, content, err)
+		}
+	}
+	assertNoSkillTempEntries(t, agents.Path, project.Path)
+}
+
+// TestInstallFilesLeavesExistingSkillWhenStagingFails 验证暂存阶段失败时不会破坏已有安装。
+func TestInstallFilesLeavesExistingSkillWhenStagingFails(t *testing.T) {
+	root := t.TempDir()
+	location := Location{Key: "agents", Agent: "Agents 目录", Path: root}
+	destination := filepath.Join(root, "demo")
+	if err := os.MkdirAll(destination, 0700); err != nil {
+		t.Fatal(err)
+	}
+	original := filepath.Join(destination, "SKILL.md")
+	if err := os.WriteFile(original, []byte("旧内容"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := InstallFiles([]Location{location}, "demo", map[string][]byte{"../escape.md": []byte("越界")})
+	if err == nil || !strings.Contains(err.Error(), "Skill 文件路径无效") {
+		t.Fatalf("期望路径校验失败，得到: %v", err)
+	}
+	content, readErr := os.ReadFile(original)
+	if readErr != nil || string(content) != "旧内容" {
+		t.Fatalf("已有 Skill 被破坏，content=%q err=%v", content, readErr)
+	}
+	assertNoSkillTempEntries(t, root)
+}
+
+func assertNoSkillTempEntries(t *testing.T, roots ...string) {
+	t.Helper()
+	for _, root := range roots {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name(), ".skill-stage-") || strings.HasPrefix(entry.Name(), ".skill-old-") {
+				t.Fatalf("目录 %s 残留临时条目: %s", root, entry.Name())
+			}
+		}
+	}
+}

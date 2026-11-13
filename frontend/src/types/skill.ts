@@ -67,6 +67,7 @@ export interface RemoteSkillPreview {
   source: string
   repositoryUrl: string
   skillUrl: string
+  commit: string
   license?: string
   files: RemoteSkillFile[]
   containsScripts: boolean
