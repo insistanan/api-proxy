@@ -35,9 +35,8 @@ export const testChannelWithModel = async (
   if (!accessKey) throw new Error('缺少访问密钥，请先完成登录认证')
 
   const baseUrl = import.meta.env.PROD ? '' : import.meta.env.VITE_BACKEND_URL || ''
-  const generateUUID = () => crypto.randomUUID()
-  const sessionId = sessionContext?.sessionId || generateUUID()
-  const threadId = sessionContext?.threadId || `thread-${generateUUID()}`
+  const sessionId = sessionContext?.sessionId || crypto.randomUUID()
+  const threadId = sessionContext?.threadId || `thread-${crypto.randomUUID()}`
   const selectedModel = model?.trim() || ''
   if (!selectedModel) throw new Error('请选择或输入用于快捷测试的模型')
   const testPurpose = sessionContext?.purpose || 'quick_test'

@@ -1,6 +1,7 @@
 // assistant 设置的草稿与操作编排；草稿仅供本设置页使用，保存以服务端响应回填。
 import { computed, ref, type Ref } from 'vue'
 import { api } from '@/services/api'
+import { CONVERSATION_PROTOCOLS } from '@/services/channel-api'
 import type { AssistantStatusResponse } from '@/types'
 import type { SettingsNotice as Notice } from './types'
 
@@ -64,7 +65,7 @@ export function useAssistantSettings(saving: Ref<boolean>) {
     assistantModelsLoading.value = true
     assistantModelsError.value = ''
     try {
-      const tabs = ['messages', 'responses', 'chat', 'gemini'] as const
+      const tabs = CONVERSATION_PROTOCOLS
       const results = await Promise.allSettled(tabs.map(tab => api.getChannelPools(tab)))
       const items: AssistantModelOption[] = [AUTO_ASSISTANT_MODEL]
       const seen = new Set<string>([''])

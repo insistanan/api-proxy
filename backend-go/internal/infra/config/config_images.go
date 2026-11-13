@@ -51,16 +51,3 @@ func validateImagesOutputConfig(upstream *UpstreamConfig) error {
 	}
 	return nil
 }
-
-func (cm *ConfigManager) AddImagesUpstreamWithResult(upstream UpstreamConfig) (AddedUpstream, error) {
-	return cm.AddChannel("images", upstream)
-}
-
-func (cm *ConfigManager) UpdateImagesUpstream(index int, updates UpstreamUpdate) (shouldResetMetrics bool, err error) {
-	return cm.UpdateChannel("images", index, updates)
-}
-
-// GetNextImagesAPIKey 获取下一个 API 密钥
-func (cm *ConfigManager) GetNextImagesAPIKey(upstream *UpstreamConfig, failedKeys map[string]bool) (string, error) {
-	return cm.GetNextAPIKey(upstream, failedKeys, "Images")
-}

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/handlers/common"
 	"github.com/insistanan/api-proxy/internal/handlers/proxycore"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/infra/utils"
@@ -171,7 +172,7 @@ func handleSuccess(c *gin.Context, resp *http.Response, envCfg *config.EnvConfig
 		proxycore.LogResponseDetails(resp, bodyBytes, envCfg, "Decisions")
 	}
 
-	usage := extractUsage(bodyBytes)
+	usage := common.ExtractUsage(bodyBytes)
 	if usage == nil {
 		usage = &types.Usage{InputTokens: utils.EstimateTokens(string(originalBody))}
 	}
@@ -179,21 +180,4 @@ func handleSuccess(c *gin.Context, resp *http.Response, envCfg *config.EnvConfig
 	proxycore.MarkRequestLogFirstToken(c)
 	c.Data(resp.StatusCode, "application/json", bodyBytes)
 	return usage, nil
-}
-
-func extractUsage(bodyBytes []byte) *types.Usage {
-	var envelope struct {
-		Usage *types.Usage `json:"usage"`
-	}
-	if err := json.Unmarshal(bodyBytes, &envelope); err != nil || envelope.Usage == nil {
-		return nil
-	}
-	usage := envelope.Usage
-	if usage.InputTokens == 0 && usage.PromptTokens > 0 {
-		usage.InputTokens = usage.PromptTokens
-	}
-	if usage.OutputTokens == 0 && usage.CompletionTokens > 0 {
-		usage.OutputTokens = usage.CompletionTokens
-	}
-	return usage
 }

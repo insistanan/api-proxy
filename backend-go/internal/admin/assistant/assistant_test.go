@@ -132,7 +132,7 @@ func TestAssistantPromptNeverLeaksKeys(t *testing.T) {
 	env.modelReply <- "收到"
 
 	// 再加一个带显眼 Key 的渠道，确认摘要也不会带出去。
-	if err := env.cfgManager.AddChatUpstream(config.UpstreamConfig{
+	if _, err := env.cfgManager.AddChannel("chat", config.UpstreamConfig{
 		ID: "chat-with-key", Name: "带Key渠道", BaseURL: "https://chat.example.com",
 		APIKeys: []string{"sk-leak-canary-123456"}, ServiceType: "openai", DefaultModel: "m",
 	}); err != nil {
@@ -204,7 +204,7 @@ func TestExtractActions(t *testing.T) {
 // TestAssistantUpdateChannelKeepsKeys 更新渠道（defaultModel）后原 Key 原样保留。
 func TestAssistantUpdateChannelKeepsKeys(t *testing.T) {
 	env := newAssistantTestEnv(t)
-	if err := env.cfgManager.AddChatUpstream(config.UpstreamConfig{
+	if _, err := env.cfgManager.AddChannel("chat", config.UpstreamConfig{
 		ID: "chat-keep", Name: "保留Key渠道", BaseURL: "https://keep.example.com",
 		APIKeys: []string{"sk-original-key"}, ServiceType: "openai", DefaultModel: "old-model",
 	}); err != nil {

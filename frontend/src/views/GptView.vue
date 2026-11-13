@@ -97,8 +97,6 @@
     </template>
 
     <AgentPromptCard agent="codex" class="mt-5" />
-
-    <v-snackbar v-model="notice.visible" :color="notice.type" location="top right" :timeout="3500">{{ notice.message }}</v-snackbar>
   </div>
 </template>
 
@@ -117,6 +115,9 @@ import ToolInstallBanner from '@/components/ToolInstallBanner.vue'
 import { fetchProxyBaseUrl } from '@/composables/useChannelQuickPick'
 import { api, type CodexSettings } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
+import { useToast } from '@/composables/useToast'
+
+const { showToast } = useToast()
 
 const loading = ref(false)
 const saving = ref(false)
@@ -132,7 +133,6 @@ const originalAPIKeyPresent = ref(false)
 const apiKeyDeleteRequested = ref(false)
 const apiKeyAction = ref<'keep' | 'replace' | 'remove'>('keep')
 const defaultBaseUrl = ref('')
-const notice = ref({ visible: false, type: 'success', message: '' })
 
 const providerOptions = computed(() => (settings.value?.providers ?? []).map(item => ({
   title: item.name ? `${item.id}（${item.name}）` : item.id,
@@ -182,9 +182,9 @@ const connectToProxy = async () => {
       apiKeyDeleteRequested.value = false
       apiKeyAction.value = 'replace'
     }
-    notice.value = { visible: true, type: 'success', message: `已填入本代理地址：${baseUrl.value}` }
+    showToast(`已填入本代理地址：${baseUrl.value}`, 'success')
   } catch (connectError) {
-    notice.value = { visible: true, type: 'error', message: connectError instanceof Error ? connectError.message : '获取本代理地址失败' }
+    showToast(connectError instanceof Error ? connectError.message : '获取本代理地址失败', 'error')
   } finally {
     connecting.value = false
   }
@@ -212,7 +212,7 @@ const clearAPIKey = () => {
 const saveSettings = async () => {
   const providerID = provider.value.trim()
   if (!providerID) {
-    notice.value = { visible: true, type: 'error', message: '请选择或输入 Model Provider' }
+    showToast('请选择或输入 Model Provider', 'error')
     return
   }
   saving.value = true
@@ -223,10 +223,10 @@ const saveSettings = async () => {
       apiKeyAction: apiKeyAction.value,
       apiKey: apiKey.value
     })
-    notice.value = { visible: true, type: 'success', message: `已保存到 ${response.configPath}` }
+    showToast(`已保存到 ${response.configPath}`, 'success')
     await loadSettings()
   } catch (saveError) {
-    notice.value = { visible: true, type: 'error', message: saveError instanceof Error ? saveError.message : '保存 GPT 配置失败' }
+    showToast(saveError instanceof Error ? saveError.message : '保存 GPT 配置失败', 'error')
   } finally {
     saving.value = false
   }

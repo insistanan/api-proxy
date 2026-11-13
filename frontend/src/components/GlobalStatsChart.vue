@@ -1,12 +1,5 @@
 <template>
   <div class="global-stats-chart-container">
-    <v-snackbar v-model="showError" color="error" :timeout="3000" location="top">
-      {{ errorMessage }}
-      <template #actions>
-        <v-btn variant="text" @click="showError = false">关闭</v-btn>
-      </template>
-    </v-snackbar>
-
     <!-- Header: Duration + View switcher -->
     <div class="chart-header d-flex align-center justify-space-between mb-3 flex-wrap ga-2">
       <div class="d-flex align-center ga-2">
@@ -70,10 +63,13 @@
 <script setup lang="ts">
 import { ref, shallowRef, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useAutoRefresh } from '@/composables/useAutoRefresh'
+import { useChartPreference } from '@/composables/useChartPreference'
+import { useToast } from '@/composables/useToast'
+import { GLOBAL_STATS_COLORS, chartThemeColors } from '@/utils/chartPalette'
 import { useTheme } from 'vuetify'
 import VueApexCharts from 'vue3-apexcharts'
 import type { ApexOptions } from 'apexcharts'
-import { api, channelApiByType, type GlobalStatsHistoryResponse, type GlobalStatsSummary } from '../services/api'
+import { channelApiByType, type GlobalStatsHistoryResponse, type GlobalStatsSummary } from '../services/api'
 import type { ApiTab } from '../services/channel-api'
 
 const apexchart = VueApexCharts
@@ -84,34 +80,21 @@ const props = withDefaults(defineProps<{
 }>(), { compact: false })
 
 type ViewMode = 'traffic' | 'tokens'
-type Duration = '1h' | '6h' | '24h' | 'today'
-
-const getStorageKey = (apiType: string, key: string) => `globalStats:${apiType}:${key}`
-
-const loadSavedPreferences = (apiType: string) => {
-  const savedView = localStorage.getItem(getStorageKey(apiType, 'viewMode')) as ViewMode | null
-  const savedDuration = localStorage.getItem(getStorageKey(apiType, 'duration')) as Duration | null
-  return {
-    view: savedView && ['traffic', 'tokens'].includes(savedView) ? savedView : 'traffic',
-    duration: savedDuration && ['1h', '6h', '24h', 'today'].includes(savedDuration) ? savedDuration : '6h'
-  }
-}
-
-const savePreference = (apiType: string, key: string, value: string) => {
-  localStorage.setItem(getStorageKey(apiType, key), value)
-}
 
 const theme = useTheme()
 const isDark = computed(() => theme.global.current.value.dark)
-const savedPrefs = loadSavedPreferences(props.apiType)
+const { showToast } = useToast()
 
-const selectedView = ref<ViewMode>(savedPrefs.view)
-const selectedDuration = ref<Duration>(savedPrefs.duration)
+const { selectedView, selectedDuration, loadPreferences } = useChartPreference<ViewMode>(
+  'globalStats',
+  () => props.apiType,
+  ['traffic', 'tokens'],
+  { view: 'traffic', duration: '6h' },
+)
+
 const isLoading = ref(false)
 const isRefreshing = ref(false)
 const historyData = shallowRef<GlobalStatsHistoryResponse | null>(null)
-const showError = ref(false)
-const errorMessage = ref('')
 let refreshRequestId = 0
 
 const { start: startAutoRefresh, stop: stopAutoRefresh } = useAutoRefresh(
@@ -127,12 +110,8 @@ const hasData = computed(() => {
     historyData.value.dataPoints.some(dp => dp.requestCount > 0)
 })
 
-// 颜色系统 — 压低饱和度，与 Instrument Deck 主题色板同调，
-// 取明暗主题都能读的中间值，避免图表比页面其他部分跳得多
-const chartColors = {
-  traffic: { primary: '#5C6BC8', success: '#2FA478', failure: '#D05B5B' },
-  tokens: { input: '#8A72C0', output: '#C1804A' }
-}
+// 颜色系统 — 来自 utils/chartPalette 的语义色，保证与 Key 趋势图、日志趋势图同调。
+const chartColors = GLOBAL_STATS_COLORS
 
 const successRateClass = computed(() => {
   const rate = summary.value?.avgSuccessRate
@@ -190,13 +169,8 @@ const formatNumber = (num: number): string => {
   return num.toFixed(0)
 }
 
-// 颜色主题 — 与 vuetify 主题的 surface / outline / on-surface-variant 对齐
-const getThemeColors = computed(() => ({
-  grid: isDark.value ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
-  text: isDark.value ? '#A2AAB8' : '#555E6E',
-  tooltipBg: isDark.value ? '#151A22' : '#FFFFFF',
-  tooltipBorder: isDark.value ? '#39414E' : '#C9CFDA',
-}))
+// 主题派生色统一由 chartPalette 提供，避免组件内硬编码十六进制值。
+const getThemeColors = computed(() => chartThemeColors(isDark.value))
 
 const chartOptions = computed<ApexOptions>(() => {
   const mode = selectedView.value
@@ -346,7 +320,6 @@ const refreshData = async (isAutoRefresh = false) => {
   const requestId = ++refreshRequestId
   isRefreshing.value = true
   if (!isAutoRefresh) isLoading.value = true
-  errorMessage.value = ''
   try {
     const newData = await channelApiByType(props.apiType).getGlobalStats(selectedDuration.value)
     if (requestId !== refreshRequestId) return
@@ -355,9 +328,11 @@ const refreshData = async (isAutoRefresh = false) => {
   } catch (error) {
     if (requestId !== refreshRequestId) return
     console.error('Failed to fetch global stats:', error)
-    errorMessage.value = error instanceof Error ? error.message : '获取全局统计数据失败'
-    showError.value = true
-    historyData.value = null
+    // 2 秒自动刷新失败时不弹 toast、不清空图表，避免断连期间持续刷屏；手动刷新才提示。
+    if (!isAutoRefresh) {
+      showToast(error instanceof Error ? error.message : '获取全局统计数据失败', 'error')
+      historyData.value = null
+    }
   } finally {
     if (requestId === refreshRequestId) {
       isRefreshing.value = false
@@ -366,16 +341,12 @@ const refreshData = async (isAutoRefresh = false) => {
   }
 }
 
-watch(selectedDuration, (newVal) => {
-  savePreference(props.apiType, 'duration', newVal)
+watch(selectedDuration, () => {
   refreshData()
 }, { flush: 'sync' })
-watch(selectedView, (newVal) => { savePreference(props.apiType, 'viewMode', newVal) })
-watch(() => props.apiType, (newApiType) => {
-  const prefs = loadSavedPreferences(newApiType)
+watch(() => props.apiType, () => {
   const oldDuration = selectedDuration.value
-  selectedView.value = prefs.view
-  selectedDuration.value = prefs.duration
+  const prefs = loadPreferences()
   historyData.value = null
   if (oldDuration === prefs.duration) void refreshData()
 })

@@ -176,12 +176,6 @@
     <v-dialog v-model="deleteDialog" max-width="500" persistent>
       <v-card><v-card-title>删除 Skill</v-card-title><v-card-text>确认删除 <strong>{{ selectedSkill?.name }}</strong> 吗？将移除 <code>{{ selectedSkill?.path }}</code> 下的整个 Skill 目录。</v-card-text><v-card-actions><v-spacer /><v-btn variant="text" @click="deleteDialog = false">取消</v-btn><v-btn color="error" :loading="deleting" @click="deleteSelected">删除</v-btn></v-card-actions></v-card>
     </v-dialog>
-    <v-snackbar v-model="notice.visible" :color="notice.type" location="bottom right" :timeout="3000" variant="elevated">
-      <div class="d-flex align-center ga-3">
-        <span>{{ notice.message }}</span>
-        <v-btn icon="mdi-close" variant="text" size="small" aria-label="关闭通知" @click="notice.visible = false" />
-      </div>
-    </v-snackbar>
   </div>
 </template>
 
@@ -191,6 +185,9 @@ import DisclosureSection from '@/components/common/DisclosureSection.vue'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { api, fetchUpstreamModels, channelApiByType, type Channel, type ManagedSkill, type RemoteSkillPreview, type SkillLocation, type SkillSearchResult } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
+import { useToast } from '@/composables/useToast'
+
+const { showToast } = useToast()
 
 const PROXY_BASE = import.meta.env.PROD
   ? ''
@@ -227,7 +224,6 @@ const remoteError = ref('')
 const detailDialog = ref(false)
 const deleteDialog = ref(false)
 const selectedSkill = ref<ManagedSkill | null>(null)
-const notice = ref({ visible: false, type: 'success', message: '' })
 const savingNote = ref(false)
 
 type TranslationState = {
@@ -330,10 +326,10 @@ const consolidateInstalledSkills = async () => {
   try {
     const result = await api.consolidateSkills()
     const conflictText = result.duplicates > 0 ? `，${result.duplicates} 个重复名称保留项目副本` : ''
-    notice.value = { visible: true, type: 'success', message: `已统一归档 ${result.total} 个 Skill，新导入 ${result.imported} 个${conflictText}` }
+    showToast(`已统一归档 ${result.total} 个 Skill，新导入 ${result.imported} 个${conflictText}`, 'success')
     await loadSkills()
   } catch (consolidateError) {
-    notice.value = { visible: true, type: 'error', message: consolidateError instanceof Error ? consolidateError.message : '导入现有 Skill 失败' }
+    showToast(consolidateError instanceof Error ? consolidateError.message : '导入现有 Skill 失败', 'error')
   } finally { consolidating.value = false }
 }
 
@@ -440,7 +436,7 @@ const installRemote = async () => {
   remoteError.value = ''
   try {
     const result = await api.installRemoteSkill(remotePreview.value.id, remoteTargets.value)
-    notice.value = { visible: true, type: 'success', message: `已安装 ${result.name}` }
+    showToast(`已安装 ${result.name}`, 'success')
     remotePreviewDialog.value = false
     await loadSkills()
   } catch (installError) {
@@ -455,11 +451,11 @@ const importSelected = async () => {
     const file = importFile.value
     const base64 = await fileToBase64(file)
     const result = await api.importSkill(file.name, base64, importTargets.value)
-    notice.value = { visible: true, type: 'success', message: `已安装 ${result.name}` }
+    showToast(`已安装 ${result.name}`, 'success')
     importDialog.value = false
     await loadSkills()
   } catch (importError) {
-    notice.value = { visible: true, type: 'error', message: importError instanceof Error ? importError.message : '导入 Skill 失败' }
+    showToast(importError instanceof Error ? importError.message : '导入 Skill 失败', 'error')
   } finally { importing.value = false }
 }
 
@@ -482,7 +478,7 @@ const openSkill = async (skill: ManagedSkill) => {
     state.original = contentResult.content
     if (backupResult.found && backupResult.translated) {
       state.translated = backupResult.translated
-      if (selectedSkillKey.value === skillStateKey(skill)) notice.value = { visible: true, type: 'success', message: '已恢复最近保存的译文' }
+      if (selectedSkillKey.value === skillStateKey(skill)) showToast('已恢复最近保存的译文', 'success')
     } else if (originalChanged) {
       state.error = '原 Skill 已更新，旧译文已清除'
     }
@@ -507,9 +503,9 @@ const saveSkillNote = async () => {
   try {
     const result = await api.updateSkillNote(skill.name, skill.note || '')
     skills.value.forEach(item => { if (item.name === skill.name) item.note = result.note })
-    notice.value = { visible: true, type: 'success', message: result.note ? '全局备注已保存' : '全局备注已清空' }
+    showToast(result.note ? '全局备注已保存' : '全局备注已清空', 'success')
   } catch (noteError) {
-    notice.value = { visible: true, type: 'error', message: noteError instanceof Error ? noteError.message : '保存备注失败' }
+    showToast(noteError instanceof Error ? noteError.message : '保存备注失败', 'error')
   } finally { savingNote.value = false }
 }
 
@@ -518,11 +514,11 @@ const copySelected = async () => {
   copying.value = true
   try {
     const result = await api.copySkill(selectedSkill.value.locationKey, selectedSkill.value.name, copyTargets.value)
-    notice.value = { visible: true, type: 'success', message: `已复制 ${result.name} 到 ${result.targets.length} 个 Agent` }
+    showToast(`已复制 ${result.name} 到 ${result.targets.length} 个 Agent`, 'success')
     copyDialog.value = false
     await loadSkills()
   } catch (copyError) {
-    notice.value = { visible: true, type: 'error', message: copyError instanceof Error ? copyError.message : '复制 Skill 失败' }
+    showToast(copyError instanceof Error ? copyError.message : '复制 Skill 失败', 'error')
   } finally { copying.value = false }
 }
 
@@ -689,7 +685,7 @@ const saveBackup = async ({ automatic = false, notify = true, skill = selectedSk
     const result = await api.backupSkill({ locationKey: skill.locationKey, name: skill.name, original, translated: state.translated, model: state.model, channelName: channel?.name })
     const translatedName = translatedNameFromContent(state.translated)
     if (translatedName && translatedName !== skill.name) skill.translatedName = translatedName
-    if (notify) notice.value = { visible: true, type: 'success', message: automatic ? '翻译完成，已自动保存' : `翻译备份已保存到 ${result.path}` }
+    if (notify) showToast(automatic ? '翻译完成，已自动保存' : `翻译备份已保存到 ${result.path}`, 'success')
   } catch (saveError) {
     const message = saveError instanceof Error ? `译文已生成，但保存失败：${saveError.message}` : '译文已生成，但保存备份失败'
     if (automatic) throw new Error(message)
@@ -701,8 +697,8 @@ const confirmDelete = (skill: ManagedSkill) => { selectedSkill.value = skill; de
 const deleteSelected = async () => {
   if (!selectedSkill.value) return
   deleting.value = true
-  try { await api.deleteSkill(selectedSkill.value.locationKey, selectedSkill.value.name); notice.value = { visible: true, type: 'success', message: 'Skill 已删除' }; deleteDialog.value = false; await loadSkills() }
-  catch (deleteError) { notice.value = { visible: true, type: 'error', message: deleteError instanceof Error ? deleteError.message : '删除失败' } }
+  try { await api.deleteSkill(selectedSkill.value.locationKey, selectedSkill.value.name); showToast('Skill 已删除', 'success'); deleteDialog.value = false; await loadSkills() }
+  catch (deleteError) { showToast(deleteError instanceof Error ? deleteError.message : '删除失败', 'error') }
   finally { deleting.value = false }
 }
 
@@ -710,9 +706,9 @@ const fileToBase64 = (file: File) => new Promise<string>((resolve, reject) => { 
 const copySkillPath = async (path: string) => {
   try {
     await navigator.clipboard.writeText(path)
-    notice.value = { visible: true, type: 'success', message: '路径已复制' }
+    showToast('路径已复制', 'success')
   } catch {
-    notice.value = { visible: true, type: 'error', message: '复制路径失败，请检查浏览器权限' }
+    showToast('复制路径失败，请检查浏览器权限', 'error')
   }
 }
 const installCountFormatter = new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 1 })

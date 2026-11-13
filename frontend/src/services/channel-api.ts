@@ -19,6 +19,16 @@ export const API_TABS = ['messages', 'responses', 'gemini', 'chat', 'images', 'e
 export type ApiTab = (typeof API_TABS)[number]
 
 /**
+ * 对话类入口协议：具备会话语义，支持图片理解与对话缓存等特性。
+ * Embeddings / Decisions 为纯透传，不属于此类。与 intent.ts 的 INTENT_PROTOCOLS 语义不同，
+ * 不要用后者做 UI 能力判断。
+ */
+export const CONVERSATION_PROTOCOLS = ['messages', 'responses', 'gemini', 'chat'] as const
+export type ConversationProtocol = (typeof CONVERSATION_PROTOCOLS)[number]
+export const isConversationProtocol = (value: string): value is ConversationProtocol =>
+  (CONVERSATION_PROTOCOLS as readonly string[]).includes(value)
+
+/**
  * 定义各组渠道共用的操作方法和返回类型。
  * channels.ts 中的 channelApi 工厂按入口协议生成对应实现。
  */

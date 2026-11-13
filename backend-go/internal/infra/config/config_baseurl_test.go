@@ -157,8 +157,8 @@ func TestUpdateUpstream_BaseURLConsistency(t *testing.T) {
 	}
 }
 
-// TestUpdateResponsesUpstream_BaseURLConsistency 测试 Responses 渠道的 baseUrl 一致性
-func TestUpdateResponsesUpstream_BaseURLConsistency(t *testing.T) {
+// TestUpdateChannelResponsesBaseURLConsistency 测试 Responses 渠道的 baseUrl 一致性
+func TestUpdateChannelResponsesBaseURLConsistency(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config.json")
 	initialConfig := `{
@@ -185,11 +185,11 @@ func TestUpdateResponsesUpstream_BaseURLConsistency(t *testing.T) {
 
 	// 测试：只更新 baseUrl 时 baseUrls 应被清空
 	t.Run("只更新 baseUrl 时 baseUrls 应被清空", func(t *testing.T) {
-		_, err := cm.UpdateResponsesUpstream(0, UpstreamUpdate{
+		_, err := cm.UpdateChannel("responses", 0, UpstreamUpdate{
 			BaseURL: strPtr("https://new.responses.com"),
 		})
 		if err != nil {
-			t.Fatalf("UpdateResponsesUpstream 失败: %v", err)
+			t.Fatalf("UpdateChannel 失败: %v", err)
 		}
 
 		cfg := cm.GetConfig()
@@ -204,8 +204,8 @@ func TestUpdateResponsesUpstream_BaseURLConsistency(t *testing.T) {
 	})
 }
 
-// TestUpdateGeminiUpstream_BaseURLConsistency 测试 Gemini 渠道的 baseUrl 一致性
-func TestUpdateGeminiUpstream_BaseURLConsistency(t *testing.T) {
+// TestUpdateChannelGeminiBaseURLConsistency 测试 Gemini 渠道的 baseUrl 一致性
+func TestUpdateChannelGeminiBaseURLConsistency(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config.json")
 	initialConfig := `{
@@ -232,11 +232,11 @@ func TestUpdateGeminiUpstream_BaseURLConsistency(t *testing.T) {
 
 	// 测试：只更新 baseUrl 时 baseUrls 应被清空
 	t.Run("只更新 baseUrl 时 baseUrls 应被清空", func(t *testing.T) {
-		_, err := cm.UpdateGeminiUpstream(0, UpstreamUpdate{
+		_, err := cm.UpdateChannel("gemini", 0, UpstreamUpdate{
 			BaseURL: strPtr("https://new.gemini.com"),
 		})
 		if err != nil {
-			t.Fatalf("UpdateGeminiUpstream 失败: %v", err)
+			t.Fatalf("UpdateChannel 失败: %v", err)
 		}
 
 		cfg := cm.GetConfig()

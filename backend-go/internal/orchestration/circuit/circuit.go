@@ -48,20 +48,21 @@ func DefaultConfig() Config {
 }
 
 func (c Config) withDefaults() Config {
+	defaults := DefaultConfig()
 	if c.FailureThreshold <= 0 {
-		c.FailureThreshold = 4
+		c.FailureThreshold = defaults.FailureThreshold
 	}
 	if c.ErrorRateThreshold <= 0 || c.ErrorRateThreshold > 1 {
-		c.ErrorRateThreshold = 0.6
+		c.ErrorRateThreshold = defaults.ErrorRateThreshold
 	}
 	if c.MinRequests <= 0 {
-		c.MinRequests = 10
+		c.MinRequests = defaults.MinRequests
 	}
 	if c.Cooldown <= 0 {
-		c.Cooldown = 60 * time.Second
+		c.Cooldown = defaults.Cooldown
 	}
 	if c.SuccessThreshold <= 0 {
-		c.SuccessThreshold = 2
+		c.SuccessThreshold = defaults.SuccessThreshold
 	}
 	return c
 }

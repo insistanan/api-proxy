@@ -97,8 +97,6 @@
     </template>
 
     <AgentPromptCard agent="claude-code" class="mt-5" />
-
-    <v-snackbar v-model="notice.visible" :color="notice.type" location="top right" :timeout="3500">{{ notice.message }}</v-snackbar>
   </div>
 </template>
 
@@ -113,6 +111,9 @@ import { buildClaudeCodeModelDefaults } from '@/composables/useChannelModelImpor
 import { fetchProxyBaseUrl } from '@/composables/useChannelQuickPick'
 import { filterProxyModelsByKind } from '@/composables/useChannelModelImport'
 import { useAuthStore } from '@/stores/auth'
+import { useToast } from '@/composables/useToast'
+
+const { showToast } = useToast()
 
 const loading = ref(false)
 const saving = ref(false)
@@ -125,7 +126,6 @@ const credentialMasked = ref('')
 const credentialPresent = ref(false)
 const credentialAction = ref<'keep' | 'replace' | 'remove'>('keep')
 const modelDefaults = ref<ClaudeCodeModelDefault[]>([])
-const notice = ref({ visible: false, type: 'success', message: '' })
 
 // 连接本代理
 const connecting = ref(false)
@@ -169,9 +169,9 @@ const connectToProxy = async () => {
       credential.value = authStore.apiKey
       credentialAction.value = 'replace'
     }
-    notice.value = { visible: true, type: 'success', message: `已连接本代理：${baseUrl.value}` }
+    showToast(`已连接本代理：${baseUrl.value}`, 'success')
   } catch (connectError) {
-    notice.value = { visible: true, type: 'error', message: connectError instanceof Error ? connectError.message : '获取本代理地址失败' }
+    showToast(connectError instanceof Error ? connectError.message : '获取本代理地址失败', 'error')
   } finally {
     connecting.value = false
   }
@@ -184,13 +184,13 @@ const importModelDefaultsFromProxy = async () => {
     const response = await api.getProxyModels('messages')
     const modelIds = filterProxyModelsByKind(response.data, 'messages')
     if (modelIds.length === 0) {
-      notice.value = { visible: true, type: 'error', message: '本代理 messages 协议分组下暂无模型，请先在渠道管理中配置分组' }
+      showToast('本代理 messages 协议分组下暂无模型，请先在渠道管理中配置分组', 'error')
       return
     }
     // 导入时不自动追加 [1m]；1M 支持由用户在每行单独勾选，保留各 family 原有 supports1M 状态
     const imported = buildClaudeCodeModelDefaults(modelIds, false)
     if (imported.length === 0) {
-      notice.value = { visible: true, type: 'error', message: '模型名不含 fable/opus/sonnet/haiku 关键词，无法按 family 归类导入' }
+      showToast('模型名不含 fable/opus/sonnet/haiku 关键词，无法按 family 归类导入', 'error')
       return
     }
     // 保留后端返回的 family 顺序（fable/opus/sonnet/haiku），用导入结果覆盖对应 family
@@ -199,9 +199,9 @@ const importModelDefaultsFromProxy = async () => {
       const matched = importedByFamily.get(existing.family)
       return matched ? { family: existing.family, model: matched.model, name: matched.name, supports1M: existing.supports1M } : existing
     })
-    notice.value = { visible: true, type: 'success', message: `已导入本代理 ${imported.length} 个模型族（已替换对应 family，1M 勾选状态保留）` }
+    showToast(`已导入本代理 ${imported.length} 个模型族（已替换对应 family，1M 勾选状态保留）`, 'success')
   } catch (importError) {
-    notice.value = { visible: true, type: 'error', message: importError instanceof Error ? importError.message : '获取本代理模型列表失败' }
+    showToast(importError instanceof Error ? importError.message : '获取本代理模型列表失败', 'error')
   } finally {
     importing.value = false
   }
@@ -229,10 +229,10 @@ const saveSettings = async () => {
       credential: credential.value,
       modelDefaults: modelDefaults.value
     })
-    notice.value = { visible: true, type: 'success', message: `已保存到 ${response.path}` }
+    showToast(`已保存到 ${response.path}`, 'success')
     await loadSettings()
   } catch (saveError) {
-    notice.value = { visible: true, type: 'error', message: saveError instanceof Error ? saveError.message : '保存 Claude Code 配置失败' }
+    showToast(saveError instanceof Error ? saveError.message : '保存 Claude Code 配置失败', 'error')
   } finally {
     saving.value = false
   }

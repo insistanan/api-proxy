@@ -429,7 +429,7 @@ func TestGateDecisionReviewUsesConfiguredProtocolAndModel(t *testing.T) {
 				}
 			} else {
 				channel.ServiceType = "openai"
-				if _, err := h.cfgManager.AddDecisionsUpstreamWithResult(channel); err != nil {
+				if _, err := h.cfgManager.AddChannel("decisions", channel); err != nil {
 					t.Fatal(err)
 				}
 			}

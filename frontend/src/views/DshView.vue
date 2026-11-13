@@ -294,8 +294,6 @@
     </template>
 
     <AgentPromptCard agent="dsh" class="mt-5" />
-
-    <v-snackbar v-model="notice.visible" :color="notice.type" location="top right" :timeout="3500">{{ notice.message }}</v-snackbar>
   </div>
 </template>
 
@@ -309,6 +307,9 @@ import { api, type DSHSettings, type DSHProvider, type DSHModel, type SaveDSHSet
 import { useProxyProtocolPick, defaultQuickPickTypeOptions } from '@/composables/useChannelQuickPick'
 import { filterProxyModelsByKind, importProxyModels, buildDSHModel } from '@/composables/useChannelModelImport'
 import { useAuthStore } from '@/stores/auth'
+import { useToast } from '@/composables/useToast'
+
+const { showToast } = useToast()
 
 // ---- 常量 ----
 
@@ -350,7 +351,6 @@ const providerKeys = ref<string[]>([])
 const selectedProviderKey = ref('')
 const defaultModelProvider = ref('')
 const defaultModelModel = ref('')
-const notice = ref({ visible: false, type: 'success', message: '' })
 
 // 模型输入模态的临时状态（按 model id 索引）
 const modelInputFlags = ref<Record<string, { text: boolean; image: boolean }>>({})
@@ -433,16 +433,16 @@ const importProxyModelsToProvider = async () => {
     const response = await api.getProxyModels(type)
     const modelIds = filterProxyModelsByKind(response.data, type)
     if (modelIds.length === 0) {
-      notice.value = { visible: true, type: 'error', message: `本代理 ${type} 协议分组下暂无模型，请先在渠道管理中配置分组` }
+      showToast(`本代理 ${type} 协议分组下暂无模型，请先在渠道管理中配置分组`, 'error')
       return
     }
     const count = importProxyModels(type, modelIds, buildDSHModel, (models) => {
       provider.models = models as DSHModel[]
     })
     syncModelFlags()
-    notice.value = { visible: true, type: 'success', message: `已导入本代理 ${type} 分组的 ${count} 个模型（已替换原有模型）` }
+    showToast(`已导入本代理 ${type} 分组的 ${count} 个模型（已替换原有模型）`, 'success')
   } catch (importError) {
-    notice.value = { visible: true, type: 'error', message: importError instanceof Error ? importError.message : '获取本代理模型列表失败' }
+    showToast(importError instanceof Error ? importError.message : '获取本代理模型列表失败', 'error')
   }
 }
 
@@ -571,7 +571,7 @@ const commitRouteId = () => {
     return
   }
   if (newKey in providers.value) {
-    notice.value = { visible: true, type: 'error', message: `路由标识 "${newKey}" 已存在` }
+    showToast(`路由标识 "${newKey}" 已存在`, 'error')
     routeIdDraft.value = selectedProviderKey.value
     return
   }
@@ -695,16 +695,15 @@ const saveSettings = async () => {
       defaultModel,
       credentialUpdates: hasCredentialUpdates ? credentialUpdates : undefined
     })
-    notice.value = {
-      visible: true,
-      type: 'success',
-      message: hasCredentialUpdates
+    showToast(
+      hasCredentialUpdates
         ? `配置已保存；凭据已更新到 ${response.credentialsPath}`
-        : `已保存到 ${response.path}`
-    }
+        : `已保存到 ${response.path}`,
+      'success',
+    )
     await loadSettings()
   } catch (saveError) {
-    notice.value = { visible: true, type: 'error', message: saveError instanceof Error ? saveError.message : '保存 DSH 配置失败' }
+    showToast(saveError instanceof Error ? saveError.message : '保存 DSH 配置失败', 'error')
     // 原子写入已过提交点时，先重新读取两份文件的实际状态，避免页面继续展示旧快照。
     if (typeof saveError === 'object' && saveError !== null && 'committed' in saveError && saveError.committed === true) {
       await loadSettings()

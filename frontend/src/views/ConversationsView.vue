@@ -465,10 +465,6 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
-
-    <v-snackbar v-model="snackbar" :color="snackbarColor" timeout="2000">
-      {{ snackbarText }}
-    </v-snackbar>
   </div>
 </template>
 
@@ -477,6 +473,10 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import CommandSafetyHistory from '@/components/CommandSafetyHistory.vue'
 import { api, type ConversationEntry, type ConversationKind, type ConversationRouteOptionChannel } from '@/services/api'
+import { API_TABS } from '@/services/channel-api'
+import { useToast } from '@/composables/useToast'
+
+const { showToast } = useToast()
 
 const headers = [
   { title: '对话', key: 'identity', sortable: false, width: 180 },
@@ -490,7 +490,7 @@ const headers = [
   { title: '操作', key: 'actions', sortable: false, width: 150 }
 ]
 
-const kindItems: ConversationKind[] = ['messages', 'responses', 'gemini', 'chat', 'images', 'embeddings', 'decisions']
+const kindItems: ConversationKind[] = [...API_TABS]
 type ConversationStatusFilter = 'all' | 'active' | 'idle'
 type ConversationOrderMode = 'created' | 'status'
 
@@ -532,15 +532,12 @@ const deleteDialog = ref(false)
 const deletingConversation = ref<ConversationEntry | null>(null)
 const deleteAllDialog = ref(false)
 const deleteAllConfirmation = ref('')
-const routeOptions = ref<Record<ConversationKind, RouteSelectItem[]>>({
-  messages: [],
-  responses: [],
-  gemini: [],
-  chat: [],
-  images: [],
-  embeddings: [],
-  decisions: []
-})
+const routeOptions = ref<Record<ConversationKind, RouteSelectItem[]>>(
+  API_TABS.reduce(
+    (acc, kind) => { acc[kind] = []; return acc },
+    {} as Record<ConversationKind, RouteSelectItem[]>,
+  ),
+)
 let clockTimer: ReturnType<typeof setInterval> | null = null
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 let searchTimer: ReturnType<typeof setTimeout> | null = null
@@ -550,13 +547,8 @@ let conversationRequestsInFlight = 0
 
 const detailDialog = ref(false)
 const selectedConversation = ref<ConversationEntry | null>(null)
-const snackbar = ref(false)
-const snackbarText = ref('')
-const snackbarColor = ref('success')
 const showOperationError = (error: unknown, message: string) => {
-  snackbarText.value = error instanceof Error ? `${message}：${error.message}` : message
-  snackbarColor.value = 'error'
-  snackbar.value = true
+  showToast(error instanceof Error ? `${message}：${error.message}` : message, 'error')
 }
 
 const openDetailDialog = (item: ConversationEntry) => {
@@ -608,13 +600,9 @@ const deleteConversation = async () => {
       selectedConversation.value = null
     }
     deleteDialog.value = false
-    snackbarText.value = '对话已删除'
-    snackbarColor.value = 'success'
-    snackbar.value = true
+    showToast('对话已删除', 'success')
   } catch (error) {
-    snackbarText.value = error instanceof Error ? error.message : '删除对话失败'
-    snackbarColor.value = 'error'
-    snackbar.value = true
+    showToast(error instanceof Error ? error.message : '删除对话失败', 'error')
   } finally {
     saving.value = false
   }
@@ -636,13 +624,9 @@ const deleteAllConversations = async () => {
     selectedConversation.value = null
     detailDialog.value = false
     deleteAllDialog.value = false
-    snackbarText.value = '已清空全部对话'
-    snackbarColor.value = 'success'
-    snackbar.value = true
+    showToast('已清空全部对话', 'success')
   } catch (error) {
-    snackbarText.value = error instanceof Error ? error.message : '清空全部对话失败'
-    snackbarColor.value = 'error'
-    snackbar.value = true
+    showToast(error instanceof Error ? error.message : '清空全部对话失败', 'error')
   } finally {
     saving.value = false
   }
@@ -657,13 +641,9 @@ const openRouteOverrideFromDetail = () => {
 const copyText = async (text: string) => {
   try {
     await navigator.clipboard.writeText(text)
-    snackbarText.value = '已复制到剪贴板'
-    snackbarColor.value = 'success'
-    snackbar.value = true
+    showToast('已复制到剪贴板', 'success')
   } catch {
-    snackbarText.value = '复制失败，请手动选择复制'
-    snackbarColor.value = 'error'
-    snackbar.value = true
+    showToast('复制失败，请手动选择复制', 'error')
   }
 }
 

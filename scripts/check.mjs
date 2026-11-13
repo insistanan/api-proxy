@@ -69,8 +69,8 @@ runValidated(
 );
 
 // 文档-代码一致性门禁：目录会持续增生，人肉维护 AGENTS.md 必然漏登，
-// 新增目录未登记到对应文档时在此直接失败。仅做正向校验（实际目录 → 文档登记），
-// 文档中已失效的条目不在此拦截，避免对正文表述造成误报。
+// 新增目录未登记到对应文档时在此直接失败。同时做反向校验：
+// 文档中登记的 internal 顶层模块必须真实存在，已删除模块不得再出现。
 // 文档中目录名可能带尾部斜杠（如 `docs/`），两种写法都视为已登记。
 function docHasEntry(docText, name) {
   return docText.includes("`" + name + "`") || docText.includes("`" + name + "/`");
@@ -89,6 +89,45 @@ function checkDocRegistry(gateName, baseDir, docPath, ignore, prefix) {
     .map((e) => prefix + e.name)
     .filter((name) => !docHasEntry(docText, name));
   if (missing.length) failMissing(gateName, docPath, missing);
+  console.log("[check] OK");
+}
+
+// 已物理删除的 internal 顶层模块。文档再出现这些名字会误导人和 AI。
+const REMOVED_INTERNAL_MODULES = ["eval"];
+const INTERNAL_MODULE_DOCS = ["backend-go/AGENTS.md", "docs/架构说明.md", "docs/技术栈.md"];
+
+function checkInternalModuleDocs() {
+  console.log("\n==> 后端 internal 模块文档反向校验");
+  const actual = new Set(
+    fs.readdirSync("backend-go/internal", { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name),
+  );
+  const problems = [];
+  for (const docPath of INTERNAL_MODULE_DOCS) {
+    const text = fs.readFileSync(docPath, "utf8");
+    for (const name of REMOVED_INTERNAL_MODULES) {
+      // 兼容三种写法：表格/行内代码的 `eval/`、全路径 internal/eval、
+      // 以及 docs/架构说明.md 目录树里不带反引号的 `├── eval/`。
+      const bareEntry = new RegExp("(^|[\\s`|│├└─-])" + name + "(/|\\s*模块)", "m");
+      if (docHasEntry(text, name) || text.includes("internal/" + name) || bareEntry.test(text)) {
+        problems.push(`${docPath} 仍登记已删除模块 ${name}/`);
+      }
+    }
+    for (const match of text.matchAll(/internal\/([a-z][a-z0-9_-]*)/g)) {
+      const name = match[1];
+      if (!actual.has(name)) {
+        problems.push(`${docPath} 登记了不存在的模块 internal/${name}/`);
+      }
+    }
+    for (const match of text.matchAll(/^- \*\*`([a-z][a-z0-9_-]*)\/`/gm)) {
+      const name = match[1];
+      if (!actual.has(name)) {
+        problems.push(`${docPath} 顶层模块条目 ${name}/ 在 backend-go/internal 中不存在`);
+      }
+    }
+  }
+  if (problems.length) fail("后端 internal 模块文档反向校验", problems.join("\n"));
   console.log("[check] OK");
 }
 
@@ -114,6 +153,8 @@ checkDocRegistry(
   new Set(),
   "cmd/",
 );
+
+checkInternalModuleDocs();
 
 // 仓库根目录存在不入仓的工具与产物目录，只校验 git 跟踪的目录，
 // 新目录必须先在根 AGENTS.md 仓库结构表中登记才算入仓。

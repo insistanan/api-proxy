@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/insistanan/api-proxy/internal/handlers/common"
 	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
@@ -104,15 +105,15 @@ func (c *responsesStreamSessionCollector) captureToolArgumentDelta(data map[stri
 	}
 	item := types.ResponsesItem{
 		Type:    itemType,
-		ID:      stringValue(data["item_id"]),
-		CallID:  stringValue(data["call_id"]),
-		Name:    stringValue(data["name"]),
+		ID:      common.StringValue(data["item_id"]),
+		CallID:  common.StringValue(data["call_id"]),
+		Name:    common.StringValue(data["name"]),
 		Content: nil,
 	}
 	if itemType == "function_call" {
-		item.Arguments = stringValue(data["delta"])
+		item.Arguments = common.StringValue(data["delta"])
 	} else {
-		item.Content = stringValue(data["delta"])
+		item.Content = common.StringValue(data["delta"])
 	}
 	if previous := c.streamItems[key]; previous != nil {
 		if item.CallID != "" {
@@ -143,12 +144,12 @@ func (c *responsesStreamSessionCollector) captureToolArgumentDone(data map[strin
 	}
 	item := types.ResponsesItem{
 		Type:   itemType,
-		ID:     stringValue(data["item_id"]),
-		CallID: stringValue(data["call_id"]),
-		Name:   stringValue(data["name"]),
+		ID:     common.StringValue(data["item_id"]),
+		CallID: common.StringValue(data["call_id"]),
+		Name:   common.StringValue(data["name"]),
 	}
 	if itemType == "function_call" {
-		item.Arguments = stringValue(data["arguments"])
+		item.Arguments = common.StringValue(data["arguments"])
 	} else {
 		item.Content = data["input"]
 		if item.Content == nil {

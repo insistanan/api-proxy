@@ -45,22 +45,22 @@ func TestParseImagesExtraParamsRejectsInvalidValues(t *testing.T) {
 func TestImagesExtraParamsUpdateNilKeepsEmptyClearsAndCloneIsolates(t *testing.T) {
 	cm := writeTestConfig(t, `{"imagesUpstream":[{"name":"images","baseUrl":"https://api.example.com","apiKeys":["test-key"],"serviceType":"openai"}]}`)
 
-	_, err := cm.UpdateImagesUpstream(0, UpstreamUpdate{ImagesExtraParams: map[string]string{" watermark ": " false "}})
+	_, err := cm.UpdateChannel("images", 0, UpstreamUpdate{ImagesExtraParams: map[string]string{" watermark ": " false "}})
 	require.NoError(t, err)
 	require.Equal(t, map[string]string{"watermark": "false"}, cm.GetConfig().ImagesUpstream[0].ImagesExtraParams)
 	require.Equal(t, map[string]string{"watermark": "false"}, ChannelToDTO(&cm.GetConfig().ImagesUpstream[0], 0)["imagesExtraParams"])
 
 	name := "renamed"
-	_, err = cm.UpdateImagesUpstream(0, UpstreamUpdate{Name: &name})
+	_, err = cm.UpdateChannel("images", 0, UpstreamUpdate{Name: &name})
 	require.NoError(t, err)
 	require.Equal(t, "renamed", cm.GetConfig().ImagesUpstream[0].Name)
 	require.Equal(t, map[string]string{"watermark": "false"}, cm.GetConfig().ImagesUpstream[0].ImagesExtraParams)
 
-	_, err = cm.UpdateImagesUpstream(0, UpstreamUpdate{ImagesExtraParams: map[string]string{"meta": "{"}})
+	_, err = cm.UpdateChannel("images", 0, UpstreamUpdate{ImagesExtraParams: map[string]string{"meta": "{"}})
 	require.ErrorContains(t, err, "不是合法 JSON")
 	require.Equal(t, map[string]string{"watermark": "false"}, cm.GetConfig().ImagesUpstream[0].ImagesExtraParams)
 
-	_, err = cm.UpdateImagesUpstream(0, UpstreamUpdate{ImagesExtraParams: map[string]string{}})
+	_, err = cm.UpdateChannel("images", 0, UpstreamUpdate{ImagesExtraParams: map[string]string{}})
 	require.NoError(t, err)
 	require.Nil(t, cm.GetConfig().ImagesUpstream[0].ImagesExtraParams)
 
@@ -76,18 +76,18 @@ func TestImagesForceNonStreamUpdateNilKeepsAndFalseClears(t *testing.T) {
 	require.False(t, cm.GetConfig().ImagesUpstream[0].ImagesForceNonStream)
 
 	enabled := true
-	_, err := cm.UpdateImagesUpstream(0, UpstreamUpdate{ImagesForceNonStream: &enabled})
+	_, err := cm.UpdateChannel("images", 0, UpstreamUpdate{ImagesForceNonStream: &enabled})
 	require.NoError(t, err)
 	require.True(t, cm.GetConfig().ImagesUpstream[0].ImagesForceNonStream)
 	require.Equal(t, true, ChannelToDTO(&cm.GetConfig().ImagesUpstream[0], 0)["imagesForceNonStream"])
 
 	name := "renamed"
-	_, err = cm.UpdateImagesUpstream(0, UpstreamUpdate{Name: &name})
+	_, err = cm.UpdateChannel("images", 0, UpstreamUpdate{Name: &name})
 	require.NoError(t, err)
 	require.True(t, cm.GetConfig().ImagesUpstream[0].ImagesForceNonStream)
 
 	disabled := false
-	_, err = cm.UpdateImagesUpstream(0, UpstreamUpdate{ImagesForceNonStream: &disabled})
+	_, err = cm.UpdateChannel("images", 0, UpstreamUpdate{ImagesForceNonStream: &disabled})
 	require.NoError(t, err)
 	require.False(t, cm.GetConfig().ImagesUpstream[0].ImagesForceNonStream)
 	require.Equal(t, false, ChannelToDTO(&cm.GetConfig().ImagesUpstream[0], 0)["imagesForceNonStream"])

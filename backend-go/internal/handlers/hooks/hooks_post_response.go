@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 
 	"github.com/insistanan/api-proxy/internal/dialogue/semantic"
+	"github.com/insistanan/api-proxy/internal/handlers/common"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/safety/sensitive"
 )
@@ -263,7 +264,7 @@ func collectResponseToolCommands(value interface{}, vault *sensitive.Vault, scan
 			}
 		case map[string]interface{}:
 			if equalString(typed["type"], "custom_tool_call") {
-				if !sensitive.IsExecutionTool(stringValue(typed["name"])) {
+				if !sensitive.IsExecutionTool(common.StringValue(typed["name"])) {
 					return
 				}
 				if input, ok := typed["input"].(string); ok {
@@ -274,9 +275,9 @@ func collectResponseToolCommands(value interface{}, vault *sensitive.Vault, scan
 							return
 						}
 					}
-					matches = append(matches, scan(stringValue(typed["name"]), input, true)...)
+					matches = append(matches, scan(common.StringValue(typed["name"]), input, true)...)
 				} else {
-					matches = append(matches, sensitive.CommandMatch{Rule: "invalid_tool_arguments", Context: "tool", ToolName: stringValue(typed["name"])})
+					matches = append(matches, sensitive.CommandMatch{Rule: "invalid_tool_arguments", Context: "tool", ToolName: common.StringValue(typed["name"])})
 				}
 				return
 			}
@@ -284,14 +285,14 @@ func collectResponseToolCommands(value interface{}, vault *sensitive.Vault, scan
 			if isCall {
 				for _, field := range []string{"input", "arguments", "args"} {
 					if arguments, exists := typed[field]; exists {
-						if !sensitive.IsExecutionTool(stringValue(typed["name"])) {
+						if !sensitive.IsExecutionTool(common.StringValue(typed["name"])) {
 							return
 						}
 						arguments, restoreErr = restoreArguments(arguments)
 						if restoreErr != nil {
 							return
 						}
-						matches = append(matches, scan(stringValue(typed["name"]), arguments, false)...)
+						matches = append(matches, scan(common.StringValue(typed["name"]), arguments, false)...)
 						return
 					}
 				}

@@ -14,7 +14,7 @@
           </div>
         </div>
         <div class="d-flex align-center ga-2 header-actions">
-          <v-btn v-if="!isEditing && ['messages', 'responses', 'chat', 'gemini'].includes(channelType)" variant="tonal" size="small" :disabled="saving" :aria-expanded="editor.providerDrawerOpen.value" @click="editor.providerDrawerOpen.value = true">
+          <v-btn v-if="!isEditing && isPresetProtocol(channelType)" variant="tonal" size="small" :disabled="saving" :aria-expanded="editor.providerDrawerOpen.value" @click="editor.providerDrawerOpen.value = true">
             常见渠道商
           </v-btn>
           <!-- 模式切换按钮（仅在添加模式显示） -->
@@ -82,6 +82,7 @@ import type { Channel } from '../services/api'
 import { computed } from 'vue'
 import { findNavigation } from '@/router/navigation'
 import type { ApiTab } from '../services/channel-api'
+import { isPresetProtocol } from '@/utils/channelPresets'
 import { useChannelModal } from '@/composables/useChannelModal'
 import ChannelQuickForm from './channel/ChannelQuickForm.vue'
 import ChannelDetailedForm from './channel/ChannelDetailedForm.vue'

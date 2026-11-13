@@ -190,7 +190,3 @@ func (s *ChannelScheduler) GetActiveChannelCountForModel(kind ChannelKind, model
 func (s *ChannelScheduler) IsMultiChannelMode(kind ChannelKind) bool {
 	return s.GetActiveChannelCount(kind) > 1
 }
-
-func (s *ChannelScheduler) IsMultiChannelModeForModel(kind ChannelKind, model string) bool {
-	return s.GetActiveChannelCountForModel(kind, model) > 1
-}

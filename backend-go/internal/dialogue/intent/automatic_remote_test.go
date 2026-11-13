@@ -30,12 +30,12 @@ func automaticRemoteService(t *testing.T, protocol, baseURL string) *Service {
 	sch := scheduler.NewChannelScheduler(s.Cfg, managers[0], managers[1], managers[2], managers[3], managers[4], managers[5], managers[6], nil, nil)
 	t.Cleanup(sch.Stop)
 	up := config.UpstreamConfig{ID: "classifier", Name: "自动分类测试", BaseURL: baseURL, ServiceType: "openai", APIKeys: []string{"test-key"}, DefaultModel: "default-model"}
+	kind := "decisions"
 	if protocol == "llm" {
-		require.NoError(t, s.Cfg.AddChatUpstream(up))
-	} else {
-		_, err := s.Cfg.AddDecisionsUpstreamWithResult(up)
-		require.NoError(t, err)
+		kind = "chat"
 	}
+	_, err := s.Cfg.AddChannel(kind, up)
+	require.NoError(t, err)
 	s.Caller = &llmgate.Caller{EnvConfig: config.NewEnvConfig(), CfgManager: s.Cfg, ChannelScheduler: sch}
 	return s
 }

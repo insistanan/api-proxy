@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/insistanan/api-proxy/internal/handlers/common"
 )
 
 const (
@@ -64,14 +66,14 @@ func appendChatMessageToolArguments(segments *[]SafetySegment, pathPrefix string
 		if function == nil {
 			continue
 		}
-		toolName := stringValue(function["name"])
+		toolName := common.StringValue(function["name"])
 		if arguments, exists := function["arguments"]; exists {
 			appendMutableJSONValue(segments, "chat", safetySourceToolArgument,
 				fmt.Sprintf("%s.tool_calls[%d].function.arguments", path, callIndex), arguments, toolName, func(masked interface{}) { function["arguments"] = masked })
 		}
 	}
 	if functionCall, ok := message["function_call"].(map[string]interface{}); ok {
-		toolName := stringValue(functionCall["name"])
+		toolName := common.StringValue(functionCall["name"])
 		if arguments, exists := functionCall["arguments"]; exists {
 			appendMutableJSONValue(segments, "chat", safetySourceToolArgument,
 				path+".function_call.arguments", arguments, toolName, func(masked interface{}) { functionCall["arguments"] = masked })
@@ -107,7 +109,7 @@ func appendKnownTextContent(segments *[]SafetySegment, protocol, source, path st
 		if !ok {
 			continue
 		}
-		blockType := strings.ToLower(stringValue(block["type"]))
+		blockType := strings.ToLower(common.StringValue(block["type"]))
 		if blockType == "" || blockType == "text" || blockType == "input_text" {
 			appendMapTextField(segments, protocol, source, fmt.Sprintf("%s[%d]", path, index), block)
 		}
@@ -210,11 +212,6 @@ func appendMutableJSONValue(
 	}
 }
 
-func stringValue(value interface{}) string {
-	text, _ := value.(string)
-	return text
-}
-
 func equalString(value interface{}, expected string) bool {
-	return strings.EqualFold(stringValue(value), expected)
+	return strings.EqualFold(common.StringValue(value), expected)
 }

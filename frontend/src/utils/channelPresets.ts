@@ -1,7 +1,11 @@
 import type { ApiTab } from '@/services/channel-api'
 import type { Channel } from '@/types/channel'
 
-export type PresetProtocol = 'messages' | 'responses' | 'chat' | 'gemini'
+/** 有渠道商预设的协议；能力矩阵另见 supportedProtocols，不要混用。 */
+export const PRESET_PROTOCOLS = ['messages', 'responses', 'chat', 'gemini'] as const
+export type PresetProtocol = (typeof PRESET_PROTOCOLS)[number]
+export const isPresetProtocol = (value: string): value is PresetProtocol =>
+  (PRESET_PROTOCOLS as readonly string[]).includes(value)
 export interface ChannelPresetEndpoint {
   protocol: PresetProtocol
   serviceType: Channel['serviceType']

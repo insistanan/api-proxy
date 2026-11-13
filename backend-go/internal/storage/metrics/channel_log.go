@@ -79,13 +79,3 @@ func (s *ChannelLogStore) Get(channelIndex int) []*ChannelLog {
 	})
 	return items
 }
-
-func (s *ChannelLogStore) DeleteChannel(channelIndex int) {
-	if s == nil {
-		return
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.logs, channelIndex)
-}

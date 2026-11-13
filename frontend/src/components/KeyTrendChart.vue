@@ -1,12 +1,5 @@
 <template>
   <div class="key-trend-chart-container">
-    <v-snackbar v-model="showError" color="error" :timeout="3000" location="top">
-      {{ errorMessage }}
-      <template #actions>
-        <v-btn variant="text" @click="showError = false">关闭</v-btn>
-      </template>
-    </v-snackbar>
-
     <!-- Header -->
     <div class="chart-header d-flex align-center justify-space-between mb-3 flex-wrap ga-2">
       <div class="d-flex align-center ga-2">
@@ -56,9 +49,12 @@ import { ref, shallowRef, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useTheme } from 'vuetify'
 import VueApexCharts from 'vue3-apexcharts'
 import type { ApexOptions } from 'apexcharts'
-import { api, channelApiByType, type ChannelKeyMetricsHistoryResponse } from '../services/api'
+import { channelApiByType, type ChannelKeyMetricsHistoryResponse } from '../services/api'
 import type { ApiTab } from '../services/channel-api'
 import { useAutoRefresh } from '../composables/useAutoRefresh'
+import { useChartPreference, type ChartDuration } from '../composables/useChartPreference'
+import { useToast } from '../composables/useToast'
+import { CHART_PALETTE, CHART_SERIES_COLORS, cacheHitRateColor, chartThemeColors } from '../utils/chartPalette'
 
 const apexchart = VueApexCharts
 
@@ -68,43 +64,21 @@ const props = defineProps<{
 }>()
 
 type ViewMode = 'traffic' | 'tokens' | 'cache'
-type Duration = '1h' | '6h' | '24h' | 'today'
-
-const getStorageKey = (channelType: string, key: string) => `keyTrendChart:${channelType}:${key}`
-
-const isLocalStorageAvailable = (): boolean => {
-  try { return typeof window !== 'undefined' && window.localStorage !== undefined }
-  catch { return false }
-}
-
-const loadSavedPreferences = (channelType: string): { view: ViewMode; duration: Duration } => {
-  if (!isLocalStorageAvailable()) return { view: 'tokens', duration: '1h' }
-  try {
-    const savedView = window.localStorage.getItem(getStorageKey(channelType, 'viewMode')) as ViewMode | null
-    const savedDuration = window.localStorage.getItem(getStorageKey(channelType, 'duration')) as Duration | null
-    return {
-      view: savedView && ['traffic', 'tokens', 'cache'].includes(savedView) ? savedView : 'tokens',
-      duration: savedDuration && ['1h', '6h', '24h', 'today'].includes(savedDuration) ? savedDuration : '1h'
-    }
-  } catch { return { view: 'tokens', duration: '1h' } }
-}
-
-const savePreference = (channelType: string, key: string, value: string) => {
-  if (!isLocalStorageAvailable()) return
-  try { window.localStorage.setItem(getStorageKey(channelType, key), value) } catch { /* ignore */ }
-}
 
 const theme = useTheme()
 const isDark = computed(() => theme.global.current.value.dark)
-const savedPrefs = loadSavedPreferences(props.channelType)
+const { showToast } = useToast()
 
-const selectedView = ref<ViewMode>(savedPrefs.view)
-const selectedDuration = ref<Duration>(savedPrefs.duration)
+const { selectedView, selectedDuration, loadPreferences } = useChartPreference<ViewMode>(
+  'keyTrendChart',
+  () => props.channelType,
+  ['traffic', 'tokens', 'cache'],
+  { view: 'tokens', duration: '1h' },
+)
+
 const isLoading = ref(false)
 const isRefreshing = ref(false)
 const historyData = shallowRef<ChannelKeyMetricsHistoryResponse | null>(null)
-const showError = ref(false)
-const errorMessage = ref('')
 let refreshRequestId = 0
 
 const { start: startAutoRefresh, stop: stopAutoRefresh } = useAutoRefresh(
@@ -113,18 +87,15 @@ const { start: startAutoRefresh, stop: stopAutoRefresh } = useAutoRefresh(
 
 // 调色板 — 低饱和的十色环，与 Instrument Deck 主题同调；
 // 明暗主题共用一套中间明度值，切主题时不需要重算系列色
-const keyColors = [
-  '#5C6BC8', '#C1804A', '#2FA478', '#8A72C0', '#C46A92',
-  '#B99436', '#3E93A8', '#CA6072', '#7E9C46', '#6E77CE',
-]
+const keyColors = CHART_SERIES_COLORS
 
 const FAILURE_RATE_THRESHOLD = 0.1
 
-const AGGREGATION_INTERVALS: Record<Duration, number> = {
+const AGGREGATION_INTERVALS: Record<ChartDuration, number> = {
   '1h': 60000, '6h': 300000, '24h': 900000, 'today': 300000
 }
 
-const getAggregationInterval = (duration: Duration): number => {
+const getAggregationInterval = (duration: ChartDuration): number => {
   const interval = AGGREGATION_INTERVALS[duration]
   if (interval === undefined) return 60000
   return interval
@@ -187,7 +158,7 @@ const failureAnnotations = computed(() => {
       annotations.push({
         x: point.timestamp - interval / 2,
         x2: point.timestamp + interval / 2,
-        fillColor: '#D05B5B',
+        fillColor: CHART_PALETTE.danger,
         opacity: getFailureOpacity(point.failureRate),
         label: { text: '' }
       })
@@ -196,10 +167,7 @@ const failureAnnotations = computed(() => {
   return annotations
 })
 
-const getThemeColors = computed(() => ({
-  grid: isDark.value ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
-  text: isDark.value ? '#A2AAB8' : '#555E6E',
-}))
+const getThemeColors = computed(() => chartThemeColors(isDark.value))
 
 const getChartColors = (): string[] => {
   const keyCount = historyData.value?.keys?.length || 0
@@ -286,7 +254,7 @@ const buildTrafficTooltip = ({ seriesIndex, dataPointIndex, w }: any): string =>
   const hasFailure = grandFailure > 0
 
   let html = `<div style="padding: 10px 14px; font-size: 12px; min-width: 220px;">`
-  html += `<div style="font-weight: 600; margin-bottom: 8px; color: ${hasFailure ? '#D05B5B' : 'inherit'}; border-bottom: 1px solid rgba(128,128,128,0.15); padding-bottom: 6px;">${timeStr}</div>`
+  html += `<div style="font-weight: 600; margin-bottom: 8px; color: ${hasFailure ? CHART_PALETTE.danger : 'inherit'}; border-bottom: 1px solid rgba(128,128,128,0.15); padding-bottom: 6px;">${timeStr}</div>`
   keyStats.forEach(stat => {
     const failureRate = stat.total > 0 ? (stat.failure / stat.total * 100).toFixed(0) : '0'
     const hasKeyFailure = stat.failure > 0
@@ -295,14 +263,14 @@ const buildTrafficTooltip = ({ seriesIndex, dataPointIndex, w }: any): string =>
     html += `<span style="flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${stat.keyMask}${stat.model ? ` <span style="font-size: 10px; color: #888;">(${stat.model})</span>` : ''}</span>`
     html += `<span style="font-weight: 600;">${stat.total}</span>`
     if (hasKeyFailure) {
-      html += `<span style="color: #D05B5B; font-size: 11px; margin-left: 4px;">${stat.failure}失(${failureRate}%)</span>`
+      html += `<span style="color: ${CHART_PALETTE.danger}; font-size: 11px; margin-left: 4px;">${stat.failure}失(${failureRate}%)</span>`
     }
     html += `</div>`
   })
   if (keyStats.length > 1) {
     html += `<div style="border-top: 1px solid rgba(128,128,128,0.2); margin-top: 8px; padding-top: 6px; font-weight: 600; display: flex; justify-content: space-between;">`
     html += `<span>合计: ${grandTotal} 请求</span>`
-    if (hasFailure) html += `<span style="color: #D05B5B;">${grandFailure} 失败 (${grandFailureRate}%)</span>`
+    if (hasFailure) html += `<span style="color: ${CHART_PALETTE.danger};">${grandFailure} 失败 (${grandFailureRate}%)</span>`
     html += `</div>`
   }
   html += `</div>`
@@ -363,7 +331,7 @@ const buildDualTooltip = ({ seriesIndex, dataPointIndex, w }: any): string => {
     html += `<span>${label2}: <b style="color: rgb(var(--v-theme-on-surface));">${formatNumber(stat.val2)}</b></span>`
     html += `</div>`
     if (stat.cacheHitRate !== undefined) {
-      const hitColor = stat.cacheHitRate >= 50 ? '#2FA478' : stat.cacheHitRate >= 20 ? '#5C6BC8' : '#C1804A'
+      const hitColor = cacheHitRateColor(stat.cacheHitRate)
       html += `<div style="padding-left: 14px; font-size: 11px; color: ${hitColor}; margin-top: 2px;">缓存命中率: <b>${stat.cacheHitRate.toFixed(1)}%</b></div>`
     }
     html += `</div>`
@@ -493,7 +461,6 @@ const refreshData = async (isAutoRefresh = false) => {
   const requestId = ++refreshRequestId
   isRefreshing.value = true
   if (!isAutoRefresh) isLoading.value = true
-  errorMessage.value = ''
   try {
     const newData = await channelApiByType(props.channelType).getChannelKeyMetricsHistory(props.channelId, selectedDuration.value)
     if (requestId !== refreshRequestId) return
@@ -502,9 +469,11 @@ const refreshData = async (isAutoRefresh = false) => {
   } catch (error) {
     if (requestId !== refreshRequestId) return
     console.error('Failed to fetch key metrics history:', error)
-    errorMessage.value = error instanceof Error ? error.message : '获取 Key 历史数据失败'
-    showError.value = true
-    historyData.value = null
+    // 2 秒自动刷新失败时不弹 toast、不清空图表，避免断连期间持续刷屏；手动刷新才提示。
+    if (!isAutoRefresh) {
+      showToast(error instanceof Error ? error.message : '获取 Key 历史数据失败', 'error')
+      historyData.value = null
+    }
   } finally {
     if (requestId === refreshRequestId) {
       isRefreshing.value = false
@@ -514,17 +483,11 @@ const refreshData = async (isAutoRefresh = false) => {
 }
 
 watch(selectedDuration, () => {
-  savePreference(props.channelType, 'duration', selectedDuration.value)
   refreshData()
 }, { flush: 'sync' })
-watch(selectedView, () => {
-  savePreference(props.channelType, 'viewMode', selectedView.value)
-}, { flush: 'sync' })
-watch(() => props.channelType, (newChannelType) => {
-  const prefs = loadSavedPreferences(newChannelType)
+watch(() => props.channelType, () => {
   const oldDuration = selectedDuration.value
-  selectedView.value = prefs.view
-  selectedDuration.value = prefs.duration
+  const prefs = loadPreferences()
   historyData.value = null
   if (oldDuration === prefs.duration) refreshData()
 })

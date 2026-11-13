@@ -579,6 +579,7 @@ import ModelMappingEditor from '../ModelMappingEditor.vue'
 import ImagesChannelProtocolFields from '../ImagesChannelProtocolFields.vue'
 import ImagesOutputFields from '../ImagesOutputFields.vue'
 import { validateEmbeddingsDimensions } from '@/composables/useChannelEditor'
+import { isConversationProtocol } from '@/services/channel-api'
 
 const props = defineProps<{ editor: ReturnType<typeof useChannelModal> }>()
 // Vuetify 规则要求返回 true 或错误文案
@@ -626,7 +627,7 @@ const {
 
 // 图片理解与对话缓存只属于对话类入口协议，Embeddings / Decisions 为纯透传。
 const supportsConversationFeatures = computed(() =>
-  ['messages', 'responses', 'gemini', 'chat'].includes(channelType.value)
+  isConversationProtocol(channelType.value)
 )
 
 // 摘要读取当前草稿，让收起的分区仍能表达已选择的策略，不额外维护状态。

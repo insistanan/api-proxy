@@ -22,26 +22,10 @@ func (cm *ConfigManager) FindChannelByID(id string) (LocatedChannel, bool) {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
 
-	if located, ok := findChannelInSlice(cm.config.Upstream, "messages", id); ok {
-		return located, true
-	}
-	if located, ok := findChannelInSlice(cm.config.ResponsesUpstream, "responses", id); ok {
-		return located, true
-	}
-	if located, ok := findChannelInSlice(cm.config.GeminiUpstream, "gemini", id); ok {
-		return located, true
-	}
-	if located, ok := findChannelInSlice(cm.config.ChatUpstream, "chat", id); ok {
-		return located, true
-	}
-	if located, ok := findChannelInSlice(cm.config.ImagesUpstream, "images", id); ok {
-		return located, true
-	}
-	if located, ok := findChannelInSlice(cm.config.EmbeddingsUpstream, "embeddings", id); ok {
-		return located, true
-	}
-	if located, ok := findChannelInSlice(cm.config.DecisionsUpstream, "decisions", id); ok {
-		return located, true
+	for _, set := range cm.config.channelSets() {
+		if located, ok := findChannelInSlice(*set.upstreams, set.kind, id); ok {
+			return located, true
+		}
 	}
 	return LocatedChannel{}, false
 }

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/handlers/common"
 )
 
 var claudeCodeSettingsMu sync.Mutex
@@ -82,7 +83,7 @@ func GetClaudeCodeSettings() gin.HandlerFunc {
 			Path:              path,
 			Exists:            exists,
 			JSONC:             isJSONC(raw),
-			BaseURL:           stringValue(env["ANTHROPIC_BASE_URL"]),
+			BaseURL:           common.StringValue(env["ANTHROPIC_BASE_URL"]),
 			CredentialKind:    credentialKind,
 			CredentialMasked:  maskOpenCodeSecret(credential),
 			CredentialPresent: credential != "",
@@ -201,10 +202,10 @@ func isClaudeCodeModelFamily(family string) bool {
 }
 
 func claudeCodeCredential(env map[string]interface{}) (string, string) {
-	if token := stringValue(env["ANTHROPIC_AUTH_TOKEN"]); token != "" {
+	if token := common.StringValue(env["ANTHROPIC_AUTH_TOKEN"]); token != "" {
 		return "authToken", token
 	}
-	return "apiKey", stringValue(env["ANTHROPIC_API_KEY"])
+	return "apiKey", common.StringValue(env["ANTHROPIC_API_KEY"])
 }
 
 func mergeClaudeCodeCredential(env map[string]interface{}, req saveClaudeCodeSettingsRequest) {
@@ -228,12 +229,12 @@ func mergeClaudeCodeCredential(env map[string]interface{}, req saveClaudeCodeSet
 func claudeCodeModelDefaults(env map[string]interface{}) []claudeCodeModelDefaultView {
 	defaults := make([]claudeCodeModelDefaultView, 0, len(claudeCodeModelFamilies))
 	for _, family := range claudeCodeModelFamilies {
-		rawModel := stringValue(env["ANTHROPIC_DEFAULT_"+family+"_MODEL"])
+		rawModel := common.StringValue(env["ANTHROPIC_DEFAULT_"+family+"_MODEL"])
 		model, supports1M := parseClaudeCode1MSuffix(rawModel)
 		defaults = append(defaults, claudeCodeModelDefaultView{
 			Family:     strings.ToLower(family),
 			Model:      model,
-			Name:       stringValue(env["ANTHROPIC_DEFAULT_"+family+"_MODEL_NAME"]),
+			Name:       common.StringValue(env["ANTHROPIC_DEFAULT_"+family+"_MODEL_NAME"]),
 			Supports1M: supports1M,
 		})
 	}

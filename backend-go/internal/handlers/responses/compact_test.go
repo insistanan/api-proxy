@@ -61,9 +61,10 @@ func TestCompactTruncatedAndLocalCommitFailure(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, cfgManager.Close()) })
 			require.NoError(t, cfgManager.SetFuzzyModeEnabled(false))
-			require.NoError(t, cfgManager.AddResponsesUpstream(config.UpstreamConfig{
+			_, err = cfgManager.AddChannel("responses", config.UpstreamConfig{
 				Name: "compact", BaseURL: server.URL, APIKeys: []string{"key-a", "key-b"}, ServiceType: "responses",
-			}))
+			})
+			require.NoError(t, err)
 			mm := metrics.NewMetricsManager()
 			t.Cleanup(mm.Stop)
 			sch := scheduler.NewChannelScheduler(cfgManager, nil, mm, nil, nil, nil, nil, nil, nil, nil)
@@ -152,16 +153,18 @@ func TestCompactMappedTargetUsesActualURLAndOwner(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, cfgManager.Close()) })
 	require.NoError(t, cfgManager.SetFuzzyModeEnabled(true))
-	require.NoError(t, cfgManager.AddResponsesUpstream(config.UpstreamConfig{
+	_, err = cfgManager.AddChannel("responses", config.UpstreamConfig{
 		ID: "source", Name: "源渠道", BaseURL: "https://unused.example", APIKeys: []string{"source-key"}, ServiceType: "claude",
-	}))
-	require.NoError(t, cfgManager.AddResponsesUpstream(config.UpstreamConfig{
+	})
+	require.NoError(t, err)
+	_, err = cfgManager.AddChannel("responses", config.UpstreamConfig{
 		ID: "target", Name: "目标渠道", BaseURLs: []string{server.URL + "/bad", server.URL + "/api#"},
 		APIKeys: []string{"target-key"}, ServiceType: "responses", DefaultModel: "不能覆盖显式目标",
 		ModelMapping: map[string][]string{"*": {"不能再次映射"}},
-	}))
+	})
+	require.NoError(t, err)
 	// 保留源渠道索引，目标渠道存在后再配置跨渠道映射。
-	_, err = cfgManager.UpdateResponsesUpstream(0, config.UpstreamUpdate{
+	_, err = cfgManager.UpdateChannel("responses", 0, config.UpstreamUpdate{
 		ModelMapping:         map[string][]string{"alias": {"mapped-model"}},
 		ModelMappingChannels: map[string]map[string]string{"alias": {"mapped-model": "target"}},
 	})
@@ -229,13 +232,14 @@ func TestTryCompactWithKey_AppliesCodexDisguise(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, cfgManager.Close()) })
 			require.NoError(t, cfgManager.SetClientDisguiseEnabled("responses", enabled))
-			require.NoError(t, cfgManager.AddResponsesUpstream(config.UpstreamConfig{
+			_, err = cfgManager.AddChannel("responses", config.UpstreamConfig{
 				Name:                  "compact-test",
 				BaseURL:               server.URL,
 				APIKeys:               []string{"sk-test"},
 				ServiceType:           "responses",
 				DisablePromptCacheKey: true,
-			}))
+			})
+			require.NoError(t, err)
 			upstream := cfgManager.GetConfig().ResponsesUpstream[0]
 			body := `{"model":"gpt-5","input":"你好","prompt_cache_key":"old-key","prompt_cache_retention":"24h"}`
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())

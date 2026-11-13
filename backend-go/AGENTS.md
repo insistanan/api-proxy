@@ -25,7 +25,7 @@
 | `cmd/server/version.go` | 编译期由 ldflags 注入的 `Version`、`BuildTime` 与 `GitCommit` 元数据 |
 | `cmd/stream_verify/` | 独立流式响应验证工具，对比 Token 统计与 SSE 事件格式 |
 
-### 2.2 核心业务包（internal/ 9 大领域模块）
+### 2.2 核心业务包（internal/ 8 大领域模块）
 
 - **`handlers/`（协议端点处理层）**：
   - `handlers/proxycore/`：跨协议统一请求流水线（`RunProxyRequest`），负责代理通用鉴权、读体、脱敏、会话观测与重试驱动；
@@ -66,7 +66,6 @@
   - `middleware/`：鉴权、跨域与通用中间件；
   - `utils/`：通用工具集合；
   - `cli/`：命令行日志查询（`api-proxy logs`）。
-- **`eval/`（评估与探针）**：渠道质量评估与探针工具。
 
 ---
 

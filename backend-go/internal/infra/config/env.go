@@ -37,14 +37,8 @@ type EnvConfig struct {
 	ResponseHeaderTimeout int
 	StreamIdleTimeout     int
 
-	MetricsWindowSize            int
-	MetricsFailureThreshold      float64
-	CircuitEnabled               bool
-	CircuitFailureThreshold      int
-	CircuitErrorRateThreshold    float64
-	CircuitMinRequests           int
-	CircuitCooldownSeconds       int
-	CircuitProbeSuccessThreshold int
+	MetricsWindowSize       int
+	MetricsFailureThreshold float64
 
 	MetricsPersistenceEnabled bool
 	MetricsRetentionDays      int
@@ -58,6 +52,8 @@ func NewEnvConfig() *EnvConfig {
 	env := getEnv("ENV", "production")
 	logLevel := getEnv("LOG_LEVEL", "info")
 	isDebug := logLevel == "debug"
+	// 网关策略默认值以 DefaultGatewaySettings 为唯一来源，避免与持久化设置各写一份。
+	defaults := DefaultGatewaySettings()
 
 	return &EnvConfig{
 		// 6 项核心外部环境变量
@@ -69,10 +65,10 @@ func NewEnvConfig() *EnvConfig {
 		LogToConsole:   getEnv("LOG_TO_CONSOLE", "false") == "true",
 
 		// 日志与调试：根据 LogLevel 或稳态默认值自动决定
-		EnableRequestLogs:           true,
-		EnableResponseLogs:          true,
-		LogCaptureMode:              "bounded",
-		LogBodyLimitKB:              1024,
+		EnableRequestLogs:           defaults.EnableRequestLogs,
+		EnableResponseLogs:          defaults.EnableResponseLogs,
+		LogCaptureMode:              defaults.LogCaptureMode,
+		LogBodyLimitKB:              defaults.LogBodyLimitKB,
 		QuietPollingLogs:            !isDebug, // 非 debug 模式下静默轮询日志
 		RawLogOutput:                false,
 		SSEDebugLevel:               "off",
@@ -80,27 +76,21 @@ func NewEnvConfig() *EnvConfig {
 		CorrectResponsesInputTokens: true, // 核心 input_tokens 校正始终开启
 
 		// 网络与请求体限制常量
-		RequestTimeout:        300000,           // 5 分钟
-		MaxRequestBodySize:    50 * 1024 * 1024, // 50 MB
-		EnableCORS:            true,             // 跨域支持始终启用
-		CORSOrigin:            "*",
-		ResponseHeaderTimeout: 120, // 120 秒
-		StreamIdleTimeout:     300, // 300 秒（5 分钟）
+		RequestTimeout:        defaults.RequestTimeout,
+		MaxRequestBodySize:    defaults.MaxRequestBodySizeMB * 1024 * 1024,
+		EnableCORS:            defaults.EnableCORS,
+		CORSOrigin:            defaults.CORSOrigin,
+		ResponseHeaderTimeout: defaults.ResponseHeaderTimeout,
+		StreamIdleTimeout:     defaults.StreamIdleTimeout,
 
-		// 指标与熔断稳态常量
-		MetricsWindowSize:            10,
-		MetricsFailureThreshold:      0.5,
-		CircuitEnabled:               true, // 熔断器始终启用
-		CircuitFailureThreshold:      4,    // 连续失败 4 次转 Open
-		CircuitErrorRateThreshold:    0.6,  // 错误率 60%
-		CircuitMinRequests:           10,   // 最小 10 次请求计算错误率
-		CircuitCooldownSeconds:       60,   // 冷却 60 秒
-		CircuitProbeSuccessThreshold: 2,    // 探测 2 次成功转 Closed
+		// 指标稳态常量
+		MetricsWindowSize:       10,
+		MetricsFailureThreshold: 0.5,
 
 		// 持久化存储常量
-		MetricsPersistenceEnabled: true,
-		MetricsRetentionDays:      7,
-		LogDBPath:                 ".config/logs.db",
+		MetricsPersistenceEnabled: defaults.MetricsPersistenceEnabled,
+		MetricsRetentionDays:      defaults.MetricsRetentionDays,
+		LogDBPath:                 defaults.LogDBPath,
 	}
 }
 

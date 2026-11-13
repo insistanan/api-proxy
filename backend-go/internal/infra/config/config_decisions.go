@@ -19,7 +19,3 @@ func ValidateDecisionsUpstream(upstream *UpstreamConfig) error {
 		return &ConfigError{Message: "Decisions 渠道的上游协议仅支持 OpenAI 兼容 JSON 接口（openai）"}
 	}
 }
-
-func (cm *ConfigManager) AddDecisionsUpstreamWithResult(upstream UpstreamConfig) (AddedUpstream, error) {
-	return cm.AddChannel("decisions", upstream)
-}

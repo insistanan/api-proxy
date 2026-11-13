@@ -548,14 +548,6 @@ func (r *Registry) AssociateExternalID(recordID string, apiKind string, external
 	return nil
 }
 
-func (r *Registry) GetRouteOverride(recordID string) (*RouteOverride, bool) {
-	result, err := r.LookupRouteOverride(recordID)
-	if err != nil {
-		log.Printf("[Conversation] 读取固定渠道失败: %v", err)
-	}
-	return result, result != nil
-}
-
 func (r *Registry) LookupRouteOverride(recordID string) (*RouteOverride, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

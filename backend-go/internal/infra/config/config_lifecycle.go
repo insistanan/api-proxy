@@ -69,21 +69,11 @@ func (cm *ConfigManager) runChannelLifecycle(now time.Time, cleanupDeprecated bo
 
 	candidate := cloneConfig(cm.config)
 	changed := false
-	var listChanged bool
-	candidate.Upstream, listChanged = applyLifecycleToUpstreams(candidate.Upstream, now, cleanupDeprecated, "Messages")
-	changed = changed || listChanged
-	candidate.ResponsesUpstream, listChanged = applyLifecycleToUpstreams(candidate.ResponsesUpstream, now, cleanupDeprecated, "Responses")
-	changed = changed || listChanged
-	candidate.GeminiUpstream, listChanged = applyLifecycleToUpstreams(candidate.GeminiUpstream, now, cleanupDeprecated, "Gemini")
-	changed = changed || listChanged
-	candidate.ChatUpstream, listChanged = applyLifecycleToUpstreams(candidate.ChatUpstream, now, cleanupDeprecated, "Chat")
-	changed = changed || listChanged
-	candidate.ImagesUpstream, listChanged = applyLifecycleToUpstreams(candidate.ImagesUpstream, now, cleanupDeprecated, "Images")
-	changed = changed || listChanged
-	candidate.EmbeddingsUpstream, listChanged = applyLifecycleToUpstreams(candidate.EmbeddingsUpstream, now, cleanupDeprecated, "Embeddings")
-	changed = changed || listChanged
-	candidate.DecisionsUpstream, listChanged = applyLifecycleToUpstreams(candidate.DecisionsUpstream, now, cleanupDeprecated, "Decisions")
-	changed = changed || listChanged
+	for _, set := range candidate.channelSets() {
+		listChanged := false
+		*set.upstreams, listChanged = applyLifecycleToUpstreams(*set.upstreams, now, cleanupDeprecated, set.name)
+		changed = changed || listChanged
+	}
 
 	if !changed {
 		return nil

@@ -168,7 +168,6 @@
       </v-dialog>
     </v-card-text>
   </v-card>
-  <v-snackbar v-model="notice.visible" :color="notice.type" location="top right" :timeout="3500">{{ notice.message }}</v-snackbar>
 </template>
 
 <script setup lang="ts">
@@ -182,6 +181,9 @@
 // 指令模板（model_messages）由后端从内置清单复制，满足 Codex 0.144+ 的硬性校验。
 import { computed, reactive, ref, watch } from 'vue'
 import { api, type CodexCatalogModel, type CodexSettings, type SaveCodexModelCatalog } from '@/services/api'
+import { useToast } from '@/composables/useToast'
+
+const { showToast } = useToast()
 
 const props = defineProps<{ settings: CodexSettings | null }>()
 const emit = defineEmits<{ saved: [] }>()
@@ -193,7 +195,6 @@ const defaultEffort = ref('')
 const savingDefault = ref(false)
 const deletingSlug = ref('')
 const savingModel = ref(false)
-const notice = ref({ visible: false, type: 'success', message: '' })
 
 // 新增模型时后端骨架固定支持的推理档位（与后端 codexDefaultReasoningLevels 一致）。
 const CREATE_REASONING_LEVELS = ['low', 'high', 'max']
@@ -308,11 +309,11 @@ const saveModel = async () => {
       defaultReasoningLevel: form.defaultReasoningLevel
     }
     const response = await api.saveCodexModelCatalog(payload)
-    notice.value = { visible: true, type: 'success', message: `已保存到 ${response.modelsPath}` }
+    showToast(`已保存到 ${response.modelsPath}`, 'success')
     closeForm()
     emit('saved')
   } catch (saveError) {
-    notice.value = { visible: true, type: 'error', message: saveError instanceof Error ? saveError.message : '保存模型失败' }
+    showToast(saveError instanceof Error ? saveError.message : '保存模型失败', 'error')
   } finally {
     savingModel.value = false
   }
@@ -329,10 +330,10 @@ const saveDefault = async () => {
       payload.clearReasoningEffort = true
     }
     const response = await api.saveCodexModelCatalog(payload)
-    notice.value = { visible: true, type: 'success', message: `已写入 ${response.configPath}` }
+    showToast(`已写入 ${response.configPath}`, 'success')
     emit('saved')
   } catch (saveError) {
-    notice.value = { visible: true, type: 'error', message: saveError instanceof Error ? saveError.message : '写入默认模型失败' }
+    showToast(saveError instanceof Error ? saveError.message : '写入默认模型失败', 'error')
   } finally {
     savingDefault.value = false
   }
@@ -343,11 +344,11 @@ const deleteModel = async (model: CodexCatalogModel) => {
   deletingSlug.value = model.slug
   try {
     const response = await api.saveCodexModelCatalog({ action: 'delete', slug: model.slug })
-    notice.value = { visible: true, type: 'success', message: `已从 ${response.modelsPath} 删除` }
+    showToast(`已从 ${response.modelsPath} 删除`, 'success')
     if (form.visible && form.editing && form.slug === model.slug) closeForm()
     emit('saved')
   } catch (deleteError) {
-    notice.value = { visible: true, type: 'error', message: deleteError instanceof Error ? deleteError.message : '删除模型失败' }
+    showToast(deleteError instanceof Error ? deleteError.message : '删除模型失败', 'error')
   } finally {
     deletingSlug.value = ''
   }

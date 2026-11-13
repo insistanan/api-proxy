@@ -4,6 +4,8 @@ package hooks
 import (
 	"fmt"
 	"strings"
+
+	"github.com/insistanan/api-proxy/internal/handlers/common"
 )
 
 func extractMessagesSafetySegments(root map[string]interface{}) []SafetySegment {
@@ -18,7 +20,7 @@ func extractMessagesSafetySegments(root map[string]interface{}) []SafetySegment 
 		if !ok {
 			continue
 		}
-		if strings.ToLower(stringValue(message["role"])) != "assistant" {
+		if strings.ToLower(common.StringValue(message["role"])) != "assistant" {
 			continue
 		}
 		blocks, _ := message["content"].([]interface{})
@@ -27,8 +29,8 @@ func extractMessagesSafetySegments(root map[string]interface{}) []SafetySegment 
 			if !ok || !equalString(block["type"], "tool_use") {
 				continue
 			}
-			id := stringValue(block["id"])
-			name := stringValue(block["name"])
+			id := common.StringValue(block["id"])
+			name := common.StringValue(block["name"])
 			if id != "" && name != "" {
 				toolNameByID[id] = name
 			}
@@ -39,7 +41,7 @@ func extractMessagesSafetySegments(root map[string]interface{}) []SafetySegment 
 		if !ok {
 			continue
 		}
-		role := strings.ToLower(stringValue(message["role"]))
+		role := strings.ToLower(common.StringValue(message["role"]))
 		content, exists := message["content"]
 		if !exists {
 			continue
@@ -52,7 +54,7 @@ func extractMessagesSafetySegments(root map[string]interface{}) []SafetySegment 
 				if !ok || !equalString(block["type"], "tool_use") {
 					continue
 				}
-				toolName := stringValue(block["name"])
+				toolName := common.StringValue(block["name"])
 				if input, exists := block["input"]; exists {
 					appendMutableJSONValue(&segments, "messages", safetySourceToolArgument,
 						fmt.Sprintf("%s[%d].input", path, blockIndex), input, toolName, func(masked interface{}) { block["input"] = masked })
@@ -77,9 +79,9 @@ func extractMessagesSafetySegments(root map[string]interface{}) []SafetySegment 
 				continue
 			}
 			blockPath := fmt.Sprintf("%s[%d]", path, blockIndex)
-			switch stringValue(block["type"]) {
+			switch common.StringValue(block["type"]) {
 			case "tool_result":
-				toolName := toolNameByID[stringValue(block["tool_use_id"])]
+				toolName := toolNameByID[common.StringValue(block["tool_use_id"])]
 				if value, exists := block["content"]; exists {
 					appendMutableJSONValue(&segments, "messages", safetySourceToolResult, blockPath+".content", value, toolName, func(masked interface{}) { block["content"] = masked })
 				}
@@ -104,8 +106,8 @@ func extractChatSafetySegments(root map[string]interface{}) []SafetySegment {
 		for _, rawCall := range calls {
 			call, _ := rawCall.(map[string]interface{})
 			function, _ := call["function"].(map[string]interface{})
-			if id := stringValue(call["id"]); id != "" {
-				toolNameByID[id] = stringValue(function["name"])
+			if id := common.StringValue(call["id"]); id != "" {
+				toolNameByID[id] = common.StringValue(function["name"])
 			}
 		}
 	}
@@ -114,7 +116,7 @@ func extractChatSafetySegments(root map[string]interface{}) []SafetySegment {
 		if !ok {
 			continue
 		}
-		role := strings.ToLower(stringValue(message["role"]))
+		role := strings.ToLower(common.StringValue(message["role"]))
 		source := ""
 		switch role {
 		case "user":
@@ -135,9 +137,9 @@ func extractChatSafetySegments(root map[string]interface{}) []SafetySegment {
 		}
 		path := fmt.Sprintf("messages[%d].content", messageIndex)
 		if source == safetySourceToolResult {
-			toolName := stringValue(message["name"])
+			toolName := common.StringValue(message["name"])
 			if toolName == "" {
-				toolName = toolNameByID[stringValue(message["tool_call_id"])]
+				toolName = toolNameByID[common.StringValue(message["tool_call_id"])]
 			}
 			appendMutableJSONValue(&segments, "chat", source, path, content, toolName, func(masked interface{}) { message["content"] = masked })
 			continue
@@ -169,12 +171,12 @@ func extractResponsesSafetySegments(root map[string]interface{}) []SafetySegment
 		if !ok {
 			continue
 		}
-		itemType := strings.ToLower(stringValue(item["type"]))
+		itemType := strings.ToLower(common.StringValue(item["type"]))
 		if itemType != "function_call" && itemType != "custom_tool_call" && itemType != "tool_search_call" {
 			continue
 		}
-		callID := stringValue(item["call_id"])
-		toolName := stringValue(item["name"])
+		callID := common.StringValue(item["call_id"])
+		toolName := common.StringValue(item["name"])
 		if callID != "" && toolName != "" {
 			toolNameByCallID[callID] = toolName
 		}
@@ -184,17 +186,17 @@ func extractResponsesSafetySegments(root map[string]interface{}) []SafetySegment
 		if !ok {
 			continue
 		}
-		itemType := strings.ToLower(stringValue(item["type"]))
+		itemType := strings.ToLower(common.StringValue(item["type"]))
 		path := fmt.Sprintf("input[%d]", itemIndex)
 		switch itemType {
 		case "function_call_output", "custom_tool_call_output", "tool_search_output":
-			toolName := toolNameByCallID[stringValue(item["call_id"])]
+			toolName := toolNameByCallID[common.StringValue(item["call_id"])]
 			if output, exists := item["output"]; exists {
 				appendMutableJSONValue(&segments, "responses", safetySourceToolResult, path+".output", output, toolName, func(masked interface{}) { item["output"] = masked })
 			}
 			continue
 		case "function_call", "custom_tool_call", "tool_search_call":
-			toolName := stringValue(item["name"])
+			toolName := common.StringValue(item["name"])
 			if arguments, exists := item["arguments"]; exists {
 				appendMutableJSONValue(&segments, "responses", safetySourceToolArgument, path+".arguments", arguments, toolName, func(masked interface{}) { item["arguments"] = masked })
 			} else if input, exists := item["input"]; exists {
@@ -205,7 +207,7 @@ func extractResponsesSafetySegments(root map[string]interface{}) []SafetySegment
 			appendMapTextField(&segments, "responses", safetySourceUser, path, item)
 			continue
 		}
-		role := strings.ToLower(stringValue(item["role"]))
+		role := strings.ToLower(common.StringValue(item["role"]))
 		source := ""
 		switch role {
 		case "user":
@@ -237,7 +239,7 @@ func extractGeminiSafetySegments(root map[string]interface{}) []SafetySegment {
 		if !ok {
 			continue
 		}
-		role := strings.ToLower(stringValue(content["role"]))
+		role := strings.ToLower(common.StringValue(content["role"]))
 		parts, _ := content["parts"].([]interface{})
 		for partIndex, rawPart := range parts {
 			part, ok := rawPart.(map[string]interface{})
@@ -248,7 +250,7 @@ func extractGeminiSafetySegments(root map[string]interface{}) []SafetySegment {
 			if functionResponse, exists := part["functionResponse"]; exists {
 				toolName := ""
 				if response, ok := functionResponse.(map[string]interface{}); ok {
-					toolName = stringValue(response["name"])
+					toolName = common.StringValue(response["name"])
 					if value, exists := response["response"]; exists {
 						appendMutableJSONValue(&segments, "gemini", safetySourceToolResult, path+".functionResponse.response", value, toolName, func(masked interface{}) { response["response"] = masked })
 					}
@@ -258,7 +260,7 @@ func extractGeminiSafetySegments(root map[string]interface{}) []SafetySegment {
 			if functionCall, exists := part["functionCall"]; exists {
 				toolName := ""
 				if call, ok := functionCall.(map[string]interface{}); ok {
-					toolName = stringValue(call["name"])
+					toolName = common.StringValue(call["name"])
 					if args, exists := call["args"]; exists {
 						appendMutableJSONValue(&segments, "gemini", safetySourceToolArgument, path+".functionCall.args", args, toolName, func(masked interface{}) { call["args"] = masked })
 					}
@@ -296,7 +298,7 @@ func extractResponseToolArgumentSegments(apiType string, root map[string]interfa
 		for index, rawBlock := range blocks {
 			block, ok := rawBlock.(map[string]interface{})
 			if ok && equalString(block["type"], "tool_use") {
-				appendImmutableJSONSegmentWithTool(&segments, apiType, safetySourceToolArgument, fmt.Sprintf("content[%d].input", index), block["input"], stringValue(block["name"]))
+				appendImmutableJSONSegmentWithTool(&segments, apiType, safetySourceToolArgument, fmt.Sprintf("content[%d].input", index), block["input"], common.StringValue(block["name"]))
 			}
 		}
 	case "chat":
@@ -309,12 +311,12 @@ func extractResponseToolArgumentSegments(apiType string, root map[string]interfa
 				call, _ := rawCall.(map[string]interface{})
 				function, _ := call["function"].(map[string]interface{})
 				if arguments, exists := function["arguments"]; exists {
-					appendImmutableJSONSegmentWithTool(&segments, apiType, safetySourceToolArgument, fmt.Sprintf("choices[%d].message.tool_calls[%d].function.arguments", choiceIndex, callIndex), arguments, stringValue(function["name"]))
+					appendImmutableJSONSegmentWithTool(&segments, apiType, safetySourceToolArgument, fmt.Sprintf("choices[%d].message.tool_calls[%d].function.arguments", choiceIndex, callIndex), arguments, common.StringValue(function["name"]))
 				}
 			}
 			if functionCall, ok := message["function_call"].(map[string]interface{}); ok {
 				if arguments, exists := functionCall["arguments"]; exists {
-					appendImmutableJSONSegmentWithTool(&segments, apiType, safetySourceToolArgument, fmt.Sprintf("choices[%d].message.function_call.arguments", choiceIndex), arguments, stringValue(functionCall["name"]))
+					appendImmutableJSONSegmentWithTool(&segments, apiType, safetySourceToolArgument, fmt.Sprintf("choices[%d].message.function_call.arguments", choiceIndex), arguments, common.StringValue(functionCall["name"]))
 				}
 			}
 		}
@@ -325,12 +327,12 @@ func extractResponseToolArgumentSegments(apiType string, root map[string]interfa
 			if !ok {
 				continue
 			}
-			switch strings.ToLower(stringValue(output["type"])) {
+			switch strings.ToLower(common.StringValue(output["type"])) {
 			case "function_call", "custom_tool_call", "tool_search_call":
 				if arguments, exists := output["arguments"]; exists {
-					appendImmutableJSONSegmentWithTool(&segments, apiType, safetySourceToolArgument, fmt.Sprintf("output[%d].arguments", index), arguments, stringValue(output["name"]))
+					appendImmutableJSONSegmentWithTool(&segments, apiType, safetySourceToolArgument, fmt.Sprintf("output[%d].arguments", index), arguments, common.StringValue(output["name"]))
 				} else if input, exists := output["input"]; exists {
-					appendImmutableJSONSegmentWithTool(&segments, apiType, safetySourceToolArgument, fmt.Sprintf("output[%d].input", index), input, stringValue(output["name"]))
+					appendImmutableJSONSegmentWithTool(&segments, apiType, safetySourceToolArgument, fmt.Sprintf("output[%d].input", index), input, common.StringValue(output["name"]))
 				}
 			}
 		}
@@ -343,7 +345,7 @@ func extractResponseToolArgumentSegments(apiType string, root map[string]interfa
 			for partIndex, rawPart := range parts {
 				part, _ := rawPart.(map[string]interface{})
 				if call, ok := part["functionCall"].(map[string]interface{}); ok {
-					appendImmutableJSONSegmentWithTool(&segments, apiType, safetySourceToolArgument, fmt.Sprintf("candidates[%d].content.parts[%d].functionCall.args", candidateIndex, partIndex), call["args"], stringValue(call["name"]))
+					appendImmutableJSONSegmentWithTool(&segments, apiType, safetySourceToolArgument, fmt.Sprintf("candidates[%d].content.parts[%d].functionCall.args", candidateIndex, partIndex), call["args"], common.StringValue(call["name"]))
 				}
 			}
 		}

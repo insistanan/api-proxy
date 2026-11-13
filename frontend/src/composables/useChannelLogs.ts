@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import type { ApexOptions } from 'apexcharts'
 import { api, type ApiTab, type Channel, type ChannelLogEntry } from '@/services/api'
+import { CHART_PALETTE } from '@/utils/chartPalette'
 
 export function useChannelLogs(props: { channelType: ApiTab }) {
   const showLogsDialog = ref(false)
@@ -63,7 +64,7 @@ export function useChannelLogs(props: { channelType: ApiTab }) {
       animations: { enabled: false },
       fontFamily: 'inherit'
     },
-    colors: ['#5C6BC8', '#2FA478', '#C1804A', '#8A72C0', '#7B8494'],
+    colors: [CHART_PALETTE.indigo, CHART_PALETTE.jade, CHART_PALETTE.copper, CHART_PALETTE.violet, CHART_PALETTE.slate],
     dataLabels: { enabled: false },
     stroke: {
       width: [2, 2, 2, 2, 2],

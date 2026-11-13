@@ -265,7 +265,7 @@ func buildProviderRequest(
 		if err != nil {
 			return nil, err
 		}
-		url = fmt.Sprintf("%s/v1/messages", strings.TrimRight(baseURL, "/"))
+		url = utils.BuildUpstreamURL(baseURL, "/v1", "/messages", upstream.UseFullURL)
 
 	case "openai":
 		// OpenAI 上游：需要转换
@@ -278,7 +278,7 @@ func buildProviderRequest(
 		if err != nil {
 			return nil, err
 		}
-		url = fmt.Sprintf("%s/v1/chat/completions", strings.TrimRight(baseURL, "/"))
+		url = utils.BuildUpstreamURL(baseURL, "/v1", "/chat/completions", upstream.UseFullURL)
 
 	default:
 		// Gemini 上游（含未显式声明 ServiceType 的渠道）：按配置处理 thought_signature 后透传。
@@ -302,15 +302,12 @@ func buildProviderRequest(
 			return nil, err
 		}
 
-		url = fmt.Sprintf("%s/v1beta/models/%s:%s", strings.TrimRight(baseURL, "/"), mappedModel, action)
-		if isStream {
+		url = utils.BuildUpstreamURL(baseURL, "/v1beta", fmt.Sprintf("/models/%s:%s", mappedModel, action), upstream.UseFullURL)
+		if isStream && !upstream.UseFullURL {
 			url += "?alt=sse"
 		}
 	}
 
-	if upstream.UseFullURL {
-		url = baseURL
-	}
 	req, err := http.NewRequestWithContext(c.Request.Context(), "POST", url, bytes.NewReader(requestBody))
 	if err != nil {
 		return nil, err

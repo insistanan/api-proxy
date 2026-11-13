@@ -75,7 +75,7 @@ func TestCallDecisionProtocolsUseSelectedChannelAndModel(t *testing.T) {
 			}))
 			t.Cleanup(upstream.Close)
 			cfgManager, sch := newGateTestEnv(t)
-			if _, err := cfgManager.AddDecisionsUpstreamWithResult(config.UpstreamConfig{
+			if _, err := cfgManager.AddChannel("decisions", config.UpstreamConfig{
 				ID: "decision-1", Name: "decision-reviewer", BaseURL: upstream.URL, ServiceType: "openai",
 				APIKeys: []string{"decision-test-key"}, DefaultModel: "channel-default",
 				ModelMapping: map[string][]string{"approval-alias": {"selected-decision-model"}},
@@ -226,10 +226,10 @@ func mustAddMessagesChannel(t *testing.T, cfgManager *config.ConfigManager, name
 func TestPickChannelPriorityOrder(t *testing.T) {
 	cfgManager, sch := newGateTestEnv(t)
 	// 只建 chat 与 gemini 渠道：messages/responses 为空应被跳过。
-	if err := cfgManager.AddChatUpstream(config.UpstreamConfig{ID: "chat-1", Name: "chat-primary", BaseURL: "https://chat.example.com", APIKeys: []string{"sk-chat"}, ServiceType: "openai", DefaultModel: "chat-model"}); err != nil {
+	if _, err := cfgManager.AddChannel("chat", config.UpstreamConfig{ID: "chat-1", Name: "chat-primary", BaseURL: "https://chat.example.com", APIKeys: []string{"sk-chat"}, ServiceType: "openai", DefaultModel: "chat-model"}); err != nil {
 		t.Fatalf("添加 chat 渠道失败: %v", err)
 	}
-	if err := cfgManager.AddGeminiUpstream(config.UpstreamConfig{ID: "gemini-1", Name: "gemini-primary", BaseURL: "https://gemini.example.com", APIKeys: []string{"sk-gemini"}, ServiceType: "gemini", DefaultModel: "gemini-model"}); err != nil {
+	if _, err := cfgManager.AddChannel("gemini", config.UpstreamConfig{ID: "gemini-1", Name: "gemini-primary", BaseURL: "https://gemini.example.com", APIKeys: []string{"sk-gemini"}, ServiceType: "gemini", DefaultModel: "gemini-model"}); err != nil {
 		t.Fatalf("添加 gemini 渠道失败: %v", err)
 	}
 	selected, err := PickChannel(context.Background(), cfgManager, sch, "", "", nil)
@@ -257,13 +257,13 @@ func TestPickChannelSkipsUnavailable(t *testing.T) {
 	// messages 渠道没有 Key。
 	mustAddMessagesChannel(t, cfgManager, "no-key", "messages-1", true, nil)
 	// responses 渠道未启用（建满后置为 disabled，与生产"备用池"语义一致）。
-	if err := cfgManager.AddResponsesUpstream(config.UpstreamConfig{ID: "resp-1", Name: "disabled-resp", BaseURL: "https://resp.example.com", APIKeys: []string{"sk-resp"}, ServiceType: "openai"}); err != nil {
+	if _, err := cfgManager.AddChannel("responses", config.UpstreamConfig{ID: "resp-1", Name: "disabled-resp", BaseURL: "https://resp.example.com", APIKeys: []string{"sk-resp"}, ServiceType: "openai"}); err != nil {
 		t.Fatalf("添加 responses 渠道失败: %v", err)
 	}
-	if err := cfgManager.SetResponsesChannelStatus(0, config.ChannelStatusDisabled); err != nil {
+	if err := cfgManager.SetChannelStatusFor("responses", 0, config.ChannelStatusDisabled); err != nil {
 		t.Fatalf("停用 responses 渠道失败: %v", err)
 	}
-	if err := cfgManager.AddChatUpstream(config.UpstreamConfig{ID: "chat-1", Name: "chat-primary", BaseURL: "https://chat.example.com", APIKeys: []string{"sk-chat"}, ServiceType: "openai", DefaultModel: "chat-model"}); err != nil {
+	if _, err := cfgManager.AddChannel("chat", config.UpstreamConfig{ID: "chat-1", Name: "chat-primary", BaseURL: "https://chat.example.com", APIKeys: []string{"sk-chat"}, ServiceType: "openai", DefaultModel: "chat-model"}); err != nil {
 		t.Fatalf("添加 chat 渠道失败: %v", err)
 	}
 	selected, err := PickChannel(context.Background(), cfgManager, sch, "", "", nil)
@@ -370,7 +370,7 @@ func TestPickChannelSkipsModelUnresolvableChannels(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("添加 messages 渠道失败: %v", err)
 	}
-	if err := cfgManager.AddChatUpstream(config.UpstreamConfig{
+	if _, err := cfgManager.AddChannel("chat", config.UpstreamConfig{
 		ID: "chat-1", Name: "chat-primary", BaseURL: "https://chat.example.com",
 		APIKeys: []string{"sk-chat"}, ServiceType: "openai", DefaultModel: "chat-model",
 	}); err != nil {
@@ -443,7 +443,7 @@ func TestCallFailoverAcrossChannels(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("添加 messages 渠道失败: %v", err)
 	}
-	if err := cfgManager.AddChatUpstream(config.UpstreamConfig{
+	if _, err := cfgManager.AddChannel("chat", config.UpstreamConfig{
 		ID: "chat-1", Name: "working", BaseURL: working.URL,
 		APIKeys: []string{"sk-working"}, ServiceType: "openai", DefaultModel: "m2",
 	}); err != nil {
@@ -676,7 +676,7 @@ func TestPickChannelAutoScansNamedPools(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("添加命名分组渠道失败: %v", err)
 	}
-	if err := cfgManager.AddChatUpstream(config.UpstreamConfig{
+	if _, err := cfgManager.AddChannel("chat", config.UpstreamConfig{
 		ID: "chat-1", Name: "chat-fallback", BaseURL: "https://chat.example.com",
 		APIKeys: []string{"sk-chat"}, ServiceType: "openai", DefaultModel: "chat-model",
 	}); err != nil {
@@ -739,7 +739,7 @@ func TestPickChannelAutoResolvesMappingOnlyChannel(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("添加 messages 渠道失败: %v", err)
 	}
-	if err := cfgManager.AddChatUpstream(config.UpstreamConfig{
+	if _, err := cfgManager.AddChannel("chat", config.UpstreamConfig{
 		ID: "chat-1", Name: "chat-primary", BaseURL: "https://chat.example.com",
 		APIKeys: []string{"sk-chat"}, ServiceType: "openai", DefaultModel: "chat-model",
 	}); err != nil {

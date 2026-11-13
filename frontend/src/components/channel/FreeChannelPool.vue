@@ -47,6 +47,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ApiError } from '@/services/http'
 import { useFreeChannelsStore } from '@/stores/freeChannels'
 import { useChannelStore } from '@/stores/channel'
+import { INTENT_PROTOCOLS } from '@/services/intent'
 import { useToast } from '@/composables/useToast'
 
 const free = useFreeChannelsStore()
@@ -75,7 +76,7 @@ async function update(action: () => Promise<void>, success: string) {
       : `更新失败，原配置保留：${message(cause)}`
     return
   }
-  const results = await Promise.allSettled((['messages', 'responses', 'chat', 'gemini'] as const).map(type => channelStore.refreshChannels(type)))
+  const results = await Promise.allSettled(INTENT_PROTOCOLS.map(type => channelStore.refreshChannels(type)))
   if (results.some(result => result.status === 'rejected')) error.value = '配置已保存，但渠道列表刷新失败，请刷新页面查看实际状态。'
   else showToast(success, 'success')
 }

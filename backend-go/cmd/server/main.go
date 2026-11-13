@@ -230,23 +230,13 @@ func newApp() (_ *app, err error) {
 		a.metricsByKind[scheduler.ChannelKindMessages].GetFailureThreshold()*100,
 		a.metricsByKind[scheduler.ChannelKindMessages].GetWindowSize())
 
-	// 渠道级三态熔断器使用 EnvConfig 的内部默认策略，不从旧 CIRCUIT_* 环境变量读取。
-	circuitConfig := circuit.Config{
-		FailureThreshold:   a.envCfg.CircuitFailureThreshold,
-		ErrorRateThreshold: a.envCfg.CircuitErrorRateThreshold,
-		MinRequests:        a.envCfg.CircuitMinRequests,
-		Cooldown:           time.Duration(a.envCfg.CircuitCooldownSeconds) * time.Second,
-		SuccessThreshold:   a.envCfg.CircuitProbeSuccessThreshold,
-	}
-	circuitManager := circuit.NewManager(circuitConfig, a.envCfg.CircuitEnabled)
+	// 渠道级三态熔断器以 circuit.DefaultConfig() 为唯一默认来源，不从旧 CIRCUIT_* 环境变量读取。
+	circuitConfig := circuit.DefaultConfig()
+	circuitManager := circuit.NewManager(circuitConfig, true)
 	a.channelScheduler.SetCircuitManager(circuitManager)
-	if a.envCfg.CircuitEnabled {
-		log.Printf("[Circuit-Init] 渠道级熔断已启用 (连续失败阈值: %d, 错误率: %.0f%%, 最小样本: %d, 冷却: %ds, 半开成功阈值: %d)",
-			circuitConfig.FailureThreshold, circuitConfig.ErrorRateThreshold*100, circuitConfig.MinRequests,
-			a.envCfg.CircuitCooldownSeconds, circuitConfig.SuccessThreshold)
-	} else {
-		log.Printf("[Circuit-Init] 渠道级熔断已禁用 (CIRCUIT_ENABLED=false)")
-	}
+	log.Printf("[Circuit-Init] 渠道级熔断已启用 (连续失败阈值: %d, 错误率: %.0f%%, 最小样本: %d, 冷却: %ds, 半开成功阈值: %d)",
+		circuitConfig.FailureThreshold, circuitConfig.ErrorRateThreshold*100, circuitConfig.MinRequests,
+		int(circuitConfig.Cooldown/time.Second), circuitConfig.SuccessThreshold)
 
 	// 性能画像与渠道性能报告（/api/performance/report）：仅用于观测展示，
 	// 不参与生产选渠——默认遵循配置顺序，健康促销在分组内临时优先。

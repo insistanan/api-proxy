@@ -12,7 +12,7 @@ import { compileImagesExtraParams } from '@/utils/imagesExtraParams'
 
 import { useQuickChannelDraft } from './useQuickChannelDraft'
 import { useChannelModels } from './useChannelModels'
-import type { ApiTab } from '@/services/channel-api'
+import { isConversationProtocol, type ApiTab } from '@/services/channel-api'
 import { resolveChannelPreset, type ChannelPreset, type ChannelPresetEndpoint } from '@/utils/channelPresets'
 
 export interface ChannelModalProps {
@@ -815,12 +815,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
         imagesExtraParamsError.value = ''
         imagesOutputError.value = ''
         // 图片理解只属于对话类入口协议，透传协议不加载相关渠道。
-        if (
-          props.channelType === 'messages' ||
-          props.channelType === 'responses' ||
-          props.channelType === 'gemini' ||
-          props.channelType === 'chat'
-        ) {
+        if (isConversationProtocol(props.channelType)) {
           void loadVisionChannels()
         }
         void loadPools()

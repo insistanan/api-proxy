@@ -3,6 +3,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { createSSRApp, ref, type Ref, type SetupContext } from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import { api, ApiError, type ApiTab, type OpenCodeConfig, type PiAgentProvider, type PiAgentStatus } from '@/services/api'
+import { useToast } from '@/composables/useToast'
 import OpenCodeView from './OpenCodeView.vue'
 import PiAgentView from './PiAgentView.vue'
 
@@ -138,9 +139,11 @@ describe('OpenCode 配置提交阶段', () => {
     const state = await setupView(OpenCodeView)
     await run(state, 'loadConfig')
     read.mockRejectedValue(new Error('断连'))
+    const { toasts } = useToast()
+    toasts.value = []
     await run(state, 'saveConfig')
     expect(write).toHaveBeenCalledTimes(1)
     expect(value<OpenCodeConfig>(state, 'config').revision).toBe('r2')
-    expect(value<{ type: string; message: string }>(state, 'notice')).toMatchObject({ type: 'warning', message: expect.stringContaining('配置已保存，但刷新失败') })
+    expect(toasts.value[toasts.value.length - 1]).toMatchObject({ type: 'warning', message: expect.stringContaining('配置已保存，但刷新失败') })
   })
 })

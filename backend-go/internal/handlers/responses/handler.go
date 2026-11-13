@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/dialogue/session"
+	"github.com/insistanan/api-proxy/internal/handlers/common"
 	"github.com/insistanan/api-proxy/internal/handlers/hooks"
 	"github.com/insistanan/api-proxy/internal/handlers/proxycore"
 	"github.com/insistanan/api-proxy/internal/handlers/streams"
@@ -403,15 +404,10 @@ func parseResponsesItemMap(itemMap map[string]interface{}) types.ResponsesItem {
 
 	if rawToolUse, ok := itemMap["tool_use"].(map[string]interface{}); ok {
 		item.ToolUse = &types.ToolUse{
-			ID:    stringValue(rawToolUse["id"]),
-			Name:  stringValue(rawToolUse["name"]),
+			ID:    common.StringValue(rawToolUse["id"]),
+			Name:  common.StringValue(rawToolUse["name"]),
 			Input: rawToolUse["input"],
 		}
 	}
 	return item
-}
-
-func stringValue(value interface{}) string {
-	valueString, _ := value.(string)
-	return valueString
 }

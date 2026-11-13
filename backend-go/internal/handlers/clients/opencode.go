@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/handlers/common"
 )
 
 const openCodeSchemaURL = "https://opencode.ai/config.json"
@@ -108,8 +109,8 @@ func GetOpenCodeConfig() gin.HandlerFunc {
 			Path:       path,
 			Exists:     exists,
 			JSONC:      isJSONC(raw),
-			Model:      stringValue(root["model"]),
-			SmallModel: stringValue(root["small_model"]),
+			Model:      common.StringValue(root["model"]),
+			SmallModel: common.StringValue(root["small_model"]),
 			Providers:  openCodeProviderViews(objectValue(root["provider"])),
 			Revision:   sha256HexOrEmpty(raw),
 		}
@@ -408,17 +409,17 @@ func openCodeProviderViews(providers map[string]interface{}) []openCodeProviderV
 	for id, rawProvider := range providers {
 		provider := objectValue(rawProvider)
 		options := objectValue(provider["options"])
-		apiKey := stringValue(options["apiKey"])
+		apiKey := common.StringValue(options["apiKey"])
 		viewOptions := copyObject(options)
 		delete(viewOptions, "apiKey")
 		delete(viewOptions, "baseURL")
 		delete(viewOptions, "headers")
 		result = append(result, openCodeProviderView{
 			ID:            id,
-			Name:          stringValue(provider["name"]),
-			Protocol:      protocolForNPM(stringValue(provider["npm"])),
-			NPM:           stringValue(provider["npm"]),
-			BaseURL:       stringValue(options["baseURL"]),
+			Name:          common.StringValue(provider["name"]),
+			Protocol:      protocolForNPM(common.StringValue(provider["npm"])),
+			NPM:           common.StringValue(provider["npm"]),
+			BaseURL:       common.StringValue(options["baseURL"]),
 			APIKeyMasked:  maskOpenCodeSecret(apiKey),
 			APIKeyPresent: apiKey != "",
 			Headers:       stringMapValue(options["headers"]),
@@ -436,8 +437,8 @@ func openCodeModelViews(models map[string]interface{}) []openCodeModelView {
 		limits := objectValue(model["limit"])
 		result = append(result, openCodeModelView{
 			Key:          key,
-			APIModelID:   stringValue(model["id"]),
-			Name:         stringValue(model["name"]),
+			APIModelID:   common.StringValue(model["id"]),
+			Name:         common.StringValue(model["name"]),
 			ContextLimit: intValue(limits["context"]),
 			InputLimit:   intValue(limits["input"]),
 			OutputLimit:  intValue(limits["output"]),
@@ -453,7 +454,7 @@ func openCodeVariantViews(variants map[string]interface{}) map[string]openCodeVa
 	for name, rawVariant := range variants {
 		variant := objectValue(rawVariant)
 		result[name] = openCodeVariantView{
-			ReasoningEffort: stringValue(variant["reasoningEffort"]),
+			ReasoningEffort: common.StringValue(variant["reasoningEffort"]),
 		}
 	}
 	return result
@@ -615,8 +616,8 @@ func stringMapValue(value interface{}) map[string]string {
 	object := objectValue(value)
 	result := make(map[string]string, len(object))
 	for key, raw := range object {
-		if stringValue(raw) != "" {
-			result[key] = stringValue(raw)
+		if common.StringValue(raw) != "" {
+			result[key] = common.StringValue(raw)
 		}
 	}
 	return result
@@ -628,11 +629,6 @@ func copyObject(source map[string]interface{}) map[string]interface{} {
 		copy[key] = value
 	}
 	return copy
-}
-
-func stringValue(value interface{}) string {
-	stringValue, _ := value.(string)
-	return stringValue
 }
 
 func boolValue(value interface{}) bool {

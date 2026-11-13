@@ -227,8 +227,6 @@
     </fieldset>
 
     <AgentPromptCard agent="opencode" class="mt-5" />
-
-    <v-snackbar v-model="notice.visible" :color="notice.type" location="top right" :timeout="3500">{{ notice.message }}</v-snackbar>
   </div>
 </template>
 
@@ -243,7 +241,10 @@ import { useProxyProtocolPick, defaultQuickPickTypeOptions } from '@/composables
 import { filterProxyModelsByKind, importProxyModels, buildOpenCodeModel } from '@/composables/useChannelModelImport'
 import { PROTOCOL_DEFAULTS } from '@/composables/channelDefaults'
 import { useAuthStore } from '@/stores/auth'
+import { useToast } from '@/composables/useToast'
 import { parseJSONObject } from '@/utils/parseJSONObject'
+
+const { showToast } = useToast()
 
 interface EditableVariant {
   name: string
@@ -314,7 +315,6 @@ const loadError = ref('')
 const config = ref<OpenCodeConfig | null>(null)
 const providers = ref<EditableProvider[]>([])
 const selectedProviderId = ref('')
-const notice = ref({ visible: false, type: 'success', message: '' })
 
 // 连接本代理（协议选择）
 const quickPickTypeOptions = defaultQuickPickTypeOptions
@@ -349,7 +349,7 @@ const applyProtocol = async (type: ApiTab, defaultBaseUrl: Promise<string>) => {
       provider.apiKeyAction = 'replace'
     }
   } catch (error) {
-    notice.value = { visible: true, type: 'error', message: error instanceof Error ? error.message : '连接本代理失败' }
+    showToast(error instanceof Error ? error.message : '连接本代理失败', 'error')
   } finally {
     preparingProvider.value = false
   }
@@ -503,7 +503,7 @@ const importProxyModelsToProvider = async () => {
     const response = await api.getProxyModels(type)
     const modelIds = filterProxyModelsByKind(response.data, type)
     if (modelIds.length === 0) {
-      notice.value = { visible: true, type: 'error', message: `本代理 ${type} 协议分组下暂无模型，请先在渠道管理中配置分组` }
+      showToast(`本代理 ${type} 协议分组下暂无模型，请先在渠道管理中配置分组`, 'error')
       return
     }
     const count = importProxyModels(type, modelIds, buildOpenCodeModel, (models) => {
@@ -521,9 +521,9 @@ const importProxyModelsToProvider = async () => {
         optionsText: ''
       }))
     })
-    notice.value = { visible: true, type: 'success', message: `已导入本代理 ${type} 分组的 ${count} 个模型（已替换原有模型）` }
+    showToast(`已导入本代理 ${type} 分组的 ${count} 个模型（已替换原有模型）`, 'success')
   } catch (importError) {
-    notice.value = { visible: true, type: 'error', message: importError instanceof Error ? importError.message : '获取本代理模型列表失败' }
+    showToast(importError instanceof Error ? importError.message : '获取本代理模型列表失败', 'error')
   } finally {
     preparingProvider.value = false
   }
@@ -610,15 +610,15 @@ const saveConfig = async () => {
     const payload = { providers: providers.value.map(prepareProvider), revision: config.value.revision }
     const response = await api.saveOpenCodeConfig(payload)
     config.value.revision = response.revision
-    notice.value = { visible: true, type: 'success', message: `已保存到 ${response.path}` }
+    showToast(`已保存到 ${response.path}`, 'success')
     try {
       applyLoadedConfig(await api.getOpenCodeConfig())
     } catch (error) {
-      notice.value = { visible: true, type: 'warning', message: `配置已保存，但刷新失败: ${error instanceof Error ? error.message : '未知错误'}。请刷新查看实际状态，请勿重复提交` }
+      showToast(`配置已保存，但刷新失败: ${error instanceof Error ? error.message : '未知错误'}。请刷新查看实际状态，请勿重复提交`, 'warning')
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : '保存 OpenCode 配置失败'
-    notice.value = { visible: true, type: 'error', message: `${message}。当前编辑已保留` }
+    showToast(`${message}。当前编辑已保留`, 'error')
   } finally {
     saving.value = false
   }

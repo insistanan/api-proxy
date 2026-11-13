@@ -141,58 +141,6 @@ func TestProcessStreamEventPreservesTrustedCacheUsage(t *testing.T) {
 	}
 }
 
-func TestStripCacheFieldsFromClaudeSSE(t *testing.T) {
-	t.Run("strips cache creation fields from nested message.usage", func(t *testing.T) {
-		event := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":5,\"cache_creation_5m_input_tokens\":2,\"cache_creation_1h_input_tokens\":3,\"cache_ttl\":\"1h\",\"cache_read_input_tokens\":7}}}\n\n"
-		got := StripCacheFieldsFromClaudeSSE(event)
-		data, ok := ParseSSEEventData(got)
-		if !ok {
-			t.Fatalf("剥离后应仍是可解析的 SSE 事件: %q", got)
-		}
-		usage := data["message"].(map[string]interface{})["usage"].(map[string]interface{})
-		for _, key := range []string{"cache_creation_input_tokens", "cache_creation_5m_input_tokens", "cache_creation_1h_input_tokens", "cache_ttl"} {
-			if _, exists := usage[key]; exists {
-				t.Fatalf("%s 应被剥离", key)
-			}
-		}
-		if usage["input_tokens"] != float64(10) {
-			t.Fatalf("input_tokens 应保留, got %v", usage["input_tokens"])
-		}
-		if usage["cache_read_input_tokens"] != float64(7) {
-			t.Fatalf("cache_read_input_tokens 必须保留（客户端据此判断缓存上下文）, got %v", usage["cache_read_input_tokens"])
-		}
-	})
-
-	t.Run("strips cache fields from top-level usage", func(t *testing.T) {
-		event := "data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":3,\"cache_creation_input_tokens\":9}}\n\n"
-		got := StripCacheFieldsFromClaudeSSE(event)
-		data, ok := ParseSSEEventData(got)
-		if !ok {
-			t.Fatalf("解析失败: %q", got)
-		}
-		usage := data["usage"].(map[string]interface{})
-		if _, exists := usage["cache_creation_input_tokens"]; exists {
-			t.Fatal("顶层 usage 的 cache_creation_input_tokens 应被剥离")
-		}
-		if usage["output_tokens"] != float64(3) {
-			t.Fatalf("output_tokens 应保留, got %v", usage["output_tokens"])
-		}
-	})
-
-	t.Run("returns event without cache fields byte-identical", func(t *testing.T) {
-		event := "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
-		if got := StripCacheFieldsFromClaudeSSE(event); got != event {
-			t.Fatalf("不含缓存字段的事件应逐字节原样返回:\nwant %q\ngot  %q", event, got)
-		}
-	})
-
-	t.Run("empty event stays empty", func(t *testing.T) {
-		if got := StripCacheFieldsFromClaudeSSE(""); got != "" {
-			t.Fatalf("空事件应原样返回, got %q", got)
-		}
-	})
-}
-
 func TestIsStreamErrorEvent(t *testing.T) {
 	cases := []struct {
 		name    string
