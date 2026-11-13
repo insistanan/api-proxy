@@ -106,6 +106,12 @@ type githubTreeEntry struct {
 	Size int64  `json:"size"`
 }
 
+// remoteSkillFile 是 Skill 包内的文件及其相对 Skill 根目录的路径。
+type remoteSkillFile struct {
+	entry    githubTreeEntry
+	relative string
+}
+
 // SearchSkills 对接 skills.sh 的公开搜索接口。搜索由后端发起，避免浏览器端的 CORS 和网络错误分散处理。
 func (s *SkillsAPI) Search() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -261,15 +267,9 @@ func loadRemoteSkill(ctx context.Context, id string) (*remoteSkillPackage, error
 		return nil, err
 	}
 
-	fileEntries := make([]githubTreeEntry, 0)
-	for _, entry := range tree.Tree {
-		if entry.Type != "blob" || (entry.Path != skillFile && !strings.HasPrefix(entry.Path, skillRoot+"/")) {
-			continue
-		}
-		if !validRemoteRelativePath(strings.TrimPrefix(entry.Path, skillRoot+"/")) && entry.Path != skillFile {
-			return nil, fmt.Errorf("远程 Skill 包含无效文件路径: %s", entry.Path)
-		}
-		fileEntries = append(fileEntries, entry)
+	fileEntries, err := collectRemoteSkillFiles(tree.Tree, skillFile, skillRoot)
+	if err != nil {
+		return nil, err
 	}
 	if len(fileEntries) == 0 {
 		return nil, errors.New("远程 Skill 没有可安装的文件")
@@ -282,18 +282,12 @@ func loadRemoteSkill(ctx context.Context, id string) (*remoteSkillPackage, error
 	fileInfo := make([]remoteSkillFileInfo, 0, len(fileEntries))
 	var totalSize int64
 	containsScripts := false
-	for _, entry := range fileEntries {
-		relative := "SKILL.md"
-		if entry.Path != skillFile {
-			relative = strings.TrimPrefix(entry.Path, skillRoot+"/")
-		}
-		if relative == "" || !validRemoteRelativePath(relative) {
-			return nil, fmt.Errorf("远程 Skill 包含无效文件路径: %s", entry.Path)
-		}
-		if entry.Size > maxRemoteSkillFileBytes {
+	for _, file := range fileEntries {
+		relative := file.relative
+		if file.entry.Size > maxRemoteSkillFileBytes {
 			return nil, fmt.Errorf("远程 Skill 文件过大: %s", relative)
 		}
-		content, err := fetchRemoteFile(ctx, owner, repository, branch, entry.Path)
+		content, err := fetchRemoteFile(ctx, owner, repository, branch, file.entry.Path)
 		if err != nil {
 			return nil, fmt.Errorf("下载远程文件 %s 失败: %w", relative, err)
 		}
@@ -303,7 +297,8 @@ func loadRemoteSkill(ctx context.Context, id string) (*remoteSkillPackage, error
 		}
 		files[relative] = content
 		fileInfo = append(fileInfo, remoteSkillFileInfo{Path: relative, Size: int64(len(content))})
-		if strings.HasPrefix(strings.ToLower(relative), "scripts/") || strings.Contains(strings.ToLower(relative), "/scripts/") {
+		lower := strings.ToLower(relative)
+		if strings.HasPrefix(lower, "scripts/") || strings.Contains(lower, "/scripts/") {
 			containsScripts = true
 		}
 	}
@@ -319,7 +314,7 @@ func loadRemoteSkill(ctx context.Context, id string) (*remoteSkillPackage, error
 	if repositoryURL == "" {
 		repositoryURL = "https://github.com/" + owner + "/" + repository
 	}
-	skillURL := repositoryURL + "/tree/" + escapeURLPath(branch) + "/" + escapeURLPath(skillRoot)
+	skillURL := remoteSkillTreeURL(repositoryURL, branch, skillRoot)
 	license := ""
 	if repositoryInfo.License != nil {
 		license = strings.TrimSpace(repositoryInfo.License.SPDXID)
@@ -373,9 +368,10 @@ func findRemoteSkillFile(tree []githubTreeEntry, requestedPath string) (string, 
 		}
 	}
 	suffix := "/" + requestedPath + "/SKILL.md"
+	lowerSuffix := strings.ToLower(suffix)
 	matched := ""
 	for _, entry := range tree {
-		if entry.Type != "blob" || !strings.HasSuffix(strings.ToLower(entry.Path), strings.ToLower(suffix)) {
+		if entry.Type != "blob" || !strings.HasSuffix(strings.ToLower(entry.Path), lowerSuffix) {
 			continue
 		}
 		if matched == "" || len(entry.Path) < len(matched) {
@@ -385,7 +381,64 @@ func findRemoteSkillFile(tree []githubTreeEntry, requestedPath string) (string, 
 	if matched != "" {
 		return matched, pathpkg.Dir(matched), nil
 	}
+
+	// skills.sh 的第三段是 Skill slug，不保证等于仓库内目录名。单技能仓库的
+	// SKILL.md 可能位于根目录或任意目录（例如 skill/），此时全仓库只有一个
+	// SKILL.md，可以无歧义地回退到它。
+	skillFiles := make([]string, 0, 1)
+	for _, entry := range tree {
+		if entry.Type == "blob" && strings.EqualFold(pathpkg.Base(entry.Path), "SKILL.md") {
+			skillFiles = append(skillFiles, entry.Path)
+		}
+	}
+	if len(skillFiles) == 1 {
+		return skillFiles[0], pathpkg.Dir(skillFiles[0]), nil
+	}
+	if len(skillFiles) > 1 {
+		return "", "", fmt.Errorf("GitHub 仓库中存在多个 SKILL.md，无法确定 %s 对应的 Skill 目录；请直接上传 ZIP", requestedPath)
+	}
 	return "", "", fmt.Errorf("GitHub 仓库中找不到 %s/SKILL.md", requestedPath)
+}
+
+// collectRemoteSkillFiles 收集 Skill 包内的文件并计算相对 Skill 根目录的路径。
+// 根目录用 "." 表示，此时仓库内所有 blob 都属于该 Skill；普通目录只收集其子树。
+func collectRemoteSkillFiles(tree []githubTreeEntry, skillFile, skillRoot string) ([]remoteSkillFile, error) {
+	prefix := ""
+	if skillRoot != "" && skillRoot != "." {
+		prefix = skillRoot + "/"
+	}
+	files := make([]remoteSkillFile, 0)
+	for _, entry := range tree {
+		if entry.Type != "blob" {
+			continue
+		}
+		var relative string
+		switch {
+		case entry.Path == skillFile:
+			relative = "SKILL.md"
+		case prefix == "":
+			relative = entry.Path
+		case strings.HasPrefix(entry.Path, prefix):
+			relative = strings.TrimPrefix(entry.Path, prefix)
+		default:
+			continue
+		}
+		if !validRemoteRelativePath(relative) {
+			return nil, fmt.Errorf("远程 Skill 包含无效文件路径: %s", entry.Path)
+		}
+		files = append(files, remoteSkillFile{entry: entry, relative: relative})
+	}
+	return files, nil
+}
+
+// remoteSkillTreeURL 生成 Skill 在仓库中的目录链接。根目录 Skill 直接指向仓库树，
+// 避免拼出 /tree/main/. 这类无效地址。
+func remoteSkillTreeURL(repositoryURL, branch, skillRoot string) string {
+	target := repositoryURL + "/tree/" + escapeURLPath(branch)
+	if skillRoot == "" || skillRoot == "." {
+		return target
+	}
+	return target + "/" + escapeURLPath(skillRoot)
 }
 
 func validRemoteRelativePath(value string) bool {

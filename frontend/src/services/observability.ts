@@ -15,6 +15,7 @@ import type {
   LogCallFilters,
   LogCallsResponse,
   LogDatesResponse,
+  LogStorageStatus,
   LogConversationsResponse,
   LogConversationRequestsResponse,
   PurgeLogsResult,
@@ -25,6 +26,9 @@ import type {
 } from '@/types'
 
 export const observabilityApi = {
+  async getLogStorageStatus(): Promise<LogStorageStatus> {
+    return apiRequest('/logs/storage')
+  },
   async getLogCalls(params: LogCallFilters & { cursor?: string; limit?: number } = {}): Promise<LogCallsResponse> {
     const search = new URLSearchParams()
     for (const key of ['type', 'q', 'status', 'from', 'to', 'cursor'] as const) {

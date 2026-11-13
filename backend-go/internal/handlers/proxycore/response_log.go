@@ -1,25 +1,23 @@
-// 普通日志只在 debug 级别打印正文；结构化流量记录由发送层统一采集。
+// 普通日志在 debug 级别输出正文定位信息；正文与头部统一由结构化流量采集管理保留期。
 package proxycore
 
 import (
+	"context"
 	"log"
 	"net/http"
 
 	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/storage/logger"
 )
 
 func LogResponseDetails(resp *http.Response, body []byte, envCfg *config.EnvConfig, apiType string) {
-	if !envCfg.Current().EnableResponseLogs || !envCfg.ShouldLog("debug") {
+	ctx := context.Background()
+	if resp.Request != nil {
+		ctx = resp.Request.Context()
+	}
+	policy := capturePolicy(ctx, envCfg)
+	if policy.BodyState(true) != "" || !envCfg.ShouldLog("debug") {
 		return
 	}
-	log.Printf("[%s-Response] 响应头:\n%s", apiType, logger.MaskedHeaderJSON(resp.Header))
-	var formatted string
-	if envCfg.RawLogOutput {
-		formatted = utils.FormatJSONBytesRaw(body)
-	} else {
-		formatted = utils.FormatJSONBytesForLog(body, 500)
-	}
-	log.Printf("[%s-Response] 响应体:\n%s", apiType, formatted)
+	log.Printf("[%s-Response] requestId=%s attemptId=%s 状态=%d 正文=%d 字节；正文与响应头见结构化日志", apiType, logger.RequestIDFromContext(ctx), logger.AttemptIDFromContext(ctx), resp.StatusCode, len(body))
 }

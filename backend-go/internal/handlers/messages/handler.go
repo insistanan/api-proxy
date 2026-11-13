@@ -94,6 +94,7 @@ func handleNormalResponse(
 	upstream *config.UpstreamConfig,
 	apiKey string,
 ) (*types.Usage, error) {
+	envCfg = proxycore.RequestLogEnv(c, envCfg)
 	defer resp.Body.Close()
 
 	bodyBytes, err := io.ReadAll(resp.Body)

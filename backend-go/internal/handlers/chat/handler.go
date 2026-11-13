@@ -304,6 +304,7 @@ func buildChatCompletionsURL(baseURL string, useFullURL ...bool) string {
 }
 
 func handleSuccess(c *gin.Context, resp *http.Response, envCfg *config.EnvConfig, startTime time.Time, isStream bool, originalBody []byte) (*types.Usage, error) {
+	envCfg = proxycore.RequestLogEnv(c, envCfg)
 	defer resp.Body.Close()
 
 	if isStream {

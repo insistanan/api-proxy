@@ -93,14 +93,19 @@ func RunProxyRequest(
 	}
 
 	startTime := time.Now()
+	bindCapturePolicy(c, envCfg)
+	envCfg = RequestLogEnv(c, envCfg)
 	c.Request = c.Request.WithContext(upstreamcontrol.WithScope(c.Request.Context()))
 
 	// 2. 读取请求体
+	requestID := BindRequestLogID(c)
 	bodyBytes, err := ReadRequestBody(c, envCfg.Current().MaxRequestBodySize)
 	if err != nil {
+		state := newRequestLifecycle(c, nil, startTime)
+		state.ErrorType, state.ErrorMessage = "request_body", truncateLogMessage(err.Error(), 500)
+		finishRequestLifecycle(c, envCfg, spec.LogName, state)
 		return
 	}
-	requestID := BindRequestLogID(c)
 	requestState := newRequestLifecycle(c, bodyBytes, startTime)
 	defer finishRequestLifecycle(c, envCfg, spec.LogName, requestState)
 
@@ -116,6 +121,8 @@ func RunProxyRequest(
 	// 3. 解析请求
 	model, stream, prompts, ok := spec.ParseRequest(c, bodyBytes)
 	if !ok {
+		requestState.ErrorType = "invalid_request"
+		requestState.ErrorMessage = "请求参数或协议格式校验失败，网关已拒绝转发"
 		return
 	}
 	// 两种支持伪装的入口都提供完整开关，转换器按实际目标选择身份。
@@ -153,7 +160,11 @@ func RunProxyRequest(
 		}
 		MarkConversationFailure(channelScheduler, conversationID, spec.Kind, err)
 		MarkConversationComplete(channelScheduler, conversationID, spec.Kind)
-		handleContentSafetyPreparationError(c, spec.LogName, err)
+		status := handleContentSafetyPreparationError(c, spec.LogName, err)
+		requestState.ErrorType, requestState.ErrorMessage = "content_safety", truncateLogMessage(err.Error(), 500)
+		if status == http.StatusForbidden {
+			requestState.Status = "blocked"
+		}
 		return
 	}
 	if preparedBody, ok := hooks.PreparedRequestBody(c.Request); ok {
@@ -196,7 +207,7 @@ func RunProxyRequest(
 
 	// 5. 记录原始请求
 	requestState.ConversationID = conversationID
-	if len(prompts) > 0 {
+	if len(prompts) > 0 && capturePolicy(c.Request.Context(), envCfg).BodyState(false) == "" {
 		requestState.PromptPreview = logger.LogPreview(prompts[0], 160)
 	}
 	recordRequestLifecycle(c, envCfg, spec.LogName, logger.PhaseRequestStart, requestState)
@@ -218,6 +229,7 @@ func RunProxyRequest(
 	if !config.IsFreeModel(model) && !IsQuickTestRequest(c, bodyBytes) {
 		releaseIntent, routeErr := prepareIntentRoute(c, cfgManager, channelScheduler, spec.Kind, bodyBytes, conversationID, requestID, explicitIndex)
 		if routeErr != nil {
+			requestState.ErrorType, requestState.ErrorMessage = "intent_route", truncateLogMessage(routeErr.Error(), 500)
 			MarkConversationFailure(channelScheduler, conversationID, spec.Kind, routeErr)
 			intentRouteError(c, routeErr)
 			return
@@ -225,6 +237,7 @@ func RunProxyRequest(
 		defer releaseIntent()
 	}
 	if err := validateFreeRoute(c, cfgManager, spec.Kind, model, explicitIndex); err != nil {
+		requestState.ErrorType, requestState.ErrorMessage = "route_validation", truncateLogMessage(err.Error(), 500)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "FREE_CHANNEL_ROUTE"})
 		return
 	}

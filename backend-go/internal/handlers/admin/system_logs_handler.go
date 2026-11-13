@@ -29,6 +29,8 @@ func writeLogPageError(c *gin.Context, err error) {
 		status = http.StatusBadRequest
 	} else if errors.Is(err, logger.ErrLogGroupNotFound) {
 		status = http.StatusNotFound
+	} else if errors.Is(err, logger.ErrLogDetailTooLarge) {
+		status = http.StatusRequestEntityTooLarge
 	}
 	c.JSON(status, gin.H{"error": err.Error()})
 }
@@ -175,6 +177,17 @@ func GetRuntimeLogs(store *logger.Store) gin.HandlerFunc {
 	}
 }
 
+func GetLogStorageStatus(store *logger.Store) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		status, err := store.GetStorageStatus(c.Request.Context())
+		if err != nil {
+			writeLogPageError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, status)
+	}
+}
+
 func GetSystemLogs(store *logger.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		limit := 100
@@ -218,7 +231,7 @@ func GetSystemLog(store *logger.Store) gin.HandlerFunc {
 		}
 		detail, err := store.GetSystemLogDetail(c.Request.Context(), requestID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load system log"})
+			writeLogPageError(c, err)
 			return
 		}
 		if detail == nil {

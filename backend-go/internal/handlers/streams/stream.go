@@ -158,6 +158,7 @@ func HandleStreamResponse(
 	requestBody []byte,
 	requestModel string,
 ) (*types.Usage, error) {
+	envCfg = proxycore.RequestLogEnv(c, envCfg)
 	defer utils.BindStreamBody(c.Request.Context(), resp.Body)()
 	stopVeto := hooks.BindAttachedStreamVeto(c, resp.Body)
 	defer stopVeto()

@@ -2,6 +2,7 @@ package proxycore
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 	"github.com/insistanan/api-proxy/internal/orchestration/availability"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"github.com/insistanan/api-proxy/internal/storage/logger"
 	"github.com/insistanan/api-proxy/internal/storage/metrics"
 	"github.com/stretchr/testify/require"
 )
@@ -36,8 +38,9 @@ func TestAvailabilityRecordsEachRetryBeforeFinalSuccess(t *testing.T) {
 			}))
 			defer server.Close()
 			upstream := &config.UpstreamConfig{ID: "availability-channel", Name: "测试", BaseURL: server.URL, APIKeys: []string{"key"}, ServiceType: "openai"}
+			c := newAttemptTestContext(context.Background())
 			result := runConfiguredAttempt(t, UpstreamAttempt{
-				Context: newAttemptTestContext(context.Background()), EnvConfig: &config.EnvConfig{LogLevel: "error"},
+				Context: c, EnvConfig: &config.EnvConfig{LogLevel: "error"},
 				ConfigManager: h.cfgManager, ChannelScheduler: h.channelScheduler, MetricsManager: h.metricsManager,
 				Kind: scheduler.ChannelKindMessages, APIType: "Messages", Upstream: upstream, RequestedModel: "model", RequestBody: []byte(`{}`),
 				URLResults: BuildDefaultURLResults(upstream.GetAllBaseURLs()), NextAPIKey: rotatingKeySelector,
@@ -53,6 +56,19 @@ func TestAvailabilityRecordsEachRetryBeforeFinalSuccess(t *testing.T) {
 			require.NotEmpty(t, result.SuccessKey)
 			require.Equal(t, int32(2), calls.Load())
 			require.NoError(t, store.Flush())
+			chain, err := store.GetLogCallAttempts(context.Background(), RequestLogID(c))
+			require.NoError(t, err)
+			require.Len(t, chain.Attempts, 2)
+			for _, payload := range chain.Attempts {
+				var entry metrics.RequestLogEntry
+				require.NoError(t, json.Unmarshal(payload, &entry))
+				require.NotNil(t, entry.UpstreamSent)
+				require.True(t, *entry.UpstreamSent)
+				require.NotNil(t, entry.ResponseHeadersMs)
+				require.GreaterOrEqual(t, *entry.ResponseHeadersMs, int64(0))
+				require.Positive(t, entry.StartedAt)
+				require.Positive(t, entry.UpstreamStatusCode)
+			}
 			rows, err := store.QueryAvailability(context.Background(), "messages", time.Now())
 			require.NoError(t, err)
 			counts := make(map[string]int64)
@@ -67,6 +83,31 @@ func TestAvailabilityRecordsEachRetryBeforeFinalSuccess(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestUnsentAttemptRecordsExplicitStateAndDuplicateCannotChangeLifecycle(t *testing.T) {
+	store := setupLifecycleLogStore(t)
+	c := newAttemptTestContext(context.Background())
+	id := BindRequestLogID(c)
+	c.Request = c.Request.WithContext(logger.ContextWithAttemptID(c.Request.Context(), "not-sent"))
+	state := newRequestLifecycle(c, []byte(`{}`), time.Now())
+	upstream := &config.UpstreamConfig{ID: "channel", BaseURL: "https://example.com", ServiceType: "openai"}
+	logs := AttemptLogContext{Model: "model", RequestLogStore: metrics.NewRequestLogStore(store)}
+	a := UpstreamAttempt{Context: c, Kind: scheduler.ChannelKindMessages, LogContext: logs}
+	a.beginAvailabilityObservation(upstream, "key")
+	recordAttemptLog(c, logs, upstream, "Messages", id, upstream.BaseURL, "key", "failed", 503, false, time.Now(), "local_admission", "队列已满", false, false, nil)
+	recordAttemptLog(c, logs, upstream, "Messages", id, upstream.BaseURL, "key", "completed", 200, true, time.Now(), "", "", false, false, nil)
+	require.Equal(t, "failed", state.Status)
+	require.NoError(t, store.Flush())
+	chain, err := store.GetLogCallAttempts(context.Background(), id)
+	require.NoError(t, err)
+	require.Len(t, chain.Attempts, 1)
+	var entry metrics.RequestLogEntry
+	require.NoError(t, json.Unmarshal(chain.Attempts[0], &entry))
+	require.NotNil(t, entry.UpstreamSent)
+	require.False(t, *entry.UpstreamSent)
+	require.Nil(t, entry.ResponseHeadersMs)
+	require.Zero(t, entry.UpstreamStatusCode)
 }
 
 func TestUnsentAttemptDoesNotCreateAvailabilityEvidence(t *testing.T) {

@@ -182,7 +182,7 @@ func TestSettingsTransactionsKeepSnapshotOnSaveFailure(t *testing.T) {
 		}},
 		{"settings", func(cm *ConfigManager) error {
 			settings := cm.GetSettings()
-			settings.Integration.CCSwitchPath = "changed"
+			settings.Assistant.Model = "changed"
 			return cm.UpdateSettings(settings)
 		}},
 	}

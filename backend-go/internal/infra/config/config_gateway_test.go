@@ -90,16 +90,57 @@ func TestGatewayRuntimeSnapshot(t *testing.T) {
 	cm := &ConfigManager{config: Config{Settings: SettingsConfig{Gateway: DefaultGatewaySettings()}}}
 	env := NewEnvConfig().WithSettings(cm)
 	first := env.Current()
+	fixed := env.Snapshot()
 	cm.mu.Lock()
 	cm.config.Settings.Gateway.EnableRequestLogs = false
 	cm.config.Settings.Gateway.StreamIdleTimeout = 900
+	cm.config.Settings.Gateway.LogCaptureMode = "metadata"
+	cm.config.Settings.Gateway.LogBodyLimitKB = 16
 	cm.mu.Unlock()
 	second := env.Current()
+	if fixed.Current().LogCaptureMode != "bounded" || fixed.Current().LogBodyLimitKB != 1024 || second.LogCaptureMode != "metadata" || second.LogBodyLimitKB != 16 {
+		t.Fatal("在途快照不能跟随采集策略热更新")
+	}
 	if !first.EnableRequestLogs || first.StreamIdleTimeout != 300 || second.EnableRequestLogs || second.StreamIdleTimeout != 900 {
 		t.Fatal("运行设置应读取新快照且不原地修改已有快照")
 	}
 	manual := &EnvConfig{EnableRequestLogs: true, StreamIdleTimeout: 45}
 	if manual.Current() != manual || manual.Current().StreamIdleTimeout != 45 {
 		t.Fatal("未绑定管理器的显式 EnvConfig 不应被全局设置覆盖")
+	}
+}
+
+func TestLogPolicyMigrationPreservesExistingCollection(t *testing.T) {
+	clearManagedEnv(t)
+	for _, enabled := range []bool{false, true} {
+		raw, err := json.Marshal(map[string]any{"settings": map[string]any{"gateway": map[string]any{"enableRequestLogs": enabled, "enableResponseLogs": enabled}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var candidate Config
+		if _, err := migrateManagedSettings(&candidate, raw); err != nil {
+			t.Fatal(err)
+		}
+		gateway := candidate.Settings.Gateway
+		if gateway.EnableRequestLogs != enabled || gateway.EnableResponseLogs != enabled || gateway.LogCaptureMode != "bounded" || gateway.LogBodyLimitKB != 1024 || gateway.LogRuntimeRetentionDays != 2 || gateway.LogCallRetentionDays != 2 || gateway.LogBodyRetentionDays != 2 || gateway.LogBudgetMB != 0 {
+			t.Fatalf("日志迁移改变原行为: %+v", gateway)
+		}
+	}
+}
+
+func TestRejectInvalidLogPolicy(t *testing.T) {
+	for _, change := range []func(*GatewaySettings){
+		func(s *GatewaySettings) { s.LogCaptureMode = "full" },
+		func(s *GatewaySettings) { s.LogBodyLimitKB = 2048 },
+		func(s *GatewaySettings) { s.LogBodyRetentionDays = 3 },
+		func(s *GatewaySettings) { s.LogCallRetentionDays = 0 },
+		func(s *GatewaySettings) { s.LogRuntimeRetentionDays = 366 },
+		func(s *GatewaySettings) { s.LogBudgetMB = 1 },
+	} {
+		settings := DefaultGatewaySettings()
+		change(&settings)
+		if err := ValidateGatewaySettings(settings); err == nil {
+			t.Fatalf("无效日志策略未被拒绝: %+v", settings)
+		}
 	}
 }

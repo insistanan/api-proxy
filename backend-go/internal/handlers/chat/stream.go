@@ -18,6 +18,7 @@ import (
 )
 
 func handleStreamSuccess(c *gin.Context, resp *http.Response, envCfg *config.EnvConfig, startTime time.Time) (*types.Usage, error) {
+	envCfg = proxycore.RequestLogEnv(c, envCfg)
 	stopVeto := hooks.BindAttachedStreamVeto(c, resp.Body)
 	defer stopVeto()
 	defer utils.BindStreamBody(c.Request.Context(), resp.Body)()

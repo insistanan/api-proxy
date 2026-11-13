@@ -146,6 +146,7 @@ func collectStrings(value interface{}, out *[]string) {
 }
 
 func handleSuccess(c *gin.Context, resp *http.Response, envCfg *config.EnvConfig, startTime time.Time, originalBody []byte) (*types.Usage, error) {
+	envCfg = proxycore.RequestLogEnv(c, envCfg)
 	defer resp.Body.Close()
 
 	bodyBytes, err := io.ReadAll(resp.Body)

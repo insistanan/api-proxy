@@ -40,15 +40,15 @@ func SendRequest(req *http.Request, upstream *config.UpstreamConfig, envCfg *con
 	if logger.AttemptIDFromContext(req.Context()) == "" {
 		req = req.WithContext(logger.ContextWithAttemptID(req.Context(), logger.NewRequestID()))
 	}
-	if upstream.InsecureSkipVerify && envCfg.Current().EnableRequestLogs {
+	policy := capturePolicy(req.Context(), envCfg)
+	req = req.WithContext(logger.ContextWithCapturePolicy(req.Context(), policy))
+	if upstream.InsecureSkipVerify && policy.Request {
 		log.Printf("[%s-Request-TLS] 警告: 正在跳过对 %s 的TLS证书验证", apiType, req.URL.String())
 	}
 
-	if envCfg.Current().EnableRequestLogs {
-		log.Printf("[%s-Request] requestId=%s attemptId=%s %s %s", apiType, logger.RequestIDFromContext(req.Context()), logger.AttemptIDFromContext(req.Context()), req.Method, req.URL.String())
-		if err := logRequestDetails(req, envCfg, apiType, isStream); err != nil {
-			return nil, err
-		}
+	log.Printf("[%s-Request] requestId=%s attemptId=%s %s %s", apiType, logger.RequestIDFromContext(req.Context()), logger.AttemptIDFromContext(req.Context()), req.Method, req.URL.String())
+	if err := logRequestDetails(req, envCfg, apiType, isStream); err != nil {
+		return nil, err
 	}
 
 	if requestTimeout <= 0 {
@@ -69,12 +69,10 @@ func SendRequest(req *http.Request, upstream *config.UpstreamConfig, envCfg *con
 		StreamLabel:        apiType,
 	})
 	if err != nil {
-		if envCfg.Current().EnableResponseLogs {
-			logger.RecordTraffic(logger.TrafficLog{
-				RequestID: logger.RequestIDFromContext(req.Context()), AttemptID: logger.AttemptIDFromContext(req.Context()),
-				Phase: logger.PhaseUpstreamError, APIType: apiType, Method: req.Method, URL: req.URL.String(), Body: err.Error(), Stream: isStream,
-			})
-		}
+		logger.RecordTrafficContext(req.Context(), logger.TrafficLog{
+			RequestID: logger.RequestIDFromContext(req.Context()), AttemptID: logger.AttemptIDFromContext(req.Context()),
+			Phase: logger.PhaseUpstreamError, APIType: apiType, Method: req.Method, URL: req.URL.String(), Body: err.Error(), Stream: isStream,
+		})
 		// 客户端创建失败（请求从未发出）：探测名额按中性归还，
 		// 不构成渠道故障证据；网络发送失败（请求已发出）由调用方收尾。
 		if strings.Contains(err.Error(), "创建上游 HTTP 客户端失败") && permit != nil {
@@ -84,7 +82,7 @@ func SendRequest(req *http.Request, upstream *config.UpstreamConfig, envCfg *con
 		return nil, err
 	}
 
-	if envCfg.Current().EnableResponseLogs && resp != nil && resp.Body != nil {
+	if resp != nil && resp.Body != nil {
 		requestID := logger.RequestIDFromContext(req.Context())
 		if requestID == "" {
 			requestID = logger.NewRequestID()
@@ -102,8 +100,8 @@ func SendRequest(req *http.Request, upstream *config.UpstreamConfig, envCfg *con
 			StatusCode:  resp.StatusCode,
 			Stream:      isStream,
 			HeadersJSON: logger.MaskedHeaderJSON(resp.Header),
-		})
-		logger.RecordTraffic(logger.TrafficLog{
+		}.WithCapturePolicy(policy))
+		logger.RecordTrafficContext(req.Context(), logger.TrafficLog{
 			RequestID: requestID, AttemptID: logger.AttemptIDFromContext(req.Context()), Phase: logger.PhaseUpstreamHeaders,
 			APIType: apiType, StatusCode: resp.StatusCode, Stream: isStream,
 		})
@@ -115,8 +113,13 @@ func SendRequest(req *http.Request, upstream *config.UpstreamConfig, envCfg *con
 // logRequestDetails 记录准备发送给上游的请求。鉴权头会做掩码处理，
 // 正文中的脱敏占位符会移除映射 ID，入库时还会省略图片和超大内容。
 // 敏感数据检测由内容安全管线负责；调用方根据 settings.gateway 中的开关启用日志。
-// RawLogOutput 决定 debug 日志中的正文按原始文本还是格式化 JSON 输出。
+// 运行日志只输出定位信息，避免正文副本绕过结构化日志的保留期。
 func logRequestDetails(req *http.Request, envCfg *config.EnvConfig, apiType string, isStream bool) error {
+	policy := capturePolicy(req.Context(), envCfg)
+	if policy.BodyState(false) != "" {
+		logger.RecordTrafficContext(req.Context(), logger.TrafficLog{RequestID: logger.RequestIDFromContext(req.Context()), AttemptID: logger.AttemptIDFromContext(req.Context()), Phase: logger.PhaseUpstreamRequest, APIType: apiType, Method: req.Method, URL: req.URL.String(), Stream: isStream, OriginalBytes: int(max(0, req.ContentLength))})
+		return nil
+	}
 	// 对请求头做敏感信息脱敏
 	reqHeaders := make(map[string]string)
 	for key, values := range req.Header {
@@ -132,7 +135,7 @@ func logRequestDetails(req *http.Request, envCfg *config.EnvConfig, apiType stri
 		reqHeadersJSON, _ = json.MarshalIndent(maskedReqHeaders, "", "  ")
 	}
 	if envCfg.ShouldLog("debug") {
-		log.Printf("[%s-Request-Headers] 实际请求头:\n%s", apiType, string(reqHeadersJSON))
+		log.Printf("[%s-Request-Headers] requestId=%s attemptId=%s 请求头已掩码保存到结构化日志", apiType, logger.RequestIDFromContext(req.Context()), logger.AttemptIDFromContext(req.Context()))
 	}
 
 	if req.Body != nil {
@@ -142,14 +145,14 @@ func logRequestDetails(req *http.Request, envCfg *config.EnvConfig, apiType stri
 			originalBytes int
 			truncated     bool
 		)
-		if req.ContentLength > logger.MaxBodyBytes {
+		if req.ContentLength > int64(policy.BodyLimit) {
 			// 长度已知的超大正文无需读取；日志不消费实际转发的 reader。
 			originalBytes = int(req.ContentLength)
-			preparedBody = logger.OmittedBody(originalBytes)
+			preparedBody = logger.OmittedBodyWithLimit(originalBytes, policy.BodyLimit)
 			truncated = true
 		} else if prepared, ok := hooks.PreparedRequestBody(req); ok {
 			bodyBytes = prepared
-			preparedBody, originalBytes, truncated = logger.PrepareBody(bodyBytes)
+			preparedBody, originalBytes, truncated = logger.PrepareBodyWithLimit(bodyBytes, policy.BodyLimit)
 		} else {
 			reader := req.Body
 			if req.GetBody != nil {
@@ -165,7 +168,7 @@ func logRequestDetails(req *http.Request, envCfg *config.EnvConfig, apiType stri
 				reader = copyReader
 			}
 			var err error
-			bodyBytes, err = io.ReadAll(io.LimitReader(reader, logger.MaxBodyBytes+1))
+			bodyBytes, err = io.ReadAll(io.LimitReader(reader, int64(policy.BodyLimit)+1))
 			if req.GetBody != nil {
 				_ = reader.Close()
 			} else {
@@ -176,31 +179,23 @@ func logRequestDetails(req *http.Request, envCfg *config.EnvConfig, apiType stri
 				_ = req.Body.Close()
 				return fmt.Errorf("读取上游请求正文失败: %w", err)
 			}
-			if len(bodyBytes) > logger.MaxBodyBytes {
+			if len(bodyBytes) > policy.BodyLimit {
 				// 只读取了前缀，不能把其长度冒充原始正文大小。
-				preparedBody = logger.OmittedBody(0)
+				preparedBody = logger.OmittedBodyWithLimit(0, policy.BodyLimit)
 				truncated = true
 			} else {
-				preparedBody, originalBytes, truncated = logger.PrepareBody(bodyBytes)
+				preparedBody, originalBytes, truncated = logger.PrepareBodyWithLimit(bodyBytes, policy.BodyLimit)
 			}
 		}
 		if envCfg.ShouldLog("debug") {
-			var formattedBody string
-			if truncated {
-				formattedBody = preparedBody
-			} else if envCfg.RawLogOutput {
-				formattedBody = utils.FormatJSONBytesRaw(bodyBytes)
-			} else {
-				formattedBody = utils.FormatJSONBytesForLog(bodyBytes, 500)
-			}
-			log.Printf("[%s-Request-Body] 实际请求体:\n%s", apiType, formattedBody)
+			log.Printf("[%s-Request-Body] requestId=%s attemptId=%s 原始正文 %d 字节，截断=%t；正文见结构化日志", apiType, logger.RequestIDFromContext(req.Context()), logger.AttemptIDFromContext(req.Context()), originalBytes, truncated)
 		}
 		requestID := logger.RequestIDFromContext(req.Context())
 		urlText := ""
 		if req.URL != nil {
 			urlText = req.URL.String()
 		}
-		logger.RecordTraffic(logger.TrafficLog{
+		logger.RecordTrafficContext(req.Context(), logger.TrafficLog{
 			RequestID:   requestID,
 			AttemptID:   logger.AttemptIDFromContext(req.Context()),
 			Stream:      isStream,

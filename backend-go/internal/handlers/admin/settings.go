@@ -2,6 +2,7 @@
 package admin
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -23,9 +24,8 @@ func UpdateSettings(cfgManager *config.ConfigManager) gin.HandlerFunc {
 		var req struct {
 			Network       *config.NetworkSettings     `json:"network"`
 			ContentSafety *config.ContentSafetyConfig `json:"contentSafety"`
-			Integration   *config.IntegrationSettings `json:"integration"`
 			Disguise      *config.DisguiseSettings    `json:"disguise"`
-			Gateway       *config.GatewaySettings     `json:"gateway"`
+			Gateway       *json.RawMessage            `json:"gateway"`
 			Assistant     *config.AssistantSettings   `json:"assistant"`
 			Prompts       *config.PromptSettings      `json:"prompts"`
 		}
@@ -33,7 +33,7 @@ func UpdateSettings(cfgManager *config.ConfigManager) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的设置参数"})
 			return
 		}
-		if req.Network == nil && req.ContentSafety == nil && req.Integration == nil && req.Disguise == nil && req.Gateway == nil && req.Assistant == nil && req.Prompts == nil {
+		if req.Network == nil && req.ContentSafety == nil && req.Disguise == nil && req.Gateway == nil && req.Assistant == nil && req.Prompts == nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "至少需要提交一个设置分类"})
 			return
 		}
@@ -54,10 +54,6 @@ func UpdateSettings(cfgManager *config.ConfigManager) gin.HandlerFunc {
 			}
 			settings.ContentSafety = *req.ContentSafety
 		}
-		if req.Integration != nil {
-			req.Integration.CCSwitchPath = strings.TrimSpace(req.Integration.CCSwitchPath)
-			settings.Integration = *req.Integration
-		}
 		if req.Disguise != nil {
 			req.Disguise.ClaudeCodeVersion = strings.TrimSpace(req.Disguise.ClaudeCodeVersion)
 			req.Disguise.CodexVersion = strings.TrimSpace(req.Disguise.CodexVersion)
@@ -68,11 +64,16 @@ func UpdateSettings(cfgManager *config.ConfigManager) gin.HandlerFunc {
 			}
 		}
 		if req.Gateway != nil {
-			if err := config.ValidateGatewaySettings(*req.Gateway); err != nil {
+			gateway := settings.Gateway
+			if err := json.Unmarshal(*req.Gateway, &gateway); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求与日志设置"})
+				return
+			}
+			if err := config.ValidateGatewaySettings(gateway); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 				return
 			}
-			settings.Gateway = *req.Gateway
+			settings.Gateway = gateway
 		}
 		if req.Assistant != nil {
 			req.Assistant.Model = strings.TrimSpace(req.Assistant.Model)

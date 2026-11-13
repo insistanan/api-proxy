@@ -66,12 +66,32 @@ func TestCleanupDeletesOlderThanYesterday(t *testing.T) {
 	}
 }
 
+// waitInitialCleanup 等待 Open 启动的后台清理跑完首轮。
+// 首轮会写入清理跳过窗口，测试若与它并发，手工清理会因跳过窗口而拿不到真实结果。
+func waitInitialCleanup(t *testing.T, store *Store) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		store.statusMu.Lock()
+		done := store.maintenance.LastCleanupAt != ""
+		store.statusMu.Unlock()
+		if done {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("等待后台清理首轮完成超时")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestCleanupFailureDoesNotBlockOtherTables(t *testing.T) {
 	store, err := Open(filepath.Join(t.TempDir(), "logs.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
+	waitInitialCleanup(t, store)
 
 	old := RetentionCutoff(time.Now()).Add(-time.Hour)
 	if err := store.RecordAppLog(AppLog{UnixMilli: old.UnixMilli(), Message: "old"}); err != nil {
@@ -463,6 +483,71 @@ func TestLogWriteRecoversAndRetriesAcceptedEntry(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("原先已接收的记录应恢复落库一次，实际 %d 次", count)
+	}
+	status, err := store.GetStorageStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Queue.WriteFailures == 0 || status.Queue.WriteRecoveries != 1 || status.Queue.PendingEntries != 0 || status.Queue.LastRecoveryAt == "" {
+		t.Fatalf("故障恢复状态不完整: %+v", status.Queue)
+	}
+}
+
+func TestQueueRejectsCongestionWithinBudgetAndKeepsAcceptedEntry(t *testing.T) {
+	store := &Store{queue: make(chan queuedWrite, 1), spaceReady: make(chan struct{}), flushWaiters: make(map[chan error]struct{})}
+	first := queuedWrite{kind: writeApp, app: AppLog{Message: "已接收"}}
+	if err := store.enqueue(first); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if err := store.enqueueContext(ctx, queuedWrite{kind: writeApp, app: AppLog{Message: "未接收"}}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("拥堵必须明确返回超时，实际 %v", err)
+	}
+	if store.queueStatus.AcceptedWrites != 1 || store.queueStatus.RejectedWrites != 1 || store.queueStatus.PendingEntries != 1 || store.queueStatus.LastRejectedError == "" {
+		t.Fatalf("队列状态错误: %+v", store.queueStatus)
+	}
+	accepted := <-store.queue
+	if accepted.app.Message != "已接收" {
+		t.Fatal("拥堵不能替换已接收记录")
+	}
+	store.completeBatch([]queuedWrite{accepted}, nil)
+	if store.queueBytes != 0 || store.queueStatus.PendingEntries != 0 {
+		t.Fatal("完成写入后必须释放队列配额")
+	}
+}
+
+func TestQueueEntryLimitIncludesInFlightBatch(t *testing.T) {
+	store := &Store{queue: make(chan queuedWrite, 1), spaceReady: make(chan struct{}), flushWaiters: make(map[chan error]struct{})}
+	if err := store.enqueue(queuedWrite{kind: writeApp, app: AppLog{Message: "处理中"}}); err != nil {
+		t.Fatal(err)
+	}
+	processing := <-store.queue
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if err := store.enqueueContext(ctx, queuedWrite{kind: writeApp}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("处理中记录也应占用条数配额: %v", err)
+	}
+	store.completeBatch([]queuedWrite{processing}, nil)
+	if err := store.enqueue(queuedWrite{kind: writeApp}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFlushContextCancellationDoesNotLeaveWaiterOrWithdrawBarrier(t *testing.T) {
+	store := &Store{queue: make(chan queuedWrite, 1), spaceReady: make(chan struct{}), flushWaiters: make(map[chan error]struct{})}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if err := store.FlushContext(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Flush 应支持取消等待: %v", err)
+	}
+	if len(store.flushWaiters) != 0 {
+		t.Fatal("取消后的 Flush 不应泄漏等待者")
+	}
+	barrier := <-store.queue
+	store.completeBatch([]queuedWrite{barrier}, nil)
+	if store.queueBytes != 0 || store.queueStatus.RejectedWrites != 0 {
+		t.Fatal("取消 Flush 只中止等待，不应计为拒收日志")
 	}
 }
 

@@ -1,17 +1,17 @@
 // 本文件负责流式响应结束时的收尾：logStreamCompletion 输出完成/事件统计日志、
 // 触发隐式缓存推断，并把上游原始 usage 组装成 *types.Usage 返回；
-// logPartialResponse 处理上游中断时的部分内容日志；logSynthesizedContent 打印
+// logPartialResponse 处理上游中断时的部分内容日志；logSynthesizedContent 保存
 // StreamSynthesizer 的合成文本（合成不可用时回退打印原始 LogBuffer）。
 package streams
 
 import (
+	"context"
 	"log"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/insistanan/api-proxy/internal/storage/logger"
 )
@@ -71,6 +71,10 @@ func logPartialResponse(c *gin.Context, ctx *Context, envCfg *config.EnvConfig) 
 
 // logSynthesizedContent 记录合成内容
 func logSynthesizedContent(c *gin.Context, ctx *Context, debug bool) {
+	requestCtx := context.Background()
+	if c != nil && c.Request != nil {
+		requestCtx = c.Request.Context()
+	}
 	if ctx.Synthesizer != nil {
 		content := ctx.Synthesizer.GetSynthesizedContent()
 		if content != "" && !ctx.Synthesizer.IsParseFailed() {
@@ -85,7 +89,7 @@ func logSynthesizedContent(c *gin.Context, ctx *Context, debug bool) {
 			}
 
 			if debug {
-				log.Printf("[Messages-Stream] 上游流式响应合成内容:\n%s", utils.RedactSensitivePlaceholdersForLog(strings.TrimSpace(trimmed)))
+				log.Printf("[Messages-Stream] requestId=%s attemptId=%s 合成正文=%d 字节；正文见结构化日志", logger.RequestIDFromContext(requestCtx), logger.AttemptIDFromContext(requestCtx), len(strings.TrimSpace(trimmed)))
 			}
 			if c != nil {
 				logger.RecordStreamSynth(c.Request.Context(), "Messages", strings.TrimSpace(trimmed))
@@ -96,7 +100,7 @@ func logSynthesizedContent(c *gin.Context, ctx *Context, debug bool) {
 	if ctx.LogBuffer.Len() > 0 {
 		raw := ctx.LogBuffer.String()
 		if debug {
-			log.Printf("[Messages-Stream] 上游流式响应原始内容:\n%s", utils.RedactSensitivePlaceholdersForLog(raw))
+			log.Printf("[Messages-Stream] requestId=%s attemptId=%s 原始流=%d 字节；内容见结构化日志", logger.RequestIDFromContext(requestCtx), logger.AttemptIDFromContext(requestCtx), len(raw))
 		}
 		if c != nil {
 			logger.RecordStreamSynth(c.Request.Context(), "Messages", raw)

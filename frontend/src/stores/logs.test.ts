@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { api } from '@/services/api'
 import { useLogsStore } from './logs'
-import type { SystemLogDetail, SystemLogSummary } from '@/types/logs'
+import type { LogStorageStatus, SystemLogDetail, SystemLogSummary } from '@/types/logs'
 
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ apiKey: null, clearAuth: vi.fn() }) }))
 const summary = (id: string, version = 1, conversationId = 'one'): SystemLogSummary => ({ requestId: id, conversationId, timestamp: '', unixMilli: version, apiType: 'responses', phases: [], stream: false, truncated: false, status: 'completed' })
@@ -11,6 +11,41 @@ beforeEach(() => setActivePinia(createPinia()))
 afterEach(() => vi.restoreAllMocks())
 
 describe('日志详情缓存', () => {
+  it('正文过期清理使缓存失效，即使调用摘要未变化也重新加载', async () => {
+    const status: LogStorageStatus = { policy: { runtimeDays: 2, callDays: 7, bodyDays: 1, budgetMB: 0 }, usedBytes: 4096, freeBytes: 0, databaseBytes: 4096, walBytes: 0, bodyCapturePaused: false, maintenance: { deletedRows: 0, expiredBodies: 0 }, budgetEvents: [] }
+    const storage = vi.spyOn(api, 'getLogStorageStatus').mockResolvedValue(status)
+    const fetch = vi.spyOn(api, 'getSystemLog').mockResolvedValue(detail('one'))
+    const store = useLogsStore()
+    await store.loadStorageStatus()
+    await store.loadDetail('one', summary('one'))
+    storage.mockResolvedValue({ ...status, maintenance: { ...status.maintenance, expiredBodies: 1 } })
+    await store.loadStorageStatus()
+    await store.loadDetail('one', summary('one'))
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('强制刷新绕过清理前的未完成查询，旧正文不能覆盖刷新结果', async () => {
+    let resolve!: (_detail: SystemLogDetail) => void
+    const old = new Promise<SystemLogDetail>(done => { resolve = done })
+    const expired: SystemLogDetail = { ...detail('one'), trafficLogs: [{ requestId: 'one', timestamp: '', phase: 'client_request', bodyState: 'expired' }] }
+    vi.spyOn(api, 'getSystemLog').mockReturnValueOnce(old).mockResolvedValueOnce(expired)
+    const store = useLogsStore()
+    const pending = store.loadDetail('one')
+    await store.loadDetail('one', undefined, true)
+    resolve(detail('one'))
+    await pending
+    expect(store.details.one?.trafficLogs[0]?.bodyState).toBe('expired')
+  })
+
+  it('读取存储状态失败时显式报告错误并保留上次状态', async () => {
+    const fetch = vi.spyOn(api, 'getLogStorageStatus').mockRejectedValue(new Error('日志数据库不可读'))
+    const store = useLogsStore()
+    await store.loadStorageStatus()
+    expect(store.storageError).toContain('日志数据库不可读')
+    expect(store.storageLoading).toBe(false)
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
   it('相同版本复用并发请求与已完成正文，有变化时重新读取', async () => {
     const fetch = vi.spyOn(api, 'getSystemLog').mockResolvedValue(detail('one'))
     const store = useLogsStore()
@@ -72,6 +107,25 @@ describe('日志详情缓存', () => {
     await store.loadDetail('one', updated.summary)
     expect(fetch).toHaveBeenCalledTimes(2)
     expect(store.details.one!.summary.model).toBe('new-model')
+  })
+
+  it('补齐结束计时也会使缓存失效，零毫秒不是缺失值', async () => {
+    const fetch = vi.spyOn(api, 'getSystemLog').mockResolvedValue(detail('one'))
+    const store = useLogsStore()
+    await store.loadDetail('one', summary('one'))
+    const updated = { ...detail('one'), summary: { ...summary('one'), endedAt: 1, durationMs: 0 } }
+    fetch.mockResolvedValue(updated)
+    await store.loadDetail('one', updated.summary)
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(store.details.one!.summary.durationMs).toBe(0)
+  })
+
+  it('尝试指标也计入详情缓存预算', async () => {
+    const oversized: SystemLogDetail = { ...detail('one'), requestLogs: [{ requestId: 'one', attemptId: 'a', timestamp: '', apiType: 'messages', status: 'failed', success: false, durationMs: 1, channelIndex: 0, baseUrl: '', keyMask: '', retried: false, stream: false, errorMessage: 'x'.repeat(8 * 1024 * 1024) }] }
+    vi.spyOn(api, 'getSystemLog').mockResolvedValue(oversized)
+    const store = useLogsStore()
+    await expect(store.loadDetail('one')).rejects.toThrow('16 MiB')
+    expect(store.details.one).toBeUndefined()
   })
 
   it('超过正文预算显式报错并保留可重试状态', async () => {

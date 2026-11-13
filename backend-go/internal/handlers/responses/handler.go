@@ -102,6 +102,7 @@ func handleSuccess(
 	channelScheduler *scheduler.ChannelScheduler,
 	conversationID string,
 ) (*types.Usage, error) {
+	envCfg = proxycore.RequestLogEnv(c, envCfg)
 	defer resp.Body.Close()
 
 	isStream := originalReq != nil && originalReq.Stream

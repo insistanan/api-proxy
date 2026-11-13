@@ -180,7 +180,6 @@
                 :total="pool.channels.length"
                 :copied="copiedChannelIndex === element.index"
                 :can-delete="canDeleteChannel(element)"
-                :supports-ccs="supportsCcs"
                 @action="runMenuAction(element, $event)"
                 @move-top="move_to_top()"
                 @move-bottom="move_to_bottom()"
@@ -235,7 +234,6 @@
           :channel="channel"
           :copied="copiedChannelIndex === channel.index"
           :allow-reorder="false"
-          :supports-ccs="supportsCcs"
           @action="runMenuAction(channel, $event)"
           @delete="$emit('delete', channel.index)"
         />
@@ -267,17 +265,6 @@
       :api-type="channelType"
     />
 
-    <!-- CC Switch 导入弹窗 -->
-    <CcsImportModal
-      v-model="showCcsModal"
-      :channel="ccsModalChannel"
-      :channel-type="channelType"
-      :ccs-configured="ccsConfigured"
-      @imported="name => emit('success', `已调用 CC Switch 导入 ${name}，请在其确认框中确认`)"
-      @copied="emit('success', 'CCS 链接已复制，粘贴到浏览器地址栏回车即可唤起 CC Switch；也可在 设置 → 集成 配置路径实现一键导入')"
-      @error="message => emit('error', message)"
-    />
-
 </template>
 
 <script setup lang="ts">
@@ -294,7 +281,6 @@ import {
   formatDateTime,
   getWebsiteUrl
 } from '../utils/channelMetricsFormat'
-import CcsImportModal from './CcsImportModal.vue'
 import ChannelStatusBadge from './ChannelStatusBadge.vue'
 import ChannelActivityChart from './ChannelActivityChart.vue'
 import ChannelPoolGrid from './ChannelPoolGrid.vue'
@@ -387,23 +373,6 @@ URL: ${channel.baseUrl}
   }
 }
 
-// ============== CC Switch 导入 ==============
-
-// CC Switch 路径（settings.integration），决定弹窗按钮是"导入"还是"复制链接"
-const ccsConfigured = ref(false)
-const showCcsModal = ref(false)
-const ccsModalChannel = ref<Channel | null>(null)
-
-const openCcsImport = async (channel: Channel) => {
-  try {
-    const settings = await api.getSettings()
-    ccsConfigured.value = Boolean(settings.integration?.ccSwitchPath?.trim())
-    ccsModalChannel.value = channel
-    showCcsModal.value = true
-  } catch (error) {
-    emit('error', `读取 CC Switch 集成设置失败：${error instanceof Error ? error.message : '未知错误'}；请重试`)
-  }
-}
 // 计算属性：非活跃渠道 - 仅 disabled 状态
 const inactiveChannels = computed(() => {
 	return props.channels.filter(ch => !ch.builtinProvider && !ch.excludeFromConversation && ch.status === 'disabled')
@@ -436,8 +405,6 @@ const hasRecentTraffic = (channelIndex: number) =>
 
 const metricsByChannel = computed(() => new Map(props.dashboardMetrics.map(metric => [metric.channelIndex, metric])))
 const getChannelMetrics = (channelIndex: number): ChannelMetrics | undefined => metricsByChannel.value.get(channelIndex)
-
-const supportsCcs = computed(() => props.channelType !== 'images' && props.channelType !== 'embeddings' && props.channelType !== 'decisions')
 
 const toggleVisionCapability = async (channel: Channel) => {
   const nextValue = !channel.visionCapable
@@ -514,7 +481,6 @@ const runMenuAction = (channel: Channel, action: ChannelMenuAction) => {
     case 'duplicate': return duplicateChannel(channel.index)
     case 'toggleVision': return toggleVisionCapability(channel)
     case 'copyConfig': return copyChannelConfig(channel)
-    case 'importCcs': return openCcsImport(channel)
     case 'quickTest': return handleQuickTest(channel)
     case 'ping': return emit('ping', channel.index)
     case 'logs': return openLogsDialog(channel)

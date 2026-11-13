@@ -38,7 +38,7 @@ func TestLogRequestDetailsPreservesBodyAndClose(t *testing.T) {
 			if !test.knownSize {
 				req.ContentLength = -1
 			}
-			if err := logRequestDetails(req, &config.EnvConfig{LogLevel: "error"}, "messages", false); err != nil {
+			if err := logRequestDetails(req, &config.EnvConfig{LogLevel: "error", EnableRequestLogs: true}, "messages", false); err != nil {
 				t.Fatalf("记录请求失败: %v", err)
 			}
 			if reader.readBytes != test.wantReads || reader.closed {
@@ -64,7 +64,7 @@ func TestLogRequestDetailsReportsGetBodyFailureAndClosesBody(t *testing.T) {
 	req.Body = reader
 	wantErr := errors.New("无法重放正文")
 	req.GetBody = func() (io.ReadCloser, error) { return nil, wantErr }
-	err = logRequestDetails(req, &config.EnvConfig{LogLevel: "error"}, "messages", false)
+	err = logRequestDetails(req, &config.EnvConfig{LogLevel: "error", EnableRequestLogs: true}, "messages", false)
 	if !errors.Is(err, wantErr) || !reader.closed {
 		t.Fatalf("日志正文失败被吞掉或未关闭 reader: err=%v, closed=%v", err, reader.closed)
 	}
@@ -78,7 +78,7 @@ func TestLogRequestDetailsRejectsNilGetBodyReader(t *testing.T) {
 	reader := &countedResponseBody{Reader: req.Body}
 	req.Body = reader
 	req.GetBody = func() (io.ReadCloser, error) { return nil, nil }
-	err = logRequestDetails(req, &config.EnvConfig{LogLevel: "error"}, "messages", false)
+	err = logRequestDetails(req, &config.EnvConfig{LogLevel: "error", EnableRequestLogs: true}, "messages", false)
 	if err == nil || !strings.Contains(err.Error(), "GetBody 返回空 reader") || !reader.closed {
 		t.Fatalf("空日志 reader 应显式失败并关闭原正文: err=%v, closed=%v", err, reader.closed)
 	}

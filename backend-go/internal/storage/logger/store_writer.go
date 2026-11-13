@@ -12,17 +12,35 @@ import (
 	"time"
 )
 
-// enqueue 对条数和字节数同时施加背压；已接收的日志不因队列拥堵被丢弃。
-// 数据库写入有超时，写入失败或关闭会唤醒所有等待中的生产者。
+// enqueue 对条数和字节数同时施加背压；拥堵超过预算后明确拒绝新记录并计数。
+// 已接收的日志仍保留并重试，避免日志拥堵无限阻塞请求转发。
 func (s *Store) enqueue(item queuedWrite) error {
+	ctx, cancel := context.WithTimeout(context.Background(), logEnqueueTimeout)
+	defer cancel()
+	return s.enqueueContext(ctx, item)
+}
+
+func (s *Store) enqueueContext(ctx context.Context, item queuedWrite) (err error) {
 	if s == nil || s.readOnly {
 		return fmt.Errorf("日志存储不可写")
 	}
+	defer func() {
+		if err != nil && item.kind != writeFlush {
+			s.queueMu.Lock()
+			s.queueStatus.RejectedWrites++
+			s.queueStatus.LastRejectedAt = time.Now().UTC().Format(time.RFC3339Nano)
+			s.queueStatus.LastRejectedError = err.Error()
+			s.queueMu.Unlock()
+		}
+	}()
 	item.bytes = queuedWriteBytes(item)
 	if item.bytes > maxQueuedLogBytes {
 		return fmt.Errorf("单条日志超过 %d MiB 缓冲上限", maxQueuedLogBytes>>20)
 	}
 	for {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("日志入队等待中断，当前记录未接收: %w", err)
+		}
 		s.queueMu.Lock()
 		if s.closed {
 			s.queueMu.Unlock()
@@ -30,10 +48,14 @@ func (s *Store) enqueue(item queuedWrite) error {
 		}
 		if err := s.writeErr; err != nil {
 			s.queueMu.Unlock()
-			return err
+			return fmt.Errorf("日志存储故障，当前入队项未接收；已接收记录仍会重试: %w", err)
 		}
-		if len(s.queue) < cap(s.queue) && s.queueBytes+item.bytes <= maxQueuedLogBytes {
+		if len(s.queue) < cap(s.queue) && s.queueStatus.PendingEntries < cap(s.queue) && s.queueBytes+item.bytes <= maxQueuedLogBytes {
 			s.queueBytes += item.bytes
+			if item.kind != writeFlush {
+				s.queueStatus.AcceptedWrites++
+				s.queueStatus.PendingEntries++
+			}
 			if item.flushDone != nil {
 				s.flushWaiters[item.flushDone] = struct{}{}
 			}
@@ -43,7 +65,11 @@ func (s *Store) enqueue(item queuedWrite) error {
 		}
 		ready := s.spaceReady
 		s.queueMu.Unlock()
-		<-ready
+		select {
+		case <-ready:
+		case <-ctx.Done():
+			return fmt.Errorf("日志队列拥堵，当前记录未接收: %w", ctx.Err())
+		}
 	}
 }
 
@@ -95,6 +121,10 @@ func (s *Store) writeBatchWithRetry(batch []queuedWrite) error {
 		s.queueMu.Lock()
 		if err == nil {
 			recovered := s.writeErr != nil
+			if recovered {
+				s.queueStatus.WriteRecoveries++
+				s.queueStatus.LastRecoveryAt = time.Now().UTC().Format(time.RFC3339Nano)
+			}
 			s.writeErr = nil
 			s.notifySpaceLocked()
 			s.queueMu.Unlock()
@@ -104,6 +134,8 @@ func (s *Store) writeBatchWithRetry(batch []queuedWrite) error {
 			return nil
 		}
 		s.writeErr = fmt.Errorf("日志批次暂未落库，将保留缓冲并重试: %w", err)
+		s.queueStatus.WriteFailures++
+		s.queueStatus.LastWriteFailureAt = time.Now().UTC().Format(time.RFC3339Nano)
 		err = s.writeErr
 		for done := range s.flushWaiters {
 			done <- err
@@ -252,6 +284,22 @@ func applyLogWrite(ctx context.Context, tx *sql.Tx, statements map[writeKind]*sq
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO traffic_body_refs (traffic_id, body_hash) VALUES (?, ?)`, id, bodyHash); err != nil {
 			return fmt.Errorf("写入正文引用失败: %w", err)
+		}
+	}
+	if item.kind == writeTraffic && contentPhase(item.traffic.Phase) {
+		id, err := result.LastInsertId()
+		if err != nil {
+			return fmt.Errorf("读取正文状态流量 ID 失败: %w", err)
+		}
+		state := item.traffic.BodyState
+		if state == "" {
+			state = "stored"
+			if item.traffic.Truncated {
+				state = "truncated"
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO traffic_body_state (traffic_id, unix_milli, state) VALUES (?, ?, ?)`, id, item.traffic.UnixMilli, state); err != nil {
+			return fmt.Errorf("写入正文采集状态失败: %w", err)
 		}
 	}
 	if item.kind == writeRequest && item.request.Availability != nil {

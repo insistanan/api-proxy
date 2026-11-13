@@ -14,17 +14,19 @@ const availabilityObservationKey = "__availability_observation"
 
 // 每次构建分配独立观测，兼容重试也不能覆盖上一次 HTTP 失败。
 type availabilityObservation struct {
-	startedAt  time.Time
-	upstream   *config.UpstreamConfig
-	apiKey     string
-	kind       string
-	model      string
-	sent       bool
-	recorded   bool
-	retryAfter string
-	status     int
-	body       string
-	evidence   string
+	startedAt          time.Time
+	upstream           *config.UpstreamConfig
+	apiKey             string
+	kind               string
+	model              string
+	sent               bool
+	responseHeadersMs  *int64
+	upstreamStatusCode int
+	recorded           bool
+	retryAfter         string
+	status             int
+	body               string
+	evidence           string
 }
 
 func currentAvailabilityObservation(c *gin.Context) *availabilityObservation {
@@ -57,13 +59,19 @@ func (a UpstreamAttempt) observeAvailabilityRequest(req *http.Request) *http.Req
 	if observation == nil {
 		return req
 	}
-	return req.WithContext(httpclient.WithSendObserver(req.Context(), func() { observation.sent = true }))
+	ctx := httpclient.WithSendObserver(req.Context(), func() { observation.sent = true })
+	ctx = httpclient.WithResponseHeadersObserver(ctx, func(elapsed time.Duration) {
+		milliseconds := elapsed.Milliseconds()
+		observation.responseHeadersMs = &milliseconds
+	})
+	return req.WithContext(ctx)
 }
 
 func (a UpstreamAttempt) observeAvailabilityResponse(resp *http.Response) {
 	if observation := currentAvailabilityObservation(a.Context); observation != nil {
 		if resp != nil {
 			observation.retryAfter = resp.Header.Get("Retry-After")
+			observation.upstreamStatusCode = resp.StatusCode
 		}
 	}
 }

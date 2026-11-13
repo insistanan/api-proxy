@@ -137,6 +137,7 @@ func handleStreamSuccess(
 	channelScheduler *scheduler.ChannelScheduler,
 	conversationID string,
 ) (*types.Usage, error) {
+	envCfg = proxycore.RequestLogEnv(c, envCfg)
 	if envCfg.Current().EnableResponseLogs {
 		responseTime := time.Since(startTime).Milliseconds()
 		log.Printf("[Responses-Stream] Responses 流式响应开始: %dms, 状态: %d", responseTime, resp.StatusCode)
@@ -477,20 +478,20 @@ func handleStreamSuccess(
 			if synthesizedContent != "" && !parseFailed {
 				synth := strings.TrimSpace(synthesizedContent)
 				if envCfg.ShouldLog("debug") {
-					log.Printf("[Responses-Stream] 上游流式响应合成内容:\n%s", utils.RedactSensitivePlaceholdersForLog(synth))
+					log.Printf("[Responses-Stream] requestId=%s attemptId=%s 合成正文=%d 字节；正文见结构化日志", logger.RequestIDFromContext(c.Request.Context()), logger.AttemptIDFromContext(c.Request.Context()), len(synth))
 				}
 				logger.RecordStreamSynth(c.Request.Context(), "Responses", synth)
 			} else if logBuffer.Len() > 0 {
 				raw := logBuffer.String()
 				if envCfg.ShouldLog("debug") {
-					log.Printf("[Responses-Stream] 上游流式响应原始内容:\n%s", utils.RedactSensitivePlaceholdersForLog(raw))
+					log.Printf("[Responses-Stream] requestId=%s attemptId=%s 原始流=%d 字节；内容见结构化日志", logger.RequestIDFromContext(c.Request.Context()), logger.AttemptIDFromContext(c.Request.Context()), len(raw))
 				}
 				logger.RecordStreamSynth(c.Request.Context(), "Responses", raw)
 			}
 		} else if logBuffer.Len() > 0 {
 			raw := logBuffer.String()
 			if envCfg.ShouldLog("debug") {
-				log.Printf("[Responses-Stream] 上游流式响应原始内容:\n%s", utils.RedactSensitivePlaceholdersForLog(raw))
+				log.Printf("[Responses-Stream] requestId=%s attemptId=%s 原始流=%d 字节；内容见结构化日志", logger.RequestIDFromContext(c.Request.Context()), logger.AttemptIDFromContext(c.Request.Context()), len(raw))
 			}
 			logger.RecordStreamSynth(c.Request.Context(), "Responses", raw)
 		}

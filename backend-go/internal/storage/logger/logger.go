@@ -15,8 +15,9 @@ var defaultStore atomic.Pointer[Store]
 
 // Config 日志系统配置。正文与运行日志一律进 sqlite，不再写 logs/ 文件。
 type Config struct {
-	DBPath  string
-	Console bool
+	DBPath         string
+	Console        bool
+	PolicyProvider func() StoragePolicy
 }
 
 func DefaultConfig() *Config {
@@ -39,7 +40,7 @@ func Setup(cfg *Config) (*Store, error) {
 	if dbPath == "" {
 		dbPath = DefaultDBPath
 	}
-	store, err := Open(dbPath)
+	store, err := openWithPolicy(dbPath, cfg.PolicyProvider)
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +55,7 @@ func Setup(cfg *Config) (*Store, error) {
 	gin.DefaultErrorWriter = writer
 	defaultStore.Store(store)
 
-	log.Printf("[Logger-Init] 日志系统已初始化: %s（保留今天与昨天）", dbPath)
+	log.Printf("[Logger-Init] 日志系统已初始化: %s", dbPath)
 	return store, nil
 }
 

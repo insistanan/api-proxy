@@ -254,7 +254,6 @@ func decodeModelMapping(raw json.RawMessage) (map[string][]string, error) {
 type SettingsConfig struct {
 	Network       NetworkSettings     `json:"network"`
 	ContentSafety ContentSafetyConfig `json:"contentSafety"`
-	Integration   IntegrationSettings `json:"integration"`
 	// Disguise 客户端伪装版本与自动同步设置。
 	Disguise DisguiseSettings `json:"disguise"`
 	// Gateway 请求、日志和存储策略；路径和持久化开关在重启后生效。
@@ -302,13 +301,6 @@ type PromptEntry struct {
 	Note      string `json:"note"`
 	Content   string `json:"content"`
 	UpdatedAt int64  `json:"updatedAt"`
-}
-
-// IntegrationSettings 外部工具集成设置。
-type IntegrationSettings struct {
-	// CCSwitchPath CC Switch 可执行文件路径；为空表示未配置，
-	// 渠道菜单的"导入到 CCS"退化为"复制 CCS 链接"。
-	CCSwitchPath string `json:"ccSwitchPath"`
 }
 
 // DisguiseSettings 客户端伪装版本设置。

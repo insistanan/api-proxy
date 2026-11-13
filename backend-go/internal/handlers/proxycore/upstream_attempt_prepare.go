@@ -45,15 +45,15 @@ func (a UpstreamAttempt) buildPreparedAttemptRequest(
 	upstreamCopy *config.UpstreamConfig,
 	apiKey string,
 ) (*http.Request, string, error) {
-	if err := a.checkIntentCandidate(upstreamCopy, apiKey); err != nil {
-		return nil, "build_request", err
-	}
 	a.beginAvailabilityObservation(upstreamCopy, apiKey)
+	// 本地候选校验也属于本次尝试，不能复用上一条已结束观测的身份。
+	a.Context.Request = a.Context.Request.WithContext(logger.ContextWithAttemptID(a.Context.Request.Context(), nextAttemptLogID("attempt")))
 	if err := a.Context.Request.Context().Err(); err != nil {
 		return nil, "client_cancelled", err
 	}
-	// 身份在构建前分配，正文、响应和结果使用同一个尝试 ID。
-	a.Context.Request = a.Context.Request.WithContext(logger.ContextWithAttemptID(a.Context.Request.Context(), nextAttemptLogID("attempt")))
+	if err := a.checkIntentCandidate(upstreamCopy, apiKey); err != nil {
+		return nil, "build_request", err
+	}
 	req, err := a.BuildRequest(a.Context, upstreamCopy, apiKey)
 	if err != nil {
 		if req != nil && req.Body != nil {

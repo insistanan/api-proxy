@@ -62,7 +62,7 @@ func RecordStreamSynth(ctx context.Context, apiType string, body string) {
 	if body == "" {
 		return
 	}
-	RecordTraffic(TrafficLog{
+	RecordTrafficContext(ctx, TrafficLog{
 		RequestID: RequestIDFromContext(ctx),
 		AttemptID: AttemptIDFromContext(ctx),
 		Phase:     PhaseStreamSynth,
@@ -94,10 +94,17 @@ func CaptureResponseBody(inner io.ReadCloser, entry TrafficLog) io.ReadCloser {
 	if inner == nil {
 		return inner
 	}
+	limit := MaxBodyBytes
+	if entry.capture != nil {
+		limit = entry.capture.BodyLimit
+		if entry.capture.BodyState(true) != "" {
+			limit = 0
+		}
+	}
 	return &responseCapture{
 		inner:     inner,
 		entry:     entry,
-		remaining: MaxBodyBytes,
+		remaining: limit,
 	}
 }
 

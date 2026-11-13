@@ -3,8 +3,10 @@ import { computed, ref, type Ref } from 'vue'
 import { api } from '@/services/api'
 import type { GatewaySettings } from '@/types'
 import type { SettingsNotice as Notice } from './types'
+import { useLogsStore } from '@/stores/logs'
 
 export function useGatewaySettings(saving: Ref<boolean>) {
+  const logs = useLogsStore()
   // ===== 请求、日志与存储策略 =====
   const gatewayFormRef = ref()
   const gateway = ref<GatewaySettings | null>(null)
@@ -27,6 +29,7 @@ export function useGatewaySettings(saving: Ref<boolean>) {
     return value !== '' && value !== null && Number.isInteger(number) && number >= min && number <= max || `请输入 ${min} 至 ${max} 之间的整数`
   }
   const nonEmptyHeaderRule = (value: string) => !!value.trim() && !value.includes('\r') && !value.includes('\n') && !value.includes('\0') || '不能为空或包含控制字符'
+  const logBudgetRule = (value: unknown) => value !== '' && value !== null && (Number(value) === 0 || integerRangeRule(64, 1048576)(value) === true) || '请输入 0 或 64 至 1048576 之间的整数'
 
   const saveGatewaySettings = async () => {
     const current = gateway.value
@@ -44,6 +47,7 @@ export function useGatewaySettings(saving: Ref<boolean>) {
       gateway.value = settings.gateway
       savedGateway.value = JSON.stringify(settings.gateway)
       gatewayNotice.value = { type: 'success', message: '设置已保存；日志路径和指标持久化开关在重启后生效' }
+      void logs.loadStorageStatus()
     } catch (error) {
       gatewayNotice.value = { type: 'error', message: error instanceof Error ? error.message : '保存请求与日志设置失败' }
     } finally {
@@ -59,6 +63,7 @@ export function useGatewaySettings(saving: Ref<boolean>) {
     gatewayDirty,
     gatewayNumberFields,
     integerRangeRule,
+    logBudgetRule,
     nonEmptyHeaderRule,
     saveGatewaySettings,
     saving

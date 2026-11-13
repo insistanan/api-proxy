@@ -109,6 +109,7 @@ func buildOpenAIEndpointURL(baseURL string, endpoint string, useFullURL ...bool)
 }
 
 func handleImagesSuccess(c *gin.Context, resp *http.Response, envCfg *config.EnvConfig, startTime time.Time, endpoint string, requestedStream, forceNonStream bool) (*types.Usage, error) {
+	envCfg = proxycore.RequestLogEnv(c, envCfg)
 	if forceNonStream && requestedStream && !streams.IsEventStreamResponse(resp) {
 		if envCfg.Current().EnableResponseLogs {
 			log.Printf("[Images-Stream] Images 强制非流式结果转为 completed: %dms, 状态: %d", time.Since(startTime).Milliseconds(), resp.StatusCode)

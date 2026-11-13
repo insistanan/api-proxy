@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"math"
@@ -16,7 +17,14 @@ import (
 const (
 	defaultSystemLogLimit = 100
 	maxSystemLogLimit     = 200
+	maxDetailTrafficRows  = 256
+	maxDetailTrafficBytes = 4 << 20
+	maxDetailRequestRows  = 100
+	maxDetailRequestBytes = 1 << 20
+	detailQueryTimeout    = 5 * time.Second
 )
+
+var ErrLogDetailTooLarge = errors.New("请求详情超过查询上限，请使用 CLI 按时间范围查询")
 
 var requiredSystemLogPhases = []string{
 	PhaseClientRequest,
@@ -125,6 +133,10 @@ func (s *Store) ListSystemLogSummaries(ctx context.Context, opts SystemLogListOp
 
 // QueryTrafficByRequestID 返回某次请求的全部流量行（含正文），按写入顺序。
 func (s *Store) QueryTrafficByRequestID(ctx context.Context, requestID string) ([]TrafficLog, error) {
+	return s.queryTrafficByRequestID(ctx, requestID, false)
+}
+
+func (s *Store) queryTrafficByRequestID(ctx context.Context, requestID string, bounded bool) ([]TrafficLog, error) {
 	if s == nil {
 		return nil, nil
 	}
@@ -133,6 +145,9 @@ func (s *Store) QueryTrafficByRequestID(ctx context.Context, requestID string) (
 		return nil, fmt.Errorf("requestId 不能为空")
 	}
 	query := s.trafficSelect() + ` WHERE t.request_id = ? ORDER BY t.unix_milli ASC, t.id ASC`
+	if bounded {
+		query += fmt.Sprintf(" LIMIT %d", maxDetailTrafficRows+1)
+	}
 	rows, err := s.readDB.QueryContext(ctx, query, requestID)
 	if err != nil {
 		return nil, fmt.Errorf("查询系统日志详情失败: %w", err)
@@ -140,24 +155,29 @@ func (s *Store) QueryTrafficByRequestID(ctx context.Context, requestID string) (
 	defer rows.Close()
 
 	entries := make([]TrafficLog, 0)
+	bytes := 0
 	for rows.Next() {
 		var entry TrafficLog
 		var streamValue, truncatedValue int
 		if err := rows.Scan(
 			&entry.ID, &entry.UnixMilli, &entry.Timestamp, &entry.RequestID, &entry.AttemptID,
 			&entry.Phase, &entry.APIType, &entry.Method, &entry.URL, &entry.StatusCode,
-			&streamValue, &entry.HeadersJSON, &entry.Body, &truncatedValue, &entry.OriginalBytes,
+			&streamValue, &entry.HeadersJSON, &entry.Body, &truncatedValue, &entry.OriginalBytes, &entry.BodyState,
 		); err != nil {
 			return nil, err
 		}
 		entry.Stream = streamValue != 0
 		entry.Truncated = truncatedValue != 0
+		bytes += len(entry.Body) + len(entry.HeadersJSON) + len(entry.URL) + 512
+		if bounded && (len(entries) >= maxDetailTrafficRows || bytes > maxDetailTrafficBytes) {
+			return nil, ErrLogDetailTooLarge
+		}
 		entries = append(entries, entry)
 	}
 	return entries, rows.Err()
 }
 
-// GetSystemLogDetail 返回一次请求的摘要 + 全部流量正文。
+// GetSystemLogDetail 返回一次请求的完整详情；超出 Web 预算时明确报错，避免半份正文参与比较。
 func (s *Store) GetSystemLogDetail(ctx context.Context, requestID string) (*SystemLogDetail, error) {
 	if s == nil {
 		return nil, nil
@@ -166,13 +186,18 @@ func (s *Store) GetSystemLogDetail(ctx context.Context, requestID string) (*Syst
 	if requestID == "" {
 		return nil, fmt.Errorf("requestId 不能为空")
 	}
-	trafficLogs, err := s.QueryTrafficByRequestID(ctx, requestID)
+	ctx, cancel := context.WithTimeout(ctx, detailQueryTimeout)
+	defer cancel()
+	trafficLogs, err := s.queryTrafficByRequestID(ctx, requestID, true)
 	if err != nil {
 		return nil, err
 	}
-	requestLogs, err := s.QueryRequestLogs(ctx, QueryOptions{RequestID: requestID, Ascending: true})
+	requestLogs, err := s.queryRequestLogs(ctx, QueryOptions{RequestID: requestID, Ascending: true, Limit: maxDetailRequestRows + 1}, maxDetailRequestBytes)
 	if err != nil {
 		return nil, err
+	}
+	if len(requestLogs) > maxDetailRequestRows {
+		return nil, ErrLogDetailTooLarge
 	}
 	if len(trafficLogs) == 0 && len(requestLogs) == 0 {
 		return nil, nil
@@ -218,7 +243,7 @@ func (s *Store) GetSystemLogDetail(ctx context.Context, requestID string) (*Syst
 	if err != nil {
 		return nil, err
 	}
-	links, err := s.toolLinks(ctx, summary, trafficLogs)
+	links, err := s.toolLinks(ctx, summary)
 	if err != nil {
 		return nil, err
 	}
@@ -418,6 +443,9 @@ func buildSystemLogSummary(requestID string, rows []trafficRowMeta, meta *reques
 		summary.RequestHash = ended.RequestHash
 		summary.Client = ended.Client
 		summary.StartedAt = ended.StartedAt
+		summary.EndedAt = ended.EndedAt
+		summary.DurationMs = ended.DurationMs
+		summary.ClientStatusCode = ended.ClientStatusCode
 		summary.Status = ended.Status
 		summary.StatusCode = ended.StatusCode
 		summary.ErrorType = ended.ErrorType
@@ -551,7 +579,7 @@ func (s *Store) Purge(ctx context.Context, opts PurgeOptions) (PurgeResult, erro
 		}
 		startMilli, endMilli = start, end-1
 	}
-	if err := s.Flush(); err != nil {
+	if err := s.FlushContext(ctx); err != nil {
 		return result, fmt.Errorf("清理前排空日志队列失败: %w", err)
 	}
 	s.mu.Lock()
@@ -590,6 +618,10 @@ func (s *Store) Purge(ctx context.Context, opts PurgeOptions) (PurgeResult, erro
 	if err := tx.Commit(); err != nil {
 		return result, fmt.Errorf("提交日志清理事务失败: %w", err)
 	}
+	s.statusMu.Lock()
+	s.maintenance.DeletedRows += result.DeletedAppLogs + result.DeletedTrafficLogs + result.DeletedRequestLogs
+	s.maintenance.LastCleanupAt = time.Now().UTC().Format(time.RFC3339Nano)
+	s.statusMu.Unlock()
 	// VACUUM 不能在事务内执行；DELETE 不收缩文件，磁盘空间不 VACUUM 不归还。
 	if _, err := s.db.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
 		return result, fmt.Errorf("日志库 checkpoint 失败: %w", err)

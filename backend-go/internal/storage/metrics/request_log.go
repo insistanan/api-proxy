@@ -24,6 +24,10 @@ type RequestLogEntry struct {
 	StatusCode            int     `json:"statusCode,omitempty"`
 	Success               bool    `json:"success"`
 	DurationMs            int64   `json:"durationMs"`
+	StartedAt             int64   `json:"startedAt,omitempty"`
+	UpstreamSent          *bool   `json:"upstreamSent,omitempty"`
+	ResponseHeadersMs     *int64  `json:"responseHeadersMs,omitempty"`
+	UpstreamStatusCode    int     `json:"upstreamStatusCode,omitempty"`
 	FirstTokenMs          int64   `json:"firstTokenMs,omitempty"`
 	TPS                   float64 `json:"tps,omitempty"`
 	Model                 string  `json:"model,omitempty"`

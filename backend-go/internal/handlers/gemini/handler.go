@@ -350,6 +350,7 @@ func handleSuccess(
 	model string,
 	isStream bool,
 ) (*types.Usage, error) {
+	envCfg = proxycore.RequestLogEnv(c, envCfg)
 	defer resp.Body.Close()
 
 	if isStream {

@@ -40,14 +40,6 @@
         </template>
         <v-list-item-title>{{ copied ? '已复制配置' : '复制配置' }}</v-list-item-title>
       </v-list-item>
-      <v-list-item
-        v-if="supportsCcs"
-        aria-label="导入到 CCS"
-        @click="emit('action', 'importCcs')"
-      >
-        <template #prepend><v-icon size="small" color="primary">mdi-application-export</v-icon></template>
-        <v-list-item-title>导入到 CCS</v-list-item-title>
-      </v-list-item>
       <v-list-item @click="emit('action', 'quickTest')">
         <template #prepend><v-icon size="small" color="success">mdi-test-tube</v-icon></template>
         <v-list-item-title>快捷测试</v-list-item-title>
@@ -105,7 +97,7 @@
 
 <script lang="ts">
 export const channelMenuActions = [
-  'edit', 'duplicate', 'toggleVision', 'copyConfig', 'importCcs', 'quickTest', 'ping',
+  'edit', 'duplicate', 'toggleVision', 'copyConfig', 'quickTest', 'ping',
   'logs', 'promotion', 'resume', 'suspend', 'disable', 'deprecate'
 ] as const
 export type ChannelMenuAction = (typeof channelMenuActions)[number]
@@ -121,15 +113,12 @@ withDefaults(defineProps<{
   copied?: boolean
   canDelete?: boolean
   allowReorder?: boolean
-  /** 该渠道类型是否支持导入 CC Switch（弹窗中选择目标应用类型） */
-  supportsCcs?: boolean
 }>(), {
   position: 0,
   total: 1,
   copied: false,
   canDelete: true,
-  allowReorder: true,
-  supportsCcs: false
+  allowReorder: true
 })
 
 // 不涉及排序与删除约束的操作统一走 action；排序和删除因两处用法规则不同而单独发出。

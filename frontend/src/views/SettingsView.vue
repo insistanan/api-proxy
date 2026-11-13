@@ -65,62 +65,6 @@
 
         <GatewaySettingsSection v-else-if="activeSection === 'gateway'" :editor="gatewayEditor" />
 
-        <section v-else-if="activeSection === 'integration'" aria-labelledby="integration-settings-title">
-          <div class="section-heading">
-            <div>
-              <h2 id="integration-settings-title" class="text-h6 font-weight-bold">集成</h2>
-            </div>
-          </div>
-
-          <v-form ref="integrationFormRef" @submit.prevent="saveIntegrationSettings">
-            <div class="setting-row">
-              <div class="setting-copy">
-                <div class="text-body-1 font-weight-medium">CC Switch 路径</div>
-                <div class="text-body-2 text-medium-emphasis mt-1">配置后可从渠道菜单一键导入 CC Switch；留空时仍可复制导入链接。</div>
-              </div>
-            </div>
-
-            <div class="ccs-path-row">
-              <v-text-field
-                v-model="ccSwitchPath"
-                label="CC Switch 可执行文件路径"
-                placeholder="例如 D:\\Tools\\cc-switch\\cc-switch.exe"
-                prepend-inner-icon="mdi-application-export"
-                variant="outlined"
-                density="comfortable"
-                autocomplete="off"
-                spellcheck="false"
-                :rules="[ccSwitchPathRule]"
-              />
-              <v-btn
-                color="primary"
-                variant="tonal"
-                prepend-icon="mdi-folder-open"
-                :loading="pickingCcsPath"
-                @click="pickCcsPath"
-              >
-                选择文件
-              </v-btn>
-            </div>
-
-            <v-alert v-if="integrationNotice" :type="integrationNotice.type" variant="tonal" density="compact" class="mt-5">
-              {{ integrationNotice.message }}
-            </v-alert>
-
-            <div class="settings-actions">
-              <v-btn
-                type="submit"
-                color="primary"
-                prepend-icon="mdi-content-save"
-                :loading="saving"
-                :disabled="!integrationDirty"
-              >
-                保存集成设置
-              </v-btn>
-            </div>
-          </v-form>
-        </section>
-
         <DisguiseSettingsSection v-else-if="activeSection === 'disguise'" :editor="disguiseEditor" />
 
         <AssistantSettingsSection v-else-if="activeSection === 'assistant'" :editor="assistantEditor" />
@@ -660,7 +604,6 @@ const settingsSections: Array<{ key: SettingsSection; label: string; icon: strin
   { key: 'network', label: '网络连接', icon: 'mdi-web' },
   { key: 'gateway', label: '请求与日志', icon: 'mdi-text' },
   { key: 'content-safety', label: '内容安全', icon: 'mdi-shield-alert' },
-  { key: 'integration', label: '外部集成', icon: 'mdi-swap-horizontal' },
   { key: 'disguise', label: '客户端伪装', icon: 'mdi-incognito' },
   { key: 'assistant', label: 'AI 助手', icon: 'mdi-robot' },
   { key: 'prompts', label: '通用提示词', icon: 'mdi-text' }
@@ -702,13 +645,6 @@ const resetGateTarget = () => {
   contentSafety.value.dangerousCmd.aiGate.model = ''
 }
 
-// 集成设置（CC Switch）
-const integrationFormRef = ref()
-const ccSwitchPath = ref('')
-const savedCcSwitchPath = ref('')
-const pickingCcsPath = ref(false)
-const integrationNotice = ref<Notice>(null)
-
 // 危险命令检测总开关关闭时联动关闭 AI 闸门：闸门依赖检测，检测关闭后
 // 闸门面板隐藏但开关状态会残留为开启，导致保存被依赖校验拦下且无处可关。
 watch(
@@ -721,15 +657,6 @@ watch(
   }
 )
 
-const integrationDirty = computed(() => ccSwitchPath.value.trim() !== savedCcSwitchPath.value)
-
-const ccSwitchPathRule = (value: string) => {
-  const raw = value?.trim()
-  if (!raw) return true // 允许为空：未配置时渠道菜单退化为复制链接
-  if (!/\.exe$/i.test(raw)) return '路径必须指向 .exe 可执行文件'
-  return true
-}
-
 const normalizedProxyUrl = computed(() => (proxyEnabled.value ? proxyUrl.value.trim() : ''))
 const networkDirty = computed(() =>
   proxyEnabled.value !== savedProxyEnabled.value || normalizedProxyUrl.value !== savedProxyUrl.value
@@ -739,7 +666,6 @@ const dirtySections = computed<Record<SettingsSection, boolean>>(() => ({
   network: networkDirty.value,
   gateway: gatewayEditor.gatewayDirty.value,
   'content-safety': contentSafetyDirty.value,
-  integration: integrationDirty.value,
   disguise: disguiseEditor.disguiseDirty.value,
   assistant: assistantEditor.assistantDirty.value,
   prompts: promptsEditor.promptsDirty.value
@@ -779,9 +705,6 @@ const loadSettings = async () => {
     proxyEnabled.value = enabled
     contentSafety.value = normalizeContentSafety(settings.contentSafety)
     savedContentSafety.value = JSON.stringify(contentSafety.value)
-    const savedPath = settings.integration?.ccSwitchPath ?? ''
-    savedCcSwitchPath.value = savedPath
-    ccSwitchPath.value = savedPath
     const savedModel = settings.assistant?.model ?? ''
     savedAssistantModel.value = savedModel
     assistantModel.value = savedModel
@@ -839,45 +762,6 @@ const saveNetworkSettings = async () => {
     notice.value = { type: 'error', message: error instanceof Error ? error.message : '保存网络设置失败' }
   } finally {
     saving.value = false
-  }
-}
-
-const saveIntegrationSettings = async () => {
-  const { valid } = await integrationFormRef.value.validate()
-  if (!valid) return
-
-  integrationNotice.value = null
-  saving.value = true
-  try {
-    const settings = await api.updateSettings({
-      integration: { ccSwitchPath: ccSwitchPath.value.trim() }
-    })
-    const savedPath = settings.integration?.ccSwitchPath ?? ''
-    savedCcSwitchPath.value = savedPath
-    ccSwitchPath.value = savedPath
-    integrationNotice.value = { type: 'success', message: '集成设置已保存' }
-  } catch (error) {
-    integrationNotice.value = { type: 'error', message: error instanceof Error ? error.message : '保存集成设置失败' }
-  } finally {
-    saving.value = false
-  }
-}
-
-const pickCcsPath = async () => {
-  pickingCcsPath.value = true
-  integrationNotice.value = null
-  try {
-    const { path } = await api.pickCcsPath()
-    if (path) {
-      // 后端选择时已顺手保存，这里同步本地状态
-      savedCcSwitchPath.value = path
-      ccSwitchPath.value = path
-      integrationNotice.value = { type: 'success', message: '路径已保存' }
-    }
-  } catch (error) {
-    integrationNotice.value = { type: 'error', message: error instanceof Error ? error.message : '打开文件选择框失败，请手动填写路径' }
-  } finally {
-    pickingCcsPath.value = false
   }
 }
 

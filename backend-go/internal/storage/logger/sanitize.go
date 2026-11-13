@@ -21,27 +21,40 @@ func omittedImagePlaceholder(mediaType string, payload string) string {
 
 // OmittedBody 为超大日志正文生成明确的省略说明；非正数表示原始长度未知。
 func OmittedBody(originalBytes int) string {
+	return OmittedBodyWithLimit(originalBytes, MaxBodyBytes)
+}
+
+// OmittedBodyWithLimit 保留实际采集上限，避免自定义小上限仍显示为 1 MiB。
+func OmittedBodyWithLimit(originalBytes, limit int) string {
 	if originalBytes <= 0 {
-		return fmt.Sprintf("[正文已省略：原始大小未知，超过 %d 字节日志上限]", MaxBodyBytes)
+		return fmt.Sprintf("[正文已省略：原始大小未知，超过 %d 字节日志上限]", limit)
 	}
-	return fmt.Sprintf("[正文已省略：原始大小 %d 字节，超过 %d 字节日志上限]", originalBytes, MaxBodyBytes)
+	return fmt.Sprintf("[正文已省略：原始大小 %d 字节，超过 %d 字节日志上限]", originalBytes, limit)
 }
 
 // PrepareBody 先限制解析输入，再替换图片和敏感占位符，最后限制输出大小。
 // 大于 1MiB 的原始正文只记录省略说明，避免日志处理分配完整的媒体对象树。
 func PrepareBody(raw []byte) (body string, originalBytes int, truncated bool) {
+	return PrepareBodyWithLimit(raw, MaxBodyBytes)
+}
+
+func PrepareBodyWithLimit(raw []byte, limit int) (body string, originalBytes int, truncated bool) {
+	// 0 仅供旧调用方使用历史上限；持久化设置中的范围由配置层校验。
+	if limit <= 0 || limit > MaxBodyBytes {
+		limit = MaxBodyBytes
+	}
 	originalBytes = len(raw)
 	if originalBytes == 0 {
 		return "", 0, false
 	}
-	if originalBytes > MaxBodyBytes {
-		return OmittedBody(originalBytes), originalBytes, true
+	if originalBytes > limit {
+		return OmittedBodyWithLimit(originalBytes, limit), originalBytes, true
 	}
 	sanitized := stripImages([]byte(utils.RedactSensitivePlaceholdersForLog(string(raw))))
-	if len(sanitized) <= MaxBodyBytes {
+	if len(sanitized) <= limit {
 		return string(sanitized), originalBytes, false
 	}
-	return string(sanitized[:MaxBodyBytes]), originalBytes, true
+	return string(sanitized[:limit]), originalBytes, true
 }
 
 func stripImages(raw []byte) []byte {

@@ -2,14 +2,14 @@
 import { computed, ref, shallowRef } from 'vue'
 import { defineStore } from 'pinia'
 import { api } from '@/services/api'
-import type { LogAPIType, LogConversationSummary, SystemLogDetail, SystemLogSummary } from '@/types/logs'
+import type { LogAPIType, LogConversationSummary, LogStorageStatus, SystemLogDetail, SystemLogSummary } from '@/types/logs'
 import { logConversationKey } from '@/utils/logConversation'
 
 const MAX_CACHE_BYTES = 16 * 1024 * 1024
 const MAX_CACHE_ENTRIES = 40
 
 export function summaryVersion(summary: SystemLogSummary): string {
-  return JSON.stringify([summary.unixMilli, summary.status, summary.statusCode, summary.phases, summary.missingPhases, summary.stream, summary.truncated, summary.channelName, summary.model, summary.client, summary.apiType, summary.conversationId, summary.requestHash, summary.errorType, summary.errorMessage, summary.promptPreview, summary.clientFamily, summary.identitySource, summary.context])
+  return JSON.stringify([summary.unixMilli, summary.startedAt, summary.endedAt, summary.durationMs, summary.status, summary.statusCode, summary.clientStatusCode, summary.phases, summary.missingPhases, summary.stream, summary.truncated, summary.channelName, summary.model, summary.client, summary.apiType, summary.conversationId, summary.requestHash, summary.errorType, summary.errorMessage, summary.promptPreview, summary.clientFamily, summary.identitySource, summary.context])
 }
 
 export function conversationVersion(group: LogConversationSummary | null): string {
@@ -37,6 +37,11 @@ export const useLogsStore = defineStore('logs', () => {
   const roundsError = ref('')
   const details = shallowRef<Record<string, SystemLogDetail>>({})
   const detailErrors = ref<Record<string, string>>({})
+  const storage = shallowRef<LogStorageStatus | null>(null)
+  const storageLoading = ref(false)
+  const storageError = ref('')
+  let storageRevision = 0
+  const loadedAt = new Map<string, number>()
   // 非响应式的请求句柄与缓存记账，不承载 UI 状态。
   const pending = new Map<string, { version: string; relatedVersion: string; promise: Promise<SystemLogDetail> }>()
   const sizes = new Map<string, number>()
@@ -52,10 +57,11 @@ export const useLogsStore = defineStore('logs', () => {
   function cacheDetail(detail: SystemLogDetail) {
     const id = detail.requestId
     // 按 UTF-16 字符保守估算正文与头部占用，不为计数重新序列化整个详情。
-    const bytes = 2048 + 2 * (JSON.stringify(detail.contexts || []).length + JSON.stringify(detail.toolLinks || {}).length) + detail.trafficLogs.reduce((sum, log) => sum + 2 * ((log.body?.length || 0) + (log.headers?.length || 0)), 0)
+    const bytes = 2048 + 2 * (JSON.stringify(detail.requestLogs || []).length + JSON.stringify(detail.summary).length + JSON.stringify(detail.contexts || []).length + JSON.stringify(detail.toolLinks || {}).length) + detail.trafficLogs.reduce((sum, log) => sum + 512 + 2 * ((log.body?.length || 0) + (log.headers?.length || 0) + (log.url?.length || 0)), 0)
     if (bytes > MAX_CACHE_BYTES) throw new Error('单次请求详情超过 16 MiB 浏览器缓存预算，请使用 CLI 查询。')
     sizes.delete(id)
     sizes.set(id, bytes)
+    loadedAt.set(id, Date.now())
     const next = { ...details.value, [id]: detail }
     let total = Array.from(sizes.values()).reduce((sum, size) => sum + size, 0)
     for (const [key, size] of sizes) {
@@ -63,6 +69,7 @@ export const useLogsStore = defineStore('logs', () => {
       if (key === id) continue
       delete next[key]
       sizes.delete(key)
+      loadedAt.delete(key)
       relatedVersions.delete(key)
       total -= size
     }
@@ -74,11 +81,11 @@ export const useLogsStore = defineStore('logs', () => {
     const version = summary ? summaryVersion(summary) : ''
     const knownSummary = summary || cached?.summary
     const relatedVersion = knownSummary && logConversationKey(knownSummary) === selectedKey.value ? conversationVersion(selectedConversation.value) : ''
-    if (!force && cached && relatedVersions.get(id) === relatedVersion && (summary ? summaryVersion(cached.summary) === version : !['processing', 'retrying'].includes(cached.summary.status || ''))) {
+    if (!force && cached && Date.now() - (loadedAt.get(id) || 0) < 30000 && relatedVersions.get(id) === relatedVersion && (summary ? summaryVersion(cached.summary) === version : !['processing', 'retrying'].includes(cached.summary.status || ''))) {
       return cached
     }
     const inFlight = pending.get(id)
-    if (inFlight && inFlight.relatedVersion === relatedVersion && (!version || inFlight.version === version)) return inFlight.promise
+    if (!force && inFlight && inFlight.relatedVersion === relatedVersion && (!version || inFlight.version === version)) return inFlight.promise
     const epoch = lifetime
     const promise: Promise<SystemLogDetail> = api.getSystemLog(id).then(detail => {
       if (epoch === lifetime && pending.get(id)?.promise === promise) {
@@ -116,6 +123,26 @@ export const useLogsStore = defineStore('logs', () => {
     } finally { if (revision === listRevision) listLoading.value = false }
   }
 
+  async function loadStorageStatus() {
+    const revision = ++storageRevision
+    storageLoading.value = true
+    try {
+      const next = await api.getLogStorageStatus()
+      if (revision !== storageRevision) return
+      if (storage.value && (next.maintenance.expiredBodies !== storage.value.maintenance.expiredBodies || next.maintenance.deletedRows !== storage.value.maintenance.deletedRows)) {
+        loadedAt.clear()
+        pending.clear()
+        sizes.clear()
+        relatedVersions.clear()
+        details.value = {}
+      }
+      storage.value = next
+      storageError.value = ''
+    } catch (error) {
+      if (revision === storageRevision) storageError.value = error instanceof Error ? error.message : '读取日志存储状态失败'
+    } finally { if (revision === storageRevision) storageLoading.value = false }
+  }
+
   async function loadRounds(options: { more?: boolean; anchor?: string; latest?: boolean } = {}) {
     const key = selectedKey.value
     if (!key) return
@@ -139,6 +166,7 @@ export const useLogsStore = defineStore('logs', () => {
           if (logConversationKey(detail.summary) !== key) continue
           delete remaining[id]
           sizes.delete(id)
+          loadedAt.delete(id)
           relatedVersions.delete(id)
           pending.delete(id)
           delete detailErrors.value[id]
@@ -198,6 +226,7 @@ export const useLogsStore = defineStore('logs', () => {
     roundsRevision++
     pending.clear()
     sizes.clear()
+    loadedAt.clear()
     relatedVersions.clear()
     details.value = {}
     detailErrors.value = {}
@@ -215,5 +244,5 @@ export const useLogsStore = defineStore('logs', () => {
     anchored.value = false
   }
 
-  return { typeFilter, searchFilter, statusFilter, fromFilter, toFilter, totalConversations, conversations, nextConversationCursor, selectedKey, selectedConversation, requests, nextRequestCursor, anchored, listLoading, roundsLoading, listError, roundsError, details, detailErrors, active, loadDetail, loadConversations, loadRounds, selectConversation, locateRequest, refresh, reset }
+  return { typeFilter, searchFilter, statusFilter, fromFilter, toFilter, totalConversations, conversations, nextConversationCursor, selectedKey, selectedConversation, requests, nextRequestCursor, anchored, listLoading, roundsLoading, listError, roundsError, details, detailErrors, active, storage, storageLoading, storageError, loadStorageStatus, loadDetail, loadConversations, loadRounds, selectConversation, locateRequest, refresh, reset }
 })

@@ -308,22 +308,27 @@ func (s *Store) contextChange(ctx context.Context, summary SystemLogSummary, cur
 		return nil, fmt.Errorf("查询前序上下文失败: %w", err)
 	}
 	// 仅获取前序输入，不下载它的上游尝试和响应。
-	query := s.trafficSelect() + ` WHERE t.request_id = ? AND t.phase IN ('client_request', 'client_input') ORDER BY t.id`
+	query := s.trafficSelect() + fmt.Sprintf(` WHERE t.request_id = ? AND t.phase IN ('client_request', 'client_input') ORDER BY t.id LIMIT %d`, maxDetailTrafficRows+1)
 	rows, err := s.readDB.QueryContext(ctx, query, previousID)
 	if err != nil {
 		return nil, fmt.Errorf("查询前序输入失败: %w", err)
 	}
 	defer rows.Close()
 	entries := make([]TrafficLog, 0, 2)
+	bytes := 0
 	for rows.Next() {
 		var entry TrafficLog
 		var stream, truncated int
 		if err := rows.Scan(&entry.ID, &entry.UnixMilli, &entry.Timestamp, &entry.RequestID, &entry.AttemptID,
 			&entry.Phase, &entry.APIType, &entry.Method, &entry.URL, &entry.StatusCode,
-			&stream, &entry.HeadersJSON, &entry.Body, &truncated, &entry.OriginalBytes); err != nil {
+			&stream, &entry.HeadersJSON, &entry.Body, &truncated, &entry.OriginalBytes, &entry.BodyState); err != nil {
 			return nil, err
 		}
 		entry.Truncated = truncated != 0
+		bytes += len(entry.Body) + len(entry.HeadersJSON) + 512
+		if len(entries) >= maxDetailTrafficRows || bytes > maxDetailTrafficBytes {
+			return &ContextChange{PreviousRequestID: previousID, Notice: "前序输入超过查询预算，本次未比较上下文；可使用 CLI 查询前序记录"}, nil
+		}
 		entries = append(entries, entry)
 	}
 	if err := rows.Err(); err != nil {

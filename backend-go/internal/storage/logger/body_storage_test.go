@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"math"
 	"path/filepath"
 	"strings"
@@ -128,6 +129,8 @@ func TestLifecycleSummaryUsesFinalOutcome(t *testing.T) {
 	start := RequestLifecycle{ConversationID: "conversation", RequestHash: "hash", Model: "model", BootID: store.BootID(), StartedAt: time.Now().UnixMilli()}
 	end := start
 	end.Status, end.ErrorType, end.ErrorMessage = "failed", "network", "等待响应头超时"
+	duration := int64(42)
+	end.EndedAt, end.DurationMs = start.StartedAt+duration, &duration
 	for _, record := range []struct {
 		phase string
 		state RequestLifecycle
@@ -147,9 +150,50 @@ func TestLifecycleSummaryUsesFinalOutcome(t *testing.T) {
 	require.Equal(t, "failed", detail.Summary.Status)
 	require.Zero(t, detail.Summary.StatusCode)
 	require.Equal(t, "conversation", detail.Summary.ConversationID)
+	require.Equal(t, end.EndedAt, detail.Summary.EndedAt)
+	require.Equal(t, &duration, detail.Summary.DurationMs)
 	list, err := store.ListSystemLogSummaries(context.Background(), SystemLogListOptions{})
 	require.NoError(t, err)
 	require.Equal(t, detail.Summary, list[0])
+}
+
+func TestWebDetailRejectsOversizedBodiesButCLIQueryStillWorks(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "logs.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	for range 5 {
+		require.NoError(t, store.RecordTraffic(TrafficLog{RequestID: "large", Phase: PhaseUpstreamResponse, Body: strings.Repeat("x", MaxBodyBytes)}))
+	}
+	require.NoError(t, store.Flush())
+	_, err = store.GetSystemLogDetail(context.Background(), "large")
+	require.ErrorIs(t, err, ErrLogDetailTooLarge)
+	rows, err := store.QueryTrafficByRequestID(context.Background(), "large")
+	require.NoError(t, err)
+	require.Len(t, rows, 5)
+}
+
+func TestWebDetailRejectsTooManyTrafficOrAttemptRows(t *testing.T) {
+	for _, attempts := range []bool{false, true} {
+		t.Run(fmt.Sprint(attempts), func(t *testing.T) {
+			store, err := Open(filepath.Join(t.TempDir(), "logs.db"))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, store.Close()) })
+			count := maxDetailTrafficRows + 1
+			if attempts {
+				count = maxDetailRequestRows + 1
+			}
+			for range count {
+				if attempts {
+					require.NoError(t, store.RecordRequest(RequestLogRecord{RequestID: "many", Payload: []byte(`{"status":"failed"}`)}))
+				} else {
+					require.NoError(t, store.RecordTraffic(TrafficLog{RequestID: "many", Phase: PhaseUpstreamHeaders, StatusCode: 200}))
+				}
+			}
+			require.NoError(t, store.Flush())
+			_, err = store.GetSystemLogDetail(context.Background(), "many")
+			require.ErrorIs(t, err, ErrLogDetailTooLarge)
+		})
+	}
 }
 
 func TestLifecycleSummaryDistinguishesActiveAndPreviousProcess(t *testing.T) {

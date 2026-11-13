@@ -6,6 +6,8 @@
       <div class="detail-meta">
         <code>{{ requestId }}</code>
         <v-chip size="small" :color="logStatus(detail.summary).color" variant="tonal">{{ logStatus(detail.summary).label }}</v-chip>
+        <span v-if="detail.summary.durationMs != null" class="text-caption">网关总耗时 {{ detail.summary.durationMs.toLocaleString() }} ms</span>
+        <span v-if="detail.summary.clientStatusCode" class="text-caption">网关写出 HTTP {{ detail.summary.clientStatusCode }}</span>
         <v-btn size="small" variant="text" @click="copyId">复制 ID</v-btn>
         <v-btn size="small" variant="text" :loading="loading" @click="load(true)">刷新</v-btn>
         <v-btn v-if="parentRequestId" size="small" variant="text" @click="emit('locate', parentRequestId)">查看原请求</v-btn>
@@ -28,14 +30,14 @@
       </v-tabs>
       <div v-if="currentLog" class="phase-content">
         <p v-if="phase === 'client'" class="text-caption text-medium-emphasis mb-3">入口输入在内容安全处理后采集，媒体已省略；摘要不能用于重放请求。</p>
-        <ContextSnapshotPanel v-if="currentContext" :snapshot="currentContext" :body="currentLog.body || ''" />
+        <ContextSnapshotPanel v-if="currentContext && bodyAvailable" :snapshot="currentContext" :body="currentLog.body || ''" />
         <div class="text-caption text-medium-emphasis phase-meta">{{ currentLog.method }} {{ currentLog.url }} <span v-if="currentLog.statusCode"> · HTTP {{ currentLog.statusCode }}</span></div>
-        <v-alert v-if="currentLog.truncated" type="info" variant="tonal" density="compact" class="mb-3">原始正文超过采集上限或不完整；这里展示实际保存的内容。</v-alert>
-        <SessionInspector :body="currentLog.body || ''" :method="currentLog.method" :url="currentLog.url" :replayable="phase !== 'response' && currentLog.phase !== 'client_input' && !currentLog.truncated" wrap />
-        <details class="mt-4" :open="headersOpen" @toggle="headersOpen = ($event.target as HTMLElement).hasAttribute('open')"><summary>请求头与响应头</summary><JsonBodyPane v-if="headersOpen" :body="currentLog.headers || '{}'" wrap /></details>
+        <v-alert v-if="bodyNotice" type="info" variant="tonal" density="compact" class="mb-3">{{ bodyNotice }}</v-alert>
+        <SessionInspector v-if="bodyAvailable" :body="currentLog.body || ''" :method="currentLog.method" :url="currentLog.url" :replayable="phase !== 'response' && currentLog.phase !== 'client_input' && !currentLog.truncated" wrap />
+        <details v-if="currentLog.headers" class="mt-4" :open="headersOpen" @toggle="headersOpen = ($event.target as HTMLElement).hasAttribute('open')"><summary>请求头与响应头</summary><JsonBodyPane v-if="headersOpen" :body="currentLog.headers" wrap /></details>
       </div>
       <div v-else class="pa-4 text-medium-emphasis">此阶段没有正文记录。</div>
-      <details v-if="synth" class="mt-4" :open="synthOpen" @toggle="synthOpen = ($event.target as HTMLElement).hasAttribute('open')"><summary>流式响应的结构化合成</summary><SessionInspector v-if="synthOpen" :body="synth.body || ''" :replayable="false" wrap /></details>
+      <details v-if="synth?.body" class="mt-4" :open="synthOpen" @toggle="synthOpen = ($event.target as HTMLElement).hasAttribute('open')"><summary>流式响应的结构化合成</summary><SessionInspector v-if="synthOpen" :body="synth.body" :replayable="false" wrap /></details>
     </template>
   </div>
 </template>
@@ -66,6 +68,16 @@ const attempts = computed(() => getLogAttempts(detail.value?.trafficLogs || []))
 const attemptItems = computed(() => attempts.value.map((attempt, index) => ({ title: attempt.label, value: index })))
 const currentAttempt = computed(() => attempts.value[selectedAttempt.value])
 const currentLog = computed(() => phase.value === 'client' ? detail.value?.trafficLogs.find(log => log.phase === 'client_input') || detail.value?.trafficLogs.find(log => log.phase === 'client_request') : phase.value === 'upstream' ? currentAttempt.value?.request : currentAttempt.value?.response)
+const bodyAvailable = computed(() => !['disabled', 'metadata', 'budget', 'expired'].includes(currentLog.value?.bodyState || ''))
+const bodyNotice = computed(() => {
+  const state = currentLog.value?.bodyState
+  if (state === 'disabled') return '该请求开始时正文采集开关已关闭。'
+  if (state === 'metadata') return '该请求使用仅元数据采集档位，未保存正文与头部。'
+  if (state === 'budget') return '该请求开始时日志预算已触发，正文采集降为元数据。'
+  if (state === 'expired') return '正文与头部已按保留策略清理；调用摘要和工具 ID 索引仍保留。'
+  if (state === 'summary') return '原始正文已省略，当前仅展示受大小限制的入口摘要，无法重放。'
+  return currentLog.value?.truncated ? '正文超过采集上限或不完整；这里展示实际保存的内容。' : ''
+})
 const currentContext = computed(() => phase.value === 'response' ? undefined : detail.value?.contexts?.find(snapshot => snapshot.trafficId === currentLog.value?.id))
 const synth = computed(() => [...(detail.value?.trafficLogs || [])].reverse().find(log => log.phase === 'stream_synth' && (!currentAttempt.value?.request?.attemptId || log.attemptId === currentAttempt.value.request.attemptId)))
 const parentRequestId = computed(() => detail.value?.requestLogs?.find(log => log.parentRequestId)?.parentRequestId || '')
@@ -92,6 +104,12 @@ watch(() => [props.requestId, props.sourceVersion], () => {
   // 聚合列表已观测到指标版本时，正文详情也要刷新，避免继续显示旧的尝试结果。
   void load(Boolean(props.sourceVersion))
 }, { immediate: true })
+watch(() => [logs.storage?.maintenance.expiredBodies, logs.storage?.maintenance.deletedRows], (next, previous) => {
+  if (detail.value && previous[0] !== undefined && (next[0] !== previous[0] || next[1] !== previous[1])) {
+    detail.value = null
+    void load(true)
+  }
+})
 onBeforeUnmount(() => { revision++ })
 </script>
 

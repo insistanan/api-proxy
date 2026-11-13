@@ -44,6 +44,7 @@ func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
 	apiGroup.DELETE("/blocked-logs/:id", admin.DeleteBlockedLog(a.blockedStore))
 	apiGroup.DELETE("/blocked-logs", admin.ClearBlockedLogs(a.blockedStore))
 	apiGroup.GET("/logs/dates", admin.ListLogDates(a.logStore))
+	apiGroup.GET("/logs/storage", admin.GetLogStorageStatus(a.logStore))
 	apiGroup.POST("/logs/purge", admin.PurgeLogs(a.logStore))
 
 	// 危险命令 AI 闸门（待确认列表 / 用户决定 / 会话级白黑名单）
@@ -100,8 +101,6 @@ func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
 	apiGroup.PUT("/settings/agent-prompt/:agent", clients.SaveAgentPrompt())
 	// CLI 工具版本检测（客户端配置页顶部横幅）
 	apiGroup.GET("/tools/:tool/version", clients.GetToolVersion())
-	apiGroup.POST("/settings/ccs/pick-path", admin.PickCcsPath(a.cfgManager))
-	apiGroup.POST("/settings/ccs/import", admin.ImportToCcs(a.cfgManager))
 
 	// pi-agent 配置管理（沿用 apiGroup 的统一鉴权）
 	apiGroup.GET("/settings/pi-agent", a.piAgentAPI.Status())

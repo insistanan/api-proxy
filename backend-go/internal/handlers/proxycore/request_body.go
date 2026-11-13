@@ -73,27 +73,21 @@ func RestoreRequestBody(c *gin.Context, bodyBytes []byte) {
 
 // LogOriginalRequest 记录原始请求信息
 func LogOriginalRequest(c *gin.Context, bodyBytes []byte, envCfg *config.EnvConfig, apiType string) {
-	if !envCfg.Current().EnableRequestLogs {
+	policy := bindCapturePolicy(c, envCfg)
+	if policy.BodyState(false) != "" {
+		logger.RecordTrafficContext(c.Request.Context(), logger.TrafficLog{RequestID: BindRequestLogID(c), Phase: logger.PhaseClientRequest, APIType: apiType, Method: c.Request.Method, URL: c.Request.URL.Path, OriginalBytes: len(bodyBytes)})
 		return
 	}
 
 	requestID := BindRequestLogID(c)
 	log.Printf("[Request-Receive] requestId=%s 收到%s请求: %s %s", requestID, apiType, c.Request.Method, c.Request.URL.Path)
-	preparedBody, originalBytes, truncated := logger.PrepareBody(bodyBytes)
+	preparedBody, originalBytes, truncated := logger.PrepareBodyWithLimit(bodyBytes, policy.BodyLimit)
 	if state := requestLifecycle(c); state != nil {
 		state.Context = logger.ContextHead(logger.AnalyzeContext(logger.TrafficLog{Phase: logger.PhaseClientRequest, Body: preparedBody, Truncated: truncated}))
 	}
 
 	if envCfg.ShouldLog("debug") {
-		var formattedBody string
-		if len(bodyBytes) > logger.MaxBodyBytes {
-			formattedBody = preparedBody
-		} else if envCfg.RawLogOutput {
-			formattedBody = utils.FormatJSONBytesRaw(bodyBytes)
-		} else {
-			formattedBody = utils.FormatJSONBytesForLog(bodyBytes, 500)
-		}
-		log.Printf("[Request-OriginalBody] 原始请求体:\n%s", formattedBody)
+		log.Printf("[Request-OriginalBody] requestId=%s 原始正文 %d 字节，截断=%t；正文见结构化日志", requestID, originalBytes, truncated)
 	}
 
 	sanitizedHeaders := make(map[string]string)
@@ -110,10 +104,10 @@ func LogOriginalRequest(c *gin.Context, bodyBytes []byte, envCfg *config.EnvConf
 		headersJSON, _ = json.MarshalIndent(maskedHeaders, "", "  ")
 	}
 	if envCfg.ShouldLog("debug") {
-		log.Printf("[Request-OriginalHeaders] 原始请求头:\n%s", string(headersJSON))
+		log.Printf("[Request-OriginalHeaders] requestId=%s 请求头已掩码保存到结构化日志", requestID)
 	}
 
-	logger.RecordTraffic(logger.TrafficLog{
+	logger.RecordTrafficContext(c.Request.Context(), logger.TrafficLog{
 		RequestID:   requestID,
 		Phase:       logger.PhaseClientRequest,
 		APIType:     apiType,
@@ -121,17 +115,21 @@ func LogOriginalRequest(c *gin.Context, bodyBytes []byte, envCfg *config.EnvConf
 		URL:         c.Request.URL.Path,
 		HeadersJSON: string(headersJSON),
 	}.WithPreparedBody(preparedBody, originalBytes, truncated))
-	if truncated && len(bodyBytes) > logger.MaxBodyBytes {
+	if truncated && len(bodyBytes) > policy.BodyLimit {
 		structuredBody, err := logger.PrepareStructuredRequest(bodyBytes)
 		if err != nil {
 			log.Printf("[Request-Log] requestId=%s 提取结构化输入失败: %v", requestID, err)
 			return
 		}
+		if len(structuredBody) > policy.BodyLimit {
+			log.Printf("[Request-Log] requestId=%s 结构化摘要超过配置的 %d 字节上限，未保存摘要", requestID, policy.BodyLimit)
+			return
+		}
 		if state := requestLifecycle(c); state != nil {
 			state.Context = logger.ContextHead(logger.AnalyzeContext(logger.TrafficLog{Phase: logger.PhaseClientInput, Body: structuredBody}))
 		}
-		logger.RecordTraffic(logger.TrafficLog{
-			RequestID: requestID, Phase: logger.PhaseClientInput, APIType: apiType,
+		logger.RecordTrafficContext(c.Request.Context(), logger.TrafficLog{
+			RequestID: requestID, Phase: logger.PhaseClientInput, APIType: apiType, BodyState: "summary",
 		}.WithPreparedBody(structuredBody, originalBytes, false))
 	}
 }

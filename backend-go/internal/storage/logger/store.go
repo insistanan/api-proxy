@@ -29,6 +29,7 @@ const (
 	maxWriteBatchBytes   = 2 << 20
 	maxWriteBatchEntries = 256
 	logWriteTimeout      = 5 * time.Second
+	logEnqueueTimeout    = 250 * time.Millisecond
 	cleanupBatchSize     = 1000
 	// 自动清理和日志写入共用一条连接。单批预算到点就中断，避免大正文把写入堵住。
 	cleanupTimeout = 1 * time.Second
@@ -49,20 +50,26 @@ type queuedWrite struct {
 
 // Store 是 logs.db 的唯一写入口。服务进程持有一份；CLI 只读打开。
 type Store struct {
-	db           *sql.DB
-	readDB       *sql.DB
-	dbPath       string
-	bootID       string
-	mu           sync.Mutex
-	queue        chan queuedWrite
-	done         chan struct{}
-	closeOnce    sync.Once
-	wg           sync.WaitGroup
-	readOnly     bool
-	bodyRefs     bool
-	requestIndex bool
-	toolIndex    bool
-	closeErr     error
+	db             *sql.DB
+	readDB         *sql.DB
+	dbPath         string
+	bootID         string
+	mu             sync.Mutex
+	queue          chan queuedWrite
+	done           chan struct{}
+	closeOnce      sync.Once
+	wg             sync.WaitGroup
+	readOnly       bool
+	bodyRefs       bool
+	requestIndex   bool
+	toolIndex      bool
+	bodyStates     bool
+	policyProvider func() StoragePolicy
+	statusMu       sync.Mutex
+	maintenance    MaintenanceStatus
+	budgetPaused   bool
+	budgetEvents   []BudgetEvent
+	closeErr       error
 
 	queueMu        sync.Mutex
 	queueBytes     int
@@ -70,15 +77,20 @@ type Store struct {
 	flushWaiters   map[chan error]struct{}
 	closed         bool
 	writeErr       error
+	queueStatus    QueueStatus
 	diagnosticMu   sync.Mutex
 	lastDiagnostic time.Time
 
 	// cleanupBatch / cleanupCeiling 按 app、traffic、request、body 记住删得动的批量。
 	// ceiling 是上次超时的批量，本进程内不再涨回去；cleanupSkipUntil 表示该表暂停清理到什么时候。
 	// 只在持有 s.mu 时访问。
-	cleanupBatch     [4]int
-	cleanupCeiling   [4]int
-	cleanupSkipUntil [4]time.Time
+	cleanupBatch         [4]int
+	cleanupCeiling       [4]int
+	cleanupSkipUntil     [4]time.Time
+	cleanupErrors        [4]error
+	bodyCleanupBatch     int
+	bodyCleanupSkipUntil time.Time
+	bodyCleanupError     error
 }
 
 func logDatabaseURI(path string) (string, error) {
@@ -151,6 +163,15 @@ func initLogSchema(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_traffic_bodies_created ON traffic_bodies(created_at, body_hash)`,
 		`CREATE TABLE IF NOT EXISTS traffic_body_refs (traffic_id INTEGER PRIMARY KEY, body_hash TEXT NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS idx_traffic_body_refs_hash ON traffic_body_refs(body_hash)`,
+		`CREATE TABLE IF NOT EXISTS traffic_body_state (traffic_id INTEGER PRIMARY KEY, unix_milli INTEGER NOT NULL, state TEXT NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS idx_traffic_body_expiry ON traffic_body_state(state, unix_milli, traffic_id)`,
+		// 旧正文只补采集状态，不解析或复制正文；过期查询随后走状态覆盖索引。
+		`INSERT INTO traffic_body_state (traffic_id, unix_milli, state)
+			SELECT id, unix_milli, CASE WHEN truncated = 1 THEN 'truncated' ELSE 'stored' END FROM traffic_logs
+			WHERE phase IN ('client_request', 'client_input', 'upstream_request', 'upstream_response', 'stream_synth')
+			AND id > COALESCE((SELECT MAX(traffic_id) FROM traffic_body_state), 0)`,
+		`CREATE TRIGGER IF NOT EXISTS delete_traffic_body_state AFTER DELETE ON traffic_logs
+			BEGIN DELETE FROM traffic_body_state WHERE traffic_id = OLD.id; END`,
 		`CREATE TRIGGER IF NOT EXISTS delete_traffic_body_ref AFTER DELETE ON traffic_logs
 			BEGIN DELETE FROM traffic_body_refs WHERE traffic_id = OLD.id; END`,
 		`CREATE TABLE IF NOT EXISTS request_logs (
@@ -169,6 +190,7 @@ func initLogSchema(db *sql.DB) error {
 			call_id TEXT NOT NULL, payload_json TEXT NOT NULL, PRIMARY KEY(traffic_id, ordinal)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_log_tools_call ON log_tool_observations(call_id, request_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_log_tools_request ON log_tool_observations(request_id, call_id)`,
 		`CREATE TRIGGER IF NOT EXISTS delete_log_tools AFTER DELETE ON traffic_logs
 			BEGIN DELETE FROM log_tool_observations WHERE traffic_id = OLD.id; END`,
 		`CREATE TABLE IF NOT EXISTS availability_samples (
@@ -196,6 +218,15 @@ func initLogSchema(db *sql.DB) error {
 
 // Open 打开可写日志库并启动后台写入 / 清理。
 func Open(path string) (*Store, error) {
+	return openWithPolicy(path, nil)
+}
+
+func openWithPolicy(path string, provider func() StoragePolicy) (*Store, error) {
+	if provider != nil {
+		if err := validateStoragePolicy(provider()); err != nil {
+			return nil, err
+		}
+	}
 	path = strings.TrimSpace(path)
 	uri, err := logDatabaseURI(path)
 	if err != nil {
@@ -221,17 +252,19 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	store := &Store{
-		db:           db,
-		readDB:       readDB,
-		dbPath:       path,
-		bootID:       NewRequestID(),
-		bodyRefs:     true,
-		requestIndex: true,
-		toolIndex:    true,
-		queue:        make(chan queuedWrite, writeQueueSize),
-		done:         make(chan struct{}),
-		spaceReady:   make(chan struct{}),
-		flushWaiters: make(map[chan error]struct{}),
+		db:             db,
+		readDB:         readDB,
+		dbPath:         path,
+		bootID:         NewRequestID(),
+		bodyRefs:       true,
+		requestIndex:   true,
+		toolIndex:      true,
+		bodyStates:     true,
+		policyProvider: provider,
+		queue:          make(chan queuedWrite, writeQueueSize),
+		done:           make(chan struct{}),
+		spaceReady:     make(chan struct{}),
+		flushWaiters:   make(map[chan error]struct{}),
 	}
 	store.wg.Add(2)
 	go store.writeLoop()
@@ -283,6 +316,11 @@ func OpenReadOnly(path string) (*Store, error) {
 		return nil, fmt.Errorf("读取工具关联索引结构失败: %w", err)
 	}
 	store.toolIndex = store.requestIndex && count > 0
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'traffic_body_state'`).Scan(&count); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("读取正文采集状态结构失败: %w", err)
+	}
+	store.bodyStates = count > 0
 	return store, nil
 }
 
@@ -325,6 +363,7 @@ func (s *Store) RecordAppLog(entry AppLog) error {
 }
 
 func (s *Store) RecordTraffic(entry TrafficLog) error {
+	entry = applyCapture(entry)
 	entry = normalizeTrafficLog(entry)
 	entry.toolObservations = extractToolObservations(entry)
 	// 索引依赖生命周期 JSON；非法输入在入队前拒绝，避免永久重试阻塞后续日志。
@@ -351,14 +390,29 @@ func (s *Store) RecordRequest(entry RequestLogRecord) error {
 
 // Flush 等待此前接收的日志提交，并返回异步写入的实际错误。
 func (s *Store) Flush() error {
+	ctx, cancel := context.WithTimeout(context.Background(), logWriteTimeout)
+	defer cancel()
+	return s.FlushContext(ctx)
+}
+
+// FlushContext 只等待此前已接收的记录；取消等待不会撤回已入队的日志。
+func (s *Store) FlushContext(ctx context.Context) error {
 	if s != nil && s.readOnly {
 		return nil
 	}
 	done := make(chan error, 1)
-	if err := s.enqueue(queuedWrite{kind: writeFlush, flushDone: done}); err != nil {
+	if err := s.enqueueContext(ctx, queuedWrite{kind: writeFlush, flushDone: done}); err != nil {
 		return err
 	}
-	return <-done
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		s.queueMu.Lock()
+		delete(s.flushWaiters, done)
+		s.queueMu.Unlock()
+		return fmt.Errorf("等待日志落库中断，已接收记录仍会继续写入: %w", ctx.Err())
+	}
 }
 
 func (s *Store) Close() error {
@@ -393,6 +447,9 @@ func (s *Store) completeBatch(batch []queuedWrite, err error) {
 	s.queueMu.Lock()
 	for i := range batch {
 		s.queueBytes -= batch[i].bytes
+		if batch[i].kind != writeFlush {
+			s.queueStatus.PendingEntries--
+		}
 		if batch[i].flushDone != nil {
 			if _, waiting := s.flushWaiters[batch[i].flushDone]; waiting {
 				batch[i].flushDone <- err

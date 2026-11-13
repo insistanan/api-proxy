@@ -37,6 +37,10 @@ export interface ChannelLogsResponse {
 }
 
 export interface RequestLogEntry extends ChannelLogEntry {
+  startedAt?: number
+  upstreamSent?: boolean
+  responseHeadersMs?: number
+  upstreamStatusCode?: number
   apiType: LogAPIType
   entry?: 'claude' | 'codex' | 'gemini' | 'chat' | 'images' | 'embeddings' | 'decisions' | 'cmd_gate' | 'llmgate'
   firstTokenMs?: number
@@ -95,6 +99,7 @@ export interface TrafficLog {
   headers?: string
   body?: string
   truncated?: boolean
+  bodyState?: 'stored' | 'disabled' | 'metadata' | 'budget' | 'truncated' | 'summary' | 'expired'
   originalBytes?: number
 }
 
@@ -117,6 +122,9 @@ export interface SystemLogSummary {
   errorType?: string
   errorMessage?: string
   startedAt?: number
+  endedAt?: number
+  durationMs?: number
+  clientStatusCode?: number
   promptPreview?: string
   clientFamily?: string
   identitySource?: string
@@ -240,6 +248,32 @@ export interface SystemLogDetail {
   contexts?: ContextSnapshot[]
   contextChange?: ContextChange
   toolLinks?: ToolLinks
+}
+
+export interface LogStorageStatus {
+  queue?: {
+    pendingEntries: number
+    pendingBytes: number
+    capacityEntries: number
+    capacityBytes: number
+    acceptedWrites: number
+    rejectedWrites: number
+    lastRejectedAt?: string
+    lastRejectedError?: string
+    writeFailures: number
+    lastWriteFailureAt?: string
+    writeRecoveries: number
+    lastRecoveryAt?: string
+  }
+  policy: { runtimeDays: number; callDays: number; bodyDays: number; budgetMB: number }
+  usedBytes: number
+  freeBytes: number
+  databaseBytes: number
+  walBytes: number
+  bodyCapturePaused: boolean
+  writeError?: string
+  maintenance: { lastCleanupAt?: string; deletedRows: number; expiredBodies: number; cleanupError?: string; budgetError?: string; cleanupDeferred?: boolean }
+  budgetEvents: Array<{ timestamp: string; paused: boolean; usedBytes: number; budgetBytes: number }>
 }
 
 /** 一个存在日志记录的本地日历日（清理入口用）。 */

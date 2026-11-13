@@ -40,6 +40,9 @@ func AttachRequestLogID(c *gin.Context, req *http.Request) *http.Request {
 	ctx := logger.ContextWithRequestID(req.Context(), requestID)
 	if c != nil && c.Request != nil {
 		ctx = logger.ContextWithAttemptID(ctx, logger.AttemptIDFromContext(c.Request.Context()))
+		if policy, ok := logger.CapturePolicyFromContext(c.Request.Context()); ok {
+			ctx = logger.ContextWithCapturePolicy(ctx, policy)
+		}
 	}
 	return req.WithContext(ctx)
 }

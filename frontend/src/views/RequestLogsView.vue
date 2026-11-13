@@ -1,6 +1,7 @@
 <template>
   <div class="request-logs-view" :class="{ 'system-tab-active': activeTab === 'system' }">
     <PageHeader title="请求与会话观测" description="查看上游尝试、会话轨迹，以及模型每次调用的上下文与变化。" />
+    <LogStorageStatus />
     <div class="logs-toolbar">
       <v-tabs v-model="activeTab" color="primary" density="comfortable" class="logs-tabs">
         <v-tab value="request">模型调用</v-tab>
@@ -238,6 +239,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import PageHeader from '@/components/common/PageHeader.vue'
+import LogStorageStatus from '@/components/LogStorageStatus.vue'
 import { useRoute, useRouter } from 'vue-router'
 import PromptBodyDialog from '@/components/PromptBodyDialog.vue'
 import RequestFailureDialog from '@/components/RequestFailureDialog.vue'
@@ -465,6 +467,7 @@ const confirmPurge = async () => {
     purgeDate.value = ''
     callStore.reset()
     logsStore.reset()
+    void logsStore.loadStorageStatus()
     callDetailOpen.value = false
     await loadLogs()
     purgeNotice.value = `清理完成，共删除 ${total.toLocaleString()} 条日志记录`

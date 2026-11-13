@@ -15,6 +15,12 @@ import (
 type GatewaySettings struct {
 	EnableRequestLogs         bool   `json:"enableRequestLogs"`
 	EnableResponseLogs        bool   `json:"enableResponseLogs"`
+	LogCaptureMode            string `json:"logCaptureMode"`
+	LogBodyLimitKB            int    `json:"logBodyLimitKB"`
+	LogRuntimeRetentionDays   int    `json:"logRuntimeRetentionDays"`
+	LogCallRetentionDays      int    `json:"logCallRetentionDays"`
+	LogBodyRetentionDays      int    `json:"logBodyRetentionDays"`
+	LogBudgetMB               int    `json:"logBudgetMB"`
 	RequestTimeout            int    `json:"requestTimeout"`
 	ResponseHeaderTimeout     int    `json:"responseHeaderTimeout"`
 	StreamIdleTimeout         int    `json:"streamIdleTimeout"`
@@ -32,6 +38,12 @@ func DefaultGatewaySettings() GatewaySettings {
 	return GatewaySettings{
 		EnableRequestLogs:         true,
 		EnableResponseLogs:        true,
+		LogCaptureMode:            "bounded",
+		LogBodyLimitKB:            1024,
+		LogRuntimeRetentionDays:   2,
+		LogCallRetentionDays:      2,
+		LogBodyRetentionDays:      2,
+		LogBudgetMB:               0,
 		RequestTimeout:            300000,
 		ResponseHeaderTimeout:     120,
 		StreamIdleTimeout:         300,
@@ -45,6 +57,21 @@ func DefaultGatewaySettings() GatewaySettings {
 }
 
 func ValidateGatewaySettings(settings GatewaySettings) error {
+	if settings.LogCaptureMode != "metadata" && settings.LogCaptureMode != "bounded" {
+		return fmt.Errorf("日志采集档位必须为 metadata 或 bounded")
+	}
+	if settings.LogBodyLimitKB < 16 || settings.LogBodyLimitKB > 1024 {
+		return fmt.Errorf("日志正文上限必须在 16 至 1024 KiB 之间")
+	}
+	if settings.LogRuntimeRetentionDays < 1 || settings.LogRuntimeRetentionDays > 365 || settings.LogCallRetentionDays < 1 || settings.LogCallRetentionDays > 365 {
+		return fmt.Errorf("运行日志和调用保留期必须在 1 至 365 天之间")
+	}
+	if settings.LogBodyRetentionDays < 1 || settings.LogBodyRetentionDays > settings.LogCallRetentionDays {
+		return fmt.Errorf("正文保留期必须在 1 天至调用保留期之间")
+	}
+	if settings.LogBudgetMB != 0 && (settings.LogBudgetMB < 64 || settings.LogBudgetMB > 1048576) {
+		return fmt.Errorf("日志预算必须为 0（不限）或 64 至 1048576 MiB")
+	}
 	if settings.RequestTimeout <= 0 || settings.RequestTimeout > 86400000 {
 		return fmt.Errorf("请求超时必须在 1 至 86400000 毫秒之间")
 	}
@@ -185,9 +212,18 @@ func (c *EnvConfig) Current() *EnvConfig {
 	return &current
 }
 
+// Snapshot 固定当前完整策略，不再跟随 provider；用于单次请求的局部副本。
+func (c *EnvConfig) Snapshot() *EnvConfig {
+	current := *c.Current()
+	current.settingsProvider = nil
+	return &current
+}
+
 func (c *EnvConfig) applyGatewaySettings(settings GatewaySettings) {
 	c.EnableRequestLogs = settings.EnableRequestLogs
 	c.EnableResponseLogs = settings.EnableResponseLogs
+	c.LogCaptureMode = settings.LogCaptureMode
+	c.LogBodyLimitKB = settings.LogBodyLimitKB
 	c.RequestTimeout = settings.RequestTimeout
 	c.ResponseHeaderTimeout = settings.ResponseHeaderTimeout
 	c.StreamIdleTimeout = settings.StreamIdleTimeout

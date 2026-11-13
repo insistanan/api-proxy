@@ -4,11 +4,16 @@ package logger
 func (s *Store) trafficSelect() string {
 	body := "t.body"
 	join := ""
+	state := "''"
+	if s.bodyStates {
+		join = " LEFT JOIN traffic_body_state bs ON bs.traffic_id = t.id"
+		state = "COALESCE(bs.state, '')"
+	}
 	if s.bodyRefs {
 		// 引用存在而正文丢失时返回 NULL，让 Scan 明确报错，不静默返回空正文。
 		body = "CASE WHEN r.traffic_id IS NULL THEN t.body ELSE b.body END"
-		join = " LEFT JOIN traffic_body_refs r ON r.traffic_id = t.id LEFT JOIN traffic_bodies b ON b.body_hash = r.body_hash"
+		join += " LEFT JOIN traffic_body_refs r ON r.traffic_id = t.id LEFT JOIN traffic_bodies b ON b.body_hash = r.body_hash"
 	}
 	return `SELECT t.id, t.unix_milli, t.timestamp, t.request_id, t.attempt_id, t.phase, t.api_type, t.method, t.url,
-		t.status_code, t.stream, t.headers_json, ` + body + `, t.truncated, t.original_bytes FROM traffic_logs t` + join
+		t.status_code, t.stream, t.headers_json, ` + body + `, t.truncated, t.original_bytes, ` + state + ` FROM traffic_logs t` + join
 }

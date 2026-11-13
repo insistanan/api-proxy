@@ -3,6 +3,7 @@ package logger
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -121,31 +122,43 @@ func extractToolObservations(entry TrafficLog) []ToolObservation {
 	return observations
 }
 
-func (s *Store) toolLinks(ctx context.Context, summary SystemLogSummary, entries []TrafficLog) (*ToolLinks, error) {
+func (s *Store) toolLinks(ctx context.Context, summary SystemLogSummary) (*ToolLinks, error) {
 	if !s.toolIndex {
 		return nil, nil
 	}
-	ids := make(map[string]bool)
+	// 正文和工具索引有独立保留期，不能再依赖正文提取关联入口。
+	seedRows, err := s.readDB.QueryContext(ctx, `SELECT DISTINCT call_id FROM log_tool_observations
+		WHERE request_id = ? ORDER BY call_id LIMIT ?`, summary.RequestID, maxToolObservations+1)
+	if err != nil {
+		return nil, fmt.Errorf("查询工具关联入口失败: %w", err)
+	}
+	ids := make([]string, 0, maxToolObservations)
 	limited := false
-	for _, entry := range entries {
-		observations := extractToolObservations(entry)
-		if len(observations) >= maxToolObservations {
+	for seedRows.Next() {
+		var id string
+		if err := seedRows.Scan(&id); err != nil {
+			seedRows.Close()
+			return nil, fmt.Errorf("读取工具关联入口失败: %w", err)
+		}
+		if len(ids) == maxToolObservations {
 			limited = true
+			break
 		}
-		for _, observation := range observations {
-			if len(ids) < maxToolObservations {
-				ids[observation.CallID] = true
-			} else {
-				limited = true
-			}
-		}
+		ids = append(ids, id)
+	}
+	seedErr := seedRows.Err()
+	closeErr := seedRows.Close()
+	if seedErr != nil || closeErr != nil {
+		return nil, fmt.Errorf("读取工具关联入口失败: %w", errors.Join(seedErr, closeErr))
 	}
 	if len(ids) == 0 {
 		return nil, nil
 	}
+	// 单条正文提取也有上限；达到边界时保守提示关联可能不完整。
+	limited = limited || len(ids) >= maxToolObservations
 	args := []any{logGroupKey(summary)}
 	marks := make([]string, 0, len(ids))
-	for id := range ids {
+	for _, id := range ids {
 		marks = append(marks, "?")
 		args = append(args, id)
 	}
@@ -159,7 +172,7 @@ func (s *Store) toolLinks(ctx context.Context, summary SystemLogSummary, entries
 	}
 	defer rows.Close()
 	result := &ToolLinks{Observations: []ToolObservation{}, Limited: limited,
-		Notice: "按明确调用 ID 关联本版本采集且尚未过期的记录；历史引用不代表再次执行，未观测到结果不代表执行失败；不推算执行耗时"}
+		Notice: "按明确调用 ID 关联仍在保留期内的索引；正文过期后仍可查看关联。模型输出表示提出调用，输入历史表示客户端带回的内容；不代表工具实际执行过程，不推算执行耗时，未观测到结果不代表失败"}
 	seen := make(map[string]bool)
 	count := 0
 	for rows.Next() {

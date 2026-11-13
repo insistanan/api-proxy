@@ -186,6 +186,7 @@ func sendWithAdmission(client *http.Client, req *http.Request) (*http.Response, 
 		return nil, err
 	}
 	notifySendObserver(req.Context())
+	started := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
 		if resp != nil && resp.Body != nil {
@@ -194,6 +195,7 @@ func sendWithAdmission(client *http.Client, req *http.Request) (*http.Response, 
 		lease.Release()
 		return nil, err
 	}
+	notifyResponseHeadersObserver(req.Context(), time.Since(started))
 	if resp.StatusCode == http.StatusTooManyRequests {
 		upstreamcontrol.Record429(req.Context(), resp.Header)
 	}

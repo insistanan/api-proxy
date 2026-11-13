@@ -98,6 +98,13 @@ func recordAttemptLog(
 	isStream bool,
 	usage *types.Usage,
 ) {
+	if observation := currentAvailabilityObservation(c); observation != nil {
+		if observation.recorded {
+			return
+		}
+		observation.recorded = true
+		start = observation.startedAt
+	}
 	if state := requestLifecycle(c); state != nil {
 		state.Status = status
 		state.StatusCode = statusCode
@@ -107,14 +114,6 @@ func recordAttemptLog(
 	if logCtx.LogStore == nil && logCtx.RequestLogStore == nil {
 		return
 	}
-	if observation := currentAvailabilityObservation(c); observation != nil {
-		if observation.recorded {
-			return
-		}
-		observation.recorded = true
-		start = observation.startedAt
-	}
-
 	channelName := ""
 	resolvedModel := logCtx.Model
 	if upstream != nil {
@@ -135,6 +134,14 @@ func recordAttemptLog(
 	}
 	durationMs := time.Since(start).Milliseconds()
 	firstTokenMs := requestLogFirstTokenMs(c, start)
+	var sent *bool
+	var responseHeadersMs *int64
+	upstreamStatusCode := 0
+	if observation := currentAvailabilityObservation(c); observation != nil {
+		value := observation.sent
+		sent, responseHeadersMs = &value, observation.responseHeadersMs
+		upstreamStatusCode = observation.upstreamStatusCode
+	}
 	sample := availabilitySample(c, success, statusCode, errorType, errorMessage)
 	errorMessage = truncateLogMessage(errorMessage, 500)
 
@@ -177,6 +184,10 @@ func recordAttemptLog(
 			Success:               success,
 			DurationMs:            durationMs,
 			FirstTokenMs:          firstTokenMs,
+			StartedAt:             start.UnixMilli(),
+			UpstreamSent:          sent,
+			ResponseHeadersMs:     responseHeadersMs,
+			UpstreamStatusCode:    upstreamStatusCode,
 			TPS:                   calculateRequestTPS(usageOutputTokens(usage), durationMs, firstTokenMs, isStream),
 			Model:                 logCtx.Model,
 			ResolvedModel:         resolvedModel,

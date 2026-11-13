@@ -6,10 +6,6 @@ export interface AppSettings {
     upstreamProxyEnabled: boolean
   }
   contentSafety: ContentSafetySettings
-  integration: {
-    /** CC Switch 可执行文件路径；空串表示未配置 */
-    ccSwitchPath: string
-  }
   disguise: DisguiseSettings
   gateway: GatewaySettings
   assistant: {
@@ -56,6 +52,12 @@ export interface DisguiseSettings {
 export interface GatewaySettings {
   enableRequestLogs: boolean
   enableResponseLogs: boolean
+  logCaptureMode: 'metadata' | 'bounded'
+  logBodyLimitKB: number
+  logRuntimeRetentionDays: number
+  logCallRetentionDays: number
+  logBodyRetentionDays: number
+  logBudgetMB: number
   requestTimeout: number
   responseHeaderTimeout: number
   streamIdleTimeout: number

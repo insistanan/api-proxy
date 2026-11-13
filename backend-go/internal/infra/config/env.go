@@ -22,6 +22,8 @@ type EnvConfig struct {
 	// 以下字段保留内部默认值；请求与日志策略由 Current 从设置快照覆盖，不再逐次读取旧 env。
 	EnableRequestLogs           bool
 	EnableResponseLogs          bool
+	LogCaptureMode              string
+	LogBodyLimitKB              int
 	QuietPollingLogs            bool
 	RawLogOutput                bool
 	SSEDebugLevel               string
@@ -69,6 +71,8 @@ func NewEnvConfig() *EnvConfig {
 		// 日志与调试：根据 LogLevel 或稳态默认值自动决定
 		EnableRequestLogs:           true,
 		EnableResponseLogs:          true,
+		LogCaptureMode:              "bounded",
+		LogBodyLimitKB:              1024,
 		QuietPollingLogs:            !isDebug, // 非 debug 模式下静默轮询日志
 		RawLogOutput:                false,
 		SSEDebugLevel:               "off",

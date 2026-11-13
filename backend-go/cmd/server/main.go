@@ -98,6 +98,10 @@ func newApp() (_ *app, err error) {
 	a.logStore, err = logger.Setup(&logger.Config{
 		DBPath:  a.envCfg.LogDBPath,
 		Console: a.envCfg.LogToConsole,
+		PolicyProvider: func() logger.StoragePolicy {
+			settings := a.cfgManager.GetGatewaySettings()
+			return logger.StoragePolicy{RuntimeDays: settings.LogRuntimeRetentionDays, CallDays: settings.LogCallRetentionDays, BodyDays: settings.LogBodyRetentionDays, BudgetMB: settings.LogBudgetMB}
+		},
 	})
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("初始化日志系统失败: %w", err), a.cfgManager.Close())

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -15,16 +16,20 @@ import (
 )
 
 const requestLifecycleKey = "__request_log_lifecycle"
+const requestLifecycleStartKey = "__request_log_started_at"
 
 func newRequestLifecycle(c *gin.Context, body []byte, start time.Time) *logger.RequestLifecycle {
-	digest := sha256.Sum256(body)
 	state := &logger.RequestLifecycle{
-		RequestHash: hex.EncodeToString(digest[:]),
-		Client:      c.Request.UserAgent(),
-		BootID:      logger.Default().BootID(),
-		StartedAt:   start.UnixMilli(),
+		Client:    c.Request.UserAgent(),
+		BootID:    logger.Default().BootID(),
+		StartedAt: start.UnixMilli(),
+	}
+	if body != nil {
+		digest := sha256.Sum256(body)
+		state.RequestHash = hex.EncodeToString(digest[:])
 	}
 	c.Set(requestLifecycleKey, state)
+	c.Set(requestLifecycleStartKey, start)
 	return state
 }
 
@@ -38,10 +43,12 @@ func requestLifecycle(c *gin.Context) *logger.RequestLifecycle {
 }
 
 func recordRequestLifecycle(c *gin.Context, env *config.EnvConfig, apiType, phase string, state *logger.RequestLifecycle) {
-	if !env.Current().EnableRequestLogs && !env.Current().EnableResponseLogs {
-		return
+	policy := bindCapturePolicy(c, env)
+	snapshot := *state
+	if policy.BodyState(false) != "" {
+		snapshot.PromptPreview, snapshot.Context = "", nil
 	}
-	payload, err := json.Marshal(state)
+	payload, err := json.Marshal(snapshot)
 	if err != nil {
 		log.Printf("[Request-Log] 编码请求生命周期失败: %v", err)
 		return
@@ -58,10 +65,13 @@ func finishRequestLifecycle(c *gin.Context, env *config.EnvConfig, apiType strin
 		state.ErrorType = "client_cancelled"
 		state.ErrorMessage = err.Error()
 	} else if c.Writer.Status() >= http.StatusBadRequest {
-		state.Status = "failed"
+		if state.Status != "blocked" {
+			state.Status = "failed"
+		}
 		state.StatusCode = c.Writer.Status()
 		if state.ErrorType == "" {
 			state.ErrorType = "local_response"
+			state.ErrorMessage = fmt.Sprintf("网关返回 HTTP %d，未记录更具体的终止原因", c.Writer.Status())
 		}
 	} else if state.Status == "" {
 		// 未写回任何响应且没有尝试结果，不能用 gin 的默认 200 冒充完成。
@@ -69,6 +79,21 @@ func finishRequestLifecycle(c *gin.Context, env *config.EnvConfig, apiType strin
 			state.Status = "completed"
 		} else {
 			state.Status = "interrupted"
+			state.ErrorType = "missing_response"
+			state.ErrorMessage = "网关处理结束但没有交付响应或记录上游结果"
+		}
+	}
+	if c.Writer.Written() {
+		state.ClientStatusCode = c.Writer.Status()
+		if state.StatusCode == 0 {
+			state.StatusCode = state.ClientStatusCode
+		}
+	}
+	state.EndedAt = time.Now().UnixMilli()
+	if value, ok := c.Get(requestLifecycleStartKey); ok {
+		if start, ok := value.(time.Time); ok {
+			duration := time.Since(start).Milliseconds()
+			state.DurationMs = &duration
 		}
 	}
 	recordRequestLifecycle(c, env, apiType, logger.PhaseRequestEnd, state)

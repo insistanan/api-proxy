@@ -62,7 +62,7 @@ func (s *Store) QueryTrafficLogs(ctx context.Context, opts QueryOptions) ([]Traf
 		if err := rows.Scan(
 			&entry.ID, &entry.UnixMilli, &entry.Timestamp, &entry.RequestID, &entry.AttemptID,
 			&entry.Phase, &entry.APIType, &entry.Method, &entry.URL, &entry.StatusCode,
-			&streamValue, &entry.HeadersJSON, &entry.Body, &truncatedValue, &entry.OriginalBytes,
+			&streamValue, &entry.HeadersJSON, &entry.Body, &truncatedValue, &entry.OriginalBytes, &entry.BodyState,
 		); err != nil {
 			return nil, err
 		}
@@ -74,6 +74,10 @@ func (s *Store) QueryTrafficLogs(ctx context.Context, opts QueryOptions) ([]Traf
 }
 
 func (s *Store) QueryRequestLogs(ctx context.Context, opts QueryOptions) ([]json.RawMessage, error) {
+	return s.queryRequestLogs(ctx, opts, 0)
+}
+
+func (s *Store) queryRequestLogs(ctx context.Context, opts QueryOptions, maxBytes int) ([]json.RawMessage, error) {
 	if s == nil {
 		return nil, nil
 	}
@@ -110,10 +114,15 @@ func (s *Store) QueryRequestLogs(ctx context.Context, opts QueryOptions) ([]json
 	}
 	defer rows.Close()
 	entries := make([]json.RawMessage, 0)
+	bytes := 0
 	for rows.Next() {
 		var payload string
 		if err := rows.Scan(&payload); err != nil {
 			return nil, err
+		}
+		bytes += len(payload)
+		if maxBytes > 0 && bytes > maxBytes {
+			return nil, ErrLogDetailTooLarge
 		}
 		entries = append(entries, json.RawMessage(payload))
 	}

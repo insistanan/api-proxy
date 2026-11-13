@@ -75,7 +75,7 @@ func (s *Store) cleanupLoop() {
 		case <-timer.C:
 			more, deleted, err := s.cleanupExpired()
 			roundDeleted += deleted
-			delay := time.Hour
+			delay := time.Minute
 			if err != nil {
 				s.reportCleanupError(err)
 				delay = time.Minute
@@ -99,7 +99,22 @@ func (s *Store) cleanupExpired() (bool, int64, error) {
 	if s == nil || s.db == nil {
 		return false, 0, fmt.Errorf("日志存储不可清理")
 	}
-	cutoff := RetentionCutoff(time.Now()).UnixMilli()
+	policy := s.storagePolicy()
+	if err := validateStoragePolicy(policy); err != nil {
+		return false, 0, err
+	}
+	budgetErr := s.refreshBudget(policy)
+	// 写入积压时让写循环先排空，避免自动删除持续争用唯一写连接。
+	s.queueMu.Lock()
+	deferred := s.queueStatus.PendingEntries > cap(s.queue)/2 || s.queueBytes > maxQueuedLogBytes/2
+	s.queueMu.Unlock()
+	s.statusMu.Lock()
+	s.maintenance.CleanupDeferred = deferred
+	s.statusMu.Unlock()
+	if deferred {
+		return true, 0, budgetErr
+	}
+	cutoff := retentionCutoffDays(time.Now(), policy.CallDays).UnixMilli()
 	targets := cleanupTargets()
 	var (
 		more    bool
@@ -112,7 +127,11 @@ func (s *Store) cleanupExpired() (bool, int64, error) {
 			return more, deleted, nil
 		default:
 		}
-		again, rows, err := s.cleanupTable(target, cutoff, i)
+		tableCutoff := cutoff
+		if target.name == "app_logs" {
+			tableCutoff = retentionCutoffDays(time.Now(), policy.RuntimeDays).UnixMilli()
+		}
+		again, rows, err := s.cleanupTable(target, tableCutoff, i)
 		deleted += rows
 		more = more || again
 		if err != nil {
@@ -120,7 +139,19 @@ func (s *Store) cleanupExpired() (bool, int64, error) {
 			errs = append(errs, err)
 		}
 	}
-	return more, deleted, errors.Join(errs...)
+	again, expired, bodyErr := s.expireTrafficBodies(retentionCutoffDays(time.Now(), policy.BodyDays).UnixMilli())
+	more = more || again
+	err := errors.Join(append(errs, bodyErr, budgetErr)...)
+	s.statusMu.Lock()
+	s.maintenance.LastCleanupAt = time.Now().UTC().Format(time.RFC3339Nano)
+	s.maintenance.DeletedRows += deleted
+	s.maintenance.ExpiredBodies += expired
+	s.maintenance.CleanupError = ""
+	if err != nil {
+		s.maintenance.CleanupError = err.Error()
+	}
+	s.statusMu.Unlock()
+	return more, deleted + expired, err
 }
 
 // cleanupTable 删除一张表的一批过期日志，写完或超时后立刻放开写锁。
@@ -152,8 +183,9 @@ func (s *Store) cleanupTable(target cleanupTarget, cutoff int64, table int) (boo
 	timedOut := isCleanupTimeout(ctx, err)
 	if err != nil && !timedOut {
 		s.cleanupSkipUntil[table] = started.Add(cleanupRetryInterval)
-		return false, 0, fmt.Errorf("清理 %s 过期日志失败（批量 %d，耗时 %s）: %w",
+		s.cleanupErrors[table] = fmt.Errorf("清理 %s 过期日志失败（批量 %d，耗时 %s）: %w",
 			target.name, batch, elapsed.Round(time.Millisecond), err)
+		return false, 0, s.cleanupErrors[table]
 	}
 	var affected int64
 	if !timedOut {
@@ -169,10 +201,12 @@ func (s *Store) cleanupTable(target cleanupTarget, cutoff int64, table int) (boo
 		// 单行仍超时说明这批语句的代价与行数无关（例如缺索引导致全表扫描），
 		// 继续每分钟重试只会重复撞同一根墙，先暂停这张表，让其他表照常清理。
 		s.cleanupSkipUntil[table] = started.Add(cleanupRetryInterval)
-		return false, 0, fmt.Errorf("清理 %s 过期日志失败（单批 %d 行仍超时，%s 内不再重试）: %w",
+		s.cleanupErrors[table] = fmt.Errorf("清理 %s 过期日志失败（单批 %d 行仍超时，%s 内不再重试）: %w",
 			target.name, batch, cleanupRetryInterval, err)
+		return false, 0, s.cleanupErrors[table]
 	}
 	s.cleanupSkipUntil[table] = time.Time{}
+	s.cleanupErrors[table] = nil
 	return again, affected, nil
 }
 

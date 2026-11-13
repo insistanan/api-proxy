@@ -11,17 +11,6 @@
   padding-top: 0;
 }
 
-.ccs-path-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-}
-
-.ccs-path-row .v-btn {
-  margin-top: 4px;
-  flex-shrink: 0;
-}
-
 .settings-nav {
   position: sticky;
   top: calc(var(--v-layout-top) + 24px);
@@ -253,6 +242,4 @@
 .settings-nav :deep(.v-list-item) { min-height: 44px; }
 @media (max-width: 600px) {
   .settings-content { padding: 16px; }
-  .ccs-path-row { flex-direction: column; }
-  .ccs-path-row > * { width: 100%; }
 }

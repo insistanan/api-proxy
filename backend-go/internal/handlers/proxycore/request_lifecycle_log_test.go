@@ -259,6 +259,59 @@ func TestCompletedLifecycleSurvivesLateClientDisconnect(t *testing.T) {
 	require.NoError(t, store.Flush())
 }
 
+func TestLifecycleRecordsGatewayTimingAndPreservesTerminalReason(t *testing.T) {
+	store := setupLifecycleLogStore(t)
+	for _, test := range []struct {
+		name, initial, want string
+		status              int
+		cancelled           bool
+	}{
+		{"安全拦截", "blocked", "blocked", 403, false},
+		{"本地拒绝", "", "failed", 400, false},
+		{"客户端取消", "failed", "cancelled", 0, true},
+		{"流式交付后中断", "failed", "failed", 200, false},
+		{"交付后断开", "completed", "completed", 200, true},
+		{"没有交付响应", "", "interrupted", 0, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			c := newAttemptTestContext(ctx)
+			id := BindRequestLogID(c)
+			state := newRequestLifecycle(c, []byte(`{}`), time.Now().Add(-250*time.Millisecond))
+			state.Status = test.initial
+			if test.initial == "failed" {
+				state.StatusCode = 502
+				state.ErrorType, state.ErrorMessage = "response_processing", "unexpected EOF"
+			}
+			if test.status != 0 {
+				c.JSON(test.status, gin.H{"result": "test"})
+			}
+			if test.cancelled {
+				cancel()
+			}
+			finishRequestLifecycle(c, &config.EnvConfig{}, "Messages", state)
+			require.Equal(t, test.want, state.Status)
+			require.NotNil(t, state.DurationMs)
+			require.GreaterOrEqual(t, *state.DurationMs, int64(250))
+			require.GreaterOrEqual(t, state.EndedAt, state.StartedAt)
+			require.NoError(t, store.Flush())
+			detail, err := store.GetSystemLogDetail(context.Background(), id)
+			require.NoError(t, err)
+			require.Equal(t, state.DurationMs, detail.Summary.DurationMs)
+			require.Equal(t, test.want, detail.Summary.Status)
+			require.Equal(t, test.status, detail.Summary.ClientStatusCode)
+			if test.initial == "failed" && !test.cancelled {
+				require.Equal(t, 502, detail.Summary.StatusCode)
+			}
+			if test.want == "failed" || test.want == "interrupted" {
+				require.NotEmpty(t, detail.Summary.ErrorType)
+				require.NotEmpty(t, detail.Summary.ErrorMessage)
+			}
+		})
+	}
+}
+
 type cancelOnCloseBody struct {
 	io.ReadCloser
 	cancel context.CancelFunc
