@@ -1,118 +1,105 @@
 <template>
-  <v-dialog v-model="isOpen" max-width="800" persistent>
-    <v-card rounded="lg">
-      <v-card-title class="d-flex align-center justify-space-between pa-4">
-        <div class="d-flex align-center ga-2">
-          <v-icon color="success">mdi-test-tube</v-icon>
-          <span class="text-h6">快捷测试</span>
-          <v-chip v-if="channel" size="small" color="primary" variant="tonal">
-            {{ channel.name }}
-          </v-chip>
+  <AppDialog :model-value="isOpen" title="快捷测试" size="lg" @update:model-value="value => { if (!value) close() }">
+    <template #header-actions>
+      <v-chip v-if="channel" size="small" color="primary" variant="tonal">
+        {{ channel.name }}
+      </v-chip>
+    </template>
+
+    <!-- 模型选择 -->
+    <v-combobox
+      v-model="selectedModel"
+      :items="modelOptions"
+      item-title="title"
+      item-value="value"
+      :return-object="false"
+      label="模型"
+      variant="outlined"
+      prepend-inner-icon="mdi-robot"
+      density="comfortable"
+      class="mb-4"
+      :disabled="isSending"
+      :loading="isLoadingModels"
+      clearable
+    >
+      <template #no-data>
+        <div class="text-center pa-4 text-medium-emphasis">
+          <template v-if="isLoadingModels">正在从上游获取模型列表...</template>
+          <template v-else-if="modelLoadError">暂时无法显示模型列表，仍可直接输入模型名称</template>
+          <template v-else>未找到匹配模型，可直接输入模型名称</template>
         </div>
-        <v-btn icon size="small" variant="text" aria-label="关闭快捷测试" @click="close">
-          <v-icon>mdi-close</v-icon>
-        </v-btn>
+      </template>
+    </v-combobox>
+
+    <div v-if="modelLoadError" class="model-load-error mb-4" role="alert">
+      <span>{{ modelLoadError }}</span>
+      <v-btn
+        size="small"
+        variant="text"
+        color="warning"
+        :loading="isLoadingModels"
+        :disabled="isSending"
+        @click="loadModels"
+      >
+        重新获取
+      </v-btn>
+    </div>
+
+    <v-select
+      v-model="selectedThinking"
+      :items="thinkingOptions"
+      label="思考档位"
+      variant="outlined"
+      density="comfortable"
+      class="mb-4"
+      :disabled="isSending"
+    />
+
+    <!-- 测试输入 -->
+    <v-textarea
+      v-model="testMessage"
+      label="测试消息"
+      variant="outlined"
+      rows="3"
+      :disabled="isSending"
+      :loading="isSending"
+      placeholder="输入测试消息..."
+      class="mb-4"
+    />
+
+    <!-- 发送按钮 -->
+    <div class="d-flex justify-end mb-4">
+      <v-btn
+        color="success"
+        prepend-icon="mdi-send"
+        :disabled="!canSend"
+        :loading="isSending"
+        @click="sendTest"
+      >
+        发送测试
+      </v-btn>
+    </div>
+
+    <!-- 响应结果 -->
+    <v-card v-if="responseText || responseError || isSending" variant="outlined" class="response-area">
+      <v-card-title class="text-subtitle-2 pa-3 bg-surface">
+        <v-icon size="small" class="mr-2">mdi-message-reply-text</v-icon>
+        响应结果
       </v-card-title>
-
       <v-divider />
-
-      <v-card-text class="pa-4">
-        <!-- 模型选择 -->
-        <v-combobox
-          v-model="selectedModel"
-          :items="modelOptions"
-          item-title="title"
-          item-value="value"
-          :return-object="false"
-          label="模型"
-          variant="outlined"
-          prepend-inner-icon="mdi-robot"
-          density="comfortable"
-          class="mb-4"
-          :disabled="isSending"
-          :loading="isLoadingModels"
-          clearable
-        >
-          <template #no-data>
-            <div class="text-center pa-4 text-medium-emphasis">
-              <template v-if="isLoadingModels">正在从上游获取模型列表...</template>
-              <template v-else-if="modelLoadError">暂时无法显示模型列表，仍可直接输入模型名称</template>
-              <template v-else>未找到匹配模型，可直接输入模型名称</template>
-            </div>
-          </template>
-        </v-combobox>
-
-        <div v-if="modelLoadError" class="model-load-error mb-4" role="alert">
-          <span>{{ modelLoadError }}</span>
-          <v-btn
-            size="small"
-            variant="text"
-            color="warning"
-            :loading="isLoadingModels"
-            :disabled="isSending"
-            @click="loadModels"
-          >
-            重新获取
-          </v-btn>
+      <v-card-text class="pa-4" style="max-height: 300px; overflow-y: auto;">
+        <div v-if="responseError" class="error-message" role="alert">
+          <v-icon color="error" class="mr-2">mdi-alert-circle</v-icon>
+          <span class="text-error">{{ responseError }}</span>
         </div>
-
-        <v-select
-          v-model="selectedThinking"
-          :items="thinkingOptions"
-          label="思考档位"
-          variant="outlined"
-          density="comfortable"
-          class="mb-4"
-          :disabled="isSending"
-        />
-
-        <!-- 测试输入 -->
-        <v-textarea
-          v-model="testMessage"
-          label="测试消息"
-          variant="outlined"
-          rows="3"
-          :disabled="isSending"
-          :loading="isSending"
-          placeholder="输入测试消息..."
-          class="mb-4"
-        />
-
-        <!-- 发送按钮 -->
-        <div class="d-flex justify-end mb-4">
-          <v-btn
-            color="success"
-            prepend-icon="mdi-send"
-            :disabled="!canSend"
-            :loading="isSending"
-            @click="sendTest"
-          >
-            发送测试
-          </v-btn>
+        <div v-else-if="isSending && !responseText" class="text-center text-medium-emphasis py-4">
+          <v-progress-circular indeterminate size="32" />
+          <div class="mt-2">正在发送请求...</div>
         </div>
-
-        <!-- 响应结果 -->
-        <v-card v-if="responseText || responseError || isSending" variant="outlined" class="response-area">
-          <v-card-title class="text-subtitle-2 pa-3 bg-surface">
-            <v-icon size="small" class="mr-2">mdi-message-reply-text</v-icon>
-            响应结果
-          </v-card-title>
-          <v-divider />
-          <v-card-text class="pa-4" style="max-height: 300px; overflow-y: auto;">
-            <div v-if="responseError" class="error-message" role="alert">
-              <v-icon color="error" class="mr-2">mdi-alert-circle</v-icon>
-              <span class="text-error">{{ responseError }}</span>
-            </div>
-            <div v-else-if="isSending && !responseText" class="text-center text-medium-emphasis py-4">
-              <v-progress-circular indeterminate size="32" />
-              <div class="mt-2">正在发送请求...</div>
-            </div>
-            <div v-else class="response-text">{{ responseText }}</div>
-          </v-card-text>
-        </v-card>
+        <div v-else class="response-text">{{ responseText }}</div>
       </v-card-text>
     </v-card>
-  </v-dialog>
+  </AppDialog>
 </template>
 
 <script setup lang="ts">
@@ -120,6 +107,7 @@ import { ref, computed, watch } from 'vue'
 import type { Channel } from '@/services/api'
 import { api, testChannelWithModel } from '@/services/api'
 import type { ApiTab } from '@/services/channel-api'
+import AppDialog from '@/components/common/AppDialog.vue'
 
 const props = defineProps<{
   modelValue: boolean

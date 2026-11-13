@@ -7,7 +7,7 @@
     <p class="text-caption text-medium-emphasis">进程运行日志按时间倒序展示；当前最多保留 200 行，翻页时自动回收较新的行。</p>
     <v-alert v-if="error" type="error" variant="tonal" density="compact">{{ error }}</v-alert>
     <div class="runtime-lines" :aria-busy="loading">
-      <div v-if="!entries.length" class="pa-4 text-medium-emphasis">{{ loading ? '正在读取日志…' : '暂无匹配的运行日志' }}</div>
+      <EmptyState v-if="!entries.length" variant="inline" :icon="loading ? 'mdi-progress-clock' : 'mdi-magnify-close'" :title="loading ? '正在读取日志…' : '暂无匹配的运行日志'" :description="loading ? undefined : '清空搜索词或换一个标签再试。'" />
       <div v-for="entry in entries" :key="entry.id" class="runtime-line">
         <span class="runtime-time">{{ formatDateTime(entry.timestamp) }}</span>
         <span class="runtime-tag">{{ entry.tag || '未分类' }}</span>
@@ -23,6 +23,7 @@ import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { api } from '@/services/api'
 import type { RuntimeLogEntry } from '@/types/logs'
 import { formatDateTime } from '../utils/datetime'
+import EmptyState from '@/components/common/EmptyState.vue'
 
 const search = ref('')
 const entries = shallowRef<RuntimeLogEntry[]>([])

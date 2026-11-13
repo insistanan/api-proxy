@@ -1,5 +1,5 @@
 <template>
-  <v-dialog :model-value="show" max-width="800" persistent @update:model-value="$emit('update:show', $event)">
+  <v-dialog :model-value="show" max-width="900" :persistent="saving" @update:model-value="$emit('update:show', $event)">
     <v-card rounded="lg" class="dialog-card-shell">
       <v-card-title class="d-flex align-center ga-3 dialog-card-header">
         <v-avatar color="primary" variant="tonal" size="40" class="dialog-header-avatar">

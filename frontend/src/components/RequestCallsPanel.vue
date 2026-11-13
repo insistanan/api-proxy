@@ -3,7 +3,7 @@
     <v-alert v-if="store.error" type="error" variant="tonal" density="compact">{{ store.error }}；可使用上方刷新按钮重试。</v-alert>
     <p class="calls-help">每行对应一次代理调用，状态以请求生命周期为准。展开只读取尝试指标；次数包含保留的历史记录，不代表实际计费次数。</p>
     <div class="calls-list">
-      <p v-if="!store.calls.length" class="pa-4 text-medium-emphasis">{{ store.loading ? '正在读取调用…' : '暂无符合筛选条件的模型调用' }}</p>
+      <EmptyState v-if="!store.calls.length" :variant="store.loading ? 'inline' : 'table'" :icon="store.loading ? 'mdi-progress-clock' : 'mdi-filter-remove-outline'" :title="store.loading ? '正在读取调用…' : '暂无符合筛选条件的模型调用'" :description="store.loading ? undefined : '调整时间范围或入口类型后再看。'" />
       <details v-for="call in store.calls" :key="call.summary.requestId" class="call-row" :open="opened.has(call.summary.requestId)" @toggle="toggle(call, $event)">
         <summary class="call-heading">
           <span class="call-chevron" aria-hidden="true">▸</span>
@@ -52,6 +52,7 @@ import type { LogCallFilters, LogCallSummary, RequestLogEntry } from '@/types/lo
 import { callVersion, useLogCallsStore } from '@/stores/logCalls'
 import { logStatus } from '@/utils/logConversation'
 import { formatDateTime } from '../utils/datetime'
+import EmptyState from './common/EmptyState.vue'
 
 const props = defineProps<{ filters: LogCallFilters }>()
 const emit = defineEmits<{ inspect: [requestId: string]; locate: [requestId: string]; failure: [attempt: RequestLogEntry] }>()

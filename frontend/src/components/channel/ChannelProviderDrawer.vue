@@ -23,7 +23,7 @@
               {{ item.endpoint.protocol === channelType ? '原生' : `转 ${presetProtocolLabels[item.endpoint.protocol]}` }}
             </span>
           </button>
-          <p v-if="!items.length" class="provider-empty">没有匹配的渠道商</p>
+          <EmptyState v-if="!items.length" variant="inline" icon="mdi-magnify" title="没有匹配的渠道商" description="换个关键词，或清空搜索查看全部渠道商。" />
         </div>
         <footer>选择后填写 Key 即可保存，已有密钥和分组会保留。</footer>
       </aside>
@@ -34,6 +34,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import type { ApiTab } from '@/services/channel-api'
+import EmptyState from '@/components/common/EmptyState.vue'
 import { CHANNEL_PRESETS, presetProtocolLabels, resolveChannelPreset, type ChannelPreset } from '@/utils/channelPresets'
 
 const props = defineProps<{ modelValue: boolean; channelType: ApiTab }>()
@@ -108,7 +109,6 @@ watch(() => props.modelValue, async (open, _previous, onCleanup) => {
 .provider-url { overflow-wrap: anywhere; }
 .provider-route { flex-shrink: 0; padding: 3px 5px; border-radius: 4px; font-size: 0.625rem; background: rgba(var(--v-theme-on-surface), 0.06); }
 .provider-route.is-native { color: rgb(var(--v-theme-success)); background: rgba(var(--v-theme-success), 0.1); }
-.provider-empty { padding: 32px 12px; text-align: center; font-size: 0.875rem; }
 footer { padding: 14px 20px; border-top: 1px solid rgba(var(--v-theme-outline), 0.2); }
 .provider-drawer-enter-active, .provider-drawer-leave-active { transition: opacity 180ms ease; }
 .provider-drawer-enter-active .provider-panel, .provider-drawer-leave-active .provider-panel { transition: transform 180ms ease; }

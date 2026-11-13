@@ -64,9 +64,8 @@
             </td>
           </tr>
           <tr v-else-if="groups.length === 0">
-            <td colspan="8" class="empty-cell">
-              <v-icon size="28" color="secondary">mdi-shield-alert</v-icon>
-              <span>暂无拦截记录</span>
+            <td colspan="8">
+              <EmptyState variant="table" icon="mdi-filter-remove-outline" title="暂无拦截记录" description="调整筛选条件，或等待新的内容安全命中产生记录。" />
             </td>
           </tr>
           <template v-else>
@@ -329,98 +328,86 @@
       />
     </footer>
 
-    <v-dialog v-model="detailDialog" max-width="680">
-      <v-card>
-        <v-card-title class="dialog-title">
-          <span>拦截详情</span>
-          <v-chip v-if="selectedLog" size="small" :color="blockTypeColor(selectedLog.blockType)" variant="tonal">
-            {{ blockTypeLabel(selectedLog.blockType) }}
-          </v-chip>
-        </v-card-title>
-        <v-divider />
-        <v-card-text>
-          <v-progress-linear v-if="detailLoading" indeterminate color="primary" />
-          <dl v-else-if="selectedLog" class="detail-grid">
-            <dt>时间</dt>
-            <dd>{{ formatTime(selectedLog.timestamp) }}</dd>
-            <dt>API 类型</dt>
-            <dd>{{ apiTypeLabel(selectedLog.apiType) }}</dd>
-            <dt>规则</dt>
-            <dd>{{ ruleLabel(selectedLog.ruleName) }}</dd>
-            <dt>模型</dt>
-            <dd>{{ selectedLog.model || '--' }}</dd>
-            <dt>渠道</dt>
-            <dd>{{ selectedLog.channelName || '--' }}</dd>
-            <dt>会话 ID</dt>
-            <dd class="break-text">{{ selectedLog.conversationId || '--' }}</dd>
-            <dt>请求 ID</dt>
-            <dd class="break-text">{{ selectedLog.requestId || '--' }}</dd>
-            <template v-if="selectedLog.aiReview">
-              <dt>AI 复核模型</dt>
-              <dd>{{ selectedLog.aiReview.model || '--' }}</dd>
-              <dt>AI 复核渠道</dt>
-              <dd>{{ selectedLog.aiReview.channelName || '--' }}</dd>
-              <dt>AI 复核原因</dt>
-              <dd class="break-text">{{ selectedLog.aiReview.reason }}</dd>
-              <dt>AI 复核来源</dt>
-              <dd>{{ selectedLog.aiReview.reused ? '复用同会话结论' : '本次复核' }}</dd>
-              <dt>AI 复核日志</dt>
-              <dd>
-                <v-btn
-                  v-if="selectedLog.aiReview.requestId"
-                  size="small"
-                  variant="tonal"
-                  :to="{ path: '/logs', query: { tab: 'system', id: selectedLog.aiReview.requestId } }"
-                >查看复核请求与响应</v-btn>
-              </dd>
-            </template>
-            <template v-if="isDangerousCmdType(selectedLog.blockType)">
-              <dt>命中的命令</dt>
-              <dd>
-                <pre class="snippet-detail">{{ selectedLog.command || snippetPreview(selectedLog.promptSnippet) || '--' }}</pre>
-              </dd>
-            </template>
-            <dt>命中片段</dt>
-            <dd>
-              <pre class="snippet-detail">{{ selectedLog.promptSnippet || '--' }}</pre>
-            </dd>
-          </dl>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="detailDialog = false">关闭</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <AppDialog v-model="detailDialog" title="拦截详情" size="lg">
+      <v-chip v-if="selectedLog" size="small" :color="blockTypeColor(selectedLog.blockType)" variant="tonal" class="mb-3">
+        {{ blockTypeLabel(selectedLog.blockType) }}
+      </v-chip>
+      <v-progress-linear v-if="detailLoading" indeterminate color="primary" />
+      <dl v-else-if="selectedLog" class="detail-grid">
+        <dt>时间</dt>
+        <dd>{{ formatTime(selectedLog.timestamp) }}</dd>
+        <dt>API 类型</dt>
+        <dd>{{ apiTypeLabel(selectedLog.apiType) }}</dd>
+        <dt>规则</dt>
+        <dd>{{ ruleLabel(selectedLog.ruleName) }}</dd>
+        <dt>模型</dt>
+        <dd>{{ selectedLog.model || '--' }}</dd>
+        <dt>渠道</dt>
+        <dd>{{ selectedLog.channelName || '--' }}</dd>
+        <dt>会话 ID</dt>
+        <dd class="break-text">{{ selectedLog.conversationId || '--' }}</dd>
+        <dt>请求 ID</dt>
+        <dd class="break-text">{{ selectedLog.requestId || '--' }}</dd>
+        <template v-if="selectedLog.aiReview">
+          <dt>AI 复核模型</dt>
+          <dd>{{ selectedLog.aiReview.model || '--' }}</dd>
+          <dt>AI 复核渠道</dt>
+          <dd>{{ selectedLog.aiReview.channelName || '--' }}</dd>
+          <dt>AI 复核原因</dt>
+          <dd class="break-text">{{ selectedLog.aiReview.reason }}</dd>
+          <dt>AI 复核来源</dt>
+          <dd>{{ selectedLog.aiReview.reused ? '复用同会话结论' : '本次复核' }}</dd>
+          <dt>AI 复核日志</dt>
+          <dd>
+            <v-btn
+              v-if="selectedLog.aiReview.requestId"
+              size="small"
+              variant="tonal"
+              :to="{ path: '/logs', query: { tab: 'system', id: selectedLog.aiReview.requestId } }"
+            >查看复核请求与响应</v-btn>
+          </dd>
+        </template>
+        <template v-if="isDangerousCmdType(selectedLog.blockType)">
+          <dt>命中的命令</dt>
+          <dd>
+            <pre class="snippet-detail">{{ selectedLog.command || snippetPreview(selectedLog.promptSnippet) || '--' }}</pre>
+          </dd>
+        </template>
+        <dt>命中片段</dt>
+        <dd>
+          <pre class="snippet-detail">{{ selectedLog.promptSnippet || '--' }}</pre>
+        </dd>
+      </dl>
+      <template #actions>
+        <v-btn variant="text" @click="detailDialog = false">关闭</v-btn>
+      </template>
+    </AppDialog>
 
-    <v-dialog v-model="deleteDialog" max-width="440">
-      <v-card>
-        <v-card-title>删除拦截记录</v-card-title>
-        <v-card-text>确定删除这条拦截记录吗？</v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="deleteDialog = false">取消</v-btn>
-          <v-btn color="error" :loading="deleting" @click="confirmDelete">删除</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ConfirmDialog
+      v-model="deleteDialog"
+      title="删除拦截记录"
+      message="确定删除这条拦截记录吗？"
+      confirm-text="删除"
+      :loading="deleting"
+      @confirm="confirmDelete"
+    />
 
-    <v-dialog v-model="clearDialog" max-width="440">
-      <v-card>
-        <v-card-title>清空拦截记录</v-card-title>
-        <v-card-text>确定清空全部 {{ total }} 条拦截记录吗？此操作无法撤销。</v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="clearDialog = false">取消</v-btn>
-          <v-btn color="error" :loading="deleting" @click="confirmClear">清空全部</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ConfirmDialog
+      v-model="clearDialog"
+      title="清空拦截记录"
+      :message="`确定清空全部 ${total} 条拦截记录吗？此操作无法撤销。`"
+      confirm-text="清空全部"
+      :loading="deleting"
+      @confirm="confirmClear"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import PageHeader from '@/components/common/PageHeader.vue'
+import AppDialog from '@/components/common/AppDialog.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import { formatDateTime } from '../utils/datetime'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import {

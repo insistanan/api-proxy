@@ -6,9 +6,7 @@
       <v-btn size="small" variant="text" :loading="loading" @click="loadPage(page)">刷新</v-btn>
     </div>
     <v-alert v-if="error" type="error" variant="tonal" density="compact" class="mb-2">{{ error }}</v-alert>
-    <p v-if="!loading && !error && entries.length === 0" class="text-caption text-medium-emphasis">
-      该对话暂无危险命令检测记录。
-    </p>
+    <EmptyState v-if="!loading && !error && entries.length === 0" variant="inline" icon="mdi-shield-check" title="该对话暂无危险命令检测记录" description="出现危险命令时，检测与判定结果会记录在这里。" />
     <v-expansion-panels variant="accordion">
       <v-expansion-panel v-for="entry in entries" :key="entry.id">
         <v-expansion-panel-title>
@@ -72,6 +70,7 @@
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { api, type BlockedLogEntry, type CommandAIReview } from '@/services/api'
 import { formatDateTime } from '../utils/datetime'
+import EmptyState from '@/components/common/EmptyState.vue'
 
 const props = defineProps<{ conversationId: string }>()
 const pageSize = 20

@@ -109,63 +109,56 @@
       </v-table>
       <v-alert v-else type="info" variant="tonal" density="compact">尚未登记自定义模型。</v-alert>
 
-      <v-dialog v-model="form.visible" max-width="800">
-        <v-card rounded="lg">
-          <v-card-title class="text-h6 pa-4">{{ form.editing ? `编辑模型：${form.slug}` : '新增模型' }}</v-card-title>
-          <v-divider />
-          <v-card-text class="pa-4">
-            <v-row>
-              <v-col cols="12" sm="6">
-                <v-text-field
-                  v-if="!form.editing"
-                  v-model.trim="form.slug"
-                  label="Slug"
-                  variant="outlined"
-                  density="comfortable"
-                  placeholder="例如 my-deepseek"
-                />
-                <v-text-field v-else v-model="form.slug" label="Slug" variant="outlined" density="comfortable" disabled />
-              </v-col>
-              <v-col cols="12" sm="6">
-                <v-text-field v-model.trim="form.displayName" label="显示名称" variant="outlined" density="comfortable" placeholder="留空则使用 slug" />
-              </v-col>
-              <v-col cols="12" sm="6">
-                <v-text-field v-model.trim="form.description" label="描述" variant="outlined" density="comfortable" />
-              </v-col>
-              <v-col cols="12" sm="4">
-                <v-switch v-model="form.supportsImage" color="primary" label="图片输入" />
-              </v-col>
-              <v-col cols="12" sm="4">
-                <v-text-field
-                  v-model.number="form.contextWindow"
-                  type="number"
-                  label="上下文窗口"
-                  variant="outlined"
-                  density="comfortable"
-                  min="1"
-                />
-              </v-col>
-              <v-col cols="12" sm="4">
-                <v-select
-                  v-model="form.defaultReasoningLevel"
-                  :items="formReasoningLevels"
-                  label="默认推理档位"
-                  variant="outlined"
-                  density="comfortable"
-                  :disabled="!formReasoningLevels.length"
-                />
-              </v-col>
-            </v-row>
-          </v-card-text>
-          <v-card-actions class="pa-4">
-            <v-spacer />
-            <v-btn variant="text" @click="closeForm">取消</v-btn>
-            <v-btn color="primary" prepend-icon="mdi-content-save" :loading="savingModel" :disabled="!formValid" @click="saveModel">
-              {{ form.editing ? '保存修改' : '新增模型' }}
-            </v-btn>
-          </v-card-actions>
-        </v-card>
-      </v-dialog>
+      <AppDialog v-model="form.visible" :title="form.editing ? `编辑模型：${form.slug}` : '新增模型'" size="lg">
+        <v-row>
+          <v-col cols="12" sm="6">
+            <v-text-field
+              v-if="!form.editing"
+              v-model.trim="form.slug"
+              label="Slug"
+              variant="outlined"
+              density="comfortable"
+              placeholder="例如 my-deepseek"
+            />
+            <v-text-field v-else v-model="form.slug" label="Slug" variant="outlined" density="comfortable" disabled />
+          </v-col>
+          <v-col cols="12" sm="6">
+            <v-text-field v-model.trim="form.displayName" label="显示名称" variant="outlined" density="comfortable" placeholder="留空则使用 slug" />
+          </v-col>
+          <v-col cols="12" sm="6">
+            <v-text-field v-model.trim="form.description" label="描述" variant="outlined" density="comfortable" />
+          </v-col>
+          <v-col cols="12" sm="4">
+            <v-switch v-model="form.supportsImage" color="primary" label="图片输入" />
+          </v-col>
+          <v-col cols="12" sm="4">
+            <v-text-field
+              v-model.number="form.contextWindow"
+              type="number"
+              label="上下文窗口"
+              variant="outlined"
+              density="comfortable"
+              min="1"
+            />
+          </v-col>
+          <v-col cols="12" sm="4">
+            <v-select
+              v-model="form.defaultReasoningLevel"
+              :items="formReasoningLevels"
+              label="默认推理档位"
+              variant="outlined"
+              density="comfortable"
+              :disabled="!formReasoningLevels.length"
+            />
+          </v-col>
+        </v-row>
+        <template #actions>
+          <v-btn variant="text" @click="closeForm">取消</v-btn>
+          <v-btn color="primary" prepend-icon="mdi-content-save" :loading="savingModel" :disabled="!formValid" @click="saveModel">
+            {{ form.editing ? '保存修改' : '新增模型' }}
+          </v-btn>
+        </template>
+      </AppDialog>
     </v-card-text>
   </v-card>
   <ConfirmDialog
@@ -193,6 +186,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { api, type CodexCatalogModel, type CodexSettings, type SaveCodexModelCatalog } from '@/services/api'
 import { useToast } from '@/composables/useToast'
 import ConfirmDialog from './common/ConfirmDialog.vue'
+import AppDialog from '@/components/common/AppDialog.vue'
 import { useConfirm } from '../composables/useConfirm'
 
 const { showToast } = useToast()

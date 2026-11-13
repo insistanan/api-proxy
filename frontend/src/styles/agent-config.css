@@ -115,12 +115,6 @@
   min-height: 390px;
 }
 
-.agent-config-page .empty-providers,
-.agent-config-page .empty-models {
-  border: 1px dashed rgba(var(--v-theme-outline), 0.3);
-  border-radius: var(--cut-md) var(--cut-xs) var(--cut-md) var(--cut-xs);
-}
-
 .agent-config-page .model-panels .v-expansion-panel {
   margin-bottom: 8px;
   border-color: rgba(var(--v-theme-outline), 0.24) !important;

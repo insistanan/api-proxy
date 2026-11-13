@@ -1,20 +1,26 @@
 <template>
   <div class="datasets-page">
-    <div class="d-flex flex-wrap align-center justify-space-between ga-3 mb-5">
-      <div><h1 class="text-h5">数据集</h1><p class="text-body-2 text-medium-emphasis mt-1">管理意图和工具风险样本，提前计算向量，发布后跨请求复用。</p></div>
-      <div class="d-flex flex-wrap ga-2">
-        <v-btn variant="outlined" :disabled="busy" @click="create">新建数据集</v-btn>
-        <v-btn variant="tonal" :disabled="busy" @click="showBuiltin">内置起步样本</v-btn>
-      </div>
-    </div>
+    <PageHeader title="数据集" description="管理意图和工具风险样本，提前计算向量，发布后跨请求复用。">
+      <v-btn variant="outlined" :disabled="busy" @click="create">新建数据集</v-btn>
+      <v-btn variant="tonal" :disabled="busy" @click="showBuiltin">内置起步样本</v-btn>
+    </PageHeader>
     <v-alert v-if="error" type="error" variant="tonal" class="mb-4">{{ error }}</v-alert>
     <v-alert v-if="notice" type="success" variant="tonal" class="mb-4">{{ notice }}</v-alert>
-    <div class="dataset-toolbar">
-      <v-select :model-value="draft?.revision ? draft.id : undefined" :items="store.items" item-title="name" item-value="id" label="选择数据集" :disabled="busy" @update:model-value="selectDataset" />
-      <v-file-input label="导入数据集 JSON" accept="application/json,.json" :disabled="busy" @update:model-value="importFile" />
-    </div>
+    <v-card class="mb-4">
+      <div class="dataset-toolbar pa-4">
+        <v-select :model-value="draft?.revision ? draft.id : undefined" :items="store.items" item-title="name" item-value="id" label="选择数据集" :disabled="busy" @update:model-value="selectDataset" />
+        <v-file-input label="导入数据集 JSON" accept="application/json,.json" :disabled="busy" @update:model-value="importFile" />
+      </div>
+    </v-card>
     <v-progress-linear v-if="busy" indeterminate color="primary" class="mb-4" />
-    <v-alert v-if="!draft && !busy" type="info" variant="tonal">选择已有数据集，或导入内置起步样本。样本先审核，再计算并发布向量索引。</v-alert>
+    <EmptyState
+      v-if="!draft && !busy"
+      icon="mdi-database-plus-outline"
+      title="还没有选择数据集"
+      description="选择已有数据集，或导入内置起步样本。样本先审核，再计算并发布向量索引。"
+    >
+      <v-btn variant="outlined" @click="showBuiltin">导入内置起步样本</v-btn>
+    </EmptyState>
     <template v-if="draft">
       <div class="d-flex flex-wrap align-center ga-3 mb-4">
         <v-chip size="small">{{ draft.kind === 'intent' ? '意图路由' : '工具安全' }}</v-chip>
@@ -78,15 +84,28 @@
         </div>
       </v-form>
     </template>
-    <v-dialog v-model="sampleDialog" max-width="760" scrollable><v-card v-if="sample"><v-card-title>编辑样本</v-card-title><v-card-text>
+    <AppDialog v-model="sampleDialog" title="编辑样本" size="lg">
+      <template v-if="sample">
       <div class="dataset-fields"><v-text-field v-model="sample.id" label="样本 ID" /><v-text-field v-model="sample.label" label="类别标识" /><v-text-field v-model="sample.family" label="样本族" /><v-select v-model="sample.split" :items="splits" label="样本用途" /></div>
       <v-textarea v-model="sample.text" label="样本文本或完整命令" rows="5" />
       <v-text-field v-model="sample.source" label="来源" />
       <div class="d-flex ga-4"><v-checkbox v-model="sample.negative" label="反例" /><v-checkbox v-model="sample.approved" label="已审核，批准参与索引或评测" /></div>
       <template v-if="draft?.kind === 'safety'"><p class="text-caption mb-3">类别使用 destructive、download_execute、reverse_shell、privilege_escalation 或 environment_tampering。</p><v-text-field v-model="sample.tool" label="适用执行工具（可选）" hint="填写去除命名空间后的工具名；留空适用于全部执行工具" persistent-hint /><v-text-field v-model="sample.platform" label="平台说明（windows / posix / any）" /><v-textarea v-model="sample.pattern" label="直接阻断核验正则（可选，Go RE2）" rows="2" hint="留空时语义命中仍需 AI 审核；不要用宽泛正则代替执行范围核验" persistent-hint /></template>
       <v-alert v-if="sampleError" type="error" variant="tonal">{{ sampleError }}</v-alert>
-    </v-card-text><v-card-actions><v-btn v-if="editingID" color="error" variant="text" @click="removeSample">移除样本</v-btn><v-spacer /><v-btn @click="sampleDialog = false">取消</v-btn><v-btn color="primary" @click="applySample">应用到草稿</v-btn></v-card-actions></v-card></v-dialog>
-    <v-dialog v-model="builtinDialog" max-width="620"><v-card><v-card-title>内置起步样本</v-card-title><v-card-text><p class="mb-4">这些是合成样本，不含真实用户日志，默认待审核。导入后审核所需样本，再构建索引。</p><v-list><v-list-item v-for="item in builtins" :key="item.id" :title="item.name" :subtitle="`${item.samples.length} 条 · ${item.kind}`"><template #append><v-btn variant="tonal" @click="importBuiltin(item)">导入草稿</v-btn></template></v-list-item></v-list></v-card-text><v-card-actions><v-spacer /><v-btn @click="builtinDialog = false">关闭</v-btn></v-card-actions></v-card></v-dialog>
+      </template>
+      <template #actions>
+        <v-btn v-if="editingID" color="error" variant="text" @click="removeSample">移除样本</v-btn>
+        <v-spacer />
+        <v-btn variant="text" @click="sampleDialog = false">取消</v-btn>
+        <v-btn color="primary" @click="applySample">应用到草稿</v-btn>
+      </template>
+    </AppDialog>
+    <AppDialog v-model="builtinDialog" title="内置起步样本" description="这些是合成样本，不含真实用户日志，默认待审核。导入后审核所需样本，再构建索引。" size="md">
+      <v-list><v-list-item v-for="item in builtins" :key="item.id" :title="item.name" :subtitle="`${item.samples.length} 条 · ${item.kind}`"><template #append><v-btn variant="tonal" @click="importBuiltin(item)">导入草稿</v-btn></template></v-list-item></v-list>
+      <template #actions>
+        <v-btn variant="text" @click="builtinDialog = false">关闭</v-btn>
+      </template>
+    </AppDialog>
     <ConfirmDialog
       :model-value="pendingConfirm !== null"
       :message="pendingConfirm?.message ?? ''"
@@ -111,6 +130,9 @@ import type { IndexStatus } from '@/services/datasets'
 import EmbeddingProfileFields from '@/components/channel/EmbeddingProfileFields.vue'
 import { formatDateTime } from '../utils/datetime'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import AppDialog from '@/components/common/AppDialog.vue'
+import PageHeader from '@/components/common/PageHeader.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import { useConfirm } from '@/composables/useConfirm'
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 const { pending: pendingConfirm, askConfirm, acceptConfirm, cancelConfirm } = useConfirm()

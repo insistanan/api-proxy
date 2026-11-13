@@ -58,6 +58,14 @@ import {
   mdiWhiteBalanceSunny,
   mdiLogout,
   mdiServerNetwork,
+  mdiDatabasePlusOutline,
+  mdiFilterRemoveOutline,
+  mdiMagnifyClose,
+  mdiTrayArrowDown,
+  mdiImageMultipleOutline,
+  mdiFileCogOutline,
+  mdiTray,
+  mdiProgressClock,
   mdiHeartPulse,
   mdiChevronDown,
   mdiChevronUp,
@@ -319,6 +327,14 @@ const iconMap: Record<string, string> = {
   'folder-arrow-down': mdiFolderArrowDown,
   'puzzle-outline': mdiPuzzleOutline,
   'text-box-search-outline': mdiTextBoxSearchOutline,
+  'database-plus-outline': mdiDatabasePlusOutline,
+  'filter-remove-outline': mdiFilterRemoveOutline,
+  'magnify-close': mdiMagnifyClose,
+  'tray-arrow-down': mdiTrayArrowDown,
+  'image-multiple-outline': mdiImageMultipleOutline,
+  'file-cog-outline': mdiFileCogOutline,
+  tray: mdiTray,
+  'progress-clock': mdiProgressClock,
   signature: mdiSignature,
   'image-search-outline': mdiImageSearchOutline,
   history: mdiHistory,
@@ -392,7 +408,7 @@ const customSvgIconSet: IconSet = {
 //            而不是靠提高颜色饱和度——所以看着"狠"但不扎眼
 // ============================================================
 
-// Light Theme — 雾灰底 + 纯白卡片，深靛主色在白底上足够沉，长时间看不累
+// Light Theme — 冷灰画布 + 纯白卡片，深靛主色在白底上足够沉，长时间看不累
 const lightTheme: ThemeDefinition = {
   dark: false,
   colors: {
@@ -402,47 +418,49 @@ const lightTheme: ThemeDefinition = {
     secondary: '#586170',
     accent: '#A55E3C',
 
-    info: '#1F6E8C',
-    success: '#0E7551',
-    warning: '#A56A12',
-    error: '#B63E3E',
+    info: '#25648C',
+    success: '#167055',
+    warning: '#96650F',
+    error: '#B23B45',
 
-    background: '#F5F6FA',
+    background: '#F2F4F8',
     surface: '#FFFFFF',
-    'surface-variant': '#E1E5ED',
+    'surface-variant': '#E8ECF3',
     'surface-bright': '#FFFFFF',
-    'on-surface': '#1D222C',
-    'on-background': '#252B36',
-    'on-surface-variant': '#555E6E',
-    outline: '#939CAC',
-    'outline-variant': '#C9CFDA'
+    'on-surface': '#171B24',
+    'on-background': '#1E232D',
+    'on-surface-variant': '#5A6373',
+    outline: '#8B94A5',
+    'outline-variant': '#D2D8E2'
   }
 }
 
-// Dark Theme — 近黑石墨底 + 提亮卡片，文字用暖白而非纯白，避免暗背景上的眩光
+// Dark Theme — 石墨层叠：画布与卡面靠明度差分层而不是阴影；
+// 主色作实心按钮时改用浅靛底加深色字，保证正文对比度达标（白字在亮靛上只有 2.6:1）。
 const darkTheme: ThemeDefinition = {
   dark: true,
   colors: {
-    primary: '#8E9BE8',
-    'primary-darken-1': '#7683DC',
-    'primary-lighten-1': '#ABB4F1',
+    primary: '#8C99E6',
+    'primary-darken-1': '#7784D8',
+    'primary-lighten-1': '#A9B3EF',
+    'on-primary': '#0C0F15',
     secondary: '#A0A8B6',
-    accent: '#D18C68',
+    accent: '#C98D6A',
 
-    info: '#63B0CE',
-    success: '#43C48D',
-    warning: '#DDA155',
-    error: '#E97C7C',
+    info: '#6FB3CE',
+    success: '#4CC294',
+    warning: '#D9A25E',
+    error: '#E58A8A',
 
-    background: '#10131B',
-    surface: '#191E28',
-    'surface-variant': '#1F252F',
-    'surface-bright': '#28303C',
-    'on-surface': '#E7EAF1',
-    'on-background': '#DBDFE8',
-    'on-surface-variant': '#A2AAB8',
-    outline: '#5B6472',
-    'outline-variant': '#2B323D'
+    background: '#0E1116',
+    surface: '#161A22',
+    'surface-variant': '#1E232C',
+    'surface-bright': '#232A35',
+    'on-surface': '#E8EBF2',
+    'on-background': '#DDE1E9',
+    'on-surface-variant': '#9BA4B3',
+    outline: '#6B7484',
+    'outline-variant': '#2C333E'
   }
 }
 

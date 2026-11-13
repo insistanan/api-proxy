@@ -92,9 +92,13 @@
       </div>
     </template>
 
-    <div v-else class="text-body-2 text-medium-emphasis py-8 text-center">
-      尚未创建任何版本，点击"新建版本"开始维护通用提示词。
-    </div>
+    <EmptyState
+      v-else
+      variant="panel"
+      icon="mdi-file-cog-outline"
+      title="尚未创建任何版本"
+      description="点击“新建版本”开始维护通用提示词，保存后会同步给各客户端。"
+    />
 
     <div class="settings-actions">
       <v-btn
@@ -123,6 +127,7 @@
 <script setup lang="ts">
 import type { usePromptSettings } from '@/composables/settings/usePromptSettings'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import { useConfirm } from '@/composables/useConfirm'
 
 const props = defineProps<{ editor: ReturnType<typeof usePromptSettings> }>()

@@ -15,8 +15,12 @@
       <span v-if="count !== undefined" class="disclosure-section__count">{{ count }}</span>
       <v-icon size="20">{{ expanded ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
     </button>
-    <div v-show="expanded" :id="contentId" class="disclosure-section__content">
-      <slot v-if="!lazy || expanded"></slot>
+    <div :id="contentId" class="disclosure-section__panel" :class="{ 'is-expanded': expanded }" :inert="!expanded || undefined">
+      <div class="disclosure-section__clip">
+        <div class="disclosure-section__content">
+          <slot v-if="!lazy || expanded"></slot>
+        </div>
+      </div>
     </div>
   </section>
 </template>
@@ -38,7 +42,7 @@ const contentId = useId()
 </script>
 
 <style scoped>
-.disclosure-section { border: 1px solid rgba(var(--v-theme-outline), 0.24); border-radius: var(--cut-md); background: rgb(var(--v-theme-surface)); overflow: hidden; }
+.disclosure-section { border: 1px solid var(--border-card); border-radius: var(--cut-lg); background: rgb(var(--v-theme-surface)); overflow: hidden; }
 .disclosure-section + .disclosure-section { margin-top: 16px; }
 .disclosure-section__toggle { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 60px; padding: 16px 20px; text-align: start; color: rgb(var(--v-theme-on-surface)); transition: background 160ms ease; }
 .disclosure-section__toggle:hover { background: rgba(var(--v-theme-primary), 0.04); }
@@ -46,6 +50,10 @@ const contentId = useId()
 .disclosure-section__title { font-size: 0.9375rem; font-weight: 650; }
 .disclosure-section__description { color: rgb(var(--v-theme-on-surface-variant)); font-size: 0.8125rem; line-height: 1.5; }
 .disclosure-section__count { padding: 2px 8px; border-radius: 6px; font-size: 0.75rem; font-variant-numeric: tabular-nums; background: rgba(var(--v-theme-primary), 0.08); color: rgb(var(--v-theme-primary)); }
+/* 折叠用 grid 行过渡，只影响面板内部的布局，不触碰页面其它区域。 */
+.disclosure-section__panel { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 180ms var(--ease-out); }
+.disclosure-section__panel.is-expanded { grid-template-rows: 1fr; }
+.disclosure-section__clip { min-height: 0; overflow: hidden; }
 .disclosure-section__content { padding: 4px 20px 20px; }
 @media (max-width: 600px) { .disclosure-section__toggle { padding: 14px; } .disclosure-section__content { padding: 4px 14px 16px; } }
 </style>

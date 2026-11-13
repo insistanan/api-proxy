@@ -78,9 +78,9 @@
           :scroll-sensitivity="90"
           :scroll-speed="18"
           :empty-insert-threshold="48"
-          ghost-class="ghost"
-          chosen-class="chosen"
-          drag-class="dragging"
+          ghost-class="pool-ghost"
+          chosen-class="pool-chosen"
+          drag-class="pool-dragging"
           class="pool-channel-list"
           :force-fallback="true"
           @change="scheduleLayoutSave"
@@ -108,7 +108,7 @@
             </div>
           </template>
         </draggable>
-        <div v-if="!collapsedPools.has(pool.id) && pool.channels.length === 0" class="pool-empty">暂无渠道，可从其他分组拖入</div>
+        <EmptyState v-if="!collapsedPools.has(pool.id) && pool.channels.length === 0" variant="inline" icon="mdi-tray-arrow-down" title="暂无渠道" description="可从其他分组拖入" />
         </div>
         </template>
       </section>
@@ -152,43 +152,34 @@
           </v-btn>
         </div>
       </div>
-      <div v-if="visionChannels.length === 0" class="pool-empty">暂无公用图片理解渠道</div>
+      <EmptyState v-if="visionChannels.length === 0" variant="inline" icon="mdi-image-multiple-outline" title="暂无公用图片理解渠道" description="在渠道的编排设置中把它加入公用池后，会显示在这里。" />
     </div>
   </section>
 
-  <v-dialog v-model="poolDialog" max-width="460">
-    <v-card rounded="lg">
-      <v-card-title>{{ editingPool ? '编辑分组' : '新建分组' }}</v-card-title>
-      <v-card-text class="pt-3">
-        <v-text-field v-model="poolName" label="名称" variant="outlined" density="compact" autofocus />
-        <v-combobox
-          v-model="poolMatcher"
-          label="模型名称包含"
-          :items="matcherOptions"
-          variant="outlined"
-          density="compact"
-          @keyup.enter="savePool"
-        />
-      </v-card-text>
-      <v-card-actions>
-        <v-spacer />
-        <v-btn variant="text" @click="poolDialog = false">取消</v-btn>
-        <v-btn color="primary" :loading="saving" :disabled="!poolName.trim() || !normalizedPoolMatcher" @click="savePool">保存</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+  <AppDialog v-model="poolDialog" :title="editingPool ? '编辑分组' : '新建分组'" size="sm">
+    <v-text-field v-model="poolName" label="名称" variant="outlined" density="compact" autofocus />
+    <v-combobox
+      v-model="poolMatcher"
+      label="模型名称包含"
+      :items="matcherOptions"
+      variant="outlined"
+      density="compact"
+      @keyup.enter="savePool"
+    />
+    <template #actions>
+      <v-btn variant="text" @click="poolDialog = false">取消</v-btn>
+      <v-btn color="primary" :loading="saving" :disabled="!poolName.trim() || !normalizedPoolMatcher" @click="savePool">保存</v-btn>
+    </template>
+  </AppDialog>
 
-  <v-dialog v-model="deletePoolDialog" max-width="460">
-    <v-card rounded="lg">
-      <v-card-title>删除分组</v-card-title>
-      <v-card-text>确定删除“{{ deletingPool?.name }}”吗？只有空分组可以删除。</v-card-text>
-      <v-card-actions>
-        <v-spacer />
-        <v-btn variant="text" @click="deletePoolDialog = false">取消</v-btn>
-        <v-btn color="error" :loading="saving" @click="deletePool">删除</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+  <ConfirmDialog
+    v-model="deletePoolDialog"
+    title="删除分组"
+    :message="`确定删除“${deletingPool?.name}”吗？只有空分组可以删除。`"
+    confirm-text="删除"
+    :loading="saving"
+    @confirm="deletePool"
+  />
 </template>
 
 <script setup lang="ts">
@@ -201,6 +192,9 @@ import type { ApiTab } from '@/services/channel-api'
 import { useChannelStore } from '@/stores/channel'
 import { FREE_POOL_ID } from '@/services/free-channels'
 import FreeChannelPool from './channel/FreeChannelPool.vue'
+import AppDialog from '@/components/common/AppDialog.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
+import ConfirmDialog from './common/ConfirmDialog.vue'
 
 const props = defineProps<{
   channels: Channel[]
@@ -472,10 +466,27 @@ const deletePool = async () => {
   padding: 10px; display: flex; flex-direction: column; gap: 8px; min-height: 72px;
 }
 .pool-drag-item { min-width: 0; }
-.ghost { opacity: .45; background: rgba(var(--v-theme-primary), .12); border-radius: 5px; }
-.chosen { cursor: grabbing; }
-.dragging { opacity: .9; }
+/* 拖拽三态：拖起 / 落位占位 / 跟随指针。只改颜色与透明度，避免拖拽过程触发重排。 */
+.pool-drag-item.pool-chosen { cursor: grabbing; }
+.pool-drag-item.pool-chosen :deep(.channel-row),
+.pool-drag-item.pool-chosen .pool-channel-row {
+  border-color: rgba(var(--v-theme-primary), 0.55);
+  background: rgba(var(--v-theme-primary), 0.06);
+}
+.pool-drag-item.pool-ghost { opacity: 0.45; }
+.pool-drag-item.pool-ghost :deep(.channel-row),
+.pool-drag-item.pool-ghost .pool-channel-row {
+  border: 1px dashed rgb(var(--v-theme-primary));
+  background: rgba(var(--v-theme-primary), 0.04);
+}
+.pool-drag-item.pool-dragging { cursor: grabbing; }
+.pool-drag-item.pool-dragging :deep(.channel-row),
+.pool-drag-item.pool-dragging .pool-channel-row {
+  border-color: rgb(var(--v-theme-primary));
+  box-shadow: 0 12px 28px -14px rgba(0, 0, 0, 0.55);
+}
 .drag-handle { cursor: grab; }
+.drag-handle:active { cursor: grabbing; }
 .pool-channel-row, .vision-channel-row {
   display: flex; align-items: center; gap: 8px; min-width: 0;
   padding: 8px 10px;
@@ -505,10 +516,6 @@ const deletePool = async () => {
 }
 .pool-channel-main span:first-child {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.pool-empty {
-  display: grid; place-items: center; min-height: 48px;
-  color: rgba(var(--v-theme-on-surface-variant), 0.8); font-size: 13px;
 }
 .vision-pool-section {
   margin-top: 22px; padding: 14px 0;

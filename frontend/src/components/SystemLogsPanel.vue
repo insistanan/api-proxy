@@ -12,7 +12,8 @@
     <v-alert v-if="locateError" type="error" variant="tonal" density="compact">{{ locateError }}</v-alert>
     <div class="system-layout">
       <aside class="system-list" aria-label="日志会话列表">
-        <div v-if="!logs.conversations.length" class="system-empty">{{ logs.listLoading ? '正在加载会话…' : '暂无会话日志' }}</div>
+        <EmptyState v-if="logs.listLoading && !logs.conversations.length" variant="inline" icon="mdi-progress-clock" title="正在加载会话…" />
+        <EmptyState v-else-if="!logs.conversations.length" variant="inline" icon="mdi-history" title="暂无会话日志" description="当前筛选条件下没有会话记录，可放宽筛选或稍后刷新。" />
         <button v-for="group in logs.conversations" :key="group.key" type="button" class="conversation-entry" :class="{ selected: group.key === logs.selectedKey }" :aria-pressed="group.key === logs.selectedKey" @click="logs.selectConversation(group)">
           <div class="entry-heading">
             <span :title="group.title || group.key">{{ conversationTitle(group) }}</span>
@@ -28,7 +29,7 @@
         <v-btn v-if="logs.nextConversationCursor" block variant="text" :loading="logs.listLoading" @click="logs.loadConversations(true)">加载更多会话</v-btn>
       </aside>
       <main class="system-detail">
-        <div v-if="!logs.selectedKey" class="system-empty">选择一个会话，查看每次请求的新增输入和回复。</div>
+        <EmptyState v-if="!logs.selectedKey" variant="inline" icon="mdi-format-list-bulleted" title="选择一个会话，查看每次请求的新增输入和回复。" />
         <template v-else>
           <div class="conversation-heading">
             <div>
@@ -45,15 +46,9 @@
         </template>
       </main>
     </div>
-    <v-dialog v-model="detailOpen" max-width="1200" scrollable>
-      <v-card>
-        <v-card-title class="detail-dialog-heading">
-          <span>请求流量详情</span>
-          <v-btn icon="mdi-close" size="small" variant="text" aria-label="关闭请求详情" @click="detailOpen = false" />
-        </v-card-title>
-        <v-card-text><RequestLogDetail :request-id="inspectedRequestId" @locate="locateRelated" /></v-card-text>
-      </v-card>
-    </v-dialog>
+    <AppDialog v-model="detailOpen" title="请求流量详情" size="xl">
+      <RequestLogDetail :request-id="inspectedRequestId" @locate="locateRelated" />
+    </AppDialog>
   </div>
 </template>
 
@@ -62,6 +57,8 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import ConversationLogTimeline from './ConversationLogTimeline.vue'
 import RequestLogDetail from './RequestLogDetail.vue'
+import AppDialog from '@/components/common/AppDialog.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import ContextTrend from './ContextTrend.vue'
 import { conversationVersion, useLogsStore } from '@/stores/logs'
 import { logStatus } from '@/utils/logConversation'
@@ -175,7 +172,6 @@ onBeforeUnmount(() => {
 .entry-model { margin: 6px 0 10px; overflow-wrap: anywhere; }
 .entry-time, .entry-model, .entry-meta { color: rgba(var(--v-theme-on-surface), 0.75); }
 .conversation-heading, .detail-dialog-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding-bottom: 16px; }
-.system-empty { padding: 32px 16px; color: rgba(var(--v-theme-on-surface), 0.75); text-align: center; }
 @media (max-width: 800px) { .system-layout { grid-template-columns: 210px minmax(0, 1fr); gap: 12px; } }
 @media (max-width: 600px) { .system-layout { display: flex; flex-direction: column; overflow: auto; } .system-list { flex-shrink: 0; max-height: 240px; border-right: 0; border-bottom: 1px solid rgba(var(--v-theme-on-surface), 0.12); } .system-detail { flex-shrink: 0; overflow: visible; } }
 </style>

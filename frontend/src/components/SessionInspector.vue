@@ -63,9 +63,9 @@
     </div>
 
     <!-- 无法解析或无结构化消息时退回 JSON -->
-    <div v-else-if="viewMode === 'structured'" class="empty-structured pa-4 text-center text-medium-emphasis rounded border">
-      <span>{{ parsed.notice }}</span>
-      <JsonBodyPane v-if="body" :body="body" :wrap="wrap" class="mt-2 text-left" />
+    <div v-else-if="viewMode === 'structured'" class="rounded border">
+      <EmptyState variant="inline" icon="mdi-file-cog-outline" :title="parsed.notice || '没有可展示的结构化内容'" />
+      <JsonBodyPane v-if="body" :body="body" :wrap="wrap" class="px-4 pb-4 text-left" />
     </div>
 
     <!-- 原始 JSON 视图 -->
@@ -79,6 +79,7 @@ import { computed, ref, watch } from 'vue'
 import { buildTraceBlocks, parseSessionBody } from '@/utils/sessionPresentation'
 import ClampText from './ClampText.vue'
 import JsonBodyPane from './JsonBodyPane.vue'
+import EmptyState from './common/EmptyState.vue'
 import { useClipboard } from '../composables/useClipboard'
 
 const props = withDefaults(
@@ -240,9 +241,5 @@ async function copyCurlCommand() {
   font-size: 12px;
   color: rgba(var(--v-theme-on-surface), 0.7);
   padding: 2px 0;
-}
-
-.empty-structured {
-  border-color: rgba(var(--v-theme-outline), 0.4);
 }
 </style>

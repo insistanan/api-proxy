@@ -89,7 +89,7 @@
               </td>
             </tr>
             <tr v-else-if="!loading && requestLogs.length === 0">
-              <td colspan="11" class="text-center text-medium-emphasis py-8">暂无请求日志</td>
+              <td colspan="11"><EmptyState variant="inline" icon="mdi-text-box-search-outline" title="暂无请求日志" description="当前筛选条件下没有请求记录，可放宽时间范围或更换模型。" /></td>
             </tr>
             <tr v-for="log in requestLogs" :key="log.attemptId">
               <td class="text-no-wrap">{{ formatTime(log.timestamp) }}</td>
@@ -173,12 +173,9 @@
 
     <PromptBodyDialog v-model="bodyDialogVisible" :request-id="bodyRequestId" />
     <RequestFailureDialog v-model="selectedFailure" @locate="openSystemLog" />
-    <v-dialog v-model="callDetailOpen" max-width="1200" scrollable>
-      <v-card>
-        <v-card-title class="d-flex align-center">调用正文详情<v-spacer /><v-btn icon="mdi-close" size="small" variant="text" aria-label="关闭正文详情" @click="callDetailOpen = false" /></v-card-title>
-        <v-card-text><RequestLogDetail v-if="callDetailOpen" :request-id="callDetailId" :source-version="callDetailVersion" @locate="locateFromDetail" /></v-card-text>
-      </v-card>
-    </v-dialog>
+    <AppDialog v-model="callDetailOpen" title="调用正文详情" size="xl">
+      <RequestLogDetail v-if="callDetailOpen" :request-id="callDetailId" :source-version="callDetailVersion" @locate="locateFromDetail" />
+    </AppDialog>
 
     <SystemLogsPanel
       v-if="activeTab === 'system'"
@@ -189,56 +186,48 @@
     />
     <RuntimeLogsPanel v-if="activeTab === 'runtime'" />
 
-    <v-dialog v-model="purgeDialog" max-width="480" persistent>
-      <v-card>
-        <v-card-title class="dialog-title">清理日志</v-card-title>
-        <v-divider />
-        <v-card-text>
-          <p class="mb-3 text-body-2">
-            清理 logs.db 全部日志（运行日志、请求正文、请求记录），不可恢复，清理后自动收缩数据库文件。
-          </p>
-          <v-btn-toggle v-model="purgeScope" mandatory density="compact" variant="outlined" divided class="mb-3">
-            <v-btn value="day" size="small">按天清理</v-btn>
-            <v-btn value="all" size="small">清理全部</v-btn>
-          </v-btn-toggle>
-          <v-select
-            v-if="purgeScope === 'day'"
-            v-model="purgeDate"
-            :items="purgeDateItems"
-            item-title="title"
-            item-value="date"
-            label="选择要清理的日期"
-            density="compact"
-            hide-details
-            :loading="purgeDatesLoading"
-            no-data-text="数据库中暂无可清理的日志"
-          />
-          <v-alert v-if="purgeError" type="error" variant="tonal" density="compact" class="mt-3">
-            {{ purgeError }}
-          </v-alert>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" :disabled="purging" @click="purgeDialog = false">取消</v-btn>
-          <v-btn
-            color="error"
-            variant="flat"
-            prepend-icon="mdi-delete"
-            :loading="purging"
-            :disabled="purgeScope === 'day' && !purgeDate"
-            @click="confirmPurge"
-          >
-            {{ purgeScope === 'all' ? '确认清理全部' : '确认清理该日' }}
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <AppDialog v-model="purgeDialog" title="清理日志" description="清理 logs.db 全部日志（运行日志、请求正文、请求记录），不可恢复，清理后自动收缩数据库文件。" size="sm" :busy="purging">
+      <v-btn-toggle v-model="purgeScope" mandatory density="compact" variant="outlined" divided class="mb-3">
+        <v-btn value="day" size="small">按天清理</v-btn>
+        <v-btn value="all" size="small">清理全部</v-btn>
+      </v-btn-toggle>
+      <v-select
+        v-if="purgeScope === 'day'"
+        v-model="purgeDate"
+        :items="purgeDateItems"
+        item-title="title"
+        item-value="date"
+        label="选择要清理的日期"
+        density="compact"
+        hide-details
+        :loading="purgeDatesLoading"
+        no-data-text="数据库中暂无可清理的日志"
+      />
+      <v-alert v-if="purgeError" type="error" variant="tonal" density="compact" class="mt-3">
+        {{ purgeError }}
+      </v-alert>
+      <template #actions>
+        <v-btn variant="text" :disabled="purging" @click="purgeDialog = false">取消</v-btn>
+        <v-btn
+          color="error"
+          variant="flat"
+          prepend-icon="mdi-delete"
+          :loading="purging"
+          :disabled="purgeScope === 'day' && !purgeDate"
+          @click="confirmPurge"
+        >
+          {{ purgeScope === 'all' ? '确认清理全部' : '确认清理该日' }}
+        </v-btn>
+      </template>
+    </AppDialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import PageHeader from '@/components/common/PageHeader.vue'
+import AppDialog from '@/components/common/AppDialog.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import LogStorageStatus from '@/components/LogStorageStatus.vue'
 import { useRoute, useRouter } from 'vue-router'
 import PromptBodyDialog from '@/components/PromptBodyDialog.vue'

@@ -83,11 +83,9 @@
                 </template>
               </v-list-item>
             </v-list>
-            <div v-else class="empty-providers text-center text-medium-emphasis px-6 py-10">
-              <v-icon size="32" class="mb-3">mdi-server-network</v-icon>
-              <div class="text-body-2">尚未配置提供商</div>
-              <v-btn class="mt-4" size="small" color="primary" variant="tonal" prepend-icon="mdi-plus" @click="addProvider">添加提供商</v-btn>
-            </div>
+            <EmptyState v-else variant="inline" icon="mdi-server-network" title="尚未配置提供商">
+              <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-plus" @click="addProvider">添加提供商</v-btn>
+            </EmptyState>
           </v-card>
         </v-col>
 
@@ -200,9 +198,7 @@
                 </div>
               </div>
 
-              <div v-if="!selectedProvider.models || selectedProvider.models.length === 0" class="empty-models text-body-2 text-medium-emphasis py-6 text-center">
-                添加至少一个模型后，它才会出现在 DSH 的模型选择器中。
-              </div>
+              <EmptyState v-if="!selectedProvider.models || selectedProvider.models.length === 0" variant="inline" icon="mdi-format-list-bulleted" title="添加至少一个模型后，它才会出现在 DSH 的模型选择器中。" />
               <v-expansion-panels v-else variant="accordion" class="model-panels">
                 <v-expansion-panel v-for="(model, idx) in selectedProvider.models" :key="idx">
                   <template #title>
@@ -314,6 +310,7 @@ import AgentConfigLocation from '@/components/AgentConfigLocation.vue'
 import AgentPromptCard from '@/components/AgentPromptCard.vue'
 import ToolInstallBanner from '@/components/ToolInstallBanner.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import { api, type DSHSettings, type DSHProvider, type DSHModel, type SaveDSHSettings, type ApiTab } from '@/services/api'
 import { useProxyProtocolPick, defaultQuickPickTypeOptions } from '@/composables/useChannelQuickPick'
 import { filterProxyModelsByKind, importProxyModels, buildDSHModel } from '@/composables/useChannelModelImport'

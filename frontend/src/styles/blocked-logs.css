@@ -180,16 +180,6 @@
   margin-right: 4px;
 }
 
-.empty-cell {
-  height: 140px !important;
-  text-align: center;
-  color: rgb(var(--v-theme-on-surface-variant));
-}
-
-.empty-cell > * + * {
-  margin-left: 10px;
-}
-
 .pagination-bar {
   display: grid;
   grid-template-columns: minmax(130px, 1fr) auto minmax(100px, 1fr);

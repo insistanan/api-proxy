@@ -48,9 +48,8 @@
     </div>
 
     <!-- Empty -->
-    <div v-else-if="!hasData" class="d-flex flex-column justify-center align-center text-medium-emphasis" :style="{ height: chartHeight + 'px' }">
-      <v-icon size="44" class="mb-2" :color="isDark ? 'grey-darken-1' : 'grey-lighten-1'">mdi-chart-timeline-variant</v-icon>
-      <div class="text-caption">选定时间范围内没有请求记录</div>
+    <div v-else-if="!hasData" class="d-flex flex-column justify-center align-center" :style="{ height: chartHeight + 'px' }">
+      <EmptyState variant="inline" icon="mdi-chart-timeline-variant" title="暂无请求记录" description="选定时间范围内没有流量。" />
     </div>
 
     <!-- Chart -->
@@ -66,6 +65,7 @@ import { useAutoRefresh } from '@/composables/useAutoRefresh'
 import { useChartPreference } from '@/composables/useChartPreference'
 import { useToast } from '@/composables/useToast'
 import { GLOBAL_STATS_COLORS, chartThemeColors } from '@/utils/chartPalette'
+import EmptyState from '@/components/common/EmptyState.vue'
 import { useTheme } from 'vuetify'
 import VueApexCharts from 'vue3-apexcharts'
 import type { ApexOptions } from 'apexcharts'

@@ -82,8 +82,11 @@
           </tr>
         </template>
         <tr v-if="!visibleRows.length">
-          <td colspan="7" class="availability-empty">
-            {{ loading ? '正在加载模型观测…' : error ? '模型观测加载失败，请重试。' : snapshot?.rows.length ? '没有符合筛选条件的模型。' : '暂无模型。配置中的模型和实际请求过的模型会出现在这里。' }}
+          <td colspan="7">
+            <EmptyState v-if="loading" variant="table" icon="mdi-progress-clock" title="正在加载模型观测…" />
+            <EmptyState v-else-if="error" variant="table" icon="mdi-information" title="模型观测加载失败，请重试。" description="检查网络或后端服务后，点击刷新重新加载。" />
+            <EmptyState v-else-if="snapshot?.rows.length" variant="table" icon="mdi-filter-remove-outline" title="没有符合筛选条件的模型。" description="放宽搜索、分组或状态筛选后再试。" />
+            <EmptyState v-else variant="table" icon="mdi-chart-timeline-variant" title="暂无模型。" description="配置中的模型和实际请求过的模型会出现在这里。" />
           </td>
         </tr>
       </tbody>
@@ -103,6 +106,7 @@ import { getModelAvailability } from '@/services/model-availability'
 import { useModelAvailabilityStore } from '@/stores/modelAvailability'
 import { useChannelStore } from '@/stores/channel'
 import type { AvailabilityCounts, AvailabilityState, ModelAvailabilityRow } from '@/types/model-availability'
+import EmptyState from '@/components/common/EmptyState.vue'
 import { formatDateTime } from '../../utils/datetime'
 
 const props = defineProps<{ channelType: ApiTab; channels: Channel[] }>()
@@ -268,7 +272,6 @@ onUnmounted(() => controller?.abort())
 .candidate-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; padding: 10px 0; border-top: 1px solid rgba(var(--v-theme-outline), 0.18); font-size: 0.8125rem; }
 .candidate-row small { display: block; margin-top: 4px; color: rgb(var(--v-theme-on-surface-variant)); }
 .candidate-row span { overflow-wrap: anywhere; }
-.availability-empty { height: 180px !important; text-align: center; color: rgb(var(--v-theme-on-surface-variant)); }
 .availability-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; min-height: 60px; padding: 8px 24px; border-top: 1px solid rgba(var(--v-theme-outline), 0.24); flex-shrink: 0; }
 @media (max-width: 900px) {
   .availability-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }

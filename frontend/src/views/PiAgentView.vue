@@ -73,11 +73,9 @@
                 </template>
               </v-list-item>
             </v-list>
-            <div v-else class="empty-providers text-center text-medium-emphasis px-6 py-10">
-              <v-icon size="32" class="mb-3">mdi-server-network</v-icon>
-              <div class="text-body-2">尚未配置供应商</div>
-              <v-btn class="mt-4" size="small" color="primary" variant="tonal" prepend-icon="mdi-plus" @click="addProvider">添加供应商</v-btn>
-            </div>
+            <EmptyState v-else variant="inline" icon="mdi-server-network" title="尚未配置供应商" description="添加供应商后即可填写协议、密钥与模型。">
+              <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-plus" @click="addProvider">添加供应商</v-btn>
+            </EmptyState>
           </v-card>
         </v-col>
 
@@ -163,7 +161,7 @@
                 </div>
               </div>
 
-              <div v-if="selectedProvider.models.length === 0" class="empty-models text-body-2 text-medium-emphasis py-6 text-center">添加至少一个模型后，它才会出现在 pi-agent 的模型列表中。</div>
+              <EmptyState v-if="selectedProvider.models.length === 0" variant="inline" icon="mdi-format-list-bulleted" title="添加至少一个模型后，它才会出现在 pi-agent 的模型列表中。" />
               <v-expansion-panels v-else multiple variant="accordion" class="model-panels">
                 <v-expansion-panel v-for="(model, index) in selectedProvider.models" :key="model.localId">
                   <template #title>
@@ -260,32 +258,20 @@
           </v-card>
 
           <v-card v-else elevation="0" class="empty-editor">
-            <div class="empty-providers text-center text-medium-emphasis px-6 py-16">
-              <v-icon size="40" class="mb-3">mdi-server-network</v-icon>
-              <div class="text-body-1 mb-2">选择一个供应商或创建新的供应商</div>
-              <!-- 支持 anthropic-messages / openai-completions / openai-responses / google-generative-ai 四种协议 -->
-            </div>
+            <EmptyState variant="panel" icon="mdi-server-network" title="选择一个供应商或创建新的供应商" description="从左侧选择已有供应商，或点击“添加供应商”新建一个再填写协议、密钥与模型。" />
           </v-card>
         </v-col>
       </v-row>
     </fieldset>
 
-    <v-dialog v-model="deleteProviderDialog" max-width="500" :persistent="deletingProvider">
-      <v-card>
-        <v-card-title>删除供应商</v-card-title>
-        <v-card-text>
-          确认删除供应商“{{ providerToDelete?.name || providerToDelete?.id || '新供应商' }}”及其模型吗？
-          <v-alert v-if="deleteProviderError" type="error" variant="tonal" density="compact" class="mt-4">
-            {{ deleteProviderError }}
-          </v-alert>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" :disabled="deletingProvider" @click="deleteProviderDialog = false">取消</v-btn>
-          <v-btn color="error" :loading="deletingProvider" @click="confirmDeleteProvider">删除</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ConfirmDialog
+      v-model="deleteProviderDialog"
+      title="删除供应商"
+      :message="`确认删除供应商“${providerToDelete?.name || providerToDelete?.id || '新供应商'}”及其模型吗？`"
+      confirm-text="删除"
+      :loading="deletingProvider"
+      @confirm="confirmDeleteProvider"
+    />
 
     <AgentPromptCard agent="pi" class="mt-5" />
   </div>
@@ -297,6 +283,8 @@ import AgentConfigHeader from '@/components/AgentConfigHeader.vue'
 import AgentConfigLocation from '@/components/AgentConfigLocation.vue'
 import AgentPromptCard from '@/components/AgentPromptCard.vue'
 import ToolInstallBanner from '@/components/ToolInstallBanner.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import { api, type ApiError, type PiAgentProvider, type PiAgentStatus, type ApiTab } from '@/services/api'
 import { useProxyProtocolPick, defaultQuickPickTypeOptions } from '@/composables/useChannelQuickPick'
 import { filterProxyModelsByKind, importProxyModels, buildPiAgentModel } from '@/composables/useChannelModelImport'

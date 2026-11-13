@@ -174,7 +174,7 @@
         </div>
       </div>
 
-      <div v-else class="text-center py-4 text-medium-emphasis text-caption">暂无弃用渠道</div>
+      <EmptyState v-else variant="inline" icon="mdi-archive-outline" title="暂无弃用渠道" description="停用或删除渠道时会先移入这里，可随时恢复。" />
     </DisclosureSection>
   </div>
 </template>
@@ -187,6 +187,7 @@ import { channelServiceLabel } from '@/utils/imagesChannelProtocol'
 import { formatDateTime } from '@/utils/channelMetricsFormat'
 import ChannelMappingBlock from '../ChannelMappingBlock.vue'
 import DisclosureSection from '../common/DisclosureSection.vue'
+import EmptyState from '../common/EmptyState.vue'
 
 defineProps<{
   inactiveChannels: Channel[]

@@ -1,38 +1,35 @@
 <template>
-  <v-dialog :model-value="modelValue" max-width="980" persistent @update:model-value="emit('update:modelValue', $event)">
-    <v-card>
-      <v-card-title class="dialog-title d-flex align-center justify-space-between">
-        <span>最终发送给大模型的提示词</span>
-        <v-btn icon="mdi-close" size="small" variant="text" :aria-label="'关闭正文弹窗'" @click="emit('update:modelValue', false)" />
-      </v-card-title>
-      <v-divider />
-      <v-card-text class="dialog-body">
-        <div class="prompt-meta mb-3">
-          <v-chip size="x-small" variant="tonal" class="font-mono">{{ requestId }}</v-chip>
-          <span v-if="attemptCount > 1" class="text-caption text-medium-emphasis">
-            共 {{ attemptCount }} 次上游尝试，展示最后一次
-          </span>
-          <v-chip v-if="truncated" size="x-small" color="warning" variant="tonal">
-            正文超 1MB 已被截断
-          </v-chip>
-          <v-chip v-if="body" size="x-small" variant="tonal">{{ formatBytes(body.length) }}</v-chip>
-        </div>
-        <div v-if="loading" class="prompt-empty">
-          <v-progress-circular indeterminate size="24" width="2" color="primary" />
-        </div>
-        <div v-else-if="error" class="prompt-empty text-error">{{ error }}</div>
-        <div v-else-if="!body" class="prompt-empty">
-          <span>未找到上游请求正文。确认 ENABLE_REQUEST_LOGS 未关闭，且该请求已完整落库。</span>
-        </div>
-        <SessionInspector v-else :key="requestId" :body="body" wrap />
-      </v-card-text>
-    </v-card>
-  </v-dialog>
+  <AppDialog
+    :model-value="modelValue"
+    title="最终发送给大模型的提示词"
+    size="xl"
+    @update:model-value="emit('update:modelValue', $event)"
+  >
+    <div class="prompt-meta mb-3">
+      <v-chip size="x-small" variant="tonal" class="font-mono">{{ requestId }}</v-chip>
+      <span v-if="attemptCount > 1" class="text-caption text-medium-emphasis">
+        共 {{ attemptCount }} 次上游尝试，展示最后一次
+      </span>
+      <v-chip v-if="truncated" size="x-small" color="warning" variant="tonal">
+        正文超 1MB 已被截断
+      </v-chip>
+      <v-chip v-if="body" size="x-small" variant="tonal">{{ formatBytes(body.length) }}</v-chip>
+    </div>
+    <div v-if="loading" class="prompt-empty">
+      <v-progress-circular indeterminate size="24" width="2" color="primary" />
+    </div>
+    <div v-else-if="error" class="prompt-empty text-error">{{ error }}</div>
+    <div v-else-if="!body" class="prompt-empty">
+      <span>未找到上游请求正文。确认 ENABLE_REQUEST_LOGS 未关闭，且该请求已完整落库。</span>
+    </div>
+    <SessionInspector v-else :key="requestId" :body="body" wrap />
+  </AppDialog>
 </template>
 
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import SessionInspector from '@/components/SessionInspector.vue'
+import AppDialog from '@/components/common/AppDialog.vue'
 import { api } from '@/services/api'
 
 const props = defineProps<{

@@ -1,7 +1,7 @@
 <template>
   <div class="capabilities">
     <p class="text-body-2 text-medium-emphasis">直接设置当前协议已有分组的任务和难度，免费分组也按相同条件参与，不会被强制优先或限制为简单任务。两项都留空的分组不参与自动匹配；停用的免费服务不会参与选组。</p>
-    <p v-if="!pools.length" class="text-body-2 text-medium-emphasis">当前协议暂无可配置的渠道分组。</p>
+    <EmptyState v-if="!pools.length" variant="inline" icon="mdi-swap-horizontal" title="当前协议暂无可配置的渠道分组" description="先在渠道编排中创建分组，再回来设置任务能力。" />
     <section v-for="row in rows" :key="row.poolId" class="capability-row" :aria-label="row.name + '的任务能力'">
       <h3 class="capability-name text-subtitle-2">{{ row.name }}</h3>
       <div class="capability-fields">
@@ -16,6 +16,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { IntentGroupCapability, IntentTask } from '@/services/intent'
+import EmptyState from '@/components/common/EmptyState.vue'
 const props = defineProps<{ pools: { id: string; name: string }[]; tasks: IntentTask[]; disabled: boolean; useFeedback: boolean }>()
 const model = defineModel<IntentGroupCapability[]>({ required: true })
 const tiers = [{ title: '简单', value: 0 }, { title: '常规', value: 1 }, { title: '复杂', value: 2 }]

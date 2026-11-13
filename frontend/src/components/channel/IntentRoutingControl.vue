@@ -3,143 +3,138 @@
     <v-icon start size="18">mdi-server-network</v-icon>
     意图匹配 <span class="ml-2 text-caption">{{ saved ? saved.enabled ? '开' : '关' : '未知' }}</span>
   </v-btn>
-  <v-dialog v-model="show" max-width="960" scrollable :persistent="saving || indexing">
-    <v-card>
-      <v-card-title class="pt-5 px-6">{{ protocol }} · 意图匹配</v-card-title>
-      <v-card-text class="intent-dialog-body">
-        <v-alert v-if="error" type="error" variant="tonal" class="mb-5">{{ error }}</v-alert>
-        <v-form v-if="draft" :disabled="saving || indexing" @submit.prevent>
-          <v-switch v-model="draft.enabled" color="primary" label="启用当前协议的意图匹配" hide-details class="mb-5" />
-          <v-tabs v-model="tab" color="primary" class="mb-6" :disabled="saving || indexing">
-            <v-tab value="routing">路由设置</v-tab>
-            <v-tab value="groups">分组能力</v-tab>
-            <v-tab value="diagnostics" @click="loadEvents">预览与反馈</v-tab>
-            <v-tab value="advanced">高级设置</v-tab>
-          </v-tabs>
-          <div v-if="tab === 'routing'" class="intent-stack">
-            <v-select v-model="draft.strategy" :items="strategies" label="匹配方式" />
-            <template v-if="draft.strategy === 'auto'">
-              <div class="intent-flow" aria-label="先识别任务类型，再判断难度，最后选择合适分组">
-                <span>① 识别任务类型</span><span>② 判断处理难度</span><span>③ 选择合适分组</span>
-              </div>
-              <p class="text-body-2 text-medium-emphasis">根据任务类型和难度，自动选择现有渠道分组。分组内沿用渠道顺序和模型映射。</p>
-              <v-select v-model="draft.classifier" :items="classifiers" label="自动判断方式" />
-              <p v-if="draft.classifier === 'heuristic'" class="text-caption text-medium-emphasis">内置规则识别明确任务，速度快、不调用额外模型；类型或难度不明确时按未命中策略处理。</p>
-              <template v-if="draft.classifier !== 'heuristic'">
-                <v-select v-model="draft.classifierChannel" :items="classifierOptions" item-title="name" item-value="id" label="辅助判断渠道" clearable @update:model-value="draft.classifierChannel ||= ''" />
-                <v-text-field v-model="draft.classifierModel" label="辅助判断模型" hint="用于任务类型和难度判断；远程模式最多执行两次辅助分类，共享总超时" persistent-hint />
-              </template>
-              <div class="d-flex flex-wrap align-center ga-3">
-                <v-btn variant="tonal" @click="tab = 'groups'">设置分组能力</v-btn>
-                <span class="text-body-2 text-medium-emphasis">当前 {{ pools.length }} 个渠道分组，{{ groups.filter(group => group.tasks.length && group.tiers.length).length }} 个已设置能力</span>
-              </div>
-              <p v-if="draft.taskMatcher === 'semantic'" class="text-body-2">任务类型使用数据集向量匹配，难度使用上方判断方式。向量配置在高级设置中管理。</p>
-            </template>
-            <template v-else>
-              <p class="text-body-2 text-medium-emphasis">{{ strategyHelp }}</p>
-              <template v-if="draft.strategy === 'complexity' || draft.strategy === 'adaptive'">
-                <v-select v-model="draft.classifier" :items="classifiers" label="难度判断方式" />
-                <template v-if="draft.classifier !== 'heuristic'">
-                  <v-select v-model="draft.classifierChannel" :items="classifierOptions" item-title="name" item-value="id" label="辅助判断渠道" clearable @update:model-value="draft.classifierChannel ||= ''" />
-                  <v-text-field v-model="draft.classifierModel" label="辅助判断模型" />
-                </template>
-              </template>
-              <v-alert v-if="draft.strategy === 'adaptive'" type="info" variant="tonal">
-                同一难度有多个候选分组时，参考任务反馈和成本，仅在新会话选组。
-                <v-switch v-model="draft.observeOnly" label="仅观察建议，暂不改变选组" hide-details class="mt-3" />
-              </v-alert>
-              <DatasetPicker v-if="draft.strategy === 'semantic'" v-model="draft.datasetIds" kind="intent" />
-              <div class="d-flex flex-wrap align-center justify-space-between ga-3">
-                <h3 class="text-subtitle-1">{{ draft.strategy === 'regex' ? '正则规则与分组' : '任务或难度与分组' }}</h3>
-                <v-btn variant="tonal" size="small" :disabled="saving" @click="addRoute">添加映射</v-btn>
-              </div>
-              <v-alert v-if="!draft.routes.length" type="info" variant="tonal">添加目标分组映射后即可启用。自动综合匹配请改用上方推荐模式。</v-alert>
-              <v-expansion-panels variant="accordion">
-                <v-expansion-panel v-for="(route, index) in draft.routes" :key="index">
-                  <v-expansion-panel-title>{{ poolName(route.poolId) }} · {{ route.description || route.id || '待配置' }}</v-expansion-panel-title>
-                  <v-expansion-panel-text>
-                    <div class="intent-stack pt-2">
-                      <v-select v-model="route.poolId" :items="pools" item-title="name" item-value="id" label="目标分组" />
-                      <v-text-field v-model="route.description" label="任务说明" />
-                      <v-text-field v-if="draft.strategy === 'semantic'" v-model="route.label" label="数据集类别" hint="与样本 label 一致，留空使用映射 ID" persistent-hint />
-                      <v-textarea v-if="draft.strategy === 'regex'" :model-value="route.patterns.join('\n')" label="正则表达式，每行一条" rows="3" @update:model-value="route.patterns = lines($event)" />
-                      <v-textarea v-if="draft.strategy === 'semantic' && !draft.datasetIds?.length" :model-value="route.examples.join('\n')" label="任务例句，每行一句" rows="3" @update:model-value="route.examples = lines($event)" />
-                      <v-select v-model="route.tier" :items="tiers" label="难度等级" />
-                      <v-text-field v-if="draft.strategy === 'adaptive'" v-model.number="route.cost" type="number" min="0" label="相对成本" />
-                      <v-text-field v-model="route.id" label="映射 ID" hint="已自动生成，用于稳定引用" persistent-hint />
-                      <v-btn variant="text" color="error" @click="draft.routes.splice(index, 1)">移除映射</v-btn>
-                    </div>
-                  </v-expansion-panel-text>
-                </v-expansion-panel>
-              </v-expansion-panels>
-            </template>
-            <p class="text-caption text-medium-emphasis">显式渠道和人工会话固定优先。工具续轮、加密推理及服务端历史保留原来源；分类结果不会写入主请求提示词。</p>
+  <AppDialog v-model="show" :title="protocol + ' · 意图匹配'" size="xl" :busy="saving || indexing">
+    <v-alert v-if="error" type="error" variant="tonal" class="mb-5">{{ error }}</v-alert>
+    <v-form v-if="draft" :disabled="saving || indexing" @submit.prevent>
+      <v-switch v-model="draft.enabled" color="primary" label="启用当前协议的意图匹配" hide-details class="mb-5" />
+      <v-tabs v-model="tab" color="primary" class="mb-6" :disabled="saving || indexing">
+        <v-tab value="routing">路由设置</v-tab>
+        <v-tab value="groups">分组能力</v-tab>
+        <v-tab value="diagnostics" @click="loadEvents">预览与反馈</v-tab>
+        <v-tab value="advanced">高级设置</v-tab>
+      </v-tabs>
+      <div v-if="tab === 'routing'" class="intent-stack">
+        <v-select v-model="draft.strategy" :items="strategies" label="匹配方式" />
+        <template v-if="draft.strategy === 'auto'">
+          <div class="intent-flow" aria-label="先识别任务类型，再判断难度，最后选择合适分组">
+            <span>① 识别任务类型</span><span>② 判断处理难度</span><span>③ 选择合适分组</span>
           </div>
-          <IntentGroupCapabilities v-else-if="tab === 'groups'" v-model="groups" :pools="pools" :tasks="options.tasks ?? []" :disabled="saving || indexing" :use-feedback="!!draft.useFeedback" />
-          <div v-else-if="tab === 'diagnostics'" class="intent-stack">
-            <section class="intent-stack">
-              <div><h3 class="text-subtitle-1">试一条任务</h3><p class="text-body-2 text-medium-emphasis mt-2">只测试当前草稿的分类结果，不向目标组生成回答、不切换真实会话。远程判断或向量匹配会调用辅助模型。</p></div>
-              <v-textarea v-model="previewText" label="模拟用户任务" rows="3" placeholder="例如：排查并修复 Go 服务中的并发死锁" />
-              <div><v-btn variant="tonal" :loading="previewing" :disabled="!previewText.trim()" @click="preview">测试匹配</v-btn></div>
-              <v-progress-linear v-if="previewing" indeterminate color="primary" aria-label="正在请求辅助分类，尚未获得匹配结果" />
-              <IntentMatchTrace v-if="decision" :decision="decision" :tasks="options.tasks ?? []" preview />
-            </section>
-            <v-divider class="my-2" />
-            <section class="intent-stack">
-              <div class="d-flex flex-wrap align-center justify-space-between ga-3"><h3 class="text-subtitle-1">最近路由与任务反馈</h3><v-btn variant="text" :loading="eventsLoading" @click="loadEvents">刷新记录</v-btn></div>
-              <p class="text-body-2 text-medium-emphasis">记录真实请求的实际分组、模型、原因和判断耗时。“已交付”表示请求完成，不代表回答质量；满意度由你评价，不会自动训练模型或更改数据集。已分类任务按类型和难度分别统计，驻留期未分类的新任务只保留评价。</p>
-              <p v-if="!events.length" class="text-body-2 text-medium-emphasis">暂无记录；先保存并启用意图匹配，再发送新任务。</p>
-              <div v-for="event in events" :key="event.requestId" class="intent-event">
-                <div>{{ event.target.poolId ? event.decision.trace?.groups.find(group => group.poolId === event.target.poolId)?.name ?? poolName(event.target.poolId) : '未确认执行目标' }} · {{ event.target.model || '未记录模型' }} · {{ event.success ? '已交付' : event.status === 'pending' ? '已确认目标，未记录完成' : '未完成' }}</div>
-                <div v-if="event.decision.task" class="text-body-2">{{ taskName(event.decision.task) }} · {{ tierName(event.decision.tier) }}</div>
-                <div class="text-caption text-medium-emphasis">{{ event.decision.trace?.classified ? '已执行分类' : event.decision.trace ? '本轮未分类' : '旧记录未保存分类过程' }} · {{ event.decision.reason }}<template v-if="event.decision.trace?.classified"> · {{ event.decision.durationMs }} ms</template></div>
-                <div class="text-caption text-medium-emphasis">{{ event.requestId }} · {{ formatDateTime(event.at) }}</div>
-                <details class="intent-event-detail" @toggle="toggleEvent(event.requestId, $event)"><summary>查看输入与匹配过程</summary><IntentMatchTrace v-if="expandedEvents.has(event.requestId)" :decision="event.decision" :tasks="options.tasks ?? []" :target="event.target" /></details>
-                <div v-if="event.success && !event.control && event.feedback === undefined" class="d-flex ga-2 mt-2">
-                  <v-btn size="small" variant="text" :disabled="feedbackBusy" @click="feedback(event, true)">效果满意</v-btn>
-                  <v-btn size="small" variant="text" :disabled="feedbackBusy" @click="feedback(event, false)">效果不满意</v-btn>
+          <p class="text-body-2 text-medium-emphasis">根据任务类型和难度，自动选择现有渠道分组。分组内沿用渠道顺序和模型映射。</p>
+          <v-select v-model="draft.classifier" :items="classifiers" label="自动判断方式" />
+          <p v-if="draft.classifier === 'heuristic'" class="text-caption text-medium-emphasis">内置规则识别明确任务，速度快、不调用额外模型；类型或难度不明确时按未命中策略处理。</p>
+          <template v-if="draft.classifier !== 'heuristic'">
+            <v-select v-model="draft.classifierChannel" :items="classifierOptions" item-title="name" item-value="id" label="辅助判断渠道" clearable @update:model-value="draft.classifierChannel ||= ''" />
+            <v-text-field v-model="draft.classifierModel" label="辅助判断模型" hint="用于任务类型和难度判断；远程模式最多执行两次辅助分类，共享总超时" persistent-hint />
+          </template>
+          <div class="d-flex flex-wrap align-center ga-3">
+            <v-btn variant="tonal" @click="tab = 'groups'">设置分组能力</v-btn>
+            <span class="text-body-2 text-medium-emphasis">当前 {{ pools.length }} 个渠道分组，{{ groups.filter(group => group.tasks.length && group.tiers.length).length }} 个已设置能力</span>
+          </div>
+          <p v-if="draft.taskMatcher === 'semantic'" class="text-body-2">任务类型使用数据集向量匹配，难度使用上方判断方式。向量配置在高级设置中管理。</p>
+        </template>
+        <template v-else>
+          <p class="text-body-2 text-medium-emphasis">{{ strategyHelp }}</p>
+          <template v-if="draft.strategy === 'complexity' || draft.strategy === 'adaptive'">
+            <v-select v-model="draft.classifier" :items="classifiers" label="难度判断方式" />
+            <template v-if="draft.classifier !== 'heuristic'">
+              <v-select v-model="draft.classifierChannel" :items="classifierOptions" item-title="name" item-value="id" label="辅助判断渠道" clearable @update:model-value="draft.classifierChannel ||= ''" />
+              <v-text-field v-model="draft.classifierModel" label="辅助判断模型" />
+            </template>
+          </template>
+          <v-alert v-if="draft.strategy === 'adaptive'" type="info" variant="tonal">
+            同一难度有多个候选分组时，参考任务反馈和成本，仅在新会话选组。
+            <v-switch v-model="draft.observeOnly" label="仅观察建议，暂不改变选组" hide-details class="mt-3" />
+          </v-alert>
+          <DatasetPicker v-if="draft.strategy === 'semantic'" v-model="draft.datasetIds" kind="intent" />
+          <div class="d-flex flex-wrap align-center justify-space-between ga-3">
+            <h3 class="text-subtitle-1">{{ draft.strategy === 'regex' ? '正则规则与分组' : '任务或难度与分组' }}</h3>
+            <v-btn variant="tonal" size="small" :disabled="saving" @click="addRoute">添加映射</v-btn>
+          </div>
+          <v-alert v-if="!draft.routes.length" type="info" variant="tonal">添加目标分组映射后即可启用。自动综合匹配请改用上方推荐模式。</v-alert>
+          <v-expansion-panels variant="accordion">
+            <v-expansion-panel v-for="(route, index) in draft.routes" :key="index">
+              <v-expansion-panel-title>{{ poolName(route.poolId) }} · {{ route.description || route.id || '待配置' }}</v-expansion-panel-title>
+              <v-expansion-panel-text>
+                <div class="intent-stack pt-2">
+                  <v-select v-model="route.poolId" :items="pools" item-title="name" item-value="id" label="目标分组" />
+                  <v-text-field v-model="route.description" label="任务说明" />
+                  <v-text-field v-if="draft.strategy === 'semantic'" v-model="route.label" label="数据集类别" hint="与样本 label 一致，留空使用映射 ID" persistent-hint />
+                  <v-textarea v-if="draft.strategy === 'regex'" :model-value="route.patterns.join('\n')" label="正则表达式，每行一条" rows="3" @update:model-value="route.patterns = lines($event)" />
+                  <v-textarea v-if="draft.strategy === 'semantic' && !draft.datasetIds?.length" :model-value="route.examples.join('\n')" label="任务例句，每行一句" rows="3" @update:model-value="route.examples = lines($event)" />
+                  <v-select v-model="route.tier" :items="tiers" label="难度等级" />
+                  <v-text-field v-if="draft.strategy === 'adaptive'" v-model.number="route.cost" type="number" min="0" label="相对成本" />
+                  <v-text-field v-model="route.id" label="映射 ID" hint="已自动生成，用于稳定引用" persistent-hint />
+                  <v-btn variant="text" color="error" @click="draft.routes.splice(index, 1)">移除映射</v-btn>
                 </div>
-                <span v-else-if="event.feedback !== undefined" class="text-caption">已记录：{{ event.feedback ? '满意' : '不满意' }}</span>
-              </div>
-            </section>
-          </div>
-          <div v-else class="intent-stack">
-            <template v-if="draft.strategy === 'auto'">
-              <h3 class="text-subtitle-1">任务识别与选组优化</h3>
-              <v-select v-model="draft.taskMatcher" :items="[{ title: '按基础设置中的判断方式识别', value: 'builtin' }, { title: '使用数据集向量识别任务类型', value: 'semantic' }]" label="任务类型识别来源" />
-              <v-switch v-model="draft.useFeedback" label="同能力分组参考任务反馈和相对成本" hide-details />
-              <p class="text-caption text-medium-emphasis">只在满足任务和难度的候选组内优化。关闭时按渠道分组顺序选择；已固定会话不会因为一次反馈立即换组。</p>
-            </template>
-            <template v-if="usesEmbedding">
-              <h3 class="text-subtitle-1">向量任务识别</h3>
-              <DatasetPicker v-if="draft.strategy === 'auto'" v-model="draft.datasetIds" kind="intent" />
-              <EmbeddingProfileFields v-model="embeddingProfile" hide-timeout />
-              <v-text-field v-model.number="draft.threshold" type="number" min="0" max="1" step="0.01" label="语义命中阈值" />
-              <div><v-btn variant="tonal" :loading="indexing" :disabled="saving || indexing" @click="buildIndex">增量构建并发布索引</v-btn></div>
-              <p class="text-caption text-medium-emphasis">索引提前构建并持久保存；模型、版本和前缀需与数据集一致。新模型启用前需重新构建。</p>
-            </template>
-            <h3 class="text-subtitle-1">切换保护与未命中处理</h3>
-            <div class="intent-fields">
-              <v-text-field v-model.number="draft.minResidenceSeconds" type="number" min="30" label="最短驻留时间（秒）" />
-              <v-text-field v-model.number="draft.minTurns" type="number" min="1" label="切换前最少用户轮次" />
-              <v-text-field v-if="usesEmbedding" v-model.number="draft.switchMargin" type="number" min="0" max="1" step="0.01" label="最小相似度差值" hint="防止相近样本反复选组；综合匹配还比较前两种任务类型" persistent-hint />
-              <v-text-field v-model.number="draft.timeoutMs" type="number" min="100" max="30000" label="辅助判断总超时（毫秒）" />
+              </v-expansion-panel-text>
+            </v-expansion-panel>
+          </v-expansion-panels>
+        </template>
+        <p class="text-caption text-medium-emphasis">显式渠道和人工会话固定优先。工具续轮、加密推理及服务端历史保留原来源；分类结果不会写入主请求提示词。</p>
+      </div>
+      <IntentGroupCapabilities v-else-if="tab === 'groups'" v-model="groups" :pools="pools" :tasks="options.tasks ?? []" :disabled="saving || indexing" :use-feedback="!!draft.useFeedback" />
+      <div v-else-if="tab === 'diagnostics'" class="intent-stack">
+        <section class="intent-stack">
+          <div><h3 class="text-subtitle-1">试一条任务</h3><p class="text-body-2 text-medium-emphasis mt-2">只测试当前草稿的分类结果，不向目标组生成回答、不切换真实会话。远程判断或向量匹配会调用辅助模型。</p></div>
+          <v-textarea v-model="previewText" label="模拟用户任务" rows="3" placeholder="例如：排查并修复 Go 服务中的并发死锁" />
+          <div><v-btn variant="tonal" :loading="previewing" :disabled="!previewText.trim()" @click="preview">测试匹配</v-btn></div>
+          <v-progress-linear v-if="previewing" indeterminate color="primary" aria-label="正在请求辅助分类，尚未获得匹配结果" />
+          <IntentMatchTrace v-if="decision" :decision="decision" :tasks="options.tasks ?? []" preview />
+        </section>
+        <v-divider class="my-2" />
+        <section class="intent-stack">
+          <div class="d-flex flex-wrap align-center justify-space-between ga-3"><h3 class="text-subtitle-1">最近路由与任务反馈</h3><v-btn variant="text" :loading="eventsLoading" @click="loadEvents">刷新记录</v-btn></div>
+          <p class="text-body-2 text-medium-emphasis">记录真实请求的实际分组、模型、原因和判断耗时。“已交付”表示请求完成，不代表回答质量；满意度由你评价，不会自动训练模型或更改数据集。已分类任务按类型和难度分别统计，驻留期未分类的新任务只保留评价。</p>
+          <EmptyState v-if="!events.length" variant="inline" icon="mdi-history" title="暂无路由记录" description="先保存并启用意图匹配，再发送新任务，这里会记录实际命中的分组与判断耗时。" />
+          <div v-for="event in events" :key="event.requestId" class="intent-event">
+            <div>{{ event.target.poolId ? event.decision.trace?.groups.find(group => group.poolId === event.target.poolId)?.name ?? poolName(event.target.poolId) : '未确认执行目标' }} · {{ event.target.model || '未记录模型' }} · {{ event.success ? '已交付' : event.status === 'pending' ? '已确认目标，未记录完成' : '未完成' }}</div>
+            <div v-if="event.decision.task" class="text-body-2">{{ taskName(event.decision.task) }} · {{ tierName(event.decision.tier) }}</div>
+            <div class="text-caption text-medium-emphasis">{{ event.decision.trace?.classified ? '已执行分类' : event.decision.trace ? '本轮未分类' : '旧记录未保存分类过程' }} · {{ event.decision.reason }}<template v-if="event.decision.trace?.classified"> · {{ event.decision.durationMs }} ms</template></div>
+            <div class="text-caption text-medium-emphasis">{{ event.requestId }} · {{ formatDateTime(event.at) }}</div>
+            <details class="intent-event-detail" @toggle="toggleEvent(event.requestId, $event)"><summary>查看输入与匹配过程</summary><IntentMatchTrace v-if="expandedEvents.has(event.requestId)" :decision="event.decision" :tasks="options.tasks ?? []" :target="event.target" /></details>
+            <div v-if="event.success && !event.control && event.feedback === undefined" class="d-flex ga-2 mt-2">
+              <v-btn size="small" variant="text" :disabled="feedbackBusy" @click="feedback(event, true)">效果满意</v-btn>
+              <v-btn size="small" variant="text" :disabled="feedbackBusy" @click="feedback(event, false)">效果不满意</v-btn>
             </div>
-            <v-select v-model="draft.unmatched" :items="[{ title: '保留原分组规则', value: 'original' }, { title: '返回未命中错误', value: 'error' }, { title: '使用指定分组', value: 'fallback' }]" label="任务或难度不明确、无合适分组时" />
-            <v-select v-if="draft.unmatched === 'fallback'" v-model="draft.fallbackPoolId" :items="pools" item-title="name" item-value="id" label="未命中目标分组" />
-            <v-select v-model="draft.failurePolicy" :items="[{ title: '返回明确错误', value: 'error' }, { title: '记录失败并保留原路由', value: 'keep' }]" label="辅助判断失败或超时" />
-            <v-expansion-panels variant="accordion">
-              <v-expansion-panel title="本地向量助手 · 仅向量匹配需要"><v-expansion-panel-text><LocalEmbeddingSettings /></v-expansion-panel-text></v-expansion-panel>
-            </v-expansion-panels>
+            <span v-else-if="event.feedback !== undefined" class="text-caption">已记录：{{ event.feedback ? '满意' : '不满意' }}</span>
           </div>
-        </v-form>
-      </v-card-text>
-      <v-card-actions class="px-6 py-4">
-        <v-spacer /><v-btn :disabled="saving || indexing" @click="show = false">取消</v-btn>
-        <v-btn color="primary" variant="flat" :loading="saving" :disabled="!draft || indexing" @click="save">保存当前协议</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+        </section>
+      </div>
+      <div v-else class="intent-stack">
+        <template v-if="draft.strategy === 'auto'">
+          <h3 class="text-subtitle-1">任务识别与选组优化</h3>
+          <v-select v-model="draft.taskMatcher" :items="[{ title: '按基础设置中的判断方式识别', value: 'builtin' }, { title: '使用数据集向量识别任务类型', value: 'semantic' }]" label="任务类型识别来源" />
+          <v-switch v-model="draft.useFeedback" label="同能力分组参考任务反馈和相对成本" hide-details />
+          <p class="text-caption text-medium-emphasis">只在满足任务和难度的候选组内优化。关闭时按渠道分组顺序选择；已固定会话不会因为一次反馈立即换组。</p>
+        </template>
+        <template v-if="usesEmbedding">
+          <h3 class="text-subtitle-1">向量任务识别</h3>
+          <DatasetPicker v-if="draft.strategy === 'auto'" v-model="draft.datasetIds" kind="intent" />
+          <EmbeddingProfileFields v-model="embeddingProfile" hide-timeout />
+          <v-text-field v-model.number="draft.threshold" type="number" min="0" max="1" step="0.01" label="语义命中阈值" />
+          <div><v-btn variant="tonal" :loading="indexing" :disabled="saving || indexing" @click="buildIndex">增量构建并发布索引</v-btn></div>
+          <p class="text-caption text-medium-emphasis">索引提前构建并持久保存；模型、版本和前缀需与数据集一致。新模型启用前需重新构建。</p>
+        </template>
+        <h3 class="text-subtitle-1">切换保护与未命中处理</h3>
+        <div class="intent-fields">
+          <v-text-field v-model.number="draft.minResidenceSeconds" type="number" min="30" label="最短驻留时间（秒）" />
+          <v-text-field v-model.number="draft.minTurns" type="number" min="1" label="切换前最少用户轮次" />
+          <v-text-field v-if="usesEmbedding" v-model.number="draft.switchMargin" type="number" min="0" max="1" step="0.01" label="最小相似度差值" hint="防止相近样本反复选组；综合匹配还比较前两种任务类型" persistent-hint />
+          <v-text-field v-model.number="draft.timeoutMs" type="number" min="100" max="30000" label="辅助判断总超时（毫秒）" />
+        </div>
+        <v-select v-model="draft.unmatched" :items="[{ title: '保留原分组规则', value: 'original' }, { title: '返回未命中错误', value: 'error' }, { title: '使用指定分组', value: 'fallback' }]" label="任务或难度不明确、无合适分组时" />
+        <v-select v-if="draft.unmatched === 'fallback'" v-model="draft.fallbackPoolId" :items="pools" item-title="name" item-value="id" label="未命中目标分组" />
+        <v-select v-model="draft.failurePolicy" :items="[{ title: '返回明确错误', value: 'error' }, { title: '记录失败并保留原路由', value: 'keep' }]" label="辅助判断失败或超时" />
+        <v-expansion-panels variant="accordion">
+          <v-expansion-panel title="本地向量助手 · 仅向量匹配需要"><v-expansion-panel-text><LocalEmbeddingSettings /></v-expansion-panel-text></v-expansion-panel>
+        </v-expansion-panels>
+      </div>
+    </v-form>
+    <template #actions>
+      <v-btn :disabled="saving || indexing" @click="show = false">取消</v-btn>
+      <v-btn color="primary" variant="flat" :loading="saving" :disabled="!draft || indexing" @click="save">保存当前协议</v-btn>
+    </template>
+  </AppDialog>
 </template>
 
 <script setup lang="ts">
@@ -154,6 +149,8 @@ import DatasetPicker from './DatasetPicker.vue'
 import EmbeddingProfileFields from './EmbeddingProfileFields.vue'
 import IntentGroupCapabilities from './IntentGroupCapabilities.vue'
 import IntentMatchTrace from './IntentMatchTrace.vue'
+import AppDialog from '@/components/common/AppDialog.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import { formatDateTime } from '../../utils/datetime'
 
 const props = defineProps<{ protocol: IntentProtocol }>()

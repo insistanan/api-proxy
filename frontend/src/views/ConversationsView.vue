@@ -183,108 +183,74 @@
       </v-data-table-server>
     </v-card>
 
-    <v-dialog v-model="routeDialog" max-width="640">
-      <v-card rounded="lg">
-        <v-card-title>设置固定渠道</v-card-title>
-        <v-card-text>
-          <div class="mb-3 text-body-2 text-medium-emphasis">
-            {{ editingConversation?.id }}
-          </div>
-          <div class="mb-3">
-            <v-chip size="small" variant="tonal">{{ editingConversation?.apiKind }}</v-chip>
-          </div>
-          <v-select
-            v-model="selectedChannelIndex"
-            :items="routeChannelItems"
-            label="渠道"
-            :error-messages="routeOptionsError"
-            variant="outlined"
-            density="compact"
-            class="mt-3"
-          />
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="routeDialog = false">取消</v-btn>
-          <v-btn color="primary" :loading="saving" @click="saveRoute">保存</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <AppDialog v-model="routeDialog" title="设置固定渠道" size="md">
+      <div class="mb-3 text-body-2 text-medium-emphasis">
+        {{ editingConversation?.id }}
+      </div>
+      <div class="mb-3">
+        <v-chip size="small" variant="tonal">{{ editingConversation?.apiKind }}</v-chip>
+      </div>
+      <v-select
+        v-model="selectedChannelIndex"
+        :items="routeChannelItems"
+        label="渠道"
+        :error-messages="routeOptionsError"
+        variant="outlined"
+        density="compact"
+        class="mt-3"
+      />
+      <template #actions>
+        <v-btn variant="text" @click="routeDialog = false">取消</v-btn>
+        <v-btn color="primary" :loading="saving" @click="saveRoute">保存</v-btn>
+      </template>
+    </AppDialog>
 
-    <v-dialog v-model="nameDialog" max-width="520">
-      <v-card rounded="lg">
-        <v-card-title>给对话命名</v-card-title>
-        <v-card-text>
-          <div class="text-body-2 text-medium-emphasis mb-3">{{ editingNameConversation?.id }}</div>
-          <v-text-field
-            v-model="conversationName"
-            label="对话名称"
-            maxlength="120"
-            counter="120"
-            variant="outlined"
-            density="compact"
-            autofocus
-            @keyup.enter="saveName"
-          />
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="nameDialog = false">取消</v-btn>
-          <v-btn color="primary" :loading="saving" @click="saveName">保存</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <AppDialog v-model="nameDialog" title="给对话命名" size="md">
+      <div class="text-body-2 text-medium-emphasis mb-3">{{ editingNameConversation?.id }}</div>
+      <v-text-field
+        v-model="conversationName"
+        label="对话名称"
+        maxlength="120"
+        counter="120"
+        variant="outlined"
+        density="compact"
+        autofocus
+        @keyup.enter="saveName"
+      />
+      <template #actions>
+        <v-btn variant="text" @click="nameDialog = false">取消</v-btn>
+        <v-btn color="primary" :loading="saving" @click="saveName">保存</v-btn>
+      </template>
+    </AppDialog>
 
-    <v-dialog v-model="deleteDialog" max-width="480">
-      <v-card rounded="lg">
-        <v-card-title>删除对话</v-card-title>
-        <v-card-text>
-          确定删除“{{ deletingConversation?.name || deletingConversation?.firstPrompt || deletingConversation?.id }}”吗？
-          此操作会删除该对话的提示词、图片指纹、图片理解结果、固定渠道设置和 Responses 持久化会话链，且无法恢复。
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="deleteDialog = false">取消</v-btn>
-          <v-btn color="error" :loading="saving" @click="deleteConversation">删除</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ConfirmDialog
+      v-model="deleteDialog"
+      title="删除对话"
+      :message="`确定删除“${deletingConversation?.name || deletingConversation?.firstPrompt || deletingConversation?.id}”吗？此操作会删除该对话的提示词、图片指纹、图片理解结果、固定渠道设置和 Responses 持久化会话链，且无法恢复。`"
+      confirm-text="删除"
+      :loading="saving"
+      @confirm="deleteConversation"
+    />
 
-    <v-dialog v-model="deleteAllDialog" max-width="520">
-      <v-card rounded="lg">
-        <v-card-title>清空全部对话</v-card-title>
-        <v-card-text>
-          此操作会删除全部对话、图片理解结果、固定渠道设置和 Responses 持久化会话链，且无法恢复。
-          <v-text-field
-            v-model="deleteAllConfirmation"
-            label="输入 清空全部 以确认"
-            variant="outlined"
-            density="compact"
-            class="mt-4"
-            autofocus
-            @keyup.enter="deleteAllConversations"
-          />
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="deleteAllDialog = false">取消</v-btn>
-          <v-btn color="error" :disabled="deleteAllConfirmation !== '清空全部'" :loading="saving" @click="deleteAllConversations">清空全部</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <AppDialog v-model="deleteAllDialog" title="清空全部对话" size="md">
+      此操作会删除全部对话、图片理解结果、固定渠道设置和 Responses 持久化会话链，且无法恢复。
+      <v-text-field
+        v-model="deleteAllConfirmation"
+        label="输入 清空全部 以确认"
+        variant="outlined"
+        density="compact"
+        class="mt-4"
+        autofocus
+        @keyup.enter="deleteAllConversations"
+      />
+      <template #actions>
+        <v-btn variant="text" @click="deleteAllDialog = false">取消</v-btn>
+        <v-btn color="error" :disabled="deleteAllConfirmation !== '清空全部'" :loading="saving" @click="deleteAllConversations">清空全部</v-btn>
+      </template>
+    </AppDialog>
 
     <!-- 详情 Dialog -->
-    <v-dialog v-model="detailDialog" max-width="960" scrollable>
-      <v-card rounded="lg" class="detail-dialog-card pa-2">
-        <v-card-title class="d-flex align-center justify-between border-b pb-2">
-          <span class="text-h6 font-weight-bold d-flex align-center ga-2">
-            <v-icon icon="mdi-message-processing" color="primary" />
-            对话详情
-          </span>
-          <v-spacer />
-          <v-btn icon="mdi-close" variant="text" size="small" @click="detailDialog = false" />
-        </v-card-title>
-        <v-card-text class="pt-4 pb-2">
+    <AppDialog v-model="detailDialog" title="对话详情" size="xl">
           <!-- ID & Meta -->
           <div class="d-flex flex-wrap align-center justify-space-between mb-4 ga-2">
             <div class="d-flex align-center ga-2">
@@ -445,26 +411,23 @@
               </div>
             </div>
           </div>
-        </v-card-text>
-
-        <v-card-actions class="border-t mt-2 pt-2">
-          <v-btn
-            v-if="selectedConversation"
-            color="error"
-            variant="tonal"
-            prepend-icon="mdi-delete"
-            @click="openDeleteDialog(selectedConversation)"
-          >
-            删除对话
-          </v-btn>
-          <v-spacer />
-          <v-btn color="primary" variant="tonal" prepend-icon="mdi-swap-horizontal" @click="openRouteOverrideFromDetail()">
-            去固定该会话渠道
-          </v-btn>
-          <v-btn variant="outlined" @click="detailDialog = false">关闭</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+      <template #actions>
+        <v-btn
+          v-if="selectedConversation"
+          color="error"
+          variant="tonal"
+          prepend-icon="mdi-delete"
+          @click="openDeleteDialog(selectedConversation)"
+        >
+          删除对话
+        </v-btn>
+        <v-spacer />
+        <v-btn color="primary" variant="tonal" prepend-icon="mdi-swap-horizontal" @click="openRouteOverrideFromDetail()">
+          去固定该会话渠道
+        </v-btn>
+        <v-btn variant="outlined" @click="detailDialog = false">关闭</v-btn>
+      </template>
+    </AppDialog>
   </div>
 </template>
 
@@ -476,7 +439,8 @@ import { api, type ConversationEntry, type ConversationKind, type ConversationRo
 import { API_TABS } from '@/services/channel-api'
 import { useToast } from '@/composables/useToast'
 import { useClipboard } from '../composables/useClipboard'
-import { formatDateTime } from '../utils/datetime'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import AppDialog from '@/components/common/AppDialog.vue'
 
 const { showToast } = useToast()
 const { copyText: copyToClipboard } = useClipboard()

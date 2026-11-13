@@ -124,53 +124,51 @@
       </v-table>
     </v-card>
 
-    <v-dialog v-model="dialogOpen" max-width="720" persistent>
-      <v-card>
-        <v-card-title>{{ editingIndex === null && !editingSource ? '新增 MCP' : '编辑 MCP' }}</v-card-title>
-        <v-card-text>
-          <v-alert v-if="formError" type="error" variant="tonal" density="compact" class="mb-4">{{ formError }}</v-alert>
-          <v-alert v-if="importHint" type="info" variant="tonal" density="compact" class="mb-4">{{ importHint }}</v-alert>
-          <v-btn-toggle :model-value="inputMode" mandatory divided color="primary" density="comfortable" class="mb-4" @update:model-value="setInputMode">
-            <v-btn value="command">粘贴命令</v-btn>
-            <v-btn value="fields">分项填写</v-btn>
-          </v-btn-toggle>
-          <v-row>
-            <v-col cols="12" md="6"><v-text-field v-model="form.name" label="名称" hint="仅允许字母、数字、下划线和连字符，1–64 个字符" persistent-hint /></v-col>
-            <v-col cols="12" md="6"><v-select :model-value="form.transport" :items="TRANSPORT_OPTIONS" label="传输方式" @update:model-value="onTransportChange" /></v-col>
-          </v-row>
-          <template v-if="inputMode === 'command' && form.transport === 'stdio'">
-            <v-textarea :model-value="commandText" label="MCP 启动命令" placeholder="npx -y @playwright/mcp@latest --extension" hint="粘贴完整命令，自动识别命令、参数和名称；支持带引号的路径与参数。" persistent-hint rows="3" :error-messages="commandParseError" @update:model-value="applyCommandText" />
-            <div v-if="form.command && !commandParseError" class="command-preview mt-3 mb-4 text-body-2">
-              <div>命令：<code>{{ form.command }}</code></div>
-              <div>参数：<code>{{ form.argsText }}</code></div>
-              <div v-if="form.envText !== '{}'">环境变量：<code>{{ form.envText }}</code></div>
-            </div>
-          </template>
-          <template v-else-if="form.transport === 'stdio'">
-            <v-text-field v-model="form.command" label="命令" placeholder="例如 npx" />
-            <v-textarea v-model="form.argsText" label="参数" hint="支持 JSON 字符串数组，或每行一个参数（忽略空行）" persistent-hint rows="3" no-resize />
-            <v-textarea v-model="form.envText" label="环境变量" hint="支持 JSON 对象，或每行一个 KEY=VALUE" persistent-hint rows="3" no-resize />
-          </template>
-          <template v-else>
-            <v-text-field v-model="form.url" label="URL" placeholder="https://example.com/mcp" />
-            <v-textarea v-model="form.headersText" label="请求头" hint="支持 JSON 对象，或每行一个 KEY=VALUE" persistent-hint rows="3" no-resize />
-          </template>
-          <div class="text-subtitle-2 mt-2 mb-1">分发到</div>
-          <div class="d-flex flex-wrap ga-4">
-            <v-checkbox v-for="agent in AGENT_OPTIONS" :key="agent.key" v-model="form.agents" :value="agent.key" :label="agent.label" density="compact" hide-details />
-          </div>
-        </v-card-text>
-        <v-card-actions><v-spacer /><v-btn variant="text" @click="dialogOpen = false">取消</v-btn><v-btn color="primary" @click="submitForm">应用到列表</v-btn></v-card-actions>
-      </v-card>
-    </v-dialog>
+    <AppDialog v-model="dialogOpen" :title="editingIndex === null && !editingSource ? '新增 MCP' : '编辑 MCP'" description="支持粘贴启动命令自动识别，或分项填写连接信息。" size="lg">
+      <v-alert v-if="formError" type="error" variant="tonal" density="compact" class="mb-4">{{ formError }}</v-alert>
+      <v-alert v-if="importHint" type="info" variant="tonal" density="compact" class="mb-4">{{ importHint }}</v-alert>
+      <v-btn-toggle :model-value="inputMode" mandatory divided color="primary" density="comfortable" class="mb-4" @update:model-value="setInputMode">
+        <v-btn value="command">粘贴命令</v-btn>
+        <v-btn value="fields">分项填写</v-btn>
+      </v-btn-toggle>
+      <v-row>
+        <v-col cols="12" md="6"><v-text-field v-model="form.name" label="名称" hint="仅允许字母、数字、下划线和连字符，1–64 个字符" persistent-hint /></v-col>
+        <v-col cols="12" md="6"><v-select :model-value="form.transport" :items="TRANSPORT_OPTIONS" label="传输方式" @update:model-value="onTransportChange" /></v-col>
+      </v-row>
+      <template v-if="inputMode === 'command' && form.transport === 'stdio'">
+        <v-textarea :model-value="commandText" label="MCP 启动命令" placeholder="npx -y @playwright/mcp@latest --extension" hint="粘贴完整命令，自动识别命令、参数和名称；支持带引号的路径与参数。" persistent-hint rows="3" :error-messages="commandParseError" @update:model-value="applyCommandText" />
+        <div v-if="form.command && !commandParseError" class="command-preview mt-3 mb-4 text-body-2">
+          <div>命令：<code>{{ form.command }}</code></div>
+          <div>参数：<code>{{ form.argsText }}</code></div>
+          <div v-if="form.envText !== '{}'">环境变量：<code>{{ form.envText }}</code></div>
+        </div>
+      </template>
+      <template v-else-if="form.transport === 'stdio'">
+        <v-text-field v-model="form.command" label="命令" placeholder="例如 npx" />
+        <v-textarea v-model="form.argsText" label="参数" hint="支持 JSON 字符串数组，或每行一个参数（忽略空行）" persistent-hint rows="3" no-resize />
+        <v-textarea v-model="form.envText" label="环境变量" hint="支持 JSON 对象，或每行一个 KEY=VALUE" persistent-hint rows="3" no-resize />
+      </template>
+      <template v-else>
+        <v-text-field v-model="form.url" label="URL" placeholder="https://example.com/mcp" />
+        <v-textarea v-model="form.headersText" label="请求头" hint="支持 JSON 对象，或每行一个 KEY=VALUE" persistent-hint rows="3" no-resize />
+      </template>
+      <div class="text-subtitle-2 mt-2 mb-1">分发到</div>
+      <div class="d-flex flex-wrap ga-4">
+        <v-checkbox v-for="agent in AGENT_OPTIONS" :key="agent.key" v-model="form.agents" :value="agent.key" :label="agent.label" density="compact" hide-details />
+      </div>
+      <template #actions>
+        <v-btn variant="text" @click="dialogOpen = false">取消</v-btn>
+        <v-btn color="primary" @click="submitForm">应用到列表</v-btn>
+      </template>
+    </AppDialog>
 
-    <v-dialog v-model="deleteDialog" max-width="480" persistent>
-      <v-card>
-        <v-card-title>删除 MCP</v-card-title>
-        <v-card-text>将删除 <strong>{{ deletingServer?.name }}</strong><span v-if="deletingSource">（来源：{{ sourceLabels(deletingSource.sources) }}）</span>。点击页面“保存”后，会从对应应用中移除配置并清理停用记录。</v-card-text>
-        <v-card-actions><v-spacer /><v-btn variant="text" @click="deleteDialog = false">取消</v-btn><v-btn color="error" @click="deleteServer">删除</v-btn></v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ConfirmDialog
+      v-model="deleteDialog"
+      title="删除 MCP"
+      :message="`将删除「${deletingServer?.name || ''}」${deletingSource ? `（来源：${sourceLabels(deletingSource.sources)}）` : ''}。点击页面「保存」后，会从对应应用中移除配置并清理停用记录。`"
+      confirm-text="删除"
+      @confirm="deleteServer"
+    />
   </div>
   <ConfirmDialog
     :model-value="pendingConfirm !== null"
@@ -189,6 +187,7 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import DisclosureSection from '@/components/common/DisclosureSection.vue'
 import { computed, onMounted, reactive, ref } from 'vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import AppDialog from '@/components/common/AppDialog.vue'
 import { useConfirm } from '@/composables/useConfirm'
 import { api, ApiError } from '@/services/api'
 import { formatMcpCommand, parseMcpCommand } from '@/utils/mcpCommand'

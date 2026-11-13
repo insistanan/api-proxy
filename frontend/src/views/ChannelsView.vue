@@ -87,11 +87,14 @@
       @success="showToast($event, 'info')"
     />
 
-    <v-card v-else class="channels-empty">
-      <v-icon size="40" color="primary">mdi-server-network</v-icon>
-      <div class="text-h6 font-weight-bold mt-4">暂无渠道</div>
-      <p class="text-body-2 text-medium-emphasis mt-2 mb-6">添加第一个上游渠道后，即可通过本代理转发 {{ navigation?.label }} 请求。</p>
-      <v-btn color="primary" prepend-icon="mdi-plus" @click="openAddChannel()">添加渠道</v-btn>
+    <v-card v-else>
+      <EmptyState
+        icon="mdi-server-network"
+        title="暂无渠道"
+        :description="`添加第一个上游渠道后，即可通过本代理转发 ${navigation?.label} 请求。`"
+      >
+        <v-btn color="primary" prepend-icon="mdi-plus" @click="openAddChannel()">添加渠道</v-btn>
+      </EmptyState>
     </v-card>
 
     <AddChannelModal
@@ -113,6 +116,7 @@
 // 渠道数据由 channelStore 持有；本页负责进入时加载、停留期间自动刷新、离开时停止。
 import { computed, onMounted, onUnmounted, watch } from 'vue'
 import PageHeader from '@/components/common/PageHeader.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import DisclosureSection from '@/components/common/DisclosureSection.vue'
 import ChannelOrchestration from '@/components/ChannelOrchestration.vue'
 import ChannelTableDrawer from '@/components/channel/ChannelTableDrawer.vue'

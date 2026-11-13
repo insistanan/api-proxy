@@ -68,120 +68,98 @@
       </div>
     </v-card>
 
-    <v-dialog v-model="importDialog" max-width="700" persistent>
-      <v-card>
-        <v-card-title>安装 Skill</v-card-title>
-        <v-card-text>
-          <v-file-input v-model="importFile" accept=".zip,.md,text/markdown,application/zip" label="ZIP 压缩包或 SKILL.md" variant="outlined" prepend-icon="mdi-paperclip" show-size />
-          <v-select v-model="importTargets" :items="writableLocations" item-title="agent" item-value="key" label="安装目标" variant="outlined" multiple chips />
-          <v-alert type="warning" density="compact" variant="tonal">项目 Skills 目录会始终同步保留一份。其他同名目标会被覆盖；ZIP 只接受单一 Skill 目录，且必须包含有效的 <code>SKILL.md</code>。</v-alert>
-        </v-card-text>
-        <v-card-actions><v-spacer /><v-btn variant="text" @click="importDialog = false">取消</v-btn><v-btn color="primary" :disabled="!importFile || importTargets.length === 0" :loading="importing" @click="importSelected">安装</v-btn></v-card-actions>
-      </v-card>
-    </v-dialog>
+    <AppDialog v-model="importDialog" title="安装 Skill" description="上传 ZIP 压缩包或 SKILL.md，选择要写入的 Agent 目录。" size="md" :busy="importing">
+      <v-file-input v-model="importFile" accept=".zip,.md,text/markdown,application/zip" label="ZIP 压缩包或 SKILL.md" variant="outlined" prepend-icon="mdi-paperclip" show-size />
+      <v-select v-model="importTargets" :items="writableLocations" item-title="agent" item-value="key" label="安装目标" variant="outlined" multiple chips />
+      <v-alert type="warning" density="compact" variant="tonal">项目 Skills 目录会始终同步保留一份。其他同名目标会被覆盖；ZIP 只接受单一 Skill 目录，且必须包含有效的 <code>SKILL.md</code>。</v-alert>
+      <template #actions>
+        <v-btn variant="text" :disabled="importing" @click="importDialog = false">取消</v-btn>
+        <v-btn color="primary" :disabled="!importFile || importTargets.length === 0" :loading="importing" @click="importSelected">安装</v-btn>
+      </template>
+    </AppDialog>
 
-    <v-dialog v-model="discoverDialog" max-width="1100" persistent>
-      <v-card class="discover-card">
-        <div class="d-flex align-center justify-space-between px-5 py-4">
-          <div>
-            <div class="text-h6">发现 Skill</div>
-            <div class="text-caption text-medium-emphasis">从 skills.sh 搜索并安装到本机</div>
-          </div>
-          <!-- 发现 Skill 数据来自 skills.sh，安装前会从 GitHub 校验 SKILL.md 和文件清单 -->
-          <v-btn icon="mdi-close" variant="text" @click="discoverDialog = false" />
-        </div>
-        <v-divider />
-        <v-card-text class="pa-5">
-          <v-text-field v-model.trim="discoverQuery" label="搜索 Skill，例如 ui、testing、react" variant="outlined" hide-details="auto" clearable @keyup.enter="searchRemote">
-            <template #append-inner><v-btn icon="mdi-magnify" variant="text" size="small" :loading="remoteSearching" @click="searchRemote" /></template>
-          </v-text-field>
-          <v-alert v-if="discoverError" type="error" variant="tonal" class="mt-4">{{ discoverError }}</v-alert>
-          <v-progress-linear v-if="remoteSearching" indeterminate color="primary" class="mt-4" />
-          <div v-if="!remoteSearching && remoteResults.length === 0 && remoteSearched" class="text-center text-medium-emphasis py-10">没有找到匹配的 Skill</div>
-          <v-table v-if="remoteResults.length" density="comfortable" class="mt-4 remote-results-table">
-            <thead><tr><th>Skill</th><th>来源</th><th>安装量</th><th class="text-right">操作</th></tr></thead>
-            <tbody>
-              <tr v-for="result in remoteResults" :key="result.id">
-                <td><div class="font-weight-medium">{{ result.name || result.skillId }}</div><div class="text-caption text-medium-emphasis">{{ result.skillId }}</div></td>
-                <td><a v-if="result.repositoryUrl" :href="result.repositoryUrl" target="_blank" rel="noreferrer" class="source-link">{{ result.source }}</a><span v-else>{{ result.source }}</span></td>
-                <td class="install-count-cell"><span class="install-count">{{ formatInstalls(result.installs) }}</span></td>
-                <td class="text-right"><v-btn size="small" variant="tonal" color="primary" :loading="remoteInspectingId === result.id" @click="inspectRemote(result.id)">查看并安装</v-btn></td>
-              </tr>
-            </tbody>
-          </v-table>
-        </v-card-text>
-      </v-card>
-    </v-dialog>
+    <AppDialog v-model="discoverDialog" title="发现 Skill" description="从 skills.sh 搜索并安装到本机，安装前会从 GitHub 校验 SKILL.md 和文件清单。" size="xl" :busy="remoteSearching">
+      <v-text-field v-model.trim="discoverQuery" label="搜索 Skill，例如 ui、testing、react" variant="outlined" hide-details="auto" clearable @keyup.enter="searchRemote">
+        <template #append-inner><v-btn icon="mdi-magnify" variant="text" size="small" :loading="remoteSearching" @click="searchRemote" /></template>
+      </v-text-field>
+      <v-alert v-if="discoverError" type="error" variant="tonal" class="mt-4">{{ discoverError }}</v-alert>
+      <v-progress-linear v-if="remoteSearching" indeterminate color="primary" class="mt-4" />
+      <EmptyState v-if="!remoteSearching && remoteResults.length === 0 && remoteSearched" variant="inline" icon="mdi-magnify-close" title="没有找到匹配的 Skill" description="换个关键词再搜一次，例如 ui、testing、react。" />
+      <v-table v-if="remoteResults.length" density="comfortable" class="mt-4 remote-results-table">
+        <thead><tr><th>Skill</th><th>来源</th><th>安装量</th><th class="text-right">操作</th></tr></thead>
+        <tbody>
+          <tr v-for="result in remoteResults" :key="result.id">
+            <td><div class="font-weight-medium">{{ result.name || result.skillId }}</div><div class="text-caption text-medium-emphasis">{{ result.skillId }}</div></td>
+            <td><a v-if="result.repositoryUrl" :href="result.repositoryUrl" target="_blank" rel="noreferrer" class="source-link">{{ result.source }}</a><span v-else>{{ result.source }}</span></td>
+            <td class="install-count-cell"><span class="install-count">{{ formatInstalls(result.installs) }}</span></td>
+            <td class="text-right"><v-btn size="small" variant="tonal" color="primary" :loading="remoteInspectingId === result.id" @click="inspectRemote(result.id)">查看并安装</v-btn></td>
+          </tr>
+        </tbody>
+      </v-table>
+    </AppDialog>
 
-    <v-dialog v-model="remotePreviewDialog" max-width="820" persistent>
-      <v-card>
-        <div class="d-flex align-center justify-space-between px-5 py-4">
-          <div><div class="text-h6">安装 {{ remotePreview?.name }}</div><div class="text-caption text-medium-emphasis">{{ remotePreview?.source }}</div></div>
-          <v-btn icon="mdi-close" variant="text" @click="remotePreviewDialog = false" />
-        </div>
-        <v-divider />
-        <v-card-text class="pa-5">
-          <v-alert v-if="remoteError" type="error" variant="tonal" class="mb-4">{{ remoteError }}</v-alert>
-          <div v-if="remotePreview" class="text-body-2 mb-4">{{ remotePreview.description }}</div>
-          <div v-if="remotePreview" class="d-flex flex-wrap ga-2 mb-4">
-            <v-chip size="small" label>{{ remotePreview.files.length }} 个文件</v-chip>
-            <v-chip v-if="remotePreview.license" size="small" label>许可证：{{ remotePreview.license }}</v-chip>
-            <v-chip v-if="remotePreview.commit" size="small" label :title="remotePreview.commit">提交 {{ remotePreview.commit.slice(0, 7) }}</v-chip>
-            <v-chip v-if="remotePreview.containsScripts" size="small" color="warning" label>包含 scripts/，请先审阅</v-chip>
-            <v-btn v-if="remotePreview.repositoryUrl" :href="remotePreview.repositoryUrl" target="_blank" rel="noreferrer" size="small" variant="text" prepend-icon="mdi-open-in-new">GitHub 仓库</v-btn>
-          </div>
-          <v-select v-model="remoteTargets" :items="writableLocations" item-title="agent" item-value="key" label="安装目标" variant="outlined" multiple chips :disabled="remoteInstalling" />
-          <v-alert type="warning" density="compact" variant="tonal" class="mb-4">项目 Skills 目录会始终同步保留一份；其他目标中的同名 Skill 会被覆盖。远程内容只会写入文件，不会在服务端执行脚本。</v-alert>
-          <div v-if="remotePreview" class="file-list"><div class="text-caption text-medium-emphasis mb-2">将安装的文件</div><div v-for="file in remotePreview.files" :key="file.path" class="d-flex justify-space-between text-body-2"><code>{{ file.path }}</code><span class="text-medium-emphasis">{{ formatBytes(file.size) }}</span></div></div>
-        </v-card-text>
-        <v-card-actions><v-spacer /><v-btn variant="text" @click="remotePreviewDialog = false">取消</v-btn><v-btn color="primary" :disabled="!remotePreview || remoteTargets.length === 0" :loading="remoteInstalling" @click="installRemote">安装</v-btn></v-card-actions>
-      </v-card>
-    </v-dialog>
+    <AppDialog v-model="remotePreviewDialog" :title="`安装 ${remotePreview?.name || ''}`" :description="remotePreview?.source" size="lg" :busy="remoteInstalling">
+      <v-alert v-if="remoteError" type="error" variant="tonal" class="mb-4">{{ remoteError }}</v-alert>
+      <div v-if="remotePreview" class="text-body-2 mb-4">{{ remotePreview.description }}</div>
+      <div v-if="remotePreview" class="d-flex flex-wrap ga-2 mb-4">
+        <v-chip size="small" label>{{ remotePreview.files.length }} 个文件</v-chip>
+        <v-chip v-if="remotePreview.license" size="small" label>许可证：{{ remotePreview.license }}</v-chip>
+        <v-chip v-if="remotePreview.commit" size="small" label :title="remotePreview.commit">提交 {{ remotePreview.commit.slice(0, 7) }}</v-chip>
+        <v-chip v-if="remotePreview.containsScripts" size="small" color="warning" label>包含 scripts/，请先审阅</v-chip>
+        <v-btn v-if="remotePreview.repositoryUrl" :href="remotePreview.repositoryUrl" target="_blank" rel="noreferrer" size="small" variant="text" prepend-icon="mdi-open-in-new">GitHub 仓库</v-btn>
+      </div>
+      <v-select v-model="remoteTargets" :items="writableLocations" item-title="agent" item-value="key" label="安装目标" variant="outlined" multiple chips :disabled="remoteInstalling" />
+      <v-alert type="warning" density="compact" variant="tonal" class="mb-4">项目 Skills 目录会始终同步保留一份；其他目标中的同名 Skill 会被覆盖。远程内容只会写入文件，不会在服务端执行脚本。</v-alert>
+      <div v-if="remotePreview" class="file-list"><div class="text-caption text-medium-emphasis mb-2">将安装的文件</div><div v-for="file in remotePreview.files" :key="file.path" class="d-flex justify-space-between text-body-2"><code>{{ file.path }}</code><span class="text-medium-emphasis">{{ formatBytes(file.size) }}</span></div></div>
+      <template #actions>
+        <v-btn variant="text" :disabled="remoteInstalling" @click="remotePreviewDialog = false">取消</v-btn>
+        <v-btn color="primary" :disabled="!remotePreview || remoteTargets.length === 0" :loading="remoteInstalling" @click="installRemote">安装</v-btn>
+      </template>
+    </AppDialog>
 
-    <v-dialog v-model="detailDialog" max-width="1280" persistent>
-      <v-card class="detail-card">
-        <div class="detail-header d-flex align-center justify-space-between px-5 py-4"><div><div class="text-h6">{{ selectedDisplayName }}</div><div class="text-caption text-medium-emphasis">{{ selectedSkill?.path }}</div></div><v-btn icon="mdi-close" variant="text" @click="detailDialog = false" /></div>
-        <v-divider />
-        <v-card-text class="detail-body pa-5">
-          <v-alert v-if="detailError" type="error" variant="tonal" class="mb-4">{{ detailError }}</v-alert>
-          <v-row>
-            <v-col cols="12" lg="6"><v-textarea :model-value="originalContent" label="原 Skill（只读）" variant="outlined" rows="19" readonly no-resize class="skill-editor" /></v-col>
-            <v-col cols="12" lg="6"><v-textarea v-model="translatedContent" label="中文翻译" variant="outlined" rows="19" no-resize class="skill-editor" /></v-col>
-          </v-row>
-        </v-card-text>
-        <v-divider />
-        <div class="detail-footer px-5 py-4">
-          <v-row align="end" class="detail-controls">
-            <v-col cols="12" md="6" lg="3"><v-text-field v-model="skillNote" label="全局备注" variant="outlined" clearable hide-details="auto" @keyup.enter="saveSkillNote"><template #append-inner><v-tooltip text="保存备注" location="top" theme="dark"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-content-save" variant="text" size="small" :loading="savingNote" :disabled="savingNote" @click="saveSkillNote" /></template></v-tooltip></template></v-text-field></v-col>
-            <v-col cols="12" md="6" lg="3"><v-select v-model="translationChannel" :items="chatChannels" item-title="name" item-value="index" label="Chat 渠道（可选）" variant="outlined" clearable /></v-col>
-            <v-col cols="12" md="6" lg="4"><v-combobox v-model="translationModel" :items="translationModelOptions" item-title="title" item-value="value" label="模型 ID（可选）" variant="outlined" clearable :loading="translationModelsLoading" :error-messages="translationModelsError || undefined" /></v-col>
-            <v-col cols="12" md="6" lg="2"><div class="detail-actions"><v-tooltip :text="selectedSkill?.readOnly ? '只读来源不可复制' : '复制到其他 Agent'" location="top" theme="dark"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-content-copy" :disabled="!selectedSkill || selectedSkill.readOnly" variant="tonal" @click="openSelectedCopy" /></template></v-tooltip><v-tooltip text="翻译并自动保存" location="top" theme="dark"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-translate" color="primary" :loading="translating" @click="translateSkill" /></template></v-tooltip><v-tooltip text="保存当前译文" location="top" theme="dark"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-content-save" :disabled="!translatedContent || savingBackup" :loading="savingBackup" @click="() => saveBackup()" /></template></v-tooltip></div></v-col>
-          </v-row>
-        </div>
-      </v-card>
-    </v-dialog>
+    <AppDialog v-model="detailDialog" :title="selectedDisplayName" :description="selectedSkill?.path" size="xl">
+      <v-alert v-if="detailError" type="error" variant="tonal" class="mb-4">{{ detailError }}</v-alert>
+      <v-row>
+        <v-col cols="12" lg="6"><v-textarea :model-value="originalContent" label="原 Skill（只读）" variant="outlined" rows="19" readonly no-resize class="skill-editor" /></v-col>
+        <v-col cols="12" lg="6"><v-textarea v-model="translatedContent" label="中文翻译" variant="outlined" rows="19" no-resize class="skill-editor" /></v-col>
+      </v-row>
+      <template #actions>
+        <v-row align="end" class="detail-controls">
+          <v-col cols="12" md="6" lg="3"><v-text-field v-model="skillNote" label="全局备注" variant="outlined" clearable hide-details="auto" @keyup.enter="saveSkillNote"><template #append-inner><v-tooltip text="保存备注" location="top" theme="dark"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-content-save" variant="text" size="small" :loading="savingNote" :disabled="savingNote" @click="saveSkillNote" /></template></v-tooltip></template></v-text-field></v-col>
+          <v-col cols="12" md="6" lg="3"><v-select v-model="translationChannel" :items="chatChannels" item-title="name" item-value="index" label="Chat 渠道（可选）" variant="outlined" clearable /></v-col>
+          <v-col cols="12" md="6" lg="4"><v-combobox v-model="translationModel" :items="translationModelOptions" item-title="title" item-value="value" label="模型 ID（可选）" variant="outlined" clearable :loading="translationModelsLoading" :error-messages="translationModelsError || undefined" /></v-col>
+          <v-col cols="12" md="6" lg="2"><div class="detail-actions"><v-tooltip :text="selectedSkill?.readOnly ? '只读来源不可复制' : '复制到其他 Agent'" location="top" theme="dark"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-content-copy" :disabled="!selectedSkill || selectedSkill.readOnly" variant="tonal" @click="openSelectedCopy" /></template></v-tooltip><v-tooltip text="翻译并自动保存" location="top" theme="dark"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-translate" color="primary" :loading="translating" @click="translateSkill" /></template></v-tooltip><v-tooltip text="保存当前译文" location="top" theme="dark"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-content-save" :disabled="!translatedContent || savingBackup" :loading="savingBackup" @click="() => saveBackup()" /></template></v-tooltip></div></v-col>
+        </v-row>
+      </template>
+    </AppDialog>
 
-    <v-dialog v-model="copyDialog" max-width="650" persistent>
-      <v-card>
-        <v-card-title>复制 Skill 到其他 Agent</v-card-title>
-        <v-card-text>
-          <div class="text-body-2 mb-4">来源：<strong>{{ selectedSkill?.name }}</strong>（{{ selectedSkill?.agent }}）</div>
-          <v-select v-model="copyTargets" :items="copyTargetLocations" item-title="agent" item-value="key" label="复制目标" variant="outlined" multiple chips :disabled="copying" />
-          <v-alert type="warning" density="compact" variant="tonal">将复制 SKILL.md 以及 references、scripts 等附属文件。同名 Skill 会覆盖目标用户目录；内置和插件来源不可作为复制源或目标。</v-alert>
-        </v-card-text>
-        <v-card-actions><v-spacer /><v-btn variant="text" @click="copyDialog = false">取消</v-btn><v-btn color="primary" :disabled="copyTargets.length === 0" :loading="copying" @click="copySelected">复制</v-btn></v-card-actions>
-      </v-card>
-    </v-dialog>
+    <AppDialog v-model="copyDialog" title="复制 Skill 到其他 Agent" size="md" :busy="copying">
+      <div class="text-body-2 mb-4">来源：<strong>{{ selectedSkill?.name }}</strong>（{{ selectedSkill?.agent }}）</div>
+      <v-select v-model="copyTargets" :items="copyTargetLocations" item-title="agent" item-value="key" label="复制目标" variant="outlined" multiple chips :disabled="copying" />
+      <v-alert type="warning" density="compact" variant="tonal">将复制 SKILL.md 以及 references、scripts 等附属文件。同名 Skill 会覆盖目标用户目录；内置和插件来源不可作为复制源或目标。</v-alert>
+      <template #actions>
+        <v-btn variant="text" :disabled="copying" @click="copyDialog = false">取消</v-btn>
+        <v-btn color="primary" :disabled="copyTargets.length === 0" :loading="copying" @click="copySelected">复制</v-btn>
+      </template>
+    </AppDialog>
 
-    <v-dialog v-model="deleteDialog" max-width="500" persistent>
-      <v-card><v-card-title>删除 Skill</v-card-title><v-card-text>确认删除 <strong>{{ selectedSkill?.name }}</strong> 吗？将移除 <code>{{ selectedSkill?.path }}</code> 下的整个 Skill 目录。</v-card-text><v-card-actions><v-spacer /><v-btn variant="text" @click="deleteDialog = false">取消</v-btn><v-btn color="error" :loading="deleting" @click="deleteSelected">删除</v-btn></v-card-actions></v-card>
-    </v-dialog>
+    <ConfirmDialog
+      v-model="deleteDialog"
+      title="删除 Skill"
+      :message="`确认删除「${selectedSkill?.name || ''}」吗？将移除 ${selectedSkill?.path || ''} 下的整个 Skill 目录。`"
+      confirm-text="删除"
+      :loading="deleting"
+      @confirm="deleteSelected"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import PageHeader from '@/components/common/PageHeader.vue'
 import DisclosureSection from '@/components/common/DisclosureSection.vue'
+import AppDialog from '@/components/common/AppDialog.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { api, fetchUpstreamModels, channelApiByType, type Channel, type ManagedSkill, type RemoteSkillPreview, type SkillLocation, type SkillSearchResult } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'

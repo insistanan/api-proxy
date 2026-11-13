@@ -16,14 +16,17 @@
       </v-card>
     </v-overlay>
 
-    <v-dialog v-model="showAuthDialog" persistent max-width="500">
-      <v-card class="pa-4">
-        <v-card-title class="auth-title">
-          <span class="auth-title-icon"><v-icon size="22">mdi-key</v-icon></span>
-          <span>API Proxy</span>
-        </v-card-title>
+    <v-dialog v-model="showAuthDialog" persistent max-width="440">
+      <v-card class="auth-card">
+        <div class="auth-head">
+          <span class="auth-title-icon"><v-icon size="22">mdi-api</v-icon></span>
+          <div>
+            <h1>API Proxy</h1>
+            <p>输入部署时设置的访问密钥进入管理控制台</p>
+          </div>
+        </div>
 
-        <v-card-text>
+        <v-card-text class="pa-0">
           <v-alert v-if="authStore.authError" type="error" variant="tonal" class="mb-4">
             {{ authStore.authError }}
           </v-alert>
@@ -97,7 +100,9 @@
       <v-container fluid class="app-content pa-4 pa-md-6">
         <!-- 认证后直接挂载目标页面，让懒加载与首屏请求立即开始。 -->
         <router-view v-if="isAuthenticated" v-slot="{ Component }">
-          <component :is="Component" :key="route.path" />
+          <div :key="route.path" class="app-page">
+            <component :is="Component" />
+          </div>
         </router-view>
       </v-container>
     </v-main>

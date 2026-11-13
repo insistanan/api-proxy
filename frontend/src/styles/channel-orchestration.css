@@ -1,9 +1,8 @@
 /* 渠道列表按卡片实际宽度响应，装饰不参与实时刷新。 */
 .channel-list, .channel-item-wrapper { display: flex; flex-direction: column; gap: 8px; }
-.channel-row { position: relative; padding: 12px 16px; min-height: 52px; background: rgb(var(--v-theme-surface)); border: 1px solid rgba(var(--v-theme-outline), 0.24); border-radius: var(--cut-md); cursor: pointer; overflow: hidden; transition: border-color 160ms ease; }
+.channel-row { position: relative; padding: 12px 16px; min-height: 52px; background: rgb(var(--v-theme-surface)); border: 1px solid var(--border-card); border-radius: var(--cut-md); cursor: pointer; overflow: hidden; transition: border-color 160ms var(--ease-out), background-color 160ms var(--ease-out); }
 .channel-row:hover { border-color: rgba(var(--v-theme-primary), 0.6); }
 .channel-row.is-suspended { background: color-mix(in srgb, rgb(var(--v-theme-warning)) 5%, rgb(var(--v-theme-surface))); border-color: rgba(var(--v-theme-warning), 0.35); }
-.channel-row.ghost { opacity: 0.5; border: 1px dashed rgb(var(--v-theme-primary)); }
 .channel-row-content { display: grid; grid-template-columns: 28px 28px 90px minmax(140px, 1fr) auto 60px 60px 60px auto; align-items: center; gap: 8px; position: relative; z-index: 1; }
 .channel-chart-wrapper { margin: 4px 0 8px; }
 .drag-handle { display: grid; place-items: center; width: 24px; height: 28px; border-radius: 4px; cursor: grab; }
