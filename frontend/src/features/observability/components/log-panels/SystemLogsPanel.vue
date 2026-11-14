@@ -16,7 +16,7 @@
         <EmptyState v-else-if="!logs.conversations.length" variant="inline" icon="mdi-history" title="暂无会话日志" description="当前筛选条件下没有会话记录，可放宽筛选或稍后刷新。" />
         <button v-for="group in logs.conversations" :key="group.key" type="button" class="conversation-entry" :class="{ selected: group.key === logs.selectedKey }" :aria-pressed="group.key === logs.selectedKey" @click="logs.selectConversation(group)">
           <div class="entry-heading">
-            <span :title="group.title || group.key">{{ conversationTitle(group) }}</span>
+            <span :title="group.name || group.title || group.key">{{ conversationTitle(group) }}</span>
             <span class="entry-time">{{ formatClockTime(group.latest.timestamp) }}</span>
           </div>
           <div class="entry-model">{{ clientLabel(group.latest.clientFamily || group.latest.client) }} · {{ group.latest.model || entryLabel(group.latest.apiType) }}</div>
@@ -92,7 +92,7 @@ const statusItems = [
   { title: '有中断调用', value: 'interrupted' }, { title: '有拦截调用', value: 'blocked' }
 ]
 const dateItems = [{ title: '全部历史', value: 0 }, { title: '最近 24 小时', value: 1 }, { title: '最近 7 天', value: 7 }]
-const conversationTitle = (group: LogConversationSummary) => group.title || group.latest.promptPreview || `会话 ${group.key.slice(-12)}`
+const conversationTitle = (group: LogConversationSummary) => group.name || group.title || group.latest.promptPreview || `会话 ${group.key.slice(-12)}`
 const identityLabels: Record<string, string> = {
   conversation_header: '会话请求头', claude_code_session: 'Claude Code 会话', conversation_query: '会话查询参数',
   session_header: '会话请求头', codex_thread: 'Codex 线程', request_conversation: '请求会话字段',

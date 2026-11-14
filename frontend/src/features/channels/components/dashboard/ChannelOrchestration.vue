@@ -180,7 +180,6 @@
                 :position="index"
                 :total="pool.channels.length"
                 :copied="copiedChannelIndex === element.index"
-                :can-delete="canDeleteChannel(element)"
                 @action="runMenuAction(element, $event)"
                 @move-top="move_to_top()"
                 @move-bottom="move_to_bottom()"
@@ -505,37 +504,8 @@ const runMenuAction = (channel: Channel, action: ChannelMenuAction) => {
   }
 }
 
-// 判断渠道是否可以删除
-// 规则：当前渠道分组中至少要保留一个 active 状态的渠道
-const activeChannelsByPool = computed(() => {
-  const counts = new Map<string, number>()
-  for (const channel of props.channels) {
-    if (channel.excludeFromConversation || !['active', undefined, ''].includes(channel.status)) continue
-    const poolID = channel.poolId || 'default'
-    counts.set(poolID, (counts.get(poolID) ?? 0) + 1)
-  }
-  return counts
-})
-const canDeleteChannel = (channel: Channel): boolean => {
-  // 统计当前 active 状态的渠道数量
-  const poolID = channel.poolId || 'default'
-  const activeCount = activeChannelsByPool.value.get(poolID) ?? 0
-
-  // 如果要删除的是 active 渠道，且只剩一个 active，则不允许删除
-  const isActive = channel.status === 'active' || channel.status === undefined || channel.status === ''
-  if (isActive && activeCount <= 1) {
-    return false
-  }
-
-  return true
-}
-
 // 处理删除渠道
 const handleDeleteChannel = (channel: Channel) => {
-  if (!canDeleteChannel(channel)) {
-    emit('error', '无法删除：当前渠道分组中至少需要保留一个活跃渠道')
-    return
-  }
   emit('delete', channel.index, channel.kind)
 }
 

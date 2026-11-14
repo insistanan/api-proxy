@@ -3,7 +3,8 @@
     <div class="trend-heading"><strong>上下文趋势</strong><span v-if="overview">全会话 {{ overview.calls }} 次调用 · {{ overview.knownCalls }} 次有可比较快照</span></div>
     <v-alert v-if="error" type="error" variant="tonal" density="compact">{{ error }} <v-btn size="small" variant="text" @click="load">重试</v-btn></v-alert>
     <p v-else-if="!overview">{{ loading ? '正在读取会话摘要…' : '暂无趋势数据' }}</p>
-    <template v-if="overview">
+    <p v-else-if="overview.calls === 0">暂无会话日志，记录可能尚未生成或已清理。</p>
+    <template v-if="overview && overview.calls > 0">
       <p>{{ overview.bucketSize > 1 ? `每组最多 ${overview.bucketSize} 次调用，显示组内上下文估算峰值` : '按调用顺序展示已保存输入的上下文估算' }}。尾部摘要、缺失数据与服务端历史引用不参与比较。</p>
       <div v-if="overview.knownCalls" class="trend-chart" :aria-busy="loading">
         <button v-for="(point, index) in overview.points" :key="index" type="button" class="trend-column" :disabled="!point.requestId" :aria-label="pointLabel(point)" :title="pointLabel(point)" @click="point.requestId && emit('locate', point.requestId)">
@@ -21,7 +22,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
-import { api } from '@/api'
+import { api, ApiError } from '@/api'
 import type { ContextOverview, ContextTrendPoint } from '@/types/logs'
 import { contextKind, estimatedLabel } from '@/features/observability/utils/contextPresentation'
 import { formatDateTime } from '@/shared/utils/datetime'
@@ -43,7 +44,11 @@ async function load() {
   try {
     const result = await api.getLogContextOverview(props.groupKey)
     if (version === revision) overview.value = result
-  } catch (failure) { if (version === revision) error.value = failure instanceof Error ? failure.message : '读取上下文趋势失败' }
+  } catch (failure) {
+    if (version !== revision) return
+    if (failure instanceof ApiError && failure.status === 404) overview.value = { calls: 0, knownCalls: 0, bucketSize: 1, points: [] }
+    else error.value = failure instanceof Error ? failure.message : '读取上下文趋势失败'
+  }
   finally { if (version === revision) loading.value = false }
 }
 watch(() => [props.groupKey, props.version], () => { void load() }, { immediate: true })

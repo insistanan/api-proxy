@@ -22,6 +22,7 @@ type LogConversationSummary struct {
 	Latest       SystemLogSummary `json:"latest"`
 	RequestCount int64            `json:"requestCount"`
 	Title        string           `json:"title,omitempty"`
+	Name         string           `json:"name,omitempty"`
 }
 
 type LogConversationsPage struct {

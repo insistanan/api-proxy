@@ -1,12 +1,129 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
 )
+
+func TestDeleteChannelPoolDeletesAllMembersAtomically(t *testing.T) {
+	for _, kind := range []string{"messages", "responses", "gemini", "chat", "images", "embeddings", "decisions"} {
+		t.Run(kind, func(t *testing.T) {
+			cm := newTransactionTestManager(t, kind)
+			cs, err := cm.config.channelSetFor(kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+			original := (*cs.upstreams)[1]
+			for _, status := range []string{ChannelStatusActive, ChannelStatusSuspended, ChannelStatusDisabled, ChannelStatusDeprecated} {
+				channel := (*cs.upstreams)[0]
+				channel.ID = status
+				channel.PoolID = "empty"
+				channel.Status = status
+				channel.ExcludeFromConversation = status == ChannelStatusDisabled
+				*cs.upstreams = append(*cs.upstreams, channel)
+			}
+			if err := cm.SaveConfig(); err != nil {
+				t.Fatal(err)
+			}
+			removed, err := cm.DeleteChannelPoolWithChannels(kind, "empty")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(removed) != 4 {
+				t.Fatalf("removed = %d, want 4", len(removed))
+			}
+			got, _, err := cm.GetChannelConfig(kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got[1], original) {
+				t.Fatal("其他渠道发生变化")
+			}
+			for i, channel := range removed {
+				if channel.Index != i+2 || got[channel.Index].Status != ChannelStatusDeleted || len(got[channel.Index].APIKeys) != 0 {
+					t.Fatalf("渠道未删除或索引发生变化: %+v", channel)
+				}
+			}
+			if poolExists(cm.GetChannelPools(kind), "empty") {
+				t.Fatal("分组未删除")
+			}
+			data, err := os.ReadFile(cm.configFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var persisted Config
+			if err := json.Unmarshal(data, &persisted); err != nil {
+				t.Fatal(err)
+			}
+			persistedSet, err := persisted.channelSetFor(kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if poolExists(*persistedSet.pools, "empty") || (*persistedSet.upstreams)[2].Status != ChannelStatusDeleted {
+				t.Fatal("删除未完整落盘")
+			}
+		})
+	}
+}
+
+func TestDeleteChannelPoolDetachesExternalVisionReference(t *testing.T) {
+	cm := newTransactionTestManager(t, "messages")
+	cm.config.Upstream[0].PoolID = "empty"
+	cm.config.ChatUpstream = []UpstreamConfig{{ID: "owner", Name: "owner", VisionCapable: true, VisionLayerEnabled: true, VisionLayerChannelID: "first", VisionLayerModel: "vision-model", MaxConcurrency: upstreamcontrol.DefaultConcurrency}}
+	if err := cm.DeleteChannelPool("messages", "empty"); err != nil {
+		t.Fatal(err)
+	}
+	owner := cm.config.ChatUpstream[0]
+	if owner.VisionCapable || owner.VisionLayerEnabled || owner.VisionLayerChannelID != "" || owner.VisionLayerModel != "" {
+		t.Fatalf("引用方仍保留图片理解配置: %+v", owner)
+	}
+}
+
+func TestDeleteChannelPoolAllowsInternalVisionReferences(t *testing.T) {
+	cm := newTransactionTestManager(t, "messages")
+	for i := range cm.config.Upstream {
+		cm.config.Upstream[i].PoolID = "empty"
+	}
+	cm.config.Upstream[0].VisionLayerEnabled = true
+	cm.config.Upstream[0].VisionLayerChannelID = "second"
+	if err := cm.DeleteChannelPool("messages", "empty"); err != nil {
+		t.Fatal(err)
+	}
+	for _, channel := range cm.config.Upstream {
+		if channel.Status != ChannelStatusDeleted {
+			t.Fatal("同组渠道未全部删除")
+		}
+	}
+}
+
+func TestDeleteNonEmptyChannelPoolKeepsSnapshotOnSaveFailure(t *testing.T) {
+	cm := newTransactionTestManager(t, "messages")
+	cm.config.Upstream[0].PoolID = "empty"
+	before := cloneConfig(cm.config)
+	data, err := os.ReadFile(cm.configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blockTransactionBackup(t, cm)
+	if err := cm.DeleteChannelPool("messages", "empty"); err == nil {
+		t.Fatal("预期备份失败")
+	}
+	if !reflect.DeepEqual(before, cm.config) {
+		t.Fatal("写入失败后内存快照发生变化")
+	}
+	after, err := os.ReadFile(cm.configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != string(after) {
+		t.Fatal("写入失败后磁盘配置发生变化")
+	}
+}
 
 func TestSelectChannelPoolUsesLongestMatcher(t *testing.T) {
 	pools := []ChannelPool{
@@ -229,14 +346,17 @@ func TestValidateAllVisionLayerConfigsChecksDependents(t *testing.T) {
 	}
 }
 
-func TestRemoveFromSliceRejectsVisionDependency(t *testing.T) {
+func TestRemoveFromSliceDetachesVisionDependency(t *testing.T) {
 	upstreams := []UpstreamConfig{
 		{ID: "text", Name: "text", VisionLayerEnabled: true, VisionLayerChannelID: "vision"},
 		{ID: "vision", Name: "vision", VisionCapable: true},
 	}
 
-	if _, _, err := removeFromSlice(upstreams, 1, "Messages"); err == nil {
-		t.Fatal("removeFromSlice() error = nil")
+	if _, _, err := removeFromSlice(upstreams, 1, "Messages"); err != nil {
+		t.Fatal(err)
+	}
+	if upstreams[0].VisionLayerEnabled || upstreams[0].VisionLayerChannelID != "" {
+		t.Fatal("引用方的图片理解层未清理")
 	}
 }
 

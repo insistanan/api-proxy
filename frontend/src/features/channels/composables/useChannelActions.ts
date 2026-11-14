@@ -74,8 +74,6 @@ export function useChannelActions(notify: ToastFn) {
     tab: ApiTab = channelStore.activeTab
   ): Promise<void> => {
     if (channelStore.isSavingChannel || channelStore.isDeletingChannel) return
-    if (!confirm('确定要删除这个渠道吗？')) return
-
     channelStore.isDeletingChannel = true
     try {
       const result = await channelStore.deleteChannel(channelId, tab)

@@ -124,6 +124,7 @@
 
     <!-- 危险命令 AI 闸门：全局待确认通知（轮询 + 声音 + 浏览器系统通知） -->
     <GatePendingNotification v-if="isAuthenticated" />
+    <JsonViewerDrawer v-if="isAuthenticated" />
   </v-app>
 </template>
 
@@ -134,6 +135,7 @@ import { useRoute } from 'vue-router'
 import { useDisplay, useTheme } from 'vuetify'
 import AppNavigation from '@/shared/components/layout/AppNavigation.vue'
 import VersionBadge from '@/shared/components/layout/VersionBadge.vue'
+import JsonViewerDrawer from '@/shared/components/common/JsonViewerDrawer.vue'
 import GatePendingNotification from '@/features/observability/components/GatePendingNotification.vue'
 import { useAuthFlow } from '@/app/useAuthFlow'
 import { toastIcons, useToast } from '@/shared/composables/useToast'

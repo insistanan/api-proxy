@@ -82,14 +82,11 @@
         <template #prepend><v-icon size="small" color="grey">mdi-archive-clock-outline</v-icon></template>
         <v-list-item-title>移至弃用池</v-list-item-title>
       </v-list-item>
-      <v-list-item :disabled="!canDelete" @click="emit('delete')">
+      <v-list-item @click="emit('delete')">
         <template #prepend>
-          <v-icon size="small" :color="canDelete ? 'error' : 'grey'">mdi-delete</v-icon>
+          <v-icon size="small" color="error">mdi-delete</v-icon>
         </template>
-        <v-list-item-title>
-          删除
-          <span v-if="!canDelete" class="text-caption text-disabled ml-1">(至少保留一个)</span>
-        </v-list-item-title>
+        <v-list-item-title>删除</v-list-item-title>
       </v-list-item>
     </v-list>
   </v-menu>
@@ -111,17 +108,15 @@ withDefaults(defineProps<{
   position?: number
   total?: number
   copied?: boolean
-  canDelete?: boolean
   allowReorder?: boolean
 }>(), {
   position: 0,
   total: 1,
   copied: false,
-  canDelete: true,
   allowReorder: true
 })
 
-// 不涉及排序与删除约束的操作统一走 action；排序和删除因两处用法规则不同而单独发出。
+// 通用操作统一走 action；排序和删除单独发出事件。
 const emit = defineEmits<{
   action: [action: ChannelMenuAction]
   moveTop: []

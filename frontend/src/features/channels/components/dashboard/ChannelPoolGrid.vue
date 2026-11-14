@@ -59,7 +59,6 @@
               variant="text"
               title="删除分组"
               :aria-label="`删除分组 ${pool.name}`"
-              :disabled="hasAssignedChannels(pool.id)"
               @click="openDeletePoolDialog(pool)"
             >
               <v-icon size="small">mdi-delete</v-icon>
@@ -178,7 +177,7 @@
   <ConfirmDialog
     v-model="deletePoolDialog"
     title="删除分组"
-    :message="`确定删除“${deletingPool?.name}”吗？只有空分组可以删除。`"
+    :message="deletePoolMessage"
     confirm-text="删除"
     :loading="saving"
     @confirm="deletePool"
@@ -188,7 +187,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import draggable from 'vuedraggable'
-import { api, type Channel, type ChannelPool, type VisionChannel } from '@/api'
+import { api, ApiError, type Channel, type ChannelPool, type ChannelDeletionImpact, type VisionChannel } from '@/api'
+import { deletionImpactWarning } from '@/features/channels/utils/deletionImpact'
 import ChannelStatusBadge from '@/features/channels/components/dashboard/ChannelStatusBadge.vue'
 import { channelServiceLabel } from '@/features/channels/utils/imagesChannelProtocol'
 import { API_TAB_LABELS, type ApiTab } from '@/features/channels/services/channel-api'
@@ -224,6 +224,9 @@ const poolDialog = ref(false)
 const deletePoolDialog = ref(false)
 const editingPool = ref<ChannelPool | null>(null)
 const deletingPool = ref<ChannelPool | null>(null)
+const deletingPoolKind = ref<ApiTab>(props.channelType)
+const deletingPoolImpact = ref<ChannelDeletionImpact | null>(null)
+const preparingDelete = ref(false)
 const poolName = ref('')
 const poolMatcher = ref<string | null>('')
 type PoolView = ChannelPool & { channels: Channel[] }
@@ -261,7 +264,7 @@ onMounted(() => void loadPools())
 onBeforeUnmount(() => {
   if (layoutSaveTimer) clearTimeout(layoutSaveTimer)
 })
-watch(() => props.channelType, () => void loadPools())
+watch(() => props.channelType, () => { deletePoolDialog.value = false; void loadPools() })
 
 const syncPoolViews = () => {
   poolViews.value = pools.value.map(pool => ({
@@ -290,7 +293,11 @@ const visionChannels = computed(() => {
 })
 const protocolLabel = (kind?: ApiTab) => (kind ? API_TAB_LABELS[kind] : '')
 const canToggleVisionStatus = (channel: Channel) => ['active', 'suspended'].includes(channel.status || 'active')
-const hasAssignedChannels = (poolId: string) => props.channels.some(channel => channel.status !== 'deleted' && (channel.poolId || 'default') === poolId)
+const deletePoolMessage = computed(() => {
+  const impact = deletingPoolImpact.value
+  if (!impact) return ''
+  return `确定删除分组“${impact.name}”吗？该分组下的全部 ${impact.channelCount} 个渠道也将一并删除（含暂停、备用、弃用及图片理解渠道），此操作不可撤销。${deletionImpactWarning(impact)}`
+})
 
 const matcherOptions = computed(() => {
   if (props.channelType === 'messages') return ['claude']
@@ -392,20 +399,41 @@ const savePool = async () => {
   }
 }
 
-const openDeletePoolDialog = (pool: ChannelPool) => {
-  deletingPool.value = pool
-  deletePoolDialog.value = true
+const openDeletePoolDialog = async (pool: ChannelPool) => {
+  if (preparingDelete.value || saving.value || deletePoolDialog.value) return
+  const kind = props.channelType
+  preparingDelete.value = true
+  try {
+    const impact = await api.getChannelPoolDeletionImpact(kind, pool.id)
+    if (kind !== props.channelType) return
+    deletingPool.value = pool
+    deletingPoolKind.value = kind
+    deletingPoolImpact.value = impact
+    deletePoolDialog.value = true
+  } catch (error) {
+    emit('error', `读取分组删除影响失败：${errorMessage(error)}`)
+  } finally {
+    preparingDelete.value = false
+  }
 }
 
 const deletePool = async () => {
-  if (!deletingPool.value) return
+  if (!deletingPool.value || saving.value) return
   saving.value = true
   try {
-    await api.deleteChannelPool(props.channelType, deletingPool.value.id)
+    await api.deleteChannelPool(deletingPoolKind.value, deletingPool.value.id)
     deletePoolDialog.value = false
-    emit('success', '分组已删除')
+    emit('success', '分组及其渠道已删除')
+    emit('refresh')
     await loadPools()
   } catch (error) {
+    if (error instanceof ApiError && error.committed) {
+      deletePoolDialog.value = false
+      emit('refresh')
+      await loadPools()
+      emit('error', `${errorMessage(error)}（分组及渠道删除已写入，请刷新核对，请勿重复提交）`)
+      return
+    }
     emit('error', `删除分组失败：${errorMessage(error)}`)
   } finally {
     saving.value = false

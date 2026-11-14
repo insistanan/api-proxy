@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
 )
 
 func GetChannelPools(cfgManager *config.ConfigManager, kind string) gin.HandlerFunc {
@@ -46,9 +47,20 @@ func UpdateChannelPool(cfgManager *config.ConfigManager, kind string) gin.Handle
 	}
 }
 
-func DeleteChannelPool(cfgManager *config.ConfigManager, kind string) gin.HandlerFunc {
+func DeleteChannelPool(cfgManager *config.ConfigManager, sch *scheduler.ChannelScheduler, kind string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if err := cfgManager.DeleteChannelPool(kind, strings.TrimSpace(c.Param("id"))); err != nil {
+		removed, err := cfgManager.DeleteChannelPoolWithChannels(kind, strings.TrimSpace(c.Param("id")))
+		if sch != nil && (err == nil || config.IsCommittedError(err)) {
+			for _, channel := range removed {
+				sch.DeleteChannelMetrics(&channel.Upstream, channel.Index, scheduler.ChannelKind(kind))
+				sch.GetTraceAffinityManager().RemoveByChannelForKind(kind, channel.Index)
+			}
+		}
+		if config.IsCommittedError(err) {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "committed": true})
+			return
+		}
+		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}

@@ -173,8 +173,8 @@ func (cm *ConfigManager) RemoveChannel(kind string, index int) (*UpstreamConfig,
 		return nil, fmt.Errorf("无效的 %s 上游索引: %d", cs.name, index)
 	}
 	removedUpstream := (*cs.upstreams)[index]
-	if referrer, ok := candidate.findVisionLayerReferrer(removedUpstream.ID, kind, index); ok {
-		return nil, fmt.Errorf("渠道 %q 正被 %q 的图片理解层使用，无法删除", removedUpstream.Name, referrer)
+	if removedUpstream.ID != "" {
+		candidate.detachVisionLayers(map[string]struct{}{removedUpstream.ID: {}})
 	}
 	newSlice, removed, err := removeFromSlice(*cs.upstreams, index, cs.name)
 	if err != nil {

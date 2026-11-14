@@ -141,18 +141,18 @@
         <v-textarea :model-value="commandText" label="MCP 启动命令" placeholder="npx -y @playwright/mcp@latest --extension" hint="粘贴完整命令，自动识别命令、参数和名称；支持带引号的路径与参数。" persistent-hint rows="3" :error-messages="commandParseError" @update:model-value="applyCommandText" />
         <div v-if="form.command && !commandParseError" class="command-preview mt-3 mb-4 text-body-2">
           <div>命令：<code>{{ form.command }}</code></div>
-          <div>参数：<code>{{ form.argsText }}</code></div>
-          <div v-if="form.envText !== '{}'">环境变量：<code>{{ form.envText }}</code></div>
+          <JsonPreviewTrigger :data="form.argsText" title="MCP 参数">参数：<code>{{ form.argsText }}</code></JsonPreviewTrigger>
+          <JsonPreviewTrigger v-if="form.envText !== '{}'" :data="form.envText" title="MCP 环境变量">环境变量：<code>{{ form.envText }}</code></JsonPreviewTrigger>
         </div>
       </template>
       <template v-else-if="form.transport === 'stdio'">
         <v-text-field v-model="form.command" label="命令" placeholder="例如 npx" />
-        <v-textarea v-model="form.argsText" label="参数" hint="支持 JSON 字符串数组，或每行一个参数（忽略空行）" persistent-hint rows="3" no-resize />
-        <v-textarea v-model="form.envText" label="环境变量" hint="支持 JSON 对象，或每行一个 KEY=VALUE" persistent-hint rows="3" no-resize />
+        <JsonPreviewTrigger :data="form.argsText" title="MCP 参数"><v-textarea v-model="form.argsText" label="参数" hint="支持 JSON 字符串数组，或每行一个参数（忽略空行）" persistent-hint rows="3" no-resize /></JsonPreviewTrigger>
+        <JsonPreviewTrigger :data="form.envText" title="MCP 环境变量"><v-textarea v-model="form.envText" label="环境变量" hint="支持 JSON 对象，或每行一个 KEY=VALUE" persistent-hint rows="3" no-resize /></JsonPreviewTrigger>
       </template>
       <template v-else>
         <v-text-field v-model="form.url" label="URL" placeholder="https://example.com/mcp" />
-        <v-textarea v-model="form.headersText" label="请求头" hint="支持 JSON 对象，或每行一个 KEY=VALUE" persistent-hint rows="3" no-resize />
+        <JsonPreviewTrigger :data="form.headersText" title="MCP 请求头"><v-textarea v-model="form.headersText" label="请求头" hint="支持 JSON 对象，或每行一个 KEY=VALUE" persistent-hint rows="3" no-resize /></JsonPreviewTrigger>
       </template>
       <div class="text-subtitle-2 mt-2 mb-1">分发到</div>
       <div class="d-flex flex-wrap ga-4">
@@ -185,6 +185,7 @@
 </template>
 
 <script setup lang="ts">
+import JsonPreviewTrigger from '@/shared/components/common/JsonPreviewTrigger.vue'
 import PageHeader from '@/shared/components/common/PageHeader.vue'
 import DisclosureSection from '@/shared/components/common/DisclosureSection.vue'
 import { computed, onMounted, reactive, ref } from 'vue'

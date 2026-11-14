@@ -126,10 +126,10 @@
                   <v-expansion-panel-text>
                     <v-row>
                       <v-col cols="12" md="6">
-                        <v-textarea v-model="selectedProvider.headersText" label="请求头 JSON" variant="outlined" density="comfortable" rows="5" auto-grow placeholder="{&#10;  &quot;X-Custom-Header&quot;: &quot;value&quot;&#10;}" />
+                        <JsonPreviewTrigger :data="selectedProvider.headersText" title="OpenCode 请求头"><v-textarea v-model="selectedProvider.headersText" label="请求头 JSON" variant="outlined" density="comfortable" rows="5" auto-grow placeholder="{&#10;  &quot;X-Custom-Header&quot;: &quot;value&quot;&#10;}" /></JsonPreviewTrigger>
                       </v-col>
                       <v-col cols="12" md="6">
-                        <v-textarea v-model="selectedProvider.optionsText" label="高级 provider options JSON" variant="outlined" density="comfortable" rows="5" auto-grow placeholder="{&#10;  &quot;timeout&quot;: 600000&#10;}" />
+                        <JsonPreviewTrigger :data="selectedProvider.optionsText" title="OpenCode 提供商选项"><v-textarea v-model="selectedProvider.optionsText" label="高级 provider options JSON" variant="outlined" density="comfortable" rows="5" auto-grow placeholder="{&#10;  &quot;timeout&quot;: 600000&#10;}" /></JsonPreviewTrigger>
                       </v-col>
                     </v-row>
                   </v-expansion-panel-text>
@@ -204,7 +204,7 @@
                     </div>
 
                     <v-col cols="12" class="pa-0 mt-4">
-                      <v-textarea v-model="model.optionsText" label="模型高级 options JSON" variant="outlined" density="comfortable" rows="3" auto-grow placeholder='{ "key": "value" }' />
+                      <JsonPreviewTrigger :data="model.optionsText" title="OpenCode 模型选项"><v-textarea v-model="model.optionsText" label="模型高级 options JSON" variant="outlined" density="comfortable" rows="3" auto-grow placeholder='{ "key": "value" }' /></JsonPreviewTrigger>
                     </v-col>
                   </v-expansion-panel-text>
                 </v-expansion-panel>
@@ -239,6 +239,7 @@
 </template>
 
 <script setup lang="ts">
+import JsonPreviewTrigger from '@/shared/components/common/JsonPreviewTrigger.vue'
 import { computed, onMounted, ref } from 'vue'
 import AgentConfigHeader from '@/features/clients/components/AgentConfigHeader.vue'
 import AgentConfigLocation from '@/features/clients/components/AgentConfigLocation.vue'

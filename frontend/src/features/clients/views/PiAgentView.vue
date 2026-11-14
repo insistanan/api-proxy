@@ -138,13 +138,13 @@
                   <v-expansion-panel-text>
                     <v-row>
                       <v-col cols="12" md="4">
-                        <v-textarea v-model="selectedProvider.headersText" label="请求头 JSON" variant="outlined" density="comfortable" rows="4" auto-grow />
+                        <JsonPreviewTrigger :data="selectedProvider.headersText" title="pi-agent 请求头"><v-textarea v-model="selectedProvider.headersText" label="请求头 JSON" variant="outlined" density="comfortable" rows="4" auto-grow /></JsonPreviewTrigger>
                       </v-col>
                       <v-col cols="12" md="4">
-                        <v-textarea v-model="selectedProvider.compatText" label="compat 兼容配置 JSON" variant="outlined" density="comfortable" rows="4" auto-grow />
+                        <JsonPreviewTrigger :data="selectedProvider.compatText" title="pi-agent 兼容配置"><v-textarea v-model="selectedProvider.compatText" label="compat 兼容配置 JSON" variant="outlined" density="comfortable" rows="4" auto-grow /></JsonPreviewTrigger>
                       </v-col>
                       <v-col cols="12" md="4">
-                        <v-textarea v-model="selectedProvider.modelOverridesText" label="模型覆盖 JSON" variant="outlined" density="comfortable" rows="4" auto-grow />
+                        <JsonPreviewTrigger :data="selectedProvider.modelOverridesText" title="pi-agent 模型覆盖"><v-textarea v-model="selectedProvider.modelOverridesText" label="模型覆盖 JSON" variant="outlined" density="comfortable" rows="4" auto-grow /></JsonPreviewTrigger>
                       </v-col>
                     </v-row>
                   </v-expansion-panel-text>
@@ -233,10 +233,10 @@
 
                           <v-row class="mt-2">
                             <v-col cols="12" md="6">
-                              <v-textarea v-model="model.headersText" label="请求头 JSON" variant="outlined" density="comfortable" rows="3" auto-grow />
+                              <JsonPreviewTrigger :data="model.headersText" title="pi-agent 模型请求头"><v-textarea v-model="model.headersText" label="请求头 JSON" variant="outlined" density="comfortable" rows="3" auto-grow /></JsonPreviewTrigger>
                             </v-col>
                             <v-col cols="12" md="6">
-                              <v-textarea v-model="model.compatText" label="compat JSON" variant="outlined" density="comfortable" rows="3" auto-grow />
+                              <JsonPreviewTrigger :data="model.compatText" title="pi-agent 模型兼容配置"><v-textarea v-model="model.compatText" label="compat JSON" variant="outlined" density="comfortable" rows="3" auto-grow /></JsonPreviewTrigger>
                             </v-col>
                           </v-row>
                         </v-expansion-panel-text>
@@ -278,6 +278,7 @@
 </template>
 
 <script setup lang="ts">
+import JsonPreviewTrigger from '@/shared/components/common/JsonPreviewTrigger.vue'
 import { computed, onMounted, ref } from 'vue'
 import AgentConfigHeader from '@/features/clients/components/AgentConfigHeader.vue'
 import AgentConfigLocation from '@/features/clients/components/AgentConfigLocation.vue'

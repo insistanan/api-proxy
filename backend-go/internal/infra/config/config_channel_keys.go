@@ -69,8 +69,8 @@ func removeFromSlice(upstreams []UpstreamConfig, index int, label string) ([]Ups
 		if ownerIndex == index || !upstreams[ownerIndex].VisionLayerEnabled {
 			continue
 		}
-		if strings.TrimSpace(upstreams[ownerIndex].VisionLayerChannelID) == removed.ID {
-			return upstreams, nil, fmt.Errorf("渠道 %q 正被 %q 的图片理解层使用，无法删除", removed.Name, upstreams[ownerIndex].Name)
+		if removed.ID != "" && strings.TrimSpace(upstreams[ownerIndex].VisionLayerChannelID) == removed.ID {
+			disableVisionLayer(&upstreams[ownerIndex])
 		}
 	}
 	upstreams[index] = UpstreamConfig{

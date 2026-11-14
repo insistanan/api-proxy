@@ -41,6 +41,7 @@ func RegisterChannelRoutes(api *gin.RouterGroup, kind scheduler.ChannelKind, dep
 	api.POST(p+"/channels", crud.AddUpstream)
 	api.PUT(p+"/channels/:id", crud.UpdateUpstream)
 	api.DELETE(p+"/channels/:id", crud.DeleteUpstream)
+	api.GET(p+"/channels/:id/deletion-impact", GetChannelDeletionImpact(deps.Cfg, string(kind), false))
 	api.POST(p+"/channels/:id/keys", crud.AddApiKey)
 	api.DELETE(p+"/channels/:id/keys/:apiKey", crud.DeleteApiKey)
 	api.POST(p+"/channels/:id/keys/:apiKey/top", crud.MoveApiKeyToTop)
@@ -52,7 +53,8 @@ func RegisterChannelRoutes(api *gin.RouterGroup, kind scheduler.ChannelKind, dep
 	api.POST(p+"/pools", CreateChannelPool(deps.Cfg, kindName))
 	api.PUT(p+"/pools/layout", SaveChannelPoolLayout(deps.Cfg, kindName))
 	api.PUT(p+"/pools/:id", UpdateChannelPool(deps.Cfg, kindName))
-	api.DELETE(p+"/pools/:id", DeleteChannelPool(deps.Cfg, kindName))
+	api.DELETE(p+"/pools/:id", DeleteChannelPool(deps.Cfg, deps.Scheduler, kindName))
+	api.GET(p+"/pools/:id/deletion-impact", GetChannelDeletionImpact(deps.Cfg, kindName, true))
 
 	// ===== 多渠道调度 API =====
 	api.POST(p+"/channels/reorder", crud.ReorderChannels)

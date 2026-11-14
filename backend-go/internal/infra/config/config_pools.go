@@ -351,23 +351,30 @@ func (cm *ConfigManager) SaveChannelPoolLayout(kind string, layout []ChannelPool
 }
 
 func (cm *ConfigManager) DeleteChannelPool(kind string, id string) error {
+	_, err := cm.DeleteChannelPoolWithChannels(kind, id)
+	return err
+}
+
+// RemovedPoolChannel 保留删除前的索引，供调度器清理指标。
+type RemovedPoolChannel struct {
+	Upstream UpstreamConfig
+	Index    int
+}
+
+// DeleteChannelPoolWithChannels 在同一次配置提交中删除分组及其全部渠道。
+func (cm *ConfigManager) DeleteChannelPoolWithChannels(kind string, id string) ([]RemovedPoolChannel, error) {
 	if id == FreeChannelPoolID {
-		return fmt.Errorf("免费分组为内置共享分组，不能删除")
+		return nil, fmt.Errorf("免费分组为内置共享分组，不能删除")
 	}
 	if id == DefaultChannelPoolID {
-		return fmt.Errorf("兜底分组不能删除")
+		return nil, fmt.Errorf("兜底分组不能删除")
 	}
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 	candidate := cloneConfig(cm.config)
 	cs, err := candidate.channelSetFor(kind)
 	if err != nil {
-		return err
-	}
-	for _, upstream := range *cs.upstreams {
-		if upstream.PoolID == id {
-			return fmt.Errorf("分组仍包含渠道，无法删除")
-		}
+		return nil, err
 	}
 	pools := *cs.pools
 	filtered := make([]ChannelPool, 0, len(pools))
@@ -380,14 +387,46 @@ func (cm *ConfigManager) DeleteChannelPool(kind string, id string) error {
 		filtered = append(filtered, pool)
 	}
 	if !found {
-		return fmt.Errorf("分组不存在")
+		return nil, fmt.Errorf("分组不存在")
 	}
 	normalized, err := normalizeChannelPools(filtered)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	*cs.pools = normalized
-	return cm.saveConfigLocked(candidate)
+	remaining := make([]UpstreamConfig, 0, len(*cs.upstreams))
+	removed := make([]RemovedPoolChannel, 0)
+	for index, upstream := range *cs.upstreams {
+		if effectivePoolID(upstream.PoolID) == id {
+			if err := rejectBuiltinChannel(*cs.upstreams, index); err != nil {
+				return nil, err
+			}
+			removed = append(removed, RemovedPoolChannel{Upstream: upstream, Index: index})
+			// 与单渠道删除一致保留墓碑，避免其他渠道索引变化导致指标串位。
+			remaining = append(remaining, UpstreamConfig{
+				ID: upstream.ID, Name: upstream.Name, PoolID: DefaultChannelPoolID,
+				Priority: upstream.Priority, Status: ChannelStatusDeleted,
+			})
+		} else {
+			remaining = append(remaining, upstream)
+		}
+	}
+	*cs.upstreams = remaining
+	targetIDs := make(map[string]struct{}, len(removed))
+	for _, channel := range removed {
+		if channel.Upstream.ID != "" {
+			targetIDs[channel.Upstream.ID] = struct{}{}
+		}
+	}
+	candidate.detachVisionLayers(targetIDs)
+	err = cm.saveConfigLocked(candidate)
+	if err != nil && !IsCommittedError(err) {
+		return nil, err
+	}
+	for _, channel := range removed {
+		cm.clearFailedKeysForUpstream(&channel.Upstream, cs.name)
+	}
+	return removed, err
 }
 
 func ensurePoolsAndAssignments(pools []ChannelPool, upstreams []UpstreamConfig) ([]ChannelPool, bool, error) {

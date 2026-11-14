@@ -1,6 +1,7 @@
 // 渠道与指标 API：复用统一 HTTP 基础层，保留端点与返回契约。
 import { apiRequest } from '@/shared/services/http'
 import type {
+  ChannelDeletionImpact,
   ChannelDashboardResponse,
   ChannelKeyMetricsHistoryResponse,
   ChannelLogsResponse,
@@ -25,6 +26,12 @@ function normalizePromotionValue(value: unknown): number {
 }
 
 export const channelsApi = {
+  getChannelDeletionImpact(type: ApiTab, channelId: number): Promise<ChannelDeletionImpact> {
+    return apiRequest(`/${type}/channels/${channelId}/deletion-impact`)
+  },
+  getChannelPoolDeletionImpact(type: ApiTab, poolId: string): Promise<ChannelDeletionImpact> {
+    return apiRequest(`/${type}/pools/${encodeURIComponent(poolId)}/deletion-impact`)
+  },
   /**
    * 根据入口协议构造管理 API 的路径前缀。
    * 五组渠道共用这套操作，避免分别维护重复的 CRUD 实现。

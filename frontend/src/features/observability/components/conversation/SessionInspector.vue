@@ -50,14 +50,14 @@
       >
         <details v-if="block.muted" class="trace-history">
           <summary>{{ block.label }}（客户端携带的历史回复）</summary>
-          <ClampText :text="block.text" :max-height="220" />
+          <JsonPreviewTrigger :data="block.text" :title="block.label" :disabled="!isJsonBlock(block.text)"><ClampText :text="block.text" :max-height="220" /></JsonPreviewTrigger>
         </details>
         <template v-else>
           <div class="trace-block-head">
             <span class="trace-label">{{ block.label }}</span>
             <span v-if="block.meta" class="trace-meta">{{ block.meta }}</span>
           </div>
-          <ClampText :text="block.text" :max-height="block.kind === 'tool_call' ? 200 : 260" />
+          <JsonPreviewTrigger :data="block.text" :title="block.label" :disabled="block.kind !== 'tool_call' && !isJsonBlock(block.text)"><ClampText :text="block.text" :max-height="block.kind === 'tool_call' ? 200 : 260" /></JsonPreviewTrigger>
         </template>
       </div>
     </div>
@@ -65,11 +65,11 @@
     <!-- 无法解析或无结构化消息时退回 JSON -->
     <div v-else-if="viewMode === 'structured'" class="rounded border">
       <EmptyState variant="inline" icon="mdi-file-cog-outline" :title="parsed.notice || '没有可展示的结构化内容'" />
-      <JsonBodyPane v-if="body" :body="body" :wrap="wrap" class="px-4 pb-4 text-left" />
+      <JsonBodyPane v-if="body" :body="body" :wrap="wrap" title="请求与响应正文" :meta="url" class="px-4 pb-4 text-left" />
     </div>
 
     <!-- 原始 JSON 视图 -->
-    <JsonBodyPane v-else :body="body || ''" :wrap="wrap" />
+    <JsonBodyPane v-else :body="body || ''" :wrap="wrap" title="请求与响应正文" :meta="url" />
   </div>
 </template>
 
@@ -80,6 +80,7 @@ import { buildTraceBlocks, parseSessionBody } from '@/features/observability/uti
 import ClampText from '@/features/observability/components/common/ClampText.vue'
 import JsonBodyPane from '@/features/observability/components/common/JsonBodyPane.vue'
 import EmptyState from '@/shared/components/common/EmptyState.vue'
+import JsonPreviewTrigger from '@/shared/components/common/JsonPreviewTrigger.vue'
 import { useClipboard } from '@/shared/composables/useClipboard'
 
 const props = withDefaults(
@@ -104,6 +105,7 @@ const props = withDefaults(
 )
 
 const viewMode = ref<'structured' | 'raw'>('structured')
+const isJsonBlock = (text: string) => text.trim().startsWith('{') || text.trim().startsWith('[')
 const curlCopied = ref(false)
 const rawCopied = ref(false)
 const copyError = ref('')

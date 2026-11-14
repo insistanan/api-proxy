@@ -29,6 +29,7 @@
         <v-spacer />
         <v-btn v-if="draft.revision" variant="text" color="error" :disabled="busy || dirty" @click="removeDataset">删除数据集</v-btn>
         <v-btn variant="text" :disabled="busy" @click="exportFile">导出 JSON</v-btn>
+        <JsonPreviewTrigger :data="draft" title="数据集 JSON" inline label="查看 JSON" />
         <v-btn color="primary" :loading="action === 'save'" :disabled="busy || !dirty" @click="save">保存数据集</v-btn>
       </div>
       <v-form :disabled="busy" class="dataset-editor" @submit.prevent>
@@ -65,7 +66,7 @@
             <v-table v-if="published.length" density="comfortable" class="mb-5">
               <thead><tr><th>模型</th><th>数据修订</th><th>样本 / 维度</th><th>构建时间</th><th>配置</th></tr></thead>
               <tbody><tr v-for="index in published" :key="index.space + JSON.stringify(index.profile)">
-                <td>{{ index.profile.model }} · {{ index.profile.modelVersion || '未指定版本' }}</td>
+                <td><JsonPreviewTrigger :data="index.profile" title="向量索引配置">{{ index.profile.model }} · {{ index.profile.modelVersion || '未指定版本' }}</JsonPreviewTrigger></td>
                 <td>{{ index.revision }} {{ index.revision === draft.revision ? '（当前）' : '（有待发布修改）' }}</td>
                 <td>{{ index.count }} / {{ index.dimension }}</td><td>{{ formatDateTime(index.builtAt) }}</td>
                 <td><v-btn variant="text" size="small" :disabled="busy" @click="profile = clone(index.profile)">使用此配置</v-btn><v-btn variant="text" size="small" color="error" :disabled="busy" @click="removeIndex(index)">删除索引</v-btn></td>
@@ -120,6 +121,7 @@
 </template>
 
 <script setup lang="ts">
+import JsonPreviewTrigger from '@/shared/components/common/JsonPreviewTrigger.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { datasetsApi, defaultEmbeddingProfile } from '@/features/extensions/datasets/services/datasets'

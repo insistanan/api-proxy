@@ -214,6 +214,7 @@ export interface LogConversationSummary {
   latest: SystemLogSummary
   requestCount: number
   title?: string
+  name?: string
 }
 
 export interface LogConversationsResponse {

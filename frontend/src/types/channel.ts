@@ -5,6 +5,12 @@ import type { ChannelRecentActivity } from './metrics'
 /** 渠道入口协议，与后端 scheduler.ChannelKind 及管理路由前缀对齐。 */
 export type ApiTab = 'messages' | 'responses' | 'gemini' | 'chat' | 'images' | 'embeddings' | 'decisions'
 
+export interface ChannelDeletionImpact {
+  name: string
+  channelCount: number
+  dependents: { kind: ApiTab; index: number; name: string }[]
+}
+
 // 渠道状态枚举
 export type ChannelStatus = 'active' | 'suspended' | 'disabled' | 'deprecated' | 'deleted'
 

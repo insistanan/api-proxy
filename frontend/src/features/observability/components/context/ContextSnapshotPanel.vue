@@ -17,7 +17,7 @@
       <summary>按内容块浏览 · {{ snapshot.items.length }} 项{{ snapshot.itemsLimited ? '（仅列出前 256 项）' : '' }}</summary>
       <template v-if="browseOpen">
         <v-select v-model="selectedPath" :items="itemChoices" label="选择指令、工具定义或消息内容" density="compact" hide-details class="mb-3" />
-        <JsonBodyPane :body="selectedBody" wrap />
+        <JsonBodyPane :body="selectedBody" title="上下文内容块" :meta="selectedPath" wrap />
       </template>
     </details>
   </section>

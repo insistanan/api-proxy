@@ -16,7 +16,7 @@ export function conversationVersion(group: LogConversationSummary | null): strin
   return group ? JSON.stringify([group.latest.requestId, group.requestCount, summaryVersion(group.latest)]) : ''
 }
 
-export const useLogsStore = defineStore('logs', () => {
+export function createLogsState() {
   // ===== 状态 =====
   const typeFilter = ref<LogAPIType | ''>('')
   const searchFilter = ref('')
@@ -245,4 +245,6 @@ export const useLogsStore = defineStore('logs', () => {
   }
 
   return { typeFilter, searchFilter, statusFilter, fromFilter, toFilter, totalConversations, conversations, nextConversationCursor, selectedKey, selectedConversation, requests, nextRequestCursor, anchored, listLoading, roundsLoading, listError, roundsError, details, detailErrors, active, storage, storageLoading, storageError, loadStorageStatus, loadDetail, loadConversations, loadRounds, selectConversation, locateRequest, refresh, reset }
-})
+}
+
+export const useLogsStore = defineStore('logs', createLogsState)

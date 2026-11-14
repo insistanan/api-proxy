@@ -269,9 +269,11 @@
             </div>
           </div>
 
-          <v-alert v-if="selectedConversation?.name" type="info" variant="tonal" density="compact" class="mb-4">
-            对话名称：{{ selectedConversation.name }}
-          </v-alert>
+          <form class="d-flex align-start flex-wrap ga-2 mb-4" @submit.prevent="saveDetailName">
+            <v-text-field v-model="detailName" label="对话名称" placeholder="为对话命名" maxlength="120" counter="120" variant="outlined" density="compact" :disabled="savingName" />
+            <v-btn type="submit" color="primary" :loading="savingName" :disabled="!detailName.trim() || detailName.trim() === (selectedConversation?.name || '')">保存名称</v-btn>
+            <v-btn variant="tonal" prepend-icon="mdi-history" @click="traceDialog = true">查看上下文与轨迹</v-btn>
+          </form>
 
           <!-- Grid Info -->
           <v-row class="mb-2" dense>
@@ -428,6 +430,7 @@
         <v-btn variant="outlined" @click="detailDialog = false">关闭</v-btn>
       </template>
     </AppDialog>
+    <ConversationTraceDialog v-if="traceDialog && selectedConversation" v-model="traceDialog" :conversation="selectedConversation" />
   </div>
 </template>
 
@@ -435,6 +438,7 @@
 import PageHeader from '@/shared/components/common/PageHeader.vue'
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import CommandSafetyHistory from '@/features/observability/components/conversation/CommandSafetyHistory.vue'
+import ConversationTraceDialog from '@/features/observability/components/conversation/ConversationTraceDialog.vue'
 import { api, type ConversationEntry, type ConversationKind, type ConversationRouteOptionChannel } from '@/api'
 import { API_TABS } from '@/features/channels'
 import { useToast } from '@/shared/composables/useToast'
@@ -515,12 +519,16 @@ let conversationRequestsInFlight = 0
 
 const detailDialog = ref(false)
 const selectedConversation = ref<ConversationEntry | null>(null)
+const detailName = ref('')
+const savingName = ref(false)
+const traceDialog = ref(false)
 const showOperationError = (error: unknown, message: string) => {
   showToast(error instanceof Error ? `${message}：${error.message}` : message, 'error')
 }
 
 const openDetailDialog = (item: ConversationEntry) => {
   selectedConversation.value = item
+  detailName.value = item.name || ''
   detailDialog.value = true
 }
 
@@ -538,16 +546,37 @@ const openNameDialog = (item: ConversationEntry) => {
 }
 
 const saveName = async () => {
-  if (!editingNameConversation.value || !conversationName.value.trim()) return
+  if (saving.value || !editingNameConversation.value || !conversationName.value.trim()) return
   saving.value = true
   try {
     const updated = await api.setConversationName(editingNameConversation.value.id, conversationName.value.trim())
+    conversationRequestSequence++
+    loading.value = false
     updateConversation(updated)
+    if (selectedConversation.value?.id === updated.id) detailName.value = updated.name || ''
     nameDialog.value = false
   } catch (error) {
     showOperationError(error, '保存对话名称失败')
   } finally {
     saving.value = false
+  }
+}
+
+const saveDetailName = async () => {
+  const target = selectedConversation.value
+  const name = detailName.value.trim()
+  if (!target || !name || savingName.value || name === (target.name || '')) return
+  savingName.value = true
+  try {
+    const updated = await api.setConversationName(target.id, name)
+    conversationRequestSequence++
+    loading.value = false
+    updateConversation(updated)
+    if (selectedConversation.value?.id === target.id) detailName.value = updated.name || ''
+  } catch (error) {
+    showOperationError(error, '保存对话名称失败')
+  } finally {
+    savingName.value = false
   }
 }
 

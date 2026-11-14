@@ -34,7 +34,7 @@
         <div class="text-caption text-medium-emphasis phase-meta">{{ currentLog.method }} {{ currentLog.url }} <span v-if="currentLog.statusCode"> · HTTP {{ currentLog.statusCode }}</span></div>
         <v-alert v-if="bodyNotice" type="info" variant="tonal" density="compact" class="mb-3">{{ bodyNotice }}</v-alert>
         <SessionInspector v-if="bodyAvailable" :body="currentLog.body || ''" :method="currentLog.method" :url="currentLog.url" :replayable="phase !== 'response' && currentLog.phase !== 'client_input' && !currentLog.truncated" wrap />
-        <details v-if="currentLog.headers" class="mt-4" :open="headersOpen" @toggle="headersOpen = ($event.target as HTMLElement).hasAttribute('open')"><summary>请求头与响应头</summary><JsonBodyPane v-if="headersOpen" :body="currentLog.headers" wrap /></details>
+        <details v-if="currentLog.headers" class="mt-4" :open="headersOpen" @toggle="headersOpen = ($event.target as HTMLElement).hasAttribute('open')"><summary>请求头与响应头</summary><JsonBodyPane v-if="headersOpen" :body="currentLog.headers" title="请求头与响应头" :meta="requestId" wrap /></details>
       </div>
       <div v-else class="pa-4 text-medium-emphasis">此阶段没有正文记录。</div>
       <details v-if="synth?.body" class="mt-4" :open="synthOpen" @toggle="synthOpen = ($event.target as HTMLElement).hasAttribute('open')"><summary>流式响应的结构化合成</summary><SessionInspector v-if="synthOpen" :body="synth.body" :replayable="false" wrap /></details>
@@ -45,7 +45,7 @@
 <script setup lang="ts">
 // 完整详情按需加载，共用日志 store 缓存；一次只挂载一个阶段的正文。
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
-import { useLogsStore } from '@/features/observability/stores/logs'
+import { useLogSession } from '@/features/observability/composables/useLogSession'
 import { getLogAttempts, logStatus } from '@/features/observability/utils/logConversation'
 import type { SystemLogDetail } from '@/types/logs'
 import SessionInspector from '@/features/observability/components/conversation/SessionInspector.vue'
@@ -56,7 +56,7 @@ import { useClipboard } from '@/shared/composables/useClipboard'
 
 const props = defineProps<{ requestId: string; sourceVersion?: string }>()
 const emit = defineEmits<{ locate: [requestId: string] }>()
-const logs = useLogsStore()
+const logs = useLogSession()
 const { copyText } = useClipboard()
 const detail = shallowRef<SystemLogDetail | null>(null)
 const loading = ref(false)

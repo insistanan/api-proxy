@@ -35,7 +35,7 @@
             <pre class="record-text">{{ entry.command }}</pre>
           </div>
           <div class="text-caption text-medium-emphasis">最终处理</div>
-          <pre class="record-text mb-2">{{ entry.promptSnippet || '旧记录未保存处理详情' }}</pre>
+          <JsonPreviewTrigger :data="entry.promptSnippet || ''" title="命令处理详情" :disabled="!entry.promptSnippet"><pre class="record-text mb-2">{{ entry.promptSnippet || '旧记录未保存处理详情' }}</pre></JsonPreviewTrigger>
           <div class="d-flex flex-wrap ga-2">
             <v-btn
               v-if="entry.aiReview?.requestId"
@@ -71,6 +71,7 @@ import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { api, type BlockedLogEntry, type CommandAIReview } from '@/api'
 import { formatDateTime } from '@/shared/utils/datetime'
 import EmptyState from '@/shared/components/common/EmptyState.vue'
+import JsonPreviewTrigger from '@/shared/components/common/JsonPreviewTrigger.vue'
 
 const props = defineProps<{ conversationId: string }>()
 const pageSize = 20

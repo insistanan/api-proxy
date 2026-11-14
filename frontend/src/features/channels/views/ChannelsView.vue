@@ -109,13 +109,24 @@
 
     <!-- AI 配置助手只在渠道页提供。 -->
     <AssistantWidget />
+    <ConfirmDialog
+      :model-value="pendingConfirm !== null"
+      :message="pendingConfirm?.message ?? ''"
+      :title="pendingConfirm?.title"
+      :confirm-text="pendingConfirm?.confirmText"
+      @update:model-value="cancelConfirm"
+      @confirm="acceptConfirm"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 // 渠道页：概览、路由开关、流量统计与渠道编排。
 // 渠道数据由 channelStore 持有；本页负责进入时加载、停留期间自动刷新、离开时停止。
-import { computed, onMounted, onUnmounted, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import ConfirmDialog from '@/shared/components/common/ConfirmDialog.vue'
+import { useConfirm } from '@/shared/composables/useConfirm'
+import { deletionImpactWarning } from '@/features/channels/utils/deletionImpact'
 import PageHeader from '@/shared/components/common/PageHeader.vue'
 import EmptyState from '@/shared/components/common/EmptyState.vue'
 import DisclosureSection from '@/shared/components/common/DisclosureSection.vue'
@@ -131,7 +142,7 @@ import { useCountUp } from '@/shared/composables/useCountUp'
 import { useRoutingModes } from '@/features/channels/composables/useRoutingModes'
 import { useToast } from '@/shared/composables/useToast'
 import { findNavigation } from '@/router/navigation'
-import type { ApiTab, Channel } from '@/api'
+import { api, type ApiTab, type Channel } from '@/api'
 import { useChannelStore } from '@/features/channels/stores/channel'
 import { useDialogStore } from '@/features/channels/stores/dialog'
 import { usePreferencesStore } from '@/shared/stores/preferences'
@@ -145,6 +156,8 @@ const dialogStore = useDialogStore()
 const preferencesStore = usePreferencesStore()
 const authStore = useAuthStore()
 const { showToast } = useToast()
+const { pending: pendingConfirm, askConfirm, acceptConfirm, cancelConfirm } = useConfirm()
+const preparingDelete = ref(false)
 
 const handleAuthError = (error: unknown): void => {
   if (error instanceof Error && error.message.includes('认证失败')) {
@@ -197,8 +210,27 @@ const handleSaveChannel = async (
   await refreshVisionChannelPool()
 }
 const handleDeleteChannel = async (channelId: number, kind?: ApiTab) => {
-  await deleteChannel(channelId, handleAuthError, kind)
-  await refreshVisionChannelPool()
+  if (preparingDelete.value || pendingConfirm.value || channelStore.isDeletingChannel || channelStore.isSavingChannel) return
+  const targetKind = kind ?? channelType.value
+  const sourceKind = channelType.value
+  preparingDelete.value = true
+  try {
+    const impact = await api.getChannelDeletionImpact(targetKind, channelId)
+    if (sourceKind !== channelType.value) return
+    askConfirm({
+      title: '删除渠道',
+      confirmText: '确认删除',
+      message: `确定删除渠道“${impact.name}”吗？此操作不可撤销。${deletionImpactWarning(impact)}`,
+      action: async () => {
+        await deleteChannel(channelId, handleAuthError, targetKind)
+        await refreshChannels()
+      }
+    })
+  } catch (error) {
+    handleAuthError(error)
+  } finally {
+    preparingDelete.value = false
+  }
 }
 
 const routing = useRoutingModes(showToast)
@@ -228,7 +260,7 @@ const modes = computed(() => [
 ])
 
 // 切换协议时本页不重新挂载，只刷新对应协议的数据；各协议缓存独立，切换不闪烁。
-watch(channelType, () => void refreshChannels())
+watch(channelType, () => { cancelConfirm(); void refreshChannels() })
 
 onMounted(() => {
   void refreshChannels()

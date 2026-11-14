@@ -209,6 +209,21 @@ export default [
     }
   },
 
+  // UI 确认统一使用组件，阻止原生弹窗重新混入。
+  {
+    files: ['src/**/*.{ts,vue,js}'],
+    rules: {
+      'no-restricted-globals': ['error',
+        ...['confirm', 'alert', 'prompt'].map(name => ({ name, message: '使用 useConfirm + ConfirmDialog 或 useToast，禁止浏览器原生弹窗。' }))
+      ],
+      'no-restricted-properties': ['error',
+        ...['window', 'globalThis', 'self'].flatMap(object => ['confirm', 'alert', 'prompt'].map(property => ({
+          object, property, message: '使用 useConfirm + ConfirmDialog 或 useToast，禁止浏览器原生弹窗。'
+        })))
+      ]
+    }
+  },
+
   // 纯 JS 构建脚本：不经 TS 配置块，恢复基础 no-unused-vars。
   {
     files: ['scripts/**/*.mjs'],

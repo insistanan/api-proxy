@@ -33,7 +33,7 @@ func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
 	apiGroup.GET("/model-availability", channels.GetModelAvailability(a.logStore, a.cfgManager))
 	apiGroup.GET("/system-logs", admin.GetSystemLogs(a.logStore))
 	apiGroup.GET("/system-logs/:requestId", admin.GetSystemLog(a.logStore))
-	apiGroup.GET("/log-conversations", admin.GetLogConversations(a.logStore))
+	apiGroup.GET("/log-conversations", admin.GetLogConversations(a.logStore, a.conversationRegistry))
 	apiGroup.GET("/log-conversation-requests", admin.GetLogConversationRequests(a.logStore))
 	apiGroup.GET("/log-context-overview", admin.GetLogContextOverview(a.logStore))
 	apiGroup.GET("/runtime-logs", admin.GetRuntimeLogs(a.logStore))

@@ -6,7 +6,7 @@
     size="lg"
   >
     <div class="failure-type">{{ log?.errorType || '未提供错误类型' }}</div>
-    <pre class="failure-message" tabindex="0" aria-label="完整失败原因">{{ log?.errorMessage || '此记录未提供详细原因。' }}</pre>
+    <JsonPreviewTrigger :data="log?.errorMessage || ''" title="完整失败原因" :disabled="!log?.errorMessage"><pre class="failure-message" tabindex="0" aria-label="完整失败原因">{{ log?.errorMessage || '此记录未提供详细原因。' }}</pre></JsonPreviewTrigger>
     <v-alert v-if="copyError" type="error" variant="tonal" density="compact" class="mt-3">{{ copyError }}</v-alert>
     <template #actions>
       <v-btn v-if="log?.requestId" variant="text" @click="openRequest">查看请求日志</v-btn>
@@ -22,6 +22,7 @@
 import { computed, ref, watch } from 'vue'
 import type { RequestLogEntry } from '@/types/logs'
 import AppDialog from '@/shared/components/common/AppDialog.vue'
+import JsonPreviewTrigger from '@/shared/components/common/JsonPreviewTrigger.vue'
 import { useClipboard } from '@/shared/composables/useClipboard'
 
 const log = defineModel<RequestLogEntry | null>({ default: null })

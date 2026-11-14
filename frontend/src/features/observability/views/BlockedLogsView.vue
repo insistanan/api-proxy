@@ -375,7 +375,7 @@
         </template>
         <dt>命中片段</dt>
         <dd>
-          <pre class="snippet-detail">{{ selectedLog.promptSnippet || '--' }}</pre>
+          <JsonPreviewTrigger :data="selectedLog.promptSnippet || ''" title="拦截记录内容"><pre class="snippet-detail">{{ selectedLog.promptSnippet || '--' }}</pre></JsonPreviewTrigger>
         </dd>
       </dl>
       <template #actions>
@@ -404,6 +404,7 @@
 </template>
 
 <script setup lang="ts">
+import JsonPreviewTrigger from '@/shared/components/common/JsonPreviewTrigger.vue'
 import PageHeader from '@/shared/components/common/PageHeader.vue'
 import AppDialog from '@/shared/components/common/AppDialog.vue'
 import ConfirmDialog from '@/shared/components/common/ConfirmDialog.vue'

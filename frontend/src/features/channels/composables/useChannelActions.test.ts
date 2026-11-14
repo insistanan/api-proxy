@@ -106,7 +106,6 @@ describe('渠道操作提交阶段', () => {
 
   it('删除请求期间切换协议，仍刷新发起删除的协议', async () => {
     const env = arrange()
-    vi.stubGlobal('confirm', vi.fn(() => true))
     const write = deferred<void>()
     env.remove.mockReturnValue(write.promise)
     const pending = env.actions.deleteChannel(0)

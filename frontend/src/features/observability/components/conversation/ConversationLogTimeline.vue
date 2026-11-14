@@ -40,7 +40,7 @@
           <details v-if="row.delta?.top" class="round-config">
             <summary>请求配置</summary>
             <span v-if="row.delta.removedTopFields.length" class="text-caption">已移除：{{ row.delta.removedTopFields.join('、') }}</span>
-            <JsonBodyPane :body="row.delta.top" wrap />
+            <JsonBodyPane :body="row.delta.top" title="本次请求配置" :meta="row.summary.requestId" wrap />
           </details>
           <div v-if="row.delta && !row.delta.repeated" class="trace-section">
             <div class="section-label">本次新增输入</div>
@@ -69,7 +69,8 @@
 <script setup lang="ts">
 // 轮次摘要可分页；仅展开轮次和它的前一轮需要正文，增量始终来自实际请求。
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { conversationVersion, useLogsStore, summaryVersion } from '@/features/observability/stores/logs'
+import { conversationVersion, summaryVersion } from '@/features/observability/stores/logs'
+import { useLogSession } from '@/features/observability/composables/useLogSession'
 import type { SystemLogSummary } from '@/types/logs'
 import { getLogAttempts, getRequestDelta, logStatus, requestInputLog } from '@/features/observability/utils/logConversation'
 import JsonBodyPane from '@/features/observability/components/common/JsonBodyPane.vue'
@@ -80,7 +81,7 @@ import { formatDateTime } from '@/shared/utils/datetime'
 
 const props = defineProps<{ groupKey: string; requests: SystemLogSummary[]; highlightRequestId?: string }>()
 const emit = defineEmits<{ inspect: [requestId: string] }>()
-const logs = useLogsStore()
+const logs = useLogSession()
 const shownCount = ref(3)
 const opened = ref(new Set<string>())
 let generation = 0

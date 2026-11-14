@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
 	"github.com/insistanan/api-proxy/internal/storage/logger"
 )
 
@@ -78,7 +79,7 @@ func logListOptions(c *gin.Context) (logger.LogConversationListOptions, bool) {
 	}, true
 }
 
-func GetLogConversations(store *logger.Store) gin.HandlerFunc {
+func GetLogConversations(store *logger.Store, registry *conversation.Registry) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		opts, ok := logListOptions(c)
 		if !ok {
@@ -88,6 +89,23 @@ func GetLogConversations(store *logger.Store) gin.HandlerFunc {
 		if err != nil {
 			writeLogPageError(c, err)
 			return
+		}
+		// 名称由会话注册表实时提供，不写入日志索引；改名、删除后无需重建日志。
+		if registry != nil {
+			for index := range page.Conversations {
+				group := &page.Conversations[index]
+				if group.Latest.ConversationID == "" {
+					continue
+				}
+				record, err := registry.Lookup(group.Latest.ConversationID)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
+				}
+				if record != nil && strings.EqualFold(record.APIKind, group.Latest.APIType) {
+					group.Name = record.Name
+				}
+			}
 		}
 		c.JSON(http.StatusOK, page)
 	}

@@ -12,10 +12,6 @@
 
     <div v-show="activeTab === 'request'" class="request-tab-panel">
       <div class="logs-actions mb-4">
-        <v-btn-toggle v-model="requestMode" mandatory density="compact" variant="outlined" divided aria-label="请求日志展示方式">
-          <v-btn value="calls" size="small">按调用聚合</v-btn>
-          <v-btn value="attempts" size="small">逐次尝试</v-btn>
-        </v-btn-toggle>
         <v-select
           v-model="datePreset"
           :items="datePresetItems"
@@ -32,13 +28,13 @@
           <v-text-field v-model="toTime" type="datetime-local" label="结束时间" density="compact" hide-details />
         </template>
         <v-select v-model="typeFilter" :items="typeItems" label="入口类型" density="compact" hide-details class="type-filter-select" />
-        <span class="logs-count text-body-2 text-medium-emphasis" role="status">{{ requestMode === 'calls' ? `已加载 ${callStore.calls.length} 次调用` : `最近 ${requestLogs.length} / 50 次尝试` }}</span>
+        <span class="logs-count text-body-2 text-medium-emphasis" role="status">最近 {{ requestLogs.length }} / 50 次尝试</span>
         <v-btn
           color="primary"
           variant="tonal"
           size="small"
           prepend-icon="mdi-refresh"
-          :loading="requestMode === 'calls' ? callStore.loading : loading"
+          :loading="loading"
           @click="loadLogs"
         >
           刷新
@@ -63,8 +59,7 @@
         <span v-if="requestLogs.length">；下方保留上次成功加载的结果。</span>
       </v-alert>
 
-      <RequestCallsPanel v-if="activeTab === 'request' && requestMode === 'calls' && callFilters" :filters="callFilters" @inspect="openCallDetail" @locate="openSystemLog" @failure="selectedFailure = $event" />
-      <v-card v-if="requestMode === 'attempts'" variant="flat" class="logs-table-card" :aria-busy="loading">
+      <v-card variant="flat" class="logs-table-card" :aria-busy="loading">
         <v-progress-linear :active="loading" :indeterminate="loading" color="primary" height="2" />
         <v-table density="comfortable" class="request-logs-table" fixed-header>
           <thead>
@@ -138,16 +133,16 @@
                 <span v-else class="text-medium-emphasis">--</span>
               </td>
               <td class="action-cell">
-                <v-tooltip text="查看正文">
+                <v-tooltip text="查看流量详情">
                   <template #activator="{ props: tooltipProps }">
                     <v-btn
                       v-bind="tooltipProps"
                       icon="mdi-text-box-search-outline"
                       size="small"
                       variant="text"
-                      aria-label="查看正文"
+                      aria-label="查看流量详情"
                       :disabled="!log.requestId"
-                      @click="openBodyDialog(log.requestId)"
+                      @click="openCallDetail(log.requestId)"
                     />
                   </template>
                 </v-tooltip>
@@ -171,9 +166,8 @@
       </v-card>
     </div>
 
-    <PromptBodyDialog v-model="bodyDialogVisible" :request-id="bodyRequestId" />
     <RequestFailureDialog v-model="selectedFailure" @locate="openSystemLog" />
-    <AppDialog v-model="callDetailOpen" title="调用正文详情" size="xl">
+    <AppDialog v-model="callDetailOpen" title="请求流量详情" size="xl">
       <RequestLogDetail v-if="callDetailOpen" :request-id="callDetailId" :source-version="callDetailVersion" @locate="locateFromDetail" />
     </AppDialog>
 
@@ -230,15 +224,11 @@ import AppDialog from '@/shared/components/common/AppDialog.vue'
 import EmptyState from '@/shared/components/common/EmptyState.vue'
 import LogStorageStatus from '@/features/observability/components/log-panels/LogStorageStatus.vue'
 import { useRoute, useRouter } from 'vue-router'
-import PromptBodyDialog from '@/features/observability/components/log-panels/PromptBodyDialog.vue'
 import RequestFailureDialog from '@/features/observability/components/log-panels/RequestFailureDialog.vue'
 import SystemLogsPanel from '@/features/observability/components/log-panels/SystemLogsPanel.vue'
 import RuntimeLogsPanel from '@/features/observability/components/log-panels/RuntimeLogsPanel.vue'
-import RequestCallsPanel from '@/features/observability/components/log-panels/RequestCallsPanel.vue'
 import RequestLogDetail from '@/features/observability/components/log-panels/RequestLogDetail.vue'
-import { callVersion, useLogCallsStore } from '@/features/observability/stores/logCalls'
 import { useLogsStore } from '@/features/observability/stores/logs'
-import type { LogCallFilters } from '@/types/logs'
 import { formatDateTime } from '@/shared/utils/datetime'
 import { api, type LogAPIType, type LogAvailableDate, type RequestLogEntry } from '@/api'
 
@@ -271,15 +261,12 @@ const datePresetItems: Array<{ title: string; value: DatePreset }> = [
 ]
 
 const typeFilter = ref<TypeFilter>('')
-const requestMode = ref<'calls' | 'attempts'>('calls')
-const callFilters = shallowRef<LogCallFilters | null>(null)
-const callStore = useLogCallsStore()
 const logsStore = useLogsStore()
 const callDetailOpen = ref(false)
 const callDetailId = ref('')
 const callDetailVersion = computed(() => {
-  const call = callStore.calls.find(item => item.summary.requestId === callDetailId.value)
-  return call ? callVersion(call) : undefined
+  const attempts = requestLogs.value.filter(item => item.requestId === callDetailId.value)
+  return JSON.stringify(attempts)
 })
 const datePreset = ref<DatePreset>('all')
 const fromTime = ref('')
@@ -289,8 +276,6 @@ const error = ref('')
 const requestLogs = shallowRef<RequestLogEntry[]>([])
 const selectedFailure = shallowRef<RequestLogEntry | null>(null)
 
-const bodyDialogVisible = ref(false)
-const bodyRequestId = ref('')
 const highlightRequestId = ref('')
 
 const purgeDialog = ref(false)
@@ -338,13 +323,8 @@ const backToRequestTab = () => {
   activeTab.value = 'request'
 }
 
-const openBodyDialog = (requestId: string) => {
-  if (!requestId) return
-  bodyRequestId.value = requestId
-  bodyDialogVisible.value = true
-}
-
 const openCallDetail = (requestId: string) => {
+  if (!requestId) return
   callDetailId.value = requestId
   callDetailOpen.value = true
 }
@@ -394,12 +374,6 @@ const loadLogs = async () => {
   const range = resolveDateRange()
   if (!range) {
     loading.value = false
-    return
-  }
-  if (requestMode.value === 'calls') {
-    loading.value = false
-    error.value = ''
-    callFilters.value = { type: typeFilter.value, from: range.from, to: range.to }
     return
   }
   loading.value = true
@@ -455,7 +429,6 @@ const confirmPurge = async () => {
     purgeDialog.value = false
     purgeDates.value = []
     purgeDate.value = ''
-    callStore.reset()
     logsStore.reset()
     void logsStore.loadStorageStatus()
     callDetailOpen.value = false
@@ -566,10 +539,6 @@ watch([fromTime, toTime], () => {
 })
 
 watch(activeTab, tab => { if (tab === 'request') void loadLogs() })
-watch(requestMode, () => {
-  logRequestSequence++
-  if (activeTab.value === 'request') void loadLogs()
-})
 onMounted(() => { if (activeTab.value === 'request') void loadLogs() })
 onBeforeUnmount(() => { logRequestSequence++ })
 </script>

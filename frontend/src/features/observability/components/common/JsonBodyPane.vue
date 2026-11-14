@@ -1,5 +1,5 @@
 <template>
-  <div class="json-body-pane">
+  <JsonPreviewTrigger class="json-body-pane" :data="body || ''" :title="title" :meta="meta">
     <div v-if="isLarge && !loaded" class="json-body-toolbar">
       <span>正文约 {{ formattedSize }}，载入后再渲染</span>
       <v-btn size="small" variant="tonal" prepend-icon="mdi-chevron-down" @click="loaded = true">
@@ -7,19 +7,22 @@
       </v-btn>
     </div>
     <ClampText v-else :text="formattedBody" :wrap="wrap" :max-height="320" />
-  </div>
+  </JsonPreviewTrigger>
 </template>
 
 <script setup lang="ts">
 // 原始正文视图：大正文先懒载入，再由 ClampText 统一做限高预览与展开。
 import { computed, ref, watch } from 'vue'
 import ClampText from './ClampText.vue'
+import JsonPreviewTrigger from '@/shared/components/common/JsonPreviewTrigger.vue'
 
 const LARGE_BODY_CHARS = 64 * 1024
 
 const props = defineProps<{
   body?: string
   wrap?: boolean
+  title?: string
+  meta?: string
 }>()
 
 const loaded = ref(false)

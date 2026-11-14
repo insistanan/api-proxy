@@ -90,6 +90,7 @@ func TestChannelAdminRouteContract(t *testing.T) {
 		actual[route.Method+" "+route.Path] = true
 	}
 	common := []string{
+		"GET /channels/:id/deletion-impact", "GET /pools/:id/deletion-impact",
 		"GET /channels", "POST /channels", "PUT /channels/:id", "DELETE /channels/:id",
 		"POST /channels/:id/keys", "DELETE /channels/:id/keys/:apiKey",
 		"POST /channels/:id/keys/:apiKey/top", "POST /channels/:id/keys/:apiKey/bottom",
@@ -114,6 +115,41 @@ func TestChannelAdminRouteContract(t *testing.T) {
 	// 公共图片理解池是四个会话协议共享的入口，独立于七个渠道前缀。
 	require.True(t, actual["GET /api/vision-channels"])
 	require.Len(t, actual, len(common)*len(channelAdminKinds)+2)
+}
+
+func TestChannelDeletionImpactRoutesAndCrossProtocolDetach(t *testing.T) {
+	r, a := newChannelAdminTestRouter(t)
+	vision, err := a.cfgManager.AddChannel("messages", config.UpstreamConfig{
+		Name: "vision", BaseURL: "https://example.com", APIKeys: []string{"secret-fixture"}, ServiceType: "openai",
+		VisionCapable: true, ExcludeFromConversation: true,
+	})
+	require.NoError(t, err)
+	_, err = a.cfgManager.AddChannel("chat", config.UpstreamConfig{
+		Name: "owner", BaseURL: "https://example.com", APIKeys: []string{"owner-fixture"}, ServiceType: "openai",
+		VisionLayerEnabled: true, VisionLayerChannelID: vision.ID, VisionLayerModel: "vision-model",
+	})
+	require.NoError(t, err)
+	path := fmt.Sprintf("/api/messages/channels/%d/deletion-impact", vision.Index)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+	require.Equal(t, http.StatusUnauthorized, w.Code)
+	w = channelAdminRequest(t, r, http.MethodGet, path, "", http.StatusOK)
+	var impact config.ChannelDeletionImpact
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &impact))
+	require.Equal(t, "vision", impact.Name)
+	require.Equal(t, 1, impact.ChannelCount)
+	require.Equal(t, []config.VisionLayerDependent{{Kind: "chat", Index: 0, Name: "owner"}}, impact.Dependents)
+	require.NotContains(t, w.Body.String(), "fixture")
+	require.NotContains(t, w.Body.String(), "baseUrl")
+	require.True(t, a.cfgManager.GetConfig().ChatUpstream[0].VisionLayerEnabled)
+	channelAdminRequest(t, r, http.MethodDelete, fmt.Sprintf("/api/messages/channels/%d", vision.Index), "", http.StatusOK)
+	owner := a.cfgManager.GetConfig().ChatUpstream[0]
+	require.False(t, owner.VisionCapable)
+	require.False(t, owner.VisionLayerEnabled)
+	require.Empty(t, owner.VisionLayerChannelID)
+	require.Empty(t, owner.VisionLayerModel)
+	channelAdminRequest(t, r, http.MethodGet, "/api/messages/channels/invalid/deletion-impact", "", http.StatusBadRequest)
+	channelAdminRequest(t, r, http.MethodGet, "/api/messages/pools/default/deletion-impact", "", http.StatusBadRequest)
 }
 
 func TestChannelAdminProtocolIsolation(t *testing.T) {
