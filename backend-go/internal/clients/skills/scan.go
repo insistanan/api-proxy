@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func Scan(location Location) ([]Item, error) {
+func Scan(location Location, projectDir string) ([]Item, error) {
 	entries, err := os.ReadDir(location.Path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
@@ -25,7 +25,7 @@ func Scan(location Location) ([]Item, error) {
 		path := filepath.Join(location.Path, entry.Name())
 		content, err := os.ReadFile(filepath.Join(path, "SKILL.md"))
 		item := Item{LocationKey: location.Key, Agent: location.Agent, Name: entry.Name(), Path: path, SourceType: location.SourceType, ReadOnly: location.ReadOnly}
-		if metadata, metadataErr := readGlobalMetadata(item.Name); metadataErr == nil {
+		if metadata, metadataErr := readGlobalMetadata(projectDir, item.Name); metadataErr == nil {
 			item.Note = metadata.Note
 		}
 		if err != nil {
@@ -37,7 +37,7 @@ func Scan(location Location) ([]Item, error) {
 				item.Issue = "frontmatter 的 name 必须与目录名一致"
 			} else {
 				item.Valid = true
-				if backup, found, backupErr := LatestBackup(item, content); backupErr == nil && found {
+				if backup, found, backupErr := LatestBackup(projectDir, item, content); backupErr == nil && found {
 					item.TranslatedName = translatedDisplayName([]byte(backup.Translated))
 				}
 			}

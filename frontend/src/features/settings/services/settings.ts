@@ -1,6 +1,11 @@
 // 网关设置 API：复用统一 HTTP 基础层，保留端点与返回契约。
 import { apiRequest } from '@/shared/services/http'
-import type { AppSettings, ClientDisguiseStatus } from '@/types'
+import type {
+  AppSettings,
+  ClientDisguiseStatus,
+  ExtensionsGitStatus,
+  ExtensionsGitSyncResponse
+} from '@/types'
 import type { ApiTab } from '@/types'
 
 export const settingsApi = {
@@ -45,4 +50,34 @@ export const settingsApi = {
       body: JSON.stringify({ protocol, enabled })
     })
   },
+
+  // 获取项目扩展目录（Skills / MCP）Git 状态
+  async getExtensionsGitStatus(): Promise<ExtensionsGitStatus> {
+    return apiRequest('/extensions/git/status')
+  },
+
+  async initExtensionsGit(repoUrl?: string): Promise<ExtensionsGitSyncResponse> {
+    return apiRequest('/extensions/git/init', {
+      method: 'POST',
+      body: JSON.stringify({ repoUrl: repoUrl ?? '' })
+    })
+  },
+
+  async cloneExtensionsGit(repoUrl?: string): Promise<ExtensionsGitSyncResponse> {
+    return apiRequest('/extensions/git/clone', {
+      method: 'POST',
+      body: JSON.stringify({ repoUrl: repoUrl ?? '' })
+    })
+  },
+
+  async pullExtensionsGit(): Promise<ExtensionsGitSyncResponse> {
+    return apiRequest('/extensions/git/pull', { method: 'POST' })
+  },
+
+  async pushExtensionsGit(message?: string): Promise<ExtensionsGitSyncResponse> {
+    return apiRequest('/extensions/git/push', {
+      method: 'POST',
+      body: JSON.stringify({ message: message ?? '' })
+    })
+  }
 }

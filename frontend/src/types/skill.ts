@@ -25,9 +25,18 @@ export interface ManagedSkill {
   readOnly: boolean
 }
 
+export interface SkillSyncReport {
+  synced: number
+  removed: number
+  skipped: number
+  errors?: string[]
+}
+
 export interface SkillsResponse {
   locations: SkillLocation[]
   skills: ManagedSkill[]
+  manifest?: Record<string, string[]>
+  managedAgents?: string[]
 }
 
 export interface SkillBackup {

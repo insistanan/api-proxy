@@ -1,5 +1,5 @@
-// Package skills 管理各 Agent（Claude Code / Codex / OpenCode / Cursor 等）的
-// Agent Skill 目录：目录发现、扫描校验、导入复制、译文备份与项目级元数据。
+// Package skills 管理各 Agent（Claude Code / Codex / OpenCode / pi / Cursor 等）的
+// Agent Skill 目录：目录发现、扫描校验、导入复制、译文备份、项目级元数据与多端启用清单。
 // 本包只做领域逻辑，不含任何 HTTP 语义；HTTP 层在 internal/clients/skills.go。
 package skills
 
@@ -34,6 +34,15 @@ func absPath(path string) string {
 		return path
 	}
 	return abs
+}
+
+// LocationOptions 为目录发现与同步提供调用方上下文。
+// OpenCode / pi 配置目录的多级回退规则由调用方传入（未传时使用环境变量或默认用户目录）；
+// ProjectDir 为空时回退到工作区根下的 skills/。
+type LocationOptions struct {
+	OpenCodeSkillsDir string
+	PiSkillsDir       string
+	ProjectDir        string
 }
 
 // Location 描述一个受管的 Skill 目录。ReadOnly 为 true 的来源（插件缓存、内置目录）

@@ -82,7 +82,7 @@ func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
 	apiGroup.GET("/settings/fuzzy-mode", admin.GetFuzzyMode(a.cfgManager))
 	apiGroup.PUT("/settings/fuzzy-mode", admin.SetFuzzyMode(a.cfgManager))
 	apiGroup.GET("/settings", admin.GetSettings(a.cfgManager))
-	apiGroup.PUT("/settings", admin.UpdateSettings(a.cfgManager))
+	apiGroup.PUT("/settings", admin.UpdateSettings(a.cfgManager, a.skillsAPI, a.mcpAPI))
 	apiGroup.POST("/upstream/models", channels.DiscoverUpstreamModels(a.cfgManager))
 	apiGroup.GET("/settings/client-disguise", admin.GetClientDisguise(a.cfgManager, a.disguiseSyncer))
 	apiGroup.POST("/settings/client-disguise/sync", admin.RefreshClientDisguise(a.disguiseSyncer))
@@ -124,12 +124,20 @@ func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
 	apiGroup.POST("/skills/remote/inspect", a.skillsAPI.InspectRemote())
 	apiGroup.POST("/skills/remote/install", a.skillsAPI.InstallRemote())
 	apiGroup.POST("/skills/copy", a.skillsAPI.Copy())
+	apiGroup.POST("/skills/toggle", a.skillsAPI.Toggle())
+	apiGroup.POST("/skills/sync", a.skillsAPI.Sync())
 	apiGroup.DELETE("/skills", a.skillsAPI.Delete())
 	apiGroup.POST("/skills/backup", a.skillsAPI.Backup())
 	// MCP 统一列表与智能体分发（沿用 apiGroup 的统一鉴权）
 	apiGroup.GET("/mcp", a.mcpAPI.List())
 	apiGroup.PUT("/mcp", a.mcpAPI.Save())
 	apiGroup.POST("/mcp/toggle", a.mcpAPI.Toggle())
+	// 项目扩展目录（Skills / MCP）Git 同步
+	apiGroup.GET("/extensions/git/status", a.extensionsGitAPI.Status())
+	apiGroup.POST("/extensions/git/init", a.extensionsGitAPI.Init())
+	apiGroup.POST("/extensions/git/clone", a.extensionsGitAPI.Clone())
+	apiGroup.POST("/extensions/git/pull", a.extensionsGitAPI.Pull())
+	apiGroup.POST("/extensions/git/push", a.extensionsGitAPI.Push())
 	a.assistantAPI.Register(apiGroup)
 }
 

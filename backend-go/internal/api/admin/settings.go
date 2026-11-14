@@ -3,12 +3,14 @@ package admin
 
 import (
 	"encoding/json"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	"log"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/clients"
 	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 )
 
 // GetSettings 获取可由管理界面维护的全局设置。
@@ -19,7 +21,7 @@ func GetSettings(cfgManager *config.ConfigManager) gin.HandlerFunc {
 }
 
 // UpdateSettings 更新管理界面开放的全局设置。未提交的设置分类保持原值。
-func UpdateSettings(cfgManager *config.ConfigManager) gin.HandlerFunc {
+func UpdateSettings(cfgManager *config.ConfigManager, skillsAPI *clients.SkillsAPI, mcpAPI *clients.MCPAPI) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req struct {
 			Network       *config.NetworkSettings     `json:"network"`
@@ -28,12 +30,13 @@ func UpdateSettings(cfgManager *config.ConfigManager) gin.HandlerFunc {
 			Gateway       *json.RawMessage            `json:"gateway"`
 			Assistant     *config.AssistantSettings   `json:"assistant"`
 			Prompts       *config.PromptSettings      `json:"prompts"`
+			Extensions    *config.ExtensionsSettings  `json:"extensions"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的设置参数"})
 			return
 		}
-		if req.Network == nil && req.ContentSafety == nil && req.Disguise == nil && req.Gateway == nil && req.Assistant == nil && req.Prompts == nil {
+		if req.Network == nil && req.ContentSafety == nil && req.Disguise == nil && req.Gateway == nil && req.Assistant == nil && req.Prompts == nil && req.Extensions == nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "至少需要提交一个设置分类"})
 			return
 		}
@@ -87,9 +90,66 @@ func UpdateSettings(cfgManager *config.ConfigManager) gin.HandlerFunc {
 			settings.Prompts = config.NormalizePromptSettings(*req.Prompts, settings.Prompts)
 		}
 
-		if err := cfgManager.UpdateSettings(settings); err != nil {
-			respondSaveError(c, "保存全局设置失败", err)
-			return
+		needDirMigration := false
+		var oldSkillsDir, newSkillsDir string
+		if req.Extensions != nil {
+			ext := config.NormalizeExtensionsSettings(*req.Extensions)
+			if err := config.ValidateExtensionsSettings(ext); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			var err error
+			oldSkillsDir, err = config.ResolveSkillsDir(settings.Extensions.SkillsDir)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			newSkillsDir, err = config.ResolveSkillsDir(ext.SkillsDir)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			needDirMigration = !config.SamePath(oldSkillsDir, newSkillsDir)
+			settings.Extensions = ext
+		}
+
+		if needDirMigration {
+			var saveErr error
+			var userBadRequest bool
+			lockErr := withExtensionsLocks(skillsAPI, mcpAPI, func() error {
+				migrated, rollback, migErr := config.MigrateSkillsDir(oldSkillsDir, newSkillsDir)
+				if migErr != nil {
+					userBadRequest = config.IsConfigError(migErr)
+					return migErr
+				}
+				if err := cfgManager.UpdateSettings(settings); err != nil {
+					if migrated && rollback != nil && !config.IsCommittedError(err) {
+						if rbErr := rollback(); rbErr != nil {
+							log.Printf("[Settings-Migrate] 配置保存失败后回滚 Skills 目录失败 (%s -> %s): %v", newSkillsDir, oldSkillsDir, rbErr)
+						}
+					}
+					saveErr = err
+					return err
+				}
+				return nil
+			})
+			if lockErr != nil {
+				if saveErr != nil {
+					respondSaveError(c, "保存全局设置失败", saveErr)
+					return
+				}
+				status := http.StatusInternalServerError
+				if userBadRequest {
+					status = http.StatusBadRequest
+				}
+				c.JSON(status, gin.H{"error": lockErr.Error()})
+				return
+			}
+		} else {
+			if err := cfgManager.UpdateSettings(settings); err != nil {
+				respondSaveError(c, "保存全局设置失败", err)
+				return
+			}
 		}
 		c.JSON(http.StatusOK, cfgManager.GetSettings())
 	}

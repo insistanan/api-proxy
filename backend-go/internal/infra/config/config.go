@@ -264,6 +264,8 @@ type SettingsConfig struct {
 	// （Claude Code / Codex / OpenCode / pi / DSH）全局提示词文件的提示词，
 	// 带版本号与生效版本标记，由客户端配置页"一键配置提示词"消费。
 	Prompts PromptSettings `json:"prompts"`
+	// Extensions 扩展管理（Skills / MCP）的项目目录与 Git 同步设置。
+	Extensions ExtensionsSettings `json:"extensions"`
 }
 
 // AssistantSettings AI 配置助手设置。

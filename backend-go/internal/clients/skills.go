@@ -3,32 +3,80 @@ package clients
 import (
 	"encoding/base64"
 	"fmt"
+	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/clients/piagent"
 	"github.com/insistanan/api-proxy/internal/clients/skills"
 )
 
-// SkillsAPI 聚合 skills 管理的互斥锁，由 main.go 构造并注入路由，
+// SkillsAPI 聚合 skills 管理的互斥锁与项目目录解析，由 main.go 构造并注入路由，
 // 替代包级全局状态；互斥锁串行化对多个 agent 技能目录的读写操作。
 type SkillsAPI struct {
 	mu          sync.Mutex
 	remoteCache remoteSkillCache
+	skillsDirFn func() (string, error)
 }
 
-// NewSkillsAPI 创建 skills 管理 API。
-func NewSkillsAPI() *SkillsAPI {
-	return &SkillsAPI{}
+// NewSkillsAPI 创建 skills 管理 API；skillsDirFn 返回当前配置的项目 Skills 目录路径。
+func NewSkillsAPI(skillsDirFn func() (string, error)) *SkillsAPI {
+	return &SkillsAPI{skillsDirFn: skillsDirFn}
+}
+
+// WithLock 在 SkillsAPI 互斥锁保护下执行目录迁移或 Git 操作，避免与并发 Skill IO 竞态。
+func (s *SkillsAPI) WithLock(fn func() error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return fn()
+}
+
+// SyncOnStartup 在服务启动或 Git 拉取后，按项目目录中的 skills-manifest.json 自动同步到各 Agent 目录。
+func (s *SkillsAPI) SyncOnStartup() (skills.SyncReport, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	opts, err := s.locationOptions()
+	if err != nil {
+		return skills.SyncReport{}, err
+	}
+	return skills.SyncManifestToAgents(opts)
+}
+
+func (s *SkillsAPI) locationOptions() (skills.LocationOptions, error) {
+	projectDir := ""
+	if s.skillsDirFn != nil {
+		resolved, err := s.skillsDirFn()
+		if err != nil {
+			return skills.LocationOptions{}, fmt.Errorf("解析项目 Skills 目录失败: %w", err)
+		}
+		projectDir = resolved
+	}
+	return skills.LocationOptions{
+		OpenCodeSkillsDir: openCodeSkillsDir(),
+		PiSkillsDir:       piSkillsDir(),
+		ProjectDir:        projectDir,
+	}, nil
 }
 
 // openCodeSkillsDir 由本层解析：OpenCode 配置路径的多级回退规则归 OpenCode 配置页所有，
 // internal/clients/skills 不重复实现该规则，改为按参数接收。
 func openCodeSkillsDir() string {
 	return filepath.Join(filepath.Dir(resolveOpenCodeConfigPath()), "skills")
+}
+
+func piSkillsDir() string {
+	if dir := strings.TrimSpace(os.Getenv("PI_CODING_AGENT_DIR")); dir != "" {
+		return filepath.Join(absolutePath(dir), "skills")
+	}
+	if dir, err := piagent.ResolveConfigDir(); err == nil && dir != "" {
+		return filepath.Join(dir, "skills")
+	}
+	return ""
 }
 
 type skillImportRequest struct {
@@ -62,13 +110,24 @@ type skillCopyRequest struct {
 	Targets     []string `json:"targets"`
 }
 
+type skillToggleRequest struct {
+	Name    string `json:"name"`
+	Agent   string `json:"agent"`
+	Enabled *bool  `json:"enabled"`
+}
+
 // ListSkills 仅枚举当前运行用户的已知 Agent Skill 目录，避免把任意路径暴露为文件浏览器。
 func (s *SkillsAPI) List() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 
-		locations, err := skills.Locations(openCodeSkillsDir())
+		opts, err := s.locationOptions()
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		locations, err := skills.Locations(opts)
 		if err != nil {
 			c.JSON(500, gin.H{"error": fmt.Sprintf("解析 Skills 目录失败: %v", err)})
 			return
@@ -82,12 +141,17 @@ func (s *SkillsAPI) List() gin.HandlerFunc {
 					return
 				}
 			}
-			found, err := skills.Scan(location)
+			found, err := skills.Scan(location, opts.ProjectDir)
 			if err != nil {
 				c.JSON(500, gin.H{"error": fmt.Sprintf("扫描 %s 失败: %v", location.Path, err)})
 				return
 			}
 			items = append(items, found...)
+		}
+		manifest, err := skills.ReadManifest(opts.ProjectDir)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
 		}
 		sort.Slice(items, func(i, j int) bool {
 			if items[i].Agent == items[j].Agent {
@@ -95,13 +159,25 @@ func (s *SkillsAPI) List() gin.HandlerFunc {
 			}
 			return items[i].Agent < items[j].Agent
 		})
-		c.JSON(200, gin.H{"locations": locations, "skills": items})
+		c.JSON(200, gin.H{
+			"locations":     locations,
+			"skills":        items,
+			"manifest":      manifest.Skills,
+			"managedAgents": skills.ManagedAgentKeys,
+		})
 	}
 }
 
 func (s *SkillsAPI) GetContent() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		ref, ok := bindSkillReference(c)
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		opts, err := s.locationOptions()
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		ref, ok := bindSkillReference(c, opts)
 		if !ok {
 			return
 		}
@@ -118,7 +194,14 @@ func (s *SkillsAPI) GetContent() gin.HandlerFunc {
 // 相同原文的不同 Agent 副本共享译文；原文内容变化时不恢复旧译文。
 func (s *SkillsAPI) GetLatestBackup() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		ref, ok := bindSkillReference(c)
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		opts, err := s.locationOptions()
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		ref, ok := bindSkillReference(c, opts)
 		if !ok {
 			return
 		}
@@ -127,7 +210,7 @@ func (s *SkillsAPI) GetLatestBackup() gin.HandlerFunc {
 			c.JSON(500, gin.H{"error": fmt.Sprintf("读取原 Skill 失败: %v", err)})
 			return
 		}
-		backup, found, err := skills.LatestBackup(ref, original)
+		backup, found, err := skills.LatestBackup(opts.ProjectDir, ref, original)
 		if err != nil {
 			c.JSON(500, gin.H{"error": fmt.Sprintf("读取翻译备份失败: %v", err)})
 			return
@@ -162,7 +245,12 @@ func (s *SkillsAPI) UpdateNote() gin.HandlerFunc {
 		}
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		if err := skills.WriteGlobalMetadata(req.Name, skills.GlobalMetadata{Note: note, UpdatedAt: time.Now().Format(time.RFC3339)}); err != nil {
+		opts, err := s.locationOptions()
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		if err := skills.WriteGlobalMetadata(opts.ProjectDir, req.Name, skills.GlobalMetadata{Note: note, UpdatedAt: time.Now().Format(time.RFC3339)}); err != nil {
 			c.JSON(500, gin.H{"error": fmt.Sprintf("保存 Skill 备注失败: %v", err)})
 			return
 		}
@@ -177,7 +265,12 @@ func (s *SkillsAPI) Consolidate() gin.HandlerFunc {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 
-		locations, err := skills.Locations(openCodeSkillsDir())
+		opts, err := s.locationOptions()
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		locations, err := skills.Locations(opts)
 		if err != nil {
 			c.JSON(500, gin.H{"error": fmt.Sprintf("解析 Skills 目录失败: %v", err)})
 			return
@@ -200,8 +293,9 @@ func (s *SkillsAPI) Consolidate() gin.HandlerFunc {
 
 		selected := make(map[string]skills.Item)
 		duplicates := make(map[string]struct{})
+		agentPresence := make(map[string][]string)
 		for _, location := range locations {
-			items, err := skills.Scan(location)
+			items, err := skills.Scan(location, opts.ProjectDir)
 			if err != nil {
 				c.JSON(500, gin.H{"error": fmt.Sprintf("扫描 %s 失败: %v", location.Path, err)})
 				return
@@ -209,6 +303,9 @@ func (s *SkillsAPI) Consolidate() gin.HandlerFunc {
 			for _, item := range items {
 				if !item.Valid {
 					continue
+				}
+				if skills.IsManagedAgentKey(location.Key) {
+					agentPresence[item.Name] = append(agentPresence[item.Name], location.Key)
 				}
 				if existing, found := selected[item.Name]; found {
 					if existing.LocationKey != item.LocationKey {
@@ -220,6 +317,13 @@ func (s *SkillsAPI) Consolidate() gin.HandlerFunc {
 			}
 		}
 
+		manifest, err := skills.ReadManifest(opts.ProjectDir)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		manifestChanged := false
+
 		names := make([]string, 0, len(selected))
 		for name := range selected {
 			names = append(names, name)
@@ -228,15 +332,24 @@ func (s *SkillsAPI) Consolidate() gin.HandlerFunc {
 		imported := 0
 		for _, name := range names {
 			item := selected[name]
-			if item.LocationKey == "project" {
-				continue
+			if item.LocationKey != "project" {
+				destination := filepath.Join(projectLocation.Path, item.Name)
+				if err := skills.CopyDir(item.Path, destination, true); err != nil {
+					c.JSON(500, gin.H{"error": fmt.Sprintf("归档 %s 失败: %v", item.Name, err)})
+					return
+				}
+				imported++
 			}
-			destination := filepath.Join(projectLocation.Path, item.Name)
-			if err := skills.CopyDir(item.Path, destination, true); err != nil {
-				c.JSON(500, gin.H{"error": fmt.Sprintf("归档 %s 失败: %v", item.Name, err)})
+			if _, exists := manifest.Skills[name]; !exists {
+				manifest.Skills[name] = agentPresence[name]
+				manifestChanged = true
+			}
+		}
+		if manifestChanged {
+			if err := skills.WriteManifest(opts.ProjectDir, manifest); err != nil {
+				c.JSON(500, gin.H{"error": err.Error()})
 				return
 			}
-			imported++
 		}
 		c.JSON(200, gin.H{"success": true, "total": len(selected), "imported": imported, "duplicates": len(duplicates)})
 	}
@@ -265,7 +378,12 @@ func (s *SkillsAPI) Import() gin.HandlerFunc {
 
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		locations, err := skills.Locations(openCodeSkillsDir())
+		opts, err := s.locationOptions()
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		locations, err := skills.Locations(opts)
 		if err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
@@ -298,18 +416,31 @@ func (s *SkillsAPI) Import() gin.HandlerFunc {
 			c.JSON(500, gin.H{"error": fmt.Sprintf("安装失败: %v", err)})
 			return
 		}
+		if err := skills.RecordSkillTargets(opts.ProjectDir, skillName, targets, true); err != nil {
+			c.JSON(500, gin.H{"error": fmt.Sprintf("记录 Skill 启用清单失败: %v", err)})
+			return
+		}
+		if _, err := skills.SyncManifestToAgents(opts); err != nil {
+			c.JSON(500, gin.H{"error": fmt.Sprintf("同步 Skill 到 Agent 失败: %v", err)})
+			return
+		}
 		c.JSON(200, gin.H{"success": true, "name": skillName})
 	}
 }
 
 func (s *SkillsAPI) Delete() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		ref, ok := bindSkillReference(c)
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		opts, err := s.locationOptions()
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		ref, ok := bindSkillReference(c, opts)
 		if !ok {
 			return
 		}
-		s.mu.Lock()
-		defer s.mu.Unlock()
 		if ref.ReadOnly {
 			c.JSON(400, gin.H{"error": "该 Skill 来自插件缓存或内置目录，不能直接删除；请通过原 Agent 的插件管理功能移除"})
 			return
@@ -317,6 +448,17 @@ func (s *SkillsAPI) Delete() gin.HandlerFunc {
 		if err := skills.Remove(ref); err != nil {
 			c.JSON(500, gin.H{"error": fmt.Sprintf("删除 Skill 失败: %v", err)})
 			return
+		}
+		if ref.LocationKey == "project" {
+			if err := skills.RemoveSkillFromManifest(opts.ProjectDir, ref.Name); err != nil {
+				c.JSON(500, gin.H{"error": fmt.Sprintf("更新 Skill 清单失败: %v", err)})
+				return
+			}
+		} else if skills.IsManagedAgentKey(ref.LocationKey) {
+			if err := skills.RemoveAgentFromSkillManifest(opts.ProjectDir, ref.Name, ref.LocationKey); err != nil {
+				c.JSON(500, gin.H{"error": fmt.Sprintf("更新 Skill 清单失败: %v", err)})
+				return
+			}
 		}
 		c.JSON(200, gin.H{"success": true})
 	}
@@ -338,7 +480,12 @@ func (s *SkillsAPI) Copy() gin.HandlerFunc {
 
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		locations, err := skills.Locations(openCodeSkillsDir())
+		opts, err := s.locationOptions()
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		locations, err := skills.Locations(opts)
 		if err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
@@ -392,7 +539,62 @@ func (s *SkillsAPI) Copy() gin.HandlerFunc {
 				return
 			}
 		}
+		if req.LocationKey == "project" {
+			if err := skills.RecordSkillTargets(opts.ProjectDir, req.Name, req.Targets, true); err != nil {
+				c.JSON(500, gin.H{"error": fmt.Sprintf("更新 Skill 清单失败: %v", err)})
+				return
+			}
+		} else if slices.Contains(req.Targets, "project") {
+			targets := append([]string{req.LocationKey}, req.Targets...)
+			if err := skills.RecordSkillTargets(opts.ProjectDir, req.Name, targets, true); err != nil {
+				c.JSON(500, gin.H{"error": fmt.Sprintf("更新 Skill 清单失败: %v", err)})
+				return
+			}
+		}
 		c.JSON(200, gin.H{"success": true, "name": req.Name, "targets": req.Targets})
+	}
+}
+
+// Toggle 切换单个项目 Skill 在指定 Agent 上的启用状态，并立即写入 manifest 与对应 Agent 目录。
+func (s *SkillsAPI) Toggle() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req skillToggleRequest
+		if err := c.ShouldBindJSON(&req); err != nil || req.Enabled == nil {
+			c.JSON(400, gin.H{"error": "Skill 开关请求无效"})
+			return
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		opts, err := s.locationOptions()
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		manifest, err := skills.ToggleAgent(opts, req.Name, req.Agent, *req.Enabled)
+		if err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"success": true, "manifest": manifest.Skills})
+	}
+}
+
+// Sync 按项目目录中的 skills-manifest.json 全量同步 Skill 到各 Agent 目录。
+func (s *SkillsAPI) Sync() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		opts, err := s.locationOptions()
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		report, err := skills.SyncManifestToAgents(opts)
+		if err != nil {
+			c.JSON(500, gin.H{"error": fmt.Sprintf("同步 Skills 失败: %v", err)})
+			return
+		}
+		c.JSON(200, gin.H{"success": true, "report": report})
 	}
 }
 
@@ -410,7 +612,12 @@ func (s *SkillsAPI) Backup() gin.HandlerFunc {
 		}
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		ref, err := skills.Resolve(req.LocationKey, req.Name, openCodeSkillsDir())
+		opts, err := s.locationOptions()
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		ref, err := skills.Resolve(req.LocationKey, req.Name, opts)
 		if err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
@@ -424,7 +631,7 @@ func (s *SkillsAPI) Backup() gin.HandlerFunc {
 			c.JSON(409, gin.H{"error": "原 Skill 已变更，请重新打开后再保存译文"})
 			return
 		}
-		backupDir, err := skills.SaveTranslationBackup(ref, original, skills.BackupInput{
+		backupDir, err := skills.SaveTranslationBackup(opts.ProjectDir, ref, original, skills.BackupInput{
 			Translated: req.Translated, Model: req.Model, ChannelName: req.ChannelName,
 		})
 		if err != nil {
@@ -435,13 +642,13 @@ func (s *SkillsAPI) Backup() gin.HandlerFunc {
 	}
 }
 
-func bindSkillReference(c *gin.Context) (skills.Item, bool) {
+func bindSkillReference(c *gin.Context, opts skills.LocationOptions) (skills.Item, bool) {
 	var req skillReferenceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": "Skill 引用无效"})
 		return skills.Item{}, false
 	}
-	ref, err := skills.Resolve(req.LocationKey, req.Name, openCodeSkillsDir())
+	ref, err := skills.Resolve(req.LocationKey, req.Name, opts)
 	if err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return skills.Item{}, false

@@ -16,10 +16,11 @@ import (
 // storeVersion 是统一列表文件的格式版本。读取版本不匹配的文件时直接报错，不尝试猜测结构。
 const storeVersion = 1
 
-// Store 持久化统一的 MCP 列表（默认 .config/mcp.json）。
+// Store 持久化统一的 MCP 列表（默认位于项目 Skills 目录下的 mcp.json）。
 // 文件包含 MCP 的 env 与 headers，可能含密钥，权限按 0600 写入。
 type Store struct {
-	path string
+	path   string
+	pathFn func() (string, error)
 }
 
 type storeFile struct {
@@ -40,9 +41,26 @@ func NewStore(path string) *Store {
 	return &Store{path: path}
 }
 
+// NewDynamicStore 创建动态解析路径的列表存储，支持随设置切换项目 Skills 目录。
+func NewDynamicStore(pathFn func() (string, error)) *Store {
+	return &Store{pathFn: pathFn}
+}
+
+// Path 返回当前生效的列表文件路径。
+func (s *Store) Path() (string, error) {
+	if s.pathFn != nil {
+		return s.pathFn()
+	}
+	return s.path, nil
+}
+
 // ReadRaw 读取列表原始字节。文件不存在时返回 nil 字节与 nil 错误。
 func (s *Store) ReadRaw() ([]byte, error) {
-	raw, err := os.ReadFile(s.path)
+	path, err := s.Path()
+	if err != nil {
+		return nil, fmt.Errorf("解析 MCP 列表路径失败: %w", err)
+	}
+	raw, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
@@ -102,6 +120,10 @@ func (s *Store) write(servers []Server) ([]byte, error) {
 }
 
 func (s *Store) writeFile(file storeFile) ([]byte, error) {
+	path, err := s.Path()
+	if err != nil {
+		return nil, fmt.Errorf("解析 MCP 列表路径失败: %w", err)
+	}
 	if file.Servers == nil {
 		file.Servers = []Server{}
 	}
@@ -110,7 +132,7 @@ func (s *Store) writeFile(file storeFile) ([]byte, error) {
 		return nil, fmt.Errorf("序列化 MCP 列表失败: %w", err)
 	}
 	data = append(data, '\n')
-	if err := atomicfile.Write(s.path, data, atomicfile.Options{TempPrefix: ".mcp-"}); err != nil {
+	if err := atomicfile.Write(path, data, atomicfile.Options{TempPrefix: ".mcp-"}); err != nil {
 		if atomicfile.IsCommitted(err) {
 			log.Printf("[MCP-Store] 列表已写入但收尾失败: %v", err)
 			return data, nil

@@ -17,6 +17,48 @@ export interface AppSettings {
   }
   /** 通用提示词版本库：可一键写入各智能体客户端的全局提示词文件 */
   prompts: PromptSettings
+  /** 项目 Skills / MCP 统一目录与 Git 同步设置 */
+  extensions?: ExtensionsSettings
+}
+
+/** 扩展与同步：项目 Skills / MCP 统一目录与 Git 仓库 */
+export interface ExtensionsSettings {
+  skillsDir: string
+  skillsRepoUrl: string
+}
+
+export interface ExtensionsGitStatus {
+  gitAvailable: boolean
+  skillsDir: string
+  repoUrl: string
+  dirExists: boolean
+  isGitRepo: boolean
+  branch?: string
+  remoteUrl?: string
+  dirty: boolean
+  changedFiles?: string[]
+  ahead: number
+  behind: number
+  hasCommits: boolean
+  error?: string
+}
+
+export interface ExtensionsGitSyncResponse {
+  status: ExtensionsGitStatus
+  message?: string
+  skillsReport?: {
+    synced: number
+    removed: number
+    skipped: number
+    errors?: string[]
+  }
+  mcpAgents?: Array<{
+    key: string
+    name: string
+    path?: string
+    ok: boolean
+    error?: string
+  }>
 }
 
 /** 通用提示词版本库 */

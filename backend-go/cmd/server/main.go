@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -60,6 +61,7 @@ type app struct {
 	piAgentAPI            *clients.PiAgentAPI
 	skillsAPI             *clients.SkillsAPI
 	mcpAPI                *clients.MCPAPI
+	extensionsGitAPI      *admin.ExtensionsGitAPI
 	assistantService      *assistant.Service
 	assistantAPI          *admin.AssistantAPI
 	disguiseSyncer        *admin.DisguiseSyncer
@@ -323,10 +325,45 @@ func newApp() (_ *app, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("初始化 pi-agent 管理 API 失败: %w", err)
 	}
-	a.skillsAPI = clients.NewSkillsAPI()
+	skillsDirFn := func() (string, error) {
+		return config.ResolveSkillsDir(a.cfgManager.GetSettings().Extensions.SkillsDir)
+	}
+	a.skillsAPI = clients.NewSkillsAPI(skillsDirFn)
 
-	// MCP 统一列表与智能体分发（列表含 env/headers 等可能的密钥，存放于 .config 下）
-	a.mcpAPI = clients.NewMCPAPI(".config/mcp.json")
+	// MCP 统一列表与智能体分发（存放在项目 Skills 目录下 mcp.json，便于与 Skills 一起 Git 管理）
+	a.mcpAPI = clients.NewDynamicMCPAPI(func() (string, error) {
+		dir, err := skillsDirFn()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(dir, "mcp.json"), nil
+	})
+	if migrated, migErr := a.mcpAPI.MigrateLegacy(".config/mcp.json"); migErr != nil {
+		log.Printf("[MCP-Migrate] 迁移旧 .config/mcp.json 失败: %v", migErr)
+	} else if migrated {
+		logInitf(a.envCfg, "[MCP-Migrate] 已将 .config/mcp.json 迁移到项目目录")
+	}
+	if report, syncErr := a.skillsAPI.SyncOnStartup(); syncErr != nil {
+		log.Printf("[Skills-Sync] 启动同步项目 Skills 到 Agent 失败: %v", syncErr)
+	} else if report.Synced > 0 || report.Removed > 0 || len(report.Errors) > 0 {
+		logInitf(a.envCfg, "[Skills-Sync] 启动同步完成: synced=%d removed=%d skipped=%d errors=%d", report.Synced, report.Removed, report.Skipped, len(report.Errors))
+	}
+	if mcpResults, syncErr := a.mcpAPI.SyncToAgents(); syncErr != nil {
+		log.Printf("[MCP-Sync] 启动分发 MCP 到 Agent 失败: %v", syncErr)
+	} else if len(mcpResults) > 0 {
+		failed := 0
+		for _, res := range mcpResults {
+			if !res.OK {
+				failed++
+			}
+		}
+		if failed > 0 {
+			log.Printf("[MCP-Sync] 启动分发 MCP 完成，%d 个智能体失败", failed)
+		} else {
+			logInitf(a.envCfg, "[MCP-Sync] 启动分发 MCP 到 %d 个智能体完成", len(mcpResults))
+		}
+	}
+	a.extensionsGitAPI = admin.NewExtensionsGitAPI(a.cfgManager, a.skillsAPI, a.mcpAPI)
 
 	// AI 配置助手（复用闸门的 llmgate.Caller：渠道优先级 messages → responses → chat → gemini）
 	assistantStore, err := assistant.NewStore(".config/assistant.db")

@@ -1,11 +1,13 @@
 <template>
   <div class="mcp-page">
-    <PageHeader title="MCP" description="集中管理工具服务器，按客户端启用与分发。开关自动保存，内容编辑后需点击保存。">
-        <v-chip v-if="dirty" color="warning" size="small" label>有未保存的修改</v-chip>
-        <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="saving" @click="reloadList">刷新</v-btn>
-        <v-btn variant="tonal" prepend-icon="mdi-plus" :disabled="!editable" @click="openCreate">新增 MCP</v-btn>
-        <v-btn color="primary" prepend-icon="mdi-content-save" :disabled="!editable || (!dirty && !needsSync)" :loading="saving" @click="saveList">{{ dirty ? '保存' : needsSync ? '重新分发' : '保存' }}</v-btn>
-    </PageHeader>
+    <div class="mcp-header-sticky">
+      <PageHeader title="MCP" description="集中管理工具服务器，按客户端启用与分发。开关自动保存，内容编辑后需点击保存。">
+          <v-chip v-if="dirty" color="warning" size="small" label>有未保存的修改</v-chip>
+          <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="saving" @click="reloadList">刷新</v-btn>
+          <v-btn variant="tonal" prepend-icon="mdi-plus" :disabled="!editable" @click="openCreate">新增 MCP</v-btn>
+          <v-btn color="primary" prepend-icon="mdi-content-save" :disabled="!editable || (!dirty && !needsSync)" :loading="saving" @click="saveList">{{ dirty ? '保存' : needsSync ? '重新分发' : '保存' }}</v-btn>
+      </PageHeader>
+    </div>
 
     <v-alert v-if="loadError" type="error" variant="tonal" class="mb-5" closable @click:close="loadError = ''">{{ loadError }}</v-alert>
     <v-alert v-if="saveError" type="error" variant="tonal" class="mb-5" closable @click:close="saveError = ''">{{ saveError }}</v-alert>
@@ -823,6 +825,13 @@ onMounted(loadList)
 
 <style scoped>
 .mcp-page { max-width: 1440px; margin: 0 auto; }
+.mcp-header-sticky {
+  position: sticky;
+  top: var(--v-layout-top, 0px);
+  z-index: 4;
+  background: rgb(var(--v-theme-background));
+  box-shadow: 0 -32px 0 0 rgb(var(--v-theme-background));
+}
 .list-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; }
 .mcp-search { flex: 0 1 400px; min-width: 220px; }
 .agent-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); }

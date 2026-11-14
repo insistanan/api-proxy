@@ -7,7 +7,10 @@ import (
 	"io/fs"
 	"log"
 	"os"
+	"path/filepath"
+	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -47,6 +50,191 @@ type Service struct {
 // NewService 创建服务。adapters 决定分发目标与列表中可用的智能体。
 func NewService(store *Store, adapters ...Adapter) *Service {
 	return &Service{store: store, adapters: adapters}
+}
+
+// WithLock 在 MCP 服务互斥锁保护下执行目录迁移或 Git 操作，避免与并发 MCP 读写竞态。
+func (s *Service) WithLock(fn func() error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return fn()
+}
+
+// MigrateLegacy 将旧路径（如 .config/mcp.json）中的统一 MCP 列表迁移到当前动态存储路径。
+// 若旧文件不存在或目标文件已存在，不覆盖目标文件；成功迁移后将旧文件重命名为 .migrated。
+func (s *Service) MigrateLegacy(legacyPath string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if strings.TrimSpace(legacyPath) == "" {
+		return false, nil
+	}
+	if _, err := os.Stat(legacyPath); errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	} else if err != nil {
+		return false, fmt.Errorf("检查旧 MCP 列表失败: %w", err)
+	}
+	targetPath, err := s.store.Path()
+	if err != nil {
+		return false, fmt.Errorf("解析目标 MCP 列表路径失败: %w", err)
+	}
+	if sameFilePath(legacyPath, targetPath) {
+		return false, nil
+	}
+	if _, err := os.Stat(targetPath); err == nil {
+		log.Printf("[MCP-Migrate] 目标路径 %s 已存在，跳过旧配置 %s 迁移", targetPath, legacyPath)
+		return false, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return false, fmt.Errorf("检查目标 MCP 列表失败: %w", err)
+	}
+
+	raw, err := os.ReadFile(legacyPath)
+	if err != nil {
+		return false, fmt.Errorf("读取旧 MCP 列表失败: %w", err)
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return false, nil
+	}
+	if _, err := decodeStoreFile(raw); err != nil {
+		return false, fmt.Errorf("校验旧 MCP 列表失败: %w", err)
+	}
+	if err := atomicfile.Write(targetPath, raw, atomicfile.Options{TempPrefix: ".mcp-"}); err != nil && !atomicfile.IsCommitted(err) {
+		return false, fmt.Errorf("写入迁移后的 MCP 列表失败: %w", err)
+	}
+	migratedPath := legacyPath + ".migrated"
+	if _, err := os.Stat(migratedPath); err == nil {
+		migratedPath = legacyPath + "." + time.Now().Format("20060102-150405") + ".migrated"
+	}
+	if err := os.Rename(legacyPath, migratedPath); err != nil {
+		log.Printf("[MCP-Migrate] 已复制到 %s，但重命名旧文件 %s 失败: %v", targetPath, legacyPath, err)
+	}
+	return true, nil
+}
+
+func sameFilePath(a, b string) bool {
+	ca, cb := filepath.Clean(a), filepath.Clean(b)
+	if absA, err := filepath.Abs(ca); err == nil {
+		ca = absA
+	}
+	if absB, err := filepath.Abs(cb); err == nil {
+		cb = absB
+	}
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(ca, cb)
+	}
+	return ca == cb
+}
+
+// SyncToAgents 根据当前存储的 mcp.json 将启用的 MCP 条目分发到各智能体配置文件。
+// 与 Save 不同，单个智能体不可用或写入失败只记录在该智能体的 AgentResult 中，不中断其他智能体。
+// 文件内容未变化时跳过写入，避免产生多余备份或无谓磁盘 IO。
+func (s *Service) SyncToAgents() ([]AgentResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	raw, err := s.store.ReadRaw()
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	file, err := decodeStoreFile(raw)
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]AgentResult, 0, len(s.adapters))
+	for _, adapter := range s.adapters {
+		res := AgentResult{Key: adapter.Key(), Name: adapter.Name(), OK: true}
+		path, err := adapter.Path()
+		if err != nil {
+			res.OK = false
+			res.Error = err.Error()
+			results = append(results, res)
+			continue
+		}
+		res.Path = path
+		current, err := readOptional(path)
+		if err != nil {
+			res.OK = false
+			res.Error = fmt.Sprintf("读取配置失败: %v", err)
+			results = append(results, res)
+			continue
+		}
+		entries, err := adapter.Read(current)
+		if err != nil {
+			res.OK = false
+			res.Error = err.Error()
+			results = append(results, res)
+			continue
+		}
+
+		desired := DesiredFor(file.Servers, adapter.Key())
+		managed := make(map[string]struct{}, len(desired))
+		for name := range desired {
+			managed[name] = struct{}{}
+		}
+		// 若 mcp.json 中某条服务在当前智能体已停用，且智能体文件中存在同配置条目（此前同步产生），
+		// 将其纳入 managed 以便清理，同时不误删用户本地同名的独立配置。
+		entryByName := make(map[string]DetectedServer, len(entries))
+		for _, entry := range entries {
+			entryByName[entry.Name] = entry
+		}
+		for _, srv := range file.Servers {
+			if _, enabled := desired[srv.Name]; enabled {
+				continue
+			}
+			if existing, ok := entryByName[srv.Name]; ok && existing.Server != nil && sameConfig(*existing.Server, srv) {
+				managed[srv.Name] = struct{}{}
+			}
+		}
+
+		base := current
+		for _, saved := range file.Disabled {
+			if saved.Agent != adapter.Key() {
+				continue
+			}
+			if _, wanted := desired[saved.Name]; !wanted {
+				continue
+			}
+			if _, present := entryByName[saved.Name]; present {
+				continue
+			}
+			entry, err := decodeEntrySnapshot(adapter, saved)
+			if err != nil {
+				res.OK = false
+				res.Error = err.Error()
+				break
+			}
+			base, _, err = replaceEntry(adapter, base, saved.Name, entry)
+			if err != nil {
+				res.OK = false
+				res.Error = err.Error()
+				break
+			}
+		}
+		if !res.OK {
+			results = append(results, res)
+			continue
+		}
+
+		next, _, err := adapter.Render(base, desired, managed)
+		if err != nil {
+			res.OK = false
+			res.Error = err.Error()
+			results = append(results, res)
+			continue
+		}
+		if !bytes.Equal(current, next) {
+			if err := writeAgentFile(path, current, next); err != nil {
+				log.Printf("[MCP-Sync] 自动同步写入 %s 配置失败: %v", adapter.Name(), err)
+				res.OK = false
+				res.Error = err.Error()
+			}
+		}
+		results = append(results, res)
+	}
+	return results, nil
 }
 
 // AgentStatus 描述智能体配置文件的当前状态，用于列表页展示。

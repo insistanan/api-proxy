@@ -23,8 +23,8 @@ type BackupInput struct {
 // 刻意不回写来源 Agent 的 SKILL.md：来源目录始终保持上游原样，项目目录才是可恢复的统一来源。
 // 完整目录复制失败时（源 Skill 缺附属资源或读取失败）降级为只同步 SKILL.md，保证项目目录始终有副本。
 // 返回本次备份目录路径。
-func SaveTranslationBackup(ref Item, original []byte, input BackupInput) (string, error) {
-	backupDir, err := ProjectBackupDir(ref.Name)
+func SaveTranslationBackup(projectDir string, ref Item, original []byte, input BackupInput) (string, error) {
+	backupDir, err := ProjectBackupDir(projectDir, ref.Name)
 	if err != nil {
 		return "", fmt.Errorf("创建备份目录失败: %w", err)
 	}
@@ -44,16 +44,17 @@ func SaveTranslationBackup(ref Item, original []byte, input BackupInput) (string
 	if err := os.WriteFile(filepath.Join(backupDir, "metadata.json"), append(metadata, '\n'), 0600); err != nil {
 		return "", fmt.Errorf("保存备份元数据失败: %w", err)
 	}
-	if copyErr := CopyDir(ref.Path, ProjectRootForName(ref.Name), true); copyErr != nil {
-		if writeErr := WriteFilesPreserving(ProjectRootForName(ref.Name), map[string][]byte{"SKILL.md": original}); writeErr != nil {
+	projectTarget := ProjectRootForName(projectDir, ref.Name)
+	if copyErr := CopyDir(ref.Path, projectTarget, true); copyErr != nil {
+		if writeErr := WriteFilesPreserving(projectTarget, map[string][]byte{"SKILL.md": original}); writeErr != nil {
 			return "", fmt.Errorf("保存项目 Skill 副本失败: %w", writeErr)
 		}
 	}
 	return backupDir, nil
 }
 
-func ProjectBackupDir(name string) (string, error) {
-	root, err := projectBackupRoot(name)
+func ProjectBackupDir(projectDir, name string) (string, error) {
+	root, err := projectBackupRoot(projectDir, name)
 	if err != nil {
 		return "", err
 	}
@@ -61,19 +62,19 @@ func ProjectBackupDir(name string) (string, error) {
 	return dir, os.MkdirAll(dir, 0700)
 }
 
-func metadataPath(name string) (string, error) {
+func metadataPath(projectDir, name string) (string, error) {
 	if !namePattern.MatchString(name) {
 		return "", errors.New("Skill 名称无效")
 	}
-	root, err := projectRoot()
+	root, err := resolveProjectDir(projectDir)
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(root, ".metadata", name+".json"), nil
 }
 
-func readGlobalMetadata(name string) (GlobalMetadata, error) {
-	path, err := metadataPath(name)
+func readGlobalMetadata(projectDir, name string) (GlobalMetadata, error) {
+	path, err := metadataPath(projectDir, name)
 	if err != nil {
 		return GlobalMetadata{}, err
 	}
@@ -91,8 +92,8 @@ func readGlobalMetadata(name string) (GlobalMetadata, error) {
 	return metadata, nil
 }
 
-func WriteGlobalMetadata(name string, metadata GlobalMetadata) error {
-	path, err := metadataPath(name)
+func WriteGlobalMetadata(projectDir, name string, metadata GlobalMetadata) error {
+	path, err := metadataPath(projectDir, name)
 	if err != nil {
 		return err
 	}
@@ -106,19 +107,19 @@ func WriteGlobalMetadata(name string, metadata GlobalMetadata) error {
 	return os.WriteFile(path, append(content, '\n'), 0600)
 }
 
-func ProjectRootForName(name string) string {
-	root, err := projectRoot()
+func ProjectRootForName(projectDir, name string) string {
+	root, err := resolveProjectDir(projectDir)
 	if err != nil {
 		return filepath.Join("skills", name)
 	}
 	return filepath.Join(root, name)
 }
 
-func projectBackupRoot(name string) (string, error) {
+func projectBackupRoot(projectDir, name string) (string, error) {
 	if !namePattern.MatchString(name) {
 		return "", errors.New("Skill 名称无效")
 	}
-	root, err := projectRoot()
+	root, err := resolveProjectDir(projectDir)
 	if err != nil {
 		return "", err
 	}
@@ -131,8 +132,8 @@ type Backup struct {
 	Metadata   BackupMetadata
 }
 
-func LatestBackup(ref Item, original []byte) (Backup, bool, error) {
-	backupRoot, err := projectBackupRoot(ref.Name)
+func LatestBackup(projectDir string, ref Item, original []byte) (Backup, bool, error) {
+	backupRoot, err := projectBackupRoot(projectDir, ref.Name)
 	if err != nil {
 		return Backup{}, false, err
 	}

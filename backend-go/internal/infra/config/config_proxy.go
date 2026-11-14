@@ -157,6 +157,10 @@ func (cm *ConfigManager) UpdateSettings(settings SettingsConfig) error {
 	if err := ValidatePromptSettings(settings.Prompts); err != nil {
 		return err
 	}
+	settings.Extensions = NormalizeExtensionsSettings(settings.Extensions)
+	if err := ValidateExtensionsSettings(settings.Extensions); err != nil {
+		return err
+	}
 	settings = cloneSettingsConfig(settings)
 
 	cm.mu.Lock()

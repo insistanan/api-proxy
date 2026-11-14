@@ -61,3 +61,37 @@ describe('促销输入校验', () => {
     expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ duration: 300, count: 0 })
   })
 })
+
+describe('扩展与 Skill 同步 API', () => {
+  it('正确调用 Skill Agent 开关、全量同步与 Git 同步端点', async () => {
+    const fetch = vi.fn().mockImplementation(() => Promise.resolve(new Response('{}', { status: 200 })))
+    vi.stubGlobal('fetch', fetch)
+
+    await api.toggleSkillAgent('demo-skill', 'claude-code', true)
+    expect(fetch.mock.calls[0][0]).toBe('/api/skills/toggle')
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ name: 'demo-skill', agent: 'claude-code', enabled: true })
+
+    await api.syncSkills()
+    expect(fetch.mock.calls[1][0]).toBe('/api/skills/sync')
+    expect(fetch.mock.calls[1][1].method).toBe('POST')
+
+    await api.getExtensionsGitStatus()
+    expect(fetch.mock.calls[2][0]).toBe('/api/extensions/git/status')
+
+    await api.initExtensionsGit('git@github.com:org/repo.git')
+    expect(fetch.mock.calls[3][0]).toBe('/api/extensions/git/init')
+    expect(JSON.parse(fetch.mock.calls[3][1].body)).toEqual({ repoUrl: 'git@github.com:org/repo.git' })
+
+    await api.cloneExtensionsGit('https://example.com/repo.git')
+    expect(fetch.mock.calls[4][0]).toBe('/api/extensions/git/clone')
+    expect(JSON.parse(fetch.mock.calls[4][1].body)).toEqual({ repoUrl: 'https://example.com/repo.git' })
+
+    await api.pullExtensionsGit()
+    expect(fetch.mock.calls[5][0]).toBe('/api/extensions/git/pull')
+    expect(fetch.mock.calls[5][1].method).toBe('POST')
+
+    await api.pushExtensionsGit('sync skills')
+    expect(fetch.mock.calls[6][0]).toBe('/api/extensions/git/push')
+    expect(JSON.parse(fetch.mock.calls[6][1].body)).toEqual({ message: 'sync skills' })
+  })
+})

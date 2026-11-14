@@ -213,7 +213,12 @@ func (s *SkillsAPI) InstallRemote() gin.HandlerFunc {
 
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		locations, err := skills.Locations(openCodeSkillsDir())
+		opts, err := s.locationOptions()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		locations, err := skills.Locations(opts)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -238,6 +243,14 @@ func (s *SkillsAPI) InstallRemote() gin.HandlerFunc {
 		}
 		if err := skills.InstallFiles(targetLocations, pkg.Name, pkg.Files); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("安装失败: %v", err)})
+			return
+		}
+		if err := skills.RecordSkillTargets(opts.ProjectDir, pkg.Name, targets, true); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("记录 Skill 启用清单失败: %v", err)})
+			return
+		}
+		if _, err := skills.SyncManifestToAgents(opts); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("同步 Skill 到 Agent 失败: %v", err)})
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{

@@ -19,11 +19,20 @@ type MCPAPI struct {
 	service *mcpsync.Service
 }
 
-// NewMCPAPI 创建 MCP 管理 API。listPath 为统一列表文件路径（默认 .config/mcp.json，含密钥）。
+// NewMCPAPI 创建 MCP 管理 API。listPath 为固定列表文件路径。
 func NewMCPAPI(listPath string) *MCPAPI {
+	return newMCPAPIWithStore(mcpsync.NewStore(listPath))
+}
+
+// NewDynamicMCPAPI 创建基于动态路径解析的 MCP 管理 API（如跟随项目 Skills 目录设置）。
+func NewDynamicMCPAPI(listPathFn func() (string, error)) *MCPAPI {
+	return newMCPAPIWithStore(mcpsync.NewDynamicStore(listPathFn))
+}
+
+func newMCPAPIWithStore(store *mcpsync.Store) *MCPAPI {
 	return &MCPAPI{
 		service: mcpsync.NewService(
-			mcpsync.NewStore(listPath),
+			store,
 			mcpsync.NewClaudeCodeAdapter(resolveClaudeCodeMCPPath),
 			mcpsync.NewCodexAdapter(resolveCodexMCPPath),
 			mcpsync.NewOpenCodeAdapter(resolveOpenCodeMCPPath, decodeOpenCodeMCPConfig),
@@ -31,6 +40,21 @@ func NewMCPAPI(listPath string) *MCPAPI {
 			mcpsync.NewDSHAdapter(resolveDSHMCPPath),
 		),
 	}
+}
+
+// WithLock 在 MCP 服务锁保护下执行目录迁移或 Git 操作。
+func (api *MCPAPI) WithLock(fn func() error) error {
+	return api.service.WithLock(fn)
+}
+
+// MigrateLegacy 将旧路径的统一 MCP 列表迁移到当前项目路径。
+func (api *MCPAPI) MigrateLegacy(legacyPath string) (bool, error) {
+	return api.service.MigrateLegacy(legacyPath)
+}
+
+// SyncToAgents 根据当前存储的 mcp.json 将启用的 MCP 分发到各智能体配置文件。
+func (api *MCPAPI) SyncToAgents() ([]mcpsync.AgentResult, error) {
+	return api.service.SyncToAgents()
 }
 
 type mcpStateResponse struct {

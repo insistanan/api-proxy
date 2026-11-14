@@ -157,7 +157,11 @@ import {
   mdiFileFindOutline,
   mdiShieldCheck,
   mdiBellRing,
-  mdiRegex
+  mdiRegex,
+  mdiSourceBranch,
+  mdiSync,
+  mdiCloudDownloadOutline,
+  mdiCloudUploadOutline
 } from '@mdi/js'
 
 // 图标名称到 SVG path 的映射 (使用 kebab-case)
@@ -354,7 +358,11 @@ const iconMap: Record<string, string> = {
   wrench: mdiWrench,
   replay: mdiReplay,
   'code-json': mdiCodeJson,
-  'folder-open': mdiFolderOpen
+  'folder-open': mdiFolderOpen,
+  'source-branch': mdiSourceBranch,
+  sync: mdiSync,
+  'cloud-download-outline': mdiCloudDownloadOutline,
+  'cloud-upload-outline': mdiCloudUploadOutline
 }
 
 // 自定义 SVG iconset

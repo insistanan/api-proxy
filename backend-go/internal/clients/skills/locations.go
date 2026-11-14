@@ -12,9 +12,9 @@ import (
 )
 
 // Locations 枚举当前运行用户的已知 Agent Skill 目录，避免把任意路径暴露为文件浏览器。
-// openCodeSkillsDir 由调用方传入：OpenCode 配置路径的多级回退规则归 handlers 的 OpenCode
-// 配置页所有，本包不重复实现；其余客户端目录（Claude Code / Codex）本包按各自环境变量自行解析。
-func Locations(openCodeSkillsDir string) ([]Location, error) {
+// opts 中的 OpenCodeSkillsDir / PiSkillsDir / ProjectDir 由调用方传入，未传时按默认规则回退；
+// 其余客户端目录（Claude Code / Codex / Cursor）本包按各自环境变量自行解析。
+func Locations(opts LocationOptions) ([]Location, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
@@ -27,8 +27,14 @@ func Locations(openCodeSkillsDir string) ([]Location, error) {
 	if configured := strings.TrimSpace(os.Getenv("CODEX_HOME")); configured != "" {
 		codexHome = absPath(configured)
 	}
-	openCodeDir := openCodeSkillsDir
-	projectDir, err := projectRoot()
+	openCodeDir := opts.OpenCodeSkillsDir
+	piDir := strings.TrimSpace(opts.PiSkillsDir)
+	if piDir == "" {
+		piDir = defaultPiSkillsDir(home)
+	} else {
+		piDir = absPath(piDir)
+	}
+	projectDir, err := resolveProjectDir(opts.ProjectDir)
 	if err != nil {
 		return nil, err
 	}
@@ -38,6 +44,7 @@ func Locations(openCodeSkillsDir string) ([]Location, error) {
 		{Key: "claude-code", Agent: "Claude Code 用户目录", Path: filepath.Join(claudeHome, "skills"), SourceType: "user", ReadOnly: false},
 		{Key: "codex", Agent: "Codex 用户目录", Path: filepath.Join(codexHome, "skills"), SourceType: "user", ReadOnly: false},
 		{Key: "opencode", Agent: "OpenCode 用户目录", Path: openCodeDir, SourceType: "user", ReadOnly: false},
+		{Key: "pi", Agent: "pi 用户目录", Path: piDir, SourceType: "user", ReadOnly: false},
 		{Key: "cursor", Agent: "Cursor 用户目录", Path: filepath.Join(home, ".cursor", "skills"), SourceType: "user", ReadOnly: false},
 		{Key: "codex-system", Agent: "Codex 内置 Skill", Path: filepath.Join(codexHome, "skills", ".system"), SourceType: "codex-system", ReadOnly: true},
 	}
@@ -122,6 +129,22 @@ func discoverClaudePluginLocations(claudeHome string) ([]Location, error) {
 	return locations, nil
 }
 
+func defaultPiSkillsDir(home string) string {
+	for _, envName := range []string{"PI_CODING_AGENT_DIR", "PI_AGENT_CONFIG_DIR"} {
+		if configured := strings.TrimSpace(os.Getenv(envName)); configured != "" {
+			return filepath.Join(absPath(configured), "skills")
+		}
+	}
+	return filepath.Join(home, ".pi", "agent", "skills")
+}
+
+func resolveProjectDir(projectDir string) (string, error) {
+	if trimmed := strings.TrimSpace(projectDir); trimmed != "" {
+		return absPath(trimmed), nil
+	}
+	return projectRoot()
+}
+
 func projectRoot() (string, error) {
 	workingDir, err := os.Getwd()
 	if err != nil {
@@ -134,11 +157,11 @@ func projectRoot() (string, error) {
 }
 
 // Resolve 把「目录 key + Skill 名」解析为具体条目，并校验路径不逃逸出所属目录。
-func Resolve(locationKey, name, openCodeSkillsDir string) (Item, error) {
+func Resolve(locationKey, name string, opts LocationOptions) (Item, error) {
 	if !namePattern.MatchString(name) {
 		return Item{}, errors.New("Skill 名称必须为小写字母、数字和连字符")
 	}
-	locations, err := Locations(openCodeSkillsDir)
+	locations, err := Locations(opts)
 	if err != nil {
 		return Item{}, err
 	}

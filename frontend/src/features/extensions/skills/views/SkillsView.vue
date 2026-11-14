@@ -1,18 +1,21 @@
 <template>
   <div class="skills-page">
-    <PageHeader title="Skills" description="发现、安装并管理各客户端使用的技能。">
-        <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="loadSkills">刷新</v-btn>
-        <v-btn variant="text" prepend-icon="mdi-archive-outline" :loading="consolidating" @click="consolidateInstalledSkills">导入现有</v-btn>
-        <v-btn variant="text" prepend-icon="mdi-swap-horizontal" @click="showTranslatedNames = !showTranslatedNames">{{ showTranslatedNames ? '显示原名称' : '显示译名' }}</v-btn>
-        <v-btn variant="tonal" prepend-icon="mdi-magnify" @click="openDiscover">发现 Skill</v-btn>
-        <v-btn color="primary" prepend-icon="mdi-plus" @click="openImport">本地安装</v-btn>
-    </PageHeader>
+    <div class="skills-header-sticky">
+      <PageHeader title="Skills" description="发现、安装并管理各客户端使用的技能。">
+          <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="loadSkills">刷新</v-btn>
+          <v-btn variant="text" prepend-icon="mdi-sync" :loading="syncing" @click="syncManifest">同步到 Agent</v-btn>
+          <v-btn variant="text" prepend-icon="mdi-archive-outline" :loading="consolidating" @click="consolidateInstalledSkills">导入现有</v-btn>
+          <v-btn variant="text" prepend-icon="mdi-swap-horizontal" @click="showTranslatedNames = !showTranslatedNames">{{ showTranslatedNames ? '显示原名称' : '显示译名' }}</v-btn>
+          <v-btn variant="tonal" prepend-icon="mdi-magnify" @click="openDiscover">发现 Skill</v-btn>
+          <v-btn color="primary" prepend-icon="mdi-plus" @click="openImport">本地安装</v-btn>
+      </PageHeader>
+    </div>
 
     <v-alert v-if="error" type="error" variant="tonal" class="mb-5" closable @click:close="error = ''">{{ error }}</v-alert>
 
     <DisclosureSection title="来源与安装位置" description="查看各客户端的技能目录、读写状态和备份位置。" icon="mdi-folder-open" class="mb-5">
       <v-alert type="info" variant="tonal" density="compact" class="mb-4">
-        项目 <code>skills/</code> 目录是统一可恢复来源：导入、远程安装和翻译保存都会同步保留 Skill；翻译备份位于 <code>skills/&lt;名称&gt;/.backups/&lt;时间&gt;/</code>。插件缓存与 Codex 内置 Skill 仅供查看，删除请回到原 Agent 的插件管理。
+        项目目录是统一可恢复来源：导入、远程安装和翻译保存都会同步保留 Skill；项目 Skill 的 Agent 启用状态保存在 <code>skills-manifest.json</code> 并自动分发到各客户端目录。目录路径与 Git 同步可在「设置 → 扩展与同步」配置。
       </v-alert>
 
       <div class="locations-strip">
@@ -39,10 +42,10 @@
     <v-card elevation="0" class="skills-list-card">
       <v-table density="comfortable">
         <thead>
-          <tr><th>Skill</th><th>来源</th><th>状态</th><th>路径</th><th class="text-right">操作</th></tr>
+          <tr><th>Skill</th><th>来源</th><th>状态</th><th>启用 Agent</th><th>路径</th><th class="text-right">操作</th></tr>
         </thead>
         <tbody>
-          <tr v-if="!loading && filteredSkills.length === 0"><td colspan="5" class="text-center text-medium-emphasis py-10">未发现符合条件的 Skill</td></tr>
+          <tr v-if="!loading && filteredSkills.length === 0"><td colspan="6" class="text-center text-medium-emphasis py-10">未发现符合条件的 Skill</td></tr>
           <tr v-for="skill in visibleSkills" :key="`${skill.locationKey}:${skill.name}`">
             <td>
               <v-tooltip :text="skill.note || ''" :disabled="!skill.note" location="top" theme="dark"><template #activator="{ props }"><button v-bind="props" type="button" class="skill-name-button font-weight-medium" @click="openSkill(skill)">{{ displaySkillName(skill) }}<v-tooltip v-if="skill.translatedName" text="已翻译" location="top" theme="dark"><template #activator="{ props: tipProps }"><v-icon v-bind="tipProps" icon="mdi-translate" size="x-small" color="primary" class="ml-1" /></template></v-tooltip></button></template></v-tooltip>
@@ -53,6 +56,26 @@
               <div v-if="skill.readOnly" class="text-caption text-medium-emphasis mt-1">只读来源</div>
             </td>
             <td><v-chip size="small" :color="skill.valid ? 'success' : 'warning'" label>{{ skill.valid ? '有效' : skill.issue || '需检查' }}</v-chip></td>
+            <td class="agent-toggles-cell">
+              <div v-if="skill.locationKey === 'project'" class="d-flex flex-wrap ga-1">
+                <v-chip
+                  v-for="agent in managedAgentItems"
+                  :key="agent.key"
+                  size="x-small"
+                  label
+                  :color="isAgentEnabled(skill.name, agent.key) ? 'primary' : undefined"
+                  :variant="isAgentEnabled(skill.name, agent.key) ? 'flat' : 'outlined'"
+                  :prepend-icon="isAgentEnabled(skill.name, agent.key) ? 'mdi-check' : undefined"
+                  :disabled="togglingKey === `${skill.name}:${agent.key}`"
+                  class="agent-toggle-chip"
+                  :title="`${isAgentEnabled(skill.name, agent.key) ? '禁用' : '启用'} ${agent.label}`"
+                  @click="toggleSkillAgent(skill.name, agent.key)"
+                >
+                  {{ agent.label }}
+                </v-chip>
+              </div>
+              <span v-else class="text-caption text-medium-emphasis">—</span>
+            </td>
             <td><div class="skill-path-cell"><code class="skill-path">{{ skill.path }}</code><v-tooltip text="复制路径" location="top" theme="dark"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-content-copy" variant="text" size="x-small" :aria-label="`复制 ${skill.name} 的路径`" @click="copySkillPath(skill.path)" /></template></v-tooltip></div></td>
             <td class="text-right text-no-wrap">
               <v-tooltip text="查看与翻译" location="top" theme="dark"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-text-box-search-outline" variant="text" size="small" @click="openSkill(skill)" /></template></v-tooltip>
@@ -174,7 +197,9 @@ const PROXY_BASE = import.meta.env.PROD
   : import.meta.env.VITE_BACKEND_URL || ''
 
 const loading = ref(false)
+const syncing = ref(false)
 const consolidating = ref(false)
+const togglingKey = ref('')
 const importing = ref(false)
 const copying = ref(false)
 const remoteSearching = ref(false)
@@ -186,6 +211,8 @@ const query = ref('')
 const agentFilter = ref('')
 const locations = ref<SkillLocation[]>([])
 const skills = ref<ManagedSkill[]>([])
+const manifest = ref<Record<string, string[]>>({})
+const managedAgents = ref<string[]>([])
 const chatChannels = ref<Channel[]>([])
 const importDialog = ref(false)
 const importFile = ref<File | null>(null)
@@ -286,6 +313,8 @@ const loadSkills = async () => {
     const data = await api.getSkills()
     locations.value = data.locations
     skills.value = data.skills
+    manifest.value = data.manifest ?? {}
+    managedAgents.value = data.managedAgents ?? []
     try {
       const channels = await channelApiByType('chat').getChannels()
       chatChannels.value = channels.channels.filter(channel => channel.status !== 'deleted')
@@ -298,7 +327,61 @@ const loadSkills = async () => {
   } finally { loading.value = false }
 }
 
-const defaultInstallTargets = () => writableLocations.value.filter(location => location.key === 'project' || location.key === 'agents').map(location => location.key)
+const AGENT_SHORT_LABELS: Record<string, string> = {
+  agents: 'Agents',
+  'claude-code': 'Claude',
+  codex: 'Codex',
+  opencode: 'OpenCode',
+  pi: 'pi',
+  cursor: 'Cursor'
+}
+
+const managedAgentItems = computed(() => {
+  const keys = managedAgents.value.length > 0 ? managedAgents.value : ['agents', 'claude-code', 'codex', 'opencode', 'pi', 'cursor']
+  return keys.map(key => ({
+    key,
+    label: AGENT_SHORT_LABELS[key] || locations.value.find(item => item.key === key)?.agent || key
+  }))
+})
+
+const isAgentEnabled = (skillName: string, agentKey: string) =>
+  (manifest.value[skillName] ?? []).includes(agentKey)
+
+const toggleSkillAgent = async (skillName: string, agentKey: string) => {
+  const lockKey = `${skillName}:${agentKey}`
+  if (togglingKey.value) return
+  const nextEnabled = !isAgentEnabled(skillName, agentKey)
+  togglingKey.value = lockKey
+  try {
+    const res = await api.toggleSkillAgent(skillName, agentKey, nextEnabled)
+    manifest.value = res.manifest ?? {}
+    const label = AGENT_SHORT_LABELS[agentKey] || agentKey
+    showToast(`${skillName} 已在 ${label} ${nextEnabled ? '启用并同步' : '禁用并移除'}`, 'success')
+    await loadSkills()
+  } catch (toggleError) {
+    showToast(toggleError instanceof Error ? toggleError.message : '切换 Skill Agent 状态失败', 'error')
+  } finally {
+    togglingKey.value = ''
+  }
+}
+
+const syncManifest = async () => {
+  if (syncing.value) return
+  syncing.value = true
+  try {
+    const res = await api.syncSkills()
+    const { synced, removed, skipped, errors } = res.report
+    const summary = `同步 ${synced}，清理 ${removed}，跳过 ${skipped}${errors?.length ? `，失败 ${errors.length}` : ''}`
+    showToast(summary, errors?.length ? 'error' : 'success')
+    await loadSkills()
+  } catch (syncError) {
+    showToast(syncError instanceof Error ? syncError.message : '同步 Skills 失败', 'error')
+  } finally {
+    syncing.value = false
+  }
+}
+
+const defaultInstallTargets = () => writableLocations.value.filter(location => location.key === 'project').map(location => location.key)
 const openImport = () => { importFile.value = null; importTargets.value = defaultInstallTargets(); importDialog.value = true }
 
 const consolidateInstalledSkills = async () => {
@@ -692,6 +775,13 @@ onMounted(loadSkills)
 
 <style scoped>
 .skills-page { max-width: 1440px; margin: 0 auto; }
+.skills-header-sticky {
+  position: sticky;
+  top: var(--v-layout-top, 0px);
+  z-index: 4;
+  background: rgb(var(--v-theme-background));
+  box-shadow: 0 -32px 0 0 rgb(var(--v-theme-background));
+}
 .locations-strip { border: 1px solid rgba(var(--v-theme-on-surface), 0.12); border-radius: 6px; padding: 12px 16px; }
 .location-chip, .source-chip { cursor: pointer; }
 .location-chip:hover, .source-chip:hover { filter: brightness(0.96); }
@@ -701,6 +791,8 @@ onMounted(loadSkills)
 .skill-name-button { background: none; border: 0; color: inherit; cursor: pointer; font: inherit; padding: 0; text-align: left; text-decoration: none; }
 .skill-name-button:hover { color: rgb(var(--v-theme-primary)); text-decoration: underline; }
 .skill-description { max-width: 440px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.agent-toggles-cell { min-width: 240px; }
+.agent-toggle-chip { cursor: pointer; }
 .skill-path-cell { align-items: center; display: flex; gap: 2px; min-width: 0; }
 .skill-path { display: block; max-width: 310px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .detail-card { height: min(900px, calc(100vh - 48px)); max-height: calc(100vh - 48px); display: flex; flex-direction: column; overflow: hidden; }

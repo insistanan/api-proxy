@@ -1,6 +1,6 @@
 // 技能管理 API：复用统一 HTTP 基础层，保留端点与返回契约。
 import { apiRequest } from '@/shared/services/http'
-import type { RemoteSkillPreview, SkillBackup, SkillSearchResponse, SkillsResponse } from '@/types'
+import type { RemoteSkillPreview, SkillBackup, SkillSearchResponse, SkillSyncReport, SkillsResponse } from '@/types'
 
 export const skillsApi = {
   // ============== 本机 Skills 管理 API ==============
@@ -56,6 +56,21 @@ export const skillsApi = {
     targets: string[]
   ): Promise<{ success: boolean; name: string; targets: string[] }> {
     return apiRequest('/skills/copy', { method: 'POST', body: JSON.stringify({ locationKey, name, targets }) })
+  },
+
+  async toggleSkillAgent(
+    name: string,
+    agent: string,
+    enabled: boolean
+  ): Promise<{ success: boolean; manifest: Record<string, string[]> }> {
+    return apiRequest('/skills/toggle', {
+      method: 'POST',
+      body: JSON.stringify({ name, agent, enabled })
+    })
+  },
+
+  async syncSkills(): Promise<{ success: boolean; report: SkillSyncReport }> {
+    return apiRequest('/skills/sync', { method: 'POST' })
   },
 
   async deleteSkill(locationKey: string, name: string): Promise<void> {

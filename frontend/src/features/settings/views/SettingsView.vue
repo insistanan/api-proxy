@@ -71,6 +71,8 @@
 
         <PromptSettingsSection v-else-if="activeSection === 'prompts'" :editor="promptsEditor" />
 
+        <ExtensionsSettingsSection v-else-if="activeSection === 'extensions'" :editor="extensionsEditor" />
+
         <section v-else aria-labelledby="content-safety-settings-title">
           <div class="section-heading">
             <div>
@@ -504,6 +506,8 @@ import PromptSettingsSection from '@/features/settings/components/PromptSettings
 import { usePromptSettings } from '@/features/settings/composables/usePromptSettings'
 import AssistantSettingsSection from '@/features/settings/components/AssistantSettingsSection.vue'
 import { useAssistantSettings } from '@/features/settings/composables/useAssistantSettings'
+import ExtensionsSettingsSection from '@/features/settings/components/ExtensionsSettingsSection.vue'
+import { useExtensionsSettings } from '@/features/settings/composables/useExtensionsSettings'
 import { defaultContentSafety, normalizeContentSafety } from '@/features/settings/utils/contentSafetyForm'
 import SemanticSafetySettings from '@/features/settings/components/SemanticSafetySettings.vue'
 import type { SettingsSection, SettingsNotice as Notice } from '@/features/settings/composables/types'
@@ -606,7 +610,8 @@ const settingsSections: Array<{ key: SettingsSection; label: string; icon: strin
   { key: 'content-safety', label: '内容安全', icon: 'mdi-shield-alert' },
   { key: 'disguise', label: '客户端伪装', icon: 'mdi-incognito' },
   { key: 'assistant', label: 'AI 助手', icon: 'mdi-robot' },
-  { key: 'prompts', label: '通用提示词', icon: 'mdi-text' }
+  { key: 'prompts', label: '通用提示词', icon: 'mdi-text' },
+  { key: 'extensions', label: '扩展与同步', icon: 'mdi-puzzle-outline' }
 ]
 const route = useRoute()
 const router = useRouter()
@@ -631,6 +636,8 @@ const promptsEditor = usePromptSettings(saving)
 const { promptEntries, promptActiveVersion, selectedPromptEntry, savedPromptsSnapshot, savedPromptActiveVersion } = promptsEditor
 const assistantEditor = useAssistantSettings(saving)
 const { assistantModel, savedAssistantModel, assistantChannel, savedAssistantChannel, loadAssistantModelOptions, loadAssistantStatus } = assistantEditor
+const extensionsEditor = useExtensionsSettings(saving, activeSection)
+const { skillsDir, skillsRepoUrl, savedSkillsDir, savedSkillsRepoUrl, loadGitStatus } = extensionsEditor
 
 const proxyEnabled = ref(false)
 const proxyUrl = ref('')
@@ -668,7 +675,8 @@ const dirtySections = computed<Record<SettingsSection, boolean>>(() => ({
   'content-safety': contentSafetyDirty.value,
   disguise: disguiseEditor.disguiseDirty.value,
   assistant: assistantEditor.assistantDirty.value,
-  prompts: promptsEditor.promptsDirty.value
+  prompts: promptsEditor.promptsDirty.value,
+  extensions: extensionsEditor.extensionsDirty.value
 }))
 
 const proxyUrlRule = (value: string) => {
@@ -728,6 +736,14 @@ const loadSettings = async () => {
     selectedPromptEntry.value =
       promptEntries.value.find(entry => entry.version === promptActiveVersion.value) ?? promptEntries.value[0] ?? null
     savedPromptsSnapshot.value = JSON.stringify(promptEntries.value)
+    // 扩展与同步设置
+    savedSkillsDir.value = settings.extensions?.skillsDir ?? ''
+    savedSkillsRepoUrl.value = settings.extensions?.skillsRepoUrl ?? ''
+    skillsDir.value = savedSkillsDir.value
+    skillsRepoUrl.value = savedSkillsRepoUrl.value
+    if (activeSection.value === 'extensions') {
+      await loadGitStatus()
+    }
   } catch (error) {
     loadError.value = error instanceof Error ? error.message : '加载设置失败'
   } finally {
