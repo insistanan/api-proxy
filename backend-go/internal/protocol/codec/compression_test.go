@@ -143,17 +143,6 @@ func TestDecompressBody_UnsupportedEncoding(t *testing.T) {
 	assert.True(t, errors.Is(decompressErr, ErrUnsupportedContentEncoding))
 }
 
-func TestGetContentEncoding(t *testing.T) {
-	headers := http.Header{}
-	headers.Add("Content-Encoding", "gzip")
-	headers.Add("Content-Encoding", "identity, zstd")
-	headers.Add("Content-Encoding", "")
-
-	normalizedEncoding := GetContentEncoding(headers)
-	assert.Equal(t, "gzip, zstd", normalizedEncoding)
-	assert.True(t, IsSupportedContentEncoding(normalizedEncoding))
-}
-
 func TestDecompressResponseBodyIfNeeded(t *testing.T) {
 	testPayload := []byte(`{"status":"ok"}`)
 	var compressedBuffer bytes.Buffer

@@ -122,9 +122,9 @@ func TestReplaceImagesUsesEachImageOwnDescription(t *testing.T) {
 
 func TestImageCacheKeyIncludesVisionProfile(t *testing.T) {
 	fingerprint := "sha256:example"
-	first := buildImageCacheKey(fingerprint, scheduler.ChannelKindMessages, "vision-model-a")
-	second := buildImageCacheKey(fingerprint, scheduler.ChannelKindMessages, "vision-model-a")
-	changedModel := buildImageCacheKey(fingerprint, scheduler.ChannelKindMessages, "vision-model-b")
+	first := buildImageCacheKey(fingerprint, "vision-model-a")
+	second := buildImageCacheKey(fingerprint, "vision-model-a")
+	changedModel := buildImageCacheKey(fingerprint, "vision-model-b")
 	if first != second {
 		t.Fatalf("same vision profile should have stable cache key: %q %q", first, second)
 	}
@@ -132,7 +132,7 @@ func TestImageCacheKeyIncludesVisionProfile(t *testing.T) {
 		t.Fatalf("different vision models should not share cache key: %q", first)
 	}
 	// 不同渠道 ID 不应影响缓存键——回退到其他 vision channel 后仍应命中缓存
-	changedChannel := buildImageCacheKey(fingerprint, scheduler.ChannelKindMessages, "vision-model-a")
+	changedChannel := buildImageCacheKey(fingerprint, "vision-model-a")
 	if first != changedChannel {
 		t.Fatalf("different channel IDs should not affect cache key: %q %q", first, changedChannel)
 	}

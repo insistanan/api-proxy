@@ -39,6 +39,17 @@ func (u UpstreamConfig) MarshalJSON() ([]byte, error) {
 			BuiltinProvider string `json:"builtinProvider"`
 		}{u.ID, u.BuiltinProvider})
 	}
+	// 删除占位只保留定位渠道所需的身份字段。
+	// 条目本身不能删（索引被路由、日志与运行时缓存引用），但 baseUrl、apiKeys、
+	// modelMapping 等运行配置对已删除渠道没有意义，还会把密钥长期留在配置里。
+	if GetChannelStatus(&u) == ChannelStatusDeleted {
+		return json.Marshal(struct {
+			ID       string `json:"id"`
+			Name     string `json:"name"`
+			Priority int    `json:"priority"`
+			Status   string `json:"status"`
+		}{u.ID, u.Name, u.Priority, ChannelStatusDeleted})
+	}
 	type plain UpstreamConfig
 	return json.Marshal(plain(u))
 }

@@ -17,31 +17,34 @@ import (
 	"github.com/insistanan/api-proxy/internal/storage/metrics"
 )
 
-// logStartupInfo 输出启动横幅与服务地址信息。
+// logStartupInfo 输出紧凑的启动摘要：地址、端点与构建信息一次展示。
 func (a *app) logStartupInfo() {
-	fmt.Printf("\n[Server-Startup] API代理服务器正在启动\n")
-	fmt.Printf("[Server-Info] 版本: %s\n", Version)
-	if BuildTime != "unknown" {
-		fmt.Printf("[Server-Info] 构建时间: %s\n", BuildTime)
-	}
+	setConsoleTitle("API Proxy " + Version)
+	build := BuildTime
 	if GitCommit != "unknown" {
-		fmt.Printf("[Server-Info] Git提交: %s\n", GitCommit)
+		build += " · " + GitCommit
 	}
-	fmt.Printf("[Server-Info] 管理界面: http://localhost:%d\n", a.envCfg.Port)
-	fmt.Printf("[Server-Info] API 地址: http://localhost:%d/v1\n", a.envCfg.Port)
-	fmt.Printf("[Server-Info] Messages: POST /v1/messages\n")
-	fmt.Printf("[Server-Info] Responses: POST /v1/responses\n")
-	fmt.Printf("[Server-Info] OpenAI Chat: POST /v1/chat/completions\n")
-	fmt.Printf("[Server-Info] OpenAI Images: POST /v1/images/{generations|edits|variations}\n")
-	fmt.Printf("[Server-Info] Gemini API: POST /v1beta/models/{model}:generateContent\n")
-	fmt.Printf("[Server-Info] Gemini API: POST /v1beta/models/{model}:streamGenerateContent\n")
-	fmt.Printf("[Server-Info] 健康检查: GET /health\n")
-	fmt.Printf("[Server-Info] 环境: %s\n", a.envCfg.Env)
+	if build != "unknown" {
+		fmt.Printf("\nAPI Proxy %s · %s · %s\n", Version, a.envCfg.Env, build)
+	} else {
+		fmt.Printf("\nAPI Proxy %s · %s\n", Version, a.envCfg.Env)
+	}
+	fmt.Printf("  管理台  http://localhost:%d\n", a.envCfg.Port)
+	fmt.Printf("  API     http://localhost:%d/v1\n", a.envCfg.Port)
+	fmt.Printf("  健康    http://localhost:%d/health\n", a.envCfg.Port)
+	fmt.Printf("  端点    Messages · Responses · Chat · Images · Gemini\n")
 	// 检查是否使用默认密码，给予提示
 	if a.envCfg.ProxyAccessKey == "your-proxy-access-key" {
-		fmt.Printf("[Server-Warn] 访问密钥: your-proxy-access-key (默认值，建议通过 .env 文件修改)\n")
+		fmt.Printf("  警告    访问密钥仍是默认值，建议在 .env 中修改\n")
 	}
-	fmt.Printf("\n")
+	fmt.Println()
+}
+
+// logInitf 输出装配细节。常规启动只保留摘要，LOG_LEVEL=debug 时才展开。
+func logInitf(envCfg *config.EnvConfig, format string, args ...any) {
+	if envCfg != nil && envCfg.LogLevel == "debug" {
+		log.Printf(format, args...)
+	}
 }
 
 // watchMappingStoreMode 跟随 sensitiveData.mode 的热切换：

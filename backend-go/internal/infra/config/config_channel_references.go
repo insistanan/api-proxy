@@ -6,19 +6,27 @@ import (
 	"strings"
 )
 
-func validateAllVisionLayerConfigs(upstreams []UpstreamConfig) error {
-	for index := range upstreams {
-		if GetChannelStatus(&upstreams[index]) == ChannelStatusDeleted {
-			continue
+// validateAllVisionLayerConfigs 跨全部渠道切片校验图片理解层引用。
+// pendingKind/pendingUpstreams 表示尚未写回 cfg 的候选切片，传 nil 时完全使用 cfg。
+func validateAllVisionLayerConfigs(cfg *Config, pendingKind string, pendingUpstreams []UpstreamConfig) error {
+	for _, set := range cfg.channelSets() {
+		upstreams := *set.upstreams
+		if set.kind == pendingKind && pendingUpstreams != nil {
+			upstreams = pendingUpstreams
 		}
-		if err := validateVisionLayerConfig(upstreams, index); err != nil {
-			return fmt.Errorf("渠道 %q 配置无效: %w", upstreams[index].Name, err)
+		for index := range upstreams {
+			if GetChannelStatus(&upstreams[index]) == ChannelStatusDeleted {
+				continue
+			}
+			if err := validateVisionLayerConfig(cfg, set.kind, upstreams, index, pendingKind, pendingUpstreams); err != nil {
+				return fmt.Errorf("渠道 %q 配置无效: %w", upstreams[index].Name, err)
+			}
 		}
 	}
 	return nil
 }
 
-func validateVisionLayerConfig(upstreams []UpstreamConfig, ownerIndex int) error {
+func validateVisionLayerConfig(cfg *Config, ownerKind string, upstreams []UpstreamConfig, ownerIndex int, pendingKind string, pendingUpstreams []UpstreamConfig) error {
 	if ownerIndex < 0 || ownerIndex >= len(upstreams) {
 		return fmt.Errorf("图片理解层所属渠道索引无效: %d", ownerIndex)
 	}
@@ -36,23 +44,34 @@ func validateVisionLayerConfig(upstreams []UpstreamConfig, ownerIndex int) error
 	if targetID == "" {
 		return fmt.Errorf("启用图片理解层后必须选择图片理解渠道")
 	}
-	for targetIndex := range upstreams {
-		target := &upstreams[targetIndex]
-		if target.ID != targetID {
-			continue
+	target, ok := cfg.locateVisionChannel(targetID, pendingKind, pendingUpstreams)
+	if !ok {
+		return fmt.Errorf("图片理解渠道 %q 不存在", targetID)
+	}
+	if target.Kind == ownerKind && target.Index == ownerIndex {
+		return fmt.Errorf("图片理解渠道不能选择当前渠道自身")
+	}
+	if GetChannelStatus(&target.Upstream) == ChannelStatusDeleted {
+		return fmt.Errorf("所选渠道 %q 已删除", target.Upstream.Name)
+	}
+	if !target.Upstream.VisionCapable {
+		return fmt.Errorf("所选渠道 %q 未标记为支持图片理解", target.Upstream.Name)
+	}
+	// 只有四个会话协议内的公用纯图片理解渠道可跨协议使用。
+	if target.Kind != ownerKind {
+		if IsConversationChannelKind(ownerKind) && IsConversationChannelKind(target.Kind) && target.Upstream.ExcludeFromConversation {
+			return nil
 		}
-		if targetIndex == ownerIndex {
-			return fmt.Errorf("图片理解渠道不能选择当前渠道自身")
-		}
-		if !target.VisionCapable {
-			return fmt.Errorf("所选渠道 %q 未标记为支持图片理解", target.Name)
-		}
-		if !target.ExcludeFromConversation && target.PoolID != owner.PoolID {
-			return fmt.Errorf("图片理解渠道必须位于当前分组或公用纯图片理解池")
-		}
+		return fmt.Errorf("图片理解渠道 %q 属于其他协议，只有公用纯图片理解渠道可跨协议使用", target.Upstream.Name)
+	}
+	// 同协议内：公用纯图片理解渠道不受分组限制，其余渠道必须同分组。
+	if target.Upstream.ExcludeFromConversation {
 		return nil
 	}
-	return fmt.Errorf("图片理解渠道 %q 不存在", targetID)
+	if effectivePoolID(target.Upstream.PoolID) != effectivePoolID(owner.PoolID) {
+		return fmt.Errorf("图片理解渠道必须位于当前分组或公用纯图片理解池")
+	}
+	return nil
 }
 
 // normalizeModelMappingChannels 归一化"映射目标渠道"并量化为与 ModelMapping 一致的集合：

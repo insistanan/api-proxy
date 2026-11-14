@@ -90,6 +90,14 @@ func (cm *ConfigManager) applyConfigDataLocked(data []byte) error {
 	if err != nil {
 		return err
 	}
+	// 历史 Key 存在指标库时，用库里的注册项补齐候选（配置文件里已不含它们）。
+	// 读取失败按渠道 ID 沿用当前快照，避免把仍在使用的旧 Key 丢掉。
+	if cm.historicalKeysReady && cm.historicalKeyStore != nil {
+		if mergeErr := cm.mergeHistoricalKeysLocked(&candidate, &needSave); mergeErr != nil {
+			log.Printf("[Config-HistoricalKeys] 合并指标库历史 Key 失败，沿用当前快照: %v", mergeErr)
+			carryHistoricalKeysByID(&candidate, cm.config)
+		}
+	}
 	if needSave {
 		return cm.saveConfigLocked(candidate)
 	}
@@ -227,6 +235,11 @@ func applyConfigDefaultsTo(candidate *Config, rawJSON []byte) (bool, error) {
 	for index := range candidate.ResponsesUpstream {
 		if index >= len(fields.ResponsesUpstream) {
 			break
+		}
+		// 墓碑只落盘四个身份字段，图片能力字段必然缺失；跳过才能避免每次启动
+		// 都判定为待迁移、写回、再被墓碑序列化剥离的循环。
+		if GetChannelStatus(&candidate.ResponsesUpstream[index]) == ChannelStatusDeleted {
+			continue
 		}
 		_, capabilityConfigured := fields.ResponsesUpstream[index]["visionCapable"]
 		_, layerConfigured := fields.ResponsesUpstream[index]["visionLayerEnabled"]
@@ -553,7 +566,23 @@ func (cm *ConfigManager) saveConfigLocked(config Config) error {
 	config.CurrentUpstream = 0
 	config.CurrentResponsesUpstream = 0
 
-	data, err := json.MarshalIndent(config, "", "  ")
+	// 历史 Key 是运行时数据：指标库可用时先同步，落盘配置不再包含它们。
+	// 同步失败则回退为随配置保存，保证任何情况下都不会丢 Key。
+	persisted := config
+	stripHistoricalKeys := cm.historicalKeysReady && cm.historicalKeyStore != nil
+	if stripHistoricalKeys {
+		if err := cm.syncHistoricalKeysToStoreLocked(config); err != nil {
+			logHistoricalKeyFallback(err)
+			cm.historicalKeysReady = false
+			stripHistoricalKeys = false
+		}
+	}
+	if stripHistoricalKeys {
+		persisted = cloneConfig(config)
+		clearHistoricalKeys(&persisted)
+	}
+
+	data, err := json.MarshalIndent(persisted, "", "  ")
 	if err != nil {
 		return err
 	}

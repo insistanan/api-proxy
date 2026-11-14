@@ -138,6 +138,15 @@ func initSchema(db *sql.DB) error {
 		-- 索引：按 metrics_key 查询
 		CREATE INDEX IF NOT EXISTS idx_records_metrics_key
 			ON request_records(metrics_key);
+
+		-- 历史 API Key 注册表：换 Key 后的旧 Key 用于统计聚合，属于运行时数据
+		CREATE TABLE IF NOT EXISTS channel_historical_keys (
+			api_type TEXT NOT NULL,
+			channel_id TEXT NOT NULL,
+			api_key TEXT NOT NULL,
+			added_at INTEGER NOT NULL,
+			PRIMARY KEY (api_type, channel_id, api_key)
+		);
 	`
 
 	_, err := db.Exec(schema)

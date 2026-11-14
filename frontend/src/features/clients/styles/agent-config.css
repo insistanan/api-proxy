@@ -7,6 +7,16 @@
   container-name: client-config;
 }
 
+/* 配置页的标题与保存动作固定在顶栏下方：长表单滚动时保存入口始终可见。
+   top 用 Vuetify 注入的顶栏高度；向上投影一段背景，避免内容从容器留白处穿过。 */
+.agent-config-header {
+  position: sticky;
+  top: var(--v-layout-top, 0px);
+  z-index: 4;
+  background: rgb(var(--v-theme-background));
+  box-shadow: 0 -32px 0 0 rgb(var(--v-theme-background));
+}
+
 .agent-config-editor {
   border: 0;
   margin: 0;

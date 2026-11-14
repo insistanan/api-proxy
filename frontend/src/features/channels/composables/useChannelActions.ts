@@ -70,10 +70,10 @@ export function useChannelActions(notify: ToastFn) {
 
   const deleteChannel = async (
     channelId: number,
-    onAuthError?: (error: unknown) => void
+    onAuthError?: (error: unknown) => void,
+    tab: ApiTab = channelStore.activeTab
   ): Promise<void> => {
     if (channelStore.isSavingChannel || channelStore.isDeletingChannel) return
-    const tab = channelStore.activeTab
     if (!confirm('确定要删除这个渠道吗？')) return
 
     channelStore.isDeletingChannel = true

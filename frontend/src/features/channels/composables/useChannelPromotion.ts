@@ -22,7 +22,7 @@ export function useChannelPromotion(props: { channelType: ApiTab }, emit: Promot
   const openPromotionDialog = (channel: Channel) => {
     if (isSavingPromotion.value) return
     promotionChannel.value = { ...channel }
-    promotionChannelType.value = props.channelType
+    promotionChannelType.value = channel.kind ?? props.channelType
     promotionError.value = ''
     promotionDuration.value = 5
     promotionCount.value = 0

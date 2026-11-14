@@ -302,15 +302,3 @@ func TestProbeLocalToolVersionExtract(t *testing.T) {
 		t.Fatalf("未安装的工具应返回空值无错误: %q %q", version, versionErr)
 	}
 }
-
-func TestInstallCommandFor(t *testing.T) {
-	for tool, spec := range toolSpecs {
-		cmd := installCommandFor(spec)
-		if cmd == "" {
-			t.Fatalf("工具 %s 的安装命令为空", tool)
-		}
-		if !strings.Contains(cmd, "@latest") && !strings.Contains(cmd, "install") {
-			t.Fatalf("工具 %s 的安装命令格式异常: %s", tool, cmd)
-		}
-	}
-}

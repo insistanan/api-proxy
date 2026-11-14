@@ -94,7 +94,7 @@ func (cm *ConfigManager) AddChannel(kind string, up UpstreamConfig) (AddedUpstre
 			return AddedUpstream{}, err
 		}
 	}
-	next, result, err := addValidatedUpstreamOp(*cs.upstreams, *cs.pools, up)
+	next, result, err := addValidatedUpstreamOp(&candidate, cs, up)
 	if err != nil {
 		return AddedUpstream{}, err
 	}
@@ -128,7 +128,7 @@ func (cm *ConfigManager) UpdateChannel(kind string, index int, updates UpstreamU
 		return false, fmt.Errorf("无效的 %s 上游索引: %d", cs.name, index)
 	}
 
-	shouldReset, err := applyCommonUpdatesToList(upstreams, *cs.pools, index, updates, cs.name)
+	shouldReset, err := applyCommonUpdatesToList(&candidate, cs, index, updates)
 	if err != nil {
 		return false, err
 	}
@@ -168,6 +168,13 @@ func (cm *ConfigManager) RemoveChannel(kind string, index int) (*UpstreamConfig,
 	}
 	if err := rejectBuiltinChannel(*cs.upstreams, index); err != nil {
 		return nil, err
+	}
+	if index < 0 || index >= len(*cs.upstreams) {
+		return nil, fmt.Errorf("无效的 %s 上游索引: %d", cs.name, index)
+	}
+	removedUpstream := (*cs.upstreams)[index]
+	if referrer, ok := candidate.findVisionLayerReferrer(removedUpstream.ID, kind, index); ok {
+		return nil, fmt.Errorf("渠道 %q 正被 %q 的图片理解层使用，无法删除", removedUpstream.Name, referrer)
 	}
 	newSlice, removed, err := removeFromSlice(*cs.upstreams, index, cs.name)
 	if err != nil {

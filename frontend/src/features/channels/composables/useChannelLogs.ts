@@ -116,7 +116,7 @@ export function useChannelLogs(props: { channelType: ApiTab }) {
     channelLogs.value = []
     isLoadingLogs.value = true
     try {
-      const response = await api.getChannelLogs(props.channelType, channel.index)
+      const response = await api.getChannelLogs(channel.kind ?? props.channelType, channel.index)
       channelLogs.value = response.logs || []
     } catch (error) {
       console.error('Failed to load channel logs:', error)

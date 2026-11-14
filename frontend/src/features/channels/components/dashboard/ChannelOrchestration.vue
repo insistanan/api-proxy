@@ -3,9 +3,10 @@
     <ChannelPoolGrid
       :channels="channels"
       :channel-type="channelType"
+      :shared-vision-channels="visionChannels"
       @add-channel="$emit('addChannel', $event)"
       @edit="$emit('edit', $event)"
-      @delete="$emit('delete', $event)"
+      @delete="handlePoolDelete"
       @error="$emit('error', $event)"
       @success="$emit('success', $event)"
       @refresh="$emit('refresh')"
@@ -235,7 +236,7 @@
           :copied="copiedChannelIndex === channel.index"
           :allow-reorder="false"
           @action="runMenuAction(channel, $event)"
-          @delete="$emit('delete', channel.index)"
+          @delete="$emit('delete', channel.index, channel.kind)"
         />
       </template>
     </ChannelPoolGrid>
@@ -262,14 +263,14 @@
     <QuickTestModal
       v-model="showQuickTestModal"
       :channel="quickTestChannel"
-      :api-type="channelType"
+      :api-type="quickTestType"
     />
 
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { api, ApiError, channelApiByType, type ApiTab, type Channel, type ChannelMetrics, type ChannelStatus, type ChannelRecentActivity } from '@/api'
+import { api, ApiError, channelApiByType, type ApiTab, type Channel, type ChannelMetrics, type ChannelStatus, type ChannelRecentActivity, type VisionChannel } from '@/api'
 import { useChannelActivity } from '@/features/channels/composables/useChannelActivity'
 import { useClipboard } from '@/shared/composables/useClipboard'
 import { defineLazyChart } from '@/shared/utils/lazyChart'
@@ -303,21 +304,28 @@ const props = defineProps<{
   // 指标与活跃度由父级随 Dashboard 快照整体替换，本组件只读。
   dashboardMetrics: ChannelMetrics[]
   dashboardRecentActivity?: ChannelRecentActivity[]
+  // 四个会话协议共享的公用图片理解池，渠道自带所属协议。
+  visionChannels?: VisionChannel[]
 }>()
 
 const emit = defineEmits<{
   (_e: 'addChannel', _poolId: string): void
   (_e: 'edit', _channel: Channel): void
-  (_e: 'delete', _channelId: number): void
+  (_e: 'delete', _channelId: number, _kind?: ApiTab): void
   (_e: 'ping', _channelId: number): void
   (_e: 'refresh'): void
   (_e: 'error', _message: string): void
   (_e: 'success', _message: string): void
 }>()
 
+// 共享图片理解渠道可能来自其他协议；所有写操作必须回到渠道自身协议。
+const kindOf = (channel: Channel): ApiTab => channel.kind ?? props.channelType
+const handlePoolDelete = (channelId: number, kind?: ApiTab) => emit('delete', channelId, kind)
+
 // 快捷测试弹窗状态
 const showQuickTestModal = ref(false)
 const quickTestChannel = ref<Channel | null>(null)
+const quickTestType = ref<ApiTab>(props.channelType)
 
 const { copyText } = useClipboard()
 
@@ -349,6 +357,7 @@ const toggleChannelChart = (channelIndex: number) => {
 
 const handleQuickTest = (channel: Channel) => {
   quickTestChannel.value = channel
+  quickTestType.value = kindOf(channel)
   showQuickTestModal.value = true
 }
 
@@ -412,7 +421,7 @@ const toggleVisionCapability = async (channel: Channel) => {
   const nextValue = !channel.visionCapable
 
   try {
-    await channelApiByType(props.channelType).updateChannel(channel.index, { visionCapable: nextValue })
+    await channelApiByType(kindOf(channel)).updateChannel(channel.index, { visionCapable: nextValue })
 
     emit('refresh')
     emit('success', nextValue
@@ -425,9 +434,9 @@ const toggleVisionCapability = async (channel: Channel) => {
   }
 }
 
-const duplicateChannel = async (channelIndex: number) => {
+const duplicateChannel = async (channelIndex: number, kind: ApiTab = props.channelType) => {
   try {
-    await api.duplicateChannel(props.channelType, channelIndex)
+    await api.duplicateChannel(kind, channelIndex)
     emit('refresh')
   } catch (error) {
     console.error('Failed to duplicate channel:', error)
@@ -437,9 +446,9 @@ const duplicateChannel = async (channelIndex: number) => {
 }
 
 // 设置渠道状态
-const setChannelStatus = async (channelId: number, status: ChannelStatus) => {
+const setChannelStatus = async (channelId: number, status: ChannelStatus, kind: ApiTab = props.channelType) => {
   try {
-    await channelApiByType(props.channelType).setStatus(channelId, status)
+    await channelApiByType(kind).setStatus(channelId, status)
     emit('refresh')
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : '未知错误'
@@ -453,8 +462,8 @@ const setChannelStatus = async (channelId: number, status: ChannelStatus) => {
 }
 
 // 恢复暂停渠道与启用备用渠道是同一操作：激活接口统一重置两层熔断，避免恢复到一半的状态。
-const resumeChannel = async (channelId: number) => {
-  await setChannelStatus(channelId, 'active')
+const resumeChannel = async (channelId: number, kind: ApiTab = props.channelType) => {
+  await setChannelStatus(channelId, 'active', kind)
 }
 
 const shouldResumeChannel = (channel: Channel): boolean => {
@@ -466,31 +475,33 @@ const shouldResumeChannel = (channel: Channel): boolean => {
 
 const toggleChannelPrimaryStatus = async (channel: Channel) => {
   const currentStatus = channel.status || 'active'
+  const kind = kindOf(channel)
 
   if (shouldResumeChannel(channel)) {
-    await resumeChannel(channel.index)
+    await resumeChannel(channel.index, kind)
     return
   }
 
   if (currentStatus === 'active') {
-    await setChannelStatus(channel.index, 'suspended')
+    await setChannelStatus(channel.index, 'suspended', kind)
   }
 }
 
 const runMenuAction = (channel: Channel, action: ChannelMenuAction) => {
+  const kind = kindOf(channel)
   switch (action) {
     case 'edit': return emit('edit', channel)
-    case 'duplicate': return duplicateChannel(channel.index)
+    case 'duplicate': return duplicateChannel(channel.index, kind)
     case 'toggleVision': return toggleVisionCapability(channel)
     case 'copyConfig': return copyChannelConfig(channel)
     case 'quickTest': return handleQuickTest(channel)
     case 'ping': return emit('ping', channel.index)
     case 'logs': return openLogsDialog(channel)
     case 'promotion': return openPromotionDialog(channel)
-    case 'resume': return resumeChannel(channel.index)
-    case 'suspend': return setChannelStatus(channel.index, 'suspended')
-    case 'disable': return setChannelStatus(channel.index, 'disabled')
-    case 'deprecate': return setChannelStatus(channel.index, 'deprecated')
+    case 'resume': return resumeChannel(channel.index, kind)
+    case 'suspend': return setChannelStatus(channel.index, 'suspended', kind)
+    case 'disable': return setChannelStatus(channel.index, 'disabled', kind)
+    case 'deprecate': return setChannelStatus(channel.index, 'deprecated', kind)
   }
 }
 
@@ -525,7 +536,7 @@ const handleDeleteChannel = (channel: Channel) => {
     emit('error', '无法删除：当前渠道分组中至少需要保留一个活跃渠道')
     return
   }
-  emit('delete', channel.index)
+  emit('delete', channel.index, channel.kind)
 }
 
 onMounted(() => {

@@ -591,6 +591,11 @@ type ConfigManager struct {
 	// 仅用于 watcher 重载去重（避免自身提交触发“保存→重载→再保存”循环），
 	// 不用于输出配置原文。
 	persistedDigest string
+
+	// historicalKeyStore 保存换 Key 后仍需聚合统计的旧 Key。
+	// 未注入（指标持久化关闭）时，历史 Key 继续随配置保存。
+	historicalKeyStore  HistoricalKeyStore
+	historicalKeysReady bool
 }
 
 // ============== 核心共享方法 ==============

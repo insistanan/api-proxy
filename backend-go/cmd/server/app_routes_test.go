@@ -111,7 +111,9 @@ func TestChannelAdminRouteContract(t *testing.T) {
 		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/"+string(kind)+"/channels", nil))
 		require.Equal(t, http.StatusUnauthorized, w.Code)
 	}
-	require.Len(t, actual, len(common)*len(channelAdminKinds)+1)
+	// 公共图片理解池是四个会话协议共享的入口，独立于七个渠道前缀。
+	require.True(t, actual["GET /api/vision-channels"])
+	require.Len(t, actual, len(common)*len(channelAdminKinds)+2)
 }
 
 func TestChannelAdminProtocolIsolation(t *testing.T) {

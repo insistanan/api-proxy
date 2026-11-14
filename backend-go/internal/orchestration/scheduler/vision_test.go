@@ -23,18 +23,24 @@ func TestListVisionChannelsSeparatesPublicAndOwnerPoolsInConfigOrder(t *testing.
 			{ID: "public-suspended", Name: "public-suspended", BaseURL: "https://suspended.example.com", APIKeys: []string{"sk-suspended"}, Status: "suspended", VisionCapable: true, ExcludeFromConversation: true},
 			{ID: "public-without-key", Name: "public-without-key", BaseURL: "https://without-key.example.com", Status: "active", VisionCapable: true, ExcludeFromConversation: true},
 		},
+		ChatUpstream: []config.UpstreamConfig{
+			{ID: "chat-public", Name: "chat-public", BaseURL: "https://chat-public.example.com", APIKeys: []string{"sk-chat-public"}, Status: "active", VisionCapable: true, ExcludeFromConversation: true},
+		},
 	}
 	scheduler, cleanup := createTestScheduler(t, cfg)
 	defer cleanup()
 
-	public := scheduler.ListPublicVisionChannels(context.Background(), ChannelKindMessages, "")
-	if got, want := visionChannelIDs(public), []string{"public-first", "public-second"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("公共图片理解池渠道 = %v, want %v", got, want)
+	public := scheduler.ListPublicVisionChannels(context.Background(), "")
+	if got, want := visionChannelIDs(public), []string{"public-first", "public-second", "chat-public"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("共享公共图片理解池渠道 = %v, want %v", got, want)
 	}
 	for _, selection := range public {
 		if selection.Reason != "vision_layer_public_pool" {
 			t.Fatalf("公共图片理解池选择原因 = %q", selection.Reason)
 		}
+	}
+	if public[2].Kind != ChannelKindChat {
+		t.Fatalf("跨协议公共图片理解渠道 Kind = %q, want %q", public[2].Kind, ChannelKindChat)
 	}
 
 	ownerPool := scheduler.ListPoolVisionChannels(context.Background(), ChannelKindMessages, "", "owner")
@@ -47,8 +53,8 @@ func TestListVisionChannelsSeparatesPublicAndOwnerPoolsInConfigOrder(t *testing.
 		}
 	}
 
-	public = scheduler.ListPublicVisionChannels(context.Background(), ChannelKindMessages, "public-first")
-	if got, want := visionChannelIDs(public), []string{"public-second"}; !reflect.DeepEqual(got, want) {
+	public = scheduler.ListPublicVisionChannels(context.Background(), "public-first")
+	if got, want := visionChannelIDs(public), []string{"public-second", "chat-public"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("排除已尝试渠道后的公共图片理解池 = %v, want %v", got, want)
 	}
 }
@@ -62,8 +68,41 @@ func TestListVisionChannelsStopsForCanceledContext(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if candidates := scheduler.ListPublicVisionChannels(ctx, ChannelKindMessages, ""); len(candidates) != 0 {
+	if candidates := scheduler.ListPublicVisionChannels(ctx, ""); len(candidates) != 0 {
 		t.Fatalf("上下文取消后仍返回 %d 个图片理解渠道", len(candidates))
+	}
+}
+
+func TestSelectVisionChannelCrossesProtocolOnlyForPublicPool(t *testing.T) {
+	cfg := config.Config{
+		MessagePools: []config.ChannelPool{
+			{ID: "owner", Name: "Owner", ModelMatcher: "owner", Priority: 1},
+		},
+		Upstream: []config.UpstreamConfig{
+			{ID: "owner", Name: "owner", PoolID: "owner", BaseURL: "https://owner.example.com", APIKeys: []string{"sk-owner"}, Status: "active"},
+		},
+		ResponsesUpstream: []config.UpstreamConfig{
+			{ID: "responses-public", Name: "responses-public", BaseURL: "https://responses-public.example.com", APIKeys: []string{"sk-public"}, Status: "active", VisionCapable: true, ExcludeFromConversation: true},
+			{ID: "responses-private", Name: "responses-private", BaseURL: "https://responses-private.example.com", APIKeys: []string{"sk-private"}, Status: "active", VisionCapable: true},
+		},
+	}
+	scheduler, cleanup := createTestScheduler(t, cfg)
+	defer cleanup()
+
+	selection, err := scheduler.SelectVisionChannel(context.Background(), ChannelKindMessages, "responses-public", "owner")
+	if err != nil {
+		t.Fatalf("跨协议选择公用图片理解渠道失败: %v", err)
+	}
+	if selection.Kind != ChannelKindResponses {
+		t.Fatalf("选择结果 Kind = %q, want %q", selection.Kind, ChannelKindResponses)
+	}
+	if inFlight := scheduler.GetChannelInFlight(ChannelKindResponses, selection.ChannelIndex); inFlight != 1 {
+		t.Fatalf("跨协议图片理解渠道在途预留 = %d, want 1", inFlight)
+	}
+	selection.Permit.Release()
+
+	if _, err := scheduler.SelectVisionChannel(context.Background(), ChannelKindMessages, "responses-private", "owner"); err == nil {
+		t.Fatal("非公用图片理解渠道不应允许跨协议使用")
 	}
 }
 

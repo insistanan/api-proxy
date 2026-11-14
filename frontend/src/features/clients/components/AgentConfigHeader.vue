@@ -1,7 +1,9 @@
 <template>
-  <PageHeader :title="title" :description="description || findNavigation(route.path)?.description">
-    <slot></slot>
-  </PageHeader>
+  <div class="agent-config-header">
+    <PageHeader :title="title" :description="description || findNavigation(route.path)?.description">
+      <slot></slot>
+    </PageHeader>
+  </div>
 </template>
 
 <script setup lang="ts">

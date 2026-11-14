@@ -9,7 +9,8 @@ import type {
   GlobalStatsHistoryResponse,
   MetricsHistoryResponse,
   ModelsResponse,
-  UpstreamModelsRequest
+  UpstreamModelsRequest,
+  VisionChannelsResponse
 } from '@/types'
 import type { ApiTab, ChannelApi } from '@/features/channels/services/channel-api'
 
@@ -78,6 +79,11 @@ export const channelsApi = {
 
   async getChannelPools(type: ApiTab): Promise<{ pools: ChannelPool[] }> {
     return apiRequest(`/${type}/pools`)
+  },
+
+  // 四个会话协议共享的公用纯图片理解池，渠道自带所属协议。
+  async getVisionChannels(): Promise<VisionChannelsResponse> {
+    return apiRequest('/vision-channels')
   },
 
   async createChannelPool(

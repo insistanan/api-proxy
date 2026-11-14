@@ -57,6 +57,8 @@ export interface Channel {
   effectiveConcurrency?: { baseUrl: string; protocol: string; keyIndex: number; maxConcurrency: number }[]
   clientIdentityMode?: 'inherit' | 'api' | 'compatibility'
   id?: string
+  // 共享图片理解池返回的渠道自身协议；普通渠道接口不返回此字段。
+  kind?: ApiTab
   poolId?: string
   name: string
   serviceType: 'openai' | 'gemini' | 'claude' | 'responses' | 'chat'
@@ -126,6 +128,15 @@ export interface ChannelsResponse {
   channels: Channel[]
   current: number
   loadBalance: string
+}
+
+// 共享公用图片理解渠道：kind 表示渠道自身所属协议。
+export interface VisionChannel extends Channel {
+  kind: ApiTab
+}
+
+export interface VisionChannelsResponse {
+  channels: VisionChannel[]
 }
 
 // 模型映射"目标渠道"下拉候选项（同协议、启用、有密钥、未熔断 Open）

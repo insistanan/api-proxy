@@ -78,9 +78,10 @@
       :channel-type="channelType"
       :dashboard-metrics="channelStore.currentDashboardMetrics"
       :dashboard-recent-activity="channelStore.currentDashboardRecentActivity"
+      :vision-channels="sharedVisionChannels"
       @add-channel="openAddChannel"
       @edit="editChannel"
-      @delete="deleteChannel($event, handleAuthError)"
+      @delete="handleDeleteChannel"
       @ping="pingChannel"
       @refresh="refreshChannels"
       @error="showToast($event, 'error')"
@@ -103,7 +104,7 @@
       :channel-type="dialogStore.channelType"
       :initial-pool-id="dialogStore.initialPoolId"
       :saving="channelStore.isSavingChannel || channelStore.isDeletingChannel"
-      @save="(channel, options) => saveChannel(channel, options, handleAuthError)"
+      @save="handleSaveChannel"
     />
 
     <!-- AI 配置助手只在渠道页提供。 -->
@@ -124,12 +125,13 @@ import AddChannelModal from '@/features/channels/components/form/AddChannelModal
 import { AssistantWidget } from '@/features/assistant'
 import IntentRoutingControl from '@/features/channels/components/routing/IntentRoutingControl.vue'
 import { isIntentProtocol } from '@/features/channels/services/intent'
+import { isConversationProtocol } from '@/features/channels/services/channel-api'
 import { useChannelActions } from '@/features/channels/composables/useChannelActions'
 import { useCountUp } from '@/shared/composables/useCountUp'
 import { useRoutingModes } from '@/features/channels/composables/useRoutingModes'
 import { useToast } from '@/shared/composables/useToast'
 import { findNavigation } from '@/router/navigation'
-import type { Channel } from '@/api'
+import type { ApiTab, Channel } from '@/api'
 import { useChannelStore } from '@/features/channels/stores/channel'
 import { useDialogStore } from '@/features/channels/stores/dialog'
 import { usePreferencesStore } from '@/shared/stores/preferences'
@@ -157,6 +159,8 @@ const channelType = computed(() => channelStore.activeTab)
 const intentProtocol = computed(() => isIntentProtocol(channelType.value) ? channelType.value : null)
 const navigation = computed(() => findNavigation(`/channels/${channelType.value}`))
 const channels = computed(() => channelStore.currentChannelsData.channels)
+// 公用图片理解池只服务于四个会话协议，透传协议页不展示。
+const sharedVisionChannels = computed(() => isConversationProtocol(channelType.value) ? channelStore.visionChannels : [])
 
 // 数据刷新时数字平滑过渡，而非硬跳变。
 const { displayValue: totalChannelsDisplay } = useCountUp(computed(() => channels.value.length))
@@ -169,10 +173,33 @@ const serviceStatus = computed(() => {
 
 // 渠道写操作由 useChannelActions 编排（R5，方案 8.1）；已提交但收尾失败时由它提示刷新（R3）。
 const { refreshChannels: refreshAction, saveChannel, deleteChannel, pingChannel, pingAllChannels } = useChannelActions(showToast)
-const refreshChannels = () => refreshAction(handleAuthError)
+
+// 公用图片理解池跨协议共享；任何渠道写入都可能改变它，刷新时机跟随渠道列表。
+const refreshVisionChannelPool = async () => {
+  try {
+    await channelStore.refreshVisionChannels()
+  } catch (error) {
+    handleAuthError(error)
+  }
+}
+const refreshChannels = async () => {
+  await refreshAction(handleAuthError)
+  await refreshVisionChannelPool()
+}
 
 const openAddChannel = (poolId = 'default') => dialogStore.openAddChannelModal(channelType.value, poolId)
-const editChannel = (channel: Channel) => dialogStore.openEditChannelModal(channel, channelType.value)
+const editChannel = (channel: Channel) => dialogStore.openEditChannelModal(channel, channel.kind ?? channelType.value)
+const handleSaveChannel = async (
+  channel: Omit<Channel, 'id' | 'index' | 'latency'>,
+  options?: { isQuickAdd?: boolean }
+) => {
+  await saveChannel(channel, options, handleAuthError)
+  await refreshVisionChannelPool()
+}
+const handleDeleteChannel = async (channelId: number, kind?: ApiTab) => {
+  await deleteChannel(channelId, handleAuthError, kind)
+  await refreshVisionChannelPool()
+}
 
 const routing = useRoutingModes(showToast)
 const modes = computed(() => [

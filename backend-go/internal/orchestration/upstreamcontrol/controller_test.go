@@ -152,9 +152,12 @@ func TestRaisedLimitWakesQueueWithoutRelease(t *testing.T) {
 	result.lease.Release()
 }
 
-func TestQueueHasAbsoluteTenSecondTimeout(t *testing.T) {
+func TestQueueTimeoutReturnsErrQueueTimeout(t *testing.T) {
+	// 生产上限固定 10 秒；测试注入毫秒级值来验证超时路径，避免让整套测试空等。
+	require.Equal(t, 10*time.Second, QueueTimeout)
 	id := NewIdentity("https://example.com", "openai", "test-key")
 	c := NewController()
+	c.queueTimeout = 20 * time.Millisecond
 	c.Reconcile(map[Identity]int{id: 1})
 	first, _, err := c.Acquire(context.Background(), id)
 	require.NoError(t, err)
@@ -162,8 +165,8 @@ func TestQueueHasAbsoluteTenSecondTimeout(t *testing.T) {
 	started := time.Now()
 	_, waited, err := c.Acquire(context.Background(), id)
 	require.ErrorIs(t, err, ErrQueueTimeout)
-	require.GreaterOrEqual(t, waited, 10*time.Second)
-	require.Less(t, time.Since(started), 12*time.Second)
+	require.GreaterOrEqual(t, waited, 20*time.Millisecond)
+	require.Less(t, time.Since(started), time.Second)
 	awaitQueue(t, c, id, 0)
 }
 

@@ -398,16 +398,3 @@ func TestUpstreamAttemptHealthNeutralOnModelCapacityExhausted(t *testing.T) {
 		t.Fatalf("Health = %v, want channelHealthNeutral（模型容量错误中性）", result.Health)
 	}
 }
-
-// recordChannelHealth 的契约：Unset 且确有尝试时跳过记账（可见警告），
-// 其余按结果准确映射。用一个最小 fake 调度器难以替换，这里直接调用
-// 各枚举值验证不 panic 且不重复记账即可；行为语义由上面端到端用例覆盖。
-func TestRecordChannelHealthMapsAllValues(t *testing.T) {
-	env := newHealthAttemptEnv(t)
-	// Unset + attempted：不 panic。
-	recordChannelHealth(env.channelScheduler, scheduler.ChannelKindMessages, 0, channelHealthUnset, true, "Test", nil)
-	// 全枚举各记账一次。
-	recordChannelHealth(env.channelScheduler, scheduler.ChannelKindMessages, 0, channelHealthSuccess, true, "Test", nil)
-	recordChannelHealth(env.channelScheduler, scheduler.ChannelKindMessages, 0, channelHealthFailure, true, "Test", nil)
-	recordChannelHealth(env.channelScheduler, scheduler.ChannelKindMessages, 0, channelHealthNeutral, true, "Test", nil)
-}

@@ -19,6 +19,12 @@ import type {
 export const API_TABS = ['messages', 'responses', 'gemini', 'chat', 'images', 'embeddings', 'decisions'] as const satisfies readonly ApiTab[]
 export type { ApiTab } from '@/types'
 
+/** 各渠道协议的展示名，供跨协议渠道列表标注来源。 */
+export const API_TAB_LABELS: Record<ApiTab, string> = {
+  messages: 'Messages', responses: 'Responses', gemini: 'Gemini', chat: 'Chat',
+  images: 'Images', embeddings: 'Embeddings', decisions: 'Decisions'
+}
+
 /**
  * 对话类入口协议：具备会话语义，支持图片理解与对话缓存等特性。
  * Embeddings / Decisions 为纯透传，不属于此类。与 intent.ts 的 INTENT_PROTOCOLS 语义不同，

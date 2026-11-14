@@ -82,12 +82,12 @@ run: copy-frontend
 # 运行测试
 test:
 	@echo "$(GREEN)🧪 运行测试...$(NC)"
-	@go test -v ./...
+	@go test ./...
 
 # 运行测试并生成覆盖率报告
 test-cover:
 	@echo "$(GREEN)🧪 运行测试并生成覆盖率...$(NC)"
-	@go test -v -cover -coverprofile=coverage.out ./...
+	@go test -cover -coverprofile=coverage.out ./...
 	@go tool cover -html=coverage.out -o coverage.html
 	@echo "$(GREEN)✅ 覆盖率报告已生成: coverage.html$(NC)"
 

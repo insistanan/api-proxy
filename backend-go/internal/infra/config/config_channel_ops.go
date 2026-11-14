@@ -248,16 +248,16 @@ func addUpstreamOp(upstreams []UpstreamConfig, upstream UpstreamConfig) ([]Upstr
 	return upstreams, AddedUpstream{ID: upstream.ID, Index: len(upstreams) - 1}
 }
 
-func addValidatedUpstreamOp(upstreams []UpstreamConfig, pools []ChannelPool, upstream UpstreamConfig) ([]UpstreamConfig, AddedUpstream, error) {
-	candidate := cloneUpstreamList(upstreams)
+func addValidatedUpstreamOp(cfg *Config, cs *channelSet, upstream UpstreamConfig) ([]UpstreamConfig, AddedUpstream, error) {
+	candidate := cloneUpstreamList(*cs.upstreams)
 	candidate, result := addUpstreamOp(candidate, upstream)
-	if err := ValidateChannelPoolAssignment(pools, candidate[result.Index].PoolID); err != nil {
+	if err := ValidateChannelPoolAssignment(*cs.pools, candidate[result.Index].PoolID); err != nil {
 		return nil, AddedUpstream{}, err
 	}
 	if err := validateUpstreamProxyConfig(&candidate[result.Index]); err != nil {
 		return nil, AddedUpstream{}, err
 	}
-	if err := validateAllVisionLayerConfigs(candidate); err != nil {
+	if err := validateAllVisionLayerConfigs(cfg, cs.kind, candidate); err != nil {
 		return nil, AddedUpstream{}, err
 	}
 	if err := validateAllModelMappingChannels(candidate); err != nil {

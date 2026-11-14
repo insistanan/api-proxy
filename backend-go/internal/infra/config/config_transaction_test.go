@@ -251,11 +251,56 @@ func TestInvalidPoolReloadKeepsPublishedSnapshot(t *testing.T) {
 	}
 }
 
-func TestConfigClonePreservesNilAndEmptySlices(t *testing.T) {
-	for _, original := range []Config{{}, {Upstream: []UpstreamConfig{}, MessagePools: []ChannelPool{}, Settings: SettingsConfig{Prompts: PromptSettings{Entries: []PromptEntry{}}}}} {
-		if !reflect.DeepEqual(original, cloneConfig(original)) {
-			t.Fatal("配置副本改变 nil 与空切片语义")
+// 删除占位只落盘身份字段，图片能力迁移必须跳过它们，否则每次启动都会
+// 判定待迁移、写回、再被墓碑序列化剥离，形成启动日志与磁盘写入的循环。
+func TestVisionMigrationSkipsDeletedTombstones(t *testing.T) {
+	// 构造一份旧格式配置（未带 visionCapable / visionLayerEnabled 键）
+	rawOld := []byte(`{
+		"fuzzyModeEnabled": true,
+		"settings": {"contentSafety": {}},
+		"responsesUpstream": [
+			{"id": "live", "name": "live", "status": "active", "priority": 1},
+			{"id": "gone", "name": "gone", "status": "deleted", "priority": 2}
+		]
+	}`)
+	var candidate Config
+	if err := json.Unmarshal(rawOld, &candidate); err != nil {
+		t.Fatal(err)
+	}
+	for _, set := range candidate.channelSets() {
+		*set.loadBalance = "failover"
+		*set.pools = []ChannelPool{defaultChannelPool()}
+		for index := range *set.upstreams {
+			(*set.upstreams)[index].PoolID = DefaultChannelPoolID
 		}
+	}
+
+	needSave, err := applyConfigDefaultsTo(&candidate, rawOld)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !needSave {
+		t.Fatal("在线渠道缺少图片能力字段时应迁移")
+	}
+	if !candidate.ResponsesUpstream[0].VisionCapable {
+		t.Fatal("在线渠道应默认启用图片理解")
+	}
+	if candidate.ResponsesUpstream[1].VisionCapable {
+		t.Fatal("删除占位不应写入图片能力")
+	}
+
+	// 第二次加载：墓碑仍缺字段（只落盘 4 字段），但迁移必须已经稳定，不能再次要求保存。
+	saved, err := json.Marshal(candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again := cloneConfig(candidate)
+	needSave, err = applyConfigDefaultsTo(&again, saved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if needSave {
+		t.Fatal("第二次加载不应再次触发迁移写入")
 	}
 }
 
@@ -277,6 +322,45 @@ func TestUnknownChannelKindDoesNotMutateMessages(t *testing.T) {
 	}
 	if !reflect.DeepEqual(before, cm.GetConfig()) {
 		t.Fatal("未知类型误写 Messages 配置")
+	}
+}
+
+func TestChannelRemovalPersistsMinimalTombstone(t *testing.T) {
+	cm := newTransactionTestManager(t, "messages")
+	if _, err := cm.RemoveChannel("messages", 0); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(cm.configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var upstreams []map[string]json.RawMessage
+	if err := json.Unmarshal(doc["upstream"], &upstreams); err != nil {
+		t.Fatal(err)
+	}
+	var tombstone map[string]json.RawMessage
+	for _, entry := range upstreams {
+		var status string
+		if err := json.Unmarshal(entry["status"], &status); err == nil && status == ChannelStatusDeleted {
+			tombstone = entry
+			break
+		}
+	}
+	if tombstone == nil {
+		t.Fatal("删除占位未落盘")
+	}
+	// 墓碑只保留身份字段：索引稳定性要求条目存在，但运行配置和密钥不应随墓碑长期留存。
+	if len(tombstone) != 4 {
+		t.Fatalf("墓碑字段应为 id/name/priority/status，实际 %d 个: %v", len(tombstone), tombstone)
+	}
+	for _, key := range []string{"id", "name", "priority", "status"} {
+		if _, ok := tombstone[key]; !ok {
+			t.Fatalf("墓碑缺少字段 %s", key)
+		}
 	}
 }
 

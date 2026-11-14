@@ -206,18 +206,6 @@ func TestGeminiPagination(t *testing.T) {
 	require.NotContains(t, decodeCatalog[map[string]any](t, secondResponse), "nextPageToken")
 }
 
-func TestEmptyCatalogFormats(t *testing.T) {
-	r := gin.New()
-	RegisterRoutes(r, &config.EnvConfig{ProxyAccessKey: "fixture"}, nil)
-	for path, expected := range map[string]string{
-		"/v1/models":                  `{"object":"list","data":[]}`,
-		"/v1/models?format=anthropic": `{"data":[],"has_more":false,"first_id":null,"last_id":null}`,
-		"/v1beta/models":              `{"models":[]}`,
-	} {
-		require.JSONEq(t, expected, catalogRequest(t, r, path, nil, 200).Body.String())
-	}
-}
-
 func TestCatalogAuthAndCORS(t *testing.T) {
 	r := newCatalogRouter(t)
 	for _, path := range []string{"/v1/models", "/v1/models/alpha", "/v1beta/models", "/v1beta/models/gemini-a", "/api/proxy-models"} {

@@ -344,7 +344,7 @@ func (cm *ConfigManager) SaveChannelPoolLayout(kind string, layout []ChannelPool
 		}
 	}
 
-	if err := validateAllVisionLayerConfigs(upstreams); err != nil {
+	if err := validateAllVisionLayerConfigs(&candidate, kind, upstreams); err != nil {
 		return err
 	}
 	return cm.saveConfigLocked(candidate)

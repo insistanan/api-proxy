@@ -216,12 +216,15 @@ func TestValidateAllVisionLayerConfigsChecksDependents(t *testing.T) {
 		},
 	}
 
-	if err := validateAllVisionLayerConfigs(upstreams); err == nil {
+	cfg := Config{Upstream: upstreams}
+
+	if err := validateAllVisionLayerConfigs(&cfg, "messages", cfg.Upstream); err == nil {
 		t.Fatal("validateAllVisionLayerConfigs() error = nil")
 	}
 
 	upstreams[1].ExcludeFromConversation = true
-	if err := validateAllVisionLayerConfigs(upstreams); err != nil {
+	cfg.Upstream = upstreams
+	if err := validateAllVisionLayerConfigs(&cfg, "messages", cfg.Upstream); err != nil {
 		t.Fatalf("public vision channel should be valid: %v", err)
 	}
 }

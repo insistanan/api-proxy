@@ -107,7 +107,7 @@ func PrepareRequest(
 			continue
 		}
 
-		cacheKey := buildImageCacheKey(fingerprint, kind, visionModelInput)
+		cacheKey := buildImageCacheKey(fingerprint, visionModelInput)
 		result, ok, err := loadCache(channelScheduler, conversationID, cacheKey)
 		if err != nil {
 			return wrapRequestError(http.StatusInternalServerError, "VISION_LAYER_CACHE_ERROR", fmt.Errorf("读取图片理解缓存失败: %w", err))
@@ -249,7 +249,7 @@ func describeImages(
 	if visionChannelID != "" {
 		selection, err := channelScheduler.SelectVisionChannel(requestContext, kind, visionChannelID, targetPoolID)
 		if err == nil {
-			result, failCount, attemptErr := describeImagesOnChannel(c, envCfg, cfgManager, channelScheduler, kind, selection, visionModelInput, profile, images, 2)
+			result, failCount, attemptErr := describeImagesOnChannel(c, envCfg, cfgManager, channelScheduler, selection, visionModelInput, profile, images, 2)
 			if selection.Permit != nil {
 				// 图片理解旁路结束：中性释放（旁路结果不计入目标渠道健康度）。
 				selection.Permit.Release()
@@ -274,7 +274,7 @@ func describeImages(
 	// 公共池优先；全部可重试失败后，再尝试文本渠道所在分组。
 	stages := []func() []*scheduler.SelectionResult{
 		func() []*scheduler.SelectionResult {
-			return channelScheduler.ListPublicVisionChannels(requestContext, kind, visionChannelID)
+			return channelScheduler.ListPublicVisionChannels(requestContext, visionChannelID)
 		},
 		func() []*scheduler.SelectionResult {
 			return channelScheduler.ListPoolVisionChannels(requestContext, kind, visionChannelID, targetPoolID)
@@ -291,10 +291,10 @@ func describeImages(
 			}
 			// 列表接口只负责筛选候选；真正开始尝试时才预留 in-flight，
 			// 避免把尚未尝试的后备渠道也算入负载，并让并发请求看到当前尝试。
-			candidate.Kind = kind
-			channelScheduler.ReserveChannel(kind, candidate.ChannelIndex)
-			candidate.Permit = channelScheduler.NewReservationPermit(kind, candidate.ChannelIndex)
-			result, failCount, err := describeImagesOnChannel(c, envCfg, cfgManager, channelScheduler, kind, candidate, visionModelInput, profile, images, 2)
+			channelKind := candidate.Kind
+			channelScheduler.ReserveChannel(channelKind, candidate.ChannelIndex)
+			candidate.Permit = channelScheduler.NewReservationPermit(channelKind, candidate.ChannelIndex)
+			result, failCount, err := describeImagesOnChannel(c, envCfg, cfgManager, channelScheduler, candidate, visionModelInput, profile, images, 2)
 			if candidate.Permit != nil {
 				// 图片理解旁路结束：中性释放（旁路结果不计入渠道健康度）。
 				candidate.Permit.Release()
@@ -324,7 +324,6 @@ func describeImagesOnChannel(
 	envCfg *config.EnvConfig,
 	cfgManager *config.ConfigManager,
 	channelScheduler *scheduler.ChannelScheduler,
-	kind scheduler.ChannelKind,
 	selection *scheduler.SelectionResult,
 	visionModelInput string,
 	profile visionAnalysisProfile,
@@ -332,6 +331,9 @@ func describeImagesOnChannel(
 	maxFailures int,
 ) (map[string]string, int, error) {
 	upstream := selection.Upstream
+	// 图片理解渠道可能来自其他会话协议；指标、熔断、URL 健康与日志
+	// 必须使用渠道自身所属的 kind，而不是入口协议。
+	channelKind := selection.Kind
 	provider := providers.GetProvider(upstream.ServiceType)
 	if provider == nil {
 		return nil, 0, fmt.Errorf("图片理解渠道 %q 的服务类型 %q 不受支持", upstream.Name, upstream.ServiceType)
@@ -358,7 +360,7 @@ func describeImagesOnChannel(
 
 	visionRequestID := fmt.Sprintf("vision-%d", atomic.AddUint64(&visionCallCounter, 1))
 	failedKeys := make(map[string]bool)
-	urlResults := channelScheduler.GetSortedURLsForChannel(kind, selection.ChannelIndex, upstream.GetAllBaseURLs())
+	urlResults := channelScheduler.GetSortedURLsForChannel(channelKind, selection.ChannelIndex, upstream.GetAllBaseURLs())
 	var lastErr error
 	failCount := 0
 
@@ -370,7 +372,7 @@ func describeImagesOnChannel(
 				lastErr = keyErr
 				break
 			}
-			if channelScheduler.ShouldSuspendKey(baseURL, apiKey, selection.ChannelIndex, kind) {
+			if channelScheduler.ShouldSuspendKey(baseURL, apiKey, selection.ChannelIndex, channelKind) {
 				failedKeys[apiKey] = true
 				continue
 			}
@@ -383,7 +385,7 @@ func describeImagesOnChannel(
 				lastErr = requestErr
 				failedKeys[apiKey] = true
 				failCount++
-				recordVisionAttempt(channelScheduler, kind, selection, upstream, visionRequestID, visionModel, baseURL, apiKey, "failed", 0, false, attemptStart, "build_request", requestErr.Error(), attempt > 0, nil)
+				recordVisionAttempt(channelScheduler, selection, upstream, visionRequestID, visionModel, baseURL, apiKey, "failed", 0, false, attemptStart, "build_request", requestErr.Error(), attempt > 0, nil)
 				if failCount >= maxFailures {
 					return nil, failCount, lastErr
 				}
@@ -391,24 +393,24 @@ func describeImagesOnChannel(
 			}
 
 			timeout := time.Duration(envCfg.Current().RequestTimeout) * time.Millisecond
-			channelScheduler.RecordRequestStart(baseURL, apiKey, selection.ChannelIndex, kind)
-			metricsRequestID := channelScheduler.RecordRequestConnected(baseURL, apiKey, visionModel, selection.ChannelIndex, kind)
+			channelScheduler.RecordRequestStart(baseURL, apiKey, selection.ChannelIndex, channelKind)
+			metricsRequestID := channelScheduler.RecordRequestConnected(baseURL, apiKey, visionModel, selection.ChannelIndex, channelKind)
 			response, requestErr := httpclient.SendForUpstream(request, timeout, cfgManager, upstreamCopy, apiKey)
 			if requestErr != nil {
 				if c.Request.Context().Err() != nil || upstreamcontrol.IsLocalError(requestErr) {
-					channelScheduler.MetricsManager(kind).RecordRequestFinalizeNeutral(baseURL, apiKey, selection.ChannelIndex, metricsRequestID)
-					channelScheduler.RecordRequestEnd(baseURL, apiKey, selection.ChannelIndex, kind)
-					recordVisionAttempt(channelScheduler, kind, selection, upstream, visionRequestID, visionModel, baseURL, apiKey, "cancelled", 0, false, attemptStart, "local_admission", requestErr.Error(), false, nil)
+					channelScheduler.MetricsManager(channelKind).RecordRequestFinalizeNeutral(baseURL, apiKey, selection.ChannelIndex, metricsRequestID)
+					channelScheduler.RecordRequestEnd(baseURL, apiKey, selection.ChannelIndex, channelKind)
+					recordVisionAttempt(channelScheduler, selection, upstream, visionRequestID, visionModel, baseURL, apiKey, "cancelled", 0, false, attemptStart, "local_admission", requestErr.Error(), false, nil)
 					return nil, failCount, requestErr
 				}
-				channelScheduler.RecordRequestFinalizeFailure(baseURL, apiKey, selection.ChannelIndex, metricsRequestID, kind)
-				channelScheduler.RecordRequestEnd(baseURL, apiKey, selection.ChannelIndex, kind)
-				channelScheduler.MarkURLFailure(kind, selection.ChannelIndex, baseURL)
+				channelScheduler.RecordRequestFinalizeFailure(baseURL, apiKey, selection.ChannelIndex, metricsRequestID, channelKind)
+				channelScheduler.RecordRequestEnd(baseURL, apiKey, selection.ChannelIndex, channelKind)
+				channelScheduler.MarkURLFailure(channelKind, selection.ChannelIndex, baseURL)
 				cfgManager.MarkKeyAsFailed(apiKey, "VisionLayer")
 				failedKeys[apiKey] = true
 				lastErr = requestErr
 				failCount++
-				recordVisionAttempt(channelScheduler, kind, selection, upstream, visionRequestID, visionModel, baseURL, apiKey, "failed", 0, false, attemptStart, "network", requestErr.Error(), attempt > 0, nil)
+				recordVisionAttempt(channelScheduler, selection, upstream, visionRequestID, visionModel, baseURL, apiKey, "failed", 0, false, attemptStart, "network", requestErr.Error(), attempt > 0, nil)
 				if failCount >= maxFailures {
 					return nil, failCount, lastErr
 				}
@@ -418,20 +420,20 @@ func describeImagesOnChannel(
 			body, readErr := io.ReadAll(response.Body)
 			response.Body.Close()
 			if cancelErr := c.Request.Context().Err(); cancelErr != nil {
-				channelScheduler.MetricsManager(kind).RecordRequestFinalizeNeutral(baseURL, apiKey, selection.ChannelIndex, metricsRequestID)
-				channelScheduler.RecordRequestEnd(baseURL, apiKey, selection.ChannelIndex, kind)
-				recordVisionAttempt(channelScheduler, kind, selection, upstream, visionRequestID, visionModel, baseURL, apiKey, "cancelled", response.StatusCode, false, attemptStart, "client_cancelled", cancelErr.Error(), false, nil)
+				channelScheduler.MetricsManager(channelKind).RecordRequestFinalizeNeutral(baseURL, apiKey, selection.ChannelIndex, metricsRequestID)
+				channelScheduler.RecordRequestEnd(baseURL, apiKey, selection.ChannelIndex, channelKind)
+				recordVisionAttempt(channelScheduler, selection, upstream, visionRequestID, visionModel, baseURL, apiKey, "cancelled", response.StatusCode, false, attemptStart, "client_cancelled", cancelErr.Error(), false, nil)
 				return nil, failCount, cancelErr
 			}
 			if readErr != nil {
-				channelScheduler.RecordRequestFinalizeFailure(baseURL, apiKey, selection.ChannelIndex, metricsRequestID, kind)
-				channelScheduler.RecordRequestEnd(baseURL, apiKey, selection.ChannelIndex, kind)
-				channelScheduler.MarkURLFailure(kind, selection.ChannelIndex, baseURL)
+				channelScheduler.RecordRequestFinalizeFailure(baseURL, apiKey, selection.ChannelIndex, metricsRequestID, channelKind)
+				channelScheduler.RecordRequestEnd(baseURL, apiKey, selection.ChannelIndex, channelKind)
+				channelScheduler.MarkURLFailure(channelKind, selection.ChannelIndex, baseURL)
 				cfgManager.MarkKeyAsFailed(apiKey, "VisionLayer")
 				failedKeys[apiKey] = true
 				lastErr = readErr
 				failCount++
-				recordVisionAttempt(channelScheduler, kind, selection, upstream, visionRequestID, visionModel, baseURL, apiKey, "failed", response.StatusCode, false, attemptStart, "read_response", readErr.Error(), attempt > 0, nil)
+				recordVisionAttempt(channelScheduler, selection, upstream, visionRequestID, visionModel, baseURL, apiKey, "failed", response.StatusCode, false, attemptStart, "read_response", readErr.Error(), attempt > 0, nil)
 				if failCount >= maxFailures {
 					return nil, failCount, lastErr
 				}
@@ -440,15 +442,15 @@ func describeImagesOnChannel(
 			body = codec.DecompressGzipIfNeeded(response, body)
 			if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 				if response.StatusCode == http.StatusTooManyRequests {
-					channelScheduler.MetricsManager(kind).RecordRequestFinalizeNeutral(baseURL, apiKey, selection.ChannelIndex, metricsRequestID)
-					channelScheduler.RecordRequestEnd(baseURL, apiKey, selection.ChannelIndex, kind)
+					channelScheduler.MetricsManager(channelKind).RecordRequestFinalizeNeutral(baseURL, apiKey, selection.ChannelIndex, metricsRequestID)
+					channelScheduler.RecordRequestEnd(baseURL, apiKey, selection.ChannelIndex, channelKind)
 					lastErr = fmt.Errorf("图片理解渠道 %q 收到 429，上游组合已按 Retry-After 冷却", upstream.Name)
-					recordVisionAttempt(channelScheduler, kind, selection, upstream, visionRequestID, visionModel, baseURL, apiKey, "failed", response.StatusCode, false, attemptStart, "rate_limit", lastErr.Error(), false, nil)
+					recordVisionAttempt(channelScheduler, selection, upstream, visionRequestID, visionModel, baseURL, apiKey, "failed", response.StatusCode, false, attemptStart, "rate_limit", lastErr.Error(), false, nil)
 					return nil, maxFailures, lastErr
 				}
-				channelScheduler.RecordRequestFinalizeFailure(baseURL, apiKey, selection.ChannelIndex, metricsRequestID, kind)
-				channelScheduler.RecordRequestEnd(baseURL, apiKey, selection.ChannelIndex, kind)
-				channelScheduler.MarkURLFailure(kind, selection.ChannelIndex, baseURL)
+				channelScheduler.RecordRequestFinalizeFailure(baseURL, apiKey, selection.ChannelIndex, metricsRequestID, channelKind)
+				channelScheduler.RecordRequestEnd(baseURL, apiKey, selection.ChannelIndex, channelKind)
+				channelScheduler.MarkURLFailure(channelKind, selection.ChannelIndex, baseURL)
 				lastErr = fmt.Errorf("图片理解渠道 %q 返回 HTTP %d（协议=%s，模型=%s，URL=%s）: %s",
 					upstream.Name, response.StatusCode, upstream.ServiceType, visionModel, baseURL, truncateErrorBody(body))
 				retry := shouldRetryVisionAttempt(response.StatusCode, body)
@@ -456,7 +458,7 @@ func describeImagesOnChannel(
 					cfgManager.MarkKeyAsFailed(apiKey, "VisionLayer")
 					failedKeys[apiKey] = true
 				}
-				recordVisionAttempt(channelScheduler, kind, selection, upstream, visionRequestID, visionModel, baseURL, apiKey, "failed", response.StatusCode, false, attemptStart, "upstream", lastErr.Error(), attempt > 0, nil)
+				recordVisionAttempt(channelScheduler, selection, upstream, visionRequestID, visionModel, baseURL, apiKey, "failed", response.StatusCode, false, attemptStart, "upstream", lastErr.Error(), attempt > 0, nil)
 				if retry {
 					failCount++
 					if failCount >= maxFailures {
@@ -473,34 +475,34 @@ func describeImagesOnChannel(
 				Body:       body,
 			})
 			if convertErr != nil {
-				channelScheduler.RecordRequestFinalizeFailure(baseURL, apiKey, selection.ChannelIndex, metricsRequestID, kind)
-				channelScheduler.RecordRequestEnd(baseURL, apiKey, selection.ChannelIndex, kind)
-				channelScheduler.MarkURLFailure(kind, selection.ChannelIndex, baseURL)
+				channelScheduler.RecordRequestFinalizeFailure(baseURL, apiKey, selection.ChannelIndex, metricsRequestID, channelKind)
+				channelScheduler.RecordRequestEnd(baseURL, apiKey, selection.ChannelIndex, channelKind)
+				channelScheduler.MarkURLFailure(channelKind, selection.ChannelIndex, baseURL)
 				lastErr = fmt.Errorf("解析图片理解响应失败: %w", convertErr)
-				recordVisionAttempt(channelScheduler, kind, selection, upstream, visionRequestID, visionModel, baseURL, apiKey, "failed", response.StatusCode, false, attemptStart, "response_processing", lastErr.Error(), attempt > 0, nil)
+				recordVisionAttempt(channelScheduler, selection, upstream, visionRequestID, visionModel, baseURL, apiKey, "failed", response.StatusCode, false, attemptStart, "response_processing", lastErr.Error(), attempt > 0, nil)
 				return nil, failCount, lastErr
 			}
 			rawResult := extractResponseText(claudeResponse)
 			if rawResult == "" {
-				channelScheduler.RecordRequestFinalizeFailure(baseURL, apiKey, selection.ChannelIndex, metricsRequestID, kind)
-				channelScheduler.RecordRequestEnd(baseURL, apiKey, selection.ChannelIndex, kind)
+				channelScheduler.RecordRequestFinalizeFailure(baseURL, apiKey, selection.ChannelIndex, metricsRequestID, channelKind)
+				channelScheduler.RecordRequestEnd(baseURL, apiKey, selection.ChannelIndex, channelKind)
 				lastErr = fmt.Errorf("图片理解渠道 %q 未返回文字结果", upstream.Name)
-				recordVisionAttempt(channelScheduler, kind, selection, upstream, visionRequestID, visionModel, baseURL, apiKey, "failed", response.StatusCode, false, attemptStart, "empty_response", lastErr.Error(), attempt > 0, nil)
+				recordVisionAttempt(channelScheduler, selection, upstream, visionRequestID, visionModel, baseURL, apiKey, "failed", response.StatusCode, false, attemptStart, "empty_response", lastErr.Error(), attempt > 0, nil)
 				return nil, failCount, lastErr
 			}
 			result, parseErr := parseVisionBatchResponse(rawResult, images)
 			if parseErr != nil {
-				channelScheduler.RecordRequestFinalizeFailure(baseURL, apiKey, selection.ChannelIndex, metricsRequestID, kind)
-				channelScheduler.RecordRequestEnd(baseURL, apiKey, selection.ChannelIndex, kind)
+				channelScheduler.RecordRequestFinalizeFailure(baseURL, apiKey, selection.ChannelIndex, metricsRequestID, channelKind)
+				channelScheduler.RecordRequestEnd(baseURL, apiKey, selection.ChannelIndex, channelKind)
 				lastErr = fmt.Errorf("图片理解渠道 %q 返回的多图结果无效: %w", upstream.Name, parseErr)
-				recordVisionAttempt(channelScheduler, kind, selection, upstream, visionRequestID, visionModel, baseURL, apiKey, "failed", response.StatusCode, false, attemptStart, "invalid_batch_response", lastErr.Error(), attempt > 0, nil)
+				recordVisionAttempt(channelScheduler, selection, upstream, visionRequestID, visionModel, baseURL, apiKey, "failed", response.StatusCode, false, attemptStart, "invalid_batch_response", lastErr.Error(), attempt > 0, nil)
 				return nil, failCount, lastErr
 			}
 
-			channelScheduler.RecordRequestFinalizeSuccess(baseURL, apiKey, selection.ChannelIndex, metricsRequestID, claudeResponse.Usage, kind)
-			channelScheduler.RecordRequestEnd(baseURL, apiKey, selection.ChannelIndex, kind)
-			channelScheduler.MarkURLSuccess(kind, selection.ChannelIndex, baseURL)
-			recordVisionAttempt(channelScheduler, kind, selection, upstream, visionRequestID, visionModel, baseURL, apiKey, "completed", response.StatusCode, true, attemptStart, "", "", attempt > 0, claudeResponse.Usage)
+			channelScheduler.RecordRequestFinalizeSuccess(baseURL, apiKey, selection.ChannelIndex, metricsRequestID, claudeResponse.Usage, channelKind)
+			channelScheduler.RecordRequestEnd(baseURL, apiKey, selection.ChannelIndex, channelKind)
+			channelScheduler.MarkURLSuccess(channelKind, selection.ChannelIndex, baseURL)
+			recordVisionAttempt(channelScheduler, selection, upstream, visionRequestID, visionModel, baseURL, apiKey, "completed", response.StatusCode, true, attemptStart, "", "", attempt > 0, claudeResponse.Usage)
 			return result, failCount, nil
 		}
 	}
@@ -578,7 +580,6 @@ func shouldRetryVisionAttempt(statusCode int, bodyBytes []byte) bool {
 
 func recordVisionAttempt(
 	channelScheduler *scheduler.ChannelScheduler,
-	kind scheduler.ChannelKind,
 	selection *scheduler.SelectionResult,
 	upstream *config.UpstreamConfig,
 	requestID string,
@@ -597,7 +598,8 @@ func recordVisionAttempt(
 	if channelScheduler == nil || selection == nil || upstream == nil {
 		return
 	}
-	store := channelScheduler.GetChannelLogStore(kind)
+	// 渠道日志跟随图片理解渠道自身协议，跨协议调用才能落在正确协议的日志里。
+	store := channelScheduler.GetChannelLogStore(selection.Kind)
 	if store == nil {
 		return
 	}

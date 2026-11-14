@@ -198,7 +198,10 @@ func applyCommonUpdates(upstream *UpstreamConfig, index int, updates UpstreamUpd
 }
 
 // applyCommonUpdatesToList 应用渠道更新，并在状态池发生变化时同步调整优先级。
-func applyCommonUpdatesToList(upstreams []UpstreamConfig, pools []ChannelPool, index int, updates UpstreamUpdate, label string) (bool, error) {
+func applyCommonUpdatesToList(cfg *Config, cs *channelSet, index int, updates UpstreamUpdate) (bool, error) {
+	upstreams := *cs.upstreams
+	pools := *cs.pools
+	label := cs.name
 	original := upstreams[index].Clone()
 	previousPool := channelStatusPool(&upstreams[index])
 	shouldResetMetrics, err := applyCommonUpdates(&upstreams[index], index, updates, label)
@@ -210,7 +213,7 @@ func applyCommonUpdatesToList(upstreams []UpstreamConfig, pools []ChannelPool, i
 		upstreams[index] = *original
 		return false, err
 	}
-	if err := validateAllVisionLayerConfigs(upstreams); err != nil {
+	if err := validateAllVisionLayerConfigs(cfg, cs.kind, upstreams); err != nil {
 		upstreams[index] = *original
 		return false, err
 	}

@@ -73,10 +73,12 @@ type entry struct {
 type Controller struct {
 	mu      sync.Mutex
 	entries map[Identity]*entry
+	// queueTimeout 是等待名额的绝对上限；构造时取 QueueTimeout，测试可注入更短值。
+	queueTimeout time.Duration
 }
 
 func NewController() *Controller {
-	return &Controller{entries: make(map[Identity]*entry)}
+	return &Controller{entries: make(map[Identity]*entry), queueTimeout: QueueTimeout}
 }
 
 // Reconcile 发布去重后的完整规则。删除再添加时仍复用未收尾的执行计数。
@@ -148,7 +150,7 @@ func (c *Controller) Acquire(ctx context.Context, id Identity) (*Lease, time.Dur
 		c.mu.Unlock()
 		return nil, 0, ErrQueueFull
 	}
-	w := &waiter{ctx: ctx, deadline: started.Add(QueueTimeout), ready: make(chan struct{})}
+	w := &waiter{ctx: ctx, deadline: started.Add(c.queueTimeout), ready: make(chan struct{})}
 	state.queue = append(state.queue, w)
 	c.dispatchLocked(id, state)
 	c.mu.Unlock()

@@ -126,7 +126,7 @@
       <span class="section-inline-label">图片理解渠道</span>
     </header>
     <div class="vision-channel-list">
-      <div v-for="channel in visionChannels" :key="channel.index" class="vision-channel-row" @click="emit('edit', channel)">
+      <div v-for="channel in visionChannels" :key="`${channel.kind ?? channelType}-${channel.index}`" class="vision-channel-row" @click="emit('edit', channel)">
         <v-icon size="small" color="primary">mdi-image-search-outline</v-icon>
         <button
           v-if="canToggleVisionStatus(channel)"
@@ -140,14 +140,17 @@
         </button>
         <ChannelStatusBadge v-else :status="channel.status || 'active'" />
         <span class="font-weight-medium text-truncate">{{ channel.name }}</span>
-        <span class="text-caption text-medium-emphasis">{{ channelServiceLabel(props.channelType, channel.serviceType) }}</span>
+        <v-chip v-if="channel.kind && channel.kind !== props.channelType" size="x-small" variant="text">
+          {{ protocolLabel(channel.kind) }}
+        </v-chip>
+        <span class="text-caption text-medium-emphasis">{{ channelServiceLabel(channel.kind ?? props.channelType, channel.serviceType) }}</span>
         <v-spacer />
         <v-chip size="x-small" variant="outlined">
           <v-icon start size="x-small">mdi-key</v-icon>{{ channel.apiKeys?.length || 0 }}
         </v-chip>
         <div class="vision-channel-actions" @click.stop>
           <slot name="vision-actions" :channel="channel" ></slot>
-          <v-btn icon size="x-small" color="error" variant="text" title="删除渠道" @click="emit('delete', channel.index)">
+          <v-btn icon size="x-small" color="error" variant="text" title="删除渠道" @click="emit('delete', channel.index, channel.kind)">
             <v-icon size="small">mdi-delete</v-icon>
           </v-btn>
         </div>
@@ -185,10 +188,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import draggable from 'vuedraggable'
-import { api, type Channel, type ChannelPool } from '@/api'
+import { api, type Channel, type ChannelPool, type VisionChannel } from '@/api'
 import ChannelStatusBadge from '@/features/channels/components/dashboard/ChannelStatusBadge.vue'
 import { channelServiceLabel } from '@/features/channels/utils/imagesChannelProtocol'
-import type { ApiTab } from '@/features/channels/services/channel-api'
+import { API_TAB_LABELS, type ApiTab } from '@/features/channels/services/channel-api'
 import { useChannelStore } from '@/features/channels/stores/channel'
 import { FREE_POOL_ID } from '@/features/channels/services/free-channels'
 import FreeChannelPool from '@/features/channels/components/dashboard/FreeChannelPool.vue'
@@ -199,11 +202,13 @@ import ConfirmDialog from '@/shared/components/common/ConfirmDialog.vue'
 const props = defineProps<{
   channels: Channel[]
   channelType: ApiTab
+  // 四个会话协议共享的公用纯图片理解池；渠道自带所属协议。
+  sharedVisionChannels?: VisionChannel[]
 }>()
 const emit = defineEmits<{
   addChannel: [poolId: string]
   edit: [channel: Channel]
-  delete: [channelId: number]
+  delete: [channelId: number, kind?: ApiTab]
   error: [message: string]
   success: [message: string]
   refresh: []
@@ -279,7 +284,11 @@ const poolColumns = computed(() => {
     orderedPools.filter(({ order }) => order % 2 === 1)
   ]
 })
-const visionChannels = computed(() => props.channels.filter(channel => channel.excludeFromConversation && channel.status !== 'deleted'))
+const visionChannels = computed(() => {
+  const source = props.sharedVisionChannels ?? props.channels.filter(channel => channel.excludeFromConversation)
+  return source.filter(channel => channel.status !== 'deleted')
+})
+const protocolLabel = (kind?: ApiTab) => (kind ? API_TAB_LABELS[kind] : '')
 const canToggleVisionStatus = (channel: Channel) => ['active', 'suspended'].includes(channel.status || 'active')
 const hasAssignedChannels = (poolId: string) => props.channels.some(channel => channel.status !== 'deleted' && (channel.poolId || 'default') === poolId)
 

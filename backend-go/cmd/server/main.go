@@ -121,7 +121,7 @@ func newApp() (_ *app, err error) {
 		return nil, fmt.Errorf("初始化内容安全拦截记录存储失败: %w", err)
 	}
 	a.registerCleanup("拦截记录存储", a.blockedStore.Close)
-	log.Printf("[ContentSafety-Init] 拦截记录存储已初始化")
+	logInitf(a.envCfg, "[ContentSafety-Init] 拦截记录存储已初始化")
 
 	// 初始化会话管理器（Responses API 专用），与对话记录共用持久化数据库。
 	conversationDB, err := sqlitedb.Open(".config/conversations.db")
@@ -140,7 +140,7 @@ func newApp() (_ *app, err error) {
 	}
 	a.registerCleanup("Responses 会话", func() error { a.sessionManager.Stop(); return nil })
 	a.sessionManager.SetMaxSessions(5000) // 全局最多 5000 个活跃 session
-	log.Printf("[Session-Init] 持久化会话管理器已初始化 (保留: 7天, 上限: 5000)")
+	logInitf(a.envCfg, "[Session-Init] 持久化会话管理器已初始化 (保留: 7天, 上限: 5000)")
 
 	// 对话存储先于调度组件创建，关闭时必须等依赖它的生产者退出。
 	a.conversationRegistry, err = conversation.NewPersistentRegistryWithDB(conversationDB)
@@ -163,7 +163,15 @@ func newApp() (_ *app, err error) {
 		}
 		a.registerCleanup("指标存储", a.metricsStore.Close)
 	} else {
-		log.Printf("[Metrics-Init] 指标持久化已禁用，使用纯内存模式")
+		logInitf(a.envCfg, "[Metrics-Init] 指标持久化已禁用，使用纯内存模式")
+	}
+
+	// 历史 API Key 属运行时数据，跟随指标库保存；未启用持久化时继续留在配置文件。
+	if a.metricsStore != nil {
+		a.cfgManager.SetHistoricalKeyStore(a.metricsStore)
+		if err := a.cfgManager.SyncHistoricalKeys(); err != nil {
+			log.Printf("[Metrics-Init] 警告: 同步历史 API Key 到指标库失败，继续随配置保存: %v", err)
+		}
 	}
 
 	// 每类协议入口分别使用独立的指标管理器，共用渠道调度器。
@@ -210,7 +218,7 @@ func newApp() (_ *app, err error) {
 
 	// 初始化 URL 管理器（非阻塞，动态排序）
 	urlManager := urlhealth.NewURLManager(30*time.Second, 3) // 30秒冷却期，连续3次失败后移到末尾
-	log.Printf("[URLManager-Init] URL管理器已初始化 (冷却期: 30秒, 最大连续失败: 3)")
+	logInitf(a.envCfg, "[URLManager-Init] URL管理器已初始化 (冷却期: 30秒, 最大连续失败: 3)")
 
 	a.channelScheduler = scheduler.NewChannelScheduler(
 		a.cfgManager,
@@ -226,7 +234,7 @@ func newApp() (_ *app, err error) {
 	)
 	a.channelScheduler.SetRequestLogStore(a.requestLogStore)
 	a.channelScheduler.SetConversationRegistry(a.conversationRegistry)
-	log.Printf("[Scheduler-Init] 多渠道调度器已初始化 (失败率阈值: %.0f%%, 滑动窗口: %d)",
+	logInitf(a.envCfg, "[Scheduler-Init] 多渠道调度器已初始化 (失败率阈值: %.0f%%, 滑动窗口: %d)",
 		a.metricsByKind[scheduler.ChannelKindMessages].GetFailureThreshold()*100,
 		a.metricsByKind[scheduler.ChannelKindMessages].GetWindowSize())
 
@@ -234,7 +242,7 @@ func newApp() (_ *app, err error) {
 	circuitConfig := circuit.DefaultConfig()
 	circuitManager := circuit.NewManager(circuitConfig, true)
 	a.channelScheduler.SetCircuitManager(circuitManager)
-	log.Printf("[Circuit-Init] 渠道级熔断已启用 (连续失败阈值: %d, 错误率: %.0f%%, 最小样本: %d, 冷却: %ds, 半开成功阈值: %d)",
+	logInitf(a.envCfg, "[Circuit-Init] 渠道级熔断已启用 (连续失败阈值: %d, 错误率: %.0f%%, 最小样本: %d, 冷却: %ds, 半开成功阈值: %d)",
 		circuitConfig.FailureThreshold, circuitConfig.ErrorRateThreshold*100, circuitConfig.MinRequests,
 		int(circuitConfig.Cooldown/time.Second), circuitConfig.SuccessThreshold)
 
@@ -242,7 +250,7 @@ func newApp() (_ *app, err error) {
 	// 不参与生产选渠——默认遵循配置顺序，健康促销在分组内临时优先。
 	a.profileManager = metrics.NewProfileManager()
 	a.channelScheduler.SetProfileManager(a.profileManager)
-	log.Println("[Main] 渠道性能画像已启用（仅观测展示，默认按配置顺序选渠，健康促销在分组内临时优先）")
+	logInitf(a.envCfg, "[Main] 渠道性能画像已启用（仅观测展示，默认按配置顺序选渠，健康促销在分组内临时优先）")
 
 	// 危险命令 AI 闸门：存储与拦截记录同库；遗留的 waiting 记录一律按拦截处理
 	// （重启后内存等待者已不存在）。llmgate.Caller 供闸门与 AI 助手共用。
@@ -275,7 +283,7 @@ func newApp() (_ *app, err error) {
 	a.registerCleanup("本地向量助手", localEmbedding.Stop)
 	// 内容安全管道注入闸门；未启用时保持"命中即拦截"的既有行为。
 	a.contentSafetyPipeline = pipeline.NewContentSafetyPipelineWithSemantic(a.cfgManager, a.blockedStore, a.cmdGate, a.intentService.Datasets)
-	log.Printf("[Gate-Init] 危险命令 AI 闸门已装配")
+	logInitf(a.envCfg, "[Gate-Init] 危险命令 AI 闸门已装配")
 
 	// 持久映射库在启动时初始化，以便运行中切换脱敏模式（Veil ADR 0004）。
 	// 只有 mask 模式会向请求注入映射库：占位符密钥从主密钥派生，
@@ -287,9 +295,9 @@ func newApp() (_ *app, err error) {
 	a.registerCleanup("持久映射存储", a.mappingStore.Close)
 	if a.cfgManager.GetSettings().ContentSafety.SensitiveData.Mode == config.ContentSafetyModeMask {
 		sensitive.SetPersistentMappingStore(a.mappingStore)
-		log.Printf("[SensitiveData-Init] 可逆脱敏持久映射库已启用（跨重启还原，AES-256-GCM 加密落盘）")
+		logInitf(a.envCfg, "[SensitiveData-Init] 可逆脱敏持久映射库已启用（跨重启还原，AES-256-GCM 加密落盘）")
 	} else {
-		log.Printf("[SensitiveData-Init] 敏感数据处置为阻断模式，持久映射库未启用（零落盘）")
+		logInitf(a.envCfg, "[SensitiveData-Init] 敏感数据处置为阻断模式，持久映射库未启用（零落盘）")
 	}
 	// 还原 miss 的审计回调：合法占位符形态但持久库查不到（如密钥已轮换）→ 原样下发 + 留痕。
 	sensitive.SetPersistentMissCallback(func(placeholder string) {
@@ -331,7 +339,7 @@ func newApp() (_ *app, err error) {
 		return nil, fmt.Errorf("初始化 AI 配置助手失败: %w", err)
 	}
 	a.assistantAPI = admin.NewAssistantAPI(a.assistantService)
-	log.Printf("[Assistant-Init] AI 配置助手已装配")
+	logInitf(a.envCfg, "[Assistant-Init] AI 配置助手已装配")
 
 	// 从现有指标同步数据到性能画像
 	syncConfig := a.cfgManager.GetConfig()

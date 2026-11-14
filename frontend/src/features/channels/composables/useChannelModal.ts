@@ -8,7 +8,7 @@ import { compileImagesExtraParams } from '@/features/channels/utils/imagesExtraP
 
 import { useQuickChannelDraft } from '@/features/channels/composables/useQuickChannelDraft'
 import { useChannelModels } from '@/features/channels/composables/useChannelModels'
-import { isConversationProtocol, type ApiTab } from '@/features/channels/services/channel-api'
+import { API_TAB_LABELS, isConversationProtocol, type ApiTab } from '@/features/channels/services/channel-api'
 import { resolveChannelPreset, type ChannelPreset, type ChannelPresetEndpoint } from '@/features/channels/utils/channelPresets'
 import { useClipboard } from '@/shared/composables/useClipboard'
 
@@ -560,6 +560,8 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
     isImagesServiceType(form.serviceType) && (form.serviceType !== 'responses' || !!form.responsesModel.trim())
   ))
 
+  const protocolLabel = (kind: ApiTab) => API_TAB_LABELS[kind]
+
   const visionChannels = ref<Channel[]>([])
   const visionChannelsLoading = ref(false)
   const visionChannelsError = ref('')
@@ -574,9 +576,18 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
   const visionChannelOptions = computed(() => {
     const currentChannelID = props.channel?.id
     return visionChannels.value
-      .filter(channel => channel.id && channel.id !== currentChannelID && channel.visionCapable && channel.status === 'active' &&
-        (channel.excludeFromConversation || (channel.poolId || 'default') === form.poolId))
-      .map(channel => ({ title: `${channel.name}（${channel.serviceType}）`, value: channel.id }))
+      .filter((channel): channel is Channel & { id: string } => {
+        if (!channel.id || channel.id === currentChannelID || !channel.visionCapable || channel.status !== 'active') return false
+        const channelKind = channel.kind ?? props.channelType
+        // 公用纯图片理解渠道可跨协议选择；其余渠道仍限本协议当前分组。
+        if (channel.excludeFromConversation) return true
+        return channelKind === props.channelType && (channel.poolId || 'default') === form.poolId
+      })
+      .map(channel => {
+        const channelKind = channel.kind ?? props.channelType
+        const scope = channelKind === props.channelType ? '' : `${protocolLabel(channelKind)} · `
+        return { title: `${channel.name}（${scope}${channel.serviceType}）`, value: channel.id }
+      })
   })
 
   const visionLayerChannelError = computed(() => {
@@ -591,8 +602,21 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
     visionChannelsLoading.value = true
     visionChannelsError.value = ''
     try {
-      const response = await channelApiByType(props.channelType).getChannels()
-      visionChannels.value = response.channels || []
+      const [owned, shared] = await Promise.all([
+        channelApiByType(props.channelType).getChannels(),
+        api.getVisionChannels()
+      ])
+      // 合并本协议渠道（用于同分组选择）与跨协议公用池；按协议 + ID 去重。
+      const merged = new Map<string, Channel>()
+      for (const channel of owned.channels || []) {
+        if (!channel.id) continue
+        merged.set(`${props.channelType}:${channel.id}`, { ...channel, kind: props.channelType })
+      }
+      for (const channel of shared.channels || []) {
+        if (!channel.id) continue
+        merged.set(`${channel.kind}:${channel.id}`, channel)
+      }
+      visionChannels.value = Array.from(merged.values())
     } catch (error) {
       visionChannels.value = []
       visionChannelsError.value = `加载图片理解渠道失败：${error instanceof Error ? error.message : String(error)}`

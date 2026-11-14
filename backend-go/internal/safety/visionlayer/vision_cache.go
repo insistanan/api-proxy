@@ -9,14 +9,13 @@ import (
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
 )
 
-func buildImageCacheKey(fingerprint string, kind scheduler.ChannelKind, model string) string {
-	// 缓存键仅基于图片指纹、渠道类型和模型，不包含 channelID 和 intentFingerprint。
+func buildImageCacheKey(fingerprint string, model string) string {
+	// 缓存键仅基于图片指纹和模型，不包含渠道类型、channelID 和 intentFingerprint。
 	// 这样同一张图片在同一对话中只解析一次，不管：
-	// - 用哪个 vision channel 解析的（回退到其他渠道后仍能命中缓存）
+	// - 从哪个入口协议或哪个 vision channel 解析的（跨协议与回退后仍能命中缓存）
 	// - 用户后续消息的文本内容如何变化（历史图片块重发时不会重新识图）
 	profile := strings.Join([]string{
 		visionPromptVersion,
-		string(kind),
 		strings.TrimSpace(model),
 		strings.TrimSpace(fingerprint),
 	}, "\n")

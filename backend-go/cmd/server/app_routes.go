@@ -144,6 +144,9 @@ func (a *app) setupChannelAdminAPI(apiGroup *gin.RouterGroup) {
 		LogStoreByKind: a.channelScheduler.GetChannelLogStore,
 	}
 
+	// 四个会话协议共享的公用图片理解池，带每条渠道自身的 kind。
+	apiGroup.GET("/vision-channels", channels.GetVisionChannels(a.cfgManager))
+
 	for _, kind := range []scheduler.ChannelKind{
 		scheduler.ChannelKindMessages,
 		scheduler.ChannelKindResponses,
