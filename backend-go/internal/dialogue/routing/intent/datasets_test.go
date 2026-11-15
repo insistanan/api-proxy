@@ -62,7 +62,10 @@ func TestInlineMigrationDoesNotOverwriteIndependentDatasetEdits(t *testing.T) {
 	datasets, err := semantic.New(filepath.Join(t.TempDir(), "data.db"), routingDatasetEmbedder{})
 	require.NoError(t, err)
 	defer datasets.Close()
-	s := &Service{Datasets: datasets}
+	local, err := NewLocal(t.TempDir())
+	require.NoError(t, err)
+	local.ready, local.manifest.ModelName = true, "test"
+	s := &Service{Datasets: datasets, Local: local}
 	cfg := config.DefaultIntentRouting()
 	cfg.EmbeddingSource = "local"
 	cfg.EmbeddingModel = "test"

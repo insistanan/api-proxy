@@ -30,6 +30,8 @@ var preferredKinds = []scheduler.ChannelKind{
 // ChannelOption 只返回审批设置所需的公开字段，不向页面暴露渠道密钥。
 type ChannelOption struct {
 	Kind         string   `json:"kind"`
+	Builtin      bool     `json:"builtin"`
+	SharedKey    string   `json:"sharedKey"`
 	ID           string   `json:"id"`
 	Name         string   `json:"name"`
 	DefaultModel string   `json:"defaultModel"`
@@ -54,6 +56,7 @@ func (c *Caller) ChannelOptions(ctx context.Context) ([]ChannelOption, error) {
 		{scheduler.ChannelKindDecisions, cfg.DecisionsUpstream},
 	}
 	options := make([]ChannelOption, 0)
+	shared := make(map[string]bool)
 	for _, group := range groups {
 		for index := range group.upstreams {
 			if err := ctx.Err(); err != nil {
@@ -69,6 +72,14 @@ func (c *Caller) ChannelOptions(ctx context.Context) ([]ChannelOption, error) {
 			}
 			if selected.Permit != nil {
 				selected.Permit.Release()
+			}
+			sharedKey := ""
+			if upstream.BuiltinProvider == "kilo" {
+				sharedKey = "kilo"
+				if shared[sharedKey] {
+					continue
+				}
+				shared[sharedKey] = true
 			}
 			models := make(map[string]struct{})
 			if model := strings.TrimSpace(upstream.DefaultModel); model != "" {
@@ -89,7 +100,7 @@ func (c *Caller) ChannelOptions(ctx context.Context) ([]ChannelOption, error) {
 				modelIDs = append(modelIDs, model)
 			}
 			sort.Strings(modelIDs)
-			options = append(options, ChannelOption{Kind: string(group.kind), ID: upstream.ID, Name: upstream.Name, DefaultModel: upstream.DefaultModel, Models: modelIDs})
+			options = append(options, ChannelOption{Kind: string(group.kind), Builtin: upstream.BuiltinProvider != "", SharedKey: sharedKey, ID: upstream.ID, Name: upstream.Name, DefaultModel: upstream.DefaultModel, Models: modelIDs})
 		}
 	}
 	return options, nil

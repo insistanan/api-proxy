@@ -76,3 +76,19 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload embedding presets to Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 三个平台上传同一清单；同名 asset 的并发替换失败须有限重试。
+          for attempt in 1 2 3 4; do
+            if gh release upload "$GITHUB_REF_NAME" deploy/embedding-presets.json deploy/embedding-presets.schema.json --clobber; then
+              exit 0
+            fi
+            if [[ "$attempt" -lt 4 ]]; then
+              sleep "$((attempt * 2))"
+            fi
+          done
+          echo "上传本地向量预设清单失败" >&2
+          exit 1

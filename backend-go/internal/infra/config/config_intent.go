@@ -56,7 +56,7 @@ func SupportsIntentRouting(kind string) bool {
 func DefaultIntentRouting() IntentRoutingConfig {
 	return IntentRoutingConfig{Strategy: "regex", Classifier: "heuristic", EmbeddingSource: "remote", Threshold: 0.75,
 		TimeoutMS: 2000, MinResidenceSeconds: 300, MinTurns: 4, SwitchMargin: 0.15,
-		Unmatched: "original", FailurePolicy: "error", ObserveOnly: true, Routes: []IntentRoute{}}
+		Unmatched: "original", FailurePolicy: "keep", ObserveOnly: true, Routes: []IntentRoute{}}
 }
 
 func cloneIntentRouting(source map[string]IntentRoutingConfig) map[string]IntentRoutingConfig {

@@ -20,6 +20,9 @@ func profileIntent(p config.SemanticEmbeddingConfig) config.IntentRoutingConfig 
 }
 
 func (s *Service) EmbeddingSpace(p config.SemanticEmbeddingConfig) (string, error) {
+	if err := s.ValidateVector(p); err != nil {
+		return "", err
+	}
 	space, err := s.embeddingSpace(profileIntent(p))
 	if err != nil {
 		return "", err
@@ -28,6 +31,9 @@ func (s *Service) EmbeddingSpace(p config.SemanticEmbeddingConfig) (string, erro
 }
 
 func (s *Service) EmbedSamples(ctx context.Context, p config.SemanticEmbeddingConfig, texts []string, parent string) ([][]float64, error) {
+	if err := s.ValidateVector(p); err != nil {
+		return nil, err
+	}
 	return s.embed(ctx, profileIntent(p), texts, parent)
 }
 
@@ -35,6 +41,9 @@ func inlineDatasetID(ctx context.Context) string { return "inline-" + protocolFr
 
 // BuildIndex 将旧版协议内例句迁入独立数据集；正式数据集由类别映射复用。
 func (s *Service) BuildIndex(ctx context.Context, cfg config.IntentRoutingConfig) error {
+	if err := s.ValidateVector(embeddingProfile(cfg)); err != nil {
+		return err
+	}
 	ids := cfg.DatasetIDs
 	if len(ids) == 0 {
 		kind := protocolFrom(ctx)

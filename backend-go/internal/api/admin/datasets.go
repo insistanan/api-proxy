@@ -97,6 +97,9 @@ func RegisterDatasetAPI(api *gin.RouterGroup, service *semantic.Service) {
 		}
 		result, err := service.Build(c.Request.Context(), c.Param("id"), req.Revision, req.Profile)
 		if err != nil {
+			if respondVectorRequired(c, err) {
+				return
+			}
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}

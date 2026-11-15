@@ -1,9 +1,9 @@
 <template>
   <div class="capabilities">
-    <p class="text-body-2 text-medium-emphasis">直接设置当前协议已有分组的任务和难度，免费分组也按相同条件参与，不会被强制优先或限制为简单任务。两项都留空的分组不参与自动匹配；停用的免费服务不会参与选组。</p>
+    <p class="text-body-2 text-medium-emphasis">任务和难度都配置后参与自动匹配；免费分组遵循相同条件。</p>
     <EmptyState v-if="!pools.length" variant="inline" icon="mdi-swap-horizontal" title="当前协议暂无可配置的渠道分组" description="先在渠道编排中创建分组，再回来设置任务能力。" />
     <section v-for="row in rows" :key="row.poolId" class="capability-row" :aria-label="row.name + '的任务能力'">
-      <h3 class="capability-name text-subtitle-2">{{ row.name }}</h3>
+      <div class="capability-name"><h4 class="text-subtitle-2">{{ row.name }}</h4><span class="text-caption" :class="row.tasks.length && row.tiers.length ? 'text-primary' : 'text-medium-emphasis'">{{ row.tasks.length && row.tiers.length ? '已参与' : row.tasks.length || row.tiers.length ? '配置不完整' : '未参与' }}</span></div>
       <div class="capability-fields">
         <v-combobox :model-value="row.tasks" :items="tasks" item-title="name" item-value="id" :return-object="false" multiple chips closable-chips clearable label="适合的任务" :aria-label="row.name + '适合的任务'" :disabled="disabled" :error-messages="row.tiers.length && !row.tasks.length ? '请选择适合的任务，或清空难度以停用' : []" hide-details="auto" @update:model-value="update(row.poolId, { tasks: $event ?? [] })" />
         <v-select :model-value="row.tiers" :items="tiers" multiple chips closable-chips clearable label="可处理的难度" :aria-label="row.name + '可处理的难度'" :disabled="disabled" :error-messages="row.tasks.length && !row.tiers.length ? '请选择可处理的难度，或清空任务以停用' : []" hide-details="auto" @update:model-value="update(row.poolId, { tiers: $event ?? [] })" />

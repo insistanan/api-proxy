@@ -12,7 +12,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,13 +36,16 @@ type LocalManifest struct {
 }
 
 type LocalStatus struct {
-	Installed bool          `json:"installed"`
-	Running   bool          `json:"running"`
-	Ready     bool          `json:"ready"`
-	Busy      bool          `json:"busy"`
-	Error     string        `json:"error"`
-	Platform  string        `json:"platform"`
-	Manifest  LocalManifest `json:"manifest"`
+	Installed   bool          `json:"installed"`
+	Running     bool          `json:"running"`
+	Ready       bool          `json:"ready"`
+	Busy        bool          `json:"busy"`
+	Error       string        `json:"error"`
+	Platform    string        `json:"platform"`
+	InstallPath string        `json:"installPath"`
+	PresetsURL  string        `json:"presetsUrl"`
+	Phase       string        `json:"phase"`
+	Manifest    LocalManifest `json:"manifest"`
 }
 
 type LocalRuntime struct {
@@ -57,14 +59,21 @@ type LocalRuntime struct {
 	stopping  bool
 	busy      bool
 	lastError string
+	phase     string
+	presets   *presetCatalog
 	queue     chan struct{}
 	active    chan struct{}
 	client    *http.Client
 }
 
 func NewLocal(dir string) (*LocalRuntime, error) {
-	l := &LocalRuntime{dir: dir, queue: make(chan struct{}, 3), active: make(chan struct{}, 1), client: &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{Proxy: nil, MaxConnsPerHost: 1, MaxIdleConns: 1, IdleConnTimeout: 60 * time.Second}}}
-	data, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, fmt.Errorf("解析本地向量安装路径失败: %w", err)
+	}
+	l := &LocalRuntime{dir: absDir, phase: "idle", presets: newPresetCatalog(), queue: make(chan struct{}, 3), active: make(chan struct{}, 1), client: &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{Proxy: nil, MaxConnsPerHost: 1, MaxIdleConns: 1, IdleConnTimeout: 60 * time.Second}}}
+	l.presets.loadURL(absDir)
+	data, err := os.ReadFile(filepath.Join(l.dir, "manifest.json"))
 	if errors.Is(err, os.ErrNotExist) {
 		return l, nil
 	}
@@ -77,14 +86,14 @@ func NewLocal(dir string) (*LocalRuntime, error) {
 	if err := validateManifest(l.manifest); err != nil {
 		return nil, err
 	}
+	l.phase = "installed"
 	return l, nil
 }
 
 func validateManifest(m LocalManifest) error {
 	for _, raw := range []string{m.RuntimeURL, m.ModelURL} {
-		u, err := url.Parse(raw)
-		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
-			return fmt.Errorf("下载地址必须为不含凭据的 HTTPS URL")
+		if err := validateHTTPS(raw); err != nil {
+			return fmt.Errorf("下载%s", err)
 		}
 	}
 	for _, hash := range []string{m.RuntimeSHA256, m.ModelSHA256} {
@@ -109,7 +118,14 @@ func (l *LocalRuntime) Status() LocalStatus {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return LocalStatus{Installed: l.manifest.ModelSHA256 != "", Running: l.cmd != nil, Ready: l.ready, Busy: l.busy,
-		Error: l.lastError, Platform: runtime.GOOS + "/" + runtime.GOARCH, Manifest: l.manifest}
+		Error: l.lastError, Platform: runtime.GOOS + "/" + runtime.GOARCH, Manifest: l.manifest,
+		InstallPath: l.dir, PresetsURL: l.presets.currentURL(), Phase: l.phase}
+}
+
+func (l *LocalRuntime) setPhase(phase string) {
+	l.mu.Lock()
+	l.phase = phase
+	l.mu.Unlock()
 }
 
 func (l *LocalRuntime) Space() (string, error) {
@@ -131,19 +147,23 @@ func (l *LocalRuntime) Install(ctx context.Context, manifest LocalManifest) (err
 		return fmt.Errorf("请先停止本地助手并等待当前操作完成")
 	}
 	l.busy, l.lastError = true, ""
+	l.phase = "downloading_runtime"
 	l.mu.Unlock()
 	defer func() {
 		l.mu.Lock()
 		l.busy = false
 		if err != nil {
 			l.lastError = err.Error()
+			l.phase = "failed"
+		} else {
+			l.phase = "installed"
 		}
 		l.mu.Unlock()
 	}()
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
 	var archive bytes.Buffer
-	if err := downloadVerified(ctx, manifest.RuntimeURL, manifest.RuntimeSHA256, 128<<20, &archive, ""); err != nil {
+	if err := downloadVerified(ctx, manifest.RuntimeURL, manifest.RuntimeSHA256, 128<<20, &archive, "", func() { l.setPhase("verifying_runtime") }); err != nil {
 		return err
 	}
 	reader, err := zip.NewReader(bytes.NewReader(archive.Bytes()), int64(archive.Len()))
@@ -154,6 +174,7 @@ func (l *LocalRuntime) Install(ctx context.Context, manifest LocalManifest) (err
 		return fmt.Errorf("运行时文件数量超限")
 	}
 	runtimeDir := filepath.Join(l.dir, strings.ToLower(manifest.RuntimeSHA256))
+	l.setPhase("extracting_runtime")
 	var total uint64
 	for _, entry := range reader.File {
 		if err := ctx.Err(); err != nil {
@@ -190,8 +211,9 @@ func (l *LocalRuntime) Install(ctx context.Context, manifest LocalManifest) (err
 		return fmt.Errorf("ZIP 内未找到指定的 llama-server: %w", err)
 	}
 	modelPath := filepath.Join(l.dir, strings.ToLower(manifest.ModelSHA256)+".gguf")
+	l.setPhase("downloading_model")
 	if err := atomicfile.WriteFunc(modelPath, func(w io.Writer) error {
-		return downloadVerified(ctx, manifest.ModelURL, manifest.ModelSHA256, 1<<30, w, "GGUF")
+		return downloadVerified(ctx, manifest.ModelURL, manifest.ModelSHA256, 1<<30, w, "GGUF", func() { l.setPhase("verifying_model") })
 	}, atomicfile.Options{Mode: 0600}); err != nil {
 		return err
 	}
@@ -213,7 +235,7 @@ func (l *LocalRuntime) Install(ctx context.Context, manifest LocalManifest) (err
 	return nil
 }
 
-func downloadVerified(ctx context.Context, rawURL, expected string, limit int64, dst io.Writer, magic string) error {
+func downloadVerified(ctx context.Context, rawURL, expected string, limit int64, dst io.Writer, magic string, verifying ...func()) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return err
@@ -251,6 +273,9 @@ func downloadVerified(ctx context.Context, rawURL, expected string, limit int64,
 	if n > limit {
 		return fmt.Errorf("下载文件超过大小限制")
 	}
+	for _, notify := range verifying {
+		notify()
+	}
 	if !strings.EqualFold(hex.EncodeToString(hash.Sum(nil)), expected) {
 		return fmt.Errorf("SHA-256 校验不匹配，未安装文件")
 	}
@@ -269,12 +294,16 @@ func (l *LocalRuntime) Start(ctx context.Context) (err error) {
 	}
 	m := l.manifest
 	l.busy, l.lastError = true, ""
+	l.phase = "starting"
 	l.mu.Unlock()
 	defer func() {
 		l.mu.Lock()
 		l.busy = false
 		if err != nil {
 			l.lastError = err.Error()
+			l.phase = "failed"
+		} else {
+			l.phase = "ready"
 		}
 		l.mu.Unlock()
 	}()
@@ -312,12 +341,16 @@ func (l *LocalRuntime) Start(ctx context.Context) (err error) {
 		l.cmd, l.ready = nil, false
 		if waitErr != nil && !l.stopping {
 			l.lastError = "本地助手已退出: " + waitErr.Error()
+			l.phase = "failed"
+		} else if !l.busy {
+			l.phase = "stopped"
 		}
 		l.stopping = false
 		l.mu.Unlock()
 		close(done)
 	}()
 	warmCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	l.setPhase("warming")
 	defer cancel()
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
@@ -354,6 +387,9 @@ func (l *LocalRuntime) Stop() error {
 		return fmt.Errorf("本地助手正在安装或启动，请等待当前操作完成后停止")
 	}
 	l.ready = false
+	if !l.busy {
+		l.phase = "stopped"
+	}
 	if cmd != nil {
 		l.stopping = true
 	}

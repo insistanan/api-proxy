@@ -11,6 +11,7 @@
 | `backend-go/` | Go 后端，先读 [后端约定](backend-go/AGENTS.md) |
 | `frontend/` | Vue 管理台，先读 [前端约定](frontend/AGENTS.md) |
 | `docs/` | 开发、架构和规范文档，新增文档放这里 |
+| `deploy/` | 发布用固定资源清单与 schema，如本地向量模型预设 |
 | `scripts/` | 全量门禁、前端产物复制、行尾维护 |
 | `.githooks/` | 提交前规范化暂存文件的行尾 |
 | `.github/` | tag 发布构建与 draft release |

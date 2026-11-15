@@ -1,0 +1,23 @@
+{
+  "$schema": "./embedding-presets.schema.json",
+  "version": 1,
+  "presets": [
+    {
+      "id": "bge-small-zh-v15-q8",
+      "name": "BGE small 中文 v1.5（推荐）",
+      "description": "中文优先的轻量向量模型，512 维，Q8_0 量化约 25 MiB；搭配 llama.cpp CPU 运行时，适合意图匹配和命令风险检索。英文与代码语义弱于多语言模型。",
+      "sizeBytes": 51597241,
+      "platforms": {
+        "windows/amd64": {
+          "runtimeUrl": "https://github.com/ggml-org/llama.cpp/releases/download/b12383/llama-b12383-bin-win-cpu-x64.zip",
+          "runtimeSha256": "ad5bf0d826ea1f39aaf9721b7e26fde9be0bef5d9b69b9ba88c2d083b9a3bca7",
+          "executable": "llama-server.exe",
+          "modelUrl": "https://huggingface.co/CompendiumLabs/bge-small-zh-v1.5-gguf/resolve/5bf683e6a1bd454bbb60ba051088c50731d63fcb/bge-small-zh-v1.5-q8_0.gguf",
+          "modelSha256": "5a88d266870fbd27c6f329df60de80e2d4cf3bbd5e6f080bd5c1b2e5abb12039",
+          "modelName": "bge-small-zh-v1.5",
+          "pooling": "cls"
+        }
+      }
+    }
+  ]
+}

@@ -118,7 +118,20 @@ func (g *CmdGate) ChannelOptions(ctx context.Context) ([]llmgate.ChannelOption, 
 	if g == nil || g.caller == nil {
 		return nil, fmt.Errorf("命令审批服务未装配")
 	}
-	return g.caller.ChannelOptions(ctx)
+	options, err := g.caller.ChannelOptions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// 共享池只列一项；审批页仍需识别已保存的旧入口 ID，不误报为不可用。
+	selected := g.gateSettings().ChannelID
+	if kind, ok := strings.CutPrefix(selected, "builtin-kilo-"); ok && config.SupportsFreeChannels(kind) {
+		for i := range options {
+			if options[i].Builtin && options[i].SharedKey == "kilo" {
+				options[i].ID, options[i].Kind = selected, kind
+			}
+		}
+	}
+	return options, nil
 }
 
 // waitSeconds 返回用户决定窗口时长。

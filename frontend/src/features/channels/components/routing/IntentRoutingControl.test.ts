@@ -2,17 +2,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createSSRApp, type Ref, type SetupContext } from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import IntentRoutingControl from '@/features/channels/components/routing/IntentRoutingControl.vue'
-import type { IntentConfig, IntentOptions } from '@/features/channels/services/intent'
+import type { IntentConfig, IntentOptions, LocalStatus } from '@/features/channels/services/intent'
 import type { EmbeddingProfile } from '@/types'
 
-const mocks = vi.hoisted(() => ({ load: vi.fn(), save: vi.fn(), options: vi.fn(), preview: vi.fn(), feedback: vi.fn() }))
+const mocks = vi.hoisted(() => ({ load: vi.fn(), save: vi.fn(), options: vi.fn(), local: vi.fn(), preview: vi.fn(), feedback: vi.fn() }))
 vi.mock('@/shared/stores/auth', () => ({ useAuthStore: () => ({ apiKey: null, clearAuth: vi.fn() }) }))
 vi.mock('@/features/channels/stores/channel', () => ({ useChannelStore: () => ({ channelPoolsMap: { responses: [{ id: 'language', name: '语言组' }, { id: 'code', name: '代码组' }, { id: 'builtin-free', name: '免费分组' }] } }) }))
 vi.mock('@/features/channels/stores/intent', () => ({ useIntentStore: () => ({ configs: {}, load: mocks.load, save: mocks.save }) }))
-vi.mock('@/features/channels/services/intent', () => ({ intentApi: { options: mocks.options, preview: mocks.preview, feedback: mocks.feedback }, intentErrorText: (error: Error) => error.message, intentPreviewFailure: () => undefined }))
+vi.mock('@/features/channels/services/intent', () => ({ intentApi: { options: mocks.options, local: mocks.local, preview: mocks.preview, feedback: mocks.feedback }, intentErrorText: (error: Error) => error.message, intentPreviewFailure: () => undefined }))
 vi.mock('@/shared/composables/useToast', () => ({ useToast: () => ({ showToast: vi.fn() }) }))
 
 const config = (): IntentConfig => ({ enabled: false, strategy: 'regex', classifier: 'heuristic', classifierChannel: '', classifierModel: '', embeddingChannel: '', embeddingModel: '', embeddingSource: 'remote', queryPrefix: '', examplePrefix: '', threshold: 0.75, timeoutMs: 2000, minResidenceSeconds: 300, minTurns: 4, switchMargin: 0.15, unmatched: 'original', fallbackPoolId: '', failurePolicy: 'error', observeOnly: true, routes: [] })
+const localStatus = (): LocalStatus => ({ installed: false, running: false, ready: false, busy: false, error: '', platform: 'windows/amd64', installPath: 'D:\\gateway\\.config\\intent-embedding', presetsUrl: 'https://example.invalid/embedding-presets.json', phase: 'idle', manifest: { runtimeUrl: '', runtimeSha256: '', executable: '', modelUrl: '', modelSha256: '', modelName: '', pooling: 'mean' } })
 type State = Record<string, unknown>
 const value = <T>(state: State, name: string) => (state[name] as Ref<T>).value
 const setup = async () => {
@@ -26,6 +27,7 @@ beforeEach(() => {
   vi.resetAllMocks()
   mocks.load.mockResolvedValue(config())
   mocks.options.mockResolvedValue({ classifiers: [], embeddings: [], tasks: [] } satisfies IntentOptions)
+  mocks.local.mockResolvedValue(localStatus())
   mocks.save.mockResolvedValue(undefined)
 })
 
@@ -92,7 +94,78 @@ describe('意图匹配编辑器', () => {
     ;(state.groups as Ref<IntentConfig['groups']>).value = [{ poolId: 'code', tasks: ['debugging'], tiers: [], cost: 0 }]
     await (state.save as () => Promise<void>)()
     expect(mocks.save).not.toHaveBeenCalled()
-    expect(value<string>(state, 'tab')).toBe('groups')
     expect(value<string>(state, 'error')).toContain('代码组')
+  })
+  it('语义配置未就绪时阻断保存，真实本地状态就绪后才能继续', async () => {
+    const original = config()
+    original.strategy = 'auto'
+    original.taskMatcher = 'semantic'
+    original.embeddingSource = 'local'
+    original.embeddingModel = 'vector'
+    mocks.load.mockResolvedValue(original)
+    const state = await setup()
+    expect(value<boolean>(state, 'vectorGuide')).toBe(true)
+    expect(value<string>(state, 'vectorReason')).toContain('尚未就绪')
+    await (state.save as () => Promise<void>)()
+    expect(mocks.save).not.toHaveBeenCalled()
+    const ready = localStatus()
+    ready.installed = ready.running = ready.ready = true
+    ready.manifest.modelName = 'vector'
+    ;(state.updateLocalStatus as (status: LocalStatus) => void)(ready)
+    expect(value<string>(state, 'vectorReason')).toBe('')
+    await (state.save as () => Promise<void>)()
+    expect(mocks.save).toHaveBeenCalledOnce()
+    expect(original.embeddingModel).toBe('vector')
+  })
+  it('切换已有 Embeddings 渠道带出默认模型，缺少模型时仍阻断保存', async () => {
+    const original = config()
+    original.strategy = 'auto'
+    original.taskMatcher = 'semantic'
+    mocks.load.mockResolvedValue(original)
+    mocks.options.mockResolvedValue({ classifiers: [], embeddings: [{ id: 'vector', name: '向量渠道', defaultModel: 'embed-model' }], tasks: [] } satisfies IntentOptions)
+    const state = await setup()
+    expect(value<string>(state, 'vectorReason')).toContain('Embeddings')
+    ;(state.useRemoteEmbedding as () => void)()
+    expect(value<IntentConfig>(state, 'draft').embeddingModel).toBe('embed-model')
+    expect(value<string>(state, 'vectorReason')).toBe('')
+    value<IntentConfig>(state, 'draft').embeddingModel = ''
+    await (state.save as () => Promise<void>)()
+    expect(mocks.save).not.toHaveBeenCalled()
+  })
+  it('共享 Kilo 只显示一个逻辑选项并保留旧 ID，其他渠道显示协议并提供模型列表', async () => {
+    const original = config()
+    original.classifier = 'llm'
+    original.classifierChannel = 'builtin-kilo-chat'
+    original.classifierModel = 'saved-model'
+    mocks.load.mockResolvedValue(original)
+    mocks.options.mockResolvedValue({ classifiers: [
+      { id: 'builtin-kilo-messages', name: 'Kilo 免费池', kind: 'messages', builtin: true, sharedKey: 'kilo', defaultModel: 'free-model', models: ['free-model'] },
+      { id: 'chat', name: '同名', kind: 'chat', builtin: false, sharedKey: '', defaultModel: 'chat-default', models: ['chat-default', 'other-model'] },
+      { id: 'decision', name: '同名', kind: 'decisions', builtin: false, sharedKey: '', defaultModel: 'decision-model', models: ['decision-model'] }
+    ], embeddings: [], tasks: [] } satisfies IntentOptions)
+    const state = await setup()
+    expect(value<{ id: string; title: string }[]>(state, 'classifierOptions')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'builtin-kilo-chat', title: 'Kilo 免费池（四个入口共享）' }), expect.objectContaining({ title: '同名 · chat' })
+    ]))
+    expect(value<{ id: string }[]>(state, 'classifierOptions')).toHaveLength(2)
+    expect(value<IntentConfig>(state, 'draft').classifierModel).toBe('saved-model')
+    ;(state.selectClassifierChannel as (id: string) => void)('chat')
+    expect(value<IntentConfig>(state, 'draft').classifierModel).toBe('chat-default')
+    expect(value<string[]>(state, 'classifierModels')).toEqual(['chat-default', 'other-model'])
+    value<IntentConfig>(state, 'draft').classifier = 'decisions'
+    expect(value<{ id: string }[]>(state, 'classifierOptions').map(option => option.id)).toEqual(['decision'])
+  })
+  it('没有 Decisions 渠道时保留显式选项并阻断启用保存', async () => {
+    const original = config()
+    original.enabled = true
+    original.strategy = 'auto'
+    original.classifier = 'decisions'
+    original.classifierModel = 'decision-model'
+    mocks.load.mockResolvedValue(original)
+    const state = await setup()
+    expect(value<string>(state, 'classifierReason')).toContain('Decisions')
+    await (state.save as () => Promise<void>)()
+    expect(mocks.save).not.toHaveBeenCalled()
+    expect(value<IntentConfig>(state, 'draft').classifier).toBe('decisions')
   })
 })

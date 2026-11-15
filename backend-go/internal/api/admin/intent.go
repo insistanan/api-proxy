@@ -18,11 +18,43 @@ func RegisterIntentAPI(api *gin.RouterGroup, service *intent.Service) {
 		}
 		embeddings := []gin.H{}
 		for _, up := range service.Cfg.GetConfig().EmbeddingsUpstream {
-			embeddings = append(embeddings, gin.H{"id": up.ID, "name": up.Name})
+			if config.GetChannelStatus(&up) != config.ChannelStatusActive || len(up.APIKeys) == 0 {
+				continue
+			}
+			embeddings = append(embeddings, gin.H{"id": up.ID, "name": up.Name, "defaultModel": up.DefaultModel})
 		}
 		c.JSON(http.StatusOK, gin.H{"classifiers": options, "embeddings": embeddings, "tasks": config.IntentTasks()})
 	})
 	api.GET("/intent/local", func(c *gin.Context) { c.JSON(http.StatusOK, service.Local.Status()) })
+	api.GET("/intent/local/presets", func(c *gin.Context) { c.JSON(http.StatusOK, service.Local.Presets(c.Request.Context())) })
+	api.PUT("/intent/local/presets-url", func(c *gin.Context) {
+		var req struct {
+			URL *string `json:"url"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil || req.URL == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请提供清单地址；传空字符串恢复默认"})
+			return
+		}
+		if err := service.Local.SetPresetsURL(*req.URL); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, service.Local.Presets(c.Request.Context()))
+	})
+	api.POST("/intent/local/install-preset", func(c *gin.Context) {
+		var req struct {
+			ID string `json:"id"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil || req.ID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请选择发布清单中的预设 ID"})
+			return
+		}
+		if err := service.Local.InstallPreset(c.Request.Context(), req.ID); err != nil {
+			respondSaveError(c, "安装并启动向量预设失败", err)
+			return
+		}
+		c.JSON(http.StatusOK, service.Local.Status())
+	})
 	api.POST("/intent/local/install", func(c *gin.Context) {
 		var manifest intent.LocalManifest
 		if err := c.ShouldBindJSON(&manifest); err != nil {
@@ -63,6 +95,12 @@ func RegisterIntentAPI(api *gin.RouterGroup, service *intent.Service) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "意图配置无效"})
 			return
 		}
+		if err := service.ValidateIntentVector(value); err != nil {
+			if !respondVectorRequired(c, err) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			}
+			return
+		}
 		if err := service.Cfg.UpdateIntentRouting(c.Param("protocol"), value); err != nil {
 			respondSaveError(c, "保存意图配置失败", err)
 			return
@@ -83,6 +121,12 @@ func RegisterIntentAPI(api *gin.RouterGroup, service *intent.Service) {
 			return
 		}
 		pools := service.Cfg.GetChannelPools(c.Param("protocol"))
+		if err := service.ValidateIntentVector(req.Config); err != nil {
+			if !respondVectorRequired(c, err) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			}
+			return
+		}
 		if err := config.ValidateIntentRouting(req.Config, pools); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -101,11 +145,20 @@ func RegisterIntentAPI(api *gin.RouterGroup, service *intent.Service) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "索引配置无效"})
 			return
 		}
+		if err := service.ValidateVector(config.SemanticEmbeddingConfig{Source: cfg.EmbeddingSource, Channel: cfg.EmbeddingChannel, Model: cfg.EmbeddingModel}); err != nil {
+			if !respondVectorRequired(c, err) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			}
+			return
+		}
 		if err := config.ValidateIntentRouting(cfg, service.Cfg.GetChannelPools(c.Param("protocol"))); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 		if err := service.BuildIndex(intent.WithProtocol(c.Request.Context(), c.Param("protocol")), cfg); err != nil {
+			if respondVectorRequired(c, err) {
+				return
+			}
 			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 			return
 		}

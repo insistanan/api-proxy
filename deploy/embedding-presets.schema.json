@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "api-proxy embedding presets v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "presets"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "const": 1 },
+    "presets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "description", "sizeBytes", "platforms"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-zA-Z0-9_-]{1,64}$" },
+          "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "description": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "sizeBytes": { "type": "integer", "minimum": 1 },
+          "platforms": {
+            "type": "object",
+            "minProperties": 1,
+            "propertyNames": { "pattern": "^[a-z0-9]+/[a-z0-9]+$" },
+            "additionalProperties": { "$ref": "#/$defs/install" }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "https": { "type": "string", "format": "uri", "pattern": "^https://[^/@#]+(?:/[^#]*)?$" },
+    "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
+    "install": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runtimeUrl", "runtimeSha256", "executable", "modelUrl", "modelSha256", "modelName", "pooling"],
+      "properties": {
+        "runtimeUrl": { "$ref": "#/$defs/https" },
+        "runtimeSha256": { "$ref": "#/$defs/sha256" },
+        "executable": { "type": "string", "minLength": 1, "description": "ZIP 内 llama-server 的安全相对路径，目录分隔符使用 /" },
+        "modelUrl": { "$ref": "#/$defs/https" },
+        "modelSha256": { "$ref": "#/$defs/sha256" },
+        "modelName": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "pooling": { "enum": ["cls", "mean", "last"] }
+      }
+    }
+  }
+}

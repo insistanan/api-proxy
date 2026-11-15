@@ -78,6 +78,7 @@ func TestFailedClassificationIsRecordedWithoutConfirmedTarget(t *testing.T) {
 	cfg := automaticConfig()
 	cfg.Groups = []config.IntentGroupCapability{{PoolID: "default", Tasks: []string{"code_generation"}, Tiers: []int{1}}}
 	cfg.Classifier, cfg.ClassifierModel = "llm", "missing-caller"
+	cfg.FailurePolicy = "error"
 	require.NoError(t, s.Cfg.UpdateIntentRouting("messages", cfg))
 	_, _, err := s.Begin(context.Background(), "messages", "failed", "failed-request", []byte(`{"input":"实现函数"}`), "")
 	require.Error(t, err)

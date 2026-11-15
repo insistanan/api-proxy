@@ -109,11 +109,14 @@ export interface LocalManifest {
   modelName: string
   pooling: string
 }
-export interface LocalStatus { installed: boolean; running: boolean; ready: boolean; busy: boolean; error: string; platform: string; manifest: LocalManifest }
+export interface LocalStatus { installed: boolean; running: boolean; ready: boolean; busy: boolean; error: string; platform: string; installPath: string; presetsUrl: string; phase: string; manifest: LocalManifest }
+export interface LocalPreset { id: string; name: string; description: string; sizeBytes: number }
+export interface LocalPresets { version: number; presets: LocalPreset[]; presetsUrl: string; defaultPresetsUrl: string; installPath: string; platform: string; error: string; stale: boolean }
+export interface ClassifierOption { kind: string; builtin: boolean; sharedKey: string; id: string; name: string; defaultModel: string; models: string[] }
 export interface IntentOptions {
   tasks?: IntentTask[]
-  classifiers: { kind: string; id: string; name: string; defaultModel: string; models: string[] }[]
-  embeddings: { id: string; name: string }[]
+  classifiers: ClassifierOption[]
+  embeddings: { id: string; name: string; defaultModel?: string }[]
 }
 
 export const intentApi = {
@@ -125,6 +128,9 @@ export const intentApi = {
   feedback: (protocol: IntentProtocol, requestId: string, good: boolean) => apiRequest(`/intent/${protocol}/feedback`, { method: 'POST', body: JSON.stringify({ requestId, good }) }),
   options: () => apiRequest<IntentOptions>('/intent/options'),
   local: () => apiRequest<LocalStatus>('/intent/local'),
+  presets: () => apiRequest<LocalPresets>('/intent/local/presets'),
+  setPresetsUrl: (url: string) => apiRequest<LocalPresets>('/intent/local/presets-url', { method: 'PUT', body: JSON.stringify({ url }) }),
+  installPreset: (id: string) => apiRequest<LocalStatus>('/intent/local/install-preset', { method: 'POST', body: JSON.stringify({ id }) }),
   install: (manifest: LocalManifest) => apiRequest<LocalStatus>('/intent/local/install', { method: 'POST', body: JSON.stringify(manifest) }),
   localAction: (action: 'start' | 'stop') => apiRequest<LocalStatus>(`/intent/local/${action}`, { method: 'POST' })
 }
