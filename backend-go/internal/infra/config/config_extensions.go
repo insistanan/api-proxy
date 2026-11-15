@@ -13,7 +13,8 @@ import (
 )
 
 // ExtensionsSettings 管理项目 Skills / MCP 统一目录与 Git 远程仓库地址。
-// SkillsDir 为空或 "skills" 时统一解析为 <workspace>/skills，保持向后兼容。
+// SkillsDir 保存时仅接受绝对路径或空值；空值使用 <workspace>/skills。
+// 运行时仍兼容已保存的 "skills"、相对路径与 ~ 路径。
 // 该目录同时存储包含 env/headers 密钥的 mcp.json，配置远程仓库时应使用私有仓库。
 type ExtensionsSettings struct {
 	SkillsDir     string `json:"skillsDir"`
@@ -40,13 +41,16 @@ func NormalizeExtensionsSettings(settings ExtensionsSettings) ExtensionsSettings
 	return settings
 }
 
-// ValidateExtensionsSettings 校验项目 Skills 目录与 Git 仓库地址。
+// ValidateExtensionsSettings 校验待保存的项目 Skills 绝对路径（允许留空）与 Git 仓库地址。
 func ValidateExtensionsSettings(settings ExtensionsSettings) error {
 	settings = NormalizeExtensionsSettings(settings)
 	if strings.ContainsAny(settings.SkillsDir, "\r\n\x00") {
 		return &ConfigError{Message: "Skills 目录路径不能包含控制字符"}
 	}
 	if settings.SkillsDir != "" {
+		if !filepath.IsAbs(settings.SkillsDir) {
+			return &ConfigError{Message: "Skills 目录必须填写绝对路径；留空使用工作区下的 skills/"}
+		}
 		resolved, err := ResolveSkillsDir(settings.SkillsDir)
 		if err != nil {
 			return err
@@ -105,7 +109,8 @@ func ValidateGitRepoURL(raw string) error {
 	return &ConfigError{Message: "Git 仓库地址格式无效，请使用 https://、ssh:// 或 git@host:owner/repo.git"}
 }
 
-// ResolveSkillsDir 将 SkillsDir 解析为干净的绝对路径；空值与 "skills" 均解析为 <workspaceRoot>/skills。
+// ResolveSkillsDir 在运行时将 SkillsDir 解析为干净的绝对路径；空值使用 <workspaceRoot>/skills。
+// 为兼容旧配置，仍解析 "skills"、相对路径与 ~ 路径；绝对路径限制仅用于保存校验。
 func ResolveSkillsDir(skillsDir string) (string, error) {
 	trimmed := strings.TrimSpace(skillsDir)
 	if trimmed == "" {

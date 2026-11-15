@@ -99,6 +99,32 @@ func fileGitURL(dir string) string {
 	return "file:///" + slashed
 }
 
+func TestUpdateSettingsSkillsDirValidation(t *testing.T) {
+	root, _, cfgManager, _, _, _, router := setupExtensionsAdminTest(t)
+	t.Chdir(root)
+	oldDir := cfgManager.GetSettings().Extensions.SkillsDir
+
+	for _, skillsDir := range []string{"skills", "relative/skills", "../skills", "~", "~/skills", `~\skills`} {
+		t.Run(skillsDir, func(t *testing.T) {
+			rec := doJSONRequest(t, router, http.MethodPut, "/settings", map[string]any{
+				"extensions": map[string]string{"skillsDir": skillsDir},
+			})
+			require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+			require.JSONEq(t, `{"error":"Skills 目录必须填写绝对路径；留空使用工作区下的 skills/"}`, rec.Body.String())
+			require.Equal(t, oldDir, cfgManager.GetSettings().Extensions.SkillsDir)
+		})
+	}
+
+	rec := doJSONRequest(t, router, http.MethodPut, "/settings", map[string]any{
+		"extensions": map[string]string{"skillsDir": ""},
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Empty(t, cfgManager.GetSettings().Extensions.SkillsDir)
+	resolved, err := config.ResolveSkillsDir(cfgManager.GetSettings().Extensions.SkillsDir)
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(root, "skills"), resolved)
+}
+
 func TestUpdateSettingsMigratesSkillsDirAndRejectsNonEmptyTarget(t *testing.T) {
 	root, _, cfgManager, _, _, _, router := setupExtensionsAdminTest(t)
 

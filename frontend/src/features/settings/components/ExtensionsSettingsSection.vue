@@ -2,7 +2,7 @@
   <section aria-labelledby="extensions-settings-title">
     <div class="section-heading">
       <div>
-        <h2 id="extensions-settings-title" class="text-h6 font-weight-bold">扩展与同步</h2>
+        <h2 id="extensions-settings-title" class="text-h6 font-weight-bold">技能与 MCP</h2>
         <div class="text-body-2 text-medium-emphasis mt-1">
           统一管理项目 Skills、启用清单 <code>skills-manifest.json</code> 与集中式 <code>mcp.json</code> 的存放路径及 Git 同步。
         </div>
@@ -13,8 +13,8 @@
       <v-text-field
         v-model="skillsDir"
         label="项目 Skills / MCP 目录路径"
-        placeholder="skills"
-        hint="留空默认使用工作区下的 skills/；支持相对路径、绝对路径或 ~/ 路径。修改路径后会自动把原目录（含 .git、mcp.json 与翻译备份）安全迁移到新位置。"
+        placeholder="D:\data\agent-skills"
+        hint="填写绝对路径，留空使用工作区下的 skills/；修改后原目录会自动迁移到新位置。"
         persistent-hint
         prepend-inner-icon="mdi-folder-open"
         variant="outlined"

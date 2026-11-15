@@ -13,11 +13,7 @@
 
     <v-alert v-if="error" type="error" variant="tonal" class="mb-5" closable @click:close="error = ''">{{ error }}</v-alert>
 
-    <DisclosureSection title="来源与安装位置" description="查看各客户端的技能目录、读写状态和备份位置。" icon="mdi-folder-open" class="mb-5">
-      <v-alert type="info" variant="tonal" density="compact" class="mb-4">
-        项目目录是统一可恢复来源：导入、远程安装和翻译保存都会同步保留 Skill；项目 Skill 的 Agent 启用状态保存在 <code>skills-manifest.json</code> 并自动分发到各客户端目录。目录路径与 Git 同步可在「设置 → 扩展与同步」配置。
-      </v-alert>
-
+    <DisclosureSection v-model="sourcesExpanded" title="来源与安装位置" description="查看各客户端的技能目录、读写状态和备份位置。" icon="mdi-folder-open" class="mb-5">
       <div class="locations-strip">
         <div class="text-caption text-medium-emphasis mb-2">已检查的本机目录</div>
         <div class="d-flex flex-wrap ga-2">
@@ -196,6 +192,7 @@ const PROXY_BASE = import.meta.env.PROD
   ? ''
   : import.meta.env.VITE_BACKEND_URL || ''
 
+const sourcesExpanded = ref(true)
 const loading = ref(false)
 const syncing = ref(false)
 const consolidating = ref(false)

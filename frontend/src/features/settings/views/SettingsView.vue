@@ -611,7 +611,7 @@ const settingsSections: Array<{ key: SettingsSection; label: string; icon: strin
   { key: 'disguise', label: '客户端伪装', icon: 'mdi-incognito' },
   { key: 'assistant', label: 'AI 助手', icon: 'mdi-robot' },
   { key: 'prompts', label: '通用提示词', icon: 'mdi-text' },
-  { key: 'extensions', label: '扩展与同步', icon: 'mdi-puzzle-outline' }
+  { key: 'extensions', label: '技能与 MCP', icon: 'mdi-puzzle-outline' }
 ]
 const route = useRoute()
 const router = useRouter()
