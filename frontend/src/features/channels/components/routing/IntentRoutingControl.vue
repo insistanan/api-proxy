@@ -6,68 +6,53 @@
   <AppDialog v-model="show" :title="protocol + ' · 意图匹配'" size="xl" :busy="saving || indexing || localBusy">
     <v-alert v-if="error" type="error" variant="tonal" class="mb-5">{{ error }}</v-alert>
     <v-form v-if="draft" :disabled="saving || indexing" class="intent-stack" @submit.prevent>
-      <v-switch v-model="draft.enabled" color="primary" label="启用当前协议的意图匹配" hide-details />
+      <v-switch v-model="draft.enabled" color="primary" label="启用意图分流" hint="关闭后沿用网关原有的渠道选择" persistent-hint />
       <section class="intent-stack" aria-labelledby="intent-step-routing">
-        <h3 id="intent-step-routing" class="text-subtitle-1">第 1 步 · 怎么分流</h3>
-        <v-radio-group v-model="draft.strategy" label="匹配方式" hide-details>
+        <div class="d-flex flex-wrap align-center justify-space-between ga-3">
+          <div>
+            <h3 id="intent-step-routing" class="text-subtitle-1">怎么识别任务</h3>
+            <p class="text-body-2 text-medium-emphasis mb-0">先选一种方式，其他参数会自动使用安全默认值。</p>
+          </div>
+          <v-chip v-if="simpleMode === 'builtin'" color="primary" variant="tonal">推荐</v-chip>
+        </div>
+        <v-radio-group v-model="simpleMode" hide-details>
           <div class="intent-strategies">
-            <div v-for="strategy in strategies" :key="strategy.value" class="intent-strategy" :class="{ 'intent-strategy-disabled': strategy.value === 'semantic' && !vectorAvailable }">
-              <v-radio :label="strategy.title" :value="strategy.value" :disabled="strategy.value === 'semantic' && !vectorAvailable" />
+            <div v-for="mode in simpleModes" :key="mode.value" class="intent-strategy">
+              <v-radio :label="mode.title" :value="mode.value" />
+              <p class="text-caption text-medium-emphasis ml-8 mb-0">{{ mode.description }}</p>
             </div>
           </div>
         </v-radio-group>
-        <div v-if="!vectorAvailable || usesEmbedding" class="d-flex flex-wrap align-center ga-3">
-          <span class="text-body-2 text-medium-emphasis">{{ vectorAvailable ? '向量模型可用' : '语义相似度需要就绪的向量模型' }}</span>
-          <v-btn variant="tonal" size="small" @click="vectorGuide = true">{{ vectorAvailable ? '管理向量模型' : '安装或选择向量模型' }}</v-btn>
-        </div>
-        <v-select v-if="draft.strategy === 'auto'" v-model="draft.taskMatcher" :items="[{ title: '使用辅助判断方式识别', value: 'builtin' }, { title: '使用数据集向量识别任务类型', value: 'semantic' }]" label="任务类型识别来源" />
-        <template v-if="needsClassifier">
-          <v-select v-model="draft.classifier" :items="classifiers" label="辅助判断方式" />
-          <template v-if="draft.classifier !== 'heuristic'">
-            <v-alert v-if="!classifierOptions.length" type="warning" variant="tonal">{{ usesDecisions ? '没有可用的 Decisions 渠道，请先添加并启用 Decisions 渠道，或选择其他判断方式。' : '没有可用的辅助判断渠道，请先启用渠道并配置密钥。' }}</v-alert>
-            <template v-else>
-              <v-autocomplete v-model="draft.classifierChannel" :items="classifierOptions" item-title="title" item-value="id" label="辅助判断渠道" clearable @update:model-value="selectClassifierChannel" />
-              <v-combobox v-model="draft.classifierModel" :items="classifierModels" :return-object="false" label="辅助判断模型" clearable @update:model-value="draft.classifierModel ||= ''" />
-            </template>
+        <template v-if="simpleMode === 'semantic'">
+          <div class="intent-inline-status">
+            <span class="text-body-2" :class="vectorReason ? 'text-warning' : 'text-primary'">{{ vectorReason || '向量模型已就绪' }}</span>
+            <v-btn variant="tonal" size="small" @click="vectorGuide = true">{{ vectorReason ? '准备向量模型' : '更换向量模型' }}</v-btn>
+          </div>
+          <DatasetPicker v-model="draft.datasetIds" kind="intent" :multiple="false" require-published :refresh-key="datasetRefresh" @published-profile="usePublishedEmbedding" />
+          <p class="text-caption text-medium-emphasis mb-0">没有数据集时，可直接采用内置合成样本；仅索引样本会被确认并发布。</p>
+          <v-btn variant="tonal" :loading="indexing" :disabled="indexing || localBusy" @click="startSemanticSetup">{{ vectorReason ? '准备向量模型' : draft.datasetIds?.length ? '构建并发布索引' : '采用内置样本并构建索引' }}</v-btn>
+        </template>
+        <template v-if="simpleMode === 'assistant'">
+          <v-select :model-value="draft.classifier" :items="assistantClassifiers" label="判断类型" @update:model-value="selectClassifier" />
+          <v-alert v-if="!classifierOptions.length" type="warning" variant="tonal">{{ usesDecisions ? '没有可用的 Decisions 渠道，请先添加并启用渠道。' : '没有可用的辅助判断渠道，请先启用渠道并配置密钥。' }}</v-alert>
+          <template v-else>
+            <v-autocomplete v-model="draft.classifierChannel" :items="classifierOptions" item-title="title" item-value="id" label="判断渠道" clearable @update:model-value="selectClassifierChannel" />
+            <v-combobox v-model="draft.classifierModel" :items="classifierModels" :return-object="false" label="判断模型" clearable @update:model-value="draft.classifierModel ||= ''" />
           </template>
         </template>
-        <DatasetPicker v-if="usesEmbedding" v-model="draft.datasetIds" kind="intent" />
-        <v-alert v-if="vectorReason" type="warning" variant="tonal">{{ vectorReason }}</v-alert>
+        <div v-if="simpleMode === 'custom'" class="d-flex flex-wrap align-center ga-3">
+          <span class="text-body-2 text-medium-emphasis">当前使用自定义模式：{{ strategyTitle(draft.strategy) }}</span>
+          <v-btn variant="tonal" size="small" @click="simpleMode = 'builtin'">切换到自动识别</v-btn>
+        </div>
         <p class="text-caption text-medium-emphasis">按任务和难度选组，会话固定与续轮保护仍优先。</p>
       </section>
       <v-divider />
-      <section ref="groupsSection" class="intent-stack" aria-labelledby="intent-step-groups">
+      <section v-if="draft.strategy === 'auto'" ref="groupsSection" class="intent-stack" aria-labelledby="intent-step-groups">
         <div class="d-flex flex-wrap align-center justify-space-between ga-3">
           <h3 id="intent-step-groups" class="text-subtitle-1">第 2 步 · 分组能力</h3>
           <span class="text-body-2 text-medium-emphasis">{{ configuredGroups }} / {{ pools.length }} 个分组已配置能力</span>
         </div>
         <IntentGroupCapabilities v-model="groups" :pools="pools" :tasks="options.tasks ?? []" :disabled="saving || indexing" :use-feedback="!!draft.useFeedback" />
-        <template v-if="draft.strategy !== 'auto'">
-          <div class="d-flex flex-wrap align-center justify-space-between ga-3">
-            <h3 class="text-subtitle-1">{{ draft.strategy === 'regex' ? '正则规则与分组' : '任务或难度与分组' }}</h3>
-            <v-btn variant="tonal" size="small" :disabled="saving" @click="addRoute">添加映射</v-btn>
-          </div>
-          <v-alert v-if="!draft.routes.length" type="info" variant="tonal">添加目标分组映射后即可启用。自动综合匹配请改用上方推荐模式。</v-alert>
-          <v-expansion-panels variant="accordion">
-            <v-expansion-panel v-for="(route, index) in draft.routes" :key="index">
-              <v-expansion-panel-title>{{ poolName(route.poolId) }} · {{ route.description || route.id || '待配置' }}</v-expansion-panel-title>
-              <v-expansion-panel-text>
-                <div class="intent-stack pt-2">
-                  <v-select v-model="route.poolId" :items="pools" item-title="name" item-value="id" label="目标分组" />
-                  <v-text-field v-model="route.description" label="任务说明" />
-                  <v-text-field v-if="draft.strategy === 'semantic'" v-model="route.label" label="数据集类别" hint="与样本 label 一致，留空使用映射 ID" persistent-hint />
-                  <v-textarea v-if="draft.strategy === 'regex'" :model-value="route.patterns.join('\n')" label="正则表达式，每行一条" rows="3" @update:model-value="route.patterns = lines($event)" />
-                  <v-textarea v-if="draft.strategy === 'semantic' && !draft.datasetIds?.length" :model-value="route.examples.join('\n')" label="任务例句，每行一句" rows="3" @update:model-value="route.examples = lines($event)" />
-                  <v-select v-model="route.tier" :items="tiers" label="难度等级" />
-                  <v-text-field v-if="draft.strategy === 'adaptive'" v-model.number="route.cost" type="number" min="0" label="相对成本" />
-                  <v-text-field v-model="route.id" label="映射 ID" hint="已自动生成，用于稳定引用" persistent-hint />
-                  <v-btn variant="text" color="error" @click="draft.routes.splice(index, 1)">移除映射</v-btn>
-                </div>
-              </v-expansion-panel-text>
-            </v-expansion-panel>
-          </v-expansion-panels>
-
-        </template>
       </section>
       <v-divider />
       <section class="intent-stack" aria-labelledby="intent-step-preview">
@@ -79,36 +64,73 @@
       <v-expansion-panels variant="accordion">
         <v-expansion-panel title="高级设置">
           <v-expansion-panel-text>
-            <v-expansion-panels variant="accordion">
-              <v-expansion-panel title="会话稳定性"><v-expansion-panel-text>
-                <div class="intent-fields">
-                  <v-text-field v-model.number="draft.minResidenceSeconds" type="number" min="30" label="最短驻留时间（秒）" />
-                  <v-text-field v-model.number="draft.minTurns" type="number" min="1" label="切换前最少用户轮次" />
+            <div class="intent-stack">
+              <v-select v-if="simpleMode === 'custom'" v-model="draft.strategy" :items="strategies" label="自定义匹配模式" item-title="title" item-value="value" />
+              <template v-if="draft.strategy !== 'auto'">
+                <v-alert v-if="!draft.routes.length" type="info" variant="tonal">添加规则映射后即可启用。</v-alert>
+                <div class="d-flex flex-wrap align-center justify-space-between ga-3">
+                  <h3 class="text-subtitle-1">{{ draft.strategy === 'regex' ? '正则规则' : '规则映射' }}</h3>
+                  <v-btn variant="tonal" size="small" :disabled="saving" @click="addRoute">添加映射</v-btn>
                 </div>
-                <v-switch v-if="draft.strategy === 'auto'" v-model="draft.useFeedback" label="同能力分组参考反馈与相对成本" hide-details />
-                <v-switch v-model="draft.observeOnly" label="自适应选组仅观察建议" hide-details />
-              </v-expansion-panel-text></v-expansion-panel>
-              <v-expansion-panel title="未命中与失败"><v-expansion-panel-text>
-                <div class="intent-stack">
-                  <v-select v-model="draft.unmatched" :items="[{ title: '不干预，使用网关默认选组', value: 'original' }, { title: '返回未命中错误', value: 'error' }, { title: '使用指定分组', value: 'fallback' }]" label="识别不出来时" />
-                  <v-select v-if="draft.unmatched === 'fallback'" v-model="draft.fallbackPoolId" :items="pools" item-title="name" item-value="id" label="未命中目标分组" />
-                  <v-select v-model="draft.failurePolicy" :items="[{ title: '沿用原路由并记录失败', value: 'keep' }, { title: '返回明确错误', value: 'error' }]" label="辅助判断失败或超时" />
-                  <v-text-field v-model.number="draft.timeoutMs" type="number" min="100" max="30000" label="辅助判断总超时（毫秒）" />
-                </div>
-              </v-expansion-panel-text></v-expansion-panel>
-              <v-expansion-panel v-if="usesEmbedding" title="向量参数"><v-expansion-panel-text>
-                <div class="intent-stack">
-                  <EmbeddingProfileFields v-model="embeddingProfile" hide-timeout />
+                <v-expansion-panels variant="accordion" class="mb-5">
+                  <v-expansion-panel v-for="(route, index) in draft.routes" :key="index">
+                    <v-expansion-panel-title>{{ poolName(route.poolId) }} · {{ route.description || route.id || '待配置' }}</v-expansion-panel-title>
+                    <v-expansion-panel-text>
+                      <div class="intent-stack pt-2">
+                        <v-select v-model="route.poolId" :items="pools" item-title="name" item-value="id" label="目标分组" />
+                        <v-text-field v-model="route.description" label="任务说明" />
+                        <v-text-field v-if="draft.strategy === 'semantic'" v-model="route.label" label="数据集类别" hint="与样本 label 一致，留空使用映射 ID" persistent-hint />
+                        <v-textarea v-if="draft.strategy === 'regex'" :model-value="route.patterns.join('\n')" label="正则表达式，每行一条" rows="3" @update:model-value="route.patterns = lines($event)" />
+                        <v-textarea v-if="draft.strategy === 'semantic' && !draft.datasetIds?.length" :model-value="route.examples.join('\n')" label="任务例句，每行一句" rows="3" @update:model-value="route.examples = lines($event)" />
+                        <v-select v-model="route.tier" :items="tiers" label="难度等级" />
+                        <v-text-field v-if="draft.strategy === 'adaptive'" v-model.number="route.cost" type="number" min="0" label="相对成本" />
+                        <v-text-field v-model="route.id" label="映射 ID" hint="已自动生成，用于稳定引用" persistent-hint />
+                        <v-btn variant="text" color="error" @click="draft.routes.splice(index, 1)">移除映射</v-btn>
+                      </div>
+                    </v-expansion-panel-text>
+                  </v-expansion-panel>
+                </v-expansion-panels>
+              </template>
+              <v-select v-if="draft.strategy === 'auto'" v-model="draft.taskMatcher" :items="[{ title: '内置规则', value: 'builtin' }, { title: '向量数据集', value: 'semantic' }]" label="任务识别来源" />
+              <v-select v-if="needsClassifier && simpleMode !== 'assistant'" :model-value="draft.classifier" :items="classifiers" label="不明确任务的判断方式" @update:model-value="selectClassifier" />
+              <template v-if="needsClassifier && draft.classifier !== 'heuristic' && simpleMode !== 'assistant'">
+                <v-alert v-if="!classifierOptions.length" type="warning" variant="tonal">{{ usesDecisions ? '没有可用的 Decisions 渠道，请先添加并启用渠道。' : '没有可用的辅助判断渠道，请先启用渠道并配置密钥。' }}</v-alert>
+                <template v-else>
+                  <v-autocomplete v-model="draft.classifierChannel" :items="classifierOptions" item-title="title" item-value="id" label="辅助判断渠道" clearable @update:model-value="selectClassifierChannel" />
+                  <v-combobox v-model="draft.classifierModel" :items="classifierModels" :return-object="false" label="辅助判断模型" clearable @update:model-value="draft.classifierModel ||= ''" />
+                </template>
+              </template>
+              <v-expansion-panels variant="accordion">
+                <v-expansion-panel title="会话稳定性"><v-expansion-panel-text>
                   <div class="intent-fields">
-                    <v-text-field v-model.number="draft.threshold" type="number" min="0" max="1" step="0.01" label="语义命中阈值" />
-                    <v-text-field v-model.number="draft.switchMargin" type="number" min="0" max="1" step="0.01" label="最小相似度差值" />
+                    <v-text-field v-model.number="draft.minResidenceSeconds" type="number" min="30" label="最短驻留时间（秒）" />
+                    <v-text-field v-model.number="draft.minTurns" type="number" min="1" label="切换前最少用户轮次" />
                   </div>
-                  <div><v-btn variant="tonal" :loading="indexing" :disabled="saving || indexing || !!vectorReason" @click="buildIndex">增量构建并发布索引</v-btn></div>
-                  <p class="text-caption text-medium-emphasis">模型或前缀变化后需重新构建索引。</p>
-                </div>
-              </v-expansion-panel-text></v-expansion-panel>
-              <v-expansion-panel title="手动安装"><v-expansion-panel-text><LocalEmbeddingSettings manual-only @status="updateLocalStatus" @busy="localBusy = $event" /></v-expansion-panel-text></v-expansion-panel>
-            </v-expansion-panels>
+                  <v-switch v-if="draft.strategy === 'auto'" v-model="draft.useFeedback" label="同能力分组参考反馈与相对成本" hide-details />
+                  <v-switch v-if="draft.strategy === 'adaptive'" v-model="draft.observeOnly" label="自适应选组仅观察建议" hide-details />
+                </v-expansion-panel-text></v-expansion-panel>
+                <v-expansion-panel title="未命中与失败"><v-expansion-panel-text>
+                  <div class="intent-stack">
+                    <v-select v-model="draft.unmatched" :items="[{ title: '不干预，使用网关默认选组', value: 'original' }, { title: '返回未命中错误', value: 'error' }, { title: '使用指定分组', value: 'fallback' }]" label="识别不出来时" />
+                    <v-select v-if="draft.unmatched === 'fallback'" v-model="draft.fallbackPoolId" :items="pools" item-title="name" item-value="id" label="未命中目标分组" />
+                    <v-select v-model="draft.failurePolicy" :items="[{ title: '沿用原路由并记录失败', value: 'keep' }, { title: '返回明确错误', value: 'error' }]" label="辅助判断失败或超时" />
+                    <v-text-field v-model.number="draft.timeoutMs" type="number" min="100" max="30000" label="辅助判断总超时（毫秒）" />
+                  </div>
+                </v-expansion-panel-text></v-expansion-panel>
+                <v-expansion-panel v-if="usesEmbedding" title="高级向量参数"><v-expansion-panel-text>
+                  <div class="intent-stack">
+                    <EmbeddingProfileFields v-model="embeddingProfile" hide-timeout compact />
+                    <div class="intent-fields">
+                      <v-text-field v-model.number="draft.threshold" type="number" min="0" max="1" step="0.01" label="语义命中阈值" />
+                      <v-text-field v-model.number="draft.switchMargin" type="number" min="0" max="1" step="0.01" label="最小相似度差值" />
+                    </div>
+                    <div><v-btn variant="tonal" :loading="indexing" :disabled="saving || indexing || !!vectorReason" @click="buildIndex">增量构建并发布索引</v-btn></div>
+                    <p class="text-caption text-medium-emphasis">模型或前缀变化后需重新构建索引。</p>
+                  </div>
+                </v-expansion-panel-text></v-expansion-panel>
+                <v-expansion-panel title="手动安装"><v-expansion-panel-text><LocalEmbeddingSettings manual-only @status="updateLocalStatus" @busy="localBusy = $event" /></v-expansion-panel-text></v-expansion-panel>
+              </v-expansion-panels>
+            </div>
           </v-expansion-panel-text>
         </v-expansion-panel>
         <v-expansion-panel title="最近路由与任务反馈" @group:selected="loadEvents"><v-expansion-panel-text>
@@ -142,13 +164,14 @@
     <div class="intent-stack">
       <p class="text-body-2">语义匹配需要本地模型就绪，或配置已有 Embeddings 渠道。</p>
       <LocalEmbeddingSettings @status="updateLocalStatus" @busy="localBusy = $event" />
-      <v-btn v-if="localStatus?.ready" variant="tonal" @click="useLocalEmbedding">使用本地模型 {{ localStatus.manifest.modelName }}</v-btn>
+      <v-btn v-if="localStatus?.ready" variant="tonal" @click="continueWithLocalEmbedding">使用本地模型并继续</v-btn>
       <v-divider />
       <v-btn v-if="options.embeddings.length" variant="tonal" @click="useRemoteEmbedding">使用已有 Embeddings 渠道</v-btn>
       <p v-else class="text-body-2 text-medium-emphasis">暂无可用的 Embeddings 渠道，请先添加并启用渠道、配置密钥。</p>
       <template v-if="draft && draft.embeddingSource === 'remote' && options.embeddings.length">
         <v-select v-model="draft.embeddingChannel" :items="options.embeddings" item-title="name" item-value="id" label="Embeddings 渠道" @update:model-value="selectEmbeddingChannel" />
         <v-text-field v-model="draft.embeddingModel" label="向量模型名称" />
+        <v-btn variant="tonal" :disabled="!draft.embeddingChannel || !draft.embeddingModel.trim()" @click="continueWithRemoteEmbedding">选择渠道并继续</v-btn>
       </template>
     </div>
     <template #actions><v-btn :disabled="localBusy" @click="vectorGuide = false">{{ vectorReason ? '稍后配置' : '完成' }}</v-btn></template>
@@ -161,8 +184,9 @@ import { useChannelStore } from '@/features/channels/stores/channel'
 import { useIntentStore } from '@/features/channels/stores/intent'
 import { useToast } from '@/shared/composables/useToast'
 import { intentApi, intentErrorText, intentPreviewFailure, type IntentConfig, type IntentDecision, type IntentEvent, type IntentGroupCapability, type IntentOptions, type IntentProtocol, type LocalStatus } from '@/features/channels/services/intent'
-import type { EmbeddingProfile } from '@/types'
+import type { Dataset, EmbeddingProfile } from '@/types'
 import LocalEmbeddingSettings from '@/features/channels/components/routing/LocalEmbeddingSettings.vue'
+import { datasetsApi } from '@/features/extensions/datasets'
 import { DatasetPicker, EmbeddingProfileFields } from '@/features/extensions/datasets/ui'
 import IntentGroupCapabilities from '@/features/channels/components/routing/IntentGroupCapabilities.vue'
 import IntentMatchTrace from '@/features/channels/components/routing/IntentMatchTrace.vue'
@@ -178,6 +202,7 @@ const { showToast } = useToast()
 const show = ref(false)
 const groupsSection = ref<HTMLElement>()
 const vectorGuide = ref(false)
+const datasetRefresh = ref(0)
 const localStatus = ref<LocalStatus>()
 const vectorChecking = ref(false)
 const vectorLoadError = ref('')
@@ -212,6 +237,33 @@ const embeddingProfile = computed<EmbeddingProfile>({
   set: value => { if (draft.value) Object.assign(draft.value, { embeddingSource: value.source, embeddingChannel: value.channel, embeddingModel: value.model, embeddingVersion: value.modelVersion, queryPrefix: value.queryPrefix, examplePrefix: value.examplePrefix, timeoutMs: value.timeoutMs }) }
 })
 const needsClassifier = computed(() => ['auto', 'complexity', 'adaptive'].includes(draft.value?.strategy ?? ''))
+const simpleMode = computed<'builtin' | 'semantic' | 'assistant' | 'custom'>({
+  get() {
+    if (!draft.value || draft.value.strategy !== 'auto') return 'custom'
+    if (draft.value.taskMatcher === 'semantic') return 'semantic'
+    return draft.value.classifier === 'heuristic' ? 'builtin' : 'assistant'
+  },
+  set(mode) {
+    if (!draft.value || mode === 'custom') return
+    draft.value.strategy = 'auto'
+    if (mode === 'semantic') {
+      draft.value.taskMatcher = 'semantic'
+      draft.value.classifier = 'heuristic'
+      return
+    }
+    draft.value.taskMatcher = 'builtin'
+    if (mode === 'builtin') {
+      draft.value.classifier = 'heuristic'
+      return
+    }
+    if (draft.value.classifier === 'heuristic') selectClassifier('llm')
+  }
+})
+const simpleModes = [
+  { title: '自动识别', value: 'builtin', description: '使用内置规则，不额外调用模型。' },
+  { title: '向量语义', value: 'semantic', description: '按已发布样本寻找语义相近的任务。' },
+  { title: '辅助模型', value: 'assistant', description: '使用你选择的渠道判断任务类型。' }
+]
 const usesDecisions = computed(() => draft.value?.classifier === 'decisions' || draft.value?.classifier === 'systemone')
 const classifierOptions = computed(() => options.value.classifiers
   .filter(option => usesDecisions.value ? option.kind === 'decisions' : option.kind !== 'decisions')
@@ -226,7 +278,6 @@ const classifierModels = computed(() => {
   return selected?.models ?? [...new Set(classifierOptions.value.flatMap(option => option.models))]
 })
 const configuredGroups = computed(() => groups.value.filter(group => group.tasks.length && group.tiers.length).length)
-const vectorAvailable = computed(() => !!localStatus.value?.ready || options.value.embeddings.length > 0)
 const vectorReason = computed(() => {
   if (!usesEmbedding.value || !draft.value) return ''
   if (vectorChecking.value && !localStatus.value) return '正在检查向量模型状态'
@@ -251,6 +302,19 @@ function selectClassifierChannel(id: string | null) {
   const option = classifierOptions.value.find(channel => channel.id === id)
   if (option) draft.value.classifierModel = option.defaultModel
 }
+function selectClassifier(classifier: IntentConfig['classifier']) {
+  if (!draft.value || draft.value.classifier === classifier) return
+  const previousUsesDecisions = usesDecisions.value
+  draft.value.classifier = classifier
+  if (previousUsesDecisions !== usesDecisions.value) {
+    draft.value.classifierChannel = ''
+    draft.value.classifierModel = ''
+  }
+  const [onlyChannel] = classifierOptions.value
+  if (classifier !== 'heuristic' && !draft.value.classifierChannel && !draft.value.classifierModel && classifierOptions.value.length === 1 && onlyChannel) {
+    selectClassifierChannel(onlyChannel.id)
+  }
+}
 function selectEmbeddingChannel(id: string) {
   if (!draft.value) return
   const option = options.value.embeddings.find(channel => channel.id === id)
@@ -273,6 +337,68 @@ function useLocalEmbedding() {
   draft.value.embeddingSource = 'local'
   draft.value.embeddingChannel = ''
   draft.value.embeddingModel = localStatus.value.manifest.modelName
+  draft.value.embeddingVersion = ''
+  draft.value.queryPrefix = ''
+  draft.value.examplePrefix = ''
+}
+function usePublishedEmbedding(profile?: EmbeddingProfile) {
+  if (!draft.value || !profile) return
+  embeddingProfile.value = { ...profile }
+}
+async function startSemanticSetup() {
+  if (vectorReason.value) {
+    vectorGuide.value = true
+    await checkVector(true)
+    return
+  }
+  await prepareSemanticIndex()
+}
+async function continueWithLocalEmbedding() {
+  useLocalEmbedding()
+  vectorGuide.value = false
+  await prepareSemanticIndex()
+}
+async function continueWithRemoteEmbedding() {
+  if (!draft.value) return
+  draft.value.embeddingSource = 'remote'
+  vectorGuide.value = false
+  await prepareSemanticIndex()
+}
+async function prepareSemanticIndex() {
+  if (!draft.value || indexing.value || vectorReason.value) return
+  indexing.value = true
+  error.value = ''
+  try {
+    if (!draft.value.datasetIds?.length) {
+      const existing = (await datasetsApi.list()).find(item => item.id === 'starter-intents-v2' && item.kind === 'intent')
+      if (existing) {
+        const published = existing.indexes[existing.indexes.length - 1]
+        if (published) {
+          draft.value.datasetIds = [existing.id]
+          usePublishedEmbedding(published.profile)
+          datasetRefresh.value++
+          showToast('已选用现有内置样本索引，请保存路由配置', 'success')
+          return
+        }
+        if (!existing.approved) throw new Error('检测到尚未审核的内置数据集。请到数据集页面审核样本后再构建索引；现有内容未被覆盖。')
+        draft.value.datasetIds = [existing.id]
+      } else {
+        const builtins = await datasetsApi.builtin()
+        const source = builtins.find(item => item.id === 'starter-intents-v2')
+        if (!source) throw new Error('内置意图样本不可用，请在数据集页面导入起步样本。')
+        const accepted: Dataset = {
+          ...source,
+          samples: source.samples.map(sample => ({ ...sample, approved: sample.split === 'index' }))
+        }
+        const savedDataset = await datasetsApi.save(accepted)
+        draft.value.datasetIds = [savedDataset.id]
+      }
+    }
+    await intentApi.buildIndex(props.protocol, draft.value)
+    datasetRefresh.value++
+    showToast('意图样本索引已发布，请保存路由配置', 'success')
+  } catch (cause) { report(cause) }
+  finally { indexing.value = false }
 }
 async function checkVector(refreshChannels = false) {
   if (vectorChecking.value) return
@@ -290,8 +416,10 @@ async function checkVector(refreshChannels = false) {
 }
 
 const strategies = [{ title: '自动综合匹配（推荐）', value: 'auto' }, { title: '语义相似度', value: 'semantic' }, { title: '仅按难度分级', value: 'complexity' }, { title: '按难度与反馈自适应选择', value: 'adaptive' }, { title: '手动正则匹配', value: 'regex' }]
-const classifiers = [{ title: '内置规则 · 不调用额外模型', value: 'heuristic' }, { title: '普通 LLM 自动判断', value: 'llm' }, { title: 'Decisions 决策模型', value: 'decisions' }, { title: '混合 · 明确信号用规则，其余交 LLM', value: 'hybrid' }]
+const assistantClassifiers = [{ title: '普通 LLM', value: 'llm' }, { title: 'Decisions 决策模型', value: 'decisions' }, { title: '混合 · 明确信号用规则，其余交 LLM', value: 'hybrid' }]
+const classifiers = [{ title: '内置规则 · 不调用额外模型', value: 'heuristic' }, ...assistantClassifiers]
 const tiers = [{ title: '简单', value: 0 }, { title: '常规', value: 1 }, { title: '复杂', value: 2 }]
+const strategyTitle = (strategy: IntentConfig['strategy']) => strategies.find(item => item.value === strategy)?.title ?? strategy
 const lines = (text: string | null) => (text ?? '').split('\n').map(line => line.trim()).filter(Boolean)
 const report = (cause: unknown) => {
   error.value = intentErrorText(cause)
@@ -306,6 +434,7 @@ function orderGroups(value: IntentGroupCapability[]) {
   return [...value].sort((a, b) => (order.get(a.poolId) ?? pools.value.length) - (order.get(b.poolId) ?? pools.value.length))
 }
 function validateGroups() {
+  if (draft.value?.strategy !== 'auto') return true
   const incomplete = groups.value.find(group => !group.tasks.length || !group.tiers.length)
   if (!incomplete) return true
   error.value = `请为“${poolName(incomplete.poolId)}”同时选择任务和难度，或将两项清空。`
@@ -339,7 +468,6 @@ async function open() {
     draft.value = copy
     options.value = choices
     await checkVector()
-    if (usesEmbedding.value && vectorReason.value) vectorGuide.value = true
   } catch (cause) { if (protocol === props.protocol && show.value) report(cause) }
 }
 function addRoute() {
@@ -399,13 +527,6 @@ onUnmounted(() => { clearInterval(statusTimer) })
 watch(usesEmbedding, async needed => {
   if (!needed || !show.value) return
   await checkVector(true)
-  if (vectorReason.value) vectorGuide.value = true
-})
-watch(() => draft.value?.classifier, (_classifier, previous) => {
-  if (previous === undefined) return
-  if (!draft.value?.classifierChannel || classifierOptions.value.some(option => option.id === draft.value?.classifierChannel)) return
-  draft.value.classifierChannel = ''
-  draft.value.classifierModel = ''
 })
 watch(show, visible => { if (!visible) vectorGuide.value = false })
 watch(vectorGuide, visible => { if (visible) void checkVector(true) })

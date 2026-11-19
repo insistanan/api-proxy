@@ -18,7 +18,7 @@ const featureImportRules = featureModules.map(feature => ({
     'no-restricted-imports': ['error', {
       patterns: featureModules.filter(other => other !== feature).map(other => ({
         regex: other === 'extensions/datasets'
-          ? '^@/features/extensions/datasets/(?!ui$)'
+          ? '^@/features/extensions/datasets/(?!ui$|config$)'
           : `^@/features/${other}/`,
         message: '跨业务模块请使用该模块的公开出口，不直接引用内部文件。'
       }))

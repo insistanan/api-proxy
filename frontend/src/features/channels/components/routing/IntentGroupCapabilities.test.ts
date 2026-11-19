@@ -13,8 +13,8 @@ async function renderEditor(model: IntentGroupCapability[]) {
   const control = defineComponent({
     inheritAttrs: false,
     props: {
-      modelValue: { type: [Array, Number], required: true },
-      label: { type: String, required: true }
+      modelValue: { type: [Array, Number, Boolean], required: true },
+      label: { type: String, default: '' }
     },
     emits: ['update:modelValue'],
     setup(props, { attrs, emit }) {
@@ -27,6 +27,7 @@ async function renderEditor(model: IntentGroupCapability[]) {
     'onUpdate:modelValue': (value: IntentGroupCapability[]) => { changed = value }
   })
   app.component('VSelect', control)
+  app.component('VSwitch', control)
   app.component('VCombobox', control)
   app.component('VTextField', control)
   const html = await renderToString(app)
@@ -39,7 +40,7 @@ describe('现有渠道分组的能力配置', () => {
     for (const pool of pools) {
       expect(editor.html).toContain(pool.name + '的任务能力')
       expect(editor.fields.get(pool.name + '适合的任务')?.value).toEqual([])
-      expect(editor.fields.get(pool.name + '可处理的难度')?.value).toEqual([])
+      expect(editor.fields.get(pool.name + '限制处理难度')?.value).toBe(false)
     }
     expect(editor.html).not.toContain('添加分组')
     expect(editor.html).not.toContain('目标分组')
@@ -51,21 +52,25 @@ describe('现有渠道分组的能力配置', () => {
     const original: IntentGroupCapability[] = [{ poolId: 'gemini', tasks: ['translation'], tiers: [0, 1], cost: 7 }]
     let editor = await renderEditor(original)
     expect(editor.fields.get('gemini适合的任务')?.value).toEqual(['translation'])
-    expect(editor.fields.get('gemini可处理的难度')?.value).toEqual([0, 1])
+    expect(editor.fields.get('gemini限制处理难度')?.value).toBe(true)
+    expect(editor.fields.get('gemini允许的难度')?.value).toEqual([0, 1])
     editor.fields.get('grok适合的任务')!.edit(['code_generation'])
     let draft = editor.changed()!
-    expect(draft).toContainEqual({ poolId: 'grok', tasks: ['code_generation'], tiers: [], cost: 0 })
+    expect(draft).toContainEqual({ poolId: 'grok', tasks: ['code_generation'], tiers: [0, 1, 2], cost: 0 })
     expect(draft).toContainEqual(original[0])
 
     editor = await renderEditor(draft)
-    editor.fields.get('grok可处理的难度')!.edit([1, 2])
+    editor.fields.get('grok限制处理难度')!.edit(true)
+    draft = editor.changed()!
+    expect(draft.find(group => group.poolId === 'grok')?.tiers).toEqual([1])
+
+    editor = await renderEditor(draft)
+    editor.fields.get('grok允许的难度')!.edit([1, 2])
     draft = editor.changed()!
     expect(draft.find(group => group.poolId === 'grok')?.tiers).toEqual([1, 2])
 
     editor = await renderEditor(draft)
     editor.fields.get('grok适合的任务')!.edit(null)
-    editor = await renderEditor(editor.changed()!)
-    editor.fields.get('grok可处理的难度')!.edit(null)
     expect(editor.changed()).toEqual(original)
     expect(original).toEqual([{ poolId: 'gemini', tasks: ['translation'], tiers: [0, 1], cost: 7 }])
     const cleared = await renderEditor(editor.changed()!)

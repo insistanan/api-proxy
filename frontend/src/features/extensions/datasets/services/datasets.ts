@@ -1,7 +1,6 @@
 import { apiRequest } from '@/shared/services/http'
 import type { Dataset, DatasetSummary, EmbeddingProfile, Evaluation, IndexStatus, SearchResult } from '@/types'
 
-export { defaultEmbeddingProfile, defaultSemanticSafety } from '@/features/extensions/datasets/utils/semanticDefaults'
 export const datasetsApi = {
   list: () => apiRequest<DatasetSummary[]>('/datasets'),
   builtin: () => apiRequest<Dataset[]>('/datasets/builtin'),

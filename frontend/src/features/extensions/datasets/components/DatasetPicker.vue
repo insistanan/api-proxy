@@ -1,18 +1,38 @@
 <template>
   <div>
-    <v-select v-model="model" :items="items" item-title="name" item-value="id" label="使用的数据集" multiple chips :loading="loading" :error-messages="error" hint="使用已发布索引；数据集用途和向量模型必须一致" persistent-hint />
+    <v-select :model-value="selection" :items="items" item-title="title" item-value="id" :label="multiple ? '使用的数据集' : '已发布的意图数据集'" :multiple="multiple" :chips="multiple" clearable :loading="loading" :error-messages="error" :hint="requirePublished ? '只显示已有可用索引的数据集' : '数据集用途与向量模型必须一致'" persistent-hint @update:model-value="select" />
     <v-btn variant="text" size="small" to="/datasets" class="mb-3">管理数据集与向量索引</v-btn>
   </div>
 </template>
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import type { EmbeddingProfile } from '@/types'
 import { useDatasetsStore } from '@/features/extensions/datasets/stores/datasets'
 import { intentErrorText } from '@/features/channels'
-const props = defineProps<{ kind: 'intent' | 'safety' }>()
+const props = withDefaults(defineProps<{ kind: 'intent' | 'safety'; multiple?: boolean; requirePublished?: boolean; refreshKey?: number }>(), { multiple: true, requirePublished: false, refreshKey: 0 })
+const emit = defineEmits<{ 'published-profile': [value: EmbeddingProfile | undefined] }>()
 const model = defineModel<string[]>({ default: () => [] })
 const store = useDatasetsStore()
-const items = computed(() => store.items.filter(item => item.kind === props.kind))
+const items = computed(() => store.items
+  .filter(item => item.kind === props.kind)
+  .filter(item => !props.requirePublished || item.indexes.length > 0)
+  .map(item => ({ ...item, title: props.requirePublished ? `${item.name} · ${item.indexes.length} 个可用索引` : item.name })))
+const selection = computed(() => props.multiple ? model.value : model.value[0] ?? null)
+function select(value: string | string[] | null) {
+  const ids = Array.isArray(value) ? value : value ? [value] : []
+  model.value = ids
+  const selected = ids.length === 1 ? store.items.find(item => item.id === ids[0]) : undefined
+  const index = selected?.indexes[selected.indexes.length - 1]
+  emit('published-profile', index?.profile)
+}
 const loading = ref(false)
 const error = ref('')
-onMounted(async () => { loading.value = true; try { await store.load() } catch (cause) { error.value = intentErrorText(cause) } finally { loading.value = false } })
+async function load() {
+  loading.value = true
+  error.value = ''
+  try { await store.load() } catch (cause) { error.value = intentErrorText(cause) }
+  finally { loading.value = false }
+}
+onMounted(load)
+watch(() => props.refreshKey, () => { if (props.refreshKey) void load() })
 </script>

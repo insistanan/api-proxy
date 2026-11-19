@@ -8,17 +8,22 @@
       <v-alert v-else-if="catalog && !catalog.presets.length" type="info" variant="tonal">发布清单暂未提供预设，可使用手动安装</v-alert>
       <v-select v-if="catalog?.presets.length" v-model="presetId" :items="catalog.presets" item-title="name" item-value="id" label="推荐向量模型" :disabled="busy" />
       <p v-if="selectedPreset" class="text-body-2 text-medium-emphasis">{{ selectedPreset.description }} · 约 {{ (selectedPreset.sizeBytes / 1024 / 1024).toFixed(0) }} MiB</p>
-      <v-text-field v-model="presetsUrl" label="发布清单地址（HTTPS）" density="compact" :disabled="busy || savingUrl" :error-messages="urlError" />
-      <div class="d-flex flex-wrap ga-2">
-        <v-btn v-if="catalog?.presets.length" color="primary" variant="flat" :disabled="busy || status?.running || !presetId || !!catalog.error || !!catalogError" @click="run('preset')">下载并启动</v-btn>
-        <v-btn variant="tonal" size="small" :loading="savingUrl" :disabled="busy || savingUrl" @click="savePresetsUrl">保存地址</v-btn>
-        <v-btn variant="text" size="small" :disabled="busy || savingUrl || presetsUrl === defaultPresetsUrl" @click="resetPresetsUrl">恢复默认</v-btn>
-        <v-btn variant="text" size="small" :loading="catalogLoading" :disabled="busy || savingUrl" @click="loadPresets">刷新发布清单</v-btn>
-      </div>
-      <p v-if="defaultPresetsUrl" class="text-caption text-medium-emphasis install-path">默认清单：{{ defaultPresetsUrl }}</p>
+      <v-btn v-if="catalog?.presets.length" color="primary" variant="flat" :disabled="busy || status?.running || !presetId || !!catalog.error || !!catalogError" @click="run('preset')">下载并启动</v-btn>
     </template>
     <v-progress-linear v-if="busy" indeterminate color="primary" :aria-label="phaseText" />
     <v-expansion-panels v-model="manualPanel" variant="accordion">
+      <v-expansion-panel v-if="!manualOnly" value="catalog">
+        <v-expansion-panel-title>下载源设置（高级）</v-expansion-panel-title>
+        <v-expansion-panel-text>
+          <v-text-field v-model="presetsUrl" label="发布清单地址（HTTPS）" density="compact" :disabled="busy || savingUrl" :error-messages="urlError" />
+          <div class="d-flex flex-wrap ga-2">
+            <v-btn variant="tonal" size="small" :loading="savingUrl" :disabled="busy || savingUrl" @click="savePresetsUrl">保存地址</v-btn>
+            <v-btn variant="text" size="small" :disabled="busy || savingUrl || presetsUrl === defaultPresetsUrl" @click="resetPresetsUrl">恢复默认</v-btn>
+            <v-btn variant="text" size="small" :loading="catalogLoading" :disabled="busy || savingUrl" @click="loadPresets">刷新发布清单</v-btn>
+          </div>
+          <p v-if="defaultPresetsUrl" class="text-caption text-medium-emphasis install-path">默认清单：{{ defaultPresetsUrl }}</p>
+        </v-expansion-panel-text>
+      </v-expansion-panel>
       <v-expansion-panel value="manual">
         <v-expansion-panel-title v-if="!manualOnly">手动安装（高级）</v-expansion-panel-title>
         <v-expansion-panel-text>
@@ -91,6 +96,7 @@ async function loadPresets() {
     catalog.value = await intentApi.presets()
     presetsUrl.value = catalog.value.presetsUrl
     defaultPresetsUrl.value = catalog.value.defaultPresetsUrl
+    if (!catalog.value.presets.some(preset => preset.id === presetId.value)) presetId.value = catalog.value.presets[0]?.id ?? ''
   }
   catch (cause) { catalogError.value = intentErrorText(cause) }
   finally { catalogLoading.value = false }
