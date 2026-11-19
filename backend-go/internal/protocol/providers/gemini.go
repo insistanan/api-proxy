@@ -53,7 +53,7 @@ func (p *GeminiProvider) ConvertToProviderRequest(c *gin.Context, upstream *conf
 }
 
 // BuildRequest 以显式输入构造 Gemini 请求（R4-a 主实现，不依赖 gin）。
-func (p *GeminiProvider) BuildRequest(input RequestInput, upstream *config.UpstreamConfig, apiKey string) (*RequestOutcome, error) {
+func (p *GeminiProvider) buildRequest(input RequestInput, upstream *config.UpstreamConfig, apiKey string) (*RequestOutcome, error) {
 	originalBodyBytes := input.Body
 
 	var claudeReq types.ClaudeRequest
@@ -227,7 +227,9 @@ func (p *GeminiProvider) convertToGeminiRequest(claudeReq *types.ClaudeRequest, 
 	// reasoning 同为 effort 语义，复用 converters.ResponsesReasoningToGeminiThinking
 	// 的档位映射（Gemini 2.5 预算表 / Gemini 3 thinkingLevel 分支都在那里），
 	// 不在 providers 再写一份。
-	if cfg, err := geminiThinkingConfigFromClaude(claudeReq); err != nil {
+	mappedRequest := *claudeReq
+	mappedRequest.Model = config.ResolveUpstreamModel(claudeReq.Model, upstream)
+	if cfg, err := geminiThinkingConfigFromClaude(&mappedRequest); err != nil {
 		return nil, err
 	} else if cfg != nil {
 		genConfig["thinkingConfig"] = cfg
@@ -266,8 +268,7 @@ func (p *GeminiProvider) convertToGeminiRequest(claudeReq *types.ClaudeRequest, 
 // 档位映射复用 converters.ResponsesReasoningToGeminiThinking。
 func geminiThinkingConfigFromClaude(claudeReq *types.ClaudeRequest) (*types.GeminiThinkingConfig, error) {
 	effort := resolveClaudeReasoningEffort(claudeReq)
-	if effort == "" || effort == "auto" {
-		// "auto" 在 Gemini 无等价字段：省略即交由上游默认策略。
+	if effort == "" {
 		return nil, nil
 	}
 	reasoning := map[string]interface{}{"effort": effort}

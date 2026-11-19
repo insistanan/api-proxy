@@ -17,6 +17,10 @@ func ChannelToDTO(up *UpstreamConfig, index int) map[string]interface{} {
 	if reasoningOutputMode == "" {
 		reasoningOutputMode = "preserve"
 	}
+	reasoningEffort := up.ReasoningEffort
+	if reasoningEffort == "" {
+		reasoningEffort = "inherit"
+	}
 	return map[string]interface{}{
 		"maxConcurrency":              up.MaxConcurrency,
 		"effectiveConcurrency":        up.EffectiveConcurrency,
@@ -57,6 +61,7 @@ func ChannelToDTO(up *UpstreamConfig, index int) map[string]interface{} {
 		"disablePromptCacheInjection": up.DisablePromptCacheInjection,
 		"disablePromptCacheKey":       up.DisablePromptCacheKey,
 		"reasoningOutputMode":         reasoningOutputMode,
+		"reasoningEffort":             reasoningEffort,
 		"parseEmbeddedReasoning":      up.ParseEmbeddedReasoning,
 		"requireReasoningContent":     up.RequireReasoningContent,
 		"visionLayerEnabled":          up.VisionLayerEnabled,

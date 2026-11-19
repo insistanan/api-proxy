@@ -5,6 +5,33 @@ import { buildChannelPayload, defaultChannelForm, useChannelEditor } from '@/fea
 import type { Channel } from '@/api'
 
 describe('渠道草稿与提交', () => {
+  it('渠道思考覆盖可编辑、清除，并且不会改动原渠道或串入非对话协议', () => {
+    const editor = useChannelEditor('messages')
+    const channel: Channel = {
+      name: '思考渠道',
+      serviceType: 'gemini',
+      baseUrl: '',
+      apiKeys: [],
+      index: 0,
+      reasoningEffort: 'max'
+    }
+    editor.loadChannelData(channel)
+    expect(editor.buildPayload(true).reasoningEffort).toBe('max')
+    editor.form.reasoningEffort = 'none'
+    expect(editor.buildPayload(true).reasoningEffort).toBe('none')
+    editor.form.reasoningEffort = 'auto'
+    expect(editor.buildPayload(true).reasoningEffort).toBe('auto')
+    editor.loadChannelData({ ...channel, reasoningEffort: 'auto' })
+    expect(editor.form.reasoningEffort).toBe('auto')
+    expect(channel.reasoningEffort).toBe('max')
+    editor.resetForm()
+    expect(editor.buildPayload(true).reasoningEffort).toBe('inherit')
+    for (const protocol of ['images', 'embeddings', 'decisions']) {
+      const form = defaultChannelForm(protocol)
+      form.reasoningEffort = 'high'
+      expect(buildChannelPayload(form, protocol, false).reasoningEffort).toBe('inherit')
+    }
+  })
   it('思考输出默认保留，编辑和重置不会串改渠道配置', () => {
     const editor = useChannelEditor('messages')
     const channel: Channel = {

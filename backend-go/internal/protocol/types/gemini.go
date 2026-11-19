@@ -42,6 +42,7 @@ type GeminiPart struct {
 	FunctionResponse *GeminiFunctionResponse `json:"functionResponse,omitempty"`
 	FileData         *GeminiFileData         `json:"fileData,omitempty"`
 	Thought          bool                    `json:"thought,omitempty"` // 是否为 thinking 内容
+	ThoughtSignature string                  `json:"thoughtSignature,omitempty"`
 }
 
 // UnmarshalJSON 自定义反序列化，兼容部分客户端将 thoughtSignature 放在 part 层级的情况（而非 functionCall 内部）
@@ -63,16 +64,17 @@ func (p *GeminiPart) UnmarshalJSON(data []byte) error {
 	}
 
 	*p = GeminiPart(raw.partAlias)
+	if raw.ThoughtSignatureSnake != "" {
+		p.ThoughtSignature = raw.ThoughtSignatureSnake
+	} else {
+		p.ThoughtSignature = raw.ThoughtSignatureCamel
+	}
 
-	// 兼容：当签名出现在 part 层级时，将其归一化到 functionCall 内部（内部存储即可）
+	// 保留文本/思考 part 的签名，同时维持旧 functionCall 内部存储契约。
 	if p.FunctionCall == nil || p.FunctionCall.ThoughtSignature != "" {
 		return nil
 	}
-	if raw.ThoughtSignatureSnake != "" {
-		p.FunctionCall.ThoughtSignature = raw.ThoughtSignatureSnake
-	} else if raw.ThoughtSignatureCamel != "" {
-		p.FunctionCall.ThoughtSignature = raw.ThoughtSignatureCamel
-	}
+	p.FunctionCall.ThoughtSignature = p.ThoughtSignature
 
 	return nil
 }
@@ -84,14 +86,18 @@ func (p GeminiPart) MarshalJSON() ([]byte, error) {
 		partAlias
 		ThoughtSignature string `json:"thoughtSignature,omitempty"`
 	}{
-		partAlias: partAlias(p),
+		partAlias:        partAlias(p),
+		ThoughtSignature: p.ThoughtSignature,
 	}
 
 	if p.FunctionCall != nil {
 		sig := p.FunctionCall.ThoughtSignature
-		if sig != "" && sig != StripThoughtSignatureMarker {
+		if sig != "" {
 			out.ThoughtSignature = sig
 		}
+	}
+	if out.ThoughtSignature == StripThoughtSignatureMarker {
+		out.ThoughtSignature = ""
 	}
 
 	return json.Marshal(out)

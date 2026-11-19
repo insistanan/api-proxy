@@ -206,18 +206,23 @@ func ensureThoughtSignatures(geminiReq *types.GeminiRequest) {
 		for j := range geminiReq.Contents[i].Parts {
 			part := &geminiReq.Contents[i].Parts[j]
 			if part.FunctionCall != nil && part.FunctionCall.ThoughtSignature == "" {
-				part.FunctionCall.ThoughtSignature = types.DummyThoughtSignature
+				if part.ThoughtSignature != "" {
+					part.FunctionCall.ThoughtSignature = part.ThoughtSignature
+				} else {
+					part.FunctionCall.ThoughtSignature = types.DummyThoughtSignature
+				}
 			}
 		}
 	}
 }
 
-// stripThoughtSignature 移除所有 functionCall 的 thought_signature 字段
+// stripThoughtSignature 移除所有 part 与 functionCall 的思考签名字段。
 // 用于兼容旧版 Gemini API（不支持该字段）
 func stripThoughtSignature(geminiReq *types.GeminiRequest) {
 	for i := range geminiReq.Contents {
 		for j := range geminiReq.Contents[i].Parts {
 			part := &geminiReq.Contents[i].Parts[j]
+			part.ThoughtSignature = ""
 			if part.FunctionCall != nil {
 				// 使用特殊标记表示需要完全移除字段
 				part.FunctionCall.ThoughtSignature = types.StripThoughtSignatureMarker
@@ -248,6 +253,16 @@ func buildProviderRequest(
 ) (*http.Request, error) {
 	// 应用模型映射
 	mappedModel := config.ResolveUpstreamModel(model, upstream)
+	if converters.HasChannelReasoningOverride(upstream) {
+		// 每次候选使用独立配置，不污染后续渠道或原请求的思考设置。
+		requestCopy := *geminiReq
+		if geminiReq.GenerationConfig != nil {
+			generationCopy := *geminiReq.GenerationConfig
+			generationCopy.ThinkingConfig = nil
+			requestCopy.GenerationConfig = &generationCopy
+		}
+		geminiReq = &requestCopy
+	}
 
 	var requestBody []byte
 	var url string
@@ -310,6 +325,10 @@ func buildProviderRequest(
 		}
 	}
 
+	requestBody, err = converters.ApplyChannelReasoningOverride(requestBody, upstream, mappedModel)
+	if err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(c.Request.Context(), "POST", url, bytes.NewReader(requestBody))
 	if err != nil {
 		return nil, err

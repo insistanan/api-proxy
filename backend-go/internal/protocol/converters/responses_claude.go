@@ -212,8 +212,11 @@ func ResponsesReasoningToClaudeThinking(raw interface{}, maxOutputTokens int) (i
 	if err != nil {
 		return nil, fmt.Errorf("Claude extended thinking %w", err)
 	}
-	if effort == "" || effort == "none" {
+	if effort == "" {
 		return nil, nil
+	}
+	if effort == "none" {
+		return map[string]interface{}{"type": "disabled"}, nil
 	}
 	if maxOutputTokens > 0 && maxOutputTokens <= 1024 {
 		return nil, fmt.Errorf("Claude extended thinking 需要 max_output_tokens 大于 1024")

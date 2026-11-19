@@ -100,7 +100,7 @@ func (c *ClaudeConverter) ToProviderRequest(sess *types.Session, req *types.Resp
 	if err != nil {
 		return nil, err
 	}
-	if thinking != nil {
+	if thinkingConfig, ok := thinking.(map[string]interface{}); ok && thinkingConfig["type"] != "disabled" {
 		if err := validateClaudeThinkingToolChoice(req.ToolChoice); err != nil {
 			return nil, err
 		}

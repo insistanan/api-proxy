@@ -34,6 +34,7 @@ export type ChannelFormState = {
   stripThoughtSignature: boolean
   disablePromptCacheKey: boolean
   reasoningOutputMode: 'preserve' | 'hide'
+  reasoningEffort: NonNullable<Channel['reasoningEffort']>
   parseEmbeddedReasoning: boolean
   description: string
   apiKeys: string[]
@@ -101,6 +102,7 @@ export function defaultChannelForm(channelType: string): ChannelFormState {
     stripThoughtSignature: false,
     disablePromptCacheKey: false,
     reasoningOutputMode: 'preserve',
+    reasoningEffort: 'inherit',
     parseEmbeddedReasoning: false,
     description: '',
     apiKeys: [],
@@ -232,6 +234,7 @@ export function buildChannelPayload(
     stripThoughtSignature: isImages ? false : form.stripThoughtSignature,
     disablePromptCacheKey: isImages ? false : form.disablePromptCacheKey,
     reasoningOutputMode: form.reasoningOutputMode,
+    reasoningEffort: supportsConversationFeatures ? form.reasoningEffort : 'inherit',
     parseEmbeddedReasoning: form.parseEmbeddedReasoning,
     description: form.description.trim(),
     apiKeys: form.apiKeys.filter(key => key.trim()),
@@ -299,6 +302,7 @@ export function useChannelEditor(channelType: MaybeRefOrGetter<string>) {
     form.stripThoughtSignature = !!channel.stripThoughtSignature
     form.disablePromptCacheKey = !!channel.disablePromptCacheKey
     form.reasoningOutputMode = channel.reasoningOutputMode || 'preserve'
+    form.reasoningEffort = supportsConversationFeatures ? channel.reasoningEffort || 'inherit' : 'inherit'
     form.parseEmbeddedReasoning = !!channel.parseEmbeddedReasoning
     form.description = channel.description || ''
     form.apiKeys = [...channel.apiKeys]

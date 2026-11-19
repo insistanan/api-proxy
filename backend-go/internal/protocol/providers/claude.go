@@ -78,13 +78,13 @@ func (p *ClaudeProvider) ConvertToProviderRequest(c *gin.Context, upstream *conf
 }
 
 // BuildRequest 以显式输入构造 Claude 透传请求（R4-a 主实现，不依赖 gin）。
-func (p *ClaudeProvider) BuildRequest(input RequestInput, upstream *config.UpstreamConfig, apiKey string) (*RequestOutcome, error) {
+func (p *ClaudeProvider) buildRequest(input RequestInput, upstream *config.UpstreamConfig, apiKey string) (*RequestOutcome, error) {
 	bodyBytes := input.Body
 
 	// 模型重定向、缓存断点注入和伪装都走 map，不按结构体重编码。
 	// 因此 safeguards 等未知字段和已有 tool_use.id 会原样送到 Claude 上游。
 	// 模型重定向本身只改 model。
-	if upstream.ModelMapping != nil && len(upstream.ModelMapping) > 0 {
+	if upstream != nil && (len(upstream.ModelMapping) > 0 || upstream.DefaultModel != "") {
 		bodyBytes = redirectModelInBody(bodyBytes, upstream)
 	}
 

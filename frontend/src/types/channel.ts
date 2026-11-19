@@ -104,6 +104,7 @@ export interface Channel {
   excludeFromConversation?: boolean // 不参与常规对话调度，仅作为图片理解渠道使用
   disablePromptCacheKey?: boolean // 不向上游发送 prompt_cache_key
   reasoningOutputMode?: 'preserve' | 'hide' // Messages→Chat：默认保留思考
+  reasoningEffort?: 'inherit' | 'auto' | 'none' | 'low' | 'high' | 'xhigh' | 'max' // inherit 跟随请求；auto 不传思考控制
   parseEmbeddedReasoning?: boolean // Messages→Chat：解析正文中的思考标签
   requireReasoningContent?: boolean // 严格渠道要求原始历史推理
   visionLayerEnabled?: boolean // 是否为当前渠道指定优先图片理解渠道

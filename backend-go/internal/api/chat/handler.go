@@ -213,6 +213,13 @@ func buildChatUpstreamRequest(c *gin.Context, upstream *config.UpstreamConfig, a
 }
 
 func applyChatModelMapping(bodyBytes []byte, upstream *config.UpstreamConfig) ([]byte, error) {
+	if converters.HasChannelReasoningOverride(upstream) {
+		var err error
+		bodyBytes, err = converters.RemoveRequestReasoningParameters(bodyBytes)
+		if err != nil {
+			return nil, err
+		}
+	}
 	var payload map[string]interface{}
 	decoder := json.NewDecoder(bytes.NewReader(bodyBytes))
 	decoder.UseNumber()
@@ -245,7 +252,11 @@ func applyChatModelMapping(bodyBytes []byte, upstream *config.UpstreamConfig) ([
 	stripChatRoutingMetadata(payload)
 	ensureChatStreamUsageOptions(payload)
 
-	return codec.MarshalJSONNoEscape(payload)
+	bodyBytes, err := codec.MarshalJSONNoEscape(payload)
+	if err != nil {
+		return nil, err
+	}
+	return converters.ApplyChannelReasoningOverride(bodyBytes, upstream, payload["model"].(string))
 }
 
 // normalizeChatReasoningEffort 就地归一化 Chat 请求顶层 reasoning_effort 字段。
@@ -359,6 +370,10 @@ func handleSuccess(c *gin.Context, resp *http.Response, envCfg *config.EnvConfig
 
 func buildChatDirectRequest(c *gin.Context, upstream *config.UpstreamConfig, apiKey string, bodyBytes []byte) (*http.Request, error) {
 	var err error
+	bodyBytes, err = converters.ApplyChannelReasoningOverride(bodyBytes, upstream, "")
+	if err != nil {
+		return nil, err
+	}
 	bodyBytes, err = stripChatPromptCacheFields(bodyBytes, upstream)
 	if err != nil {
 		return nil, err

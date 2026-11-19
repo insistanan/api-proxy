@@ -87,6 +87,25 @@ func TestGeminiPart_UnmarshalJSON_ThoughtSignatureAtPartLevel(t *testing.T) {
 	})
 }
 
+func TestGeminiPart_TextAndThoughtSignaturesSurviveReplay(t *testing.T) {
+	for _, input := range []string{
+		`{"text":"thought","thought":true,"thoughtSignature":"original-signature"}`,
+		`{"text":"answer","thoughtSignature":"original-signature"}`,
+	} {
+		var part GeminiPart
+		if err := json.Unmarshal([]byte(input), &part); err != nil {
+			t.Fatal(err)
+		}
+		output, err := json.Marshal(part)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(output) != input {
+			t.Fatalf("原生回放不应丢失思考/文本 part 的签名: got %s want %s", output, input)
+		}
+	}
+}
+
 func TestGeminiFunctionDeclaration_UnmarshalJSON_ParametersJsonSchema(t *testing.T) {
 	input := `{
 	  "name": "list_directory",

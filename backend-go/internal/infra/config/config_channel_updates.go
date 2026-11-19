@@ -185,6 +185,9 @@ func applyCommonUpdates(upstream *UpstreamConfig, index int, updates UpstreamUpd
 	if updates.ReasoningOutputMode != nil {
 		upstream.ReasoningOutputMode = *updates.ReasoningOutputMode
 	}
+	if updates.ReasoningEffort != nil {
+		upstream.ReasoningEffort = *updates.ReasoningEffort
+	}
 	if updates.ParseEmbeddedReasoning != nil {
 		upstream.ParseEmbeddedReasoning = *updates.ParseEmbeddedReasoning
 	}

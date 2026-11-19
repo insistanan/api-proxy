@@ -22,6 +22,12 @@ func ExtractReasoningFromClaude(claudeReq *types.ClaudeRequest) ReasoningConfig 
 	if claudeReq == nil {
 		return ReasoningConfig{}
 	}
+	// 明确关闭优先于遗留 effort，避免 disabled 被 output_config.effort 重新开启。
+	if thinking, ok := claudeReq.Thinking.(map[string]interface{}); ok {
+		if typ, _ := thinking["type"].(string); strings.EqualFold(typ, "disabled") {
+			return ReasoningConfig{Effort: "none"}
+		}
+	}
 
 	// 优先检查 output_config.effort
 	if claudeReq.OutputConfig != nil {
@@ -151,7 +157,11 @@ func ExtractReasoningFromGemini(cfg *types.GeminiThinkingConfig, maxOutputTokens
 
 // ApplyReasoningToClaude 将统一思考配置应用到 Claude 请求字典
 func ApplyReasoningToClaude(config ReasoningConfig, claudePayload map[string]interface{}, maxOutputTokens int) {
-	if claudePayload == nil || !config.IsEnabled() {
+	if claudePayload == nil || config.Effort == "" {
+		return
+	}
+	if config.Effort == "none" {
+		claudePayload["thinking"] = map[string]interface{}{"type": "disabled"}
 		return
 	}
 	if config.Effort == "auto" {
@@ -178,7 +188,7 @@ func ApplyReasoningToClaude(config ReasoningConfig, claudePayload map[string]int
 
 // ApplyReasoningToOpenAIChat 将统一思考配置应用到 OpenAI Chat Completions 请求字典
 func ApplyReasoningToOpenAIChat(config ReasoningConfig, chatPayload map[string]interface{}) {
-	if chatPayload == nil || !config.IsEnabled() {
+	if chatPayload == nil || config.Effort == "" {
 		return
 	}
 	reasoningEffort := ReasoningEffortToOpenAIChatReasoningEffort(config.Effort)
@@ -189,7 +199,7 @@ func ApplyReasoningToOpenAIChat(config ReasoningConfig, chatPayload map[string]i
 
 // ApplyReasoningToResponses 将统一思考配置应用到 Responses 请求字典
 func ApplyReasoningToResponses(config ReasoningConfig, responsesPayload map[string]interface{}) {
-	if responsesPayload == nil || !config.IsEnabled() {
+	if responsesPayload == nil || config.Effort == "" {
 		return
 	}
 	responsesPayload["reasoning"] = map[string]interface{}{
@@ -199,7 +209,7 @@ func ApplyReasoningToResponses(config ReasoningConfig, responsesPayload map[stri
 
 // ApplyReasoningToGemini 将统一思考配置应用到 Gemini generationConfig 字典
 func ApplyReasoningToGemini(config ReasoningConfig, generationConfig map[string]interface{}) {
-	if generationConfig == nil || !config.IsEnabled() {
+	if generationConfig == nil || config.Effort == "" {
 		return
 	}
 	thinkingConfig := map[string]interface{}{}

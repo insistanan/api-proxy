@@ -286,7 +286,7 @@ func ResponsesReasoningToGeminiThinking(model string, raw interface{}) (*types.G
 
 func responsesReasoningToGemini3Thinking(modelLower string, effort string) (*types.GeminiThinkingConfig, error) {
 	if effort == "none" {
-		return nil, nil
+		return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("Gemini 3 不支持保证关闭 thinking，不能省略参数后按默认思考继续请求")}
 	}
 
 	level := effort
@@ -313,7 +313,7 @@ func responsesReasoningToGemini25Thinking(modelLower string, effort string) (*ty
 	switch effort {
 	case "none":
 		if strings.Contains(modelLower, "pro") {
-			return nil, fmt.Errorf("Gemini 2.5 Pro 不支持关闭 thinking")
+			return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("Gemini 2.5 Pro 不支持关闭 thinking")}
 		}
 		budget = 0
 	case "auto":

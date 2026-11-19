@@ -75,7 +75,7 @@ func (p *MessagesResponsesProvider) ConvertToProviderRequest(c *gin.Context, ups
 }
 
 // BuildRequest 以显式输入构造 Responses 上游请求（R4-a 主实现，不依赖 gin）。
-func (p *MessagesResponsesProvider) BuildRequest(input RequestInput, upstream *config.UpstreamConfig, apiKey string) (*RequestOutcome, error) {
+func (p *MessagesResponsesProvider) buildRequest(input RequestInput, upstream *config.UpstreamConfig, apiKey string) (*RequestOutcome, error) {
 	originalBodyBytes := input.Body
 
 	var claudeReq types.ClaudeRequest

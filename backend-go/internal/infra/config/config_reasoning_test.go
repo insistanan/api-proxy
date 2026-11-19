@@ -53,3 +53,34 @@ func TestReasoningOutputMode_ManagementDTORetainsOptions(t *testing.T) {
 		t.Fatal("隐藏模式必须可读回")
 	}
 }
+
+func TestChannelReasoningEffortPartialUpdateAndValidation(t *testing.T) {
+	upstream := UpstreamConfig{ReasoningEffort: "max"}
+	_, err := applyCommonUpdates(&upstream, 0, UpstreamUpdate{}, "test")
+	if err != nil || upstream.ReasoningEffort != "max" {
+		t.Fatalf("未传思考等级应保持原值: effort=%s err=%v", upstream.ReasoningEffort, err)
+	}
+	inherit := "inherit"
+	_, err = applyCommonUpdates(&upstream, 0, UpstreamUpdate{ReasoningEffort: &inherit}, "test")
+	if err != nil || ChannelToDTO(&upstream, 0)["reasoningEffort"] != "inherit" {
+		t.Fatalf("恢复跟随请求必须可读回: effort=%s err=%v", upstream.ReasoningEffort, err)
+	}
+	auto := "auto"
+	_, err = applyCommonUpdates(&upstream, 0, UpstreamUpdate{ReasoningEffort: &auto}, "test")
+	if err != nil || ChannelToDTO(&upstream, 0)["reasoningEffort"] != "auto" {
+		t.Fatalf("自动思考必须可保存并读回: effort=%s err=%v", upstream.ReasoningEffort, err)
+	}
+	var loaded UpstreamConfig
+	if err := json.Unmarshal([]byte(`{"reasoningEffort":"auto"}`), &loaded); err != nil || loaded.ReasoningEffort != "auto" {
+		t.Fatalf("自动思考必须可从配置重新载入: effort=%s err=%v", loaded.ReasoningEffort, err)
+	}
+	for _, effort := range []string{"future", "medium", "ultra"} {
+		body, err := json.Marshal(map[string]interface{}{"reasoningEffort": effort})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(body, &UpstreamConfig{}); err == nil {
+			t.Fatalf("渠道不支持的等级 %s 必须明确拒绝", effort)
+		}
+	}
+}

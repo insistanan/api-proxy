@@ -210,14 +210,7 @@ func ClaudeResponseToGemini(claudeResp map[string]interface{}) (*types.GeminiRes
 				Args: args,
 			}
 
-			// 处理 thought_signature:
-			// 1. 如果 Claude 响应中包含 signature，保留原值
-			// 2. 否则使用 dummy signature 跳过 Gemini 验证
-			if signature, ok := contentBlock["signature"].(string); ok && signature != "" {
-				functionCall.ThoughtSignature = signature
-			} else {
-				functionCall.ThoughtSignature = types.DummyThoughtSignature
-			}
+			// Claude 签名不能用于 Gemini 回放，不跨协议复制或生成占位签名。
 
 			parts = append(parts, types.GeminiPart{
 				FunctionCall: functionCall,
@@ -305,12 +298,11 @@ func OpenAIResponseToGemini(openaiResp map[string]interface{}) (*types.GeminiRes
 					_ = jsonUnmarshal([]byte(argsStr), &args)
 				}
 
-				// OpenAI 响应不包含 signature，统一使用 dummy signature
+				// Chat 工具调用没有 Gemini 签名，转换时只保留工具内容。
 				parts = append(parts, types.GeminiPart{
 					FunctionCall: &types.GeminiFunctionCall{
-						Name:             name,
-						Args:             args,
-						ThoughtSignature: types.DummyThoughtSignature,
+						Name: name,
+						Args: args,
 					},
 				})
 			}
@@ -380,6 +372,10 @@ func geminiContentToClaudeMessage(content *types.GeminiContent) (map[string]inte
 	claudeContent := []map[string]interface{}{}
 
 	for i, part := range content.Parts {
+		// Gemini 思考和签名没有可回放的 Claude 等价块，显式丢弃思考部分。
+		if part.Thought {
+			continue
+		}
 		if part.Text != "" {
 			claudeContent = append(claudeContent, map[string]interface{}{
 				"type": "text",
@@ -453,6 +449,9 @@ func geminiContentToOpenAIMessage(content *types.GeminiContent, pendingToolCallI
 	var toolResponseContent interface{}
 
 	for i, part := range content.Parts {
+		if part.Thought {
+			continue
+		}
 		if part.Text != "" {
 			textParts = append(textParts, part.Text)
 		}
@@ -484,6 +483,10 @@ func geminiContentToOpenAIMessage(content *types.GeminiContent, pendingToolCallI
 			}
 			toolResponseContent = part.FunctionResponse.Response
 		}
+	}
+
+	if len(toolCalls) == 0 && len(textParts) == 0 && !hasToolResponse {
+		return nil, nil
 	}
 
 	// 如果是工具响应，返回 tool role 的消息
@@ -527,7 +530,7 @@ func geminiContentToOpenAIMessage(content *types.GeminiContent, pendingToolCallI
 func extractTextFromGeminiParts(parts []types.GeminiPart) string {
 	texts := []string{}
 	for _, part := range parts {
-		if part.Text != "" {
+		if !part.Thought && part.Text != "" {
 			texts = append(texts, part.Text)
 		}
 	}

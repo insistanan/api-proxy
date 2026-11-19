@@ -89,6 +89,7 @@ type UpstreamConfig struct {
 	DisablePromptCacheKey       bool   `json:"disablePromptCacheKey,omitempty"`       // 是否禁用兼容上游的 prompt_cache_key
 	RequireReasoningContent     bool   `json:"requireReasoningContent,omitempty"`     // 严格渠道要求 assistant 历史携带可恢复的原始推理
 	ReasoningOutputMode         string `json:"reasoningOutputMode,omitempty"`         // Messages→Chat：空值/preserve 保留思考，hide 显式隐藏
+	ReasoningEffort             string `json:"reasoningEffort,omitempty"`             // inherit 跟随请求；auto 移除控制；none/low/high/xhigh/max 强制覆盖上游思考参数
 	ParseEmbeddedReasoning      bool   `json:"parseEmbeddedReasoning,omitempty"`      // Messages→Chat：显式解析正文中的 <think>/<thinking> 标签
 	EnablePreviousResponseID    bool   `json:"enablePreviousResponseID,omitempty"`    // Messages->Responses 是否启用 previous_response_id 链
 }
@@ -129,9 +130,14 @@ func ValidateReasoningOptions(upstream *UpstreamConfig) error {
 	}
 	switch upstream.ReasoningOutputMode {
 	case "", "preserve", "hide":
-		return nil
 	default:
 		return &ConfigError{Message: "reasoningOutputMode 必须是 preserve 或 hide"}
+	}
+	switch upstream.ReasoningEffort {
+	case "", "inherit", "auto", "none", "low", "high", "xhigh", "max":
+		return nil
+	default:
+		return &ConfigError{Message: "reasoningEffort 必须是 inherit、auto、none、low、high、xhigh 或 max"}
 	}
 }
 
@@ -188,6 +194,7 @@ type UpstreamUpdate struct {
 	DisablePromptCacheKey       *bool   `json:"disablePromptCacheKey"`
 	RequireReasoningContent     *bool   `json:"requireReasoningContent"`
 	ReasoningOutputMode         *string `json:"reasoningOutputMode"`
+	ReasoningEffort             *string `json:"reasoningEffort"`
 	ParseEmbeddedReasoning      *bool   `json:"parseEmbeddedReasoning"`
 	EnablePreviousResponseID    *bool   `json:"enablePreviousResponseID"`
 }

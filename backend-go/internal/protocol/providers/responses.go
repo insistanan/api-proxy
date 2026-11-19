@@ -73,7 +73,7 @@ func (p *ResponsesProvider) ConvertToProviderRequest(
 
 // BuildRequest 以显式输入构造 Responses 上游请求（R4-a 主实现，不依赖 gin）。
 // 转换产物经 RequestOutcome 返回（错误路径同样返回部分产物供调用方消费）。
-func (p *ResponsesProvider) BuildRequest(input RequestInput, upstream *config.UpstreamConfig, apiKey string) (*RequestOutcome, error) {
+func (p *ResponsesProvider) buildRequest(input RequestInput, upstream *config.UpstreamConfig, apiKey string) (*RequestOutcome, error) {
 	bodyBytes := input.Body
 	outcome := &RequestOutcome{OriginalBody: bodyBytes}
 

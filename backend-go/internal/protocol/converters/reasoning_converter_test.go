@@ -91,6 +91,22 @@ func TestExtractReasoningFromGemini(t *testing.T) {
 	assert.Equal(t, 4096, cfg.BudgetTokens)
 }
 
+func TestDisabledThinkingRemainsExplicitAcrossProtocols(t *testing.T) {
+	budget := int32(0)
+	input := &types.GeminiRequest{GenerationConfig: &types.GeminiGenerationConfig{ThinkingConfig: &types.GeminiThinkingConfig{ThinkingBudget: &budget}}}
+	chat, err := GeminiToOpenAIRequest(input, "chat-model")
+	assert.NoError(t, err)
+	assert.Equal(t, "none", chat["reasoning_effort"])
+	claude, err := GeminiToClaudeRequest(input, "claude-model")
+	assert.NoError(t, err)
+	assert.Equal(t, "disabled", claude["thinking"].(map[string]interface{})["type"])
+	thinking, err := ResponsesReasoningToClaudeThinking(map[string]interface{}{"effort": "none"}, 4000)
+	assert.NoError(t, err)
+	assert.Equal(t, "disabled", thinking.(map[string]interface{})["type"])
+	conflict := ExtractReasoningFromClaude(&types.ClaudeRequest{Thinking: map[string]interface{}{"type": "disabled"}, OutputConfig: map[string]interface{}{"effort": "max"}})
+	assert.Equal(t, "none", conflict.Effort)
+}
+
 func TestApplyReasoningToTargets(t *testing.T) {
 	cfg := ReasoningConfig{
 		Effort:       "high",

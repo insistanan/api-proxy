@@ -140,6 +140,18 @@
       />
     </v-col>
 
+    <v-col v-if="supportsConversationFeatures" cols="12" md="6">
+      <v-select
+        v-model="form.reasoningEffort"
+        label="思考控制"
+        :items="reasoningEffortItems"
+        variant="outlined"
+        density="comfortable"
+        :hint="reasoningEffortHint"
+        persistent-hint
+      />
+    </v-col>
+
     <!-- Chat 默认模型 -->
     <v-col v-if="channelType === 'chat' && form.serviceType" cols="12">
       <v-card variant="outlined" rounded="lg">
@@ -629,6 +641,26 @@ const {
 const supportsConversationFeatures = computed(() =>
   isConversationProtocol(channelType.value)
 )
+const reasoningEffortItems = [
+  { title: '跟随请求', value: 'inherit' },
+  { title: '自动（模型默认）', value: 'auto' },
+  { title: '关闭', value: 'none' },
+  { title: 'low', value: 'low' },
+  { title: 'high', value: 'high' },
+  { title: 'xhigh', value: 'xhigh' },
+  { title: 'max', value: 'max' }
+]
+const reasoningEffortHint = computed(() => {
+  switch (form.reasoningEffort) {
+    case 'inherit': return '按客户端请求决定是否思考。'
+    case 'auto': return '不发送思考参数，由上游模型决定。'
+    case 'none': return '向上游发送关闭参数；模型须支持关闭。'
+    default:
+      return form.serviceType === 'gemini'
+        ? '覆盖请求等级。Gemini 2.5 的 xhigh 和 max 均为 16384 tokens。'
+        : '覆盖请求等级；模型须支持所选等级。'
+  }
+})
 
 // 摘要读取当前草稿，让收起的分区仍能表达已选择的策略，不额外维护状态。
 const connectionSummary = computed(() => {
