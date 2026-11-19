@@ -1,4 +1,4 @@
-package admin
+package extensions
 
 import (
 	"bytes"
@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	adminshared "github.com/insistanan/api-proxy/internal/api/admin/shared"
 	"github.com/insistanan/api-proxy/internal/clients"
 	"github.com/insistanan/api-proxy/internal/clients/mcpsync"
 	"github.com/insistanan/api-proxy/internal/clients/skills"
@@ -64,26 +65,11 @@ type extensionsGitSyncResponse struct {
 	MCPAgents    []mcpsync.AgentResult `json:"mcpAgents,omitempty"`
 }
 
-func withExtensionsLocks(skillsAPI *clients.SkillsAPI, mcpAPI *clients.MCPAPI, fn func() error) error {
-	if skillsAPI != nil {
-		return skillsAPI.WithLock(func() error {
-			if mcpAPI != nil {
-				return mcpAPI.WithLock(fn)
-			}
-			return fn()
-		})
-	}
-	if mcpAPI != nil {
-		return mcpAPI.WithLock(fn)
-	}
-	return fn()
-}
-
 // Status 返回当前项目 Skills 目录的 Git 仓库状态。
 func (api *ExtensionsGitAPI) Status() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var status ExtensionsGitStatus
-		err := withExtensionsLocks(api.skillsAPI, api.mcpAPI, func() error {
+		err := adminshared.WithExtensionsLocks(api.skillsAPI, api.mcpAPI, func() error {
 			var inspectErr error
 			status, inspectErr = api.inspectStatus(c.Request.Context())
 			return inspectErr
@@ -119,7 +105,7 @@ func (api *ExtensionsGitAPI) Init() gin.HandlerFunc {
 		}
 
 		var status ExtensionsGitStatus
-		err := withExtensionsLocks(api.skillsAPI, api.mcpAPI, func() error {
+		err := adminshared.WithExtensionsLocks(api.skillsAPI, api.mcpAPI, func() error {
 			skillsDir, err := config.ResolveSkillsDir(settings.SkillsDir)
 			if err != nil {
 				return err
@@ -182,7 +168,7 @@ func (api *ExtensionsGitAPI) Clone() gin.HandlerFunc {
 
 		httpCode := http.StatusInternalServerError
 		var status ExtensionsGitStatus
-		err := withExtensionsLocks(api.skillsAPI, api.mcpAPI, func() error {
+		err := adminshared.WithExtensionsLocks(api.skillsAPI, api.mcpAPI, func() error {
 			skillsDir, err := config.ResolveSkillsDir(settings.SkillsDir)
 			if err != nil {
 				httpCode = http.StatusBadRequest
@@ -241,7 +227,7 @@ func (api *ExtensionsGitAPI) Pull() gin.HandlerFunc {
 		settings := api.cfgManager.GetSettings().Extensions
 		httpCode := http.StatusInternalServerError
 		var status ExtensionsGitStatus
-		err := withExtensionsLocks(api.skillsAPI, api.mcpAPI, func() error {
+		err := adminshared.WithExtensionsLocks(api.skillsAPI, api.mcpAPI, func() error {
 			skillsDir, err := config.ResolveSkillsDir(settings.SkillsDir)
 			if err != nil {
 				httpCode = http.StatusBadRequest
@@ -309,7 +295,7 @@ func (api *ExtensionsGitAPI) Push() gin.HandlerFunc {
 		var status ExtensionsGitStatus
 		message := "已推送到远程仓库"
 
-		err := withExtensionsLocks(api.skillsAPI, api.mcpAPI, func() error {
+		err := adminshared.WithExtensionsLocks(api.skillsAPI, api.mcpAPI, func() error {
 			skillsDir, err := config.ResolveSkillsDir(settings.SkillsDir)
 			if err != nil {
 				httpCode = http.StatusBadRequest

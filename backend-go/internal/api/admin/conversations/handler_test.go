@@ -1,4 +1,4 @@
-package admin
+package conversations
 
 import (
 	"net/http"

@@ -4,7 +4,11 @@ package main
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/api/admin"
+	adminconversations "github.com/insistanan/api-proxy/internal/api/admin/conversations"
+	adminintent "github.com/insistanan/api-proxy/internal/api/admin/intent"
+	adminlogs "github.com/insistanan/api-proxy/internal/api/admin/logs"
+	admingate "github.com/insistanan/api-proxy/internal/api/admin/security"
+	adminsettings "github.com/insistanan/api-proxy/internal/api/admin/settings"
 	"github.com/insistanan/api-proxy/internal/api/channels"
 	"github.com/insistanan/api-proxy/internal/api/chat"
 	"github.com/insistanan/api-proxy/internal/api/decisions"
@@ -22,38 +26,38 @@ import (
 
 // setupAdminAPI 注册 Web 管理界面 API 路由（/api 组）。
 func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
-	admin.RegisterIntentAPI(apiGroup, a.intentService)
-	admin.RegisterDatasetAPI(apiGroup, a.intentService.Datasets)
+	adminintent.RegisterIntentAPI(apiGroup, a.intentService)
+	adminintent.RegisterDatasetAPI(apiGroup, a.intentService.Datasets)
 	apiGroup.GET("/free-channels", channels.GetFreeChannels(a.cfgManager))
 	apiGroup.PUT("/free-channels/kilo", channels.UpdateKiloFreeChannel(a.cfgManager))
 	apiGroup.POST("/free-channels/kilo/models/sync", channels.SyncKiloFreeModels(a.cfgManager))
-	apiGroup.GET("/request-logs", admin.GetRequestLogs(a.requestLogStore))
-	apiGroup.GET("/log-calls", admin.GetLogCalls(a.logStore))
-	apiGroup.GET("/log-call-attempts", admin.GetLogCallAttempts(a.logStore))
+	apiGroup.GET("/request-logs", adminlogs.GetRequestLogs(a.requestLogStore))
+	apiGroup.GET("/log-calls", adminlogs.GetLogCalls(a.logStore))
+	apiGroup.GET("/log-call-attempts", adminlogs.GetLogCallAttempts(a.logStore))
 	apiGroup.GET("/model-availability", channels.GetModelAvailability(a.logStore, a.cfgManager))
-	apiGroup.GET("/system-logs", admin.GetSystemLogs(a.logStore))
-	apiGroup.GET("/system-logs/:requestId", admin.GetSystemLog(a.logStore))
-	apiGroup.GET("/log-conversations", admin.GetLogConversations(a.logStore, a.conversationRegistry))
-	apiGroup.GET("/log-conversation-requests", admin.GetLogConversationRequests(a.logStore))
-	apiGroup.GET("/log-context-overview", admin.GetLogContextOverview(a.logStore))
-	apiGroup.GET("/runtime-logs", admin.GetRuntimeLogs(a.logStore))
+	apiGroup.GET("/system-logs", adminlogs.GetSystemLogs(a.logStore))
+	apiGroup.GET("/system-logs/:requestId", adminlogs.GetSystemLog(a.logStore))
+	apiGroup.GET("/log-conversations", adminlogs.GetLogConversations(a.logStore, a.conversationRegistry))
+	apiGroup.GET("/log-conversation-requests", adminlogs.GetLogConversationRequests(a.logStore))
+	apiGroup.GET("/log-context-overview", adminlogs.GetLogContextOverview(a.logStore))
+	apiGroup.GET("/runtime-logs", adminlogs.GetRuntimeLogs(a.logStore))
 	// 会话注册表直接注入（R4-b：scheduler 退出服务定位器角色，
 	// 装配层持有实例并显式传参）。
-	apiGroup.GET("/blocked-logs", admin.GetBlockedLogs(a.blockedStore, a.conversationRegistry))
-	apiGroup.GET("/blocked-logs/:id", admin.GetBlockedLog(a.blockedStore))
-	apiGroup.DELETE("/blocked-logs/:id", admin.DeleteBlockedLog(a.blockedStore))
-	apiGroup.DELETE("/blocked-logs", admin.ClearBlockedLogs(a.blockedStore))
-	apiGroup.GET("/logs/dates", admin.ListLogDates(a.logStore))
-	apiGroup.GET("/logs/storage", admin.GetLogStorageStatus(a.logStore))
-	apiGroup.POST("/logs/purge", admin.PurgeLogs(a.logStore))
+	apiGroup.GET("/blocked-logs", adminlogs.GetBlockedLogs(a.blockedStore, a.conversationRegistry))
+	apiGroup.GET("/blocked-logs/:id", adminlogs.GetBlockedLog(a.blockedStore))
+	apiGroup.DELETE("/blocked-logs/:id", adminlogs.DeleteBlockedLog(a.blockedStore))
+	apiGroup.DELETE("/blocked-logs", adminlogs.ClearBlockedLogs(a.blockedStore))
+	apiGroup.GET("/logs/dates", adminlogs.ListLogDates(a.logStore))
+	apiGroup.GET("/logs/storage", adminlogs.GetLogStorageStatus(a.logStore))
+	apiGroup.POST("/logs/purge", adminlogs.PurgeLogs(a.logStore))
 
 	// 危险命令 AI 闸门（待确认列表 / 用户决定 / 会话级白黑名单）
-	apiGroup.GET("/security/gate/channels", admin.GetGateChannels(a.cmdGate))
-	apiGroup.GET("/security/gate/pending", admin.GetGatePending(a.cmdGate))
-	apiGroup.POST("/security/gate/pending/:id/decision", admin.DecideGatePending(a.cmdGate))
-	apiGroup.GET("/security/gate/decisions", admin.ListGateDecisions(a.cmdGate))
-	apiGroup.POST("/security/gate/decisions", admin.AddGateDecision(a.cmdGate))
-	apiGroup.DELETE("/security/gate/decisions/:conversationId", admin.RemoveGateDecisions(a.cmdGate))
+	apiGroup.GET("/security/gate/channels", admingate.GetGateChannels(a.cmdGate))
+	apiGroup.GET("/security/gate/pending", admingate.GetGatePending(a.cmdGate))
+	apiGroup.POST("/security/gate/pending/:id/decision", admingate.DecideGatePending(a.cmdGate))
+	apiGroup.GET("/security/gate/decisions", admingate.ListGateDecisions(a.cmdGate))
+	apiGroup.POST("/security/gate/decisions", admingate.AddGateDecision(a.cmdGate))
+	apiGroup.DELETE("/security/gate/decisions/:conversationId", admingate.RemoveGateDecisions(a.cmdGate))
 
 	a.setupChannelAdminAPI(apiGroup)
 
@@ -68,25 +72,25 @@ func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
 	apiGroup.POST("/circuit-breakers/reset", channels.ResetCircuitBreaker(a.channelScheduler))
 
 	// 对话与路由覆盖
-	apiGroup.GET("/conversations/route-options", admin.GetConversationRouteOptions(a.cfgManager))
+	apiGroup.GET("/conversations/route-options", adminconversations.GetConversationRouteOptions(a.cfgManager))
 	// 会话注册表直接注入（R4-b：调度器退出服务定位器角色）
-	apiGroup.GET("/conversations", admin.ListConversations(a.conversationRegistry))
-	apiGroup.DELETE("/conversations", admin.DeleteAllConversations(a.conversationRegistry, a.sessionManager))
-	apiGroup.GET("/conversations/:id", admin.GetConversation(a.conversationRegistry))
-	apiGroup.PUT("/conversations/:id/name", admin.SetConversationName(a.conversationRegistry))
-	apiGroup.DELETE("/conversations/:id", admin.DeleteConversation(a.conversationRegistry, a.sessionManager))
-	apiGroup.PUT("/conversations/:id/route", admin.SetConversationRouteOverride(a.conversationRegistry, a.cfgManager))
-	apiGroup.DELETE("/conversations/:id/route", admin.ClearConversationRouteOverride(a.conversationRegistry))
+	apiGroup.GET("/conversations", adminconversations.ListConversations(a.conversationRegistry))
+	apiGroup.DELETE("/conversations", adminconversations.DeleteAllConversations(a.conversationRegistry, a.sessionManager))
+	apiGroup.GET("/conversations/:id", adminconversations.GetConversation(a.conversationRegistry))
+	apiGroup.PUT("/conversations/:id/name", adminconversations.SetConversationName(a.conversationRegistry))
+	apiGroup.DELETE("/conversations/:id", adminconversations.DeleteConversation(a.conversationRegistry, a.sessionManager))
+	apiGroup.PUT("/conversations/:id/route", adminconversations.SetConversationRouteOverride(a.conversationRegistry, a.cfgManager))
+	apiGroup.DELETE("/conversations/:id/route", adminconversations.ClearConversationRouteOverride(a.conversationRegistry))
 
 	// 管理界面设置
-	apiGroup.GET("/settings/fuzzy-mode", admin.GetFuzzyMode(a.cfgManager))
-	apiGroup.PUT("/settings/fuzzy-mode", admin.SetFuzzyMode(a.cfgManager))
-	apiGroup.GET("/settings", admin.GetSettings(a.cfgManager))
-	apiGroup.PUT("/settings", admin.UpdateSettings(a.cfgManager, a.skillsAPI, a.mcpAPI))
+	apiGroup.GET("/settings/fuzzy-mode", adminsettings.GetFuzzyMode(a.cfgManager))
+	apiGroup.PUT("/settings/fuzzy-mode", adminsettings.SetFuzzyMode(a.cfgManager))
+	apiGroup.GET("/settings", adminsettings.GetSettings(a.cfgManager))
+	apiGroup.PUT("/settings", adminsettings.UpdateSettings(a.cfgManager, a.skillsAPI, a.mcpAPI))
 	apiGroup.POST("/upstream/models", channels.DiscoverUpstreamModels(a.cfgManager))
-	apiGroup.GET("/settings/client-disguise", admin.GetClientDisguise(a.cfgManager, a.disguiseSyncer))
-	apiGroup.POST("/settings/client-disguise/sync", admin.RefreshClientDisguise(a.disguiseSyncer))
-	apiGroup.PUT("/settings/client-disguise", admin.SetClientDisguise(a.cfgManager))
+	apiGroup.GET("/settings/client-disguise", adminsettings.GetClientDisguise(a.cfgManager, a.disguiseSyncer))
+	apiGroup.POST("/settings/client-disguise/sync", adminsettings.RefreshClientDisguise(a.disguiseSyncer))
+	apiGroup.PUT("/settings/client-disguise", adminsettings.SetClientDisguise(a.cfgManager))
 	apiGroup.GET("/settings/opencode", clients.GetOpenCodeConfig())
 	apiGroup.PUT("/settings/opencode", clients.SaveOpenCodeConfig())
 	apiGroup.GET("/settings/claude-code", clients.GetClaudeCodeSettings())

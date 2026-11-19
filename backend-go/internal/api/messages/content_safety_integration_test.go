@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/api/admin"
+	adminlogs "github.com/insistanan/api-proxy/internal/api/admin/logs"
 	"github.com/insistanan/api-proxy/internal/dialogue/session"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
@@ -270,7 +270,7 @@ func newContentSafetyTestRouter(t *testing.T) (*gin.Engine, *config.ConfigManage
 
 	router := gin.New()
 	router.POST("/v1/messages", Handler(envCfg, cfgManager, channelScheduler, pipeline))
-	router.GET("/api/blocked-logs", admin.GetBlockedLogs(store, nil))
+	router.GET("/api/blocked-logs", adminlogs.GetBlockedLogs(store, nil))
 	return router, cfgManager, capture
 }
 

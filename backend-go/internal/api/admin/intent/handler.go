@@ -1,9 +1,10 @@
-package admin
+package intent
 
 import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/api/common"
 	"github.com/insistanan/api-proxy/internal/dialogue/routing/intent"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 )
@@ -50,7 +51,7 @@ func RegisterIntentAPI(api *gin.RouterGroup, service *intent.Service) {
 			return
 		}
 		if err := service.Local.InstallPreset(c.Request.Context(), req.ID); err != nil {
-			respondSaveError(c, "安装并启动向量预设失败", err)
+			common.WriteSaveError(c, "安装并启动向量预设失败", err)
 			return
 		}
 		c.JSON(http.StatusOK, service.Local.Status())
@@ -62,7 +63,7 @@ func RegisterIntentAPI(api *gin.RouterGroup, service *intent.Service) {
 			return
 		}
 		if err := service.Local.Install(c.Request.Context(), manifest); err != nil {
-			respondSaveError(c, "安装本地向量助手失败", err)
+			common.WriteSaveError(c, "安装本地向量助手失败", err)
 			return
 		}
 		c.JSON(http.StatusOK, service.Local.Status())
@@ -102,7 +103,7 @@ func RegisterIntentAPI(api *gin.RouterGroup, service *intent.Service) {
 			return
 		}
 		if err := service.Cfg.UpdateIntentRouting(c.Param("protocol"), value); err != nil {
-			respondSaveError(c, "保存意图配置失败", err)
+			common.WriteSaveError(c, "保存意图配置失败", err)
 			return
 		}
 		c.JSON(http.StatusOK, service.Cfg.GetIntentRouting(c.Param("protocol")))
@@ -174,7 +175,7 @@ func RegisterIntentAPI(api *gin.RouterGroup, service *intent.Service) {
 			return
 		}
 		if err := service.Feedback(c.Param("protocol"), req.RequestID, *req.Good); err != nil {
-			respondSaveError(c, "记录反馈失败", err)
+			common.WriteSaveError(c, "记录反馈失败", err)
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"success": true})

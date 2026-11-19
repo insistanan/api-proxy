@@ -1,5 +1,5 @@
-// Package handlers 提供 HTTP 处理器
-package admin
+// Package security 提供命令审核与决策管理接口。
+package security
 
 import (
 	"net/http"

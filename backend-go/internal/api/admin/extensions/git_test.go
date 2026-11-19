@@ -1,4 +1,4 @@
-package admin
+package extensions
 
 import (
 	"bytes"
@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	adminsettings "github.com/insistanan/api-proxy/internal/api/admin/settings"
 	"github.com/insistanan/api-proxy/internal/clients"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/stretchr/testify/require"
@@ -69,7 +70,7 @@ func setupExtensionsAdminTest(t *testing.T) (
 	gitAPI = NewExtensionsGitAPI(cfgManager, skillsAPI, mcpAPI)
 
 	router = gin.New()
-	router.PUT("/settings", UpdateSettings(cfgManager, skillsAPI, mcpAPI))
+	router.PUT("/settings", adminsettings.UpdateSettings(cfgManager, skillsAPI, mcpAPI))
 	router.GET("/extensions/git/status", gitAPI.Status())
 	router.POST("/extensions/git/init", gitAPI.Init())
 	router.POST("/extensions/git/clone", gitAPI.Clone())

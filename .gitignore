@@ -1,6 +1,9 @@
 # Logs
 
 logs
+# 管理 API 的 logs 子包是源码目录；裸 logs 规则会吞掉它，必须显式放回。
+!backend-go/internal/api/admin/logs/
+!backend-go/internal/api/admin/logs/**
 # 只忽略仓库根的运行时 Skills 目录（skills.projectRoot() 落点）。
 # 必须带前导斜杠：裸 skills/ 会连 backend-go/internal/skills/ 这个 Go 包一起吞掉，
 # 表现为新包文件本地能编译、却永远进不了仓库、CI 直接构建失败。

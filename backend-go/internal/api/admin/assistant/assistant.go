@@ -1,5 +1,5 @@
-// Package handlers 提供 HTTP 处理器
-package admin
+// Package assistant 提供 AI 配置助手的管理接口。
+package assistant
 
 import (
 	"net/http"

@@ -1,5 +1,5 @@
-// Package handlers 提供 HTTP 处理器
-package admin
+// Package settings 提供系统设置和客户端伪装管理接口。
+package settings
 
 import (
 	"encoding/json"
@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	adminshared "github.com/insistanan/api-proxy/internal/api/admin/shared"
+	"github.com/insistanan/api-proxy/internal/api/common"
 	"github.com/insistanan/api-proxy/internal/clients"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
@@ -116,7 +118,7 @@ func UpdateSettings(cfgManager *config.ConfigManager, skillsAPI *clients.SkillsA
 		if needDirMigration {
 			var saveErr error
 			var userBadRequest bool
-			lockErr := withExtensionsLocks(skillsAPI, mcpAPI, func() error {
+			lockErr := adminshared.WithExtensionsLocks(skillsAPI, mcpAPI, func() error {
 				migrated, rollback, migErr := config.MigrateSkillsDir(oldSkillsDir, newSkillsDir)
 				if migErr != nil {
 					userBadRequest = config.IsConfigError(migErr)
@@ -135,7 +137,7 @@ func UpdateSettings(cfgManager *config.ConfigManager, skillsAPI *clients.SkillsA
 			})
 			if lockErr != nil {
 				if saveErr != nil {
-					respondSaveError(c, "保存全局设置失败", saveErr)
+					common.WriteSaveError(c, "保存全局设置失败", saveErr)
 					return
 				}
 				status := http.StatusInternalServerError
@@ -147,24 +149,12 @@ func UpdateSettings(cfgManager *config.ConfigManager, skillsAPI *clients.SkillsA
 			}
 		} else {
 			if err := cfgManager.UpdateSettings(settings); err != nil {
-				respondSaveError(c, "保存全局设置失败", err)
+				common.WriteSaveError(c, "保存全局设置失败", err)
 				return
 			}
 		}
 		c.JSON(http.StatusOK, cfgManager.GetSettings())
 	}
-}
-
-// respondSaveError 统一响应设置保存失败（R3-c）：已过提交点的错误携带
-// code/committed，前端不得按未提交重试（应刷新查看实际状态）。
-func respondSaveError(c *gin.Context, message string, err error) {
-	body := gin.H{"error": message, "detail": err.Error()}
-	if config.IsCommittedError(err) {
-		body["code"] = "CONFIG_COMMITTED"
-		body["committed"] = true
-		body["error"] = message + "（已写入，请刷新查看实际状态）"
-	}
-	c.JSON(http.StatusInternalServerError, body)
 }
 
 // GetFuzzyMode 获取 Fuzzy 模式状态
@@ -211,7 +201,7 @@ func SetFuzzyMode(cfgManager *config.ConfigManager) gin.HandlerFunc {
 			}
 		}
 		if err != nil {
-			respondSaveError(c, "保存自动故障转移设置失败", err)
+			common.WriteSaveError(c, "保存自动故障转移设置失败", err)
 			return
 		}
 

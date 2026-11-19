@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/api/admin"
+	adminsettings "github.com/insistanan/api-proxy/internal/api/admin/settings"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/infra/middleware"
 	"github.com/stretchr/testify/require"
@@ -14,8 +14,8 @@ import (
 func TestFuzzyModeAdminProtocolIsolation(t *testing.T) {
 	r, app := newChannelAdminTestRouter(t)
 	group := r.Group("/api", middleware.AdminAuthMiddleware(&config.EnvConfig{ProxyAccessKey: "test-admin"}))
-	group.GET("/settings/fuzzy-mode", admin.GetFuzzyMode(app.cfgManager))
-	group.PUT("/settings/fuzzy-mode", admin.SetFuzzyMode(app.cfgManager))
+	group.GET("/settings/fuzzy-mode", adminsettings.GetFuzzyMode(app.cfgManager))
+	group.PUT("/settings/fuzzy-mode", adminsettings.SetFuzzyMode(app.cfgManager))
 	require.NoError(t, app.cfgManager.SetFuzzyModeEnabled(true))
 	channelAdminRequest(t, r, http.MethodPut, "/api/settings/fuzzy-mode", `{"protocol":"messages","enabled":false}`, http.StatusOK)
 	state := channelAdminRequest(t, r, http.MethodGet, "/api/settings/fuzzy-mode", "", http.StatusOK).Body.String()

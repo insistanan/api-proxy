@@ -1,4 +1,4 @@
-package admin
+package intent
 
 import (
 	"math"
