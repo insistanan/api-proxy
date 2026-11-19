@@ -7,7 +7,7 @@ import { useJsonViewerDrawer } from '@/shared/composables/useJsonViewerDrawer'
 type State = Record<string, unknown>
 const value = <T>(state: State, key: string) => (state[key] as Ref<T>).value
 async function setupDrawer(data: unknown) {
-  useJsonViewerDrawer().pinSource(Symbol(), { data, title: '测试正文' })
+  useJsonViewerDrawer().openSource({ data, title: '测试正文' })
   let state!: State
   const setup = (JsonViewerDrawer as unknown as { setup: (props: object, context: SetupContext) => State }).setup
   await renderToString(createSSRApp({ setup(props, context) { state = setup(props, { ...context, expose: vi.fn() }); return () => null } }))
@@ -39,7 +39,7 @@ describe('JSON 抽屉解析保护', () => {
     expect(value<{ text: string }>(scalar, 'formatted').text).toBe('"hello"')
   })
 
-  it('Esc 关闭固定抽屉并停止事件传播，避免同时关闭底层业务弹窗', async () => {
+  it('Esc 关闭抽屉并停止事件传播，避免同时关闭底层业务弹窗', async () => {
     const state = await setupDrawer('{}')
     const event = { key: 'Escape', preventDefault: vi.fn(), stopImmediatePropagation: vi.fn() }
     ;(state.onKeydown as (event: unknown) => void)(event)

@@ -38,7 +38,10 @@ export function useGatewaySettings(saving: Ref<boolean>) {
       return
     }
     const { valid } = await gatewayFormRef.value.validate()
-    if (!valid) return
+    if (!valid) {
+      gatewayNotice.value = { type: 'error', message: '请展开日志保留与容量或高级部署设置，检查标记的字段。' }
+      return
+    }
     saving.value = true
     gatewayNotice.value = null
     try {

@@ -283,7 +283,7 @@ const purgeScope = ref<'day' | 'all'>('day')
 const purgeDate = ref('')
 const purgeDates = ref<LogAvailableDate[]>([])
 const purgeDatesLoading = ref(false)
-const purging = ref(false)
+const purging = computed(() => logsStore.purging)
 const purgeError = ref('')
 
 const route = useRoute()
@@ -418,26 +418,20 @@ const openPurgeDialog = async () => {
 }
 
 const confirmPurge = async () => {
-  purging.value = true
+  if (purging.value) return
   purgeError.value = ''
   try {
     const payload: { scope: 'all' | 'day'; date?: string } =
       purgeScope.value === 'all' ? { scope: 'all' } : { scope: 'day', date: purgeDate.value }
-    const response = await api.purgeLogs(payload)
-    const total =
-      response.purged.deletedAppLogs + response.purged.deletedTrafficLogs + response.purged.deletedRequestLogs
+    const total = await logsStore.purgeLogs(payload)
     purgeDialog.value = false
     purgeDates.value = []
     purgeDate.value = ''
-    logsStore.reset()
-    void logsStore.loadStorageStatus()
     callDetailOpen.value = false
     await loadLogs()
     purgeNotice.value = `清理完成，共删除 ${total.toLocaleString()} 条日志记录`
   } catch (err) {
     purgeError.value = err instanceof Error ? err.message : '清理日志失败'
-  } finally {
-    purging.value = false
   }
 }
 

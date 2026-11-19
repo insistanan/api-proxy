@@ -1,9 +1,8 @@
 <template>
   <v-overlay :model-value="isOpen" :scrim="false" :z-index="100000" class="json-viewer-overlay" persistent scroll-strategy="none" :close-on-back="false" content-class="json-viewer-drawer-overlay">
-    <aside class="json-viewer-drawer" aria-label="JSON 查看器" @mouseenter="enterDrawer" @mouseleave="leaveDrawer">
+    <aside class="json-viewer-drawer" aria-label="JSON 查看器">
       <header class="drawer-header">
-        <div class="drawer-heading"><h2>{{ source?.title || 'JSON 查看器' }}</h2><p v-if="source?.meta">{{ source.meta }}</p><p>{{ (prepared.bytes / 1024).toFixed(1) }} KB · {{ pinned ? '已固定，按 Esc 关闭' : '悬浮预览，移出后自动关闭' }}</p></div>
-        <v-btn :icon="pinned ? 'mdi-pin' : 'mdi-pin-outline'" variant="text" size="small" :aria-label="pinned ? '取消固定 JSON' : '固定 JSON'" :aria-pressed="pinned" @click="togglePin" />
+        <div class="drawer-heading"><h2>{{ source?.title || 'JSON 查看器' }}</h2><p v-if="source?.meta">{{ source.meta }}</p><p>{{ (prepared.bytes / 1024).toFixed(1) }} KB · 按 Esc 或点击关闭</p></div>
         <v-btn icon="mdi-close" variant="text" size="small" aria-label="关闭 JSON 查看器" @click="close" />
       </header>
       <div class="drawer-toolbar">
@@ -48,7 +47,7 @@ import { useClipboard } from '@/shared/composables/useClipboard'
 import { useToast } from '@/shared/composables/useToast'
 import { JSON_AUTO_PARSE_BYTES, JSON_MAX_PARSE_BYTES, JSON_MAX_ROWS, JSON_MAX_DEPTH, jsonLength, jsonText, jsonTreeRows, jsonType, type JsonTreeRow } from '@/shared/utils/jsonViewer'
 
-const { isOpen, source, pinned, enterDrawer, leaveDrawer, togglePin, close } = useJsonViewerDrawer()
+const { isOpen, source, close } = useJsonViewerDrawer()
 const { copyText } = useClipboard()
 const { showToast } = useToast()
 const RAW_PAGE_CHARS = 32 * 1024

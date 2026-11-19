@@ -40,6 +40,7 @@ export function createLogsState() {
   const storage = shallowRef<LogStorageStatus | null>(null)
   const storageLoading = ref(false)
   const storageError = ref('')
+  const purging = ref(false)
   let storageRevision = 0
   const loadedAt = new Map<string, number>()
   // 非响应式的请求句柄与缓存记账，不承载 UI 状态。
@@ -143,6 +144,20 @@ export function createLogsState() {
     } finally { if (revision === storageRevision) storageLoading.value = false }
   }
 
+  async function purgeLogs(scope: Parameters<typeof api.purgeLogs>[0]) {
+    if (purging.value) throw new Error('日志正在清理，请等待完成。')
+    purging.value = true
+    try {
+      const { success, purged } = await api.purgeLogs(scope)
+      if (!success) throw new Error('日志清理未完成，请刷新存储状态。')
+      reset()
+      return purged.deletedAppLogs + purged.deletedTrafficLogs + purged.deletedRequestLogs
+    } finally {
+      purging.value = false
+      void loadStorageStatus()
+    }
+  }
+
   async function loadRounds(options: { more?: boolean; anchor?: string; latest?: boolean } = {}) {
     const key = selectedKey.value
     if (!key) return
@@ -244,7 +259,7 @@ export function createLogsState() {
     anchored.value = false
   }
 
-  return { typeFilter, searchFilter, statusFilter, fromFilter, toFilter, totalConversations, conversations, nextConversationCursor, selectedKey, selectedConversation, requests, nextRequestCursor, anchored, listLoading, roundsLoading, listError, roundsError, details, detailErrors, active, storage, storageLoading, storageError, loadStorageStatus, loadDetail, loadConversations, loadRounds, selectConversation, locateRequest, refresh, reset }
+  return { typeFilter, searchFilter, statusFilter, fromFilter, toFilter, totalConversations, conversations, nextConversationCursor, selectedKey, selectedConversation, requests, nextRequestCursor, anchored, listLoading, roundsLoading, listError, roundsError, details, detailErrors, active, storage, storageLoading, storageError, purging, purgeLogs, loadStorageStatus, loadDetail, loadConversations, loadRounds, selectConversation, locateRequest, refresh, reset }
 }
 
 export const useLogsStore = defineStore('logs', createLogsState)
