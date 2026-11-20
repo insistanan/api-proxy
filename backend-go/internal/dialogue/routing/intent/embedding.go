@@ -96,7 +96,7 @@ func (s *Service) embeddingSpace(cfg config.IntentRoutingConfig) (string, error)
 	if err != nil {
 		return "", err
 	}
-	return digest(fmt.Sprintf("%s|%s|%s|%s|%t|%d", up.ID, up.ServiceType, up.GetEffectiveBaseURL(), config.ResolveUpstreamModel(cfg.EmbeddingModel, up), up.UseFullURL, up.EmbeddingsDimensions)), nil
+	return digest(fmt.Sprintf("%s|%s|%s|%s|%s|%t|%d", up.ID, up.ServiceType, up.GetEffectiveBaseURL(), cfg.EmbeddingModel, config.ResolveUpstreamModel(cfg.EmbeddingModel, up), up.UseFullURL, up.EmbeddingsDimensions)), nil
 }
 
 func (s *Service) embed(ctx context.Context, cfg config.IntentRoutingConfig, inputs []string, parent string) (vectors [][]float64, err error) {

@@ -192,9 +192,11 @@ type ChannelInfo struct {
 // ChannelOption 是助手渠道选择器的一个候选项（按 messages → responses →
 // chat → gemini 顺序排列，images 不参与）。
 type ChannelOption struct {
-	Kind string `json:"kind"`
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	PoolID   string `json:"poolId"`
+	PoolName string `json:"poolName"`
+	Kind     string `json:"kind"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
 }
 
 // StatusReport 是 /assistant/status 的响应体。
@@ -259,7 +261,13 @@ func (s *Service) channelOptions(ctx context.Context, model string) []ChannelOpt
 			if err != nil {
 				continue
 			}
-			options = append(options, ChannelOption{Kind: string(selection.Kind), ID: selection.Upstream.ID, Name: selection.Upstream.Name})
+			poolName := selection.Upstream.PoolID
+			for _, pool := range s.cfgManager.GetChannelPools(string(selection.Kind)) {
+				if pool.ID == selection.Upstream.PoolID {
+					poolName = pool.Name
+				}
+			}
+			options = append(options, ChannelOption{Kind: string(selection.Kind), ID: selection.Upstream.ID, Name: selection.Upstream.Name, PoolID: selection.Upstream.PoolID, PoolName: poolName})
 		}
 	}
 	return options

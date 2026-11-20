@@ -1,6 +1,7 @@
 package intent
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -40,8 +41,22 @@ func (s *Service) ValidateVector(p config.SemanticEmbeddingConfig) error {
 	return nil
 }
 
+func (s *Service) ValidateIntentIndexes(ctx context.Context, cfg config.IntentRoutingConfig) error {
+	if !config.IntentUsesVector(cfg) {
+		return nil
+	}
+	if s.Datasets == nil {
+		return fmt.Errorf("意图匹配未绑定数据集服务")
+	}
+	ids := cfg.DatasetIDs
+	if len(ids) == 0 && cfg.RecognitionMode == "" {
+		ids = []string{inlineDatasetID(ctx)}
+	}
+	return s.Datasets.ValidateIndexes(ctx, ids, "intent", embeddingProfile(cfg))
+}
+
 func (s *Service) ValidateIntentVector(cfg config.IntentRoutingConfig) error {
-	if cfg.Strategy == "semantic" || cfg.Strategy == "auto" && cfg.TaskMatcher == "semantic" {
+	if config.IntentUsesVector(cfg) {
 		return s.ValidateVector(embeddingProfile(cfg))
 	}
 	return nil

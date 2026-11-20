@@ -34,6 +34,8 @@ type ChannelOption struct {
 	SharedKey    string   `json:"sharedKey"`
 	ID           string   `json:"id"`
 	Name         string   `json:"name"`
+	PoolID       string   `json:"poolId"`
+	PoolName     string   `json:"poolName"`
 	DefaultModel string   `json:"defaultModel"`
 	Models       []string `json:"models"`
 }
@@ -81,26 +83,15 @@ func (c *Caller) ChannelOptions(ctx context.Context) ([]ChannelOption, error) {
 				}
 				shared[sharedKey] = true
 			}
-			models := make(map[string]struct{})
-			if model := strings.TrimSpace(upstream.DefaultModel); model != "" {
-				models[model] = struct{}{}
-			}
-			for source, targets := range upstream.ModelMapping {
-				if source != "*" && !strings.ContainsAny(source, "*?[") {
-					models[source] = struct{}{}
-				}
-				for _, target := range targets {
-					if model := strings.TrimSpace(target); model != "" {
-						models[model] = struct{}{}
-					}
+			modelIDs := config.ConfiguredModelOptions(upstream)
+			poolName := upstream.PoolID
+			for _, pool := range c.CfgManager.GetChannelPools(string(group.kind)) {
+				if pool.ID == upstream.PoolID {
+					poolName = pool.Name
+					break
 				}
 			}
-			modelIDs := make([]string, 0, len(models))
-			for model := range models {
-				modelIDs = append(modelIDs, model)
-			}
-			sort.Strings(modelIDs)
-			options = append(options, ChannelOption{Kind: string(group.kind), Builtin: upstream.BuiltinProvider != "", SharedKey: sharedKey, ID: upstream.ID, Name: upstream.Name, DefaultModel: upstream.DefaultModel, Models: modelIDs})
+			options = append(options, ChannelOption{Kind: string(group.kind), Builtin: upstream.BuiltinProvider != "", SharedKey: sharedKey, ID: upstream.ID, Name: upstream.Name, PoolID: upstream.PoolID, PoolName: poolName, DefaultModel: upstream.DefaultModel, Models: modelIDs})
 		}
 	}
 	return options, nil

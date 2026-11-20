@@ -10,6 +10,8 @@ import (
 
 // IntentRoutingConfig 按入口协议保存，路由目标始终是稳定的分组 ID。
 type IntentRoutingConfig struct {
+	RecognitionMode     string                  `json:"recognitionMode,omitempty"`
+	HybridMatchers      []string                `json:"hybridMatchers,omitempty"`
 	TaskMatcher         string                  `json:"taskMatcher,omitempty"`
 	Groups              []IntentGroupCapability `json:"groups,omitempty"`
 	UseFeedback         bool                    `json:"useFeedback,omitempty"`
@@ -69,6 +71,7 @@ func cloneIntentRouting(source map[string]IntentRoutingConfig) map[string]Intent
 			value.Classifier = "decisions"
 		}
 		value.Groups = slices.Clone(value.Groups)
+		value.HybridMatchers = slices.Clone(value.HybridMatchers)
 		for i := range value.Groups {
 			value.Groups[i].Tasks = slices.Clone(value.Groups[i].Tasks)
 			value.Groups[i].Tiers = slices.Clone(value.Groups[i].Tiers)
@@ -149,6 +152,9 @@ func validateIntentRouting(candidate *Config) error {
 }
 
 func ValidateIntentRouting(value IntentRoutingConfig, pools []ChannelPool) error {
+	if err := validateIntentRecognition(value); err != nil {
+		return err
+	}
 	if err := ValidateDatasetIDs(value.DatasetIDs); err != nil {
 		return err
 	}
@@ -239,7 +245,7 @@ func ValidateIntentRouting(value IntentRoutingConfig, pools []ChannelPool) error
 	if value.Enabled && value.Strategy == "semantic" && value.EmbeddingSource == "remote" && value.EmbeddingChannel == "" {
 		return fmt.Errorf("请选择辅助 Embeddings 渠道")
 	}
-	if value.Enabled && (value.Strategy == "auto" || value.Strategy == "complexity" || value.Strategy == "adaptive") && value.Classifier != "heuristic" && strings.TrimSpace(value.ClassifierModel) == "" {
+	if value.Enabled && (value.RecognitionMode == "" || slices.Contains(IntentRecognitionStages(value), "assistant")) && (value.Strategy == "auto" || value.Strategy == "complexity" || value.Strategy == "adaptive") && value.Classifier != "heuristic" && strings.TrimSpace(value.ClassifierModel) == "" {
 		return fmt.Errorf("远程分类需要指定分类模型")
 	}
 	return nil

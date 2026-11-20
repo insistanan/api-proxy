@@ -165,6 +165,30 @@ func ResolveUpstreamModelTargets(model string, upstream *UpstreamConfig) ([]stri
 	return targets, channelIDs
 }
 
+// ConfiguredModelOptions 返回可选的明确模型名，排除仅用于匹配的通配表达式。
+func ConfiguredModelOptions(upstream *UpstreamConfig) []string {
+	models := make(map[string]struct{})
+	if model := strings.TrimSpace(upstream.DefaultModel); model != "" {
+		models[model] = struct{}{}
+	}
+	for source, targets := range upstream.ModelMapping {
+		if source != "*" && !strings.ContainsAny(source, "*?[") {
+			models[source] = struct{}{}
+		}
+		for _, target := range targets {
+			if model := strings.TrimSpace(target); model != "" {
+				models[model] = struct{}{}
+			}
+		}
+	}
+	options := make([]string, 0, len(models))
+	for model := range models {
+		options = append(options, model)
+	}
+	sort.Strings(options)
+	return options
+}
+
 // redirectModel 模型重定向（返回第一个匹配的模型）
 func redirectModel(model string, upstream *UpstreamConfig) string {
 	models := redirectModelList(model, upstream)

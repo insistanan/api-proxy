@@ -14,7 +14,7 @@
 
 | 目录 | 职责与主要子包 |
 |---|---|
-| `api/` | 代理与管理 HTTP 接入、SSE 写回；`admin/` 按业务域分包，`admin/shared` 放跨管理子包协作，`api/common` 放跨 API 子包共用能力；协议差异留在端点中 |
+| `api/` | 代理与管理 HTTP 接入、SSE 写回；`api/admin/` 按业务域分包，`api/admin/shared` 放跨管理子包协作，`api/common` 放跨 API 子包共用能力；协议差异留在端点中 |
 | `proxycore/` | 统一请求编排、上游尝试、故障转移与日志策略；入口 protocol.go |
 | `clients/` | 客户端配置接口与文件操作；协同服务在下方子包中 |
 | `management/` | 管理支撑：assistant、channelcrud、modelcatalog |
@@ -31,6 +31,7 @@
 |---|---|
 | `api/messages`、`api/responses`、`api/chat`、`api/gemini`、`api/images` | 五类编排协议入口 |
 | `api/embeddings`、`api/decisions` | 原样透传 |
+| `api/admin/` | 管理 API 的业务域子包 |
 | `api/admin/{assistant,conversations,extensions,intent,logs,security,settings}` | 对应业务域的管理接口 |
 | `api/channels`、`api/modelapi` | 渠道与模型接口 |
 | `api/system` | 健康检查、前端资源与代理模型列表 |

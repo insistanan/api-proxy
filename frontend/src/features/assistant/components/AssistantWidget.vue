@@ -87,23 +87,18 @@
     />
 
     <!-- 渠道选择：自动（四协议优先级编排）或显式指定渠道 -->
-    <v-select
-      v-model:menu="channelMenuOpen"
-      :model-value="selectedChannelId"
-      :items="channelItems"
+    <ChannelPicker
+      ref="channelPicker"
+      v-model="channelDraft"
+      :options="assistantStore.channels"
+      allow-auto
       :loading="assistantStore.statusLoading || assistantStore.channelSaving"
       :disabled="!assistantStore.statusChecked || assistantStore.channelSaving || assistantStore.sending"
-      :list-props="{ disabled: assistantStore.statusLoading }"
-      placeholder="指定渠道不可用，请重新选择"
-      item-title="title"
-      item-value="value"
-      density="compact"
-      variant="outlined"
-      hide-details
       class="assistant-panel__channels"
       :menu-props="assistantMenuProps"
       aria-label="选择助手渠道"
-      @update:model-value="selectChannel($event as string)"
+      @select="selectChannel"
+      @menu="channelMenuOpen = $event"
     />
 
     <!-- 当前生效的模型路由：分组（匹配词）→ 命中渠道 -->
@@ -197,6 +192,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useAssistantStore } from '@/features/assistant/stores/assistant'
 import type { AssistantSession } from '@/api'
+import ChannelPicker from '@/shared/components/common/ChannelPicker.vue'
 
 const assistantStore = useAssistantStore()
 const draft = ref('')
@@ -226,19 +222,10 @@ const kindLabels: Record<string, string> = {
   gemini: 'Gemini',
 }
 
-// 渠道选择器候选：自动 + 当前模型下可用的四协议渠道。
-const channelItems = computed<Array<{ title: string; value: string }>>(() => [
-  { title: '自动（Messages → Responses → Chat → Gemini）', value: '' },
-  ...assistantStore.channels.map(channel => ({
-    title: `${kindLabels[channel.kind] ?? channel.kind} · ${channel.name}`,
-    value: channel.id,
-  })),
-])
-
-// 已配置渠道变为不可用时显示提示，不把它加回候选，也不静默改成自动。
-const selectedChannelId = computed(() =>
-  channelItems.value.some(item => item.value === assistantStore.channelId) ? assistantStore.channelId : null
-)
+// 协议和分组选择只编辑本地状态，选定渠道后才保存，避免中途切成自动路由。
+const channelDraft = ref(assistantStore.channelId)
+const channelPicker = ref<{ closeMenus: () => void }>()
+watch(() => assistantStore.channelId, value => { channelDraft.value = value })
 
 const refreshStatus = async () => {
   sendError.value = ''
@@ -348,6 +335,7 @@ const viewportSize = ref<{ width: number; height: number } | null>(null)
 const closeMenus = () => {
   sessionMenuOpen.value = false
   channelMenuOpen.value = false
+  channelPicker.value?.closeMenus()
 }
 
 watch(channelMenuOpen, open => {
@@ -360,7 +348,7 @@ watch(channelMenuOpen, open => {
 })
 
 watch(sessionMenuOpen, open => {
-  if (open) channelMenuOpen.value = false
+  if (open) { channelMenuOpen.value = false; channelPicker.value?.closeMenus() }
 })
 
 // 菜单挂在 body 下，由父 VOverlay 的栈关系保证层级；高度交给定位器按视口裁定。

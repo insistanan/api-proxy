@@ -5,7 +5,8 @@
     <v-alert v-if="actionError || statusError || status?.error" type="error" variant="tonal">{{ actionError || statusError || status?.error }}</v-alert>
     <template v-if="!manualOnly">
       <v-alert v-if="catalog?.error || catalogError" type="warning" variant="tonal">{{ catalog?.error || catalogError }}<span v-if="catalog?.stale">；下方保留上次成功清单，刷新成功后才能安装。</span></v-alert>
-      <v-alert v-else-if="catalog && !catalog.presets.length" type="info" variant="tonal">发布清单暂未提供预设，可使用手动安装</v-alert>
+      <v-alert v-else-if="catalog && !catalog.presets.length" type="info" variant="tonal">推荐清单没有适合当前平台的模型，可使用已配置的 Embeddings 渠道或手动安装。</v-alert>
+      <p v-if="catalog && !catalog.presetsUrl" class="text-caption text-medium-emphasis">使用随 exe 附带的推荐清单，无需先发布 GitHub Release。</p>
       <v-select v-if="catalog?.presets.length" v-model="presetId" :items="catalog.presets" item-title="name" item-value="id" label="推荐向量模型" :disabled="busy" />
       <p v-if="selectedPreset" class="text-body-2 text-medium-emphasis">{{ selectedPreset.description }} · 约 {{ (selectedPreset.sizeBytes / 1024 / 1024).toFixed(0) }} MiB</p>
       <v-btn v-if="catalog?.presets.length" color="primary" variant="flat" :disabled="busy || status?.running || !presetId || !!catalog.error || !!catalogError" @click="run('preset')">下载并启动</v-btn>
@@ -15,7 +16,7 @@
       <v-expansion-panel v-if="!manualOnly" value="catalog">
         <v-expansion-panel-title>下载源设置（高级）</v-expansion-panel-title>
         <v-expansion-panel-text>
-          <v-text-field v-model="presetsUrl" label="发布清单地址（HTTPS）" density="compact" :disabled="busy || savingUrl" :error-messages="urlError" />
+          <v-text-field v-model="presetsUrl" label="自定义清单地址（HTTPS）" hint="留空使用随 exe 附带的推荐清单；自定义地址拉取失败时会报错。" persistent-hint density="compact" :disabled="busy || savingUrl" :error-messages="urlError" />
           <div class="d-flex flex-wrap ga-2">
             <v-btn variant="tonal" size="small" :loading="savingUrl" :disabled="busy || savingUrl" @click="savePresetsUrl">保存地址</v-btn>
             <v-btn variant="text" size="small" :disabled="busy || savingUrl || presetsUrl === defaultPresetsUrl" @click="resetPresetsUrl">恢复默认</v-btn>

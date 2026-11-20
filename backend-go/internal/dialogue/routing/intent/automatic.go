@@ -43,7 +43,15 @@ func builtinTask(text string) string {
 // classifyAutomatic 先独立识别任务，再判定难度，最后把两项条件交集映射到分组。
 // 分组声明不能改变任务标签，也不能把没有信号的输入伪装成简单任务。
 func (s *Service) classifyAutomatic(ctx context.Context, cfg config.IntentRoutingConfig, text, parent string) (Decision, error) {
-	task, score, err := s.automaticTask(ctx, cfg, text, parent)
+	var task string
+	var score float64
+	var err error
+	tier, known := -1, false
+	if cfg.RecognitionMode != "" {
+		task, score, tier, known, err = s.recognizeAutomatic(ctx, cfg, text, parent)
+	} else {
+		task, score, err = s.automaticTask(ctx, cfg, text, parent)
+	}
 	if err != nil {
 		return Decision{}, err
 	}
@@ -55,9 +63,11 @@ func (s *Service) classifyAutomatic(ctx context.Context, cfg config.IntentRoutin
 		decision.Reason = "已识别任务，但没有分组声明适合该任务"
 		return decision, nil
 	}
-	tier, known := automaticDifficulty(task, text)
-	recordTierEvidence(ctx, task, text, tier, known)
-	if cfg.Classifier != "heuristic" && !(cfg.Classifier == "hybrid" && known) {
+	if cfg.RecognitionMode == "" {
+		tier, known = automaticDifficulty(task, text)
+		recordTierEvidence(ctx, task, text, tier, known)
+	}
+	if cfg.RecognitionMode == "" && cfg.Classifier != "heuristic" && !(cfg.Classifier == "hybrid" && known) {
 		if trace := traceFrom(ctx); trace != nil {
 			trace.TierSource, trace.TierEvidence = cfg.Classifier, "辅助模型判断难度，不提供自由文本推理"
 		}
@@ -67,14 +77,16 @@ func (s *Service) classifyAutomatic(ctx context.Context, cfg config.IntentRoutin
 		}
 		tier, known = map[string]int{"simple": 0, "medium": 1, "complex": 2}[label]
 	}
-	if !known {
+	if !known && !slices.ContainsFunc(cfg.Groups, func(group config.IntentGroupCapability) bool {
+		return cfg.RecognitionMode != "" && slices.Contains(group.Tasks, task) && len(group.Tiers) == 3
+	}) {
 		decision.Reason = "任务类型已识别，但难度信号不足"
 		return decision, nil
 	}
 	decision.Tier = tier
 	candidates := []config.IntentRoute{}
 	for _, group := range cfg.Groups {
-		if slices.Contains(group.Tasks, task) && slices.Contains(group.Tiers, tier) {
+		if slices.Contains(group.Tasks, task) && (known && slices.Contains(group.Tiers, tier) || !known && len(group.Tiers) == 3) {
 			candidates = append(candidates, config.IntentRoute{ID: "auto_" + group.PoolID, PoolID: group.PoolID, Tier: tier, Cost: group.Cost})
 		}
 	}
@@ -96,6 +108,59 @@ func (s *Service) classifyAutomatic(ctx context.Context, cfg config.IntentRoutin
 		decision.Reason += "；同能力分组参考质量反馈与相对成本"
 	}
 	return decision, nil
+}
+
+// recognizeAutomatic 只有未可靠识别时才尝试下一方式；调用错误显式交给失败策略。
+func (s *Service) recognizeAutomatic(ctx context.Context, cfg config.IntentRoutingConfig, text, parent string) (string, float64, int, bool, error) {
+	for _, stage := range config.IntentRecognitionStages(cfg) {
+		stageConfig := cfg
+		var task string
+		var score float64
+		var err error
+		switch stage {
+		case "builtin":
+			stageConfig.TaskMatcher, stageConfig.Classifier = "builtin", "heuristic"
+		case "semantic":
+			stageConfig.TaskMatcher, stageConfig.Classifier = "semantic", "heuristic"
+		case "assistant":
+			stageConfig.TaskMatcher = "builtin"
+		default:
+			return "", 0, -1, false, fmt.Errorf("不支持的识别方式 %q", stage)
+		}
+		task, score, err = s.automaticTask(ctx, stageConfig, text, parent)
+		if err != nil {
+			return "", 0, -1, false, fmt.Errorf("%s 识别失败: %w", stage, err)
+		}
+		tier, known := automaticDifficulty(task, text)
+		if !known {
+			tier = -1
+		}
+		if task != "" && stage == "assistant" {
+			label, callErr := s.classifyAllowed(ctx, stageConfig, text, map[string]string{"simple": "简单、单步任务", "medium": "常规、多步骤任务", "complex": "复杂、系统级任务", "unmatched": "信息不足"}, "任务类型为 "+task+"，只判断处理难度。", parent)
+			if callErr != nil {
+				return "", 0, -1, false, callErr
+			}
+			tier, known = map[string]int{"simple": 0, "medium": 1, "complex": 2}[label]
+			if !known {
+				tier = -1
+			}
+			if trace := traceFrom(ctx); trace != nil {
+				trace.TierSource, trace.TierEvidence = cfg.Classifier, "辅助模型判断任务难度"
+			}
+		} else {
+			recordTierEvidence(ctx, task, text, tier, known)
+		}
+		matched := task != "" && (known || slices.ContainsFunc(cfg.Groups, func(group config.IntentGroupCapability) bool {
+			return slices.Contains(group.Tasks, task) && len(group.Tiers) == 3
+		}))
+		if trace := traceFrom(ctx); trace != nil {
+			trace.Stages = append(trace.Stages, RecognitionAttempt{Stage: stage, Matched: matched, Task: task})
+		}
+		if matched {
+			return task, score, tier, known, nil
+		}
+	}
+	return "", 0, -1, false, nil
 }
 
 func automaticDifficulty(task, text string) (int, bool) {
@@ -203,6 +268,6 @@ func (s *Service) classifyAllowed(ctx context.Context, cfg config.IntentRoutingC
 
 func groupCanHandle(cfg config.IntentRoutingConfig, pool, task string, tier int) bool {
 	return slices.ContainsFunc(cfg.Groups, func(group config.IntentGroupCapability) bool {
-		return group.PoolID == pool && slices.Contains(group.Tasks, task) && slices.Contains(group.Tiers, tier)
+		return group.PoolID == pool && slices.Contains(group.Tasks, task) && (slices.Contains(group.Tiers, tier) || tier < 0 && len(group.Tiers) == 3 && cfg.RecognitionMode != "")
 	})
 }

@@ -22,7 +22,13 @@ func RegisterIntentAPI(api *gin.RouterGroup, service *intent.Service) {
 			if config.GetChannelStatus(&up) != config.ChannelStatusActive || len(up.APIKeys) == 0 {
 				continue
 			}
-			embeddings = append(embeddings, gin.H{"id": up.ID, "name": up.Name, "defaultModel": up.DefaultModel})
+			poolName := up.PoolID
+			for _, pool := range service.Cfg.GetChannelPools("embeddings") {
+				if pool.ID == up.PoolID {
+					poolName = pool.Name
+				}
+			}
+			embeddings = append(embeddings, gin.H{"id": up.ID, "name": up.Name, "kind": "embeddings", "poolId": up.PoolID, "poolName": poolName, "defaultModel": up.DefaultModel, "models": config.ConfiguredModelOptions(&up)})
 		}
 		c.JSON(http.StatusOK, gin.H{"classifiers": options, "embeddings": embeddings, "tasks": config.IntentTasks()})
 	})
@@ -96,11 +102,17 @@ func RegisterIntentAPI(api *gin.RouterGroup, service *intent.Service) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "意图配置无效"})
 			return
 		}
-		if err := service.ValidateIntentVector(value); err != nil {
-			if !respondVectorRequired(c, err) {
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		if value.Enabled {
+			if err := service.ValidateIntentVector(value); err != nil {
+				if !respondVectorRequired(c, err) {
+					c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				}
+				return
 			}
-			return
+			if err := service.ValidateIntentIndexes(intent.WithProtocol(c.Request.Context(), c.Param("protocol")), value); err != nil {
+				c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "VECTOR_INDEX_REQUIRED"})
+				return
+			}
 		}
 		if err := service.Cfg.UpdateIntentRouting(c.Param("protocol"), value); err != nil {
 			common.WriteSaveError(c, "保存意图配置失败", err)
@@ -112,6 +124,7 @@ func RegisterIntentAPI(api *gin.RouterGroup, service *intent.Service) {
 		var req struct {
 			Config config.IntentRoutingConfig `json:"config"`
 			Text   string                     `json:"text"`
+			Model  string                     `json:"model"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "预览输入无效"})
@@ -137,7 +150,28 @@ func RegisterIntentAPI(api *gin.RouterGroup, service *intent.Service) {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "辅助分类失败", "code": "INTENT_CLASSIFIER_FAILED", "decision": decision})
 			return
 		}
+		if req.Model != "" {
+			routing, err := previewModelRoute(service.Cfg, c.Param("protocol"), req.Config, decision, req.Model)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"trace": decision.Trace, "task": decision.Task, "poolId": decision.PoolID, "routeId": decision.RouteID, "reason": decision.Reason, "score": decision.Score, "tier": decision.Tier, "durationMs": decision.DurationMS, "routing": routing})
+			return
+		}
 		c.JSON(http.StatusOK, decision)
+	})
+	group.POST("/index-status", func(c *gin.Context) {
+		var cfg config.IntentRoutingConfig
+		if err := c.ShouldBindJSON(&cfg); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "索引配置无效"})
+			return
+		}
+		if err := service.ValidateIntentIndexes(intent.WithProtocol(c.Request.Context(), c.Param("protocol")), cfg); err != nil {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "VECTOR_INDEX_REQUIRED"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"ready": true})
 	})
 	group.GET("/events", func(c *gin.Context) { c.JSON(http.StatusOK, service.Events(c.Param("protocol"))) })
 	group.POST("/index", func(c *gin.Context) {

@@ -81,7 +81,7 @@
             <v-btn variant="text" prepend-icon="mdi-format-list-bulleted" to="/blocked-logs">拦截记录</v-btn>
           </div>
 
-          <form @submit.prevent="saveContentSafetySettings">
+          <form @submit.prevent="(!contentSafety.dangerousCmd.enabled || !contentSafety.dangerousCmd.aiGate.enabled || gateSelectionValid) && saveContentSafetySettings()">
             <div class="safety-group">
               <div class="setting-row safety-master-row">
                 <div class="setting-copy">
@@ -263,30 +263,7 @@
                       class="ai-gate-select"
                       @update:model-value="resetGateTarget"
                     />
-                    <v-select
-                      v-model="contentSafety.dangerousCmd.aiGate.channelId"
-                      :items="gateChannelItems"
-                      item-title="title"
-                      item-value="value"
-                      label="判断渠道"
-                      :loading="gateChannelsLoading"
-                      :error-messages="gateChannelsError"
-                      variant="outlined"
-                      density="compact"
-                      class="ai-gate-select"
-                      @update:menu="open => { if (open) loadGateChannels() }"
-                    />
-                    <v-combobox
-                      v-model="contentSafety.dangerousCmd.aiGate.model"
-                      :items="gateModelItems"
-                      label="审批模型"
-                      placeholder="留空使用渠道默认模型"
-                      hint="可选已有模型或输入模型 ID；显式选择优先于渠道默认模型，并应用渠道模型映射。"
-                      persistent-hint
-                      variant="outlined"
-                      density="compact"
-                      class="ai-gate-select"
-                    />
+                    <ChannelPicker v-model="contentSafety.dangerousCmd.aiGate.channelId" v-model:selected-model="contentSafety.dangerousCmd.aiGate.model" :options="eligibleGateChannels" :loading="gateChannelsLoading" :error="gateChannelsError" show-model allow-auto label="判断渠道" model-label="审批模型" class="ai-gate-channel-picker" @valid="gateSelectionValid = $event" />
                     <v-text-field
                       v-model.number="contentSafety.dangerousCmd.aiGate.waitSeconds"
                       type="number"
@@ -473,7 +450,7 @@
                 color="primary"
                 prepend-icon="mdi-content-save"
                 :loading="saving"
-                :disabled="!contentSafetyDirty"
+                :disabled="!contentSafetyDirty || (contentSafety.dangerousCmd.enabled && contentSafety.dangerousCmd.aiGate.enabled && !gateSelectionValid)"
               >
                 保存内容安全设置
               </v-btn>
@@ -489,6 +466,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import PageHeader from '@/shared/components/common/PageHeader.vue'
+import ChannelPicker from '@/shared/components/common/ChannelPicker.vue'
 import {
   api,
   type ContentSafetySettings,
@@ -575,26 +553,7 @@ const loadGateChannels = async () => {
 }
 const isDecisionGate = computed(() => ['decisions', 'systemone'].includes(contentSafety.value.dangerousCmd.aiGate.protocol ?? 'chat'))
 const eligibleGateChannels = computed(() => gateChannels.value.filter(channel => isDecisionGate.value ? channel.kind === 'decisions' : channel.kind !== 'decisions'))
-const gateChannelItems = computed(() => {
-  const items = [
-    { title: isDecisionGate.value ? '自动选择 Decisions 渠道' : '自动选择对话渠道', value: '' },
-    ...eligibleGateChannels.value.map(channel => ({
-      title: `${channel.kind} · ${channel.name}`,
-      value: channel.id
-    }))
-  ]
-  const selected = contentSafety.value.dangerousCmd.aiGate.channelId
-  if (selected && !items.some(item => item.value === selected)) {
-    items.push({ title: `已选渠道当前不可用（${selected}）`, value: selected })
-  }
-  return items
-})
-const gateModelItems = computed(() => {
-  const selected = contentSafety.value.dangerousCmd.aiGate.channelId
-  return [...new Set(eligibleGateChannels.value
-    .filter(channel => !selected || channel.id === selected)
-    .flatMap(channel => channel.models))]
-})
+const gateSelectionValid = ref(true)
 const gateProtocolHint = computed(() => {
   switch (contentSafety.value.dangerousCmd.aiGate.protocol) {
     case 'systemone':

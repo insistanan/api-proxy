@@ -89,6 +89,26 @@ func TestPersistentIndexAndIncrementalBuild(t *testing.T) {
 	require.Equal(t, 1, evaluation.Correct)
 }
 
+func TestIndexValidation_ChangedModelRequiresRebuildWithoutCallingEmbedding(t *testing.T) {
+	ctx := context.Background()
+	embedder := &testEmbedder{space: "original-model"}
+	s, err := New(filepath.Join(t.TempDir(), "datasets.db"), embedder)
+	require.NoError(t, err)
+	defer s.Close()
+	d, err := s.Save(ctx, testDataset())
+	require.NoError(t, err)
+	_, err = s.Build(ctx, d.ID, d.Revision, testProfile())
+	require.NoError(t, err)
+	calls := len(embedder.calls)
+	require.NoError(t, s.ValidateIndexes(ctx, []string{d.ID}, "intent", testProfile()))
+	embedder.space = "different-model-same-dimension"
+	require.ErrorContains(t, s.ValidateIndexes(ctx, []string{d.ID}, "intent", testProfile()), "重新计算")
+	require.Len(t, embedder.calls, calls, "保存前检查不调用模型，也不自动重算样本")
+	_, err = s.Search(ctx, []string{d.ID}, "intent", testProfile(), "翻译内容", "test")
+	require.ErrorContains(t, err, "重建索引")
+	require.Len(t, embedder.calls, calls, "不允许用新模型查询向量比较旧模型样本")
+}
+
 func TestBuildFailureKeepsPublishedVersion(t *testing.T) {
 	ctx := context.Background()
 	embedder := &testEmbedder{space: "same"}

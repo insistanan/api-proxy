@@ -6,7 +6,7 @@
       </div>
     </div>
 
-    <v-form @submit.prevent="saveAssistantSettings">
+    <v-form @submit.prevent="channelSelectionValid && saveAssistantSettings()">
       <div class="setting-row">
         <div class="setting-copy">
           <div class="text-body-1 font-weight-medium">模型分组</div>
@@ -26,29 +26,8 @@
         density="comfortable"
       />
 
-      <v-select
-        v-model="assistantChannel"
-        :items="assistantChannelItems"
-        item-title="title"
-        item-value="value"
-        label="指定渠道"
-        hint="自动选择按协议优先级调度；指定后固定使用该渠道，不自动切换。"
-        persistent-hint
-        :error-messages="assistantStatusError"
-        variant="outlined"
-        density="comfortable"
-        class="mt-5"
-      >
-        <template #selection="{ item }">
-          <span class="v-select__selection-text">
-            {{
-              assistantChannelItems.some(option => option.value === item.value)
-                ? item.title
-                : '指定渠道不可用，请重新选择'
-            }}
-          </span>
-        </template>
-      </v-select>
+      <ChannelPicker v-model="assistantChannel" :options="assistantStatus?.channels ?? []" :error="assistantStatusError" allow-auto label="指定渠道" class="mt-5" @valid="channelSelectionValid = $event" />
+      <p class="text-caption text-medium-emphasis">自动选择按协议优先级调度；指定后固定使用该渠道。</p>
 
       <v-alert
         v-if="assistantStatus && !assistantStatusError"
@@ -76,7 +55,7 @@
           color="primary"
           prepend-icon="mdi-content-save"
           :loading="saving"
-          :disabled="!assistantDirty"
+          :disabled="!assistantDirty || !channelSelectionValid"
         >
           保存助手设置
         </v-btn>
@@ -86,9 +65,12 @@
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue'
 import type { useAssistantSettings } from '@/features/settings/composables/useAssistantSettings'
+import ChannelPicker from '@/shared/components/common/ChannelPicker.vue'
 
 const props = defineProps<{ editor: ReturnType<typeof useAssistantSettings> }>()
+const channelSelectionValid = ref(true)
 const {
   assistantStatus,
   assistantStatusError,
@@ -99,7 +81,6 @@ const {
   assistantChannel,
   assistantNotice,
   assistantDirty,
-  assistantChannelItems,
   assistantModelItems,
   saveAssistantSettings,
   saving

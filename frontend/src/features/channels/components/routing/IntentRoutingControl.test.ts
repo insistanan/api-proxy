@@ -5,11 +5,11 @@ import IntentRoutingControl from '@/features/channels/components/routing/IntentR
 import type { IntentConfig, IntentOptions, LocalStatus } from '@/features/channels/services/intent'
 import type { Dataset, EmbeddingProfile } from '@/types'
 
-const mocks = vi.hoisted(() => ({ load: vi.fn(), save: vi.fn(), options: vi.fn(), local: vi.fn(), preview: vi.fn(), feedback: vi.fn(), buildIndex: vi.fn(), datasetList: vi.fn(), datasetBuiltin: vi.fn(), datasetSave: vi.fn() }))
+const mocks = vi.hoisted(() => ({ load: vi.fn(), save: vi.fn(), options: vi.fn(), local: vi.fn(), preview: vi.fn(), feedback: vi.fn(), buildIndex: vi.fn(), indexStatus: vi.fn(), datasetList: vi.fn(), datasetBuiltin: vi.fn(), datasetSave: vi.fn() }))
 vi.mock('@/shared/stores/auth', () => ({ useAuthStore: () => ({ apiKey: null, clearAuth: vi.fn() }) }))
 vi.mock('@/features/channels/stores/channel', () => ({ useChannelStore: () => ({ channelPoolsMap: { responses: [{ id: 'language', name: '语言组' }, { id: 'code', name: '代码组' }, { id: 'builtin-free', name: '免费分组' }] } }) }))
 vi.mock('@/features/channels/stores/intent', () => ({ useIntentStore: () => ({ configs: {}, load: mocks.load, save: mocks.save }) }))
-vi.mock('@/features/channels/services/intent', () => ({ intentApi: { options: mocks.options, local: mocks.local, preview: mocks.preview, feedback: mocks.feedback, buildIndex: mocks.buildIndex }, intentErrorText: (error: Error) => error.message, intentPreviewFailure: () => undefined }))
+vi.mock('@/features/channels/services/intent', () => ({ intentApi: { options: mocks.options, local: mocks.local, preview: mocks.preview, feedback: mocks.feedback, buildIndex: mocks.buildIndex, indexStatus: mocks.indexStatus }, intentErrorText: (error: Error) => error.message, intentPreviewFailure: () => undefined }))
 vi.mock('@/features/extensions/datasets', () => ({ datasetsApi: { list: mocks.datasetList, builtin: mocks.datasetBuiltin, save: mocks.datasetSave } }))
 vi.mock('@/shared/composables/useToast', () => ({ useToast: () => ({ showToast: vi.fn() }) }))
 
@@ -30,6 +30,7 @@ beforeEach(() => {
   mocks.options.mockResolvedValue({ classifiers: [], embeddings: [], tasks: [] } satisfies IntentOptions)
   mocks.local.mockResolvedValue(localStatus())
   mocks.buildIndex.mockResolvedValue(undefined)
+  mocks.indexStatus.mockResolvedValue({ ready: true })
   mocks.datasetList.mockResolvedValue([])
   mocks.datasetBuiltin.mockResolvedValue([])
   mocks.datasetSave.mockImplementation(async (dataset: Dataset) => ({ ...dataset, revision: 1 }))
@@ -101,24 +102,25 @@ describe('意图匹配编辑器', () => {
     expect(mocks.save).not.toHaveBeenCalled()
     expect(value<string>(state, 'error')).toContain('代码组')
   })
-  it('语义配置未就绪时不会自动打断；点击准备后引导安装，模型就绪才能保存', async () => {
+  it('向量模型未就绪时阻断启用，模型就绪且索引匹配后才能保存', async () => {
     const original = config()
+    original.enabled = true
     original.strategy = 'auto'
     original.taskMatcher = 'semantic'
     original.embeddingSource = 'local'
     original.embeddingModel = 'vector'
+    original.datasetIds = ['intent']
     mocks.load.mockResolvedValue(original)
     const state = await setup()
     expect(value<boolean>(state, 'vectorGuide')).toBe(false)
     expect(value<string>(state, 'vectorReason')).toContain('尚未就绪')
-    await (state.startSemanticSetup as () => Promise<void>)()
-    expect(value<boolean>(state, 'vectorGuide')).toBe(true)
     await (state.save as () => Promise<void>)()
     expect(mocks.save).not.toHaveBeenCalled()
     const ready = localStatus()
     ready.installed = ready.running = ready.ready = true
     ready.manifest.modelName = 'vector'
     ;(state.updateLocalStatus as (status: LocalStatus) => void)(ready)
+    await (state.checkIndex as () => Promise<void>)()
     expect(value<string>(state, 'vectorReason')).toBe('')
     await (state.save as () => Promise<void>)()
     expect(mocks.save).toHaveBeenCalledOnce()
@@ -128,11 +130,11 @@ describe('意图匹配编辑器', () => {
     const state = await setup()
     const mode = state.simpleMode as Ref<string>
     mode.value = 'assistant'
-    expect(value<IntentConfig>(state, 'draft')).toMatchObject({ strategy: 'auto', taskMatcher: 'builtin', classifier: 'llm' })
+    expect(value<IntentConfig>(state, 'draft')).toMatchObject({ strategy: 'auto', recognitionMode: 'assistant', taskMatcher: 'builtin', classifier: 'llm' })
     mode.value = 'semantic'
-    expect(value<IntentConfig>(state, 'draft')).toMatchObject({ strategy: 'auto', taskMatcher: 'semantic', classifier: 'heuristic' })
+    expect(value<IntentConfig>(state, 'draft')).toMatchObject({ strategy: 'auto', recognitionMode: 'semantic', taskMatcher: 'semantic', classifier: 'heuristic' })
     mode.value = 'builtin'
-    expect(value<IntentConfig>(state, 'draft')).toMatchObject({ strategy: 'auto', taskMatcher: 'builtin', classifier: 'heuristic' })
+    expect(value<IntentConfig>(state, 'draft')).toMatchObject({ strategy: 'auto', recognitionMode: 'builtin', taskMatcher: 'builtin', classifier: 'heuristic' })
   })
   it('首次准备向量匹配只确认并索引内置索引样本，不把评测样本批准', async () => {
     const original = config()
@@ -159,6 +161,7 @@ describe('意图匹配编辑器', () => {
   })
   it('切换已有 Embeddings 渠道带出默认模型，缺少模型时仍阻断保存', async () => {
     const original = config()
+    original.enabled = true
     original.strategy = 'auto'
     original.taskMatcher = 'semantic'
     mocks.load.mockResolvedValue(original)
@@ -172,7 +175,7 @@ describe('意图匹配编辑器', () => {
     await (state.save as () => Promise<void>)()
     expect(mocks.save).not.toHaveBeenCalled()
   })
-  it('共享 Kilo 只显示一个逻辑选项并保留旧 ID，其他渠道显示协议并提供模型列表', async () => {
+  it('共享 Kilo 保留旧 ID 所属协议，其他渠道提供分组和模型列表', async () => {
     const original = config()
     original.classifier = 'llm'
     original.classifierChannel = 'builtin-kilo-chat'
@@ -184,14 +187,14 @@ describe('意图匹配编辑器', () => {
       { id: 'decision', name: '同名', kind: 'decisions', builtin: false, sharedKey: '', defaultModel: 'decision-model', models: ['decision-model'] }
     ], embeddings: [], tasks: [] } satisfies IntentOptions)
     const state = await setup()
-    expect(value<{ id: string; title: string }[]>(state, 'classifierOptions')).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'builtin-kilo-chat', title: 'Kilo 免费池（四个入口共享）' }), expect.objectContaining({ title: '同名 · chat' })
+    expect(value<{ id: string; name: string }[]>(state, 'classifierOptions')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'builtin-kilo-chat', kind: 'chat', name: 'Kilo 免费池（四个入口共享）' }), expect.objectContaining({ name: '同名', kind: 'chat' })
     ]))
     expect(value<{ id: string }[]>(state, 'classifierOptions')).toHaveLength(2)
     expect(value<IntentConfig>(state, 'draft').classifierModel).toBe('saved-model')
     ;(state.selectClassifierChannel as (id: string) => void)('chat')
     expect(value<IntentConfig>(state, 'draft').classifierModel).toBe('chat-default')
-    expect(value<string[]>(state, 'classifierModels')).toEqual(['chat-default', 'other-model'])
+    expect(value<IntentOptions['classifiers']>(state, 'classifierOptions').find(option => option.id === 'chat')?.models).toEqual(['chat-default', 'other-model'])
     ;(state.selectClassifier as (type: IntentConfig['classifier']) => void)('decisions')
     expect(value<{ id: string }[]>(state, 'classifierOptions').map(option => option.id)).toEqual(['decision'])
     await (state.save as () => Promise<void>)()
@@ -212,5 +215,24 @@ describe('意图匹配编辑器', () => {
     await (state.save as () => Promise<void>)()
     expect(mocks.save).not.toHaveBeenCalled()
     expect(value<IntentConfig>(state, 'draft').classifier).toBe('decisions')
+  })
+  it('混合模式只有四种组合，选择组合不会改变固定顺序', async () => {
+    const state = await setup()
+    ;(state.simpleMode as Ref<string>).value = 'hybrid'
+    ;(state.selectHybridCombination as (value: string) => void)('builtin,semantic,assistant')
+    expect(value<IntentConfig>(state, 'draft')).toMatchObject({ recognitionMode: 'hybrid', hybridMatchers: ['builtin', 'semantic', 'assistant'], classifier: 'llm' })
+    ;(state.selectHybridCombination as (value: string) => void)('assistant,semantic')
+    expect(value<IntentConfig>(state, 'draft').hybridMatchers).toEqual(['builtin', 'semantic', 'assistant'])
+  })
+  it('重建已有内置数据集时保留新模型，不切回旧索引的模型', async () => {
+    const original = config()
+    Object.assign(original, { strategy: 'auto', taskMatcher: 'semantic', embeddingChannel: 'vector', embeddingModel: 'new-model' })
+    mocks.load.mockResolvedValue(original)
+    mocks.options.mockResolvedValue({ classifiers: [], embeddings: [{ id: 'vector', name: '向量渠道' }], tasks: [] } satisfies IntentOptions)
+    mocks.datasetList.mockResolvedValue([{ id: 'starter-intents-v2', kind: 'intent', approved: 144, indexes: [{ profile: { model: 'old-model', source: 'remote', channel: 'old-channel' } }] }])
+    const state = await setup()
+    await (state.prepareSemanticIndex as () => Promise<void>)()
+    expect(mocks.buildIndex).toHaveBeenCalledWith('responses', expect.objectContaining({ embeddingModel: 'new-model', embeddingChannel: 'vector', datasetIds: ['starter-intents-v2'] }))
+    expect(value<IntentConfig>(state, 'draft').embeddingModel).toBe('new-model')
   })
 })

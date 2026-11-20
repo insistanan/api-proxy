@@ -1,4 +1,5 @@
 import { apiRequest, ApiError } from '@/shared/services/http'
+import type { ChannelSelectionOption } from '@/types/channel-selection'
 
 export function intentErrorText(cause: unknown): string {
   if (cause instanceof ApiError && cause.details && typeof cause.details === 'object' && 'detail' in cause.details && typeof cause.details.detail === 'string') {
@@ -22,6 +23,8 @@ export interface IntentRoute {
   cost: number
 }
 export interface IntentConfig {
+  recognitionMode?: 'builtin' | 'semantic' | 'assistant' | 'hybrid'
+  hybridMatchers?: ('builtin' | 'semantic' | 'assistant')[]
   taskMatcher?: 'builtin' | 'semantic'
   groups?: IntentGroupCapability[]
   useFeedback?: boolean
@@ -63,6 +66,7 @@ export interface IntentGroupMatch {
   bad?: number
 }
 export interface IntentTrace {
+  stages?: { stage: string; matched: boolean; task?: string }[]
   input: string
   truncated: boolean
   classified: boolean
@@ -79,7 +83,7 @@ export interface IntentTrace {
   threshold?: number
   switchMargin?: number
 }
-export interface IntentDecision { trace?: IntentTrace; task?: string; poolId: string; routeId: string; reason: string; score: number; tier: number; durationMs: number }
+export interface IntentDecision { routing?: { requestedModel: string; originalPools: string[]; selectedPools: string[]; candidates: { channel: string; model: string }[] }; trace?: IntentTrace; task?: string; poolId: string; routeId: string; reason: string; score: number; tier: number; durationMs: number }
 
 // 失败仍保留后端返回的诊断快照，不在前端重跑匹配。
 export function intentPreviewFailure(cause: unknown): IntentDecision | undefined {
@@ -112,18 +116,19 @@ export interface LocalManifest {
 export interface LocalStatus { installed: boolean; running: boolean; ready: boolean; busy: boolean; error: string; platform: string; installPath: string; presetsUrl: string; phase: string; manifest: LocalManifest }
 export interface LocalPreset { id: string; name: string; description: string; sizeBytes: number }
 export interface LocalPresets { version: number; presets: LocalPreset[]; presetsUrl: string; defaultPresetsUrl: string; installPath: string; platform: string; error: string; stale: boolean }
-export interface ClassifierOption { kind: string; builtin: boolean; sharedKey: string; id: string; name: string; defaultModel: string; models: string[] }
+export interface ClassifierOption extends ChannelSelectionOption { builtin: boolean; sharedKey: string; defaultModel: string; models: string[] }
 export interface IntentOptions {
   tasks?: IntentTask[]
   classifiers: ClassifierOption[]
-  embeddings: { id: string; name: string; defaultModel?: string }[]
+  embeddings: (Omit<ChannelSelectionOption, 'kind'> & { kind?: string })[]
 }
 
 export const intentApi = {
 	buildIndex: (protocol: IntentProtocol, config: IntentConfig) => apiRequest(`/intent/${protocol}/index`, { method: 'POST', body: JSON.stringify(config) }),
   get: (protocol: IntentProtocol) => apiRequest<IntentConfig>(`/intent/${protocol}`),
   save: (protocol: IntentProtocol, config: IntentConfig) => apiRequest<IntentConfig>(`/intent/${protocol}`, { method: 'PUT', body: JSON.stringify(config) }),
-  preview: (protocol: IntentProtocol, config: IntentConfig, text: string) => apiRequest<IntentDecision>(`/intent/${protocol}/preview`, { method: 'POST', body: JSON.stringify({ config, text }) }),
+  preview: (protocol: IntentProtocol, config: IntentConfig, text: string, model = '') => apiRequest<IntentDecision>(`/intent/${protocol}/preview`, { method: 'POST', body: JSON.stringify({ config, text, model }) }),
+  indexStatus: (protocol: IntentProtocol, config: IntentConfig) => apiRequest(`/intent/${protocol}/index-status`, { method: 'POST', body: JSON.stringify(config) }),
   events: (protocol: IntentProtocol) => apiRequest<IntentEvent[]>(`/intent/${protocol}/events`),
   feedback: (protocol: IntentProtocol, requestId: string, good: boolean) => apiRequest(`/intent/${protocol}/feedback`, { method: 'POST', body: JSON.stringify({ requestId, good }) }),
   options: () => apiRequest<IntentOptions>('/intent/options'),

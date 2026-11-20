@@ -167,6 +167,30 @@ func (s *Service) Search(ctx context.Context, ids []string, kind string, profile
 	return s.search(ctx, ids, kind, profile, text, parent, nil)
 }
 
+// ValidateIndexes 在保存配置前检查模型身份，不计算查询向量或修改旧索引。
+func (s *Service) ValidateIndexes(ctx context.Context, ids []string, kind string, profile config.SemanticEmbeddingConfig) error {
+	if len(ids) == 0 {
+		return fmt.Errorf("请先选择数据集并构建索引")
+	}
+	space, err := s.embedder.EmbeddingSpace(profile)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err := s.validateKind(id, kind); err != nil {
+			return err
+		}
+		index, err := s.published(ctx, id+"/"+profileKey(profile))
+		if err != nil {
+			return fmt.Errorf("数据集 %s 没有当前向量模型的可用索引，请重新构建: %w", id, err)
+		}
+		if index.Space != space {
+			return fmt.Errorf("数据集 %s 的模型、渠道或模型映射已变化，请重新计算并发布索引", id)
+		}
+	}
+	return nil
+}
+
 func (s *Service) SearchTool(ctx context.Context, ids []string, profile config.SemanticEmbeddingConfig, text, parent, tool string, labels []string) (Result, error) {
 	return s.search(ctx, ids, "safety", profile, text, parent, func(row Sample) bool {
 		return slices.Contains(labels, row.Label) && (row.Tool == "" || strings.EqualFold(row.Tool, tool))

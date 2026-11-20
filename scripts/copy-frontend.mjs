@@ -99,6 +99,14 @@ if (!existsSync(srcDir)) {
 
 const start = Date.now();
 copyDirContents(srcDir, dstDir);
+// 推荐清单随二进制嵌入，本地构建也能一键安装，不依赖 Release 附件是否已发布。
+for (const name of ["embedding-presets.json", "embedding-presets.schema.json"]) {
+  const source = join(repoRoot, "deploy", name);
+  if (!existsSync(source)) {
+    throw new Error(`[copy-frontend] 缺少向量预设资源: ${source}`);
+  }
+  cpSync(source, join(dstDir, name));
+}
 const ms = Date.now() - start;
 console.log(`[copy-frontend] 已复制 ${srcDir} -> ${dstDir} (${ms} ms)`);
 

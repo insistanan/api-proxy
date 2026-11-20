@@ -32,6 +32,8 @@ export interface AssistantStatusChannel {
 
 /** 渠道选择器候选项（按 messages → responses → chat → gemini 顺序） */
 export interface AssistantChannelOption {
+  poolId?: string
+  poolName?: string
   kind: string
   id: string
   name: string

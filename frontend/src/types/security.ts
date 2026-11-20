@@ -1,6 +1,8 @@
 // 危险命令 AI 闸门类型（待确认列表 / 会话级白黑名单）。
 
 export interface GateChannelOption {
+  poolId?: string
+  poolName?: string
   kind: string
   id: string
   name: string

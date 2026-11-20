@@ -14,22 +14,29 @@ import (
 
 // DecisionTrace 保存当时的判断依据，不用当前配置重新推断历史决策。
 type DecisionTrace struct {
-	Input           string          `json:"input"`
-	Truncated       bool            `json:"truncated"`
-	Classified      bool            `json:"classified"`
-	Strategy        string          `json:"strategy"`
-	TaskSource      string          `json:"taskSource,omitempty"`
-	TierSource      string          `json:"tierSource,omitempty"`
-	TaskEvidence    string          `json:"taskEvidence,omitempty"`
-	TierEvidence    string          `json:"tierEvidence,omitempty"`
-	SuggestedPoolID string          `json:"suggestedPoolId,omitempty"`
-	Selection       string          `json:"selection,omitempty"`
-	Error           string          `json:"error,omitempty"`
-	Groups          []GroupMatch    `json:"groups"`
-	Semantic        []SemanticMatch `json:"semantic,omitempty"`
-	Threshold       float64         `json:"threshold"`
-	SwitchMargin    float64         `json:"switchMargin"`
+	Input           string               `json:"input"`
+	Truncated       bool                 `json:"truncated"`
+	Classified      bool                 `json:"classified"`
+	Strategy        string               `json:"strategy"`
+	Stages          []RecognitionAttempt `json:"stages,omitempty"`
+	TaskSource      string               `json:"taskSource,omitempty"`
+	TierSource      string               `json:"tierSource,omitempty"`
+	TaskEvidence    string               `json:"taskEvidence,omitempty"`
+	TierEvidence    string               `json:"tierEvidence,omitempty"`
+	SuggestedPoolID string               `json:"suggestedPoolId,omitempty"`
+	Selection       string               `json:"selection,omitempty"`
+	Error           string               `json:"error,omitempty"`
+	Groups          []GroupMatch         `json:"groups"`
+	Semantic        []SemanticMatch      `json:"semantic,omitempty"`
+	Threshold       float64              `json:"threshold"`
+	SwitchMargin    float64              `json:"switchMargin"`
 	freeActive      bool
+}
+
+type RecognitionAttempt struct {
+	Stage   string `json:"stage"`
+	Matched bool   `json:"matched"`
+	Task    string `json:"task,omitempty"`
 }
 
 type GroupMatch struct {
@@ -131,6 +138,8 @@ func (s *Service) finishTrace(trace *DecisionTrace, cfg config.IntentRoutingConf
 				group.Status, group.Reason = "skipped", "任务类型未确定"
 			case !slices.Contains(group.Tasks, decision.Task):
 				group.Status, group.Reason = "excluded", "未声明适合该任务类型"
+			case decision.Tier < 0 && cfg.RecognitionMode != "" && len(group.Tiers) == 3:
+				group.Status, group.Reason = "candidate", "任务类型满足，分组可处理所有难度"
 			case decision.Tier < 0:
 				group.Status, group.Reason = "skipped", "任务类型满足，但难度未确定"
 			case !slices.Contains(group.Tiers, decision.Tier):

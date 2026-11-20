@@ -9,21 +9,24 @@ import { computed, onMounted, ref, watch } from 'vue'
 import type { EmbeddingProfile } from '@/types'
 import { useDatasetsStore } from '@/features/extensions/datasets/stores/datasets'
 import { intentErrorText } from '@/features/channels'
-const props = withDefaults(defineProps<{ kind: 'intent' | 'safety'; multiple?: boolean; requirePublished?: boolean; refreshKey?: number }>(), { multiple: true, requirePublished: false, refreshKey: 0 })
+const props = withDefaults(defineProps<{ kind: 'intent' | 'safety'; multiple?: boolean; requirePublished?: boolean; refreshKey?: number; profile?: EmbeddingProfile }>(), { multiple: true, requirePublished: false, refreshKey: 0 })
 const emit = defineEmits<{ 'published-profile': [value: EmbeddingProfile | undefined] }>()
 const model = defineModel<string[]>({ default: () => [] })
 const store = useDatasetsStore()
 const items = computed(() => store.items
   .filter(item => item.kind === props.kind)
   .filter(item => !props.requirePublished || item.indexes.length > 0)
-  .map(item => ({ ...item, title: props.requirePublished ? `${item.name} · ${item.indexes.length} 个可用索引` : item.name })))
+  .map(item => ({ ...item, title: props.profile ? `${item.name} · ${item.indexes.some(index => sameProfile(index.profile, props.profile!)) ? '已有当前模型配置的索引' : '需要按当前模型构建索引'}` : props.requirePublished ? `${item.name} · ${item.indexes.length} 个可用索引` : item.name })))
+function sameProfile(a: EmbeddingProfile, b: EmbeddingProfile) {
+  return a.source === b.source && a.channel === b.channel && a.model === b.model && a.modelVersion === b.modelVersion && a.queryPrefix === b.queryPrefix && a.examplePrefix === b.examplePrefix
+}
 const selection = computed(() => props.multiple ? model.value : model.value[0] ?? null)
 function select(value: string | string[] | null) {
   const ids = Array.isArray(value) ? value : value ? [value] : []
   model.value = ids
   const selected = ids.length === 1 ? store.items.find(item => item.id === ids[0]) : undefined
   const index = selected?.indexes[selected.indexes.length - 1]
-  emit('published-profile', index?.profile)
+  if (!props.profile) emit('published-profile', index?.profile)
 }
 const loading = ref(false)
 const error = ref('')

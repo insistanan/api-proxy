@@ -119,6 +119,10 @@
   max-width: 380px;
 }
 
+.ai-gate-channel-picker {
+  flex: 1 1 100%;
+}
+
 .ai-gate-wait {
   flex: 0 1 160px;
 }

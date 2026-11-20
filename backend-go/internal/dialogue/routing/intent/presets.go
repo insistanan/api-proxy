@@ -17,10 +17,12 @@ import (
 	"sync"
 	"time"
 
+	apiproxy "github.com/insistanan/api-proxy"
 	"github.com/insistanan/api-proxy/internal/storage/atomicfile"
 )
 
-const DefaultPresetsURL = "https://github.com/insistanan/api-proxy/releases/latest/download/embedding-presets.json"
+// 空地址明确选择随二进制附带的推荐清单；自定义 HTTPS 地址失败仍显式报错。
+const DefaultPresetsURL = ""
 const presetBodyLimit = 256 << 10
 const presetCacheTTL = 10 * time.Minute
 const presetsURLFile = "presets-url.txt"
@@ -115,8 +117,10 @@ func (l *LocalRuntime) SetPresetsURL(raw string) error {
 	if raw == "" {
 		raw = DefaultPresetsURL
 	}
-	if err := validateHTTPS(raw); err != nil {
-		return fmt.Errorf("清单地址无效：%w", err)
+	if raw != DefaultPresetsURL {
+		if err := validateHTTPS(raw); err != nil {
+			return fmt.Errorf("清单地址无效：%w", err)
+		}
 	}
 	p := l.presets
 	p.mu.Lock()
@@ -199,6 +203,13 @@ func (p *presetCatalog) fetch(ctx context.Context) (EmbeddingPresets, error) {
 }
 
 func (p *presetCatalog) download(ctx context.Context) (EmbeddingPresets, error) {
+	if p.url == DefaultPresetsURL {
+		data, err := apiproxy.FrontendFS.ReadFile("frontend/dist/embedding-presets.json")
+		if err != nil {
+			return EmbeddingPresets{}, fmt.Errorf("读取内置向量预设清单失败，请通过项目复制脚本重新构建: %w", err)
+		}
+		return validatePresets(data)
+	}
 	if err := validateHTTPS(p.url); err != nil {
 		return EmbeddingPresets{}, err
 	}

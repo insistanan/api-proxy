@@ -34,6 +34,9 @@ func TestIntentAndDatasetEndpointsShareVectorReadinessError(t *testing.T) {
 	RegisterDatasetAPI(router.Group("/api"), service.Datasets)
 	cfg := config.DefaultIntentRouting()
 	cfg.Strategy, cfg.EmbeddingSource, cfg.EmbeddingModel = "semantic", "local", "vector"
+	cfg.Enabled = true
+	cfg.DatasetIDs = []string{dataset.ID}
+	cfg.Routes = []config.IntentRoute{{ID: "writing", PoolID: "default", Label: "writing"}}
 	before := cm.GetIntentRouting("messages")
 	for _, tc := range []struct {
 		method, path string
@@ -57,10 +60,18 @@ func TestIntentAndDatasetEndpointsShareVectorReadinessError(t *testing.T) {
 		require.Equal(t, intent.DefaultPresetsURL, result["presetsUrl"])
 	}
 	require.Equal(t, before, cm.GetIntentRouting("messages"), "阻断保存不能改动已有配置")
-	cfg.Strategy, cfg.FailurePolicy = "regex", "error"
+	// 关闭配置无需等待向量模型就绪，仍应允许保存。
+	cfg.Enabled = false
 	body, err := json.Marshal(cfg)
 	require.NoError(t, err)
 	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPut, "/api/intent/messages", bytes.NewReader(body)))
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.False(t, cm.GetIntentRouting("messages").Enabled)
+	cfg.Strategy, cfg.FailurePolicy = "regex", "error"
+	body, err = json.Marshal(cfg)
+	require.NoError(t, err)
+	response = httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodPut, "/api/intent/messages", bytes.NewReader(body)))
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	require.Equal(t, "error", cm.GetIntentRouting("messages").FailurePolicy, "旧配置的显式错误策略不得被新默认迁移")
