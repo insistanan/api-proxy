@@ -78,7 +78,7 @@
         <template #[`item.identity`]="{ item }">
           <div class="conversation-identity">
             <button type="button" class="conversation-title" title="查看对话详情" @click="openDetailDialog(item)">
-              {{ item.name || '未命名对话' }}
+              {{ displayConversationName(item) }}
             </button>
             <div class="conversation-id-row">
               <span class="conversation-id font-mono" :title="item.id">{{ formatConversationID(item.id) }}</span>
@@ -165,6 +165,7 @@
 
         <template #[`item.actions`]="{ item }">
           <div class="conversation-actions">
+            <v-btn icon="mdi-history" size="small" variant="text" title="查看上下文与轨迹" aria-label="查看上下文与轨迹" @click="openTraceDialog(item)" />
             <v-btn icon="mdi-pencil" size="small" variant="text" title="命名" aria-label="命名对话" @click="openNameDialog(item)" />
             <v-btn icon="mdi-swap-horizontal" size="small" variant="text" title="固定渠道" aria-label="固定渠道" @click="openRouteDialog(item)" />
             <v-btn
@@ -250,7 +251,7 @@
     </AppDialog>
 
     <!-- 详情 Dialog -->
-    <AppDialog v-model="detailDialog" title="对话详情" size="xl">
+    <AppDialog v-model="detailDialog" :title="selectedConversation ? `对话详情 · ${displayConversationName(selectedConversation)}` : '对话详情'" size="xl">
           <!-- ID & Meta -->
           <div class="d-flex flex-wrap align-center justify-space-between mb-4 ga-2">
             <div class="d-flex align-center ga-2">
@@ -459,7 +460,7 @@ const headers = [
   { title: '请求统计', key: 'requests', sortable: false, width: 96 },
   { title: '渠道路由', key: 'routing', sortable: false, width: 200 },
   { title: '创建 / 活动时间', key: 'timestamps', sortable: false, width: 150 },
-  { title: '操作', key: 'actions', sortable: false, width: 150 }
+  { title: '操作', key: 'actions', sortable: false, width: 190 }
 ]
 
 const kindItems: ConversationKind[] = [...API_TABS]
@@ -531,6 +532,12 @@ const openDetailDialog = (item: ConversationEntry) => {
   detailName.value = item.name || ''
   detailDialog.value = true
 }
+const openTraceDialog = (item: ConversationEntry) => {
+  selectedConversation.value = item
+  detailName.value = item.name || ''
+  traceDialog.value = true
+}
+const displayConversationName = (item: ConversationEntry): string => item.name || item.firstPrompt || conversationPrompts(item)[0] || '未命名对话'
 
 const updateConversation = (updated: ConversationEntry) => {
   conversations.value = conversations.value.map(item => item.id === updated.id ? updated : item)

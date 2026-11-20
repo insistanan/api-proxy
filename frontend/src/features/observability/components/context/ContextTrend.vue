@@ -1,44 +1,99 @@
 <template>
   <section class="context-trend" aria-label="全会话上下文趋势">
-    <div class="trend-heading"><strong>上下文趋势</strong><span v-if="overview">全会话 {{ overview.calls }} 次调用 · {{ overview.knownCalls }} 次有可比较快照</span></div>
+    <div class="trend-heading">
+      <div><strong>上下文趋势</strong><p v-if="overview">全会话 {{ overview.calls }} 次调用 · {{ overview.knownCalls }} 次有可比较快照</p></div>
+      <v-chip v-if="peakPoint" size="small" variant="tonal" color="secondary">峰值 {{ estimatedLabel(peakPoint.peak?.estimatedTokens || 0) }}</v-chip>
+    </div>
     <v-alert v-if="error" type="error" variant="tonal" density="compact">{{ error }} <v-btn size="small" variant="text" @click="load">重试</v-btn></v-alert>
     <p v-else-if="!overview">{{ loading ? '正在读取会话摘要…' : '暂无趋势数据' }}</p>
     <p v-else-if="overview.calls === 0">暂无会话日志，记录可能尚未生成或已清理。</p>
     <template v-if="overview && overview.calls > 0">
-      <p>{{ overview.bucketSize > 1 ? `每组最多 ${overview.bucketSize} 次调用，显示组内上下文估算峰值` : '按调用顺序展示已保存输入的上下文估算' }}。尾部摘要、缺失数据与服务端历史引用不参与比较。</p>
-      <div v-if="overview.knownCalls" class="trend-chart" :aria-busy="loading">
-        <button v-for="(point, index) in overview.points" :key="index" type="button" class="trend-column" :disabled="!point.requestId" :aria-label="pointLabel(point)" :title="pointLabel(point)" @click="point.requestId && emit('locate', point.requestId)">
-          <span v-if="point.peak" class="trend-stack" :style="{ height: `${Math.max(3, point.peak.estimatedTokens / peak * 100)}%` }">
-            <i v-for="part in point.peak.parts" :key="part.kind" :style="{ flex: Math.max(part.estimatedTokens, 1), backgroundColor: contextKind(part.kind).color }"></i>
+      <p class="trend-description">{{ overview.bucketSize > 1 ? `每组最多 ${overview.bucketSize} 次调用，显示组内上下文估算峰值` : '按调用顺序展示已保存输入的上下文估算' }}。尾部摘要、缺失数据与服务端历史引用不参与比较。</p>
+      <template v-if="overview.knownCalls">
+        <apexchart type="bar" height="230" :options="chartOptions" :series="series" @data-point-selection="selectPoint" />
+        <div class="trend-selection">
+          <v-select v-model="selectedPointIndex" :items="pointItems" label="选择趋势点" density="compact" hide-details clearable />
+          <v-btn size="small" variant="tonal" color="primary" :disabled="!selectedPoint?.requestId" @click="selectedPoint?.requestId && emit('locate', selectedPoint.requestId)">定位调用</v-btn>
+          <span v-if="selectedDelta != null" :class="selectedDelta > 0 ? 'delta-up' : selectedDelta < 0 ? 'delta-down' : ''">
+            较前一快照 {{ selectedDelta > 0 ? '+' : '' }}{{ selectedDelta.toLocaleString() }} Token
           </span>
-          <span v-else class="trend-unknown"></span>
-        </button>
-      </div>
+        </div>
+        <details class="trend-data">
+          <summary>查看上下文估算数据</summary>
+          <div class="trend-data__scroll">
+            <v-table density="compact">
+              <thead><tr><th>时间</th><th>调用 / 有快照</th><th>峰值估算</th><th>请求</th></tr></thead>
+              <tbody><tr v-for="(point, index) in overview.points" :key="index"><td>{{ formatDateTime(point.firstAt) }}</td><td>{{ point.calls }} / {{ point.knownCalls }}</td><td>{{ point.peak ? estimatedLabel(point.peak.estimatedTokens) : '--' }}</td><td><v-btn size="x-small" variant="text" color="primary" :disabled="!point.requestId" @click="point.requestId && emit('locate', point.requestId)">{{ point.requestId?.slice(0, 8) || '--' }}</v-btn></td></tr></tbody>
+            </v-table>
+          </div>
+        </details>
+      </template>
       <p v-else>历史日志尚未记录可比较的上下文摘要；新调用将在结束后出现在这里。</p>
-      <div class="trend-scale"><span>会话开始</span><span>点击柱形定位调用 · 最高 {{ estimatedLabel(peak) }}</span><span>最近调用</span></div>
+      <div class="trend-scale"><span>会话开始</span><span>柱形为组内峰值，不表示每一轮都达到该值</span><span>最近调用</span></div>
     </template>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import { useChartDarkTheme } from '@/shared/composables/useChartDarkTheme'
+import type { ApexOptions } from 'apexcharts'
 import { api, ApiError } from '@/api'
 import type { ContextOverview, ContextTrendPoint } from '@/types/logs'
 import { contextKind, estimatedLabel } from '@/features/observability/utils/contextPresentation'
 import { formatDateTime } from '@/shared/utils/datetime'
+import { defineLazyChart } from '@/shared/utils/lazyChart'
+import { chartThemeColors } from '@/shared/utils/chartPalette'
 
+const apexchart = defineLazyChart(() => import('vue3-apexcharts'))
 const props = defineProps<{ groupKey: string; version: string }>()
 const emit = defineEmits<{ locate: [requestId: string] }>()
 const overview = shallowRef<ContextOverview | null>(null)
 const loading = ref(false)
 const error = ref('')
+const selectedPointIndex = ref<number | null>(null)
+const isDark = useChartDarkTheme()
 let revision = 0
 let loadedKey = ''
-const peak = computed(() => Math.max(1, ...(overview.value?.points.map(point => point.peak?.estimatedTokens || 0) || [])))
-const pointLabel = (point: ContextTrendPoint) => `${formatDateTime(point.firstAt)}～${formatDateTime(point.lastAt)} · ${point.calls} 次调用 · ${point.knownCalls} 次有快照 · ${point.peak ? estimatedLabel(point.peak.estimatedTokens) : '上下文未知'}`
+const peakPoint = computed(() => overview.value?.points.reduce<ContextTrendPoint | undefined>((highest, point) => (point.peak?.estimatedTokens || 0) > (highest?.peak?.estimatedTokens || 0) ? point : highest, undefined))
+const selectedPoint = computed(() => typeof selectedPointIndex.value === 'number' ? overview.value?.points[selectedPointIndex.value] : undefined)
+const selectedDelta = computed(() => {
+  const index = selectedPointIndex.value
+  if (typeof index !== 'number' || !selectedPoint.value?.peak) return null
+  const previous = overview.value?.points.slice(0, index).reverse().find(point => point.peak)?.peak
+  return previous ? selectedPoint.value.peak.estimatedTokens - previous.estimatedTokens : null
+})
+const pointItems = computed(() => overview.value?.points.map((point, index) => ({ title: `${formatDateTime(point.firstAt)} · ${point.peak ? estimatedLabel(point.peak.estimatedTokens) : '无快照'}`, value: index })) || [])
+const kinds = computed(() => Array.from(new Set(overview.value?.points.flatMap(point => point.peak?.parts.map(part => part.kind) || []) || [])))
+const series = computed(() => kinds.value.map(kind => ({
+  name: contextKind(kind).label,
+  data: overview.value?.points.map(point => ({
+    x: point.firstAt,
+    y: point.peak?.parts.find(part => part.kind === kind)?.estimatedTokens || 0
+  })) || []
+})))
+const chartOptions = computed<ApexOptions>(() => {
+  const colors = chartThemeColors(isDark.value)
+  return {
+    chart: { type: 'bar', stacked: true, background: 'transparent', animations: { enabled: false }, toolbar: { show: false } },
+    theme: { mode: isDark.value ? 'dark' : 'light' },
+    colors: kinds.value.map(kind => contextKind(kind).color),
+    plotOptions: { bar: { columnWidth: '72%', borderRadius: 2 } },
+    dataLabels: { enabled: false },
+    grid: { borderColor: colors.grid, strokeDashArray: 3, padding: { left: 10, right: 10 } },
+    xaxis: { type: 'datetime', labels: { datetimeUTC: false, format: 'MM/dd HH:mm', style: { colors: colors.text, fontSize: '11px' } }, axisBorder: { show: false }, axisTicks: { show: false } },
+    yaxis: { min: 0, title: { text: '估算 Token', style: { color: colors.text, fontWeight: 400 } }, labels: { style: { colors: colors.text, fontSize: '11px' }, formatter: (value: number) => new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 1 }).format(value) } },
+    legend: { show: true, position: 'top', horizontalAlign: 'left', fontSize: '11px', labels: { colors: colors.text }, markers: { size: 5, strokeWidth: 0 }, itemMargin: { horizontal: 8 } },
+    tooltip: { theme: isDark.value ? 'dark' : 'light', shared: true, intersect: false, x: { format: 'yyyy-MM-dd HH:mm:ss' }, y: { formatter: (value: number) => estimatedLabel(Math.round(value)) } },
+    noData: { text: '暂无可比较快照', style: { color: colors.text } }
+  }
+})
+function selectPoint(_event: unknown, _seriesIndex: number, config: { dataPointIndex?: number }) {
+  if (typeof config.dataPointIndex === 'number') selectedPointIndex.value = config.dataPointIndex
+}
 async function load() {
   const version = ++revision
-  if (loadedKey !== props.groupKey) { overview.value = null; loadedKey = props.groupKey }
+  if (loadedKey !== props.groupKey) { overview.value = null; loadedKey = props.groupKey; selectedPointIndex.value = null }
   loading.value = true
   error.value = ''
   try {
@@ -56,17 +111,17 @@ onBeforeUnmount(() => { revision++ })
 </script>
 
 <style scoped>
-.context-trend { margin-bottom: 20px; border-bottom: 1px solid rgba(var(--v-theme-on-surface), 0.12); padding-bottom: 16px; }
-.trend-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; }
-.trend-heading span, p, .trend-scale { font-size: 12px; color: rgba(var(--v-theme-on-surface), 0.65); }
-p { margin: 8px 0 12px; }
-.trend-chart { display: flex; gap: 2px; height: 92px; align-items: stretch; }
-.trend-column { display: flex; flex: 1 1 0; min-width: 1px; align-items: flex-end; background: transparent; border: 0; cursor: pointer; }
-.trend-column:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: 2px; }
-.trend-column:disabled { cursor: default; }
-.trend-column:hover .trend-stack { filter: brightness(1.25); }
-.trend-stack { display: flex; flex-direction: column-reverse; width: 100%; overflow: hidden; border-radius: 2px 2px 0 0; }
-.trend-stack i { min-height: 1px; }
-.trend-unknown { width: 100%; height: 3px; background: rgba(var(--v-theme-on-surface), 0.2); }
-.trend-scale { display: flex; justify-content: space-between; gap: 12px; margin-top: 8px; flex-wrap: wrap; }
+.context-trend { margin-bottom: 20px; padding: 16px; border: 1px solid rgba(var(--v-theme-outline), .18); border-radius: 12px; background: rgba(var(--v-theme-surface-bright), .25); }
+.trend-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.trend-heading p, .trend-description, .trend-scale { margin: 5px 0 0; color: rgb(var(--v-theme-on-surface-variant)); font-size: 12px; }
+.trend-description { margin-bottom: 8px; }
+.trend-selection { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.trend-selection .v-input { flex: 1 1 260px; }
+.trend-selection > span { font-size: 12px; font-variant-numeric: tabular-nums; }
+.delta-up { color: rgb(var(--v-theme-warning)); }
+.delta-down { color: rgb(var(--v-theme-success)); }
+.trend-data { margin-top: 8px; color: rgb(var(--v-theme-on-surface-variant)); font-size: 12px; }
+.trend-data summary { padding: 6px 0; cursor: pointer; }
+.trend-data__scroll { max-height: 260px; overflow: auto; }
+.trend-scale { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
 </style>

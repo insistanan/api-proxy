@@ -15,3 +15,11 @@ export function formatShortDateTime(value: DateInput): string {
 export function formatClockTime(value: DateInput): string {
   return new Date(value).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
+
+/** datetime-local 控件所需的本地时间，不经过 UTC 换算。 */
+export function toDateTimeLocal(value: DateInput): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const pad = (part: number) => String(part).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}

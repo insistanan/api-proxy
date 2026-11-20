@@ -5,6 +5,7 @@
     <div class="logs-toolbar">
       <v-tabs v-model="activeTab" color="primary" density="comfortable" class="logs-tabs">
         <v-tab value="request">模型调用</v-tab>
+        <v-tab value="stats">统计概览</v-tab>
         <v-tab value="system">会话轨迹</v-tab>
         <v-tab value="runtime">运行日志</v-tab>
       </v-tabs>
@@ -12,43 +13,44 @@
 
     <div v-show="activeTab === 'request'" class="request-tab-panel">
       <div class="logs-actions mb-4">
-        <v-select
-          v-model="datePreset"
-          :items="datePresetItems"
-          item-title="title"
-          item-value="value"
-          label="时间范围"
+        <v-text-field
+          v-model="searchText"
+          label="搜索请求、会话、渠道、模型或错误"
+          prepend-inner-icon="mdi-magnify"
           density="compact"
-          variant="outlined"
           hide-details
-          class="date-preset-select"
+          clearable
+          class="log-search-field"
+          @keyup.enter="resetAndLoad"
         />
-        <template v-if="datePreset === 'custom'">
-          <v-text-field v-model="fromTime" type="datetime-local" label="开始时间" density="compact" hide-details />
-          <v-text-field v-model="toTime" type="datetime-local" label="结束时间" density="compact" hide-details />
-        </template>
+        <v-select v-model="datePreset" :items="datePresetItems" label="时间范围" density="compact" variant="outlined" hide-details class="date-preset-select" />
         <v-select v-model="typeFilter" :items="typeItems" label="入口类型" density="compact" hide-details class="type-filter-select" />
-        <span class="logs-count text-body-2 text-medium-emphasis" role="status">最近 {{ requestLogs.length }} / 50 次尝试</span>
-        <v-btn
-          color="primary"
-          variant="tonal"
-          size="small"
-          prepend-icon="mdi-refresh"
-          :loading="loading"
-          @click="loadLogs"
-        >
-          刷新
+        <v-select v-model="statusFilter" :items="logStatusItems" label="状态" density="compact" hide-details class="type-filter-select" />
+        <v-select v-model="sortField" :items="sortItems" label="排序字段" density="compact" hide-details class="type-filter-select" />
+        <v-btn variant="outlined" size="small" class="sort-order-button" @click="sortOrder = sortOrder === 'desc' ? 'asc' : 'desc'">
+          {{ sortOrder === 'desc' ? '降序' : '升序' }}
         </v-btn>
-        <v-btn
-          color="error"
-          variant="tonal"
-          size="small"
-          prepend-icon="mdi-broom"
-          @click="openPurgeDialog"
-        >
-          清理日志
-        </v-btn>
+        <span class="logs-count text-body-2 text-medium-emphasis" role="status">共 {{ totalLogs.toLocaleString() }} 次尝试</span>
+        <v-btn color="primary" variant="tonal" size="small" prepend-icon="mdi-refresh" :loading="loading" @click="loadLogs">刷新</v-btn>
+        <v-btn variant="tonal" size="small" prepend-icon="mdi-download" :disabled="!requestLogs.length" @click="exportCurrentPage">导出本页</v-btn>
+        <v-btn color="error" variant="tonal" size="small" prepend-icon="mdi-broom" @click="openPurgeDialog">清理日志</v-btn>
       </div>
+
+      <details class="advanced-filters mb-4">
+        <summary>更多筛选与自定义时间</summary>
+        <div class="advanced-filters__grid">
+          <v-text-field v-model="channelFilter" label="渠道名称（精确）" density="compact" hide-details clearable />
+          <v-text-field v-model="modelFilter" label="实际模型（精确）" density="compact" hide-details clearable />
+          <v-text-field v-model="errorTypeFilter" label="错误类型" density="compact" hide-details clearable />
+          <v-text-field v-model="upstreamFilter" label="上游地址" density="compact" hide-details clearable />
+          <v-text-field v-model="keyMaskFilter" label="密钥掩码" density="compact" hide-details clearable />
+          <v-select v-model="retriedFilter" :items="booleanFilterItems" label="是否重试" density="compact" hide-details />
+          <v-select v-model="streamFilter" :items="booleanFilterItems" label="是否流式" density="compact" hide-details />
+          <v-text-field v-if="datePreset === 'custom'" v-model="fromTime" type="datetime-local" label="开始时间" density="compact" hide-details />
+          <v-text-field v-if="datePreset === 'custom'" v-model="toTime" type="datetime-local" label="结束时间" density="compact" hide-details />
+          <v-btn variant="text" color="primary" prepend-icon="mdi-filter-remove-outline" @click="clearFilters">清除全部筛选</v-btn>
+        </div>
+      </details>
 
       <v-alert v-if="purgeNotice" type="success" variant="tonal" density="compact" class="mb-4" closable @click:close="purgeNotice = ''">
         {{ purgeNotice }}
@@ -72,7 +74,7 @@
               <th>首字/耗时</th>
               <th>Token I/O</th>
               <th>缓存</th>
-              <th>TPM</th>
+              <th>输出速度</th>
               <th>终止/失败原因</th>
               <th class="action-column">操作</th>
             </tr>
@@ -121,7 +123,10 @@
                 <div>{{ formatNumber(log.cacheReadTokens) }}</div>
                 <div class="text-caption text-medium-emphasis">命中 {{ formatCacheHitRate(log) }}</div>
               </td>
-              <td class="text-no-wrap">{{ formatTPM(log.tpm) }}</td>
+              <td class="text-no-wrap performance-cell">
+                <div>{{ formatTPS(log.tps) }}</div>
+                <div class="text-caption text-medium-emphasis">TPM {{ formatTPM(log.tpm) }}</div>
+              </td>
               <td class="error-cell">
                 <button v-if="log.errorType || log.errorMessage" type="button" class="error-summary" aria-label="查看完整终止或失败原因" @click="selectedFailure = log">
                   <span class="error-summary__heading">
@@ -163,7 +168,16 @@
             </tr>
           </tbody>
         </v-table>
+        <div class="logs-table-footer">
+          <span class="text-caption text-medium-emphasis">第 {{ page }} / {{ totalPages }} 页 · 当前 {{ requestLogs.length }} 条</span>
+          <v-select v-model="pageSize" :items="[25, 50, 100]" label="每页" density="compact" hide-details class="page-size-select" />
+          <v-pagination v-model="page" :length="totalPages" :total-visible="5" density="compact" size="small" />
+        </div>
       </v-card>
+    </div>
+
+    <div v-show="activeTab === 'stats'" class="stats-tab-panel">
+      <RequestStatsPanel v-if="activeTab === 'stats'" show-protocol @drill="applyStatsDrill" />
     </div>
 
     <RequestFailureDialog v-model="selectedFailure" @locate="openSystemLog" />
@@ -228,12 +242,14 @@ import RequestFailureDialog from '@/features/observability/components/log-panels
 import SystemLogsPanel from '@/features/observability/components/log-panels/SystemLogsPanel.vue'
 import RuntimeLogsPanel from '@/features/observability/components/log-panels/RuntimeLogsPanel.vue'
 import RequestLogDetail from '@/features/observability/components/log-panels/RequestLogDetail.vue'
+import RequestStatsPanel from '@/features/observability/components/stats/RequestStatsPanel.vue'
+import { downloadCsv } from '@/features/observability/utils/exportCsv'
 import { useLogsStore } from '@/features/observability/stores/logs'
-import { formatDateTime } from '@/shared/utils/datetime'
-import { api, type LogAPIType, type LogAvailableDate, type RequestLogEntry } from '@/api'
+import { formatDateTime, toDateTimeLocal } from '@/shared/utils/datetime'
+import { api, type LogAPIType, type LogAvailableDate, type RequestLogEntry, type RequestStatsDrill } from '@/api'
 
 type TypeFilter = LogAPIType | ''
-type LogsTab = 'request' | 'system' | 'runtime'
+type LogsTab = 'request' | 'stats' | 'system' | 'runtime'
 type DatePreset = 'today' | 'yesterday' | 'all' | 'custom'
 
 const typeLabelMap: Record<LogAPIType, string> = {
@@ -271,6 +287,37 @@ const callDetailVersion = computed(() => {
 const datePreset = ref<DatePreset>('all')
 const fromTime = ref('')
 const toTime = ref('')
+let exactCustomRange: DateRange | undefined
+function setCustomRange(range: DateRange) {
+  exactCustomRange = range
+  datePreset.value = 'custom'
+  fromTime.value = range.from ? toDateTimeLocal(range.from) : ''
+  toTime.value = range.to ? toDateTimeLocal(range.to) : ''
+}
+const searchText = ref('')
+const channelFilter = ref<string | null>(null)
+const modelFilter = ref<string | null>(null)
+const statusFilter = ref('')
+const errorTypeFilter = ref<string | null>(null)
+const upstreamFilter = ref<string | null>(null)
+const keyMaskFilter = ref<string | null>(null)
+const retriedFilter = ref('')
+const streamFilter = ref('')
+const sortField = ref<'timestamp' | 'durationMs' | 'firstTokenMs' | 'inputTokens' | 'outputTokens' | 'totalTokens'>('timestamp')
+const sortOrder = ref<'asc' | 'desc'>('desc')
+const page = ref(1)
+const pageSize = ref(50)
+const totalLogs = ref(0)
+const totalPages = computed(() => Math.max(1, Math.ceil(totalLogs.value / pageSize.value)))
+const logStatusItems = [
+  { title: '全部状态', value: '' }, { title: '已完成', value: 'completed' }, { title: '失败', value: 'failed' },
+  { title: '已取消', value: 'cancelled' }, { title: '未正常收尾', value: 'interrupted' }, { title: '已拦截', value: 'blocked' }, { title: '状态未知', value: 'unknown' }
+]
+const booleanFilterItems = [{ title: '全部', value: '' }, { title: '是', value: 'true' }, { title: '否', value: 'false' }]
+const sortItems = [
+  { title: '按时间', value: 'timestamp' }, { title: '按总耗时', value: 'durationMs' }, { title: '按首字耗时', value: 'firstTokenMs' },
+  { title: '按输入 Token', value: 'inputTokens' }, { title: '按输出 Token', value: 'outputTokens' }, { title: '按总 Token', value: 'totalTokens' }
+]
 const loading = ref(false)
 const error = ref('')
 const requestLogs = shallowRef<RequestLogEntry[]>([])
@@ -289,8 +336,25 @@ const purgeError = ref('')
 const route = useRoute()
 const router = useRouter()
 
+const routeValue = (key: string): string => String(route.query[key] || '')
+if (routeValue('type')) typeFilter.value = routeValue('type') as TypeFilter
+channelFilter.value = routeValue('channel') || null
+modelFilter.value = routeValue('model') || null
+statusFilter.value = routeValue('status')
+errorTypeFilter.value = routeValue('errorType') || null
+upstreamFilter.value = routeValue('upstream') || null
+keyMaskFilter.value = routeValue('keyMask') || null
+if (routeValue('from') || routeValue('to')) {
+  setCustomRange({ from: routeValue('from'), to: routeValue('to') })
+}
+
 const activeTab = computed({
-  get: (): LogsTab => (route.query.tab === 'system' ? 'system' : route.query.tab === 'runtime' ? 'runtime' : 'request'),
+  get: (): LogsTab => {
+    if (route.query.tab === 'system') return 'system'
+    if (route.query.tab === 'runtime') return 'runtime'
+    if (route.query.tab === 'stats') return 'stats'
+    return 'request'
+  },
   set: (tab: LogsTab) => {
     const query = { ...route.query }
     if (tab !== 'request') {
@@ -344,8 +408,11 @@ const dayRangeRFC = (offsetDays: number): DateRange => {
 
 const customRangeRFC = (): DateRange | null => {
   if (!fromTime.value && !toTime.value) return { from: '', to: '' }
-  const from = fromTime.value ? new Date(fromTime.value) : null
-  const to = toTime.value ? new Date(toTime.value) : null
+  // 下钻传入的时间可能包含秒和毫秒。日期控件以分钟显示，手动编辑前保留查询边界。
+  const fromValue = exactCustomRange?.from && fromTime.value === toDateTimeLocal(exactCustomRange.from) ? exactCustomRange.from : fromTime.value
+  const toValue = exactCustomRange?.to && toTime.value === toDateTimeLocal(exactCustomRange.to) ? exactCustomRange.to : toTime.value
+  const from = fromValue ? new Date(fromValue) : null
+  const to = toValue ? new Date(toValue) : null
   if (from && Number.isNaN(from.getTime())) {
     error.value = '开始时间无效'
     return null
@@ -382,15 +449,85 @@ const loadLogs = async () => {
     const response = await api.getRequestLogs({
       type: typeFilter.value,
       limit: 50,
+      page: page.value,
+      pageSize: pageSize.value,
       from: range.from,
-      to: range.to
+      to: range.to,
+      q: searchText.value.trim(),
+      channel: channelFilter.value || '',
+      model: modelFilter.value || '',
+      status: statusFilter.value,
+      errorType: errorTypeFilter.value || '',
+      upstream: upstreamFilter.value || '',
+      keyMask: keyMaskFilter.value || '',
+      retried: retriedFilter.value ? retriedFilter.value === 'true' : undefined,
+      stream: streamFilter.value ? streamFilter.value === 'true' : undefined,
+      sort: sortField.value,
+      order: sortOrder.value
     })
-    if (sequence === logRequestSequence) requestLogs.value = response.logs || []
+    if (sequence === logRequestSequence) {
+      requestLogs.value = response.logs || []
+      totalLogs.value = response.total ?? response.logs?.length ?? 0
+    }
   } catch (err) {
     if (sequence === logRequestSequence) error.value = err instanceof Error ? err.message : '加载请求日志失败'
   } finally {
     if (sequence === logRequestSequence) loading.value = false
   }
+}
+
+function formatTPS(value: number | undefined): string {
+  return value && value > 0 ? `${value.toFixed(value >= 100 ? 0 : 1)} /s` : '--'
+}
+
+function exportCurrentPage() {
+  downloadCsv(`模型调用-第${page.value}页.csv`,
+    ['时间', '请求 ID', '尝试 ID', '入口', '状态', '渠道', '请求模型', '实际模型', '总耗时(ms)', '首字(ms)', '输入 Token', '输出 Token', '缓存创建', '缓存读取', '重试', '流式', '错误类型', '错误原因'],
+    requestLogs.value.map(log => [
+      log.timestamp, log.requestId || '', log.attemptId || '', log.entry || log.apiType, log.status,
+      log.channelName || '', log.model, log.resolvedModel || '', log.durationMs || '', log.firstTokenMs || '',
+      log.inputTokens || 0, log.outputTokens || 0, log.cacheCreationTokens || 0, log.cacheReadTokens || 0,
+      log.retried ? '是' : '否', log.stream ? '是' : '否', log.errorType || '', log.errorMessage || ''
+    ]))
+}
+
+function clearFilters() {
+  datePreset.value = 'all'
+  exactCustomRange = undefined
+  fromTime.value = ''
+  toTime.value = ''
+  searchText.value = ''
+  typeFilter.value = ''
+  channelFilter.value = null
+  modelFilter.value = null
+  statusFilter.value = ''
+  errorTypeFilter.value = null
+  upstreamFilter.value = null
+  keyMaskFilter.value = null
+  retriedFilter.value = ''
+  streamFilter.value = ''
+  scheduleLoad()
+}
+
+function applyStatsDrill(filters: RequestStatsDrill) {
+  if (filters.from || filters.to) {
+    setCustomRange({ from: filters.from || '', to: filters.to || '' })
+  } else {
+    datePreset.value = 'all'
+    exactCustomRange = undefined
+  }
+  typeFilter.value = (filters.type || '') as TypeFilter
+  channelFilter.value = filters.channel || null
+  modelFilter.value = filters.model || null
+  statusFilter.value = filters.status || ''
+  errorTypeFilter.value = filters.errorType || null
+  upstreamFilter.value = filters.upstream || null
+  keyMaskFilter.value = filters.keyMask || null
+  searchText.value = ''
+  retriedFilter.value = ''
+  streamFilter.value = ''
+  activeTab.value = 'request'
+  scheduleLoad()
 }
 
 const purgeDateItems = computed(() =>
@@ -517,24 +654,33 @@ const formatCacheHitRate = (log: RequestLogEntry) => {
   return `${((read / total) * 100).toFixed(1)}%`
 }
 
-watch(typeFilter, () => {
-  if (activeTab.value === 'request') void loadLogs()
-})
+let filterTimer: ReturnType<typeof setTimeout> | undefined
+function scheduleLoad(resetPage = true) {
+  if (resetPage) page.value = 1
+  if (filterTimer !== undefined) clearTimeout(filterTimer)
+  filterTimer = setTimeout(() => {
+    filterTimer = undefined
+    if (activeTab.value === 'request') void loadLogs()
+  }, 180)
+}
+function resetAndLoad() {
+  if (filterTimer !== undefined) clearTimeout(filterTimer)
+  filterTimer = undefined
+  page.value = 1
+  void loadLogs()
+}
 
-watch(datePreset, () => {
-  if (datePreset.value === 'custom') return
-  if (activeTab.value === 'request') void loadLogs()
-})
-
-watch([fromTime, toTime], () => {
-  if (activeTab.value === 'request' && datePreset.value === 'custom') {
-    void loadLogs()
-  }
-})
-
-watch(activeTab, tab => { if (tab === 'request') void loadLogs() })
+watch([typeFilter, statusFilter, channelFilter, modelFilter, errorTypeFilter, upstreamFilter, keyMaskFilter, retriedFilter, streamFilter, sortField, sortOrder], () => scheduleLoad())
+watch(searchText, () => scheduleLoad())
+watch(datePreset, () => { if (datePreset.value !== 'custom') scheduleLoad() })
+watch([fromTime, toTime], () => { if (datePreset.value === 'custom') scheduleLoad() })
+watch([page, pageSize], () => scheduleLoad(false))
+watch(activeTab, tab => { if (tab === 'request') scheduleLoad() })
 onMounted(() => { if (activeTab.value === 'request') void loadLogs() })
-onBeforeUnmount(() => { logRequestSequence++ })
+onBeforeUnmount(() => {
+  logRequestSequence++
+  if (filterTimer !== undefined) clearTimeout(filterTimer)
+})
 </script>
 
 <style scoped>
@@ -599,9 +745,20 @@ onBeforeUnmount(() => { logRequestSequence++ })
   min-height: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-y: auto;
   padding-right: 2px;
 }
+
+.stats-tab-panel { flex: 1 1 auto; min-height: 0; padding: 2px; overflow-y: auto; }
+.log-search-field { flex: 1 1 280px; min-width: 240px; }
+.sort-order-button { min-height: 40px; }
+.advanced-filters { flex-shrink: 0; padding: 10px 16px; color: rgb(var(--v-theme-on-surface-variant)); border: 1px solid rgba(var(--v-theme-outline), .2); border-radius: var(--cut-md); background: rgba(var(--v-theme-surface-bright), .3); }
+.advanced-filters summary { font-size: 12px; cursor: pointer; user-select: none; }
+.advanced-filters__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; align-items: center; padding-top: 14px; }
+.logs-table-footer { display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; padding: 8px 12px; border-top: 1px solid rgba(var(--v-theme-outline), .18); }
+.logs-table-footer > span { margin-right: auto; }
+.page-size-select { width: 90px; flex: 0 0 90px; }
+.performance-cell { min-width: 92px; }
 
 .action-cell {
   white-space: nowrap;

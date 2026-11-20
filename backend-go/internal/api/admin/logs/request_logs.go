@@ -13,17 +13,31 @@ import (
 
 func GetRequestLogs(store *metrics.RequestLogStore) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		limit := 50
+		pageSize := 50
 		if rawLimit := c.Query("limit"); rawLimit != "" {
 			parsed, err := strconv.Atoi(rawLimit)
-			if err != nil || parsed < 1 {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid limit"})
+			if err != nil || parsed < 1 || parsed > 50 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "limit 必须在 1～50 之间"})
 				return
 			}
-			limit = parsed
+			pageSize = parsed
 		}
-		if limit > 50 {
-			limit = 50
+		if rawSize := c.Query("pageSize"); rawSize != "" {
+			parsed, err := strconv.Atoi(rawSize)
+			if err != nil || parsed < 1 || parsed > 100 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "pageSize 必须在 1～100 之间"})
+				return
+			}
+			pageSize = parsed
+		}
+		page := 1
+		if rawPage := c.Query("page"); rawPage != "" {
+			parsed, err := strconv.Atoi(rawPage)
+			if err != nil || parsed < 1 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid page"})
+				return
+			}
+			page = parsed
 		}
 		from, ok := parseRequestLogTime(c, "from")
 		if !ok {
@@ -37,12 +51,22 @@ func GetRequestLogs(store *metrics.RequestLogStore) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "开始时间不能晚于结束时间"})
 			return
 		}
+		retried, ok := parseOptionalBool(c, "retried")
+		if !ok {
+			return
+		}
+		stream, ok := parseOptionalBool(c, "stream")
+		if !ok {
+			return
+		}
 
-		logs, err := store.List(metrics.RequestLogListOptions{
-			APIType: c.Query("type"),
-			Limit:   limit,
-			From:    from.UnixMilli(),
-			To:      to.UnixMilli(),
+		logs, total, err := store.ListPage(c.Request.Context(), logger.RequestLogPageOptions{
+			APIType: c.Query("type"), Page: page, PageSize: pageSize,
+			From: from.UnixMilli(), To: to.UnixMilli(), Search: c.Query("q"),
+			Channel: c.Query("channel"), Model: c.Query("model"), Status: c.Query("status"),
+			ErrorType: c.Query("errorType"), RequestID: c.Query("requestId"),
+			Upstream: c.Query("upstream"), KeyMask: c.Query("keyMask"),
+			Retried: retried, Stream: stream, Sort: c.Query("sort"), Order: c.Query("order"),
 		})
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load request logs"})
@@ -50,10 +74,22 @@ func GetRequestLogs(store *metrics.RequestLogStore) gin.HandlerFunc {
 		}
 
 		c.JSON(http.StatusOK, gin.H{
-			"logs":  logs,
-			"limit": limit,
+			"logs": logs, "limit": pageSize, "total": total, "page": page, "pageSize": pageSize,
 		})
 	}
+}
+
+func parseOptionalBool(c *gin.Context, name string) (*bool, bool) {
+	raw := strings.TrimSpace(c.Query(name))
+	if raw == "" {
+		return nil, true
+	}
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid " + name})
+		return nil, false
+	}
+	return &value, true
 }
 
 // parseRequestLogTime 解析 RFC3339 时间参数；缺零值表示不限制。

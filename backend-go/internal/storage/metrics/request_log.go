@@ -125,6 +125,10 @@ func (s *RequestLogStore) List(opts RequestLogListOptions) ([]RequestLogEntry, e
 	if err != nil {
 		return nil, err
 	}
+	return decodeRequestLogEntries(payloads), nil
+}
+
+func decodeRequestLogEntries(payloads []json.RawMessage) []RequestLogEntry {
 	entries := make([]RequestLogEntry, 0, len(payloads))
 	for _, payload := range payloads {
 		var entry RequestLogEntry
@@ -135,7 +139,20 @@ func (s *RequestLogStore) List(opts RequestLogListOptions) ([]RequestLogEntry, e
 		entry.Entry = normalizeRequestLogEntry(entry.Entry, entry.APIType)
 		entries = append(entries, entry)
 	}
-	return entries, nil
+	return entries
+}
+
+// ListPage 使用请求上下文执行服务端筛选、排序和分页，不把整段历史加载到浏览器。
+func (s *RequestLogStore) ListPage(ctx context.Context, opts logger.RequestLogPageOptions) ([]RequestLogEntry, int64, error) {
+	if s == nil || s.logStore == nil {
+		return []RequestLogEntry{}, 0, nil
+	}
+	opts.APIType = normalizeRequestLogAPIType(opts.APIType)
+	page, err := s.logStore.QueryRequestLogPage(ctx, opts)
+	if err != nil {
+		return nil, 0, err
+	}
+	return decodeRequestLogEntries(page.Payloads), page.Total, nil
 }
 
 func (s *RequestLogStore) Close() {

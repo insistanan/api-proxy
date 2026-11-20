@@ -19,7 +19,10 @@ import type {
   LogConversationsResponse,
   LogConversationRequestsResponse,
   PurgeLogsResult,
+  RequestLogQueryParams,
   RequestLogsResponse,
+  RequestStatsParams,
+  RequestStatsResponse,
   RuntimeLogsResponse,
   SystemLogDetail,
   SystemLogsResponse
@@ -43,16 +46,30 @@ export const observabilityApi = {
     return apiRequest(`/log-call-attempts?${new URLSearchParams({ requestId })}`)
   },
 
-  async getRequestLogs(
-    params: { type?: LogAPIType | ''; limit?: number; from?: string; to?: string } = {}
-  ): Promise<RequestLogsResponse> {
+  async getRequestLogs(params: RequestLogQueryParams = {}): Promise<RequestLogsResponse> {
     const search = new URLSearchParams()
-    if (params.type) search.set('type', params.type)
+    for (const key of ['type', 'from', 'to', 'q', 'channel', 'model', 'status', 'errorType', 'upstream', 'keyMask', 'requestId', 'sort', 'order'] as const) {
+      const value = params[key]
+      if (value) search.set(key, value)
+    }
     if (params.limit) search.set('limit', String(params.limit))
-    if (params.from) search.set('from', params.from)
-    if (params.to) search.set('to', params.to)
+    if (params.page) search.set('page', String(params.page))
+    if (params.pageSize) search.set('pageSize', String(params.pageSize))
+    if (params.retried !== undefined) search.set('retried', String(params.retried))
+    if (params.stream !== undefined) search.set('stream', String(params.stream))
     const query = search.toString()
     return apiRequest(`/request-logs${query ? `?${query}` : ''}`)
+  },
+
+  async getRequestStats(params: RequestStatsParams = {}): Promise<RequestStatsResponse> {
+    const search = new URLSearchParams()
+    for (const key of ['duration', 'from', 'to', 'interval', 'type', 'channel', 'model', 'status', 'errorType', 'upstream', 'keyMask', 'dimensionSort', 'q'] as const) {
+      const value = params[key]
+      if (value) search.set(key, value)
+    }
+    if (params.compare !== undefined) search.set('compare', String(params.compare))
+    const query = search.toString()
+    return apiRequest(`/request-stats${query ? `?${query}` : ''}`)
   },
 
   async getSystemLogs(params: { type?: LogAPIType | ''; limit?: number } = {}): Promise<SystemLogsResponse> {

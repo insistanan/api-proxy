@@ -15,6 +15,14 @@ export const CHART_PALETTE = {
   danger: '#D05B5B',
 } as const
 
+/** 渠道运行状态使用低饱和色，避免小面积柱状图和指标条过亮。 */
+export const CHART_STATUS_COLORS = {
+  success: '#73998B',
+  warning: '#B29A76',
+  failure: '#B27E83',
+  info: '#809EAD',
+} as const
+
 /** 多渠道/多 Key 系列色环（十色）。 */
 export const CHART_SERIES_COLORS: string[] = [
   CHART_PALETTE.indigo,

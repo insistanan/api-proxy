@@ -12,8 +12,43 @@
         <v-btn size="small" variant="text" :loading="loading" @click="load(true)">刷新</v-btn>
         <v-btn v-if="parentRequestId" size="small" variant="text" @click="emit('locate', parentRequestId)">查看原请求</v-btn>
       </div>
-      <v-alert v-if="detail.summary.errorMessage" type="warning" variant="tonal" density="compact" class="mb-4">{{ detail.summary.errorMessage }}</v-alert>
+      <div v-if="detail.summary.errorMessage || currentCallAttempt?.errorMessage" class="attempt-error mb-4">
+        <div class="attempt-error__heading">
+          <strong>{{ currentCallAttempt?.errorType || detail.summary.errorType || '调用未正常完成' }}</strong>
+          <v-btn size="x-small" variant="text" prepend-icon="mdi-content-copy" @click="copyError">复制完整原因</v-btn>
+        </div>
+        <pre>{{ currentCallAttempt?.errorMessage || detail.summary.errorMessage }}</pre>
+      </div>
       <ToolTraceLinks v-if="detail.toolLinks" :links="detail.toolLinks" @locate="emit('locate', $event)" />
+      <section v-if="callAttempts.length" class="attempt-section">
+        <div class="attempt-section__heading">
+          <strong>上游尝试时间线</strong>
+          <span>{{ callAttempts.length }} 次尝试 · 网关总耗时与单次上游耗时分别展示</span>
+        </div>
+        <ol class="attempt-timeline">
+          <li v-for="(attempt, index) in callAttempts" :key="attempt.attemptId || index" :class="{ active: attempt.attemptId === selectedCallAttemptId, failed: !attempt.success }">
+            <button type="button" @click="selectCallAttempt(attempt)">
+              <span class="attempt-timeline__rail" aria-hidden="true"></span>
+              <span class="attempt-timeline__content">
+                <span class="attempt-timeline__heading">
+                  <strong>第 {{ index + 1 }} 次</strong>
+                  <v-chip size="x-small" :color="attempt.success ? 'success' : 'error'" variant="tonal">{{ attempt.success ? '成功' : (attempt.status || '失败') }}</v-chip>
+                  <time>{{ formatAttemptTime(attempt.timestamp) }}</time>
+                </span>
+                <span class="attempt-timeline__meta">{{ attempt.channelName || '无渠道' }} · {{ attempt.resolvedModel || attempt.model || '--' }} · 上游 {{ formatDuration(attempt.durationMs) }} · 首字 {{ formatDuration(attempt.firstTokenMs) }}</span>
+                <span class="attempt-timeline__tokens">输入 {{ attempt.inputTokens || 0 }} · 输出 {{ attempt.outputTokens || 0 }} · 缓存读取 {{ attempt.cacheReadTokens || 0 }}</span>
+              </span>
+            </button>
+          </li>
+        </ol>
+        <div v-if="currentCallAttempt" class="selected-attempt-meta">
+          <span>渠道 HTTP {{ currentCallAttempt.statusCode || '--' }}</span>
+          <span>响应头 {{ formatDuration(currentCallAttempt.responseHeadersMs) }}</span>
+          <span>{{ currentCallAttempt.stream ? '流式' : '非流式' }}</span>
+          <span>{{ currentCallAttempt.retried ? '重试尝试' : '首次尝试' }}</span>
+          <code>{{ currentCallAttempt.attemptId }}</code>
+        </div>
+      </section>
       <div v-if="phase === 'client' && detail.contextChange" class="context-change">
         <span v-if="detail.contextChange.comparable">与前序调用相比：新增 {{ detail.contextChange.added }} 块 · 移除 {{ detail.contextChange.removed }} 块 · 估算净变化 {{ detail.contextChange.estimatedDelta > 0 ? '+' : '' }}{{ detail.contextChange.estimatedDelta.toLocaleString() }} Token</span>
         <p>{{ detail.contextChange.notice }}</p>
@@ -47,7 +82,7 @@
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { useLogSession } from '@/features/observability/composables/useLogSession'
 import { getLogAttempts, logStatus } from '@/features/observability/utils/logConversation'
-import type { SystemLogDetail } from '@/types/logs'
+import type { RequestLogEntry, SystemLogDetail } from '@/types/logs'
 import SessionInspector from '@/features/observability/components/conversation/SessionInspector.vue'
 import JsonBodyPane from '@/features/observability/components/common/JsonBodyPane.vue'
 import ContextSnapshotPanel from '@/features/observability/components/context/ContextSnapshotPanel.vue'
@@ -63,12 +98,15 @@ const loading = ref(false)
 const error = ref('')
 const phase = ref<'client' | 'upstream' | 'response'>('client')
 const selectedAttempt = ref(0)
+const selectedCallAttemptId = ref('')
 const headersOpen = ref(false)
 const synthOpen = ref(false)
 let revision = 0
 const attempts = computed(() => getLogAttempts(detail.value?.trafficLogs || []))
 const attemptItems = computed(() => attempts.value.map((attempt, index) => ({ title: attempt.label, value: index })))
 const currentAttempt = computed(() => attempts.value[selectedAttempt.value])
+const callAttempts = computed(() => detail.value?.requestLogs || [])
+const currentCallAttempt = computed(() => callAttempts.value.find(attempt => attempt.attemptId === selectedCallAttemptId.value) || callAttempts.value[callAttempts.value.length - 1])
 const currentLog = computed(() => phase.value === 'client' ? detail.value?.trafficLogs.find(log => log.phase === 'client_input') || detail.value?.trafficLogs.find(log => log.phase === 'client_request') : phase.value === 'upstream' ? currentAttempt.value?.request : currentAttempt.value?.response)
 const bodyAvailable = computed(() => !['disabled', 'metadata', 'budget', 'expired'].includes(currentLog.value?.bodyState || ''))
 const bodyNotice = computed(() => {
@@ -93,12 +131,37 @@ async function load(force = false) {
     if (version !== revision) return
     detail.value = result
     selectedAttempt.value = Math.max(0, getLogAttempts(result.trafficLogs).length - 1)
+    selectedCallAttemptId.value = result.requestLogs?.[result.requestLogs.length - 1]?.attemptId || ''
   } catch (failure) { if (version === revision) error.value = failure instanceof Error ? failure.message : '加载请求详情失败' }
   finally { if (version === revision) loading.value = false }
 }
 async function copyId() {
-  if (!await copyText(props.requestId)) error.value = '复制请求 ID 失败'
+  if (!await copyText(props.requestId, '请求 ID 已复制')) error.value = '复制请求 ID 失败'
 }
+async function copyError() {
+  const message = currentCallAttempt.value?.errorMessage || detail.value?.summary.errorMessage
+  if (message && !await copyText(message, '完整失败原因已复制')) error.value = '复制失败原因失败'
+}
+function selectCallAttempt(attempt: RequestLogEntry) {
+  selectedCallAttemptId.value = attempt.attemptId
+  const index = attempts.value.findIndex(item => item.key === attempt.attemptId || item.request?.attemptId === attempt.attemptId || item.response?.attemptId === attempt.attemptId)
+  if (index >= 0) {
+    selectedAttempt.value = index
+    phase.value = 'upstream'
+  }
+}
+function formatAttemptTime(value: string): string {
+  const date = new Date(value)
+  return `${date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}.${String(date.getMilliseconds()).padStart(3, '0')}`
+}
+function formatDuration(value?: number): string {
+  if (!value || value <= 0) return '--'
+  return value < 1000 ? `${Math.round(value)} ms` : `${(value / 1000).toFixed(2)} s`
+}
+watch(selectedAttempt, index => {
+  const id = attempts.value[index]?.request?.attemptId || attempts.value[index]?.response?.attemptId
+  if (id) selectedCallAttemptId.value = id
+})
 watch(() => [props.requestId, props.sourceVersion], () => {
   detail.value = null
   phase.value = 'client'
@@ -117,6 +180,28 @@ onBeforeUnmount(() => { revision++ })
 <style scoped>
 .detail-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
 .detail-meta code { overflow-wrap: anywhere; }
+.attempt-error { padding: 12px 14px; color: rgb(var(--v-theme-on-error-container)); border: 1px solid rgba(var(--v-theme-error), .28); border-radius: 8px; background: rgba(var(--v-theme-error), .08); }
+.attempt-error__heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.attempt-error pre { max-height: 220px; margin: 8px 0 0; overflow: auto; font: 12px/1.6 inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+.attempt-section { margin: 18px 0; padding: 14px; border: 1px solid rgba(var(--v-theme-outline), .18); border-radius: 10px; background: rgba(var(--v-theme-surface-bright), .3); }
+.attempt-section__heading { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; font-size: 12px; }
+.attempt-section__heading span { color: rgb(var(--v-theme-on-surface-variant)); }
+.attempt-timeline { margin: 0; padding: 0; list-style: none; }
+.attempt-timeline li { position: relative; }
+.attempt-timeline button { display: flex; width: 100%; padding: 0; color: inherit; text-align: left; background: transparent; border: 0; cursor: pointer; }
+.attempt-timeline__rail { position: relative; width: 24px; flex: 0 0 24px; }
+.attempt-timeline__rail::before { position: absolute; z-index: 1; top: 18px; left: 7px; width: 9px; height: 9px; background: rgb(var(--v-theme-success)); border: 2px solid rgb(var(--v-theme-surface)); border-radius: 50%; content: ''; box-shadow: 0 0 0 1px rgba(var(--v-theme-success), .4); }
+.attempt-timeline__rail::after { position: absolute; top: 28px; bottom: -8px; left: 11px; width: 1px; background: rgba(var(--v-theme-outline), .35); content: ''; }
+.attempt-timeline li:last-child .attempt-timeline__rail::after { display: none; }
+.attempt-timeline li.failed .attempt-timeline__rail::before { background: rgb(var(--v-theme-error)); box-shadow: 0 0 0 1px rgba(var(--v-theme-error), .4); }
+.attempt-timeline__content { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid transparent; border-radius: 8px; }
+.attempt-timeline li.active .attempt-timeline__content { border-color: rgba(var(--v-theme-primary), .35); background: rgba(var(--v-theme-primary), .07); }
+.attempt-timeline button:hover .attempt-timeline__content { background: rgba(var(--v-theme-primary), .05); }
+.attempt-timeline__heading { display: flex; align-items: center; gap: 8px; }
+.attempt-timeline__heading time { margin-left: auto; color: rgb(var(--v-theme-on-surface-variant)); font-size: 11px; font-variant-numeric: tabular-nums; }
+.attempt-timeline__meta, .attempt-timeline__tokens { color: rgb(var(--v-theme-on-surface-variant)); font-size: 12px; overflow-wrap: anywhere; }
+.selected-attempt-meta { display: flex; gap: 8px 16px; flex-wrap: wrap; margin: 8px 0 0 24px; padding: 10px 12px; color: rgb(var(--v-theme-on-surface-variant)); font-size: 11px; border-top: 1px solid rgba(var(--v-theme-outline), .16); }
+.selected-attempt-meta code { overflow-wrap: anywhere; }
 .phase-content { padding-top: 16px; }
 .phase-meta { overflow-wrap: anywhere; margin-bottom: 12px; }
 .context-change { margin-bottom: 16px; font-size: 13px; }

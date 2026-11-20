@@ -1,5 +1,7 @@
 // 指标与统计类型：渠道/Key 历史、全局统计与实时活跃度。
 
+import type { LogAPIType } from './logs'
+
 // 历史数据点（用于时间序列图表）
 export interface HistoryDataPoint {
   timestamp: string
@@ -71,6 +73,92 @@ export interface GlobalStatsSummary {
   totalCacheReadTokens: number
   avgSuccessRate: number
   duration: string
+}
+
+export type StatsDuration = '1h' | '6h' | '24h' | '7d' | '30d' | 'today' | 'custom'
+
+export type RequestStatsDimensionSort = 'volume' | 'failures' | 'failureRate' | 'tokens' | 'duration'
+
+export interface RequestStatsParams {
+  duration?: Exclude<StatsDuration, 'custom'>
+  from?: string
+  to?: string
+  interval?: string
+  type?: LogAPIType | ''
+  channel?: string
+  model?: string
+  status?: string
+  errorType?: string
+  upstream?: string
+  keyMask?: string
+  q?: string
+  compare?: boolean
+  dimensionSort?: RequestStatsDimensionSort
+}
+
+export interface RequestStatsSummary extends GlobalStatsSummary {
+  totalCalls: number
+  totalRetried: number
+  retryRate: number
+  cacheHitRate: number
+  avgDurationMs: number
+  p50DurationMs: number
+  p95DurationMs: number
+  maxDurationMs: number
+  avgFirstTokenMs: number
+  p50FirstTokenMs: number
+  p95FirstTokenMs: number
+  avgTps: number
+  durationSamples: number
+  firstTokenSamples: number
+}
+
+export interface RequestStatsPoint extends GlobalHistoryDataPoint {
+  retriedCount: number
+  avgDurationMs: number
+  avgFirstTokenMs: number
+}
+
+export interface RequestStatsDimension {
+  name: string
+  requestCount: number
+  successCount: number
+  failureCount: number
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  avgDurationMs: number
+  successRate: number
+}
+
+export interface RequestStatsResponse {
+  from: string
+  to: string
+  interval: string
+  retentionDays: number
+  summary: RequestStatsSummary
+  previousSummary?: RequestStatsSummary
+  dataPoints: RequestStatsPoint[]
+  channels: RequestStatsDimension[]
+  models: RequestStatsDimension[]
+  errors: RequestStatsDimension[]
+  protocols: RequestStatsDimension[]
+  statuses: RequestStatsDimension[]
+  upstreams: RequestStatsDimension[]
+  keys: RequestStatsDimension[]
+  facets: { channels: string[]; models: string[] }
+}
+
+export interface RequestStatsDrill {
+  from?: string
+  to?: string
+  type?: LogAPIType | ''
+  channel?: string
+  model?: string
+  status?: string
+  errorType?: string
+  upstream?: string
+  keyMask?: string
 }
 
 // 全局统计响应

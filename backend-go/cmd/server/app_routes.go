@@ -32,6 +32,7 @@ func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
 	apiGroup.PUT("/free-channels/kilo", channels.UpdateKiloFreeChannel(a.cfgManager))
 	apiGroup.POST("/free-channels/kilo/models/sync", channels.SyncKiloFreeModels(a.cfgManager))
 	apiGroup.GET("/request-logs", adminlogs.GetRequestLogs(a.requestLogStore))
+	apiGroup.GET("/request-stats", adminlogs.GetRequestStats(a.logStore))
 	apiGroup.GET("/log-calls", adminlogs.GetLogCalls(a.logStore))
 	apiGroup.GET("/log-call-attempts", adminlogs.GetLogCallAttempts(a.logStore))
 	apiGroup.GET("/model-availability", channels.GetModelAvailability(a.logStore, a.cfgManager))

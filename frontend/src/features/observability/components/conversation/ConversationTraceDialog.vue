@@ -1,5 +1,5 @@
 <template>
-  <AppDialog v-model="visible" :title="conversation.name ? `${conversation.name} · 上下文与轨迹` : '上下文与轨迹'" size="xl">
+  <AppDialog v-model="visible" :title="`${conversation.name || conversation.firstPrompt || '未命名对话'} · 上下文与轨迹`" size="xl">
     <div class="d-flex align-center flex-wrap ga-2 mb-4">
       <code class="trace-key">{{ groupKey }}</code>
       <v-spacer />

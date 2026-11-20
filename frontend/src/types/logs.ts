@@ -48,6 +48,7 @@ export interface RequestLogEntry extends ChannelLogEntry {
   transform?: string
   cacheTTL?: string
   tpm?: number
+  tps?: number
   conversationId?: string
   parentRequestId?: string
 }
@@ -55,6 +56,30 @@ export interface RequestLogEntry extends ChannelLogEntry {
 export interface RequestLogsResponse {
   logs: RequestLogEntry[]
   limit: number
+  total?: number
+  page?: number
+  pageSize?: number
+}
+
+export interface RequestLogQueryParams {
+  type?: LogAPIType | ''
+  limit?: number
+  page?: number
+  pageSize?: number
+  from?: string
+  to?: string
+  q?: string
+  channel?: string
+  model?: string
+  status?: string
+  errorType?: string
+  upstream?: string
+  keyMask?: string
+  requestId?: string
+  retried?: boolean
+  stream?: boolean
+  sort?: 'timestamp' | 'durationMs' | 'firstTokenMs' | 'inputTokens' | 'outputTokens' | 'totalTokens'
+  order?: 'asc' | 'desc'
 }
 
 export interface LogCallSummary {
