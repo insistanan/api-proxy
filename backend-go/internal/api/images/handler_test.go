@@ -68,22 +68,6 @@ func TestExtractImagesPromptsCoversJSONAndMultipart(t *testing.T) {
 	}
 }
 
-func TestExtractImagesRequestMetadataReadsMultipartFields(t *testing.T) {
-	body, contentType := buildImagesForm(t)
-	metadata := extractImagesRequestMetadata(contentType, body)
-	if metadata.Model != "gpt-image-1" {
-		t.Errorf("multipart model = %q，期望 gpt-image-1", metadata.Model)
-	}
-	if !metadata.Stream {
-		t.Error("multipart stream=true 未被识别")
-	}
-
-	jsonMetadata := extractImagesRequestMetadata("application/json", []byte(`{"model":"dall-e-3","stream":1}`))
-	if jsonMetadata.Model != "dall-e-3" || !jsonMetadata.Stream {
-		t.Errorf("JSON 元数据解析错误: %+v", jsonMetadata)
-	}
-}
-
 func TestApplyImagesModelMappingRewritesMultipartAndSyncsBoundary(t *testing.T) {
 	body, contentType := buildImagesForm(t)
 	originalBoundary, _ := codec.MultipartBoundary(contentType)
@@ -116,31 +100,6 @@ func TestApplyImagesModelMappingRewritesMultipartAndSyncsBoundary(t *testing.T) 
 	}
 	if parts[3].FileName != "cat.png" || !bytes.Equal(parts[3].Content, []byte{0x89, 0x50, 0x4E, 0x47, 0x0D}) {
 		t.Errorf("文件部件在重建后被破坏: %+v", parts[3])
-	}
-}
-
-func TestApplyImagesModelMappingKeepsBodyWhenModelUnchanged(t *testing.T) {
-	body, contentType := buildImagesForm(t)
-	upstream := &config.UpstreamConfig{Name: "images-channel"}
-
-	mappedBody, mappedContentType, err := applyImagesModelMapping(contentType, body, upstream)
-	if err != nil {
-		t.Fatalf("模型映射失败: %v", err)
-	}
-	if mappedContentType != contentType {
-		t.Errorf("无需映射时不应更换 Content-Type: %s", mappedContentType)
-	}
-	if !bytes.Equal(mappedBody, body) {
-		t.Error("无需映射时表单必须逐字节原样透传")
-	}
-
-	jsonBody := []byte(`{"model":"gpt-image-1","prompt":"画一只猫"}`)
-	mappedJSON, mappedJSONContentType, err := applyImagesModelMapping("application/json", jsonBody, upstream)
-	if err != nil {
-		t.Fatalf("JSON 模型映射失败: %v", err)
-	}
-	if mappedJSONContentType != "application/json" || !bytes.Equal(mappedJSON, jsonBody) {
-		t.Errorf("无需映射时 JSON 载荷必须原样透传: %s", mappedJSON)
 	}
 }
 

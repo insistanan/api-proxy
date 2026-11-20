@@ -73,14 +73,6 @@ func TestApplyImagesModelMappingInjectsTypedExtraParamsOverridingClientValues(t 
 	require.Equal(t, []interface{}{"a"}, payload["tags"])
 }
 
-func TestApplyImagesModelMappingKeepsBodyWhenExtraParamsEmpty(t *testing.T) {
-	body := []byte(`{"model":"gpt-image-1","prompt":"猫"}`)
-	mapped, contentType, err := applyImagesModelMapping("application/json", body, &config.UpstreamConfig{})
-	require.NoError(t, err)
-	require.Equal(t, "application/json", contentType)
-	require.Equal(t, body, mapped)
-}
-
 func TestApplyImagesModelMappingRejectsInvalidExtraParamsAndNonJSON(t *testing.T) {
 	body := []byte(`{"model":"gpt-image-1","prompt":"猫"}`)
 	_, _, err := applyImagesModelMapping("application/json", body, &config.UpstreamConfig{

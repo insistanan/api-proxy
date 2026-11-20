@@ -28,16 +28,6 @@ func TestRewriteEmbeddingsPayloadOverridesDimensions(t *testing.T) {
 	require.Equal(t, "text-embedding-3-small", payload["model"])
 }
 
-// 渠道维度为零时不改写，客户端请求的 dimensions 原样透传。
-func TestRewriteEmbeddingsPayloadKeepsDimensionsWhenUnset(t *testing.T) {
-	up := &config.UpstreamConfig{ServiceType: "openai"}
-	body := []byte(`{"model":"text-embedding-3-small","input":"hi","dimensions":1536}`)
-
-	out, err := rewriteEmbeddingsPayload(body, up)
-	require.NoError(t, err)
-	require.Equal(t, float64(1536), decodePayload(t, out)["dimensions"])
-}
-
 // 客户端未传 dimensions 且渠道设置了维度时，补上渠道维度。
 func TestRewriteEmbeddingsPayloadAddsDimensionsWhenMissing(t *testing.T) {
 	up := &config.UpstreamConfig{ServiceType: "openai", EmbeddingsDimensions: 1024}

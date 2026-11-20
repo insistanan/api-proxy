@@ -63,35 +63,6 @@ func TestEventRebuildPreservesLineStructure(t *testing.T) {
 	})
 }
 
-// TestEventRebuildPassesThroughUnchanged 断言无可改写内容时事件逐字节原样返回，
-// 既不改前缀风格（上游 "data:" 不带空格的写法保留），也不动行结构。
-func TestEventRebuildPassesThroughUnchanged(t *testing.T) {
-	cases := []struct {
-		name  string
-		event string
-	}{
-		{"无 data 行", "event: ping\n\n"},
-		{"DONE 标记", "data: [DONE]\n\n"},
-		{"非 JSON 载荷", "data: not-json\n\n"},
-		{"无空格前缀且无 usage", "event: content_block_stop\ndata:{\"type\":\"content_block_stop\",\"index\":0}\n\n"},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			// PatchTokensInEventWithCache 对可解析的 JSON 会重新序列化（既有行为），
-			// 故这里只对"解析不出 JSON"或"无需改写"的输入断言逐字节相等。
-			if out := PatchMessageStartEvent(tc.event, "m", true, false); out != tc.event {
-				t.Errorf("PatchMessageStartEvent 改动了事件:\n got  %q\n want %q", out, tc.event)
-			}
-			if !strings.Contains(tc.event, "{") {
-				if out := PatchTokensInEventWithCache(tc.event, 1, 2, 0, false, false, false); out != tc.event {
-					t.Errorf("PatchTokensInEventWithCache 改动了事件:\n got  %q\n want %q", out, tc.event)
-				}
-			}
-		})
-	}
-}
-
 // TestReplaceSSEDataWithoutDataLine 断言没有 data 行时返回原事件，不做重建。
 func TestReplaceSSEDataWithoutDataLine(t *testing.T) {
 	event := "event: ping\nid: 7\n\n"

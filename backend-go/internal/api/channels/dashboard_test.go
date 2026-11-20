@@ -1,4 +1,4 @@
-package gemini
+package channels
 
 import (
 	"encoding/json"
@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/api/channels"
 	"github.com/insistanan/api-proxy/internal/dialogue/session"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
@@ -71,7 +70,7 @@ func TestGetDashboard_IncludesStripThoughtSignature(t *testing.T) {
 	sch := scheduler.NewChannelScheduler(cfgManager, messagesMetrics, responsesMetrics, geminiMetrics, chatMetrics, imagesMetrics, nil, nil, traceAffinity, urlManager)
 
 	r := gin.New()
-	r.GET("/gemini/channels/dashboard", channels.GetChannelDashboard(cfgManager, sch, scheduler.ChannelKindGemini))
+	r.GET("/gemini/channels/dashboard", GetChannelDashboard(cfgManager, sch, scheduler.ChannelKindGemini))
 
 	req := httptest.NewRequest(http.MethodGet, "/gemini/channels/dashboard", nil)
 	w := httptest.NewRecorder()

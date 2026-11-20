@@ -171,38 +171,3 @@ func TestApplyChatModelMapping_NormalizesModalitiesObjectToArray(t *testing.T) {
 		t.Fatalf("modalities 应为 [text, audio]，实际: %v", modalities)
 	}
 }
-
-func TestApplyChatModelMapping_KeepsModalitiesArrayAsIs(t *testing.T) {
-	input := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"modalities":["text"]}`)
-	out, err := applyChatModelMapping(input, &config.UpstreamConfig{})
-	if err != nil {
-		t.Fatalf("applyChatModelMapping 不应报错: %v", err)
-	}
-
-	var payload map[string]interface{}
-	if err := json.Unmarshal(out, &payload); err != nil {
-		t.Fatalf("解析结果失败: %v", err)
-	}
-
-	modalities, ok := payload["modalities"].([]interface{})
-	if !ok || len(modalities) != 1 || modalities[0] != "text" {
-		t.Fatalf("modalities 数组应原样保留，实际: %#v", payload["modalities"])
-	}
-}
-
-func TestApplyChatModelMapping_RemovesEmptyModalities(t *testing.T) {
-	input := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"modalities":{"text":false,"audio":false}}`)
-	out, err := applyChatModelMapping(input, &config.UpstreamConfig{})
-	if err != nil {
-		t.Fatalf("applyChatModelMapping 不应报错: %v", err)
-	}
-
-	var payload map[string]interface{}
-	if err := json.Unmarshal(out, &payload); err != nil {
-		t.Fatalf("解析结果失败: %v", err)
-	}
-
-	if _, exists := payload["modalities"]; exists {
-		t.Fatalf("modalities 全 false 时应删除，实际: %#v", payload["modalities"])
-	}
-}

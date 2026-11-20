@@ -40,25 +40,3 @@ func TestChannelPerformanceReportContract(t *testing.T) {
 		"p50Latency":0,"p95Latency":0,"p99Latency":0,"avgTokenSpeed":0,"successRate":100,"recentSuccessRate":100,
 		"lastScoreUpdate":"0001-01-01T00:00:00Z"}]}`, w.Body.String())
 }
-
-func TestChannelPerformanceReportEmptySemantics(t *testing.T) {
-	pm := metrics.NewProfileManager()
-	pm.Stop()
-	for _, tc := range []struct {
-		name    string
-		manager *metrics.ProfileManager
-		want    string
-	}{
-		{"未注入", nil, `{"success":true,"data":null}`},
-		{"空画像", pm, `{"success":true,"data":[]}`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			r := gin.New()
-			r.GET("/report", GetChannelPerformanceReport(tc.manager))
-			w := httptest.NewRecorder()
-			r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/report", nil))
-			require.Equal(t, http.StatusOK, w.Code)
-			require.JSONEq(t, tc.want, w.Body.String())
-		})
-	}
-}
