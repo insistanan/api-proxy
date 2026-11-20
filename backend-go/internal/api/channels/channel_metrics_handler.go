@@ -507,6 +507,7 @@ func GetChannelDashboard(cfgManager *config.ConfigManager, sch *scheduler.Channe
 				"latency":             resp.Latency,
 				"keyMetrics":          resp.KeyMetrics,
 				"timeWindows":         resp.TimeWindows,
+				"activeConversations": sch.ActiveChannelConversations(kind, upstream.ID),
 			}
 
 			// 渠道级熔断状态（internal/orchestration/circuit 运行时态；无记录时为 closed 零值）

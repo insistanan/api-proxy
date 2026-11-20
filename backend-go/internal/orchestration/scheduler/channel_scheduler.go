@@ -27,9 +27,55 @@ type ChannelScheduler struct {
 	// inFlightByKind 记录选渠后、真正发出上游请求前的在途预留。
 	// 用于许可生命周期和在途观测，不参与渠道排序。
 	inFlightByKind map[ChannelKind]map[int]int64
+	// 按稳定渠道 ID 和对话 ID 记录在途请求，避免重试或并行请求重复计数。
+	activeConversations map[channelIdentity]map[string]int
 
 	// stopOnce 保证聚合停止只执行一次，下属组件也支持并发停止并等待任务退出。
 	stopOnce sync.Once
+}
+
+type channelIdentity struct {
+	kind ChannelKind
+	id   string
+}
+
+// TrackChannelConversation 登记一次渠道处理，返回该处理结束时的释放函数。
+func (s *ChannelScheduler) TrackChannelConversation(kind ChannelKind, channelID, conversationID string) func() {
+	if s == nil || channelID == "" || conversationID == "" {
+		return func() {}
+	}
+	key := channelIdentity{kind: kind, id: channelID}
+	s.mu.Lock()
+	if s.activeConversations == nil {
+		s.activeConversations = make(map[channelIdentity]map[string]int)
+	}
+	conversations := s.activeConversations[key]
+	if conversations == nil {
+		conversations = make(map[string]int)
+		s.activeConversations[key] = conversations
+	}
+	conversations[conversationID]++
+	s.mu.Unlock()
+
+	return sync.OnceFunc(func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if conversations[conversationID] == 1 {
+			delete(conversations, conversationID)
+		} else {
+			conversations[conversationID]--
+		}
+		if len(conversations) == 0 {
+			delete(s.activeConversations, key)
+		}
+	})
+}
+
+// ActiveChannelConversations 返回该渠道正在处理的独立对话数。
+func (s *ChannelScheduler) ActiveChannelConversations(kind ChannelKind, channelID string) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.activeConversations[channelIdentity{kind: kind, id: channelID}])
 }
 
 // ChannelKind 标识调度器所处理的渠道类型

@@ -7,7 +7,7 @@
         <v-chip size="x-small" color="primary" variant="tonal">{{ pools.length }}</v-chip>
         <slot name="heading"></slot>
       </div>
-      <p class="pool-guide">按模型名称匹配分组，组内顺序即故障转移优先级；拖动手柄可调整顺序或移入其他已展开的分组。</p>
+      <p class="pool-guide">拖动渠道调整故障转移顺序，或移入其他已展开的分组。</p>
       <div class="pool-header-actions">
         <v-btn size="small" variant="text" :disabled="!poolViews.length" @click="toggleAllPools">
           {{ allPoolsCollapsed ? '展开全部' : '收起全部' }}
@@ -29,6 +29,9 @@
         :style="{ order }"
       >
         <FreeChannelPool v-if="pool.id === FREE_POOL_ID">
+          <template #summary>
+            <slot v-for="channel in pool.channels" :key="channel.id || channel.index" name="free-summary" :channel="channel"></slot>
+          </template>
           <template #activity>
             <slot v-for="channel in pool.channels" :key="channel.id || channel.index" name="free-activity" :channel="channel"></slot>
           </template>
@@ -37,7 +40,7 @@
         <header class="pool-card-header">
           <button type="button" class="pool-card-toggle" :aria-expanded="!collapsedPools.has(pool.id)" :aria-controls="`pool-${channelType}-${pool.id}`" @click="togglePool(pool.id)">
             <v-icon size="18">{{ collapsedPools.has(pool.id) ? 'mdi-chevron-right' : 'mdi-chevron-down' }}</v-icon>
-            <span class="min-width-0">
+            <span class="pool-identity">
             <span class="pool-name" :title="pool.name">{{ pool.name }}</span>
             <span class="pool-rule" :title="pool.id === 'default' ? undefined : pool.modelMatcher">
               <template v-if="pool.id === 'default'">未匹配或命中分组不可用时使用</template>
@@ -475,9 +478,9 @@ const deletePool = async () => {
 }
 
 .pool-card-header {
-  min-height: 58px;
+  min-height: 42px;
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 11px 14px 10px 18px;
+  padding: 4px 9px 4px 12px;
   border-bottom: 1px solid rgba(var(--v-theme-outline), 0.2);
   background: rgba(var(--v-theme-surface-variant), 0.25);
 }
@@ -485,22 +488,23 @@ const deletePool = async () => {
 .pool-channel-count { flex-shrink: 0; padding-inline: 4px; color: rgb(var(--v-theme-on-surface-variant)); font-size: 0.75rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .pool-card.is-default .pool-card-header { background: color-mix(in srgb, rgb(var(--v-theme-primary)) 8%, rgb(var(--v-theme-surface))); }
 .v-theme--dark .pool-card-header { background: rgba(255, 255, 255, 0.035); }
+.pool-identity { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .pool-name {
-  display: block;
+  flex-shrink: 0; max-width: 65%; font-size: 0.875rem;
   font-weight: 650; line-height: 1.4;
   letter-spacing: -0.01em;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .pool-rule {
   display: block;
-  margin-top: 3px; font-size: 12px;
+  font-size: 0.6875rem;
   font-family: var(--font-mono);
   color: rgb(var(--v-theme-on-surface-variant));
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .pool-card.is-default .pool-rule::before { content: '兜底  /  '; color: rgb(var(--v-theme-primary)); font-weight: 700; }
 .pool-channel-list {
-  padding: 10px; display: flex; flex-direction: column; gap: 8px; min-height: 72px;
+  padding: 6px; display: flex; flex-direction: column; gap: 5px; min-height: 48px;
 }
 .pool-drag-item { min-width: 0; }
 /* 拖拽三态：拖起 / 落位占位 / 跟随指针。只改颜色与透明度，避免拖拽过程触发重排。 */
@@ -569,7 +573,6 @@ const deletePool = async () => {
 }
 .vision-status-toggle:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: 2px; }
 .vision-status-toggle :deep(.badge-content) { cursor: pointer; }
-.min-width-0 { min-width: 0; }
 @container channel-pools (max-width: 1120px) {
   /* inline-size 容器不提供内容宽度，单列必须拉伸，避免缩放后卡片收缩到零宽。 */
   .pool-grid { display: flex; flex-direction: column; align-items: stretch; }

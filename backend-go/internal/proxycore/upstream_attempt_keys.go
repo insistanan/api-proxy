@@ -54,6 +54,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 	failoverState := newUpstreamFailoverState()
 	requestLogID := BindRequestLogID(c)
 	capabilities := newUpstreamCapabilityState(upstream)
+	trackingConversation := false
 
 	// 强制探测模式：基于本次优先尝试的 BaseURL 判断（避免 BaseURL/BaseURLs 不一致导致误判）
 	forceProbeMode := AreAllKeysSuspended(metricsManager, urlResults[0].URL, upstream.APIKeys, logCtx.ChannelIndex)
@@ -179,6 +180,10 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 				return newUpstreamAttemptResult(true, "", 0, nil, nil, err).withHealth(channelHealthNeutral)
 			}
 			// 请求准备成功后再启动请求画像和活跃度观测。
+			if !trackingConversation {
+				defer channelScheduler.TrackChannelConversation(kind, upstream.ID, logCtx.ConversationID)()
+				trackingConversation = true
+			}
 			lifecycle := a.startAttemptLifecycle(currentBaseURL, apiKey)
 			candidateStep := candidateAttempt{
 				attempt:          a,

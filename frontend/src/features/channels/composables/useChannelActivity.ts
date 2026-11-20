@@ -4,6 +4,7 @@
 // 活跃度索引、历史峰值与波形柱的派生计算。
 import { computed, ref, watch, type Ref } from 'vue'
 import type { ChannelRecentActivity } from '@/api'
+import { CHART_STATUS_COLORS } from '@/shared/utils/chartPalette'
 
 /** 波形柱的健康档位，与成功率颜色对应。 */
 export type ActivityLevel = 'idle' | 'ok' | 'warn' | 'bad'
@@ -104,34 +105,25 @@ export function useChannelActivity(recentActivity: Ref<ChannelRecentActivity[]>)
         const height = Math.max(heightPercent * 85, requests > 0 ? 2 : 0)
         const y = 100 - height
 
-        // 根据该 6 秒段的成功率计算颜色（7 档分级：极端档位 + 整数档位）
-        let color = 'rgb(52, 211, 153)' // 默认绿色（无请求或 100% 成功）
+        // 保留成功率的健康分级，柱状图使用低饱和的统一状态色。
+        let color: string = CHART_STATUS_COLORS.success
         let level: ActivityLevel = 'idle'
 
         if (requests > 0) {
           const successCount = requests - segment.failureCount
           const successRate = (successCount / requests) * 100
 
-          if (successRate < 5) {
-            color = 'rgb(220, 38, 38)' // 0-5%：深红色（极端故障）
-            level = 'bad'
-          } else if (successRate < 20) {
-            color = 'rgb(248, 113, 113)' // 5-20%：红色（严重失败）
+          if (successRate < 20) {
+            color = CHART_STATUS_COLORS.failure
             level = 'bad'
           } else if (successRate < 40) {
-            color = 'rgb(251, 146, 60)' // 20-40%：深橙色（高失败率）
+            color = CHART_STATUS_COLORS.warning
             level = 'bad'
-          } else if (successRate < 60) {
-            color = 'rgb(250, 204, 21)' // 40-60%：黄色（中等失败率）
-            level = 'warn'
           } else if (successRate < 80) {
-            color = 'rgb(163, 230, 53)' // 60-80%：黄绿色（轻微失败）
+            color = CHART_STATUS_COLORS.warning
             level = 'warn'
-          } else if (successRate < 95) {
-            color = 'rgb(74, 222, 128)' // 80-95%：亮绿色（良好）
-            level = 'ok'
           } else {
-            color = 'rgb(52, 211, 153)' // 95-100%：翠绿色（优秀）
+            color = CHART_STATUS_COLORS.success
             level = 'ok'
           }
         }
@@ -144,7 +136,7 @@ export function useChannelActivity(recentActivity: Ref<ChannelRecentActivity[]>)
           radius: Math.min(actualBarWidth / 2, 1.5),
           color,
           level,
-          gradientKey: color.replace(/[^0-9]+/g, '-'),
+          gradientKey: color.replace(/[^a-zA-Z0-9]+/g, '-'),
           latest: i === numSegments - 1
         })
       }

@@ -8,6 +8,7 @@
             <h3 class="text-subtitle-1 font-weight-bold">免费分组</h3>
             <v-chip size="x-small" variant="tonal">Kilo</v-chip>
             <span v-if="free.config" class="text-caption text-medium-emphasis">{{ free.config.kilo.models.length }} 个模型</span>
+            <slot name="summary"></slot>
           </div>
           <div class="d-flex align-center text-caption text-medium-emphasis">
             自动选择：<code>free</code>
@@ -33,7 +34,7 @@
         <ul class="free-models" aria-label="免费模型调用名称">
           <li v-for="model in visibleModels" :key="model">
             <code>{{ `free/${model}` }}</code>
-            <v-btn icon="mdi-content-copy" size="small" variant="text" :aria-label="`复制 free/${model}`" @click="copyModel(model)" />
+            <v-btn icon="mdi-content-copy" size="x-small" variant="text" :aria-label="`复制 free/${model}`" @click="copyModel(model)" />
           </li>
         </ul>
         <p v-if="!visibleModels.length" class="text-caption text-medium-emphasis py-2">没有匹配的模型。</p>
@@ -97,7 +98,7 @@ onMounted(() => void load())
 </script>
 
 <style scoped>
-.free-pool { position: relative; isolation: isolate; overflow: hidden; border-radius: inherit; padding: 12px 18px; min-width: 0; }
+.free-pool { position: relative; isolation: isolate; overflow: hidden; border-radius: inherit; padding: 8px 12px; min-width: 0; }
 .free-pool-content { position: relative; z-index: 1; }
 .free-pool-header, .free-pool-title, .free-pool-actions { display: flex; align-items: center; gap: 8px; }
 .free-pool-header { position: relative; justify-content: space-between; flex-wrap: wrap; }
@@ -105,8 +106,8 @@ onMounted(() => void load())
 .free-pool-title { flex-wrap: wrap; }
 .free-pool-actions { margin-left: auto; }
 .free-pool-actions .v-switch { flex: none; margin-left: 4px; }
-.free-models { padding: 0; margin-top: 8px; list-style: none; max-height: 220px; overflow: auto; border-top: 1px solid rgba(var(--v-theme-outline), 0.18); }
-.free-models li { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 40px; padding-block: 2px; }
+.free-models { padding: 0; margin-top: 8px; list-style: none; max-height: 158px; overflow: auto; border-top: 1px solid rgba(var(--v-theme-outline), 0.18); }
+.free-models li { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 30px; padding-block: 2px; }
 .free-models li + li { border-top: 1px solid rgba(var(--v-theme-outline), 0.12); }
 .free-models code { overflow-wrap: anywhere; user-select: text; font-size: 0.8125rem; }
 .free-models .v-btn { flex-shrink: 0; }

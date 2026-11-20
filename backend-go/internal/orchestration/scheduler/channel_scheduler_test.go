@@ -16,6 +16,32 @@ import (
 	"github.com/insistanan/api-proxy/internal/storage/metrics"
 )
 
+func TestActiveChannelConversationsDeduplicatesUntilLastRequestEnds(t *testing.T) {
+	s := &ChannelScheduler{}
+	finishFirst := s.TrackChannelConversation(ChannelKindResponses, "channel-a", "conversation-1")
+	finishParallel := s.TrackChannelConversation(ChannelKindResponses, "channel-a", "conversation-1")
+	finishSecond := s.TrackChannelConversation(ChannelKindResponses, "channel-a", "conversation-2")
+	finishChat := s.TrackChannelConversation(ChannelKindChat, "channel-a", "conversation-1")
+	defer finishChat()
+
+	if count := s.ActiveChannelConversations(ChannelKindResponses, "channel-a"); count != 2 {
+		t.Fatalf("独立对话数 = %d，预期 2", count)
+	}
+	finishFirst()
+	finishFirst()
+	finishSecond()
+	if count := s.ActiveChannelConversations(ChannelKindResponses, "channel-a"); count != 1 {
+		t.Fatalf("同一对话仍有请求时计数 = %d，预期 1", count)
+	}
+	finishParallel()
+	if count := s.ActiveChannelConversations(ChannelKindResponses, "channel-a"); count != 0 {
+		t.Fatalf("全部请求结束后计数 = %d，预期 0", count)
+	}
+	if count := s.ActiveChannelConversations(ChannelKindChat, "channel-a"); count != 1 {
+		t.Fatalf("其他协议渠道计数 = %d，预期 1", count)
+	}
+}
+
 // createTestConfigManager 创建测试用配置管理器
 func createTestConfigManager(t *testing.T, cfg config.Config) (*config.ConfigManager, func()) {
 	t.Helper()

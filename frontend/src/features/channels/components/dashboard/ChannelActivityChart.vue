@@ -45,7 +45,7 @@ const gradientID = (key: string) => `gradient-${props.channelType}-${props.chann
 }
 :global(.channel-row:hover) .activity-chart-bg { opacity: 0.28; }
 .activity-bar { transition: none; }
-.activity-bar-latest { filter: brightness(1.45) saturate(1.2); }
+.activity-bar-latest { filter: brightness(1.08); }
 @media (prefers-reduced-motion: reduce) {
   .activity-chart-bg, .activity-bar { transition: none !important; animation: none !important; }
 }

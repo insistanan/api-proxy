@@ -17,6 +17,11 @@
           {{ isMultiChannelMode ? '多渠道模式' : '单渠道模式' }}
         </v-chip>
       </template>
+      <template #free-summary="{ channel }">
+        <span class="channel-concurrency text-caption" title="当前在免费渠道处理中的独立对话数">
+          并发对话 <strong>{{ getChannelMetrics(channel.index)?.activeConversations ?? '—' }}</strong>
+        </span>
+      </template>
       <template #free-activity="{ channel }">
         <ChannelActivityChart
           :bars="getActivityBars(channel.index)"
@@ -25,195 +30,116 @@
         />
       </template>
       <template #channel="{ channel: element, index, pool, move_to_top, move_to_bottom }">
-          <div class="channel-item-wrapper">
-            <div
-              class="channel-row"
-              :class="{ 'is-suspended': element.status === 'suspended' }"
-              @click="toggleChannelChart(element.index)"
-            >
-              <ChannelActivityChart
-                :bars="getActivityBars(element.index)"
-                :channel-id="element.index"
-                :channel-type="channelType"
-              />
-
-              <!-- Grid 内容容器 -->
-              <div class="channel-row-content" :class="{ 'is-idle': !hasRecentTraffic(element.index) }">
-                <!-- 拖拽手柄 -->
-                <div class="drag-handle" @click.stop>
-                  <v-icon size="small" color="grey">mdi-drag-vertical</v-icon>
-                </div>
-
-            <!-- 优先级序号 -->
-            <div class="priority-number" @click.stop>
-              <span class="text-caption font-weight-bold">{{ index + 1 }}</span>
-            </div>
-
-            <!-- 状态指示器 -->
-            <button
-              type="button"
-              class="channel-status-toggle"
-              :title="shouldResumeChannel(element) ? '点击恢复为活跃并重置熔断' : '点击切换为熔断'"
-              :aria-label="`${shouldResumeChannel(element) ? '恢复' : '暂停'} ${element.name}`"
-              @click.stop="toggleChannelPrimaryStatus(element)"
-            >
-              <ChannelStatusBadge :status="element.status || 'active'" :metrics="getChannelMetrics(element.index)" />
-            </button>
-
-            <!-- 渠道名称和描述 -->
-            <div class="channel-name">
-              <button
-                type="button"
-                class="font-weight-medium channel-name-link"
-                :title="element.name"
-                :aria-label="`编辑渠道 ${element.name}`"
-                @click.stop="$emit('edit', element)"
-              >{{ element.name }}</button>
-              <!-- 促销期标识 -->
-              <v-chip
-                v-if="isInPromotion(element)"
-                size="x-small"
-                color="info"
-                variant="flat"
-                class="ml-2"
-              >
-                <v-icon start size="12">mdi-rocket-launch</v-icon>
-                {{ formatPromotionRemaining(element.promotionUntil, element.promotionCount) }}
-              </v-chip>
-              <v-chip
-                v-if="element.temporary"
-                size="x-small"
-                color="warning"
-                variant="tonal"
-                class="ml-2"
-              >
-                <v-icon start size="12">mdi-timer-sand</v-icon>
-                临时 {{ formatDateTime(element.temporaryUntil) }}
-              </v-chip>
-              <v-tooltip
-                v-if="element.visionCapable"
-                text="支持图片理解"
-                location="top"
-                :open-delay="150"
-                :open-on-focus="false"
-              >
-                <template #activator="{ props: tooltipProps }">
-                  <v-chip
-                    v-bind="tooltipProps"
-                    size="x-small"
-                    color="primary"
-                    variant="tonal"
-                    class="ml-2 vision-default-chip"
-                    @click.stop
-                  >
-                    <v-icon start size="12">mdi-image-search-outline</v-icon>
-                    图片
-                  </v-chip>
-                </template>
-              </v-tooltip>
-              <!-- 展开图标 -->
-              <v-btn
-                icon
-                size="x-small"
-                variant="text"
-                class="ml-auto expand-icon"
-                :color="expandedChannelIndex === element.index ? 'primary' : 'grey-lighten-1'"
-                :aria-label="`${expandedChannelIndex === element.index ? '收起' : '展开'} ${element.name} 的密钥趋势`"
-                :aria-expanded="expandedChannelIndex === element.index"
-                @click.stop="toggleChannelChart(element.index)"
-              ><v-icon size="18">{{ expandedChannelIndex === element.index ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon></v-btn>
-            </div>
-
-            <ChannelMetricsCell :metrics="getChannelMetrics(element.index)" />
-
-            <!-- RPM/TPM 显示 -->
-            <div class="channel-rpm-tpm" @click.stop>
-              <div class="rpm-tpm-values">
-                <span class="rpm-value" :class="{ 'has-data': hasActivityData(element.index) }">{{ formatRPM(element.index) }}</span>
-                <span class="rpm-tpm-separator">/</span>
-                <span class="tpm-value" :class="{ 'has-data': hasActivityData(element.index) }">{{ formatTPM(element.index) }}</span>
+        <div class="channel-item-wrapper">
+          <div
+            class="channel-row"
+            :class="{ 'is-suspended': element.status === 'suspended' }"
+            @click="toggleChannelChart(element.index)"
+          >
+            <div class="channel-row-main">
+              <div class="drag-handle" title="拖动调整顺序" @click.stop>
+                <v-icon size="small">mdi-drag-vertical</v-icon>
               </div>
-              <div class="rpm-tpm-labels">
-                <span>RPM</span>
-                <span>/</span>
-                <span>TPM</span>
+              <span class="priority-number" title="故障转移优先级">{{ index + 1 }}</span>
+              <div class="channel-name">
+                <button
+                  type="button"
+                  class="channel-name-link"
+                  :title="element.name"
+                  :aria-label="`编辑渠道 ${element.name}`"
+                  @click.stop="$emit('edit', element)"
+                >{{ element.name }}</button>
+                <button
+                  type="button"
+                  class="channel-status-toggle"
+                  :title="shouldResumeChannel(element) ? '恢复活跃并重置熔断' : '切换为熔断'"
+                  :aria-label="`${shouldResumeChannel(element) ? '恢复' : '暂停'} ${element.name}`"
+                  @click.stop="toggleChannelPrimaryStatus(element)"
+                >
+                  <ChannelStatusBadge size="small" :status="element.status || 'active'" :metrics="getChannelMetrics(element.index)" />
+                </button>
+                <v-chip v-if="isInPromotion(element)" size="x-small" color="info" variant="tonal" title="促销期">
+                  <v-icon start size="12">mdi-rocket-launch</v-icon>
+                  {{ formatPromotionRemaining(element.promotionUntil, element.promotionCount) }}
+                </v-chip>
+                <v-chip v-if="element.temporary" size="x-small" color="warning" variant="tonal" :title="`临时渠道 · ${formatDateTime(element.temporaryUntil)} 到期`">
+                  临时
+                </v-chip>
+                <v-icon v-if="element.visionCapable" size="14" class="channel-vision-icon" title="支持图片理解" aria-label="支持图片理解">
+                  mdi-image-search-outline
+                </v-icon>
               </div>
-            </div>
-
-            <!-- 延迟显示 -->
-            <div class="channel-latency" @click.stop>
-              <v-chip
-                v-if="isLatencyValid(element, currentTime)"
-                size="x-small"
-                :color="getLatencyColor(element.latency!)"
-                variant="tonal"
-              >
-                {{ element.latency }}ms
-              </v-chip>
-            </div>
-
-            <!-- API密钥数量 -->
-            <div class="channel-keys" @click.stop>
-              <v-chip size="x-small" variant="outlined" class="keys-chip" @click="$emit('edit', element)">
-                <v-icon start size="x-small">mdi-key</v-icon>
-                {{ element.apiKeys?.length || 0 }}
-              </v-chip>
-            </div>
-
-            <!-- 操作按钮 -->
-            <div class="channel-actions" @click.stop>
-              <!-- suspended 状态显示恢复按钮 -->
-              <v-btn
-                v-if="element.status === 'suspended'"
-                icon
-                size="x-small"
-                variant="text"
-                color="warning"
-                title="恢复"
-                @click="resumeChannel(element.index)"
-              >
-                <v-icon size="small">mdi-refresh</v-icon>
-              </v-btn>
-
-              <ChannelQuickMenu
-                :channel="element"
-                :position="index"
-                :total="pool.channels.length"
-                :copied="copiedChannelIndex === element.index"
-                @action="runMenuAction(element, $event)"
-                @move-top="move_to_top()"
-                @move-bottom="move_to_bottom()"
-                @delete="handleDeleteChannel(element)"
-              />
-            </div>
-              </div><!-- .channel-row-content -->
-
-              <!-- 副行：映射 / 描述。主行名称列塞不下它们，挤在一起会被压成看不出内容的小方块。
-                   映射未配置也照样占位显示——漏配映射是常见误配，必须一眼看得到 -->
-              <div class="channel-row-meta" @click.stop>
-                <ChannelMappingBlock
-                  :channel="element"
-                  :channel-type="channelType"
-                  @edit="$emit('edit', element)"
-                />
-
-                <span class="channel-service">{{ channelServiceLabel(channelType, element.serviceType) }}</span>
+              <div class="channel-actions" @click.stop>
                 <v-btn
+                  size="x-small"
+                  variant="text"
+                  class="channel-keys"
+                  :title="`${element.apiKeys?.length || 0} 个密钥`"
+                  :aria-label="`编辑 ${element.name} 的 ${element.apiKeys?.length || 0} 个密钥`"
+                  @click="$emit('edit', element)"
+                ><v-icon start size="12">mdi-key</v-icon>{{ element.apiKeys?.length || 0 }}</v-btn>
+                <v-btn
+                  :icon="expandedChannelIndex === element.index ? 'mdi-chevron-up' : 'mdi-chevron-down'"
+                  size="x-small"
+                  variant="text"
+                  :color="expandedChannelIndex === element.index ? 'primary' : undefined"
+                  :aria-label="`${expandedChannelIndex === element.index ? '收起' : '展开'} ${element.name} 的密钥趋势`"
+                  :aria-expanded="expandedChannelIndex === element.index"
+                  @click="toggleChannelChart(element.index)"
+                />
+                <ChannelQuickMenu
+                  :channel="element"
+                  :position="index"
+                  :total="pool.channels.length"
+                  :copied="copiedChannelIndex === element.index"
+                  @action="runMenuAction(element, $event)"
+                  @move-top="move_to_top()"
+                  @move-bottom="move_to_bottom()"
+                  @delete="handleDeleteChannel(element)"
+                />
+              </div>
+            </div>
+
+            <div class="channel-row-meta" @click.stop>
+              <div class="channel-route">
+                <ChannelMappingBlock :channel="element" :channel-type="channelType" :preview-limit="32" @edit="$emit('edit', element)" />
+                <a
+                  class="channel-service"
                   :href="getWebsiteUrl(element)"
                   target="_blank"
                   rel="noopener"
-                  icon="mdi-open-in-new"
-                  size="x-small"
-                  variant="text"
-                  title="打开官网"
-                  :aria-label="`打开 ${element.name} 的官网`"
-                />
-
-                <span v-if="element.description" class="meta-desc" :title="element.description">
-                  {{ element.description }}
-                </span>
+                  :title="`打开 ${element.name} 的官网${element.description ? ' · ' + element.description : ''}`"
+                >{{ channelServiceLabel(channelType, element.serviceType) }}</a>
               </div>
-          </div><!-- .channel-row -->
+              <div class="channel-live-status">
+                <span
+                  v-if="showsConversations"
+                  class="channel-concurrency"
+                  :class="{ 'has-conversations': (getChannelMetrics(element.index)?.activeConversations ?? 0) > 0 }"
+                  title="当前在此渠道处理中的独立对话数"
+                >
+                  并发对话 <strong>{{ getChannelMetrics(element.index)?.activeConversations ?? '—' }}</strong>
+                </span>
+                <span v-if="isLatencyValid(element, currentTime)" :class="`text-${getLatencyColor(element.latency!)}`" title="最近探测延迟">{{ element.latency }} ms</span>
+              </div>
+            </div>
+
+            <div v-if="getChannelMetrics(element.index)?.timeWindows?.['15m']?.requestCount || hasActivityData(element.index)" class="channel-telemetry" @click.stop>
+              <ChannelMetricsCell :metrics="getChannelMetrics(element.index)" />
+              <div class="channel-throughput" title="最近 15 分钟平均每分钟请求数 / Token 数">
+                <span>{{ formatRPM(element.index) }} <small>RPM</small> · {{ formatTPM(element.index) }} <small>TPM</small></span>
+                <span class="channel-traffic-count">15 分钟 · {{ getChannelMetrics(element.index)?.timeWindows?.['15m']?.requestCount ?? '—' }} 次请求</span>
+              </div>
+              <div class="channel-activity" role="img" aria-label="最近 15 分钟请求活跃度，绿色表示成功，暖色表示存在失败">
+                <ChannelActivityChart
+                  class="channel-sparkline"
+                  :bars="getActivityBars(element.index)"
+                  :channel-id="element.index"
+                  :channel-type="channelType"
+                />
+              </div>
+            </div>
+          </div>
 
           <!-- 展开的图表区域 -->
           <v-expand-transition>
@@ -226,7 +152,7 @@
               />
             </div>
           </v-expand-transition>
-          </div>
+        </div>
       </template>
 
       <template #vision-actions="{ channel }">
@@ -256,7 +182,7 @@
   </div>
 
     <ChannelPromotionDialog :editor="promotionEditor" />
-    <ChannelLogsDialog :viewer="logsViewer" />
+    <ChannelLogsDialog :viewer="logsViewer" :channel-type="channelType" />
 
     <!-- 快捷测试弹窗 -->
     <QuickTestModal
@@ -410,9 +336,7 @@ watch(() => props.channelType, () => {
   expandedChannelIndex.value = null
 })
 
-// 近 15 分钟既无请求也无实时速率的渠道，在窄布局下收起指标行。
-const hasRecentTraffic = (channelIndex: number) =>
-  !!getChannelMetrics(channelIndex)?.timeWindows?.['15m']?.requestCount || hasActivityData(channelIndex)
+const showsConversations = computed(() => ['messages', 'responses', 'chat', 'gemini'].includes(props.channelType))
 
 const metricsByChannel = computed(() => new Map(props.dashboardMetrics.map(metric => [metric.channelIndex, metric])))
 const getChannelMetrics = (channelIndex: number): ChannelMetrics | undefined => metricsByChannel.value.get(channelIndex)

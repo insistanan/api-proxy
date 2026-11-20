@@ -44,6 +44,8 @@ export interface ChannelMetrics {
   latency: number // ms
   lastSuccessAt?: string
   lastFailureAt?: string
+  /** 仪表盘快照中，该渠道正在处理的独立对话数。 */
+  activeConversations?: number
   // 渠道级三态熔断运行时状态（dashboard API 注入）
   circuitState?: CircuitState
   circuitConsecutiveFailures?: number
