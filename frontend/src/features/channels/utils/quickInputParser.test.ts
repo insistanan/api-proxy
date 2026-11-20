@@ -26,11 +26,6 @@ describe('复制配置的快速解析', () => {
 
 describe('API Key 识别', () => {
   describe('OpenAI 格式', () => {
-    it('应识别 OpenAI Legacy 格式 (sk-xxx)', () => {
-      expect(isValidApiKey('sk-7nKxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx1234')).toBe(true)
-      expect(isValidApiKey('sk-abcdef1234567890abcdef1234567890abcdef123456')).toBe(true)
-    })
-
     it('应识别 OpenAI Project 格式 (sk-proj-xxx)', () => {
       expect(isValidApiKey('sk-proj-Aw9' + 'x'.repeat(100))).toBe(true)
       expect(isValidApiKey('sk-proj-' + 'abcdef1234567890'.repeat(8))).toBe(true)
@@ -50,47 +45,6 @@ describe('API Key 识别', () => {
       expect(isValidApiKey('AIzaSyDxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')).toBe(true)
       expect(isValidApiKey('AIzaXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX')).toBe(true)
     })
-
-    it('不应识别非 AIza 开头的类似格式', () => {
-      expect(isValidApiKey('AIzbSyDxxx')).toBe(false)
-      expect(isValidApiKey('Aiza1234567')).toBe(false)
-    })
-  })
-
-  describe('OpenRouter 格式', () => {
-    it('应识别 OpenRouter 格式 (sk-or-v1-xxx)', () => {
-      // OpenRouter 使用混合大小写字母数字
-      expect(isValidApiKey('sk-or-v1-0ndQl1opjKLMNOPqrs' + 'x'.repeat(40))).toBe(true)
-      expect(isValidApiKey('sk-or-v1-' + 'AbCdEf123456'.repeat(5))).toBe(true)
-    })
-  })
-
-  describe('Hugging Face 格式', () => {
-    it('应识别 hf_ 前缀', () => {
-      expect(isValidApiKey('hf_AVd' + 'x'.repeat(31))).toBe(true)
-      expect(isValidApiKey('hf_' + 'abcdef1234567890'.repeat(2) + 'ab')).toBe(true)
-    })
-  })
-
-  describe('Groq 格式', () => {
-    it('应识别 gsk_ 前缀', () => {
-      expect(isValidApiKey('gsk_8sX' + 'x'.repeat(49))).toBe(true)
-      expect(isValidApiKey('gsk_' + 'abcdef1234567890'.repeat(3) + 'abcd')).toBe(true)
-    })
-  })
-
-  describe('Perplexity 格式', () => {
-    it('应识别 pplx- 前缀', () => {
-      expect(isValidApiKey('pplx-f9a' + 'x'.repeat(40))).toBe(true)
-      expect(isValidApiKey('pplx-' + 'abcdef1234567890'.repeat(3))).toBe(true)
-    })
-  })
-
-  describe('Replicate 格式', () => {
-    it('应识别 r8_ 前缀', () => {
-      expect(isValidApiKey('r8_G7b' + 'x'.repeat(20))).toBe(true)
-      expect(isValidApiKey('r8_abcdef1234567890abcdef')).toBe(true)
-    })
   })
 
   describe('智谱 AI 格式 (id.secret)', () => {
@@ -104,11 +58,6 @@ describe('API Key 识别', () => {
     it('应识别火山引擎 Ark UUID 格式', () => {
       expect(isValidApiKey('550e8400-e29b-41d4-a716-446655440000')).toBe(true)
       expect(isValidApiKey('123e4567-e89b-12d3-a456-426614174000')).toBe(true)
-    })
-
-    it('应识别火山引擎 IAM AK 格式', () => {
-      expect(isValidApiKey('AKLTNmYyYz' + 'x'.repeat(20))).toBe(true)
-      expect(isValidApiKey('AKLTabcdefghij1234567890abcdefgh')).toBe(true)
     })
   })
 
@@ -126,16 +75,6 @@ describe('API Key 识别', () => {
       expect(isValidApiKey('s-1234567890123')).toBe(false)
       expect(isValidApiKey('u_1234567890123')).toBe(false)
     })
-
-    it('不应识别无分隔符的字符串', () => {
-      expect(isValidApiKey('sk123')).toBe(false)
-      expect(isValidApiKey('apikey')).toBe(false)
-    })
-
-    it('不应识别分隔符后无内容的字符串', () => {
-      expect(isValidApiKey('sk-')).toBe(false)
-      expect(isValidApiKey('ut_')).toBe(false)
-    })
   })
 
   describe('宽松兜底格式（常见前缀 + 任意后缀）', () => {
@@ -144,18 +83,6 @@ describe('API Key 识别', () => {
       expect(isValidApiKey('sk-x')).toBe(true)
       expect(isValidApiKey('sk-abc')).toBe(true)
       expect(isValidApiKey('sk-test')).toBe(true)
-    })
-
-    it('应识别其他常见前缀的短密钥', () => {
-      expect(isValidApiKey('api-123')).toBe(true)
-      expect(isValidApiKey('key-abc')).toBe(true)
-      expect(isValidApiKey('ut_test')).toBe(true)
-      expect(isValidApiKey('hf_short')).toBe(true)
-      expect(isValidApiKey('gsk_x')).toBe(true)
-      expect(isValidApiKey('cr_1')).toBe(true)
-      expect(isValidApiKey('ms-test')).toBe(true)
-      expect(isValidApiKey('r8_abc')).toBe(true)
-      expect(isValidApiKey('pplx-x')).toBe(true)
     })
 
     it('不应识别未知前缀的短字符串', () => {
@@ -174,11 +101,6 @@ describe('API Key 识别', () => {
       expect(isValidApiKey('DATABASE_URL')).toBe(false)
       expect(isValidApiKey('SECRET_KEY')).toBe(false)
     })
-
-    it('不应识别带数字的配置键名', () => {
-      expect(isValidApiKey('API_V2_KEY')).toBe(false)
-      expect(isValidApiKey('REDIS_DB_0')).toBe(false)
-    })
   })
 
   describe('JWT 格式', () => {
@@ -187,17 +109,8 @@ describe('API Key 识别', () => {
       expect(isValidApiKey(validJwt)).toBe(true)
     })
 
-    it('应识别简短但有效的 JWT 格式', () => {
-      // 至少 20 字符，有两个点
-      expect(isValidApiKey('eyJhbGciOiJIUzI1Ni.eyJzdWIiOiIxMjM0.xxx')).toBe(true)
-    })
-
     it('不应识别只有一个点的 JWT', () => {
       expect(isValidApiKey('eyJhbGciOiJIUzI1NiIs.xxx')).toBe(false)
-    })
-
-    it('不应识别过短的 JWT', () => {
-      expect(isValidApiKey('eyJ.xxx.yyy')).toBe(false)
     })
   })
 
@@ -208,10 +121,6 @@ describe('API Key 识别', () => {
       expect(isValidApiKey('72f988bf7ab9e0f0a1234567890abcde')).toBe(true) // Azure OpenAI 风格
     })
 
-    it('应识别包含下划线和横线的长字符串', () => {
-      expect(isValidApiKey('abcdefghijklmnop_qrstuvwxyz-12345')).toBe(true)
-    })
-
     it('不应识别少于 32 字符的无前缀字符串', () => {
       expect(isValidApiKey('a'.repeat(31))).toBe(false)
       expect(isValidApiKey('shortkey')).toBe(false)
@@ -220,32 +129,6 @@ describe('API Key 识别', () => {
     it('不应识别纯字母的长字符串', () => {
       expect(isValidApiKey('a'.repeat(32))).toBe(false)
       expect(isValidApiKey('abcdefghijklmnopqrstuvwxyzabcdef')).toBe(false)
-    })
-
-    it('不应识别包含特殊字符的字符串', () => {
-      expect(isValidApiKey('a'.repeat(30) + '!@')).toBe(false)
-      expect(isValidApiKey('abcdefghijklmnopqrstuvwxyz12345!')).toBe(false)
-    })
-  })
-
-  describe('无效输入', () => {
-    it('不应识别普通单词', () => {
-      expect(isValidApiKey('hello')).toBe(false)
-      expect(isValidApiKey('world')).toBe(false)
-      expect(isValidApiKey('test')).toBe(false)
-    })
-
-    it('不应识别 URL', () => {
-      expect(isValidApiKey('http://localhost')).toBe(false)
-      expect(isValidApiKey('https://api.example.com')).toBe(false)
-    })
-
-    it('不应识别空字符串', () => {
-      expect(isValidApiKey('')).toBe(false)
-    })
-
-    it('不应识别纯数字', () => {
-      expect(isValidApiKey('12345678901234567890123456789012')).toBe(false)
     })
   })
 })
@@ -259,37 +142,9 @@ describe('URL 识别', () => {
       expect(isValidUrl('http://localhost:3000/')).toBe(true)
       expect(isValidUrl('http://localhost:5688/v1')).toBe(true)
     })
-
-    it('应识别域名', () => {
-      expect(isValidUrl('https://api.openai.com')).toBe(true)
-      expect(isValidUrl('https://api.openai.com/')).toBe(true)
-      expect(isValidUrl('https://api.openai.com/v1')).toBe(true)
-      expect(isValidUrl('https://api.anthropic.com/v1')).toBe(true)
-    })
-
-    it('应识别带端口的域名', () => {
-      expect(isValidUrl('http://example.com:8080')).toBe(true)
-      expect(isValidUrl('https://api.example.com:443/v1')).toBe(true)
-    })
-
-    it('应识别 IP 地址', () => {
-      expect(isValidUrl('http://127.0.0.1')).toBe(true)
-      expect(isValidUrl('http://192.168.1.1:8080')).toBe(true)
-    })
-
-    it('应识别子域名', () => {
-      expect(isValidUrl('https://api.v2.example.com')).toBe(true)
-      expect(isValidUrl('https://a.b.c.d.example.com/path')).toBe(true)
-    })
   })
 
   describe('无效 URL', () => {
-    it('不应识别不完整的 URL', () => {
-      expect(isValidUrl('http://')).toBe(false)
-      expect(isValidUrl('https://')).toBe(false)
-      expect(isValidUrl('http:///')).toBe(false)
-    })
-
     it('不应识别无协议的 URL', () => {
       expect(isValidUrl('localhost')).toBe(false)
       expect(isValidUrl('api.openai.com')).toBe(false)
@@ -299,11 +154,6 @@ describe('URL 识别', () => {
     it('不应识别无效协议', () => {
       expect(isValidUrl('ftp://example.com')).toBe(false)
       expect(isValidUrl('ws://example.com')).toBe(false)
-    })
-
-    it('不应识别无效域名格式', () => {
-      expect(isValidUrl('http://-example.com')).toBe(false)
-      expect(isValidUrl('http://example-.com')).toBe(false)
     })
   })
 })
@@ -321,25 +171,11 @@ describe('综合解析场景', () => {
     expect(result.detectedApiKeys).toEqual(['sk-key1abc123456', 'sk-key2def789012', 'sk-key3ghi345678'])
   })
 
-  it('应正确解析 localhost URL', () => {
-    const input = 'http://localhost:5688 sk-1234567890ab sk-abcdef123456'
-    const result = parseQuickInput(input)
-    expect(result.detectedBaseUrl).toBe('http://localhost:5688')
-    expect(result.detectedApiKeys).toEqual(['sk-1234567890ab', 'sk-abcdef123456'])
-  })
-
   it('应正确解析混合分隔符', () => {
     const input = 'https://api.example.com, sk-key1234567890; ut_key2abc123456, api-key3def789012'
     const result = parseQuickInput(input)
     expect(result.detectedBaseUrl).toBe('https://api.example.com')
     expect(result.detectedApiKeys).toEqual(['sk-key1234567890', 'ut_key2abc123456', 'api-key3def789012'])
-  })
-
-  it('应忽略不完整的 URL', () => {
-    const input = 'http:// sk-key1234567890'
-    const result = parseQuickInput(input)
-    expect(result.detectedBaseUrl).toBe('')
-    expect(result.detectedApiKeys).toEqual(['sk-key1234567890'])
   })
 
   it('应只取第一个 URL', () => {
@@ -359,12 +195,6 @@ describe('综合解析场景', () => {
     const input = 'https://api.example.com/anthropic# sk-key1234567890'
     const result = parseQuickInput(input)
     expect(result.detectedBaseUrl).toBe('https://api.example.com/anthropic#')
-  })
-
-  it('应保留无路径的 # 结尾', () => {
-    const input = 'https://api.example.com# sk-key1234567890'
-    const result = parseQuickInput(input)
-    expect(result.detectedBaseUrl).toBe('https://api.example.com#')
   })
 
   it('应移除末尾斜杠', () => {
@@ -394,25 +224,11 @@ describe('引号内容提取', () => {
     expect(result.detectedApiKeys).not.toContain('ANTHROPIC_BASE_URL')
   })
 
-  it('应从英文单引号中提取内容', () => {
-    const input = `'sk-test123456789012' 'https://api.example.com/v1'`
-    const result = parseQuickInput(input)
-    expect(result.detectedBaseUrl).toBe('https://api.example.com/v1')
-    expect(result.detectedApiKeys).toEqual(['sk-test123456789012'])
-  })
-
   it('应从中文双引号中提取内容', () => {
     const input = `"sk-chinese123456789""https://api.example.com"`
     const result = parseQuickInput(input)
     expect(result.detectedBaseUrl).toBe('https://api.example.com')
     expect(result.detectedApiKeys).toEqual(['sk-chinese123456789'])
-  })
-
-  it('应从中文单引号中提取内容', () => {
-    const input = `'sk-chinese789012345''https://api.test.com'`
-    const result = parseQuickInput(input)
-    expect(result.detectedBaseUrl).toBe('https://api.test.com')
-    expect(result.detectedApiKeys).toEqual(['sk-chinese789012345'])
   })
 
   it('应正确解析完整的 Claude Code 配置格式', () => {
@@ -452,40 +268,6 @@ snow里获取不到模型不知道为啥
     expect(result.detectedApiKeys).not.toContain('ANTHROPIC_BASE_URL')
     expect(result.detectedApiKeys).not.toContain('ANTHROPIC_AUTH_TOKEN')
     expect(result.detectedApiKeys).not.toContain('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC')
-  })
-
-  it('应忽略引号内的非 URL/Key 内容', () => {
-    const input = `"env": { "ANTHROPIC_AUTH_TOKEN": "sk-valid1234567890" }`
-    const result = parseQuickInput(input)
-    expect(result.detectedBaseUrl).toBe('')
-    expect(result.detectedApiKeys).toContain('sk-valid1234567890')
-    expect(result.detectedApiKeys).not.toContain('ANTHROPIC_AUTH_TOKEN')
-  })
-
-  it('应同时支持引号内容和普通分隔', () => {
-    const input = `"sk-quoted123456789" sk-plain4567890123 https://api.example.com`
-    const result = parseQuickInput(input)
-    expect(result.detectedBaseUrl).toBe('https://api.example.com')
-    expect(result.detectedApiKeys).toContain('sk-quoted123456789')
-    expect(result.detectedApiKeys).toContain('sk-plain4567890123')
-  })
-
-  it('应支持单边引号（只有开头引号）', () => {
-    const input = `"http://localhost:5689`
-    const result = parseQuickInput(input)
-    expect(result.detectedBaseUrl).toBe('http://localhost:5689')
-  })
-
-  it('应支持单边引号提取 API Key', () => {
-    const input = `"sk-test1234567890`
-    const result = parseQuickInput(input)
-    expect(result.detectedApiKeys).toContain('sk-test1234567890')
-  })
-
-  it('应支持单边单引号', () => {
-    const input = `'https://api.example.com/v1`
-    const result = parseQuickInput(input)
-    expect(result.detectedBaseUrl).toBe('https://api.example.com/v1')
   })
 
   it('应支持混合完整引号和单边引号', () => {

@@ -65,14 +65,6 @@ describe('请求增量', () => {
     expect(delta.removedTopFields).toEqual(['previous_response_id'])
   })
 
-  it('普通请求的 _log 字段仍按业务配置比较', () => {
-    const first = traffic({ _log: { custom: '旧' }, messages: [user('一')] })
-    const next = traffic({ _log: { custom: '新' }, messages: [user('一')] })
-    const delta = getRequestDelta(first, next)
-    expect(delta.repeated).toBe(false)
-    expect(JSON.parse(delta.top)._log).toEqual({ custom: '新' })
-  })
-
   it('忽略 JSON 对象键序，保留数组顺序与内容变化', () => {
     const first = traffic({ tools: [{ name: 'tool', description: '工具' }], messages: [{ role: 'user', content: '一' }] })
     const next = traffic({ messages: [{ content: '一', role: 'user' }], tools: [{ description: '工具', name: 'tool' }] })

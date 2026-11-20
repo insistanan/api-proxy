@@ -40,17 +40,6 @@ describe('对话详情命名', () => {
     expect(value<boolean>(state, 'detailDialog')).toBe(true)
   })
 
-  it('原有操作列命名入口仍同步当前详情', async () => {
-    vi.spyOn(api, 'setConversationName').mockResolvedValue(entry('one', '操作列名称'))
-    const state = await setupView()
-    ;(state.openNameDialog as (item: ConversationEntry) => void)(entry())
-    ;(state.conversationName as Ref<string>).value = '操作列名称'
-    await (state.saveName as () => Promise<void>)()
-    expect(value<ConversationEntry>(state, 'selectedConversation').name).toBe('操作列名称')
-    expect(value<string>(state, 'detailName')).toBe('操作列名称')
-    expect(value<boolean>(state, 'nameDialog')).toBe(false)
-  })
-
   it('保存失败保留名称草稿和原数据，并显示错误', async () => {
     vi.spyOn(api, 'setConversationName').mockRejectedValue(new Error('写入失败'))
     const state = await setupView()

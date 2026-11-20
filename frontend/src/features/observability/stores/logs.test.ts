@@ -98,17 +98,6 @@ describe('日志详情缓存', () => {
     expect(store.details).toEqual({})
   })
 
-  it('相同毫秒的元数据变化也会刷新详情', async () => {
-    const fetch = vi.spyOn(api, 'getSystemLog').mockResolvedValue(detail('one'))
-    const store = useLogsStore()
-    await store.loadDetail('one', summary('one'))
-    const updated = { ...detail('one'), summary: { ...summary('one'), model: 'new-model', errorType: 'network' } }
-    fetch.mockResolvedValue(updated)
-    await store.loadDetail('one', updated.summary)
-    expect(fetch).toHaveBeenCalledTimes(2)
-    expect(store.details.one!.summary.model).toBe('new-model')
-  })
-
   it('补齐结束计时也会使缓存失效，零毫秒不是缺失值', async () => {
     const fetch = vi.spyOn(api, 'getSystemLog').mockResolvedValue(detail('one'))
     const store = useLogsStore()

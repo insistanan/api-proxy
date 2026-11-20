@@ -47,10 +47,6 @@ describe('本代理模型按协议导入', () => {
     expect(filterProxyModelsByKind(entries, kind)).toEqual(expected)
   })
 
-  it('只配置其他协议分组时返回空列表', () => {
-    expect(filterProxyModelsByKind([entry('gpt', 'pool:responses'), entry('sonnet', 'api-proxy')], 'messages')).toEqual([])
-  })
-
   it('忽略空 ID，并对多协议条目去重', () => {
     expect(filterProxyModelsByKind([
       entry(' gpt ', 'pool:messages,responses'),

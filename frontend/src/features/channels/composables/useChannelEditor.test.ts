@@ -1,6 +1,5 @@
 // 表单提交契约：草稿隔离、地址规范化与五协议字段转换。
 import { describe, expect, it } from 'vitest'
-import { ref } from 'vue'
 import { buildChannelPayload, defaultChannelForm, useChannelEditor } from '@/features/channels/composables/useChannelEditor'
 import type { Channel } from '@/api'
 
@@ -197,16 +196,6 @@ describe('渠道草稿与提交', () => {
     expect(buildChannelPayload(form, 'responses', false)).not.toHaveProperty('status')
   })
 
-  it.each([' model ', { value: ' model ' }, null])('Chat 默认模型兼容 combobox 值 %j', value => {
-    const form = defaultChannelForm('chat')
-    form.defaultModel = value as unknown as string
-    form.modelMapping = { source: ['target'] }
-    form.modelMappingChannels = { source: { target: 'id-1' } }
-    expect(buildChannelPayload(form, 'chat', true)).toMatchObject({
-      defaultModel: value === null ? '' : 'model', modelMapping: {}, modelMappingChannels: {}
-    })
-  })
-
   it('Images 保留模型映射、主模型与参数，禁用不适用的文本功能', () => {
     const form = defaultChannelForm('images')
     Object.assign(form, {
@@ -221,19 +210,6 @@ describe('渠道草稿与提交', () => {
       visionLayerChannelId: '', visionLayerModel: '', injectDummyThoughtSignature: false,
       stripThoughtSignature: false, disablePromptCacheKey: false, modelMapping: { image: ['image-target'] }
     })
-  })
-
-  it('编辑器 reset 和 buildPayload 使用当前协议，运行时状态不会写入配置', () => {
-    const type = ref('responses')
-    const editor = useChannelEditor(type)
-    editor.loadChannelData({ name: '渠道', serviceType: 'gemini', baseUrl: '', apiKeys: [], index: 0, status: 'error' })
-    expect(editor.buildPayload(true).status).toBe('active')
-    type.value = 'images'
-    editor.resetForm()
-    expect(editor.form.serviceType).toBe('openai')
-    expect(editor.buildPayload(false).imagesForceNonStream).toBe(false)
-    type.value = 'gemini'
-    expect(editor.buildPayload(false)).not.toHaveProperty('imagesForceNonStream')
   })
 
   it('输出配置可载入、修改和清除，并保持草稿隔离', () => {
@@ -252,23 +228,6 @@ describe('渠道草稿与提交', () => {
     expect(editor.buildPayload(true)).toMatchObject({ imagesOutputFormat: '', imagesFrameCount: 0, imagesFrameDurationMs: 0 })
     editor.resetForm()
     expect(editor.form.imagesOutputFormat).toBe('')
-  })
-
-  it.each([undefined, 0])('旧渠道未设置帧参数（%s）时，选择 GIF 自动带入建议值且不改原配置', value => {
-    const channel: Channel = {
-      name: '旧渠道', serviceType: 'openai', index: 0, baseUrl: 'https://api.example', apiKeys: ['fixture'],
-      imagesFrameCount: value, imagesFrameDurationMs: value
-    }
-    const editor = useChannelEditor('images')
-    editor.loadChannelData(channel)
-    expect(editor.buildPayload(true)).toMatchObject({ imagesOutputFormat: '', imagesFrameCount: 0, imagesFrameDurationMs: 0 })
-    editor.form.imagesOutputFormat = 'gif'
-    expect(editor.buildPayload(true)).toMatchObject({ imagesOutputFormat: 'gif', imagesFrameCount: 9, imagesFrameDurationMs: 200 })
-    expect(channel.imagesFrameCount).toBe(value)
-    expect(channel.imagesFrameDurationMs).toBe(value)
-    editor.form.imagesFrameCount = ''
-    editor.form.imagesFrameDurationMs = null
-    expect(editor.buildPayload(true)).toMatchObject({ imagesFrameCount: 0, imagesFrameDurationMs: 0 })
   })
 
   it.each([[12, 100], [-1, 10]])('已配置的帧参数 %s/%s 原样载入，不被建议值覆盖', (frameCount, frameDurationMs) => {

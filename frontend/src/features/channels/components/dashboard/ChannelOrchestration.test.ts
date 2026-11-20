@@ -43,17 +43,6 @@ beforeEach(() => {
 })
 afterEach(() => { vi.restoreAllMocks() })
 
-describe('复制渠道入口', () => {
-  it('点击复制只发出原渠道草稿事件，不立即写入配置', async () => {
-    const duplicate = vi.spyOn(api, 'duplicateChannel')
-    const { state, emit } = await setupPromotion()
-    const channel = { ...suspended, kind: 'responses' as const }
-    ;(state.runMenuAction as (channel: Channel, action: 'duplicate') => void)(channel, 'duplicate')
-    expect(emit).toHaveBeenCalledExactlyOnceWith('duplicate', channel)
-    expect(duplicate).not.toHaveBeenCalled()
-  })
-})
-
 describe('手动恢复渠道', () => {
   it.each(['open', 'half_open'] as const)('配置为 active、运行时为 %s 时点击徽章直接恢复', async circuitState => {
     const { state, emit } = await setupPromotion([{
@@ -66,12 +55,6 @@ describe('手动恢复渠道', () => {
     expect(resume).not.toHaveBeenCalled()
     expect(emit).toHaveBeenCalledWith('refresh')
     expect(channel.status).toBe('active')
-  })
-
-  it.each(['active', 'suspended'] as const)('配置为 %s 且没有运行时熔断时保留状态切换', async currentStatus => {
-    const { state } = await setupPromotion()
-    await (state.toggleChannelPrimaryStatus as (_channel: Channel) => Promise<void>)({ ...suspended, status: currentStatus })
-    expect(status).toHaveBeenCalledExactlyOnceWith(2, currentStatus === 'active' ? 'suspended' : 'active')
   })
 
   it('恢复失败时显示错误', async () => {

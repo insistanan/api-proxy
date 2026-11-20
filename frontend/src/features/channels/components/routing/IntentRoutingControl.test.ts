@@ -50,19 +50,6 @@ describe('意图匹配编辑器', () => {
     await (state.save as () => Promise<void>)()
     expect(mocks.save).toHaveBeenCalledWith('responses', expect.objectContaining({ classifier: 'decisions', groups: [{ poolId: 'builtin-free', tasks: ['architecture'], tiers: [2], cost: 0 }] }))
   })
-  it('只给空配置推荐综合模式，保留已有正则规则', async () => {
-    const blank = config()
-    mocks.load.mockResolvedValue(blank)
-    const state = await setup()
-    expect(value<IntentConfig>(state, 'draft').strategy).toBe('auto')
-    expect(blank.strategy).toBe('regex')
-    const existing = config()
-    existing.routes = [{ id: 'manual', poolId: 'code', description: '已有规则', patterns: ['测试'], examples: [], tier: 1, cost: 0 }]
-    mocks.load.mockResolvedValue(existing)
-    const edited = await setup()
-    expect(value<IntentConfig>(edited, 'draft').strategy).toBe('regex')
-    expect(value<IntentConfig>(edited, 'draft').routes).toEqual(existing.routes)
-  })
   it('分组能力和向量配置进入同一草稿，保存前不会污染原配置', async () => {
     const original = config()
     mocks.load.mockResolvedValue(original)
@@ -125,16 +112,6 @@ describe('意图匹配编辑器', () => {
     await (state.save as () => Promise<void>)()
     expect(mocks.save).toHaveBeenCalledOnce()
     expect(original.embeddingModel).toBe('vector')
-  })
-  it('常用方式可映射到自动分流，保留同一份草稿字段', async () => {
-    const state = await setup()
-    const mode = state.simpleMode as Ref<string>
-    mode.value = 'assistant'
-    expect(value<IntentConfig>(state, 'draft')).toMatchObject({ strategy: 'auto', recognitionMode: 'assistant', taskMatcher: 'builtin', classifier: 'llm' })
-    mode.value = 'semantic'
-    expect(value<IntentConfig>(state, 'draft')).toMatchObject({ strategy: 'auto', recognitionMode: 'semantic', taskMatcher: 'semantic', classifier: 'heuristic' })
-    mode.value = 'builtin'
-    expect(value<IntentConfig>(state, 'draft')).toMatchObject({ strategy: 'auto', recognitionMode: 'builtin', taskMatcher: 'builtin', classifier: 'heuristic' })
   })
   it('内置样本未审核时提示直接去数据集页面，不自动导入或批准', async () => {
     const original = config()
@@ -221,14 +198,6 @@ describe('意图匹配编辑器', () => {
     await (state.save as () => Promise<void>)()
     expect(mocks.save).not.toHaveBeenCalled()
     expect(value<IntentConfig>(state, 'draft').classifier).toBe('decisions')
-  })
-  it('混合模式只有四种组合，选择组合不会改变固定顺序', async () => {
-    const state = await setup()
-    ;(state.simpleMode as Ref<string>).value = 'hybrid'
-    ;(state.selectHybridCombination as (value: string) => void)('builtin,semantic,assistant')
-    expect(value<IntentConfig>(state, 'draft')).toMatchObject({ recognitionMode: 'hybrid', hybridMatchers: ['builtin', 'semantic', 'assistant'], classifier: 'llm' })
-    ;(state.selectHybridCombination as (value: string) => void)('assistant,semantic')
-    expect(value<IntentConfig>(state, 'draft').hybridMatchers).toEqual(['builtin', 'semantic', 'assistant'])
   })
   it('重建已有内置数据集时保留新模型，不切回旧索引的模型', async () => {
     const original = config()

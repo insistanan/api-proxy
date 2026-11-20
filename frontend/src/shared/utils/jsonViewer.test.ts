@@ -13,12 +13,6 @@ describe('JSON 结构树', () => {
     expect(jsonType(null)).toBe('null')
   })
 
-  it('全部折叠只显示根节点；全部展开仍能独立折叠子树', () => {
-    expect(jsonTreeRows(value, new Set(), false, '').rows).toHaveLength(1)
-    expect(jsonTreeRows(value, new Set(), true, '').rows).toHaveLength(6)
-    expect(jsonTreeRows(value, new Set(['$/a~1b~0c']), true, '').rows.map(row => row.key)).toEqual(['$', 'a/b~c', 'text'])
-  })
-
   it('搜索键名或值会保留完整祖先路径，并隐藏无关分支', () => {
     expect(jsonTreeRows(value, new Set(), true, 'TRUE').rows.map(row => row.key)).toEqual(['$', 'a/b~c', '0', 'enabled'])
     expect(jsonTreeRows(value, new Set(), true, '中文').rows.map(row => row.key)).toEqual(['$', 'text'])

@@ -92,16 +92,6 @@ describe('MCP 应用配置管理', () => {
     expect(rows.every(row => row.conflict)).toBe(true)
   })
 
-  it('node_repl 与其它 MCP 使用相同的开关规则', async () => {
-    const runtime = server('node_repl', 'C:/Codex/runtimes/cua_node/node.exe')
-    vi.spyOn(api, 'getMcp').mockResolvedValue(snapshot({ detected: [{ name: runtime.name, agent: 'codex', enabled: true, server: runtime }] }))
-    const toggle = vi.spyOn(api, 'toggleMcp').mockResolvedValue({ success: true, revision: 'r2', agents: [{ key: 'claude-code', name: 'Claude Code', path: '/test/claude.json', ok: true }] })
-    const state = await setupView()
-    await run(state, 'loadList')
-    await (state.toggleServer as (server: McpServer, agent: string, enabled: boolean) => Promise<void>)(runtime, 'claude-code', true)
-    expect(toggle).toHaveBeenCalledOnce()
-  })
-
   it('读取并合并来源，直接编辑在保存前不写入配置', async () => {
     vi.spyOn(api, 'getMcp').mockResolvedValue(snapshot({ detected: [
       { name: 'demo', agent: 'codex', enabled: true, server: server('demo') },

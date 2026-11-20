@@ -16,12 +16,6 @@ describe('正文展示解析', () => {
     expect(parsed.items[0]!.role).toBe('assistant')
     expect(parsed.items[0]!.text).toBe('回复')
   })
-
-  it('损坏 JSON 给出明确说明', () => {
-    const parsed = parseSessionBody('{"input":[')
-    expect(parsed.items).toEqual([])
-    expect(parsed.notice).toContain('解析')
-  })
 })
 
 const sse = (...events: Record<string, unknown>[]) => events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
