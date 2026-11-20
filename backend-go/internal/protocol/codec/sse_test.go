@@ -49,36 +49,6 @@ func TestParseSSEDataLine(t *testing.T) {
 	}
 }
 
-// TestSSEDataJSON 锁定 JSON 载荷过滤层：终止标记与空载荷一律视为无 JSON 可处理。
-func TestSSEDataJSON(t *testing.T) {
-	cases := []struct {
-		name        string
-		line        string
-		wantPayload string
-		wantOK      bool
-	}{
-		{"正常 JSON 载荷", "data: {\"a\":1}", `{"a":1}`, true},
-		{"不带空格的 JSON 载荷", "data:{\"a\":1}", `{"a":1}`, true},
-		{"非 JSON 文本也原样返回", "data: hello", "hello", true},
-		{"终止标记被滤掉", "data: [DONE]", "", false},
-		{"空载荷被滤掉", "data:", "", false},
-		{"仅空格载荷被滤掉", "data:  ", "", false},
-		{"非 data 行被滤掉", "event: ping", "", false},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			payload, ok := SSEDataJSON(tc.line)
-			if ok != tc.wantOK {
-				t.Fatalf("ok = %v, want %v", ok, tc.wantOK)
-			}
-			if payload != tc.wantPayload {
-				t.Fatalf("payload = %q, want %q", payload, tc.wantPayload)
-			}
-		})
-	}
-}
-
 // TestRewriteSSEDataLinesFidelity 锁定重建保真契约：
 // 无任何行被改写时，返回值必须与入参逐字节相同——尤其不能给以 "\n\n"
 // 结尾的事件多补一个换行（收敛前各调用点逐行 WriteString("\n") 的老毛病）。

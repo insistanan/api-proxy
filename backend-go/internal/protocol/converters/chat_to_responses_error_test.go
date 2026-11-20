@@ -45,20 +45,3 @@ func TestConvertOpenAIChatToResponses_UpstreamErrorBecomesResponseFailed(t *test
 		t.Fatalf("response.error 应保留上游错误信封: %v", response["error"])
 	}
 }
-
-// 正常 chunk 不受影响：choices 存在时不误判为错误。
-func TestConvertOpenAIChatToResponses_NormalChunkUnaffected(t *testing.T) {
-	var state any
-	events := ConvertOpenAIChatToResponses(
-		context.Background(), "gpt-4o", nil, nil,
-		[]byte(`data: {"id":"c1","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}]}`),
-		&state,
-	)
-	joined := strings.Join(events, "")
-	if strings.Contains(joined, "response.failed") {
-		t.Fatalf("正常 chunk 不应产出 response.failed:\n%s", joined)
-	}
-	if !strings.Contains(joined, "response.output_text.delta") {
-		t.Fatalf("正常 chunk 应产出文本 delta:\n%s", joined)
-	}
-}

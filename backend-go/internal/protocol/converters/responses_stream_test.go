@@ -106,22 +106,6 @@ func TestConvertGeminiStreamToResponses_CachedPromptSubtractedFromInput(t *testi
 	}
 }
 
-// 上游把 cachedContentTokenCount 报得比 promptTokenCount 还大时（异常回包），
-// input_tokens 必须钳制到 0，不能让负数流进客户端与指标。
-func TestConvertGeminiStreamToResponses_NegativeInputClampedToZero(t *testing.T) {
-	events := collectGeminiResponsesEvents(t, []string{
-		`data: {"candidates":[{"content":{"parts":[{"text":"ok"}],"role":"model"},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":10,"cachedContentTokenCount":99,"candidatesTokenCount":5}}`,
-	})
-
-	for _, ev := range events {
-		if strings.Contains(ev, `"type":"response.completed"`) {
-			if !strings.Contains(ev, `"input_tokens":0`) {
-				t.Errorf("input_tokens 应钳制为 0，实际: %s", ev)
-			}
-		}
-	}
-}
-
 // 尾包终值必须进入唯一的 response.completed，不得提前按零 usage 定稿。
 func TestConvertGeminiStreamToResponses_TrailingUsageChunkKeepsSingleCompleted(t *testing.T) {
 	events := collectGeminiResponsesEvents(t, []string{

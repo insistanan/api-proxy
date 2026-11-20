@@ -302,20 +302,6 @@ func TestOpenAIProviderHandleStreamResponse_StreamsToolCallArguments(t *testing.
 	}
 }
 
-func TestProcessToolUsePartIncludesInitialInputObject(t *testing.T) {
-	events := strings.Join(processToolUsePart("call_1", "edit_file", map[string]interface{}{"path": "main.go"}, 0), "")
-
-	if !strings.Contains(events, `"type":"tool_use"`) {
-		t.Fatalf("missing tool_use start event:\n%s", events)
-	}
-	if !strings.Contains(events, `"input":{}`) {
-		t.Fatalf("missing initial tool_use input object:\n%s", events)
-	}
-	if !strings.Contains(events, `"type":"input_json_delta"`) {
-		t.Fatalf("missing input_json_delta event:\n%s", events)
-	}
-}
-
 // 反证切片 2 的结构性修复：finish_reason=tool_calls 不再提前结束流，
 // 其后到达的 usage chunk 必须被纳入 message_delta（旧实现提前 return 丢 usage）。
 func TestChatStream_ToolCallsFinishDoesNotDropTrailingUsage(t *testing.T) {

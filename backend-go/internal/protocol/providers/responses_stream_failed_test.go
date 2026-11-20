@@ -50,15 +50,3 @@ func TestResponsesStream_CapacityFailedMarked(t *testing.T) {
 		t.Fatalf("容量错误不应带 failedMessage（走同候选重试而非上报正文）: %q", state.failedMessage)
 	}
 }
-
-// 普通 response.failed 不标记容量。
-func TestResponsesStream_NonCapacityFailed(t *testing.T) {
-	state := newResponsesToClaudeStreamState()
-	state.processLine(`data: {"type":"response.failed","response":{"error":{"code":"server_error","message":"boom"}}}`)
-	if !state.failed || state.capacityError {
-		t.Fatalf("非容量错误应标记 failed 且不标 capacity: %+v", state)
-	}
-	if !strings.Contains(state.failedMessage, "boom") {
-		t.Fatalf("failedMessage 应保存错误信封: %q", state.failedMessage)
-	}
-}

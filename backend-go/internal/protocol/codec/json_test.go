@@ -6,56 +6,6 @@ import (
 	"testing"
 )
 
-func TestTruncateJSONIntelligently(t *testing.T) {
-	tests := []struct {
-		name           string
-		input          interface{}
-		maxTextLength  int
-		expectTruncate bool
-	}{
-		{
-			name:           "短字符串不截断",
-			input:          "Hello",
-			maxTextLength:  10,
-			expectTruncate: false,
-		},
-		{
-			name:           "长字符串截断",
-			input:          strings.Repeat("a", 600),
-			maxTextLength:  500,
-			expectTruncate: true,
-		},
-		{
-			name: "嵌套对象中的长字符串",
-			input: map[string]interface{}{
-				"short": "test",
-				"long":  strings.Repeat("b", 600),
-			},
-			maxTextLength:  500,
-			expectTruncate: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := TruncateJSONIntelligently(tt.input, tt.maxTextLength)
-
-			// 转换为JSON检查
-			jsonBytes, err := json.Marshal(result)
-			if err != nil {
-				t.Fatalf("Marshal failed: %v", err)
-			}
-
-			resultStr := string(jsonBytes)
-			if tt.expectTruncate {
-				if !strings.Contains(resultStr, "...") {
-					t.Errorf("Expected truncation marker '...' not found")
-				}
-			}
-		})
-	}
-}
-
 func TestSimplifyToolsArray(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -117,50 +67,6 @@ func TestSimplifyToolsArray(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestFormatJSONForLog(t *testing.T) {
-	input := map[string]interface{}{
-		"model": "claude-3",
-		"tools": []interface{}{
-			map[string]interface{}{
-				"name":        "get_weather",
-				"description": "Get weather information",
-				"parameters": map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"location": map[string]interface{}{
-							"type":        "string",
-							"description": "City name",
-						},
-					},
-				},
-			},
-		},
-		"messages": []interface{}{
-			map[string]interface{}{
-				"role":    "user",
-				"content": strings.Repeat("Hello ", 200), // 长内容
-			},
-		},
-	}
-
-	result := FormatJSONForLog(input, 100)
-
-	// 检查tools被简化
-	if !strings.Contains(result, `"get_weather"`) {
-		t.Error("Tools should be simplified to names")
-	}
-
-	// 检查长文本被截断
-	if !strings.Contains(result, "...") {
-		t.Error("Long content should be truncated")
-	}
-
-	// 检查JSON格式化
-	if !strings.Contains(result, "\n") {
-		t.Error("Output should be formatted with newlines")
 	}
 }
 

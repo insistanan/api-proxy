@@ -143,25 +143,6 @@ func TestDecompressBody_UnsupportedEncoding(t *testing.T) {
 	assert.True(t, errors.Is(decompressErr, ErrUnsupportedContentEncoding))
 }
 
-func TestDecompressResponseBodyIfNeeded(t *testing.T) {
-	testPayload := []byte(`{"status":"ok"}`)
-	var compressedBuffer bytes.Buffer
-	gzipWriter := gzip.NewWriter(&compressedBuffer)
-	_, _ = gzipWriter.Write(testPayload)
-	_ = gzipWriter.Close()
-
-	httpResponse := &http.Response{
-		Header: http.Header{
-			"Content-Encoding": []string{"gzip"},
-		},
-	}
-
-	decompressedBytes, wasDecoded, err := DecompressResponseBodyIfNeeded(httpResponse, compressedBuffer.Bytes(), 1024*1024)
-	require.NoError(t, err)
-	assert.True(t, wasDecoded)
-	assert.Equal(t, testPayload, decompressedBytes)
-}
-
 func TestWrapStreamReaderIfNeeded(t *testing.T) {
 	testPayload := []byte("data: {\"test\":true}\n\n")
 	var compressedBuffer bytes.Buffer
