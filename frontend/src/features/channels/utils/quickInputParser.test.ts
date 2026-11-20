@@ -7,6 +7,23 @@
 import { describe, it, expect } from 'vitest'
 import { isValidApiKey, isValidUrl, parseQuickInput } from '@/features/channels/utils/quickInputParser'
 
+describe('复制配置的快速解析', () => {
+  it.each(['名称:', '名称：', 'name:', '渠道名称：'])('解析 %s 前缀，名称不会包含标签', prefix => {
+    const parsed = parseQuickInput(`${prefix} 渠道A\nURL: https://api.example.com/v1\n密钥: sk-fixture-key`)
+    expect(parsed).toMatchObject({
+      detectedChannelName: '渠道A', detectedBaseUrl: 'https://api.example.com/v1', detectedApiKeys: ['sk-fixture-key']
+    })
+  })
+
+  it('清理旧名称的重复前缀，多次复制和粘贴保持名称稳定', () => {
+    let name = '名称: 名称：渠道A'
+    for (let count = 0; count < 3; count++) {
+      name = parseQuickInput(`名称: ${name}\nURL: https://api.example.com/v1\n密钥: sk-fixture-key`).detectedChannelName
+      expect(name).toBe('渠道A')
+    }
+  })
+})
+
 describe('API Key 识别', () => {
   describe('OpenAI 格式', () => {
     it('应识别 OpenAI Legacy 格式 (sk-xxx)', () => {

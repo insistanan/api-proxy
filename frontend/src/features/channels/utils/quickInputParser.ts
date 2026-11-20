@@ -157,9 +157,10 @@ const extractChannelName = (input: string): string => {
     .filter(Boolean)
 
   for (const line of lines) {
-    const match = line.match(/^(?:name|channel|渠道|渠道名称)\s*[:：=]\s*(.+)$/i)
+    const match = line.match(/^(?:name|channel|名称|渠道|渠道名称)\s*[:：=]\s*(.+)$/i)
     if (match?.[1]) {
-      return match[1].trim().replace(/^["'“”‘’]+|["'“”‘’]+$/g, '')
+      // 清理旧版本复制后累积的名称前缀，避免再次复制时继续叠加。
+      return match[1].trim().replace(/^["'“”‘’]+|["'“”‘’]+$/g, '').replace(/^(?:名称\s*[:：]\s*)+/, '')
     }
   }
 
