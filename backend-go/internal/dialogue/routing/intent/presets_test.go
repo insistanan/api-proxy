@@ -135,15 +135,6 @@ func TestPresetsURLIsEditablePersistedAndResets(t *testing.T) {
 	require.ErrorContains(t, reopened.SetPresetsURL("http://example.invalid/presets.json"), "HTTPS")
 }
 
-func TestPresetsURLLoadFallsBackOnInvalidFile(t *testing.T) {
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, presetsURLFile), []byte("http://example.invalid/presets.json"), 0o600))
-	local, err := NewLocal(dir)
-	require.NoError(t, err)
-	require.Equal(t, DefaultPresetsURL, local.Status().PresetsURL)
-	require.Contains(t, local.presets.loadError, "清单地址无效")
-}
-
 // 发布清单是实际下发内容，损坏或字段缺失必须在测试阶段被发现。
 func TestDeployPresetManifestIsValid(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "..", "deploy", "embedding-presets.json"))

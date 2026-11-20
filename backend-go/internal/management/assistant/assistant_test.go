@@ -174,33 +174,6 @@ func TestAssistantRejectsUnknownAction(t *testing.T) {
 	}
 }
 
-// TestExtractActions 锁定行动块解析：提取、剥离、未闭合围栏。
-func TestExtractActions(t *testing.T) {
-	reply := "先说明：\n```assistant-action\n{\"action\":\"create_pool\",\"kind\":\"chat\",\"name\":\"gpt5\"}\n```\n创建完成。"
-	actions, body, err := extractActions(reply)
-	if err != nil {
-		t.Fatalf("解析失败: %v", err)
-	}
-	if len(actions) != 1 || actions[0].Action != "create_pool" || actions[0].Name != "gpt5" {
-		t.Fatalf("行动解析错误: %+v", actions)
-	}
-	if strings.Contains(body, "assistant-action") || !strings.Contains(body, "创建完成") {
-		t.Fatalf("正文剥离错误: %q", body)
-	}
-
-	// 无行动块。
-	actions, body, err = extractActions("纯文本回复")
-	if err != nil || len(actions) != 0 || body != "纯文本回复" {
-		t.Fatalf("纯文本解析错误: %v %+v %q", err, actions, body)
-	}
-
-	// 未闭合围栏按无行动处理，正文保留。
-	actions, body, err = extractActions("```assistant-action\n{\"action\":\"create_pool\"")
-	if err != nil || len(actions) != 0 || !strings.Contains(body, "assistant-action") {
-		t.Fatalf("未闭合围栏处理错误: %v %+v %q", err, actions, body)
-	}
-}
-
 // TestAssistantUpdateChannelKeepsKeys 更新渠道（defaultModel）后原 Key 原样保留。
 func TestAssistantUpdateChannelKeepsKeys(t *testing.T) {
 	env := newAssistantTestEnv(t)

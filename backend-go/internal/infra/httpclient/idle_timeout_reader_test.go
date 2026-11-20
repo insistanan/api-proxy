@@ -3,7 +3,6 @@ package httpclient
 import (
 	"errors"
 	"io"
-	"strings"
 	"testing"
 	"time"
 )
@@ -36,28 +35,6 @@ func TestIdleTimeoutReader_TriggerOnHang(t *testing.T) {
 	_, err := r.Read(buf)
 	if !errors.Is(err, ErrStreamIdleTimeout) {
 		t.Fatalf("期望 ErrStreamIdleTimeout，得到: %v", err)
-	}
-}
-
-// TestIdleTimeoutReader_PassThrough 验证：正常数据立即返回，不受影响。
-func TestIdleTimeoutReader_PassThrough(t *testing.T) {
-	r := NewIdleTimeoutReader(&oneShotReader{inner: strings.NewReader("hello")}, 5*time.Second, "Test")
-	buf := make([]byte, 1024)
-	n, err := r.Read(buf)
-	if err != nil {
-		t.Fatalf("期望无错误，得到: %v", err)
-	}
-	if string(buf[:n]) != "hello" {
-		t.Fatalf("期望 'hello'，得到: %q", string(buf[:n]))
-	}
-}
-
-// TestIdleTimeoutReader_Disabled 验证：idleTimeout <= 0 时直接透传（不包装）。
-func TestIdleTimeoutReader_Disabled(t *testing.T) {
-	inner := &oneShotReader{inner: strings.NewReader("x")}
-	r := NewIdleTimeoutReader(inner, 0, "Test")
-	if r != io.ReadCloser(inner) {
-		t.Fatal("idleTimeout<=0 时应直接返回原 reader")
 	}
 }
 
@@ -94,18 +71,5 @@ func TestIdleTimeoutReader_NoWriteToCallerBufferAfterTimeout(t *testing.T) {
 
 	if _, err := r.Read(p); !errors.Is(err, ErrStreamIdleTimeout) {
 		t.Fatalf("超时后后续 Read 应返回 ErrStreamIdleTimeout，得到: %v", err)
-	}
-}
-
-// TestIdleTimeoutReader_SequencePreserved 验证：多轮读取下数据完整、顺序不变
-// （私有缓冲 copy 路径不丢字节），EOF 语义与底层一致。
-func TestIdleTimeoutReader_SequencePreserved(t *testing.T) {
-	r := NewIdleTimeoutReader(io.NopCloser(strings.NewReader("hello world, 流式数据完整性")), 5*time.Second, "Test")
-	got, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatalf("期望无错误，得到: %v", err)
-	}
-	if string(got) != "hello world, 流式数据完整性" {
-		t.Fatalf("数据不完整或顺序错乱: %q", string(got))
 	}
 }

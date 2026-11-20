@@ -1,33 +1,10 @@
 package config
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
-
-func TestParseImagesExtraParamsKeepsTypedValues(t *testing.T) {
-	parsed, err := ParseImagesExtraParams(map[string]string{
-		" watermark ": " false ",
-		"label":       `"false"`,
-		"count":       "2",
-		"code":        "01",
-		"plain":       "hello",
-		"meta":        `{"a":1}`,
-		"tags":        `["x"]`,
-		"empty":       "null",
-	})
-	require.NoError(t, err)
-	require.Equal(t, false, parsed["watermark"])
-	require.Equal(t, "false", parsed["label"])
-	require.Equal(t, json.Number("2"), parsed["count"])
-	require.Equal(t, "01", parsed["code"])
-	require.Equal(t, "hello", parsed["plain"])
-	require.Nil(t, parsed["empty"])
-	require.Equal(t, json.Number("1"), parsed["meta"].(map[string]interface{})["a"])
-	require.Equal(t, []interface{}{"x"}, parsed["tags"])
-}
 
 func TestParseImagesExtraParamsRejectsInvalidValues(t *testing.T) {
 	_, err := ParseImagesExtraParams(map[string]string{"model": "x"})

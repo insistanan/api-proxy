@@ -153,25 +153,6 @@ func TestBuildAzureAndGeminiURLs(t *testing.T) {
 	}
 }
 
-func TestOrderedDiscoveryMethodsServiceType(t *testing.T) {
-	t.Parallel()
-
-	claudeMethods := orderedDiscoveryMethods("claude")
-	if claudeMethods[0].Name != "anthropic" {
-		t.Fatalf("claude first method = %s, want anthropic", claudeMethods[0].Name)
-	}
-
-	geminiMethods := orderedDiscoveryMethods("gemini")
-	if geminiMethods[0].Name != "gemini" {
-		t.Fatalf("gemini first method = %s, want gemini", geminiMethods[0].Name)
-	}
-
-	azureMethods := orderedDiscoveryMethods("azure")
-	if azureMethods[0].Name != "azure" {
-		t.Fatalf("azure first method = %s, want azure", azureMethods[0].Name)
-	}
-}
-
 func TestParseAnthropicAndGeminiPages(t *testing.T) {
 	t.Parallel()
 

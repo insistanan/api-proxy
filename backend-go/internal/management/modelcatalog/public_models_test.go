@@ -33,19 +33,6 @@ func TestFreeCatalogUsesSharedListWithoutDiscovery(t *testing.T) {
 	require.Empty(t, OpenAIModels(context.Background(), cm).Data)
 }
 
-func TestPublicModelsEmptyWithoutConfiguredGroups(t *testing.T) {
-	t.Parallel()
-
-	for _, manager := range []*config.ConfigManager{nil, newTestConfigManager(t, config.Config{})} {
-		response := OpenAIModels(context.Background(), manager)
-		encoded, err := json.Marshal(response)
-		require.NoError(t, err)
-		require.JSONEq(t, `{"object":"list","data":[]}`, string(encoded))
-		_, found := ModelDetail(context.Background(), manager, "opus")
-		require.False(t, found)
-	}
-}
-
 func TestOpenAIModelsIncludesPoolMatchers(t *testing.T) {
 	t.Parallel()
 

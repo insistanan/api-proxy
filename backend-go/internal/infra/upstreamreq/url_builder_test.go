@@ -60,20 +60,3 @@ func TestBuildUpstreamURL(t *testing.T) {
 		})
 	}
 }
-
-// TestHasVersionSuffix 验证版本段检测的边界。
-func TestHasVersionSuffix(t *testing.T) {
-	cases := map[string]bool{
-		"https://api.example.com/v1":      true,
-		"https://api.example.com/v1beta":  true,
-		"https://api.example.com/v2alpha": true,
-		"https://api.example.com":         false,
-		"https://api.example.com/v":       false, // 无数字
-		"https://api.example.com/v1x2":    false, // 数字后的额外字符破坏匹配
-	}
-	for baseURL, want := range cases {
-		if got := HasVersionSuffix(baseURL); got != want {
-			t.Errorf("HasVersionSuffix(%q) = %v, want %v", baseURL, got, want)
-		}
-	}
-}

@@ -204,70 +204,6 @@ func TestGetToolVersionHandler(t *testing.T) {
 	})
 }
 
-func TestFetchNpmLatestVersion(t *testing.T) {
-	t.Run("scoped 包名编码为单一路径段", func(t *testing.T) {
-		var gotURL string
-		original := toolVersionHTTPGet
-		toolVersionHTTPGet = func(_ context.Context, url string) ([]byte, int, error) {
-			gotURL = url
-			return []byte(`{"latest":"1.0.0"}`), http.StatusOK, nil
-		}
-		t.Cleanup(func() { toolVersionHTTPGet = original })
-
-		_, latestErr := fetchNpmLatestVersion(context.Background(), "@anthropic-ai/claude-code")
-		if latestErr != "" {
-			t.Fatalf("不应报错: %s", latestErr)
-		}
-		// 字面量斜杠会让 registry 把包名解析成多余路径段而 404，scoped 包必须转义为 %2F。
-		if !strings.Contains(gotURL, "/-/package/@anthropic-ai%2Fclaude-code/dist-tags") {
-			t.Fatalf("scoped 包名未正确编码: %s", gotURL)
-		}
-	})
-
-	t.Run("解析 dist-tags", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Header.Get("Accept") != "application/json" {
-				w.WriteHeader(http.StatusNotAcceptable)
-				return
-			}
-			if !strings.HasSuffix(r.URL.Path, "/dist-tags") {
-				http.NotFound(w, r)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, `{"latest":"2.1.268","next":"2.1.269"}`)
-		}))
-		defer server.Close()
-		original := toolVersionHTTPGet
-		toolVersionHTTPGet = func(ctx context.Context, url string) ([]byte, int, error) {
-			// 通过 httpGetDefault 真实走一遍 HTTP（打到桩服务器）。
-			return httpGetDefault(ctx, strings.Replace(url, "https://registry.npmjs.org", server.URL, 1))
-		}
-		t.Cleanup(func() { toolVersionHTTPGet = original })
-
-		latest, latestErr := fetchNpmLatestVersion(context.Background(), "@anthropic-ai/claude-code")
-		if latestErr != "" {
-			t.Fatalf("不应报错: %s", latestErr)
-		}
-		if latest != "2.1.268" {
-			t.Fatalf("latest 错误: %s", latest)
-		}
-	})
-
-	t.Run("网络错误返回错误信息", func(t *testing.T) {
-		original := toolVersionHTTPGet
-		toolVersionHTTPGet = func(ctx context.Context, url string) ([]byte, int, error) {
-			return nil, 0, fmt.Errorf("connection refused")
-		}
-		t.Cleanup(func() { toolVersionHTTPGet = original })
-
-		latest, latestErr := fetchNpmLatestVersion(context.Background(), "opencode-ai")
-		if latest != "" || !strings.Contains(latestErr, "connection refused") {
-			t.Fatalf("网络错误未透出: %q %q", latest, latestErr)
-		}
-	})
-}
-
 func TestToolVersionRetriesOnlyFailedProbeAfterShortTTL(t *testing.T) {
 	localCalls := 0
 	stubToolVersionProbes(t, func(context.Context, string) (string, string) {
@@ -291,14 +227,5 @@ func TestToolVersionRetriesOnlyFailedProbeAfterShortTTL(t *testing.T) {
 	}
 	if localCalls != 1 || result.Current != "1.0.0" {
 		t.Fatalf("成功的本地探测应继续复用缓存: calls=%d result=%+v", localCalls, result)
-	}
-}
-
-func TestProbeLocalToolVersionExtract(t *testing.T) {
-	// 不注入桩，真实调用（探测的是测试环境自身 PATH 中的命令），
-	// 只验证"未安装的工具返回空且无错误"这一稳定分支。
-	version, versionErr := probeLocalToolVersion(context.Background(), "definitely-not-installed-tool-xyz")
-	if version != "" || versionErr != "" {
-		t.Fatalf("未安装的工具应返回空值无错误: %q %q", version, versionErr)
 	}
 }

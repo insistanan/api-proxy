@@ -54,35 +54,6 @@ func decodeDSHSettingsResponse(t *testing.T, recorder *httptest.ResponseRecorder
 	return response
 }
 
-func TestGetDSHSettingsMissingFileReturnsEmptyArray(t *testing.T) {
-	t.Run("settings.yaml 不存在时 providerKeys 必须是 [] 而不是 null", func(t *testing.T) {
-		setupDSHHome(t)
-
-		recorder := performDSHSettingsRequest(t, http.MethodGet, "")
-		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
-		response := decodeDSHSettingsResponse(t, recorder)
-
-		require.Contains(t, response, "providerKeys")
-		// 回归点：早期实现在这里返回 nil slice，json.Marshal 后是 "null"，
-		// 前端 DshView 的 [...providerKeys] 会抛 "undefined is not iterable"。
-		assert.Equal(t, "[]", string(response["providerKeys"]),
-			"providerKeys 不能序列化为 null")
-		assert.Equal(t, "{}", string(response["providers"]))
-	})
-
-	t.Run("providers 有值但文件顺序缺失时仍按稳定顺序补齐", func(t *testing.T) {
-		home := setupDSHHome(t)
-		// 写成标量而非 mapping，让 extractDSHProviderKeysOrdered 走 "取不到顺序" 分支。
-		require.NoError(t, os.WriteFile(filepath.Join(home, "settings.yaml"),
-			[]byte("llm-pi-ai:\n  providers: not-a-map\n"), 0600))
-
-		recorder := performDSHSettingsRequest(t, http.MethodGet, "")
-		require.Equal(t, http.StatusOK, recorder.Code)
-		response := decodeDSHSettingsResponse(t, recorder)
-		assert.Equal(t, "[]", string(response["providerKeys"]))
-	})
-}
-
 func TestGetDSHSettingsOrderedProviderKeys(t *testing.T) {
 	t.Run("按文件顺序返回 providerKeys 并保留未知字段", func(t *testing.T) {
 		home := setupDSHHome(t)

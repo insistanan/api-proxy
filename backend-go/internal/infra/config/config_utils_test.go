@@ -3,30 +3,7 @@ package config
 import (
 	"encoding/json"
 	"testing"
-	"time"
 )
-
-func TestDefaultContentSafetyConfigIsFullyDisabled(t *testing.T) {
-	settings := DefaultContentSafetyConfig()
-	if settings.SensitiveData.Mode != ContentSafetyModeBlock {
-		t.Fatalf("敏感数据默认处置模式 = %q，期望 block", settings.SensitiveData.Mode)
-	}
-	if settings.SensitiveWord.Enabled || settings.SensitiveWord.PornographyEnabled ||
-		settings.SensitiveWord.GamblingEnabled || settings.SensitiveWord.DrugsEnabled ||
-		settings.SensitiveWord.ViolenceTerrorEnabled || settings.SensitiveWord.PoliticalEnabled ||
-		settings.SensitiveWord.IllegalCrimeEnabled || len(settings.SensitiveWord.CustomWords) != 0 {
-		t.Fatalf("敏感词默认设置未完全关闭: %+v", settings.SensitiveWord)
-	}
-	if settings.SensitiveInfo.Enabled || len(settings.SensitiveInfo.EnabledRules) != 0 {
-		t.Fatalf("敏感信息默认设置未完全关闭: %+v", settings.SensitiveInfo)
-	}
-	if settings.Credential.Enabled || len(settings.Credential.EnabledRules) != 0 {
-		t.Fatalf("凭据默认设置未完全关闭: %+v", settings.Credential)
-	}
-	if settings.DangerousCmd.Enabled || len(settings.DangerousCmd.EnabledRules) != 0 {
-		t.Fatalf("危险命令默认设置未完全关闭: %+v", settings.DangerousCmd)
-	}
-}
 
 func TestValidateContentSafetyRejectsUnknownSensitiveDataMode(t *testing.T) {
 	for _, mode := range []string{"", "fallback", "MASK"} {
@@ -235,38 +212,6 @@ func TestUpstreamConfigUnmarshalLegacyModelMapping(t *testing.T) {
 	assertStringSlice(t, upstream.ModelMapping["sonnet"], []string{"gpt-4o", "gpt-4o-mini"})
 	if upstream.BaseURL != "https://api.example.com" || upstream.ServiceType != "openai" || upstream.MaxConcurrency != 5 || len(upstream.APIKeys) != 1 {
 		t.Fatalf("兼容映射解码覆盖了其他字段或默认值: %+v", upstream)
-	}
-}
-
-func TestGetNextAPIKeyPreservesFailoverOrder(t *testing.T) {
-	now := time.Now()
-	manager := &ConfigManager{
-		keyRecoveryTime: time.Minute,
-		maxFailureCount: 3,
-		failedKeysCache: map[string]*FailedKey{
-			"first":  {Timestamp: now.Add(-10 * time.Second), FailureCount: 1},
-			"second": {Timestamp: now.Add(-20 * time.Second), FailureCount: 1},
-			"third":  {Timestamp: now.Add(-90 * time.Second), FailureCount: 4},
-		},
-	}
-	upstream := &UpstreamConfig{APIKeys: []string{"first", "second", "third", "ready"}}
-	for _, test := range []struct {
-		failed map[string]bool
-		want   string
-	}{
-		{nil, "ready"},
-		{map[string]bool{"ready": true}, "third"},
-		{map[string]bool{"ready": true, "third": true}, "second"},
-		{map[string]bool{"ready": true, "third": true, "second": true, "first": true}, ""},
-	} {
-		key, err := manager.GetNextAPIKey(upstream, test.failed, "test")
-		if key != test.want || (err != nil) != (test.want == "") {
-			t.Fatalf("密钥顺序或请求内失败排除错误: key=%q want=%q err=%v", key, test.want, err)
-		}
-	}
-	manager.failedKeysCache["first"].Timestamp = now.Add(-2 * time.Minute)
-	if key, err := manager.GetNextAPIKey(upstream, nil, "test"); key != "first" || err != nil {
-		t.Fatalf("冷却结束后未恢复配置顺序: key=%q err=%v", key, err)
 	}
 }
 

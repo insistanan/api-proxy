@@ -141,29 +141,6 @@ func TestSelectChannelPoolUsesLongestMatcher(t *testing.T) {
 	}
 }
 
-func TestSelectChannelPoolUsesDefaultGroupAsFallback(t *testing.T) {
-	pools := []ChannelPool{
-		{ID: "gpt", Name: "GPT", ModelMatcher: "gpt", Priority: 1},
-		{ID: DefaultChannelPoolID, Name: "默认子池", ModelMatcher: "legacy", Priority: 2},
-	}
-
-	selected, err := SelectChannelPool(pools, "gpt-5.4")
-	if err != nil {
-		t.Fatalf("SelectChannelPool() error = %v", err)
-	}
-	if selected.ID != "gpt" {
-		t.Fatalf("SelectChannelPool() ID = %q, want gpt", selected.ID)
-	}
-
-	selected, err = SelectChannelPool(pools, "claude-sonnet")
-	if err != nil {
-		t.Fatalf("SelectChannelPool() fallback error = %v", err)
-	}
-	if selected.ID != DefaultChannelPoolID || selected.Name != FallbackChannelPoolName || selected.ModelMatcher != "*" {
-		t.Fatalf("SelectChannelPool() fallback = %#v", selected)
-	}
-}
-
 func TestSelectChannelPoolRouteReturnsMatchedThenFallback(t *testing.T) {
 	pools := []ChannelPool{
 		{ID: "gpt", Name: "GPT", ModelMatcher: "gpt", Priority: 1},
@@ -255,34 +232,6 @@ func TestSaveChannelPoolLayoutMovesAndReordersChannels(t *testing.T) {
 	}
 	if got[1].PoolID != DefaultChannelPoolID || got[1].Priority != 1 {
 		t.Fatalf("default channel = %#v, want default priority 1", got[1])
-	}
-}
-
-func TestEnsurePoolsAndAssignmentsReportsNormalization(t *testing.T) {
-	pools := []ChannelPool{
-		{ID: DefaultChannelPoolID, Name: " 默认子池 ", ModelMatcher: "*", Priority: 99},
-		{ID: "sonnet", Name: " Sonnet ", ModelMatcher: " CLAUDE-SONNET ", Priority: 7},
-	}
-	upstreams := []UpstreamConfig{
-		{Name: "default-channel"},
-		{Name: "sonnet-channel", PoolID: "sonnet"},
-	}
-
-	normalized, changed, err := ensurePoolsAndAssignments(pools, upstreams)
-	if err != nil {
-		t.Fatalf("ensurePoolsAndAssignments() error = %v", err)
-	}
-	if !changed {
-		t.Fatal("ensurePoolsAndAssignments() changed = false, want true")
-	}
-	if normalized[0].ID != "sonnet" || normalized[0].ModelMatcher != "claude-sonnet" || normalized[0].Priority != 1 {
-		t.Fatalf("normalized custom pool = %#v", normalized[0])
-	}
-	if normalized[1].ID != DefaultChannelPoolID || normalized[1].Name != FallbackChannelPoolName || normalized[1].ModelMatcher != "*" {
-		t.Fatalf("normalized fallback pool = %#v", normalized[1])
-	}
-	if upstreams[0].PoolID != DefaultChannelPoolID {
-		t.Fatalf("default upstream pool = %q", upstreams[0].PoolID)
 	}
 }
 

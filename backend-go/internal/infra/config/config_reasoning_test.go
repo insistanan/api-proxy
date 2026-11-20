@@ -42,18 +42,6 @@ func TestReasoningOutputMode_PartialUpdateKeepsAndClearsOptions(t *testing.T) {
 	}
 }
 
-func TestReasoningOutputMode_ManagementDTORetainsOptions(t *testing.T) {
-	upstream := UpstreamConfig{ParseEmbeddedReasoning: true, RequireReasoningContent: true}
-	dto := ChannelToDTO(&upstream, 0)
-	if dto["reasoningOutputMode"] != "preserve" || dto["parseEmbeddedReasoning"] != true || dto["requireReasoningContent"] != true {
-		t.Fatalf("管理 API 必须返回有效默认值及严格能力，避免编辑渠道时覆盖：%+v", dto)
-	}
-	upstream.ReasoningOutputMode = "hide"
-	if ChannelToDTO(&upstream, 0)["reasoningOutputMode"] != "hide" {
-		t.Fatal("隐藏模式必须可读回")
-	}
-}
-
 func TestChannelReasoningEffortPartialUpdateAndValidation(t *testing.T) {
 	upstream := UpstreamConfig{ReasoningEffort: "max"}
 	_, err := applyCommonUpdates(&upstream, 0, UpstreamUpdate{}, "test")

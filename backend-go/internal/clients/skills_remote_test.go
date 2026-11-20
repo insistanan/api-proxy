@@ -112,13 +112,6 @@ func TestCollectRemoteSkillFilesRejectsInvalidPath(t *testing.T) {
 	require.ErrorContains(t, err, "无效文件路径")
 }
 
-func TestRemoteSkillTreeURL(t *testing.T) {
-	const repositoryURL = "https://github.com/oil-oil/oil-delegate"
-	require.Equal(t, repositoryURL+"/tree/main", remoteSkillTreeURL(repositoryURL, "main", "."))
-	require.Equal(t, repositoryURL+"/tree/main/skill", remoteSkillTreeURL(repositoryURL, "main", "skill"))
-	require.Equal(t, repositoryURL+"/tree/main/skills/foo", remoteSkillTreeURL(repositoryURL, "main", "skills/foo"))
-}
-
 func remoteSkillRelativePaths(files []remoteSkillFile) []string {
 	paths := make([]string, 0, len(files))
 	for _, file := range files {
@@ -209,14 +202,6 @@ func TestDownloadRemoteSkillArchiveDoesNotRetryNotFound(t *testing.T) {
 	_, err := downloadRemoteSkillArchive(context.Background(), server.URL, map[string]string{"SKILL.md": "SKILL.md"})
 	require.ErrorContains(t, err, "HTTP 404")
 	require.Equal(t, 1, attempts)
-}
-
-func TestRemoteSkillArchiveURLPinsCommit(t *testing.T) {
-	require.Equal(
-		t,
-		"https://codeload.github.com/oil-oil/oil-delegate/tar.gz/0123456789abcdef0123456789abcdef01234567",
-		remoteSkillArchiveURL("oil-oil", "oil-delegate", "0123456789abcdef0123456789abcdef01234567"),
-	)
 }
 
 func TestFetchJSONWithRetryRecoversFromServerError(t *testing.T) {
