@@ -9,12 +9,6 @@ export interface AppSettings {
   contentSafety: ContentSafetySettings
   disguise: DisguiseSettings
   gateway: GatewaySettings
-  assistant: {
-    /** 助手模型 ID（渠道分组的匹配词）；空串表示自动（走各协议兜底分组） */
-    model: string
-    /** 显式指定的渠道稳定 ID；空串表示自动（按四协议优先级编排，不换渠道） */
-    channelId: string
-  }
   /** 通用提示词版本库：可一键写入各智能体客户端的全局提示词文件 */
   prompts: PromptSettings
   /** 项目 Skills / MCP 统一目录与 Git 同步设置 */

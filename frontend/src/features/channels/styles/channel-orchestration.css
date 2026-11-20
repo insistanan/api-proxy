@@ -3,9 +3,9 @@
 /* 名称、路由、运行指标分层展示，窄分组内按实际宽度换行。 */
 .channel-list, .channel-item-wrapper { @apply flex flex-col gap-1.5; }
 .channel-row {
-  @apply [padding:10px_14px_12px] min-h-29 flex flex-col justify-center gap-1.5 panel-surface cursor-pointer [container:channel-row_/_inline-size] [transition:border-color_160ms_var(--ease-out),_background-color_160ms_var(--ease-out)];
+  @apply px-3.5 py-3 min-h-29 flex flex-col justify-center gap-2 panel-surface cursor-pointer [container:channel-row_/_inline-size] [transition:border-color_160ms_var(--ease-out),_background-color_160ms_var(--ease-out)];
 }
-.channel-row:hover { @apply [border-color:color-mix(in_srgb,_var(--primary)_45%,_transparent)]; }
+.channel-row:hover { @apply border-primary/40; }
 .channel-row.is-suspended { @apply [border-inline-start-color:color-mix(in_srgb,_var(--warning)_60%,_transparent)]; }
 .channel-row-main, .channel-name, .channel-actions, .channel-route, .channel-live-status {
   @apply flex items-center min-w-0;

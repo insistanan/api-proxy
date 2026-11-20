@@ -143,11 +143,11 @@ func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
 	apiGroup.POST("/extensions/git/clone", a.extensionsGitAPI.Clone())
 	apiGroup.POST("/extensions/git/pull", a.extensionsGitAPI.Pull())
 	apiGroup.POST("/extensions/git/push", a.extensionsGitAPI.Push())
-	a.assistantAPI.Register(apiGroup)
 }
 
 // setupChannelAdminAPI 装配各协议渠道管理路由，沿用调用方路由组的鉴权。
 func (a *app) setupChannelAdminAPI(apiGroup *gin.RouterGroup) {
+	a.registerCleanup("指纹检测任务", channels.RegisterModelFingerprintRoutes(apiGroup, a.cfgManager))
 	channelDeps := channels.ChannelRouteDeps{
 		Cfg:       a.cfgManager,
 		Scheduler: a.channelScheduler,

@@ -55,13 +55,14 @@ export const testChannelWithModel = async (
     'x-api-key': accessKey,
     'x-proxy-purpose': testPurpose
   }
+  if (sessionContext?.thinking) headers['x-proxy-test-effort'] = sessionContext.thinking
 
   switch (apiType) {
     case 'messages':
       endpoint = '/v1/messages'
       body = {
         model: selectedModel,
-        max_tokens: 1024,
+        max_tokens: 8192,
         messages: [{ role: 'user', content: message }],
         metadata,
         stream: true

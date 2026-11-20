@@ -1,3 +1,5 @@
+github.com/Ikaleio/lm-detector/sdk/go v0.2.0 h1:Jh/VNLdF1ksUEvJqI+3McIu6ce2M4XVr3UIAKFyO0tQ=
+github.com/Ikaleio/lm-detector/sdk/go v0.2.0/go.mod h1:D0K9qKdAasfIkdNhz2bpJYyNdkDy7EOrHvG8aLNo1GA=
 github.com/andybalholm/brotli v1.2.3 h1:8H1qwOkl2LPfjf3YezB90JnCliZb6SInJ/OJkEbA5NQ=
 github.com/andybalholm/brotli v1.2.3/go.mod h1:rzTDkvFWvIrjDXZHkuS16NPggd91W3kUSvPlQ1pLaKY=
 github.com/bytedance/sonic v1.11.6 h1:oUp34TzMlL+OY1OUWxHqsdkgC/Zfc85zGqw9siXjrc0=

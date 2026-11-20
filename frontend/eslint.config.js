@@ -6,7 +6,7 @@ import tsPlugin from '@typescript-eslint/eslint-plugin'
 import prettierConfig from 'eslint-config-prettier'
 
 const featureModules = [
-  'channels', 'clients', 'settings', 'observability', 'assistant',
+  'channels', 'clients', 'settings', 'observability',
   'extensions/datasets', 'extensions/mcp', 'extensions/skills'
 ]
 

@@ -265,25 +265,12 @@ type SettingsConfig struct {
 	Disguise DisguiseSettings `json:"disguise"`
 	// Gateway 请求、日志和存储策略；路径和持久化开关在重启后生效。
 	Gateway GatewaySettings `json:"gateway"`
-	// Assistant AI 配置助手的模型路由设置。
-	Assistant AssistantSettings `json:"assistant"`
 	// Prompts 通用提示词版本库：集中维护一份可下发到各智能体客户端
 	// （Claude Code / Codex / OpenCode / pi / DSH）全局提示词文件的提示词，
 	// 带版本号与生效版本标记，由客户端配置页"一键配置提示词"消费。
 	Prompts PromptSettings `json:"prompts"`
 	// Extensions 扩展管理（Skills / MCP）的项目目录与 Git 同步设置。
 	Extensions ExtensionsSettings `json:"extensions"`
-}
-
-// AssistantSettings AI 配置助手设置。
-// Model 是内部调用的模型 ID（取渠道分组的匹配词），由主链路编排按分组匹配
-// 选渠；为空表示自动——与主链路对未匹配模型的行为一致，走各协议兜底分组。
-// ChannelID 显式指定渠道（稳定渠道 ID）；为空表示自动——按
-// messages → responses → chat → gemini 优先级编排选渠。显式指定时
-// 不回退不换渠道（显式指定代表用户意图）。
-type AssistantSettings struct {
-	Model     string `json:"model"`
-	ChannelID string `json:"channelId"`
 }
 
 // promptEntryLimits / promptContentMaxBytes 通用提示词的规模上限。

@@ -9,6 +9,7 @@ import (
 	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -372,6 +373,12 @@ func handleSingleChannelProxy(
 		upstream = upstream.Clone()
 		upstream.ModelMapping = nil
 		upstream.DefaultModel = ""
+		// 快捷测试显式选择思考档位；不让渠道固定策略覆盖管理端本次实验。
+		effort := strings.TrimSpace(c.GetHeader("X-Proxy-Test-Effort"))
+		if effort == "" {
+			effort = "auto"
+		}
+		upstream.ReasoningEffort = effort
 	}
 
 	// 渠道级熔断检查（internal/orchestration/circuit）：非快捷测试且已熔断（Open）时直接拦截并返回 503 CIRCUIT_OPEN。

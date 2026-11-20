@@ -843,14 +843,11 @@ onMounted(loadList)
 .mcp-header-sticky {
   @apply sticky [top:var(--app-header-height,_0px)] [z-index:4] bg-background [box-shadow:0_-32px_0_0_var(--background)];
 }
-.list-toolbar { @apply flex items-center flex-wrap gap-4; }
+.list-toolbar { @apply flex items-center flex-wrap gap-3 rounded-card border border-border bg-card p-4; }
 .mcp-search { @apply [flex:0_1_400px] min-w-55; }
 .agent-grid { @apply grid gap-4 [grid-template-columns:repeat(auto-fit,_minmax(min(100%,_260px),_1fr))]; }
 .agent-path { @apply block overflow-hidden text-ellipsis whitespace-nowrap; }
-.mcp-list-card { @apply [border:1px_solid_color-mix(in_srgb,_var(--foreground)_12%,_transparent)] rounded-card overflow-hidden; }
-.mcp-list-card :deep(thead) { @apply [background:color-mix(in_srgb,_var(--foreground)_4%,_transparent)]; }
-.mcp-list-card :deep(tbody tr:nth-child(even)) { @apply [background:color-mix(in_srgb,_var(--foreground)_2.5%,_transparent)]; }
-.mcp-list-card :deep(tbody tr:hover) { @apply [background:color-mix(in_srgb,_var(--primary)_4%,_transparent)]; }
+.mcp-list-card { @apply rounded-card overflow-hidden; }
 .server-column { @apply w-full; }
 .agent-column { @apply min-w-27 whitespace-nowrap; }
 .server-cell { @apply pt-4! pb-4!; }

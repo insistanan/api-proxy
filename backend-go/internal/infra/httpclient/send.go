@@ -32,6 +32,8 @@ type SendOptions struct {
 	StreamIdleTimeout time.Duration
 	// StreamLabel 流式空闲超时日志的协议前缀（如 "Messages"）。
 	StreamLabel string
+	// DisableRedirects 防止诊断采样被重定向到另一个目标。
+	DisableRedirects bool
 }
 
 // ShouldForceIdentityEncoding 判定是否应强制上游使用 identity 编码（禁止压缩）。
@@ -80,6 +82,11 @@ func Send(req *http.Request, opts SendOptions) (*http.Response, error) {
 		req.Header.Set("Accept-Encoding", "identity")
 	}
 
+	if opts.DisableRedirects {
+		isolatedClient := *client
+		isolatedClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		client = &isolatedClient
+	}
 	resp, err := doWithTLSHandshakeRetry(client, req)
 	if err != nil {
 		return nil, err

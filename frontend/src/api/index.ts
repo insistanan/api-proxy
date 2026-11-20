@@ -2,7 +2,6 @@
 import { channelsApi } from '@/features/channels/services/channels'
 import { observabilityApi } from '@/features/observability/services/observability'
 import { securityGateApi } from '@/features/observability/services/security-gate'
-import { assistantApi } from '@/features/assistant/services/assistant'
 import { settingsApi } from '@/features/settings/services/settings'
 import { clientConfigApi } from '@/features/clients/services/client-config'
 import { skillsApi } from '@/features/extensions/skills/services/skills'
@@ -21,7 +20,6 @@ export const api = {
   ...channelsApi,
   ...observabilityApi,
   ...securityGateApi,
-  ...assistantApi,
   ...settingsApi,
   ...clientConfigApi,
   ...skillsApi,

@@ -3,6 +3,8 @@
   .ui-expand-enter-from, .ui-expand-leave-to { @apply opacity-0; }
   html { @apply bg-background font-sans text-foreground antialiased; text-rendering: optimizeLegibility; }
   body { @apply m-0 min-w-80; }
+  html { color-scheme: light; }
+  html[data-theme-mode='dark'] { color-scheme: dark; }
   button, [role='button'], summary { @apply touch-manipulation cursor-pointer; }
   button:disabled { @apply cursor-not-allowed; }
   :where(a, button, input, textarea, select, summary, [tabindex], [role='button']):focus-visible { @apply outline-2 outline-offset-2 outline-ring; }
@@ -11,6 +13,7 @@
   ::selection { @apply bg-primary/20; }
   ::-webkit-scrollbar { @apply size-[7px]; }
   ::-webkit-scrollbar-thumb { @apply rounded-full bg-muted-foreground/35; }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-muted-foreground/55; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }

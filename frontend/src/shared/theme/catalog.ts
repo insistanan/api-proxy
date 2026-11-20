@@ -11,14 +11,26 @@ export const DEFAULT_THEME: ThemeSettings = {
 }
 export const THEME_OPTIONS = {
   mode: { light: '亮色', dark: '暗色', system: '跟随系统' },
-  palette: { ink: '砚墨', ocean: '海蓝', forest: '森林', sunset: '暖橙', rose: '玫瑰' },
-  surface: { flat: '扁平', soft: '柔和', raised: '厚重', glass: '玻璃' },
+  palette: { ink: '砚墨', ocean: '海蓝', forest: '森林', sunset: '暖橙', rose: '玫瑰', pop: '跃色撞色', breeze: '清岚青蓝' },
+  surface: { flat: '扁平', soft: '柔和', raised: '厚重', glass: '玻璃', bold: '描边撞色' },
   radius: { square: '方角', standard: '标准', rounded: '圆润' },
-  decoration: { none: '纯色', waves: '波浪', glow: '光晕' },
+  decoration: { none: '纯色', waves: '波浪', glow: '光晕', confetti: '几何彩点' },
   opacity: { 85: '85%', 92: '92%', 100: '100%' }
 } as const
 
 export const THEME_PRESETS: ThemePreset[] = [
+  {
+    id: 'pop',
+    name: '跃色',
+    description: '莓紫 × 青柠，描边与几何彩点',
+    settings: { palette: 'pop', surface: 'bold', radius: 'rounded', decoration: 'confetti', opacity: 100 }
+  },
+  {
+    id: 'breeze',
+    name: '清岚',
+    description: '雾白 × 青蓝，轻盈而有序',
+    settings: { palette: 'breeze', surface: 'soft', radius: 'standard', decoration: 'none', opacity: 100 }
+  },
   {
     id: 'ink',
     name: '砚墨',

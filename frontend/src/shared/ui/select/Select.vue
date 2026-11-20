@@ -9,16 +9,18 @@
       :disabled="disabled"
       :open="isOpen"
       ignore-filter
+      open-on-click
       :reset-search-term-on-blur="false"
       :reset-search-term-on-select="false"
       @update:model-value="select"
       @update:open="updateOpen"
     >
       <ComboboxAnchor
-        class="ui-field flex min-h-10 items-center gap-2 rounded-control border bg-card px-3 focus-within:border-ring"
+        class="ui-field field-surface flex min-h-10 items-center gap-2 px-3"
+        :data-disabled="disabled || undefined"
         :class="message ? 'border-destructive' : 'border-input'"
       >
-        <Icon v-if="prependInnerIcon" :icon="prependInnerIcon" :size="16" />
+        <Icon v-if="prependInnerIcon" :icon="prependInnerIcon" :size="16" class="text-muted-foreground" />
         <ComboboxInput
           :id="id"
           :model-value="inputText"
@@ -28,7 +30,7 @@
           :aria-required="required || undefined"
           :aria-invalid="!!message"
           :aria-describedby="message || hint ? `${id}-message` : undefined"
-          class="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none! disabled:opacity-50"
+          class="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none! placeholder:text-muted-foreground/70 disabled:cursor-not-allowed"
           @update:model-value="query = $event"
           @blur="validate"
         />
@@ -74,13 +76,13 @@
               v-for="item in filtered"
               :key="item.key"
               :value="item.key"
-              class="flex cursor-pointer items-center gap-2 rounded-control px-3 py-2 text-sm outline-none data-highlighted:bg-primary/12 data-highlighted:text-primary data-[state=checked]:font-semibold"
+              class="flex min-h-9 cursor-pointer items-center gap-2 rounded-control px-3 py-2 text-sm break-words outline-none transition-colors data-highlighted:bg-primary/10 data-highlighted:text-primary data-[state=checked]:bg-primary/5 data-[state=checked]:font-medium"
               ><ComboboxItemIndicator><Icon icon="mdi-check" :size="14" /></ComboboxItemIndicator
-              ><slot
+              ><span class="min-w-0 flex-1 [overflow-wrap:anywhere]"><slot
                 name="item"
                 :item="{ raw: item.raw, title: item.title, value: item.value, subtitle: item.subtitle }"
                 :props="{}"
-                >{{ item.title }}</slot
+                >{{ item.title }}</slot></span
               ></ComboboxItem
             >
             <ComboboxItem

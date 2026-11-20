@@ -44,7 +44,7 @@
 }
 
 .dialog-card-actions {
-  @apply shrink-0 [padding:16px_24px] [border-top:1px_solid_var(--border)] [background:var(--surface)];
+  @apply shrink-0 flex-wrap gap-2 px-6 py-4 border-t border-border bg-muted/20;
 }
 
 .header-action-btn {
@@ -52,7 +52,7 @@
 }
 
 .dialog-card-header {
-  @apply shrink-0 [padding:20px_24px] [border-bottom:1px_solid_color-mix(in_srgb,_var(--outline)_20%,_transparent)] whitespace-normal;
+  @apply shrink-0 px-6 py-5 border-b border-border/70 whitespace-normal;
 }
 
 .dialog-card-subtitle { @apply mt-1 [line-height:1.5]; }

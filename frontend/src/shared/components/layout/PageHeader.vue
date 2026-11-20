@@ -15,10 +15,10 @@ defineProps<{ title: string; description?: string }>()
 <style scoped>
 @reference "@/styles/index.css";
 
-.page-header { @apply flex items-center justify-between gap-5 mb-6 min-w-0; }
+.page-header { @apply flex items-start justify-between gap-5 mb-6 min-w-0 py-1; }
 .page-header__copy { @apply min-w-0; }
-h1 { @apply m-0 text-foreground [font-size:1.625rem] [line-height:1.3] font-semibold [letter-spacing:-0.02em]; }
-p { @apply [margin:8px_0_0] [max-width:72ch] text-muted-foreground [font-size:0.875rem] [line-height:1.65]; }
-.page-header__actions { @apply flex items-center flex-wrap justify-end gap-2 max-w-full; }
+h1 { @apply m-0 text-foreground text-2xl leading-tight font-semibold tracking-tight; }
+p { @apply mt-2 max-w-[72ch] text-muted-foreground text-[13px] leading-6; }
+.page-header__actions { @apply flex shrink-0 items-center flex-wrap justify-end gap-2 max-w-full; }
 @media (max-width: 700px) { .page-header { @apply items-start flex-col gap-4 mb-5; } .page-header__actions { @apply justify-start w-full; } h1 { @apply [font-size:1.375rem]; } }
 </style>

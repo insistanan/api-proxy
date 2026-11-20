@@ -11,7 +11,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	apiproxy "github.com/insistanan/api-proxy"
-	adminassistant "github.com/insistanan/api-proxy/internal/api/admin/assistant"
 	adminextensions "github.com/insistanan/api-proxy/internal/api/admin/extensions"
 	adminsettings "github.com/insistanan/api-proxy/internal/api/admin/settings"
 	"github.com/insistanan/api-proxy/internal/api/system"
@@ -21,7 +20,6 @@ import (
 	"github.com/insistanan/api-proxy/internal/dialogue/session"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/infra/middleware"
-	"github.com/insistanan/api-proxy/internal/management/assistant"
 	"github.com/insistanan/api-proxy/internal/orchestration/circuit"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
 	"github.com/insistanan/api-proxy/internal/orchestration/urlhealth"
@@ -58,8 +56,6 @@ type app struct {
 	skillsAPI             *clients.SkillsAPI
 	mcpAPI                *clients.MCPAPI
 	extensionsGitAPI      *adminextensions.ExtensionsGitAPI
-	assistantService      *assistant.Service
-	assistantAPI          *adminassistant.AssistantAPI
 	disguiseSyncer        *adminsettings.DisguiseSyncer
 	engine                *gin.Engine
 	cleanups              []appCleanup
@@ -251,7 +247,7 @@ func newApp() (_ *app, err error) {
 	logInitf(a.envCfg, "[Main] 渠道性能画像已启用（仅观测展示，默认按配置顺序选渠，健康促销在分组内临时优先）")
 
 	// 危险命令 AI 闸门：存储与拦截记录同库；遗留的 waiting 记录一律按拦截处理
-	// （重启后内存等待者已不存在）。llmgate.Caller 供闸门与 AI 助手共用。
+	// （重启后内存等待者已不存在）。llmgate.Caller 供闸门与意图识别共用。
 	a.gateStore, err = sensitive.NewGateStoreWithDB(blockedDB)
 	if err != nil {
 		return nil, fmt.Errorf("初始化危险命令 AI 闸门存储失败: %w", err)
@@ -360,19 +356,6 @@ func newApp() (_ *app, err error) {
 		}
 	}
 	a.extensionsGitAPI = adminextensions.NewExtensionsGitAPI(a.cfgManager, a.skillsAPI, a.mcpAPI)
-
-	// AI 配置助手（复用闸门的 llmgate.Caller：渠道优先级 messages → responses → chat → gemini）
-	assistantStore, err := assistant.NewStore(".config/assistant.db")
-	if err != nil {
-		return nil, fmt.Errorf("初始化 AI 配置助手存储失败: %w", err)
-	}
-	a.registerCleanup("AI 配置助手存储", assistantStore.Close)
-	a.assistantService, err = assistant.NewService(a.cfgManager, gateCaller, assistantStore)
-	if err != nil {
-		return nil, fmt.Errorf("初始化 AI 配置助手失败: %w", err)
-	}
-	a.assistantAPI = adminassistant.NewAssistantAPI(a.assistantService)
-	logInitf(a.envCfg, "[Assistant-Init] AI 配置助手已装配")
 
 	// 从现有指标同步数据到性能画像
 	syncConfig := a.cfgManager.GetConfig()

@@ -30,7 +30,7 @@ func CORSMiddleware(envCfg *config.EnvConfig) gin.HandlerFunc {
 		}
 
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, x-api-key, x-goog-api-key, anthropic-version, X-API-Proxy-Type")
+		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, x-api-key, x-goog-api-key, anthropic-version, X-API-Proxy-Type, X-Proxy-Purpose, X-Proxy-Test-Effort")
 		// 仅在非 * 时设置 credentials，避免浏览器拒绝 credentials + * 组合
 		if current.CORSOrigin != "*" {
 			c.Header("Access-Control-Allow-Credentials", "true")

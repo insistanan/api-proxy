@@ -12,6 +12,20 @@
   @apply rounded-card border-(length:--surface-border-width) border-border bg-card text-card-foreground shadow-card backdrop-blur-(--surface-blur);
 }
 
+@utility field-surface {
+  @apply rounded-control border bg-popover transition-[border-color,box-shadow,background-color] duration-150;
+  &:hover:not([data-disabled]) { border-color: var(--outline); }
+  &:focus-within {
+    border-color: var(--ring);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 12%, transparent);
+  }
+  &[data-disabled] { @apply cursor-not-allowed bg-muted/40 opacity-60; }
+  &:has([aria-invalid='true']), &[aria-invalid='true'] { border-color: var(--destructive); }
+  &:has([aria-invalid='true']):focus-within, &[aria-invalid='true']:focus-within {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--destructive) 12%, transparent);
+  }
+}
+
 @theme inline {
   --animate-app-page: app-page-in 160ms var(--ease-out) both;
   @keyframes app-page-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
@@ -41,6 +55,7 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-switch-thumb: var(--switch-thumb);
   --radius-control: var(--radius-control);
   --radius-card: var(--radius-card);
   --radius-dialog: var(--radius-dialog);

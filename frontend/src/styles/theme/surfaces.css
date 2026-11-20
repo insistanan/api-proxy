@@ -2,9 +2,9 @@
   --card: var(--surface);
   --surface-blur: 0px;
   --surface-border-width: 1px;
-  --shadow-card: 0 1px 2px color-mix(in srgb, var(--foreground) 4%, transparent);
-  --shadow-popover: 0 8px 28px #0002;
-  --shadow-dialog: 0 20px 60px #0004;
+  --shadow-card: 0 1px 2px color-mix(in srgb, var(--foreground) 3%, transparent), 0 4px 14px color-mix(in srgb, var(--foreground) 2%, transparent);
+  --shadow-popover: 0 4px 8px #0001, 0 12px 36px #0002;
+  --shadow-dialog: 0 8px 24px #0002, 0 28px 80px #0004;
   --border-card: var(--border);
   --border-soft: color-mix(in srgb, var(--outline) 22%, transparent);
 }
@@ -20,6 +20,14 @@
   --surface-blur: 18px;
   --surface-border-width: 1px;
   --shadow-card: 0 6px 24px #0001;
+}
+[data-surface='bold'] {
+  --card: var(--surface);
+  --surface-blur: 0px;
+  --surface-border-width: 2px;
+  --shadow-card: 3px 3px 0 color-mix(in srgb, var(--accent) 65%, var(--foreground));
+  --shadow-popover: 4px 4px 0 color-mix(in srgb, var(--accent) 65%, var(--foreground));
+  --shadow-dialog: 7px 7px 0 color-mix(in srgb, var(--accent) 65%, var(--foreground)), 0 24px 80px #0003;
 }
 :root, [data-opacity='100'] { --surface-opacity: 100%; }
 [data-opacity='92'] { --surface-opacity: 92%; }

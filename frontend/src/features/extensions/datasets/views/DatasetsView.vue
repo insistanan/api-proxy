@@ -268,15 +268,15 @@ onMounted(() => run('load', async () => { await store.load(); const first = stor
 <style scoped>
 @reference "@/styles/index.css";
 
-.datasets-page { @apply max-w-360 [margin:0_auto] p-6; }
+.datasets-page { @apply max-w-370 mx-auto min-w-0; }
 .dataset-toolbar, .dataset-fields { @apply grid [grid-template-columns:repeat(2,_minmax(0,_1fr))] gap-4 items-center; }
 .dataset-list { @apply grid [grid-template-columns:repeat(auto-fit,_minmax(min(100%,_280px),_1fr))] gap-3; }
 .dataset-choice { @apply grid gap-1.5 [padding:14px_16px] min-w-0 text-left [color:inherit] [background:transparent] [border:1px_solid_var(--border)] rounded-control cursor-pointer [overflow-wrap:anywhere]; }
 .dataset-choice:hover:not(:disabled), .dataset-choice--selected { @apply [border-color:color-mix(in_srgb,_var(--primary)_50%,_transparent)] [background:color-mix(in_srgb,_var(--primary)_5%,_transparent)]; }
 .dataset-choice:focus-visible { @apply [outline:2px_solid_var(--primary)] [outline-offset:2px]; }
 .dataset-choice:disabled { @apply cursor-default opacity-65; }
-.dataset-editor { @apply border-0 p-0 m-0 min-w-0; }
+.dataset-editor { @apply panel-surface p-5 m-0 min-w-0 space-y-5; }
 .sample-search { @apply [flex:1_1_280px]; }
 .sample-text { @apply max-w-160 whitespace-pre-wrap [overflow-wrap:anywhere] [padding:10px_0]; }
-@media (max-width: 700px) { .datasets-page { @apply p-4; } .dataset-toolbar, .dataset-fields { @apply [grid-template-columns:minmax(0,_1fr)] gap-2; } }
+@media (max-width: 700px) { .dataset-editor { @apply p-4; } .dataset-toolbar, .dataset-fields { @apply [grid-template-columns:minmax(0,_1fr)] gap-3; } }
 </style>

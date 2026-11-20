@@ -1,8 +1,8 @@
 <template>
-  <div class="min-w-0" :aria-busy="loading || undefined">
-    <div class="ui-table-scroll overflow-x-auto">
+  <div class="panel-surface min-w-0 overflow-hidden" :aria-busy="loading || undefined">
+    <div class="ui-table-scroll overflow-x-auto overscroll-x-contain">
       <table class="w-full border-collapse text-sm">
-        <thead class="bg-muted/60 text-left text-xs text-muted-foreground">
+        <thead class="bg-muted/45 text-left text-xs text-muted-foreground">
           <tr>
             <th v-if="showSelect" class="p-3">
               <input
@@ -16,13 +16,13 @@
             <th
               v-for="header in headers"
               :key="header.key"
-              class="px-3 py-3 font-semibold"
+              class="px-3 py-3 font-medium whitespace-nowrap"
               :aria-sort="sortKey === header.key ? (descending ? 'descending' : 'ascending') : undefined"
             >
               <button
                 v-if="header.sortable !== false && !server"
                 type="button"
-                class="inline-flex items-center gap-1"
+                class="inline-flex items-center gap-1.5 rounded-badge text-inherit transition-colors hover:text-foreground"
                 @click="sort(header.key)"
               >
                 {{ header.title }}<span v-if="sortKey === header.key">{{ descending ? '↓' : '↑' }}</span></button
@@ -34,7 +34,8 @@
           <tr
             v-for="(item, index) in rows"
             :key="String(keyFor(item) ?? index)"
-            class="border-t border-border hover:bg-primary/5"
+            class="border-t border-border/70 transition-colors hover:bg-muted/30"
+            :class="showSelect && isSelected(item) ? 'bg-primary/5' : ''"
           >
             <td v-if="showSelect" class="p-3">
               <input
@@ -45,7 +46,7 @@
                 @change="selectOne(item, ($event.target as HTMLInputElement).checked)"
               />
             </td>
-            <td v-for="header in headers" :key="header.key" class="px-3 py-3 align-top">
+            <td v-for="header in headers" :key="header.key" class="px-3 py-3 align-top leading-6 tabular-nums">
               <slot :name="`item.${header.key}`" :item="item">{{ field(item, header.key) }}</slot>
             </td>
           </tr>
@@ -58,13 +59,13 @@
       </table>
     </div>
     <footer
-      class="flex flex-wrap items-center justify-end gap-4 border-t border-border px-3 py-2 text-sm text-muted-foreground"
+      class="flex flex-wrap items-center justify-end gap-x-4 gap-y-2 border-t border-border bg-muted/15 px-3 py-3 text-xs text-muted-foreground"
     >
       <span>共 {{ total }} 条</span
       ><label class="flex items-center gap-2"
         >每页<select
           :value="size"
-          class="rounded-control border border-input bg-card px-2 py-1"
+          class="field-surface min-h-8 border-border px-2 py-1 text-foreground outline-none"
           @change="changeSize(Number(($event.target as HTMLSelectElement).value))"
         >
           <option v-for="option in pageOptions" :key="option.value" :value="option.value">{{ option.title }}</option>

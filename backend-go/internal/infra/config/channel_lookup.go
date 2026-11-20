@@ -2,7 +2,7 @@ package config
 
 import "strings"
 
-// LocatedChannel 是按稳定 UUID 跨五类切片只读查到的渠道。
+// LocatedChannel 是按稳定 ID 跨渠道切片只读查到的渠道。
 // Kind 使用调度层的渠道类型字符串：messages / responses / gemini / chat / images。
 // Index 仍是该切片内的数组下标，仅供熔断查询等仍以 index 为键的旧接口使用。
 type LocatedChannel struct {

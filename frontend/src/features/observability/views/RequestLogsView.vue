@@ -703,17 +703,17 @@ onBeforeUnmount(() => {
 .request-logs-view {
   @apply flex flex-col gap-4;
   /* 视口高度减去顶栏与内容区上下内边距，表格在页面内滚动。 */
-  @apply [height:calc(100dvh_-_var(--app-header-height)_-_48px)] min-h-0 overflow-hidden;
+  @apply [height:calc(100dvh_-_var(--app-header-height)_-_var(--app-content-gap)_-_var(--app-content-gap))] min-h-0 overflow-hidden;
 }
 
 .request-logs-view > :deep(.page-header) { @apply shrink-0 mb-0; }
 
 .logs-toolbar {
-  @apply flex items-center justify-start gap-4 p-0 shrink-0 [border-bottom:1px_solid_color-mix(in_srgb,_var(--outline)_24%,_transparent)];
+  @apply flex items-center justify-start gap-4 p-0 shrink-0;
 }
 
 .logs-actions {
-  @apply flex items-center gap-2.5 flex-wrap justify-start p-4 [background:var(--surface)] [border:1px_solid_color-mix(in_srgb,_var(--outline)_24%,_transparent)] rounded-control;
+  @apply flex items-center gap-3 flex-wrap justify-start p-4 bg-card border border-border rounded-card;
 }
 
 .logs-tabs {
@@ -763,7 +763,7 @@ onBeforeUnmount(() => {
 .request-tab-panel .logs-actions { @apply shrink-0; }
 
 .request-logs-table :deep(th) {
-  @apply [font-size:12px] font-bold text-foreground [background:color-mix(in_srgb,_var(--primary)_8%,_transparent)] whitespace-nowrap;
+  @apply text-xs font-medium text-muted-foreground bg-muted/45 whitespace-nowrap;
 }
 
 .request-logs-table :deep(td) {
@@ -789,7 +789,7 @@ onBeforeUnmount(() => {
 
 @media (max-width: 600px) {
   .request-logs-view {
-    @apply [height:calc(100dvh_-_var(--app-header-height)_-_32px)] min-h-120;
+    @apply min-h-120;
   }
   .date-preset-select, .type-filter-select { @apply [flex:1_1_140px]; }
 }

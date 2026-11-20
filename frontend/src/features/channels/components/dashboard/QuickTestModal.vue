@@ -1,112 +1,105 @@
 <template>
   <AppDialog :model-value="isOpen" title="快捷测试" size="lg" @update:model-value="value => { if (!value) close() }">
     <template #header-actions>
-      <UiBadge v-if="channel" size="small" color="primary" variant="tonal">
+      <span v-if="channel" class="max-w-36 truncate rounded-badge bg-muted px-2.5 py-1 text-xs text-muted-foreground sm:max-w-72" :title="channel.name">
         {{ channel.name }}
-      </UiBadge>
+      </span>
     </template>
 
-    <!-- 模型选择 -->
-    <UiSelect
-v-model="selectedModel" searchable
-      creatable
-      :items="modelOptions"
-      item-title="title"
-      item-value="value"
-      :return-object="false"
-      label="模型"
-      variant="outlined"
-      prepend-inner-icon="mdi-robot"
-      density="comfortable"
-      class="mb-4"
-      :disabled="isSending"
-      :loading="isLoadingModels"
-      clearable
-    >
-      <template #no-data>
-        <div class="text-center p-4 text-muted-foreground">
-          <template v-if="isLoadingModels">正在从上游获取模型列表...</template>
-          <template v-else-if="modelLoadError">暂时无法显示模型列表，仍可直接输入模型名称</template>
-          <template v-else>未找到匹配模型，可直接输入模型名称</template>
+    <div class="space-y-5">
+      <div v-if="supportsFingerprint" class="grid grid-cols-2 gap-1 rounded-control bg-muted/70 p-1" role="group" aria-label="测试方式">
+        <button
+          v-for="mode in testModes"
+          :key="mode.value"
+          type="button"
+          class="flex min-h-10 items-center justify-center gap-2 rounded-control px-3 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50"
+          :class="testMode === mode.value ? 'bg-card text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground'"
+          :aria-pressed="testMode === mode.value"
+          :disabled="isSending || fingerprintBusy"
+          @click="testMode = mode.value"
+        >
+          <UiIcon :icon="mode.icon" :size="17" />
+          {{ mode.label }}
+        </button>
+      </div>
+
+      <div class="grid gap-4" :class="supportsFingerprint ? 'sm:grid-cols-[minmax(0,1fr)_12rem]' : ''">
+        <UiSelect
+          v-model="selectedModel"
+          searchable
+          creatable
+          :items="modelOptions"
+          item-title="title"
+          item-value="value"
+          :return-object="false"
+          label="模型"
+          placeholder="选择或输入模型名称"
+          prepend-inner-icon="mdi-robot-outline"
+          :disabled="isSending || fingerprintBusy"
+          :loading="isLoadingModels"
+          clearable
+        >
+          <template #no-data>
+            <div class="p-4 text-center text-sm text-muted-foreground">
+              <template v-if="isLoadingModels">正在获取模型列表…</template>
+              <template v-else>可直接输入模型名称</template>
+            </div>
+          </template>
+        </UiSelect>
+        <UiSelect
+          v-if="supportsFingerprint"
+          v-model="selectedThinking"
+          :items="thinkingOptions"
+          label="思考档位"
+          prepend-inner-icon="mdi-brain"
+          :disabled="isSending || fingerprintBusy"
+        />
+      </div>
+
+      <div v-if="modelLoadError" class="flex items-start gap-2 rounded-control border border-warning/20 bg-warning/5 px-3 py-2 text-xs text-warning" role="alert">
+        <UiIcon icon="mdi-alert-circle-outline" :size="16" class="mt-0.5 shrink-0" />
+        <span class="min-w-0 flex-1 break-words leading-6">{{ modelLoadError }}</span>
+        <UiButton size="x-small" variant="text" color="warning" :loading="isLoadingModels" :disabled="isSending || fingerprintBusy" @click="loadModels">重新获取</UiButton>
+      </div>
+
+      <ModelFingerprintPanel
+        v-if="isOpen && testMode === 'fingerprint' && channel"
+        :key="channel.id"
+        :channel="channel"
+        :model="selectedModel"
+        :effort="selectedThinking"
+        @busy="fingerprintBusy = $event"
+        @target="restoreFingerprintTarget"
+        @background="close"
+      />
+
+      <template v-else>
+        <UiTextarea v-model="testMessage" label="测试消息" rows="3" :disabled="isSending" placeholder="输入测试消息…" />
+        <div class="flex justify-end">
+          <UiButton color="primary" prepend-icon="mdi-send" :disabled="!canSend" :loading="isSending" @click="sendTest">发送测试</UiButton>
         </div>
+        <section v-if="responseText || responseError || isSending" class="overflow-hidden rounded-card border border-border" aria-label="响应结果">
+          <header class="flex items-center justify-between gap-3 border-b border-border bg-muted/40 px-4 py-3">
+            <span class="flex items-center gap-2 text-sm font-medium"><UiIcon icon="mdi-message-reply-text" :size="17" />响应结果</span>
+            <span class="text-xs" :class="responseError ? 'text-destructive' : isSending ? 'text-primary' : 'text-success'" role="status">{{ responseError ? '请求失败' : isSending ? '正在接收…' : '已完成' }}</span>
+          </header>
+          <div class="max-h-80 overflow-y-auto p-4">
+            <div v-if="responseError" class="flex items-start gap-2 rounded-control bg-destructive/5 p-3 text-sm text-destructive" role="alert">
+              <UiIcon icon="mdi-alert-circle-outline" :size="18" class="mt-0.5 shrink-0" />
+              <span class="min-w-0 whitespace-pre-wrap break-words">{{ responseError }}</span>
+            </div>
+            <div v-else-if="isSending && !responseText" class="flex items-center justify-center gap-3 py-6 text-sm text-muted-foreground">
+              <UiSpinner indeterminate size="20" />等待模型回答…
+            </div>
+            <div v-else class="whitespace-pre-wrap break-words text-sm leading-7">{{ responseText }}</div>
+          </div>
+        </section>
       </template>
-    </UiSelect>
-
-    <div v-if="modelLoadError" class="model-load-error mb-4" role="alert">
-      <span>{{ modelLoadError }}</span>
-      <UiButton
-        size="small"
-        variant="text"
-        color="warning"
-        :loading="isLoadingModels"
-        :disabled="isSending"
-        @click="loadModels"
-      >
-        重新获取
-      </UiButton>
     </div>
-
-    <UiSelect
-      v-model="selectedThinking"
-      :items="thinkingOptions"
-      label="思考档位"
-      variant="outlined"
-      density="comfortable"
-      class="mb-4"
-      :disabled="isSending"
-    />
-
-    <!-- 测试输入 -->
-    <UiTextarea
-      v-model="testMessage"
-      label="测试消息"
-      variant="outlined"
-      rows="3"
-      :disabled="isSending"
-      :loading="isSending"
-      placeholder="输入测试消息..."
-      class="mb-4"
-    />
-
-    <!-- 发送按钮 -->
-    <div class="flex justify-end mb-4">
-      <UiButton
-        color="success"
-        prepend-icon="mdi-send"
-        :disabled="!canSend"
-        :loading="isSending"
-        @click="sendTest"
-      >
-        发送测试
-      </UiButton>
-    </div>
-
-    <!-- 响应结果 -->
-    <UiCard v-if="responseText || responseError || isSending" variant="outlined" class="response-area">
-      <div class="ui-card-title px-4 pt-4 text-base font-semibold text-sm font-medium p-3 bg-card">
-        <UiIcon size="small" class="mr-2">mdi-message-reply-text</UiIcon>
-        响应结果
-      </div>
-      <hr class="border-0 border-t border-border" />
-      <div class="p-4 p-4" style="max-height: 300px; overflow-y: auto;">
-        <div v-if="responseError" class="error-message" role="alert">
-          <UiIcon color="error" class="mr-2">mdi-alert-circle</UiIcon>
-          <span class="text-destructive">{{ responseError }}</span>
-        </div>
-        <div v-else-if="isSending && !responseText" class="text-center text-muted-foreground py-4">
-          <UiSpinner indeterminate size="32" />
-          <div class="mt-2">正在发送请求...</div>
-        </div>
-        <div v-else class="response-text">{{ responseText }}</div>
-      </div>
-    </UiCard>
   </AppDialog>
 </template>
-
 <script setup lang="ts">
 import UiButton from '@/shared/ui/button/Button.vue'
-import UiCard from '@/shared/ui/card/Card.vue'
-import UiBadge from '@/shared/ui/feedback/Badge.vue'
 import UiSpinner from '@/shared/ui/feedback/Spinner.vue'
 import UiTextarea from '@/shared/ui/field/Textarea.vue'
 import UiIcon from '@/shared/ui/icon/Icon.vue'
@@ -116,6 +109,8 @@ import type { Channel } from '@/api'
 import { api, testChannelWithModel } from '@/api'
 import type { ApiTab } from '@/features/channels/services/channel-api'
 import AppDialog from '@/shared/components/overlay/AppDialog.vue'
+import ModelFingerprintPanel from '@/features/channels/components/dashboard/ModelFingerprintPanel.vue'
+import type { FingerprintTask } from '@/types/model-fingerprint'
 
 const props = defineProps<{
   modelValue: boolean
@@ -133,6 +128,13 @@ const isOpen = computed({
 })
 
 const modelOptions = ref<Array<{ title: string; value: string }>>([])
+const testModes = [
+  { value: 'message', label: '消息测试', icon: 'mdi-chat-outline' },
+  { value: 'fingerprint', label: '模型指纹', icon: 'mdi-chart-box-outline' }
+] as const
+const testMode = ref<'message' | 'fingerprint'>('message')
+const fingerprintBusy = ref(false)
+const supportsFingerprint = computed(() => !props.channel?.builtinProvider && ['messages', 'responses', 'chat', 'gemini'].includes(props.apiType))
 const selectedModel = ref<string | null>(null)
 const isLoadingModels = ref(false)
 const modelLoadError = ref('')
@@ -144,7 +146,12 @@ const responseError = ref<string | null>(null)
 let modelLoadRequestId = 0
 
 const thinkingOptions = computed(() => [
-  { title: '使用协议默认值', value: '' }
+  { title: '使用模型默认值', value: '' },
+  { title: '关闭思考（none）', value: 'none' },
+  { title: 'low', value: 'low' },
+  { title: 'high', value: 'high' },
+  { title: 'xhigh', value: 'xhigh' },
+  { title: 'max', value: 'max' }
 ])
 
 const canSend = computed(() => {
@@ -154,6 +161,11 @@ const canSend = computed(() => {
 const close = () => {
   modelLoadRequestId++
   isOpen.value = false
+}
+
+function restoreFingerprintTarget(target: FingerprintTask['target']) {
+  selectedModel.value = target.model
+  selectedThinking.value = target.effort
 }
 
 const loadModels = async () => {
@@ -237,8 +249,10 @@ const sendTest = async () => {
 }
 
 // 监听弹窗打开或渠道切换，自动加载对应渠道的模型。
-watch([() => props.modelValue, () => props.channel?.id], ([newVal]) => {
+watch([() => props.modelValue, () => props.channel?.id], ([newVal, channelId], [, previousChannelId]) => {
   if (newVal && props.channel) {
+    if (channelId !== previousChannelId || !supportsFingerprint.value) testMode.value = 'message'
+    fingerprintBusy.value = false
     // 重置状态
     modelLoadRequestId++
     responseText.value = ''
@@ -257,31 +271,3 @@ watch([() => props.modelValue, () => props.channel?.id], ([newVal]) => {
   }
 })
 </script>
-
-<style scoped>
-@reference "@/styles/index.css";
-
-.response-area {
-  @apply [border:1px_solid_color-mix(in_srgb,_var(--outline)_20%,_transparent)];
-}
-
-.response-text {
-  @apply whitespace-pre-wrap [word-break:break-word] [font-family:'Consolas',_'Monaco',_monospace] [font-size:14px] [line-height:1.6];
-}
-
-.error-message {
-  @apply flex items-center text-destructive p-3 [background:color-mix(in_srgb,_var(--destructive)_10%,_transparent)] rounded-control;
-}
-
-.model-load-error {
-  @apply flex flex-wrap items-center justify-between gap-3 [margin-top:-8px] [padding:8px_12px] text-warning [background:color-mix(in_srgb,_var(--warning)_8%,_transparent)] [border:1px_solid_color-mix(in_srgb,_var(--warning)_24%,_transparent)] rounded-badge [font-size:0.75rem] [line-height:1.5] [word-break:break-word];
-}
-
-.model-load-error span {
-  @apply [flex:1_1_320px] min-w-0;
-}
-
-.model-load-error .ui-button {
-  @apply [flex:0_0_auto] ml-auto;
-}
-</style>

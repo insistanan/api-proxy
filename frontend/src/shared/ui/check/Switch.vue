@@ -4,10 +4,10 @@
       :model-value="on"
       :aria-label="($attrs['aria-label'] as string) || label"
       :disabled="disabled || loading"
-      class="relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent bg-muted transition-colors data-[state=checked]:bg-primary"
+      class="relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent bg-input transition-colors disabled:cursor-not-allowed data-[state=checked]:bg-primary"
       @update:model-value="update"
       ><SwitchThumb
-        class="pointer-events-none block size-5 translate-x-0 rounded-full bg-popover shadow-sm transition-transform data-[state=checked]:translate-x-5" /></SwitchRoot
+        class="pointer-events-none block size-5 translate-x-0 rounded-full bg-switch-thumb shadow-sm transition-transform data-[state=checked]:translate-x-5 data-[state=checked]:bg-primary-foreground" /></SwitchRoot
     ><span v-if="label">{{ label }}</span
     ><span v-if="persistentHint && hint" class="text-xs text-muted-foreground">{{ hint }}</span></label
   >

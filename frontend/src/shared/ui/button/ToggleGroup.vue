@@ -1,5 +1,5 @@
 <template>
-  <div role="group" class="ui-toggle-group inline-flex flex-wrap gap-1 rounded-control border border-border p-1">
+  <div role="group" class="ui-toggle-group inline-flex max-w-full flex-wrap gap-1 rounded-control border border-border bg-muted/40 p-1">
     <slot></slot>
   </div>
 </template>

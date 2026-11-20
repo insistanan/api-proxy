@@ -1,19 +1,19 @@
 <template>
-  <nav class="flex items-center justify-center gap-2 py-3" :aria-label="($attrs['aria-label'] as string) || '分页'">
+  <nav class="flex max-w-full flex-wrap items-center justify-center gap-2 py-1" :aria-label="($attrs['aria-label'] as string) || '分页'">
     <button
       type="button"
       :disabled="disabled || current <= 1"
       aria-label="上一页"
-      class="rounded-control border border-border px-3 py-1.5 disabled:opacity-40"
+      class="min-h-8 rounded-control border border-border bg-popover px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-40"
       @click="emit('update:modelValue', current - 1)"
     >
       上一页</button
-    ><span class="text-sm tabular-nums">{{ current }} / {{ Math.max(1, Number(length)) }}</span
+    ><span class="min-w-12 text-center text-xs tabular-nums text-muted-foreground">{{ current }} / {{ Math.max(1, Number(length)) }}</span
     ><button
       type="button"
       :disabled="disabled || current >= Number(length)"
       aria-label="下一页"
-      class="rounded-control border border-border px-3 py-1.5 disabled:opacity-40"
+      class="min-h-8 rounded-control border border-border bg-popover px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-40"
       @click="emit('update:modelValue', current + 1)"
     >
       下一页

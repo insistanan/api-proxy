@@ -24,7 +24,7 @@
       </div>
     </DisclosureSection>
 
-    <div class="grid grid-cols-12 gap-4 mb-1">
+    <div class="grid grid-cols-12 gap-4 mb-4 rounded-card border border-border bg-card p-4">
       <div class="min-w-0 col-span-12 md:col-span-7"  >
         <UiInput v-model.trim="query" density="comfortable" variant="outlined" prepend-inner-icon="mdi-magnify" label="搜索名称、描述或来源" hide-details />
       </div>
@@ -794,11 +794,11 @@ onMounted(loadSkills)
 .location-chip, .source-chip { @apply cursor-pointer; }
 .location-chip:hover, .source-chip:hover { @apply [filter:brightness(0.96)]; }
 .location-chip--active, .source-chip--active { @apply [outline:2px_solid_var(--primary)] [outline-offset:1px]; }
-.skills-list-card { @apply [border:1px_solid_color-mix(in_srgb,_var(--foreground)_12%,_transparent)] overflow-x-auto; }
+.skills-list-card { @apply overflow-hidden; }
 .skills-pagination { @apply flex items-center justify-between flex-wrap gap-3 [padding:12px_16px] [border-top:1px_solid_color-mix(in_srgb,_var(--outline)_20%,_transparent)]; }
 .skill-name-button { @apply [background:none] border-0 [color:inherit] cursor-pointer [font:inherit] p-0 text-left no-underline; }
 .skill-name-button:hover { @apply text-primary underline; }
-.skill-description { @apply max-w-110 whitespace-nowrap overflow-hidden text-ellipsis; }
+.skill-description { @apply max-w-110 mt-1 line-clamp-2 whitespace-normal leading-5; }
 .agent-toggles-cell { @apply min-w-60; }
 .agent-toggle-chip { @apply cursor-pointer; }
 .skill-path-cell { @apply items-center flex gap-0.5 min-w-0; }

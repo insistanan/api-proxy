@@ -81,10 +81,10 @@ onUnmounted(() => resizeObserver?.disconnect())
 .nav-viewport::-webkit-scrollbar { @apply hidden; }
 .nav-track { @apply flex items-center [width:max-content] [padding:5px]; }
 .nav-group { @apply flex items-center gap-0.5 shrink-0; }
-.nav-group + .nav-group { @apply ml-2.5 pl-2.5 [border-left:1px_solid_color-mix(in_srgb,_var(--outline)_24%,_transparent)]; }
-.nav-link { @apply flex items-center min-h-8.5 [padding:6px_9px] rounded-control text-muted-foreground [font-size:0.8125rem] font-semibold [line-height:1.5] whitespace-nowrap no-underline [transition:color_160ms_ease,_background_160ms_ease]; }
+.nav-group + .nav-group { @apply ml-2 pl-2 border-l border-border/70; }
+.nav-link { @apply flex items-center min-h-8.5 [padding:6px_9px] rounded-control text-muted-foreground text-[13px] font-medium leading-6 whitespace-nowrap no-underline transition-colors; }
 .nav-link:hover { @apply text-foreground [background:color-mix(in_srgb,_var(--foreground)_5%,_transparent)]; }
-.nav-link.is-active { @apply text-primary [background:color-mix(in_srgb,_var(--primary)_12%,_transparent)] [box-shadow:inset_0_0_0_1px_color-mix(in_srgb,_var(--primary)_20%,_transparent)]; }
+.nav-link.is-active { @apply text-primary font-semibold bg-primary/10; }
 .nav-scroll { @apply grid [place-items:center] shrink-0 w-8 h-9 rounded-control text-foreground [background:color-mix(in_srgb,_var(--foreground)_5%,_transparent)]; }
 .nav-scroll:hover:not(:disabled) { @apply text-primary [background:color-mix(in_srgb,_var(--primary)_10%,_transparent)]; }
 .nav-scroll:disabled { @apply opacity-30 cursor-default; }

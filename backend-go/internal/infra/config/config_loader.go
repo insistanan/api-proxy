@@ -130,9 +130,6 @@ func (cm *ConfigManager) prepareCandidate(data []byte) (Config, bool, error) {
 		return Config{}, false, fmt.Errorf("迁移全局设置失败: %w", err)
 	}
 	needMigration := migrateOldFormatIn(&candidate)
-	if needMigration {
-		log.Printf("[Config-Migration] 检测到旧格式配置，正在迁移到新格式...")
-	}
 	needNormalization := normalizeChannelListsIn(&candidate)
 	if clearUnsupportedClientIdentityIn(&candidate) {
 		needNormalization = true
@@ -230,7 +227,6 @@ func applyConfigDefaultsTo(candidate *Config, rawJSON []byte) (bool, error) {
 	if len(fields.FuzzyModeEnabled) == 0 {
 		candidate.FuzzyModeEnabled = true
 		needSave = true
-		log.Printf("[Config-Migration] FuzzyModeEnabled 字段不存在，设为默认值 true")
 	}
 	for index := range candidate.ResponsesUpstream {
 		if index >= len(fields.ResponsesUpstream) {
@@ -249,23 +245,19 @@ func applyConfigDefaultsTo(candidate *Config, rawJSON []byte) (bool, error) {
 			candidate.ResponsesUpstream[index].VisionLayerChannelID = ""
 			candidate.ResponsesUpstream[index].VisionLayerModel = ""
 			needSave = true
-			log.Printf("[Config-Migration] Responses 渠道 [%d] 默认启用图片理解", index)
 		}
 	}
 	if len(fields.Settings.ContentSafety) == 0 {
 		candidate.Settings.ContentSafety = DefaultContentSafetyConfig()
 		needSave = true
-		log.Printf("[Config-Migration] Settings.ContentSafety 字段不存在，已写入默认配置")
 	} else if migrateContentSafetyConfig(&candidate.Settings.ContentSafety, fields.Settings.ContentSafety) {
 		needSave = true
-		log.Printf("[Config-Migration] 内容安全配置已迁移到分离的 PII/凭据策略")
 	}
 	// 旧版代理地址非空即生效，仅在缺少开关时保持这个行为。
 	if _, hasEnabled := fields.Settings.Network["upstreamProxyEnabled"]; !hasEnabled &&
 		strings.TrimSpace(candidate.Settings.Network.UpstreamProxyURL) != "" {
 		candidate.Settings.Network.UpstreamProxyEnabled = true
 		needSave = true
-		log.Printf("[Config-Migration] 旧版全局代理配置缺少启用开关，按已启用迁移")
 	}
 
 	for _, set := range candidate.channelSets() {
@@ -426,7 +418,7 @@ func migrateOldFormatIn(candidate *Config) bool {
 		case "responses":
 			current = candidate.CurrentResponsesUpstream
 		}
-		changed = migrateUpstreamsList(*set.upstreams, current, set.name) || changed
+		changed = migrateUpstreamsList(*set.upstreams, current) || changed
 	}
 	return changed
 }
@@ -458,7 +450,6 @@ func clearUnsupportedClientIdentityIn(candidate *Config) bool {
 		for index := range *set.upstreams {
 			upstream := &(*set.upstreams)[index]
 			if upstream.ClientIdentityMode != "" {
-				log.Printf("[Config-Migration] 渠道 %q 所属协议不支持客户端伪装，已清除身份模式设置", upstream.Name)
 				upstream.ClientIdentityMode = ""
 				changed = true
 			}
@@ -468,7 +459,7 @@ func clearUnsupportedClientIdentityIn(candidate *Config) bool {
 }
 
 // migrateUpstreamsList 迁移单个渠道列表
-func migrateUpstreamsList(upstreams []UpstreamConfig, currentIdx int, name string) bool {
+func migrateUpstreamsList(upstreams []UpstreamConfig, currentIdx int) bool {
 	if len(upstreams) == 0 {
 		return false
 	}
@@ -492,9 +483,6 @@ func migrateUpstreamsList(upstreams []UpstreamConfig, currentIdx int, name strin
 			upstreams[i].Status = "disabled"
 		}
 	}
-
-	log.Printf("[Config-Migration] %s 渠道 [%d] %s 已设置为 active，其他 %d 个渠道已设为 disabled",
-		name, currentIdx, upstreams[currentIdx].Name, len(upstreams)-1)
 
 	return true
 }

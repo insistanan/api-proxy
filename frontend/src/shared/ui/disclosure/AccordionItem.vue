@@ -6,7 +6,7 @@
   >
     <summary
       v-if="title || $slots.title"
-      class="flex cursor-pointer list-none items-center justify-between gap-3 p-4 text-sm font-semibold"
+      class="flex cursor-pointer list-none items-center justify-between gap-3 rounded-card p-4 text-sm font-semibold transition-colors hover:bg-muted/35 group-open:rounded-b-none group-open:bg-muted/25"
     >
       <span
         ><slot name="title">{{ title }}</slot></span

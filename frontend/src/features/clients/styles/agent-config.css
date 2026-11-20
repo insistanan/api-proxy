@@ -19,7 +19,7 @@
 }
 
 .agent-config-location {
-  @apply mb-5;
+  @apply mb-3;
 }
 
 .agent-config-location :is(.ui-alert-content, .agent-config-location__content) {
@@ -31,7 +31,7 @@
 }
 
 .agent-config-location__label {
-  @apply text-info [font-weight:650];
+  @apply text-muted-foreground font-medium;
 }
 
 .agent-config-location code {
@@ -43,7 +43,7 @@
 .agent-config-page .provider-editor-card,
 .agent-config-page .settings-card,
 .agent-config-page .empty-editor {
-  @apply overflow-hidden [border-color:color-mix(in_srgb,_var(--outline)_24%,_transparent)]!;
+  @apply overflow-hidden border-border!;
 }
 
 .agent-config-page .provider-list-card {
@@ -51,31 +51,31 @@
 }
 
 .agent-config-page .provider-list-card .ui-list-item {
-  @apply min-h-14.5 [margin:2px_8px];
+  @apply min-h-13 mx-2 my-1 w-auto;
 }
 
 .agent-config-page .provider-list-card [data-active=true] {
-  @apply [border:1px_solid_color-mix(in_srgb,_var(--primary)_28%,_transparent)];
+  @apply bg-primary/10 text-primary;
 }
 
 .agent-config-panel-header {
-  @apply flex items-center justify-between gap-4 min-h-17 [padding:14px_20px];
+  @apply flex flex-wrap items-center justify-between gap-3 min-h-15 px-5 py-3.5 bg-muted/20;
 }
 
 .agent-config-panel-title {
-  @apply [color:color-mix(in_srgb,_var(--foreground)_92%,_transparent)] [font-size:1rem] [font-weight:750] [line-height:1.35];
+  @apply text-foreground text-sm font-semibold leading-6;
 }
 
 .agent-config-panel-subtitle {
-  @apply [margin-top:3px] [color:color-mix(in_srgb,_var(--foreground)_58%,_transparent)] [font-size:0.75rem] [line-height:1.4];
+  @apply mt-1 text-muted-foreground text-xs leading-5;
 }
 
 .agent-config-callout {
-  @apply [padding:14px_16px_16px] [background:color-mix(in_srgb,_var(--primary)_7%,_transparent)] [border:1px_solid_color-mix(in_srgb,_var(--primary)_30%,_transparent)] [border-radius:var(--radius-control)_var(--radius-badge)_var(--radius-control)_var(--radius-badge)];
+  @apply p-4 bg-primary/5 border border-primary/15 rounded-control;
 }
 
 .agent-config-callout__title {
-  @apply flex items-center gap-2 mb-3 text-primary [font-size:0.875rem] [font-weight:750];
+  @apply flex items-center gap-2 mb-3 text-primary text-sm font-semibold;
 }
 
 .agent-config-page .empty-editor {
@@ -87,11 +87,11 @@
 }
 
 .agent-config-tabs {
-  @apply mb-5 [border-bottom:1px_solid_color-mix(in_srgb,_var(--outline)_24%,_transparent)];
+  @apply mb-5;
 }
 
 .agent-config-tabs [role=tab] {
-  @apply min-h-12 font-bold;
+  @apply min-h-10 font-medium;
 }
 
 /* 侧栏占用的宽度也计入断点，避免窗口较宽但编辑区仍然拥挤。 */

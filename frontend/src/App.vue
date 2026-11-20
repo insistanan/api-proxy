@@ -92,7 +92,7 @@
     </AppHeader>
 
     <main id="main-content" class="relative min-w-0" tabindex="-1">
-      <div class="mx-auto w-full max-w-[1680px] p-4 pb-20 md:p-6 md:pb-20">
+      <div class="mx-auto w-full max-w-[1680px] px-4 pt-(--app-content-gap) pb-20 [--app-content-gap:20px] md:px-6 md:[--app-content-gap:28px] xl:px-8">
         <!-- 认证后直接挂载目标页面，让懒加载与首屏请求立即开始。 -->
         <router-view v-if="isAuthenticated" v-slot="{ Component }">
           <div :key="route.path" class="motion-safe:animate-app-page">

@@ -4,7 +4,8 @@
       >{{ label }}<span v-if="required" class="ml-1 text-destructive">*</span></label
     >
     <div
-      class="ui-field flex min-h-10 items-center gap-2 rounded-control border bg-card px-3 transition-colors focus-within:border-ring"
+      class="ui-field field-surface flex min-h-10 items-center gap-2 px-3"
+      :data-disabled="disabled || undefined"
       :class="message || error ? 'border-destructive' : 'border-input'"
     >
       <Icon v-if="prependInnerIcon" :icon="prependInnerIcon" :size="16" class="text-muted-foreground" />
@@ -17,7 +18,7 @@
         :required="required"
         :aria-invalid="!!message || !!error"
         :aria-describedby="message || hint ? `${id}-message` : undefined"
-        class="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none! disabled:opacity-50"
+        class="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none! placeholder:text-muted-foreground/70 disabled:cursor-not-allowed"
         @input="input"
         @blur="validate"
       />

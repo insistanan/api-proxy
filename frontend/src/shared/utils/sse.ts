@@ -4,7 +4,7 @@
 export async function readSSEStream<T>(
   response: Response,
   onData: (data: T) => void,
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal; strict?: boolean; stopWhen?: (_data: T) => boolean }
 ): Promise<void> {
   if (!response.body) {
     throw new Error('Response body is null')
@@ -13,6 +13,22 @@ export async function readSSEStream<T>(
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  const processLine = (line: string): boolean => {
+    const trimmed = line.trim()
+    if (!trimmed.startsWith('data:')) return false
+    const data = trimmed.slice(5).trim()
+    if (data === '[DONE]') return true
+    let parsed: T
+    try {
+      parsed = JSON.parse(data) as T
+    } catch (cause) {
+      if (options?.strict) throw cause
+      return false
+    }
+    // 回调中的业务错误不能被误当成 JSON 解析失败而吞掉。
+    onData(parsed)
+    return options?.stopWhen?.(parsed) ?? false
+  }
 
   try {
     while (true) {
@@ -26,24 +42,15 @@ export async function readSSEStream<T>(
       const lines = buffer.split('\n')
       buffer = lines.pop() ?? ''
 
-      for (const line of lines) {
-        const trimmed = line.trim()
-        if (!trimmed || trimmed.startsWith(':')) continue // 跳过注释行
-
-        if (trimmed.startsWith('data: ')) {
-          const data = trimmed.slice(6)
-          if (data === '[DONE]') return
-
-          try {
-            const parsed = JSON.parse(data) as T
-            onData(parsed)
-          } catch {
-            // 跳过无法解析的行
-          }
-        }
-      }
+      for (const line of lines) if (processLine(line)) return
     }
+    buffer += decoder.decode()
+    if (buffer.trim()) processLine(buffer)
   } finally {
-    reader.releaseLock()
+    try {
+      if (options?.strict) await reader.cancel()
+    } finally {
+      reader.releaseLock()
+    }
   }
 }

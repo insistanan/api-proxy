@@ -24,6 +24,34 @@ var channelAdminKinds = []scheduler.ChannelKind{
 	scheduler.ChannelKindChat, scheduler.ChannelKindImages, scheduler.ChannelKindEmbeddings, scheduler.ChannelKindDecisions,
 }
 
+func TestFingerprintRouteRequiresAdminAndStableChannel(t *testing.T) {
+	r, a := newChannelAdminTestRouter(t)
+	for _, endpoint := range []struct{ method, path string }{
+		{http.MethodGet, "/api/channels/missing/fingerprint"},
+		{http.MethodDelete, "/api/channels/missing/fingerprint/task-id"},
+		{http.MethodPost, "/api/channels/missing/fingerprint/task-id/samples/1/retry"},
+		{http.MethodPost, "/api/channels/missing/fingerprint/task-id/retry"},
+	} {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(endpoint.method, endpoint.path, nil))
+		require.Equal(t, http.StatusUnauthorized, w.Code, endpoint.path)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/channels/missing/fingerprint", strings.NewReader(`{"model":"requested"}`))
+	request.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, request)
+	require.Equal(t, http.StatusUnauthorized, w.Code)
+	w = channelAdminRequest(t, r, http.MethodPost, "/api/channels/missing/fingerprint", `{"model":"requested"}`, http.StatusBadRequest)
+	require.Contains(t, w.Body.String(), "渠道不存在")
+	added, err := a.cfgManager.AddUpstreamWithResult(config.UpstreamConfig{
+		Name: "指纹查询测试", ServiceType: "claude", BaseURL: "https://example.invalid", APIKeys: []string{"fixture-key"},
+	})
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(added.ID, "ch_"))
+	w = channelAdminRequest(t, r, http.MethodGet, "/api/channels/"+added.ID+"/fingerprint", "", http.StatusOK)
+	require.Equal(t, "null", w.Body.String(), "新渠道应返回无记录，不能误报渠道 ID 无效")
+}
+
 func TestModelCatalogRoutesCoexistWithProxyEndpoints(t *testing.T) {
 	r, a := newChannelAdminTestRouter(t)
 	a.envCfg = &config.EnvConfig{ProxyAccessKey: "test-admin"}
@@ -69,6 +97,7 @@ func newChannelAdminTestRouter(t *testing.T) (*gin.Engine, *app) {
 	r := gin.New()
 	group := r.Group("/api", middleware.AdminAuthMiddleware(&config.EnvConfig{ProxyAccessKey: "test-admin"}))
 	a.setupChannelAdminAPI(group)
+	t.Cleanup(func() { require.NoError(t, a.shutdown()) })
 	return r, a
 }
 
@@ -114,7 +143,12 @@ func TestChannelAdminRouteContract(t *testing.T) {
 	}
 	// 公共图片理解池是四个会话协议共享的入口，独立于七个渠道前缀。
 	require.True(t, actual["GET /api/vision-channels"])
-	require.Len(t, actual, len(common)*len(channelAdminKinds)+2)
+	require.True(t, actual["POST /api/channels/:id/fingerprint"])
+	require.True(t, actual["GET /api/channels/:id/fingerprint"])
+	require.True(t, actual["DELETE /api/channels/:id/fingerprint/:taskId"])
+	require.True(t, actual["POST /api/channels/:id/fingerprint/:taskId/samples/:sampleIndex/retry"])
+	require.True(t, actual["POST /api/channels/:id/fingerprint/:taskId/retry"])
+	require.Len(t, actual, len(common)*len(channelAdminKinds)+7)
 }
 
 func TestChannelDeletionImpactRoutesAndCrossProtocolDetach(t *testing.T) {

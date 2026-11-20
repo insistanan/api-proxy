@@ -41,7 +41,7 @@
 }
 
 .blocked-logs-table :deep(th) {
-  @apply text-foreground [background:color-mix(in_srgb,_var(--primary)_7%,_transparent)] [font-size:12px] font-bold whitespace-nowrap;
+  @apply text-muted-foreground bg-muted/45 text-xs font-medium whitespace-nowrap;
 }
 
 .blocked-logs-table :deep(td) {

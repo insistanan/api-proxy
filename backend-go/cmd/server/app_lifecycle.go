@@ -17,7 +17,7 @@ import (
 	"github.com/insistanan/api-proxy/internal/storage/metrics"
 )
 
-// logStartupInfo 输出紧凑的启动摘要：地址、端点与构建信息一次展示。
+// logStartupInfo 输出紧凑的启动摘要：地址与构建信息一次展示。
 func (a *app) logStartupInfo() {
 	setConsoleTitle("API Proxy " + Version)
 	build := BuildTime
@@ -32,7 +32,6 @@ func (a *app) logStartupInfo() {
 	fmt.Printf("  管理台  http://localhost:%d\n", a.envCfg.Port)
 	fmt.Printf("  API     http://localhost:%d/v1\n", a.envCfg.Port)
 	fmt.Printf("  健康    http://localhost:%d/health\n", a.envCfg.Port)
-	fmt.Printf("  端点    Messages · Responses · Chat · Images · Gemini\n")
 	// 检查是否使用默认密码，给予提示
 	if a.envCfg.ProxyAccessKey == "your-proxy-access-key" {
 		fmt.Printf("  警告    访问密钥仍是默认值，建议在 .env 中修改\n")

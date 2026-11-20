@@ -110,8 +110,6 @@
       @save="handleSaveChannel"
     />
 
-    <!-- AI 配置助手只在渠道页提供。 -->
-    <AssistantWidget />
     <ConfirmDialog
       :model-value="pendingConfirm !== null"
       :message="pendingConfirm?.message ?? ''"
@@ -141,7 +139,6 @@ import DisclosureSection from '@/shared/components/layout/DisclosureSection.vue'
 import ChannelOrchestration from '@/features/channels/components/dashboard/ChannelOrchestration.vue'
 import ChannelTableDrawer from '@/features/channels/components/dashboard/ChannelTableDrawer.vue'
 import AddChannelModal from '@/features/channels/components/form/AddChannelModal.vue'
-import { AssistantWidget } from '@/features/assistant'
 import IntentRoutingControl from '@/features/channels/components/routing/IntentRoutingControl.vue'
 import { isIntentProtocol } from '@/features/channels/services/intent'
 import { isConversationProtocol } from '@/features/channels/services/channel-api'

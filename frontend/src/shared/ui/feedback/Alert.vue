@@ -1,7 +1,7 @@
 <template>
   <div
     :role="role ?? (type === 'error' ? 'alert' : 'status')"
-    class="flex items-start gap-3 rounded-control border px-4 py-3 text-sm leading-6"
+    class="flex items-start gap-2.5 rounded-control border px-3.5 py-3 text-[13px] leading-6"
     :class="toneClass(type ?? 'info')"
   >
     <Icon
@@ -10,7 +10,7 @@
       :size="18"
       class="mt-0.5"
     />
-    <div class="ui-alert-content min-w-0 flex-1">
+    <div class="ui-alert-content min-w-0 flex-1 break-words">
       <strong v-if="title" class="block">{{ title }}</strong
       ><slot></slot>
     </div>

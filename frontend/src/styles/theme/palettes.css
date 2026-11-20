@@ -8,3 +8,121 @@
 [data-theme-mode='dark'][data-palette='forest'], [data-theme-mode='dark'] [data-palette='forest'] { --primary: #7bcea2; --primary-foreground: #0d2418; }
 [data-theme-mode='dark'][data-palette='sunset'], [data-theme-mode='dark'] [data-palette='sunset'] { --primary: #efad7d; --primary-foreground: #2e1a0a; }
 [data-theme-mode='dark'][data-palette='rose'], [data-theme-mode='dark'] [data-palette='rose'] { --primary: #efa1c5; --primary-foreground: #301123; }
+
+/* 跃色用莓紫、青柠与青绿建立撞色，功能状态仍沿用独立语义色。 */
+[data-palette='pop'] {
+  --primary: #a51c82;
+  --primary-foreground: #fff;
+  --palette-tint: 0%;
+  --canvas-neutral: #fbf5e8;
+  --panel-neutral: #fffdf7;
+  --background: #fbf5e8;
+  --surface: #fffdf7;
+  --foreground: #30213b;
+  --muted: #f1e8f2;
+  --muted-foreground: #705775;
+  --border: #bda6c4;
+  --outline: #765d80;
+  --input: #ad91b6;
+  --accent: #abc428;
+  --popover: #fffdf7;
+  --surface-variant: #f1e8f2;
+  --surface-bright: #fffdf7;
+  --chart-1: #a51c82;
+  --chart-2: #b56a16;
+  --chart-3: #188873;
+  --chart-4: #7958c4;
+  --chart-5: #c04b63;
+  --chart-6: #819c19;
+  --chart-7: #208ca0;
+  --chart-8: #ca663f;
+  --chart-9: #647d38;
+  --chart-10: #5a73c4;
+}
+[data-theme-mode='dark'][data-palette='pop'], [data-theme-mode='dark'] [data-palette='pop'] {
+  --primary: #f392df;
+  --primary-foreground: #34122f;
+  --canvas-neutral: #19131f;
+  --panel-neutral: #261d30;
+  --background: #19131f;
+  --surface: #261d30;
+  --foreground: #f8edf6;
+  --muted: #38283f;
+  --muted-foreground: #c6adc9;
+  --border: #6b4f75;
+  --outline: #aa81b4;
+  --input: #82628d;
+  --accent: #d8eb68;
+  --popover: #2c2136;
+  --surface-variant: #38283f;
+  --surface-bright: #3b2c44;
+  --chart-1: #f392df;
+  --chart-2: #f0be68;
+  --chart-3: #6bd5b6;
+  --chart-4: #bda0fa;
+  --chart-5: #f18caa;
+  --chart-6: #d8eb68;
+  --chart-7: #75cddc;
+  --chart-8: #f2ac86;
+  --chart-9: #accc7c;
+  --chart-10: #92b2f4;
+}
+
+/* 清岚使用低饱和青蓝与雾灰表面，减轻长时间阅读的视觉负担。 */
+[data-palette='breeze'] {
+  --primary: #1d6977;
+  --primary-foreground: #fff;
+  --palette-tint: 0%;
+  --canvas-neutral: #f1f6f6;
+  --panel-neutral: #fff;
+  --background: #f1f6f6;
+  --surface: #fff;
+  --foreground: #1f343b;
+  --muted: #eaf1f2;
+  --muted-foreground: #566d77;
+  --border: #d4e0e3;
+  --outline: #849ea7;
+  --input: #a8bec5;
+  --accent: #587482;
+  --popover: #fff;
+  --surface-variant: #eaf1f2;
+  --surface-bright: #fff;
+  --chart-1: #347d8d;
+  --chart-2: #aa8156;
+  --chart-3: #528c75;
+  --chart-4: #8276a5;
+  --chart-5: #a66f87;
+  --chart-6: #9a8b43;
+  --chart-7: #4a96a0;
+  --chart-8: #b8796c;
+  --chart-9: #7a915b;
+  --chart-10: #5f7fb0;
+}
+[data-theme-mode='dark'][data-palette='breeze'], [data-theme-mode='dark'] [data-palette='breeze'] {
+  --primary: #83c5cf;
+  --primary-foreground: #102b32;
+  --canvas-neutral: #10191e;
+  --panel-neutral: #17242b;
+  --background: #10191e;
+  --surface: #17242b;
+  --foreground: #e1edf0;
+  --muted: #203139;
+  --muted-foreground: #9bb3bd;
+  --border: #304650;
+  --outline: #708c98;
+  --input: #49646f;
+  --accent: #aac1c9;
+  --popover: #1b2a32;
+  --surface-variant: #203139;
+  --surface-bright: #293d46;
+  --chart-1: #83c5cf;
+  --chart-2: #caa37c;
+  --chart-3: #8cbaa2;
+  --chart-4: #b3a4d2;
+  --chart-5: #d0a0b7;
+  --chart-6: #c5b67e;
+  --chart-7: #80b9bd;
+  --chart-8: #d6a292;
+  --chart-9: #a8bd8d;
+  --chart-10: #96b5d9;
+}

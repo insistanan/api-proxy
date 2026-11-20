@@ -8,13 +8,13 @@
       @click="theme.update({ mode: theme.isDark ? 'light' : 'dark' })"
     />
     <Button
-      icon="mdi-eye-dropper"
       variant="text"
       size="small"
+      prepend-icon="mdi-eye-dropper"
       aria-label="外观主题"
       title="外观主题"
       @click="open = true"
-    />
+    ><span class="hidden sm:inline">主题</span></Button>
     <AppDialog v-model="open" title="外观主题"><ThemePanel /></AppDialog>
   </div>
 </template>

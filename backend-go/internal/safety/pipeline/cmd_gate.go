@@ -113,7 +113,7 @@ func (g *CmdGate) Enabled() bool {
 	return settings.Enabled && settings.AIGate.Enabled
 }
 
-// ChannelOptions 返回审批专用候选，不依赖 AI 助手的模型或渠道设置。
+// ChannelOptions 返回审批配置可选的渠道。
 func (g *CmdGate) ChannelOptions(ctx context.Context) ([]llmgate.ChannelOption, error) {
 	if g == nil || g.caller == nil {
 		return nil, fmt.Errorf("命令审批服务未装配")

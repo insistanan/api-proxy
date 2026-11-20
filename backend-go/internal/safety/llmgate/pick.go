@@ -1,4 +1,4 @@
-// Package llmgate 为代理内部功能（危险命令 AI 闸门、AI 配置助手）提供
+// Package llmgate 为代理内部功能（危险命令 AI 闸门、意图识别）提供
 // "选一个大模型渠道并发一段提示词" 的通用调用能力。
 //
 // 与 visionlayer（图片理解旁路）同形但不同域：
@@ -230,7 +230,7 @@ func canResolveInternalModel(model string, upstream *config.UpstreamConfig) bool
 	return ok
 }
 
-// internalCallModel 解析内部调用（AI 闸门 / AI 助手）实际发给上游的具体模型，
+// internalCallModel 解析内部调用（AI 闸门 / 意图识别）实际发给上游的具体模型，
 // 返回 (具体模型, 是否可解析)。解析优先级：
 //  1. 渠道 DefaultModel：显式默认，最权威，任何模式都用它；
 //  2. 调用方传入 model 非空：按渠道映射 / 透传解析（ResolveUpstreamModel）；

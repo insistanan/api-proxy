@@ -3,9 +3,10 @@
     >{{ label
     }}<input
       :disabled="disabled"
+      :data-disabled="disabled || undefined"
       :accept="accept"
       type="file"
-      class="mt-1 block w-full rounded-control border border-input bg-card p-2 text-sm file:mr-3 file:rounded-control file:border-0 file:bg-muted file:px-3 file:py-1 file:text-foreground"
+      class="field-surface mt-1 block w-full border-input p-2 text-sm outline-none file:mr-3 file:rounded-control file:border-0 file:bg-muted file:px-3 file:py-1 file:text-foreground"
       @change="change"
   /></label>
 </template>

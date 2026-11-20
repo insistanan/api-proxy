@@ -62,7 +62,7 @@
 
     <UiAlert v-if="loadError" type="error" variant="tonal" density="compact" class="mb-4">{{ loadError }}<span v-if="conversations.length">；下方保留上次成功加载的结果。</span></UiAlert>
 
-    <UiCard rounded="lg">
+    <section aria-label="对话列表">
       <UiDataTable
         v-model:page="page"
         v-model:items-per-page="pageSize"
@@ -183,7 +183,7 @@
           </div>
         </template>
       </UiDataTable>
-    </UiCard>
+    </section>
 
     <AppDialog v-model="routeDialog" title="设置固定渠道" size="md">
       <div class="mb-3 text-sm text-muted-foreground">

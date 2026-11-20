@@ -493,7 +493,7 @@ const deletePool = async () => {
 }
 .pool-card.is-default .pool-rule::before { @apply [content:'兜底_/_'] text-primary font-bold; }
 .pool-channel-list {
-  @apply p-1.5 flex flex-col [gap:5px] min-h-12;
+  @apply p-2.5 flex flex-col gap-2 min-h-12;
 }
 .pool-drag-item { @apply min-w-0; }
 /* 拖拽三态：拖起 / 落位占位 / 跟随指针。只改颜色与透明度，避免拖拽过程触发重排。 */

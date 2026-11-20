@@ -75,7 +75,8 @@ async function parseResponseBody(response: Response): Promise<unknown> {
   }
 }
 
-export async function apiRequest<T = unknown>(url: string, options: RequestInit = {}): Promise<T> {
+/** 管理接口的原始响应入口，流式请求也复用相同的鉴权和错误处理。 */
+export async function apiStreamRequest(url: string, options: RequestInit = {}): Promise<Response> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string>)
@@ -138,6 +139,11 @@ export async function apiRequest<T = unknown>(url: string, options: RequestInit 
     throw new ApiError(errorMessage, response.status, errorBody, errorCode, committed)
   }
 
+  return response
+}
+
+export async function apiRequest<T = unknown>(url: string, options: RequestInit = {}): Promise<T> {
+  const response = await apiStreamRequest(url, options)
   if (response.status === 204) return null as T
   return await parseResponseBody(response) as T
 }

@@ -4,8 +4,10 @@
     ><DropdownMenuPortal
       ><DropdownMenuContent
         :side-offset="5"
-        class="z-[200015] min-w-40 rounded-card border border-border bg-popover p-1 text-popover-foreground shadow-popover"
-        :style="maxWidth ? { maxWidth: `${maxWidth}px` } : undefined"
+        align="end"
+        :collision-padding="8"
+        class="z-[200015] max-h-(--reka-dropdown-menu-content-available-height) min-w-[min(10rem,var(--reka-dropdown-menu-content-available-width))] max-w-(--reka-dropdown-menu-content-available-width) overflow-auto overscroll-contain rounded-card border border-border bg-popover p-1 text-popover-foreground shadow-popover"
+        :style="maxWidth ? { maxWidth: `min(${maxWidth}px, var(--reka-dropdown-menu-content-available-width))` } : undefined"
         ><slot></slot></DropdownMenuContent></DropdownMenuPortal
   ></DropdownMenuRoot>
 </template>

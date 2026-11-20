@@ -8,7 +8,6 @@
         icon ? 'aspect-square px-0' : '',
         block && 'w-full',
         appearance,
-        selected && 'ring-2 ring-ring/30',
         $attrs.class as string
       )
     "
@@ -59,7 +58,7 @@ const normalizedSize = computed(() =>
   ['x-small', 'small', 'large'].includes(props.size ?? '') ? (props.size as 'small' | 'large' | 'x-small') : 'default'
 )
 const buttonVariants = cva(
-  'ui-button inline-flex shrink-0 items-center justify-center gap-2 rounded-control border border-transparent font-medium leading-5 transition-colors focus-visible:ring-2 focus-visible:ring-ring/30 disabled:pointer-events-none disabled:opacity-50',
+  'ui-button inline-flex shrink-0 items-center justify-center gap-2 rounded-control border border-transparent font-medium leading-5 transition-[color,background-color,border-color,box-shadow] duration-150 focus-visible:ring-2 focus-visible:ring-ring/30 disabled:pointer-events-none disabled:opacity-50',
   {
     variants: {
       size: {
@@ -72,10 +71,11 @@ const buttonVariants = cva(
   }
 )
 const appearance = computed(() => {
+  if (selected.value) return props.selectedClass || 'bg-primary/10 text-primary border-primary/15'
   if (props.variant === 'text') return `${colorClass(props.color)} hover:bg-muted`
-  if (props.variant === 'outlined') return `border-input ${colorClass(props.color)} hover:bg-muted`
+  if (props.variant === 'outlined') return `border-border bg-popover ${colorClass(props.color)} hover:border-input hover:bg-muted/50`
   if (props.variant === 'tonal') return toneClass(props.color ?? 'secondary')
-  return props.color ? toneClass(props.color, true) : 'bg-muted text-foreground hover:bg-muted/70'
+  return props.color ? `${toneClass(props.color, true)} hover:brightness-95 active:brightness-90` : 'bg-muted text-foreground hover:bg-muted/70'
 })
 function click(event: MouseEvent) {
   if (blocked.value) {

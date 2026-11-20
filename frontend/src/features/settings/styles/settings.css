@@ -2,27 +2,27 @@
 
 /* 设置页与各设置分区共享的外观规则，由 SFC 保持 scoped 作用域。 */
 .settings-page {
-  @apply max-w-280 [margin:0_auto];
+  @apply max-w-320 mx-auto;
 }
 
 .settings-layout {
-  @apply grid [grid-template-columns:196px_minmax(0,_1fr)] gap-7 pt-0;
+  @apply grid [grid-template-columns:208px_minmax(0,_1fr)] gap-6 items-start;
 }
 
 .settings-nav {
-  @apply sticky [top:calc(var(--app-header-height)_+_24px)] [align-self:start] [border-right:1px_solid_var(--border)] pr-5;
+  @apply sticky [top:calc(var(--app-header-height)_+_24px)] rounded-card border border-border bg-card p-2;
 }
 
 .settings-content {
-  @apply max-w-190 min-w-0 p-6 [background:var(--surface)] [border:1px_solid_color-mix(in_srgb,_var(--outline)_24%,_transparent)] rounded-card;
+  @apply min-w-0 panel-surface p-6;
 }
 
 .section-heading {
-  @apply flex items-start justify-between gap-4 mb-7;
+  @apply flex flex-wrap items-start justify-between gap-3 mb-6;
 }
 
 .setting-row {
-  @apply flex items-center justify-between gap-8 min-h-18 [padding:16px_0] [border-top:1px_solid_var(--border)] [border-bottom:1px_solid_var(--border)];
+  @apply flex items-center justify-between gap-6 min-h-18 py-4 border-b border-border/70;
 }
 
 .setting-copy {
@@ -30,7 +30,7 @@
 }
 
 .proxy-editor {
-  @apply pt-0;
+  @apply pt-4;
 }
 
 .safety-group + .safety-group {
@@ -118,7 +118,7 @@
 }
 
 .settings-actions {
-  @apply flex justify-end sticky bottom-0 [z-index:2] mt-5 [padding:16px_0_max(8px,_env(safe-area-inset-bottom))] [background:var(--surface)] [border-top:1px_solid_color-mix(in_srgb,_var(--outline)_20%,_transparent)];
+  @apply flex flex-wrap justify-end gap-2 sticky bottom-0 z-2 mt-6 [padding:16px_0_max(8px,_env(safe-area-inset-bottom))] bg-popover border-t border-border;
 }
 
 /* 通用提示词分区：版本条与内容编辑器 */
@@ -142,11 +142,11 @@
   }
 
   .settings-nav {
-    @apply [position:static] min-w-0 overflow-x-auto max-w-full [border-right:0] [border-bottom:1px_solid_var(--border)] pr-0 pb-3;
+    @apply static min-w-0 overflow-x-auto overscroll-x-contain max-w-full p-1.5;
   }
 
   .settings-nav :deep(.ui-list) {
-    @apply flex [width:max-content];
+    @apply flex w-max gap-1 space-y-0;
   }
 
   .setting-row {

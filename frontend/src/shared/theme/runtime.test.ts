@@ -34,6 +34,19 @@ function setupTheme() {
 }
 
 describe('主题偏好', () => {
+  it.each(['pop', 'breeze'])('新增主题 %s 支持保存、恢复及独立的明暗切换', preset => {
+    const { theme, system } = setupTheme()
+    theme.applyPreset(preset)
+    expect(theme.preset).toBe(preset)
+    const saved = JSON.parse(localStorage.getItem(THEME_STORAGE_KEY)!)
+    expect(saved.palette).toBe(preset)
+    system(true)
+    expect(document.documentElement.dataset).toMatchObject({ themeMode: 'dark', palette: preset })
+    window.dispatchEvent(new StorageEvent('storage', { key: THEME_STORAGE_KEY, newValue: JSON.stringify(saved) }))
+    expect(theme.preset).toBe(preset)
+    theme.update({ mode: 'light' })
+    expect(document.documentElement.dataset).toMatchObject({ themeMode: 'light', palette: preset })
+  })
   it('首次启动迁移明暗偏好并保留其他设置，应用预设不改变明暗', () => {
     localStorage.setItem('api-proxy-preferences', JSON.stringify({ darkModePreference: 'dark', showGlobalStats: true }))
     const { theme, system } = setupTheme()

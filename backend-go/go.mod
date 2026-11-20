@@ -5,6 +5,7 @@ go 1.26.0
 toolchain go1.26.10
 
 require (
+	github.com/Ikaleio/lm-detector/sdk/go v0.2.0
 	github.com/andybalholm/brotli v1.2.3
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/gin-gonic/gin v1.10.0

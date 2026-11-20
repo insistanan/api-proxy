@@ -11,9 +11,8 @@ Vue 3 + TypeScript strict + Tailwind CSS 4 管理台。Go 嵌入前端构建产�
 | `api/` | 聚合业务接口，页面和 Store 可从 `@/api` 引用 |
 | `features/channels/` | 渠道、渠道池、模型映射、意图路由、渠道弹窗状态 |
 | `features/observability/` | 对话、日志、上下文快照、命令审核与通知 |
-| `features/settings/` | 网关、伪装、提示词、助手与语义安全设置 |
+| `features/settings/` | 网关、伪装、提示词与语义安全设置 |
 | `features/clients/` | Claude Code / Codex（GPT）/ OpenCode / pi-agent / DSH 配置 |
-| `features/assistant/` | 内置配置助手 |
 | `features/extensions/` | mcp、skills、datasets，各自维护视图与服务 |
 | `shared/` | 通用组件、composables、HTTP / health / version、认证与偏好 Store、工具 |
 | `shared/ui/` | 项目维护的基础控件，复杂交互使用 Reka UI |

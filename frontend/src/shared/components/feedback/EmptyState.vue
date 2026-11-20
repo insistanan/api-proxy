@@ -1,6 +1,6 @@
 <template>
   <div class="empty-state" :class="`empty-state--${variant}`">
-    <UiIcon v-if="icon" class="empty-state__icon" :size="variant === 'inline' ? 20 : 30">{{ icon }}</UiIcon>
+    <span v-if="icon" class="empty-state__icon"><UiIcon :size="variant === 'inline' ? 20 : 26">{{ icon }}</UiIcon></span>
     <p class="empty-state__title">{{ title }}</p>
     <p v-if="description" class="empty-state__desc">{{ description }}</p>
     <div v-if="$slots.default" class="empty-state__action"><slot></slot></div>
@@ -28,8 +28,8 @@ withDefaults(defineProps<{
 .empty-state--panel { @apply [padding:52px_24px]; }
 .empty-state--inline { @apply [padding:24px_16px] gap-0.5; }
 .empty-state--table { @apply [padding:40px_24px]; }
-.empty-state__icon { @apply mb-3 [color:color-mix(in_srgb,_var(--outline)_75%,_transparent)]; }
-.empty-state--inline .empty-state__icon { @apply mb-1.5; }
+.empty-state__icon { @apply mb-4 grid size-12 place-items-center rounded-card border border-border bg-muted/45 text-muted-foreground; }
+.empty-state--inline .empty-state__icon { @apply mb-2 size-9 rounded-control border-0 bg-muted/40; }
 .empty-state__title { @apply m-0 text-foreground [font-size:0.9375rem] font-semibold [line-height:1.5]; }
 .empty-state--inline .empty-state__title { @apply [font-size:0.875rem] font-medium; }
 .empty-state__desc { @apply [max-width:42ch] [margin:6px_0_0] [font-size:0.8125rem] [line-height:1.65]; }

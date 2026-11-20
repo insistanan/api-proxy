@@ -1,5 +1,5 @@
 <template>
-  <div role="tablist" class="flex flex-wrap gap-1 border-b border-border pb-2"><slot></slot></div>
+  <div role="tablist" class="ui-tabs flex flex-wrap gap-1 rounded-control border border-border bg-muted/35 p-1"><slot></slot></div>
 </template>
 <script setup lang="ts" generic="T">
 import { computed, provide } from 'vue'

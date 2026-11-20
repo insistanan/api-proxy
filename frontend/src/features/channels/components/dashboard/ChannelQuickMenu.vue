@@ -1,5 +1,5 @@
 <template>
-  <UiMenu>
+  <UiMenu :max-width="280">
     <template #activator="{ props: menuProps }">
       <UiButton
         icon
@@ -13,7 +13,8 @@
       </UiButton>
     </template>
 
-    <UiList density="compact">
+    <UiList density="compact" class="channel-quick-menu w-60 max-w-full">
+      <div class="truncate border-b border-border px-3 py-2 text-xs font-medium text-muted-foreground" :title="channel.name">{{ channel.name }}</div>
       <UiListItem @click="emit('action', 'edit')">
         <template #prepend><UiIcon size="small">mdi-pencil</UiIcon></template>
         <span class="block">编辑</span>
@@ -24,7 +25,7 @@
       </UiListItem>
       <UiListItem @click="emit('action', 'toggleVision')">
         <template #prepend>
-          <UiIcon size="small" :color="channel.visionCapable ? 'success' : 'primary'">
+          <UiIcon size="small" :color="channel.visionCapable ? 'success' : undefined">
             {{ channel.visionCapable ? 'mdi-check-circle' : 'mdi-image-search-outline' }}
           </UiIcon>
         </template>
@@ -34,14 +35,15 @@
       </UiListItem>
       <UiListItem @click="emit('action', 'copyConfig')">
         <template #prepend>
-          <UiIcon size="small" :color="copied ? 'success' : 'primary'">
+          <UiIcon size="small" :color="copied ? 'success' : undefined">
             {{ copied ? 'mdi-check' : 'mdi-content-copy' }}
           </UiIcon>
         </template>
         <span class="block">{{ copied ? '已复制配置' : '复制配置' }}</span>
       </UiListItem>
+      <hr class="my-1 border-0 border-t border-border" />
       <UiListItem @click="emit('action', 'quickTest')">
-        <template #prepend><UiIcon size="small" color="success">mdi-test-tube</UiIcon></template>
+        <template #prepend><UiIcon size="small">mdi-test-tube</UiIcon></template>
         <span class="block">快捷测试</span>
       </UiListItem>
       <UiListItem @click="emit('action', 'ping')">
@@ -52,20 +54,21 @@
         <template #prepend><UiIcon size="small">mdi-text-box-search-outline</UiIcon></template>
         <span class="block">请求日志</span>
       </UiListItem>
+      <hr class="my-1 border-0 border-t border-border" />
       <UiListItem @click="emit('action', 'promotion')">
-        <template #prepend><UiIcon size="small" color="info">mdi-rocket-launch</UiIcon></template>
+        <template #prepend><UiIcon size="small">mdi-rocket-launch</UiIcon></template>
         <span class="block">抢优先级</span>
       </UiListItem>
       <UiListItem v-if="allowReorder && position > 0" @click="emit('moveTop')">
-        <template #prepend><UiIcon size="small" color="primary">mdi-arrow-collapse-up</UiIcon></template>
+        <template #prepend><UiIcon size="small">mdi-arrow-collapse-up</UiIcon></template>
         <span class="block">置顶</span>
       </UiListItem>
       <UiListItem v-if="allowReorder && position < total - 1" @click="emit('moveBottom')">
-        <template #prepend><UiIcon size="small" color="primary">mdi-arrow-collapse-down</UiIcon></template>
+        <template #prepend><UiIcon size="small">mdi-arrow-collapse-down</UiIcon></template>
         <span class="block">置底</span>
       </UiListItem>
 
-      <hr class="border-0 border-t border-border" />
+      <hr class="my-1 border-0 border-t border-border" />
       <UiListItem v-if="channel.status === 'suspended'" @click="emit('action', 'resume')">
         <template #prepend><UiIcon size="small" color="success">mdi-play-circle</UiIcon></template>
         <span class="block">恢复 (重置指标)</span>
@@ -75,14 +78,14 @@
         <span class="block">暂停</span>
       </UiListItem>
       <UiListItem @click="emit('action', 'disable')">
-        <template #prepend><UiIcon size="small" color="error">mdi-stop-circle</UiIcon></template>
+        <template #prepend><UiIcon size="small">mdi-stop-circle</UiIcon></template>
         <span class="block">移至备用池</span>
       </UiListItem>
       <UiListItem @click="emit('action', 'deprecate')">
-        <template #prepend><UiIcon size="small" color="grey">mdi-archive-clock-outline</UiIcon></template>
+        <template #prepend><UiIcon size="small">mdi-archive-clock-outline</UiIcon></template>
         <span class="block">移至弃用池</span>
       </UiListItem>
-      <UiListItem @click="emit('delete')">
+      <UiListItem color="error" @click="emit('delete')">
         <template #prepend>
           <UiIcon size="small" color="error">mdi-delete</UiIcon>
         </template>
@@ -129,3 +132,10 @@ const emit = defineEmits<{
   delete: []
 }>()
 </script>
+
+<style scoped>
+@reference "@/styles/index.css";
+
+.channel-quick-menu { @apply space-y-0.5; }
+.channel-quick-menu :deep(.ui-list-item) { @apply min-h-9 gap-3 px-3 py-2 transition-colors; }
+</style>

@@ -182,7 +182,7 @@ func TestSettingsTransactionsKeepSnapshotOnSaveFailure(t *testing.T) {
 		}},
 		{"settings", func(cm *ConfigManager) error {
 			settings := cm.GetSettings()
-			settings.Assistant.Model = "changed"
+			settings.Network.UpstreamProxyEnabled = true
 			return cm.UpdateSettings(settings)
 		}},
 	}

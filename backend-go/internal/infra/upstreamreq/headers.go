@@ -141,7 +141,7 @@ func PrepareUpstreamHeadersFromHeader(source http.Header, targetHost string) htt
 			headers.Del(strings.TrimSpace(name))
 		}
 	}
-	for _, name := range []string{"Cookie", "Origin", "Referer", "Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization", "TE", "Trailer", "Transfer-Encoding", "Upgrade", "X-Proxy-Purpose", "X-Channel-Index", "X-Target-Channel", "Content-Length"} {
+	for _, name := range []string{"Cookie", "Origin", "Referer", "Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization", "TE", "Trailer", "Transfer-Encoding", "Upgrade", "X-Proxy-Purpose", "X-Proxy-Test-Effort", "X-Channel-Index", "X-Target-Channel", "Content-Length"} {
 		headers.Del(name)
 	}
 

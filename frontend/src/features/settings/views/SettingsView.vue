@@ -5,7 +5,7 @@
     <div class="settings-layout">
       <nav class="settings-nav" aria-label="设置分类">
         <UiList v-model:selected="selectedSections" nav mandatory density="compact" bg-color="transparent">
-          <UiListItem v-for="section in settingsSections" :key="section.key" :value="section.key" :prepend-icon="section.icon" :title="section.label" color="primary" :aria-current="activeSection === section.key ? 'page' : undefined">
+          <UiListItem v-for="section in settingsSections" :key="section.key" :value="section.key" :prepend-icon="section.icon" :title="section.label" :aria-current="activeSection === section.key ? 'page' : undefined">
             <template #append><span v-if="!loading && dirtySections[section.key]" class="settings-dirty-dot" aria-label="有未保存的修改"></span></template>
           </UiListItem>
         </UiList>
@@ -71,8 +71,6 @@
         <GatewaySettingsSection v-else-if="activeSection === 'gateway'" :editor="gatewayEditor" />
 
         <DisguiseSettingsSection v-else-if="activeSection === 'disguise'" :editor="disguiseEditor" />
-
-        <AssistantSettingsSection v-else-if="activeSection === 'assistant'" :editor="assistantEditor" />
 
         <PromptSettingsSection v-else-if="activeSection === 'prompts'" :editor="promptsEditor" />
 
@@ -501,8 +499,6 @@ import DisguiseSettingsSection from '@/features/settings/components/DisguiseSett
 import { useDisguiseSettings } from '@/features/settings/composables/useDisguiseSettings'
 import PromptSettingsSection from '@/features/settings/components/PromptSettingsSection.vue'
 import { usePromptSettings } from '@/features/settings/composables/usePromptSettings'
-import AssistantSettingsSection from '@/features/settings/components/AssistantSettingsSection.vue'
-import { useAssistantSettings } from '@/features/settings/composables/useAssistantSettings'
 import ExtensionsSettingsSection from '@/features/settings/components/ExtensionsSettingsSection.vue'
 import { useExtensionsSettings } from '@/features/settings/composables/useExtensionsSettings'
 import { defaultContentSafety, normalizeContentSafety } from '@/features/settings/utils/contentSafetyForm'
@@ -551,7 +547,7 @@ const dangerousCommandRules: Array<{ value: DangerousCommandRule; label: string 
   { value: 'environment_tampering', label: '环境变量篡改' }
 ]
 
-// 审批使用独立渠道候选，不读取 AI 助手的模型和渠道筛选结果。
+// 审批候选按命令审核使用的协议筛选。
 const gateProtocolItems = [
   { title: '大模型对话 API', value: 'chat' },
   { title: 'Decisions API（原生决策格式）', value: 'decisions' }
@@ -589,7 +585,6 @@ const settingsSections: Array<{ key: SettingsSection; label: string; icon: strin
   { key: 'gateway', label: '请求与日志', icon: 'mdi-text' },
   { key: 'content-safety', label: '内容安全', icon: 'mdi-shield-alert' },
   { key: 'disguise', label: '客户端伪装', icon: 'mdi-incognito' },
-  { key: 'assistant', label: 'AI 助手', icon: 'mdi-robot' },
   { key: 'prompts', label: '通用提示词', icon: 'mdi-text' },
   { key: 'extensions', label: '技能与 MCP', icon: 'mdi-puzzle-outline' }
 ]
@@ -614,8 +609,6 @@ const disguiseEditor = useDisguiseSettings(saving, activeSection)
 const { disguiseClaudeVersion, disguiseCodexVersion, disguiseAutoUpdate, savedDisguiseClaudeVersion, savedDisguiseCodexVersion, savedDisguiseAutoUpdate, loadDisguiseStatus } = disguiseEditor
 const promptsEditor = usePromptSettings(saving)
 const { promptEntries, promptActiveVersion, selectedPromptEntry, savedPromptsSnapshot, savedPromptActiveVersion } = promptsEditor
-const assistantEditor = useAssistantSettings(saving)
-const { assistantModel, savedAssistantModel, assistantChannel, savedAssistantChannel, loadAssistantModelOptions, loadAssistantStatus } = assistantEditor
 const extensionsEditor = useExtensionsSettings(saving, activeSection)
 const { skillsDir, skillsRepoUrl, savedSkillsDir, savedSkillsRepoUrl, loadGitStatus } = extensionsEditor
 
@@ -655,7 +648,6 @@ const dirtySections = computed<Record<SettingsSection, boolean>>(() => ({
   gateway: gatewayEditor.gatewayDirty.value,
   'content-safety': contentSafetyDirty.value,
   disguise: disguiseEditor.disguiseDirty.value,
-  assistant: assistantEditor.assistantDirty.value,
   prompts: promptsEditor.promptsDirty.value,
   extensions: extensionsEditor.extensionsDirty.value
 }))
@@ -694,12 +686,6 @@ const loadSettings = async () => {
     proxyEnabled.value = enabled
     contentSafety.value = normalizeContentSafety(settings.contentSafety)
     savedContentSafety.value = JSON.stringify(contentSafety.value)
-    const savedModel = settings.assistant?.model ?? ''
-    savedAssistantModel.value = savedModel
-    assistantModel.value = savedModel
-    const savedChannel = settings.assistant?.channelId ?? ''
-    savedAssistantChannel.value = savedChannel
-    assistantChannel.value = savedChannel
     // 伪装设置
     if (!settings.disguise) throw new Error('服务端未返回伪装设置，请确认后端版本')
     const savedDisguise = settings.disguise
@@ -877,8 +863,6 @@ const toggleDesktopNotify = async (value: boolean | null) => {
 onMounted(() => {
   loadSettings()
   loadGateChannels()
-  loadAssistantModelOptions()
-  loadAssistantStatus()
   initDesktopNotify()
 })
 </script>

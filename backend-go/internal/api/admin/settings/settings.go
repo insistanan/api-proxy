@@ -30,7 +30,6 @@ func UpdateSettings(cfgManager *config.ConfigManager, skillsAPI *clients.SkillsA
 			ContentSafety *config.ContentSafetyConfig `json:"contentSafety"`
 			Disguise      *config.DisguiseSettings    `json:"disguise"`
 			Gateway       *json.RawMessage            `json:"gateway"`
-			Assistant     *config.AssistantSettings   `json:"assistant"`
 			Prompts       *config.PromptSettings      `json:"prompts"`
 			Extensions    *config.ExtensionsSettings  `json:"extensions"`
 		}
@@ -38,7 +37,7 @@ func UpdateSettings(cfgManager *config.ConfigManager, skillsAPI *clients.SkillsA
 			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的设置参数"})
 			return
 		}
-		if req.Network == nil && req.ContentSafety == nil && req.Disguise == nil && req.Gateway == nil && req.Assistant == nil && req.Prompts == nil && req.Extensions == nil {
+		if req.Network == nil && req.ContentSafety == nil && req.Disguise == nil && req.Gateway == nil && req.Prompts == nil && req.Extensions == nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "至少需要提交一个设置分类"})
 			return
 		}
@@ -79,11 +78,6 @@ func UpdateSettings(cfgManager *config.ConfigManager, skillsAPI *clients.SkillsA
 				return
 			}
 			settings.Gateway = gateway
-		}
-		if req.Assistant != nil {
-			req.Assistant.Model = strings.TrimSpace(req.Assistant.Model)
-			req.Assistant.ChannelID = strings.TrimSpace(req.Assistant.ChannelID)
-			settings.Assistant = *req.Assistant
 		}
 		if req.Prompts != nil {
 			// 提交 prompts 分类时才归一化（trim + 刷新 UpdatedAt）；

@@ -4,12 +4,12 @@
     :data-active="isActive || undefined"
     :type="menu ? undefined : 'button'"
     :class="[
-      'ui-list-item flex min-h-9 w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm outline-none hover:bg-muted data-highlighted:bg-muted',
-      isActive ? 'bg-primary/12 text-primary' : colorClass(color)
+      'ui-list-item flex min-h-9 w-full items-center gap-2.5 rounded-control px-3 py-2 text-left text-sm outline-none transition-colors hover:bg-muted/70 data-highlighted:bg-muted/70',
+      isActive ? 'bg-primary/10 font-medium text-primary hover:bg-primary/12' : colorClass(color)
     ]"
     @click="click"
     ><slot name="prepend"><Icon v-if="prependIcon" :icon="prependIcon" :size="18" /></slot
-    ><span class="min-w-0 flex-1"
+    ><span class="min-w-0 flex-1 [overflow-wrap:anywhere]"
       ><slot>{{ title }}</slot
       ><span v-if="subtitle" class="block text-xs text-muted-foreground">{{ subtitle }}</span></span
     ><slot name="append"></slot
