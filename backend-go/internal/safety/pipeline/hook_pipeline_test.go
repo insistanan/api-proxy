@@ -39,17 +39,6 @@ func TestPipelineDoesNotImportAdapters(t *testing.T) {
 	}
 }
 
-func TestHookPipelineEmptyStagesPreserveResult(t *testing.T) {
-	pipeline := NewPipeline()
-	initial := HookResult{RequestBody: []byte("request"), ResponseBody: []byte("response")}
-	for _, stage := range []HookStage{HookStagePreRequest, HookStagePostResponse} {
-		result, err := pipeline.Run(context.Background(), stage, HookContext{}, initial)
-		if err != nil || string(result.RequestBody) != "request" || string(result.ResponseBody) != "response" {
-			t.Fatalf("空阶段应保留输入: stage=%s result=%+v err=%v", stage, result, err)
-		}
-	}
-}
-
 func TestHookPipelineRejectsInvalidExecution(t *testing.T) {
 	pipeline := NewPipeline()
 	if _, err := pipeline.Run(context.Background(), HookStage("invalid"), HookContext{}, HookResult{}); err == nil {

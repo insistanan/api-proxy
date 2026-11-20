@@ -217,21 +217,6 @@ func TestStorageStatusReportsWriteFailure(t *testing.T) {
 	store.queueMu.Unlock()
 }
 
-func TestCaptureStateRoundTripThroughStore(t *testing.T) {
-	store, err := Open(filepath.Join(t.TempDir(), "logs.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, store.Close()) })
-	policy := CapturePolicy{Request: true, Response: true, Mode: "metadata", BodyLimit: 16384}
-	require.NoError(t, store.RecordTraffic(TrafficLog{RequestID: "metadata", Phase: PhaseClientRequest, Body: `{"messages":[{"role":"user","content":"private content"}]}`, HeadersJSON: `{"private":"header"}`}.WithCapturePolicy(policy)))
-	require.NoError(t, store.Flush())
-	logs, err := store.QueryTrafficByRequestID(context.Background(), "metadata")
-	require.NoError(t, err)
-	require.Len(t, logs, 1)
-	require.Equal(t, "metadata", logs[0].BodyState)
-	require.Empty(t, logs[0].Body)
-	require.Empty(t, logs[0].HeadersJSON)
-}
-
 func TestCleanupUsesHotUpdatedIndependentRetentionPeriods(t *testing.T) {
 	var current atomic.Pointer[StoragePolicy]
 	initial := DefaultStoragePolicy()

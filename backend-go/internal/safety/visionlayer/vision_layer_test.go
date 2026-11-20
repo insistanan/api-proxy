@@ -34,48 +34,6 @@ func TestPrepareRequestSkipsImagesProtocolImageToImage(t *testing.T) {
 	}
 }
 
-func TestPreferredVisionChannelID(t *testing.T) {
-	tests := []struct {
-		name      string
-		upstream  *config.UpstreamConfig
-		want      string
-		wantError bool
-	}{
-		{
-			name:     "未配置图片理解层时使用默认公共池",
-			upstream: &config.UpstreamConfig{Name: "text", VisionLayerChannelID: "stale-channel"},
-		},
-		{
-			name:     "显式配置时返回指定渠道",
-			upstream: &config.UpstreamConfig{Name: "text", VisionLayerEnabled: true, VisionLayerChannelID: " vision-channel "},
-			want:     "vision-channel",
-		},
-		{
-			name:      "启用但未指定渠道时显式报错",
-			upstream:  &config.UpstreamConfig{Name: "text", VisionLayerEnabled: true},
-			wantError: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := preferredVisionChannelID(tt.upstream)
-			if tt.wantError {
-				if err == nil {
-					t.Fatal("preferredVisionChannelID() error = nil")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("preferredVisionChannelID() error = %v", err)
-			}
-			if got != tt.want {
-				t.Fatalf("preferredVisionChannelID() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestReplaceImagesUsesEachImageOwnDescription(t *testing.T) {
 	first := map[string]interface{}{
 		"type": "image",

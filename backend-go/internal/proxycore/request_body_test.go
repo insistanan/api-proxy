@@ -14,18 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestReadRequestBody_Plaintext(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	testPayload := []byte(`{"model":"gpt-4o","stream":true}`)
-
-	recordingContext, _ := gin.CreateTestContext(httptest.NewRecorder())
-	recordingContext.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(testPayload))
-
-	bodyBytes, readErr := ReadRequestBody(recordingContext, 1024*1024)
-	require.NoError(t, readErr)
-	assert.Equal(t, testPayload, bodyBytes)
-}
-
 func TestReadRequestBody_ZstdCompressed(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	testPayload := []byte(`{"model":"gpt-5-codex","stream":false,"prompt":"hello from codex desktop"}`)

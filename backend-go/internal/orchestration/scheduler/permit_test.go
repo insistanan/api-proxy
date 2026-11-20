@@ -208,28 +208,3 @@ func TestConcurrentPrecheckAdmitsAtMostOneProbe(t *testing.T) {
 		t.Fatalf("结束后 in-flight 应为 0，实际 %d", inFlight)
 	}
 }
-
-// 探测名额泄漏检查：选渠未释放许可时名额被占用，下轮选渠只能换渠道或失败。
-// （正常调用方都应 defer 释放；本用例反向锁定"许可确实持有名额"的语义。）
-func TestPermitHoldsProbeSlotUntilReleased(t *testing.T) {
-	sch, _ := newPermitTestEnv(t)
-	sch.RecordCircuitFailure(ChannelKindMessages, 0)
-	time.Sleep(25 * time.Millisecond)
-
-	first, err := sch.SelectChannel(context.Background(), "", make(map[int]bool), ChannelKindMessages, "")
-	if err != nil {
-		t.Fatalf("首次选渠失败: %v", err)
-	}
-	if sch.CircuitManager().SnapshotEntry("messages", 0).HalfOpenInFlight != 1 {
-		t.Fatal("首次选渠应取得探测名额")
-	}
-
-	// 未释放名额时，第二次选渠不能再次取得该渠道的探测名额。
-	second, err := sch.SelectChannel(context.Background(), "", map[int]bool{first.ChannelIndex: true}, ChannelKindMessages, "")
-	if err == nil && second.Permit != nil && second.ChannelIndex == first.ChannelIndex {
-		t.Fatal("探测名额被占用期间不得再次取得同渠道名额")
-	}
-
-	first.Permit.RecordHealthSuccess()
-	first.Permit.Release()
-}

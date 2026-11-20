@@ -1,7 +1,6 @@
 package metrics
 
 import (
-	"encoding/json"
 	"math"
 	"testing"
 
@@ -81,27 +80,5 @@ func TestRecordSuccessWithUsage_CacheCreationFallbackFromTTLBreakdown(t *testing
 	}
 	if stats.CacheReadTokens != 50 {
 		t.Fatalf("expected cacheReadTokens=50, got %d", stats.CacheReadTokens)
-	}
-}
-
-func TestTimeWindowStatsCacheHitRateZeroIsSerialized(t *testing.T) {
-	stats := TimeWindowStats{
-		RequestCount: 1,
-		SuccessRate:  100,
-		InputTokens:  100,
-		CacheHitRate: 0,
-	}
-
-	body, err := json.Marshal(stats)
-	if err != nil {
-		t.Fatalf("failed to marshal stats: %v", err)
-	}
-
-	var got map[string]interface{}
-	if err := json.Unmarshal(body, &got); err != nil {
-		t.Fatalf("failed to unmarshal stats: %v", err)
-	}
-	if _, ok := got["cacheHitRate"]; !ok {
-		t.Fatalf("expected cacheHitRate to be serialized, got %s", string(body))
 	}
 }

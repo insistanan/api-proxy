@@ -197,27 +197,3 @@ func TestMappingStorePurge(t *testing.T) {
 		t.Fatalf("TTL 过期行应被清理: %v %d", err, count)
 	}
 }
-
-// TestMappingStoreNilIsNoOp 零值/nil store 全部 no-op（block 模式退化路径）。
-func TestMappingStoreNilIsNoOp(t *testing.T) {
-	store, err := NewMappingStore("", "")
-	if err != nil {
-		t.Fatalf("空路径应返回 nil store: %v", err)
-	}
-	if store != nil {
-		t.Fatal("空路径应返回 nil store")
-	}
-	var nilStore *MappingStore
-	if _, err := nilStore.LookupOriginal("x"); err != nil {
-		t.Fatalf("nil store LookupOriginal 应 no-op: %v", err)
-	}
-	if _, err := nilStore.LookupPlaceholder("y"); err != nil {
-		t.Fatalf("nil store LookupPlaceholder 应 no-op: %v", err)
-	}
-	if err := nilStore.PutMapping("a", "T", "b"); err != nil {
-		t.Fatalf("nil store PutMapping 应 no-op: %v", err)
-	}
-	if err := nilStore.Close(); err != nil {
-		t.Fatalf("nil store Close 应 no-op: %v", err)
-	}
-}

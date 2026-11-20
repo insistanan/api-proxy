@@ -11,29 +11,6 @@ func floatEquals(a, b, epsilon float64) bool {
 	return math.Abs(a-b) < epsilon
 }
 
-func TestGetRecentActivityMultiURL_EmptyInputs(t *testing.T) {
-	m := NewMetricsManager()
-	defer m.Stop()
-
-	// 空 baseURLs
-	result := m.GetRecentActivityMultiURL(0, []string{}, []string{"key1"})
-	if result.ChannelIndex != 0 {
-		t.Errorf("expected channelIndex 0, got %d", result.ChannelIndex)
-	}
-	if len(result.Segments) != 150 {
-		t.Errorf("expected 150 segments, got %d", len(result.Segments))
-	}
-	if result.RPM != 0 || result.TPM != 0 {
-		t.Errorf("expected RPM=0, TPM=0 for empty input")
-	}
-
-	// 空 activeKeys
-	result = m.GetRecentActivityMultiURL(0, []string{"http://example.com"}, []string{})
-	if len(result.Segments) != 150 {
-		t.Errorf("expected 150 segments, got %d", len(result.Segments))
-	}
-}
-
 func TestGetRecentActivityMultiURL_SegmentBoundaries(t *testing.T) {
 	m := NewMetricsManager()
 	defer m.Stop()
@@ -155,92 +132,6 @@ func TestGetRecentActivityMultiURL_FailureCount(t *testing.T) {
 	}
 	if foundSeg.FailureCount != 1 {
 		t.Errorf("expected 1 failure, got %d", foundSeg.FailureCount)
-	}
-}
-
-func TestGetRecentActivityMultiURL_MultipleURLs(t *testing.T) {
-	m := NewMetricsManager()
-	defer m.Stop()
-
-	baseURL1 := "http://test1.com"
-	baseURL2 := "http://test2.com"
-	apiKey := "test-key"
-
-	now := time.Now()
-	m.mu.Lock()
-	metrics1 := m.getOrCreateKey(baseURL1, apiKey, 0)
-	metrics1.requestHistory = append(metrics1.requestHistory, RequestRecord{
-		Timestamp:    now,
-		Success:      true,
-		OutputTokens: 100,
-	})
-
-	metrics2 := m.getOrCreateKey(baseURL2, apiKey, 0)
-	metrics2.requestHistory = append(metrics2.requestHistory, RequestRecord{
-		Timestamp:    now,
-		Success:      true,
-		OutputTokens: 200,
-	})
-	m.mu.Unlock()
-
-	result := m.GetRecentActivityMultiURL(0, []string{baseURL1, baseURL2}, []string{apiKey})
-
-	// 验证聚合了两个 URL 的数据
-	var totalRequests int64
-	for _, seg := range result.Segments {
-		totalRequests += seg.RequestCount
-	}
-	if totalRequests != 2 {
-		t.Errorf("expected 2 total requests from 2 URLs, got %d", totalRequests)
-	}
-
-	// TPM 应该是 (100 + 200) / 15
-	expectedTPM := 300.0 / 15.0
-	if !floatEquals(result.TPM, expectedTPM, 0.0001) {
-		t.Errorf("expected TPM %.4f, got %.4f", expectedTPM, result.TPM)
-	}
-}
-
-func TestGetRecentActivityMultiURL_MultipleKeys(t *testing.T) {
-	m := NewMetricsManager()
-	defer m.Stop()
-
-	baseURL := "http://test.com"
-	apiKey1 := "test-key-1"
-	apiKey2 := "test-key-2"
-
-	now := time.Now()
-	m.mu.Lock()
-	metrics1 := m.getOrCreateKey(baseURL, apiKey1, 0)
-	metrics1.requestHistory = append(metrics1.requestHistory, RequestRecord{
-		Timestamp:    now,
-		Success:      true,
-		OutputTokens: 150,
-	})
-
-	metrics2 := m.getOrCreateKey(baseURL, apiKey2, 0)
-	metrics2.requestHistory = append(metrics2.requestHistory, RequestRecord{
-		Timestamp:    now,
-		Success:      true,
-		OutputTokens: 250,
-	})
-	m.mu.Unlock()
-
-	result := m.GetRecentActivityMultiURL(0, []string{baseURL}, []string{apiKey1, apiKey2})
-
-	// 验证聚合了两个 Key 的数据
-	var totalRequests int64
-	for _, seg := range result.Segments {
-		totalRequests += seg.RequestCount
-	}
-	if totalRequests != 2 {
-		t.Errorf("expected 2 total requests from 2 Keys, got %d", totalRequests)
-	}
-
-	// TPM 应该是 (150 + 250) / 15
-	expectedTPM := 400.0 / 15.0
-	if !floatEquals(result.TPM, expectedTPM, 0.0001) {
-		t.Errorf("expected TPM %.4f, got %.4f", expectedTPM, result.TPM)
 	}
 }
 

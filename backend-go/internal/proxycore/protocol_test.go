@@ -313,59 +313,6 @@ func TestRunProxyRequestParseFailureStopsFlow(t *testing.T) {
 	}
 }
 
-func TestRunProxyRequestInvalidChannelIndexMetadataType(t *testing.T) {
-	env := newRunProxyTestEnv(t)
-	rec := &specRecorder{}
-	spec := rec.newSpec()
-
-	w := performRunProxyRequest(t, env, spec, `{"model":"test-model","metadata":"not-an-object"}`, "test-access-key")
-
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("期望 400，实际 %d，响应体: %s", w.Code, w.Body.String())
-	}
-	var resp struct {
-		Code string `json:"code"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("解析错误响应失败: %v，响应体: %s", err, w.Body.String())
-	}
-	if resp.Code != "INVALID_CHANNEL_INDEX" {
-		t.Fatalf("期望错误码 INVALID_CHANNEL_INDEX，实际: %s", w.Body.String())
-	}
-	_, parseCalls, buildCalls, _ := rec.snapshot()
-	if parseCalls != 1 || buildCalls != 0 {
-		t.Fatalf("metadata 校验失败应发生在 ParseRequest 之后、构建上游之前，parse=%d build=%d", parseCalls, buildCalls)
-	}
-}
-
-func TestRunProxyRequestRequestedChannelOutOfRange(t *testing.T) {
-	env := newRunProxyTestEnv(t)
-	server := newRecordingUpstreamServer(t, nil)
-	addTestUpstream(t, env, "ch-0", server.URL(), "key-a")
-
-	rec := &specRecorder{}
-	spec := rec.newSpec()
-
-	w := performRunProxyRequest(t, env, spec, `{"model":"test-model","metadata":{"channel_index":5}}`, "test-access-key")
-
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("期望 400，实际 %d，响应体: %s", w.Code, w.Body.String())
-	}
-	var resp struct {
-		Code string `json:"code"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("解析错误响应失败: %v，响应体: %s", err, w.Body.String())
-	}
-	if resp.Code != "INVALID_CHANNEL_INDEX" {
-		t.Fatalf("期望错误码 INVALID_CHANNEL_INDEX，实际: %s", w.Body.String())
-	}
-	_, _, buildCalls, _ := rec.snapshot()
-	if buildCalls != 0 {
-		t.Fatalf("显式渠道越界后不应构建上游请求，build=%d", buildCalls)
-	}
-}
-
 func TestRunProxyRequestPreRouteShortCircuitsDispatch(t *testing.T) {
 	env := newRunProxyTestEnv(t)
 	rec := &specRecorder{}

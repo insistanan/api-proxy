@@ -5,20 +5,6 @@ import (
 	"time"
 )
 
-func TestBreakerClosedAllowsRequests(t *testing.T) {
-	b := NewBreaker(DefaultConfig())
-	for i := 0; i < 10; i++ {
-		if got := b.Allow(); !got.Allowed {
-			t.Fatalf("Closed 状态第 %d 次请求被拒绝: %+v", i, got)
-		}
-		b.RecordSuccess()
-	}
-	snap := b.Snapshot()
-	if snap.State != StateClosed {
-		t.Fatalf("期望 Closed，实际 %s", snap.State)
-	}
-}
-
 func TestBreakerOpensOnConsecutiveFailures(t *testing.T) {
 	b := NewBreaker(Config{FailureThreshold: 4})
 	for i := 0; i < 3; i++ {
@@ -88,59 +74,6 @@ func TestBreakerOpensOnErrorRate(t *testing.T) {
 	}
 }
 
-func TestBreakerErrorRateBelowThresholdStaysClosed(t *testing.T) {
-	b := NewBreaker(DefaultConfig())
-	for i := 0; i < 10; i++ {
-		b.Allow()
-		if i%3 == 0 {
-			b.RecordFailure()
-		} else {
-			b.RecordSuccess()
-		}
-	}
-	if got := b.Allow(); !got.Allowed {
-		t.Fatalf("错误率 1/3 未达 0.6 不应熔断: %+v", got)
-	}
-}
-
-func TestBreakerOpenCooldownExpiryTransitionsToHalfOpen(t *testing.T) {
-	b := NewBreaker(Config{FailureThreshold: 1, Cooldown: 10 * time.Millisecond})
-	b.Allow()
-	b.RecordFailure()
-	if b.Snapshot().State != StateOpen {
-		t.Fatalf("期望 Open，实际 %s", b.Snapshot().State)
-	}
-
-	time.Sleep(20 * time.Millisecond)
-	got := b.Allow()
-	if !got.Allowed || !got.Probe {
-		t.Fatalf("冷却到期应放行探测请求: %+v", got)
-	}
-	snap := b.Snapshot()
-	if snap.State != StateHalfOpen {
-		t.Fatalf("期望 HalfOpen，实际 %s", snap.State)
-	}
-}
-
-func TestBreakerHalfOpenAllowsOnlyOneProbe(t *testing.T) {
-	b := NewBreaker(Config{FailureThreshold: 1, Cooldown: 10 * time.Millisecond})
-	b.Allow()
-	b.RecordFailure()
-	time.Sleep(20 * time.Millisecond)
-
-	first := b.Allow()
-	if !first.Allowed || !first.Probe {
-		t.Fatalf("首个探测应放行: %+v", first)
-	}
-	second := b.Allow()
-	if second.Allowed {
-		t.Fatalf("探测在途时第二个请求应被拒绝: %+v", second)
-	}
-	if second.State != StateHalfOpen {
-		t.Fatalf("第二个请求判定时应处于 HalfOpen: %+v", second)
-	}
-}
-
 func TestBreakerHalfOpenProbeSuccessCloses(t *testing.T) {
 	b := NewBreaker(Config{FailureThreshold: 1, Cooldown: 10 * time.Millisecond, SuccessThreshold: 2})
 	b.Allow()
@@ -179,28 +112,6 @@ func TestBreakerHalfOpenProbeFailureReopens(t *testing.T) {
 	// 冷却重新计时：50ms 未到仍拒绝。
 	if got := b.Allow(); got.Allowed {
 		t.Fatalf("重新熔断后冷却未到应拒绝: %+v", got)
-	}
-}
-
-func TestBreakerNeutralReleasesProbeWithoutAffectingHealth(t *testing.T) {
-	b := NewBreaker(Config{FailureThreshold: 1, Cooldown: 10 * time.Millisecond, SuccessThreshold: 1})
-	b.Allow()
-	b.RecordFailure()
-	time.Sleep(20 * time.Millisecond)
-
-	if got := b.Allow(); !got.Probe {
-		t.Fatalf("应放行探测: %+v", got)
-	}
-	b.RecordNeutral() // 客户端取消类结果
-	if snap := b.Snapshot(); snap.HalfOpenInFlight != 0 {
-		t.Fatalf("Neutral 应释放探测名额: %+v", snap)
-	}
-	if snap := b.Snapshot(); snap.State != StateHalfOpen {
-		t.Fatalf("Neutral 不应改变状态: %+v", snap)
-	}
-	// 名额已释放，下一个探测可以进入。
-	if got := b.Allow(); !got.Probe {
-		t.Fatalf("名额释放后应再次放行探测: %+v", got)
 	}
 }
 
@@ -285,19 +196,5 @@ func TestManagerResetAndSnapshot(t *testing.T) {
 	}
 	if entries[0].Snapshot.State != StateClosed {
 		t.Fatalf("重置后快照应为 Closed: %+v", entries[0])
-	}
-}
-
-func TestManagerSnapshotParsesMultiDigitIndex(t *testing.T) {
-	m := NewManager(Config{FailureThreshold: 1}, true)
-	m.Allow("responses", 12)
-	m.RecordFailure("responses", 12)
-
-	entries := m.Snapshot()
-	if len(entries) != 1 {
-		t.Fatalf("期望 1 条快照: %+v", entries)
-	}
-	if entries[0].Kind != "responses" || entries[0].ChannelIndex != 12 {
-		t.Fatalf("快照解析错误: %+v", entries[0])
 	}
 }

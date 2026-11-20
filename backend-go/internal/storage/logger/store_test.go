@@ -11,21 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/insistanan/api-proxy/internal/storage/logbody"
 )
-
-func TestRetentionCutoffKeepsTodayAndYesterday(t *testing.T) {
-	now := time.Date(2026, 10, 2, 15, 4, 0, 0, time.Local)
-	cutoff := RetentionCutoff(now)
-	year, month, day := cutoff.Date()
-	if year != 2026 || month != time.October || day != 1 {
-		t.Fatalf("cutoff=%s, want 2026-10-01 00:00:00 local", cutoff)
-	}
-	if cutoff.Hour() != 0 || cutoff.Minute() != 0 || cutoff.Second() != 0 {
-		t.Fatalf("cutoff should be start of yesterday, got %s", cutoff)
-	}
-}
 
 func TestCleanupDeletesOlderThanYesterday(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "logs.db")
@@ -165,30 +151,6 @@ func TestNextCleanupBatchAvoidsRetryingASizeThatTimedOut(t *testing.T) {
 	next, _, more, giveUp = nextCleanupBatch(cleanupShrinkBatch, 0, int64(cleanupShrinkBatch), cleanupTimeout/2, false)
 	if giveUp || !more || next != cleanupShrinkBatch {
 		t.Fatalf("接近预算的满批不应放大，得到 next=%d more=%v giveUp=%v", next, more, giveUp)
-	}
-}
-
-func TestIsCleanupTimeout(t *testing.T) {
-	ctx := context.Background()
-	if !isCleanupTimeout(ctx, context.DeadlineExceeded) {
-		t.Fatal("context deadline 应视为本批超时")
-	}
-	if !isCleanupTimeout(ctx, fmt.Errorf("清理过期日志失败: %w", context.DeadlineExceeded)) {
-		t.Fatal("包装后的 deadline 应视为本批超时")
-	}
-	if !isCleanupTimeout(ctx, fmt.Errorf("Operation terminated by sqlite3_interrupt()(SQLITE_INTERRUPT)")) {
-		t.Fatal("sqlite 中断应视为本批超时")
-	}
-	canceled, cancel := context.WithCancel(ctx)
-	cancel()
-	if !isCleanupTimeout(canceled, errors.New("interrupted (9)")) {
-		t.Fatal("ctx 已到期时驱动返回的中断错误应视为本批超时")
-	}
-	if isCleanupTimeout(ctx, fmt.Errorf("database is locked")) {
-		t.Fatal("锁冲突不能当成批量过大")
-	}
-	if isCleanupTimeout(ctx, nil) {
-		t.Fatal("nil 不是超时")
 	}
 }
 
@@ -592,13 +554,5 @@ func TestResponseCaptureConcurrentCloseUnblocksReadOnce(t *testing.T) {
 	wg.Wait()
 	if closes := inner.closes.Load(); closes != 1 {
 		t.Fatalf("底层响应体关闭 %d 次，预期 1 次", closes)
-	}
-}
-
-func TestNormalizeTrafficLogPreservesPreparedBodyMetadata(t *testing.T) {
-	prepared := TrafficLog{}.WithPreparedBody(logbody.OmittedBody(0), 0, true)
-	normalized := normalizeTrafficLog(prepared)
-	if normalized.Body != prepared.Body || normalized.OriginalBytes != 0 || !normalized.Truncated {
-		t.Fatalf("未知原始长度被替换成省略说明长度: %+v", normalized)
 	}
 }

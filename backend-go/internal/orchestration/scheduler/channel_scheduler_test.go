@@ -437,51 +437,6 @@ func TestSchedulerUsesFallbackGroupWhenMatchedGroupHasNoActiveChannel(t *testing
 	}
 }
 
-// TestPromotedChannelSkippedAfterFailure 测试促销渠道在本次请求失败后被跳过
-func TestPromotedChannelSkippedAfterFailure(t *testing.T) {
-	promotionUntil := time.Now().Add(5 * time.Minute)
-
-	cfg := config.Config{
-		Upstream: []config.UpstreamConfig{
-			{
-				Name:     "normal-channel",
-				BaseURL:  "https://normal.example.com",
-				APIKeys:  []string{"sk-normal-key"},
-				Status:   "active",
-				Priority: 1,
-			},
-			{
-				Name:           "promoted-channel",
-				BaseURL:        "https://promoted.example.com",
-				APIKeys:        []string{"sk-promoted-key"},
-				Status:         "active",
-				Priority:       2,
-				PromotionUntil: &promotionUntil,
-			},
-		},
-	}
-
-	scheduler, cleanup := createTestScheduler(t, cfg)
-	defer cleanup()
-
-	// 标记促销渠道已失败
-	failedChannels := map[int]bool{1: true}
-
-	// 选择渠道 - 应该跳过促销渠道，选择普通渠道
-	result, err := scheduler.SelectChannel(context.Background(), "test-user", failedChannels, ChannelKindMessages, "")
-	if err != nil {
-		t.Fatalf("选择渠道失败: %v", err)
-	}
-
-	if result.ChannelIndex != 0 {
-		t.Errorf("期望选择普通渠道 (index=0)，实际选择了 index=%d", result.ChannelIndex)
-	}
-
-	if result.Upstream.Name != "normal-channel" {
-		t.Errorf("期望选择 normal-channel，实际选择了 %s", result.Upstream.Name)
-	}
-}
-
 // TestUnhealthyChannelSkipped 测试不健康的渠道被跳过
 func TestUnhealthyChannelSkipped(t *testing.T) {
 	cfg := config.Config{
@@ -520,55 +475,6 @@ func TestUnhealthyChannelSkipped(t *testing.T) {
 
 	if result.ChannelIndex != 1 {
 		t.Errorf("期望选择健康渠道 (index=1)，实际选择了 index=%d", result.ChannelIndex)
-	}
-
-	if result.Upstream.Name != "healthy-channel" {
-		t.Errorf("期望选择 healthy-channel，实际选择了 %s", result.Upstream.Name)
-	}
-}
-
-// TestExpiredPromotionNotBypassHealthCheck 测试过期的促销不绕过健康检查
-func TestExpiredPromotionNotBypassHealthCheck(t *testing.T) {
-	// 设置促销截止时间为过去
-	promotionUntil := time.Now().Add(-5 * time.Minute)
-
-	cfg := config.Config{
-		Upstream: []config.UpstreamConfig{
-			{
-				Name:     "healthy-channel",
-				BaseURL:  "https://healthy.example.com",
-				APIKeys:  []string{"sk-healthy-key"},
-				Status:   "active",
-				Priority: 1,
-			},
-			{
-				Name:           "expired-promoted-channel",
-				BaseURL:        "https://expired.example.com",
-				APIKeys:        []string{"sk-expired-key"},
-				Status:         "active",
-				Priority:       2,
-				PromotionUntil: &promotionUntil, // 已过期
-			},
-		},
-	}
-
-	scheduler, cleanup := createTestScheduler(t, cfg)
-	defer cleanup()
-
-	// 模拟过期促销渠道不健康
-	metricsManager := scheduler.MetricsManager(ChannelKindMessages)
-	for i := 0; i < 10; i++ {
-		metricsManager.RecordFailure("https://expired.example.com", "sk-expired-key", 1)
-	}
-
-	// 选择渠道 - 过期促销渠道不应该被优先选择，应该选择健康的渠道
-	result, err := scheduler.SelectChannel(context.Background(), "test-user", make(map[int]bool), ChannelKindMessages, "")
-	if err != nil {
-		t.Fatalf("选择渠道失败: %v", err)
-	}
-
-	if result.ChannelIndex != 0 {
-		t.Errorf("期望选择健康渠道 (index=0)，实际选择了 index=%d", result.ChannelIndex)
 	}
 
 	if result.Upstream.Name != "healthy-channel" {

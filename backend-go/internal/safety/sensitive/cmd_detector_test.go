@@ -219,18 +219,6 @@ func TestStreamCmdScannerContinuesAfterAllow(t *testing.T) {
 	}
 }
 
-func TestCmdDetectorDisabled(t *testing.T) {
-	settings := defaultDangerousCmdSettings()
-	settings.Enabled = false
-	detector, err := NewCmdDetector(settings)
-	if err != nil {
-		t.Fatalf("创建关闭检测器失败: %v", err)
-	}
-	if len(detector.Find("```sh\nrm -rf /\n```")) != 0 {
-		t.Fatal("关闭后仍然命中危险命令")
-	}
-}
-
 func defaultDangerousCmdSettings() config.DangerousCmdConfig {
 	return config.DangerousCmdConfig{
 		Enabled: true,

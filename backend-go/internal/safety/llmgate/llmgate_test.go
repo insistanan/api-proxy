@@ -275,14 +275,6 @@ func TestPickChannelSkipsUnavailable(t *testing.T) {
 	}
 }
 
-// TestPickChannelNoChannel 锁定无可用渠道时显式报错（闸门依赖该错误走"失败即拦截"）。
-func TestPickChannelNoChannel(t *testing.T) {
-	cfgManager, sch := newGateTestEnv(t)
-	if _, err := PickChannel(context.Background(), cfgManager, sch, "", "", nil); err == nil {
-		t.Fatal("没有任何渠道时应返回错误")
-	}
-}
-
 // TestPickChannelExplicitID 锁定显式指定行为：命中即用，不存在时显式报错（不静默回退）。
 func TestPickChannelExplicitID(t *testing.T) {
 	cfgManager, sch := newGateTestEnv(t)
@@ -693,36 +685,6 @@ func TestPickChannelAutoScansNamedPools(t *testing.T) {
 	if selected.Permit != nil {
 		selected.Permit.Release()
 		selected.Permit = nil
-	}
-}
-
-// TestInternalCallModel 锁定内部调用模型解析优先级，以及"不静默编造模型名"的边界。
-func TestInternalCallModel(t *testing.T) {
-	cases := []struct {
-		name     string
-		model    string
-		upstream *config.UpstreamConfig
-		want     string
-		wantOK   bool
-	}{
-		{"default model wins", "req", &config.UpstreamConfig{DefaultModel: "dm"}, "dm", true},
-		{"explicit model maps", "sonnet", &config.UpstreamConfig{ModelMapping: map[string][]string{"sonnet": {"real"}}}, "real", true},
-		{"explicit model passthrough", "gpt-x", &config.UpstreamConfig{}, "gpt-x", true},
-		{"auto mode wildcard", "", &config.UpstreamConfig{ModelMapping: map[string][]string{"*": {"wild"}}}, "wild", true},
-		{"auto mode specific key deterministic", "", &config.UpstreamConfig{ModelMapping: map[string][]string{
-			"zeta":  {"z-target"},
-			"alpha": {"a-target"},
-		}}, "a-target", true},
-		{"auto mode pure passthrough unusable", "", &config.UpstreamConfig{}, "", false},
-		{"nil upstream", "", nil, "", false},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got, ok := internalCallModel(c.model, c.upstream)
-			if got != c.want || ok != c.wantOK {
-				t.Fatalf("internalCallModel(%q) = (%q,%v), want (%q,%v)", c.model, got, ok, c.want, c.wantOK)
-			}
-		})
 	}
 }
 

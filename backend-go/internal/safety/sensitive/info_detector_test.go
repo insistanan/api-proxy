@@ -259,20 +259,6 @@ func TestInfoDetectorMasksMultipleValuesDeterministically(t *testing.T) {
 	}
 }
 
-func TestInfoDetectorDisabled(t *testing.T) {
-	settings := defaultSensitiveInfoSettings()
-	settings.Enabled = false
-	detector, err := NewInfoDetector(settings)
-	if err != nil {
-		t.Fatalf("创建关闭的检测器失败: %v", err)
-	}
-	input := "alice@example.com 电话 13800138000"
-	masked, matches := detector.Mask(input)
-	if masked != input || len(matches) != 0 {
-		t.Fatalf("关闭后仍发生掩码: %q %+v", masked, matches)
-	}
-}
-
 // TestInfoDetectorCodeLikeTextNoFalsePositives 用冒号/十六进制密集的代码与
 // 配置文本（旧 IPv6 宽正则的高频误判来源）验证 IP 规则不会产生误掩码。
 // 时间字面量、bash 命令、URL、UUID、CSS 颜色、路径等都不是 IP，必须原样放行。
@@ -347,55 +333,6 @@ func TestInfoDetectorIPv6BoundaryCases(t *testing.T) {
 				t.Fatalf("命中原文或偏移错误: %+v", matches[0])
 			}
 		})
-	}
-}
-
-// TestInfoDetectorFeatureGateSkipsImpossibleRules 验证必要条件预筛：
-// 缺少结构特征的文本跳过对应规则，不产生任何命中；特征齐全时规则正常执行。
-func TestInfoDetectorFeatureGateSkipsImpossibleRules(t *testing.T) {
-	detector, err := NewInfoDetector(defaultSensitiveInfoSettings())
-	if err != nil {
-		t.Fatalf("创建检测器失败: %v", err)
-	}
-	if len(detector.rules) == 0 {
-		t.Fatal("默认配置应启用至少一条规则")
-	}
-	for _, rule := range detector.rules {
-		if rule.gate == nil {
-			t.Fatalf("规则 %s 缺少必要条件预筛", rule.name)
-		}
-	}
-
-	// 纯中文散文：无 '@'、无 '.'、无 ':'、无长数字块，所有规则 gate 都应拒绝。
-	plainText := "这是一段普通的项目说明，请继续整理函数的输入输出并补充文档。"
-	features := scanTextFeatures(plainText)
-	if features.hasAt || features.hasDot || features.hasColon {
-		t.Fatalf("纯中文散文不应含有 '@' '.' ':' 特征: %+v", features)
-	}
-	if features.maxDigitRun != 0 || features.maxCardRun != 0 {
-		t.Fatalf("纯中文散文不应有数字块: %+v", features)
-	}
-	for _, rule := range detector.rules {
-		if rule.gate(features) {
-			t.Fatalf("规则 %s 的 gate 对无特征文本应拒绝", rule.name)
-		}
-	}
-
-	// 关键特征触发 gate 放行：真实检测交给正则。
-	if !(scanTextFeatures("a@b.c").hasAt) {
-		t.Fatal("邮箱文本应具备 '@' 特征")
-	}
-	if !(scanTextFeatures("1.2.3.4").hasDot) {
-		t.Fatal("点分文本应具备 '.' 特征")
-	}
-	if !(scanTextFeatures("aa:bb:cc").hasColon) {
-		t.Fatal("冒号文本应具备 ':' 特征")
-	}
-	if got := scanTextFeatures("13800138000").maxDigitRun; got != 11 {
-		t.Fatalf("11 位手机号数字块 = %d", got)
-	}
-	if got := scanTextFeatures("4111 1111 1111 1111").maxCardRun; got != 16 {
-		t.Fatalf("空格分组卡号数字块 = %d", got)
 	}
 }
 

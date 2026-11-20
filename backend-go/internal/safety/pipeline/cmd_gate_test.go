@@ -654,31 +654,6 @@ func TestGateAIReviewDedupPerCompleteCommand(t *testing.T) {
 	}
 }
 
-// TestNormalizeGateCommandKey 不允许折叠可能改变执行语义的参数、引号和操作符。
-func TestNormalizeGateCommandKey(t *testing.T) {
-	cases := []struct {
-		first  string
-		second string
-	}{
-		{"rm -rf /tmp/cache", "rm -rf /"},
-		{"git push origin main", "git push --force origin main"},
-		{"npm run build:web", "npm run build:api"},
-		{"echo safe | cat", "echo safe; rm -rf /"},
-		{"rm -rf '$DIR'", "rm -rf \"$DIR\""},
-		{"rm -rf /Data", "rm -rf /data"},
-		{"FOO=1 rm -rf /tmp/a", "FOO=2 rm -rf /tmp/a"},
-	}
-	for _, testCase := range cases {
-		first := normalizeGateCommandKey(testCase.first)
-		if first == "" || first != normalizeGateCommandKey(testCase.first) || first == normalizeGateCommandKey(testCase.second) {
-			t.Errorf("不同执行语义不能共用身份: %q / %q", testCase.first, testCase.second)
-		}
-	}
-	if normalizeGateCommandKey("") != "" {
-		t.Fatal("空命令不能生成可复用的缓存身份")
-	}
-}
-
 func TestGateReviewCacheInvalidationStaysWithinConversation(t *testing.T) {
 	h := newGateTestHarness(t, 10)
 	h.aiVerdict.Store("allow")

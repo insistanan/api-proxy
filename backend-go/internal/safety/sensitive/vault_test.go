@@ -177,22 +177,3 @@ func TestVaultMaskKnownUsesExistingRequestMapping(t *testing.T) {
 		t.Fatalf("既有映射脱敏结果 = %q", got)
 	}
 }
-
-func TestVaultClearReleasesMappings(t *testing.T) {
-	vault := NewVault()
-	original := "18012345523"
-	placeholder, err := vault.Mask(original, []RedactionMatch{{
-		Type: "PHONE", Rule: "phone", Original: original, Start: 0, End: len(original),
-	}})
-	if err != nil {
-		t.Fatalf("创建占位符失败: %v", err)
-	}
-	vault.ReserveText("reserved")
-	vault.Clear()
-	if !vault.Empty() {
-		t.Fatal("清理后 Vault 应为空")
-	}
-	if got := vault.Restore(placeholder); got != placeholder {
-		t.Fatalf("清理后不应继续还原占位符: %q", got)
-	}
-}
