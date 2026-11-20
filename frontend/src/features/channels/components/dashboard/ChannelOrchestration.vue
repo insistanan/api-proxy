@@ -310,6 +310,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (_e: 'addChannel', _poolId: string): void
   (_e: 'edit', _channel: Channel): void
+  (_e: 'duplicate', _channel: Channel): void
   (_e: 'delete', _channelId: number, _kind?: ApiTab): void
   (_e: 'ping', _channelId: number): void
   (_e: 'refresh'): void
@@ -433,16 +434,7 @@ const toggleVisionCapability = async (channel: Channel) => {
   }
 }
 
-const duplicateChannel = async (channelIndex: number, kind: ApiTab = props.channelType) => {
-  try {
-    await api.duplicateChannel(kind, channelIndex)
-    emit('refresh')
-  } catch (error) {
-    console.error('Failed to duplicate channel:', error)
-    const errorMessage = error instanceof Error ? error.message : '未知错误'
-    emit('error', `复制渠道失败: ${errorMessage}`)
-  }
-}
+const duplicateChannel = (channel: Channel) => emit('duplicate', channel)
 
 // 设置渠道状态
 const setChannelStatus = async (channelId: number, status: ChannelStatus, kind: ApiTab = props.channelType) => {
@@ -490,7 +482,7 @@ const runMenuAction = (channel: Channel, action: ChannelMenuAction) => {
   const kind = kindOf(channel)
   switch (action) {
     case 'edit': return emit('edit', channel)
-    case 'duplicate': return duplicateChannel(channel.index, kind)
+    case 'duplicate': return duplicateChannel(channel)
     case 'toggleVision': return toggleVisionCapability(channel)
     case 'copyConfig': return copyChannelConfig(channel)
     case 'quickTest': return handleQuickTest(channel)

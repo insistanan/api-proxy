@@ -4,6 +4,65 @@ import { ref } from 'vue'
 import { buildChannelPayload, defaultChannelForm, useChannelEditor } from '@/features/channels/composables/useChannelEditor'
 import type { Channel } from '@/api'
 
+describe('复制渠道草稿', () => {
+  const source: Channel = {
+    id: 'source-id', name: '供应商A', index: 3, poolId: 'source-pool', status: 'disabled',
+    serviceType: 'openai', baseUrl: 'https://api.example.com/v1', baseUrls: ['https://api.example.com/v1', 'https://backup.example.com/v1'],
+    apiKeys: ['sk-fixture-key'], proxyMode: 'custom', proxyUrl: 'http://localhost:8080',
+    modelMapping: { '*': ['local-model', 'external-model'], sonnet: ['local-model'] },
+    modelMappingChannels: { '*': { 'external-model': 'other-channel' } }, reasoningEffort: 'high',
+    visionLayerEnabled: true, visionLayerChannelId: 'vision-channel'
+  }
+
+  it('同协议复制保留配置，默认进入兜底分组，并隔离原渠道数据', () => {
+    const editor = useChannelEditor('messages')
+    editor.loadChannelCopy(source, 'messages')
+    expect(editor.form).toMatchObject({
+      name: '供应商A (副本)', poolId: 'default', status: 'active', reasoningEffort: 'high',
+      apiKeys: source.apiKeys, modelMapping: source.modelMapping, modelMappingChannels: source.modelMappingChannels
+    })
+    editor.form.apiKeys.push('sk-new-key')
+    editor.form.modelMapping['*'].push('new-model')
+    editor.form.modelMappingChannels['*']['external-model'] = 'new-channel'
+    expect(source.apiKeys).toEqual(['sk-fixture-key'])
+    expect(source.modelMapping?.['*']).toEqual(['local-model', 'external-model'])
+    expect(source.modelMappingChannels?.['*']['external-model']).toBe('other-channel')
+    expect(editor.buildPayload(false)).not.toHaveProperty('id')
+    expect(editor.buildPayload(false)).not.toHaveProperty('status')
+  })
+
+  it('跨协议复制保留供应商连接、代理与本地模型，清理原协议的渠道引用', () => {
+    const editor = useChannelEditor('responses')
+    editor.loadChannelCopy(source, 'messages')
+    expect(editor.form).toMatchObject({
+      baseUrls: source.baseUrls, apiKeys: source.apiKeys, proxyMode: 'custom', proxyUrl: source.proxyUrl,
+      poolId: 'default', visionCapable: true, visionLayerEnabled: false, visionLayerChannelId: '',
+      reasoningEffort: 'inherit', modelMappingChannels: {}, modelMapping: { '*': ['local-model'], sonnet: ['local-model'] }
+    })
+  })
+
+  it.each(['images', 'embeddings', 'decisions'] as const)('复制到 %s 时使用该协议的模型与专属配置', protocol => {
+    const editor = useChannelEditor(protocol)
+    editor.loadChannelCopy(source, 'messages')
+    expect(editor.form.modelMapping).toEqual({})
+    expect(editor.form.modelMappingChannels).toEqual({})
+    expect(editor.form.visionLayerEnabled).toBe(false)
+    expect(editor.form.embeddingsDimensions).toBe(1024)
+    expect(editor.form.responsesModel).toBe('')
+  })
+
+  it('Chat 默认模型与唯一的本地通配映射可以相互转换', () => {
+    const chat = useChannelEditor('chat')
+    chat.loadChannelCopy(source, 'messages')
+    expect(chat.form.defaultModel).toBe('local-model')
+    const messages = useChannelEditor('messages')
+    messages.loadChannelCopy({ ...source, modelMapping: {}, modelMappingChannels: {}, defaultModel: 'chat-model' }, 'chat')
+    expect(messages.form.modelMapping).toEqual({ '*': ['chat-model'] })
+    chat.loadChannelCopy({ ...source, modelMapping: { '*': ['a', 'b'] }, modelMappingChannels: {} }, 'messages')
+    expect(chat.form.defaultModel).toBe('')
+  })
+})
+
 describe('渠道草稿与提交', () => {
   it('渠道思考覆盖可编辑、清除，并且不会改动原渠道或串入非对话协议', () => {
     const editor = useChannelEditor('messages')

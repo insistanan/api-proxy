@@ -15,6 +15,8 @@ export const useDialogStore = defineStore('dialog', () => {
   // 添加/编辑渠道对话框
   const showAddChannelModal = ref(false)
   const editingChannel = ref<Channel | null>(null)
+  const copyingChannel = ref<Channel | null>(null)
+  const copySourceType = ref<ApiTab>('messages')
   const channelType = ref<ApiTab>('messages')
   const initialPoolId = ref('default')
 
@@ -27,6 +29,7 @@ export const useDialogStore = defineStore('dialog', () => {
     channelType.value = type
     initialPoolId.value = poolId
     editingChannel.value = null
+    copyingChannel.value = null
     showAddChannelModal.value = true
   }
 
@@ -37,6 +40,17 @@ export const useDialogStore = defineStore('dialog', () => {
     channelType.value = type
     initialPoolId.value = 'default'
     editingChannel.value = channel
+    copyingChannel.value = null
+    showAddChannelModal.value = true
+  }
+
+  /** 复制只打开独立草稿，保存时按目标协议创建新渠道。 */
+  function openCopyChannelModal(channel: Channel, type: ApiTab) {
+    channelType.value = type
+    copySourceType.value = type
+    initialPoolId.value = 'default'
+    editingChannel.value = null
+    copyingChannel.value = channel
     showAddChannelModal.value = true
   }
 
@@ -46,6 +60,7 @@ export const useDialogStore = defineStore('dialog', () => {
   function closeAddChannelModal() {
     showAddChannelModal.value = false
     editingChannel.value = null
+    copyingChannel.value = null
     initialPoolId.value = 'default'
   }
 
@@ -55,6 +70,7 @@ export const useDialogStore = defineStore('dialog', () => {
   function resetDialogState() {
     showAddChannelModal.value = false
     editingChannel.value = null
+    copyingChannel.value = null
     initialPoolId.value = 'default'
   }
 
@@ -62,12 +78,15 @@ export const useDialogStore = defineStore('dialog', () => {
     // 状态
     showAddChannelModal,
     editingChannel,
+    copyingChannel,
+    copySourceType,
     channelType,
     initialPoolId,
 
     // 方法
     openAddChannelModal,
     openEditChannelModal,
+    openCopyChannelModal,
     closeAddChannelModal,
     resetDialogState,
   }

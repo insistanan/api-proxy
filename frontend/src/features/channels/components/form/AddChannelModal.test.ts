@@ -1,14 +1,134 @@
 // 表单提交入口回归：校验失败不保存，Images 参数先编译，再交给编辑器组装。
-import { describe, expect, it, vi } from 'vitest'
-import { createSSRApp, nextTick, ref, type Ref, type SetupContext } from 'vue'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createRenderer, createSSRApp, nextTick, reactive, ref, type Ref, type SetupContext } from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import type { ChannelFormState } from '@/features/channels/composables/useChannelEditor'
 import AddChannelModal from '@/features/channels/components/form/AddChannelModal.vue'
+import { api, type ApiTab, type Channel, type ChannelPool, type MappingTargetChannel, type MappingTargetChannelsResponse } from '@/api'
+import { useChannelModal } from '@/features/channels/composables/useChannelModal'
 
 vi.mock('vuetify', () => ({ useTheme: () => ({ current: ref({ dark: false }) }) }))
 vi.mock('@/shared/stores/auth', () => ({ useAuthStore: () => ({ apiKey: null, clearAuth: vi.fn() }) }))
 
 type State = Record<string, unknown>
+const cleanups: Array<() => void> = []
+afterEach(() => {
+  cleanups.splice(0).forEach(cleanup => cleanup())
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+})
+
+// 使用最小渲染宿主保留真实的生命周期和 watcher，不需要启动浏览器或渲染 Vuetify。
+const setupCopyForm = () => {
+  vi.stubGlobal('document', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
+  const source: Channel = {
+    id: 'source-id', name: '供应商A', index: 2, poolId: 'source-pool',
+    serviceType: 'responses', baseUrl: 'https://api.example.com/v1', apiKeys: ['sk-fixture-key'],
+    modelMapping: { '*': ['model-a'] }
+  }
+  const props = reactive({ show: false, saving: false, channelType: 'responses' as ApiTab, copySource: source, copySourceType: 'responses' as ApiTab })
+  let editor!: ReturnType<typeof useChannelModal>
+  const emit = vi.fn()
+  const renderer = createRenderer<Record<string, unknown>, Record<string, unknown>>({
+    patchProp: () => {}, insert: () => {}, remove: () => {},
+    createElement: () => ({}), createText: () => ({}), createComment: () => ({}),
+    setText: () => {}, setElementText: () => {}, parentNode: () => null, nextSibling: () => null
+  })
+  const app = renderer.createApp({ setup() {
+    editor = useChannelModal(props, emit)
+    return () => null
+  } })
+  app.mount({})
+  cleanups.push(() => app.unmount())
+  return { props, source, emit, editor }
+}
+
+const defaultPool: ChannelPool = { id: 'default', name: '兜底分组', modelMatcher: '', priority: 0 }
+const mockCopyResources = () => {
+  vi.spyOn(api, 'getChannelPools').mockResolvedValue({ pools: [defaultPool, { ...defaultPool, id: 'builtin-free', name: 'Free' }] })
+  vi.spyOn(api, 'getVisionChannels').mockResolvedValue({ channels: [] })
+  const factory = api.channelApi.bind(api)
+  vi.spyOn(api, 'channelApi').mockImplementation(kind => ({
+    ...factory(kind), getChannels: vi.fn().mockResolvedValue({ channels: [] }), listMappingTargets: vi.fn().mockResolvedValue({ channels: [] })
+  }))
+  return factory
+}
+
+const mappingCandidate = (id: string, name: string, serviceType: string): MappingTargetChannel => ({
+  id, name, serviceType, index: 0, poolId: 'default', status: 'active', circuitState: 'closed'
+})
+
+describe('复制渠道协议切换', () => {
+  it('使用详细配置，默认兜底分组且排除 Free，切换协议保留各自的编辑草稿', async () => {
+    mockCopyResources()
+    const { props, source, editor, emit } = setupCopyForm()
+    props.show = true
+    await nextTick()
+    await nextTick()
+    expect(editor.isQuickMode.value).toBe(false)
+    expect(editor.isEditing.value).toBe(false)
+    expect(editor.form.poolId).toBe('default')
+    expect(editor.poolOptions.value.map(pool => pool.value)).toEqual(['default'])
+    editor.form.name = 'Responses 自定义'
+    props.channelType = 'chat'
+    await nextTick()
+    expect(editor.form.serviceType).toBe('')
+    expect(editor.form.defaultModel).toBe('model-a')
+    editor.form.name = 'Chat 自定义'
+    editor.form.serviceType = 'openai'
+    props.channelType = 'responses'
+    await nextTick()
+    expect(editor.form.name).toBe('Responses 自定义')
+    expect(editor.form.serviceType).toBe('responses')
+    props.channelType = 'chat'
+    await nextTick()
+    expect(editor.form.name).toBe('Chat 自定义')
+    expect(editor.form.serviceType).toBe('openai')
+    expect(source.name).toBe('供应商A')
+    expect(emit).not.toHaveBeenCalledWith('save', expect.anything())
+  })
+
+  it('原协议的迟到分组和模型候选不会覆盖目标协议', async () => {
+    const factory = mockCopyResources()
+    let resolvePools!: (value: { pools: ChannelPool[] }) => void
+    vi.mocked(api.getChannelPools).mockImplementation(kind => kind === 'responses'
+      ? new Promise(resolve => { resolvePools = resolve })
+      : Promise.resolve({ pools: [defaultPool, { ...defaultPool, id: 'chat-pool', name: 'Chat 分组' }] }))
+    let resolveTargets!: (value: MappingTargetChannelsResponse) => void
+    vi.mocked(api.channelApi).mockImplementation(kind => ({
+      ...factory(kind),
+      getChannels: vi.fn().mockResolvedValue({ channels: [], current: -1, loadBalance: 'failover' }),
+      listMappingTargets: () => kind === 'responses'
+        ? new Promise(resolve => { resolveTargets = resolve })
+        : Promise.resolve({ channels: [mappingCandidate('chat-channel', 'Chat 渠道', 'openai')] })
+    }))
+    const { props, editor } = setupCopyForm()
+    props.show = true
+    await nextTick()
+    props.channelType = 'chat'
+    await nextTick()
+    await nextTick()
+    resolvePools({ pools: [defaultPool, { ...defaultPool, id: 'old-pool', name: '旧分组' }] })
+    resolveTargets({ channels: [mappingCandidate('old-channel', '旧渠道', 'responses')] })
+    await nextTick()
+    await nextTick()
+    expect(editor.poolOptions.value.map(pool => pool.value)).toEqual(['default', 'chat-pool'])
+    expect(editor.targetChannelOptions.value.map(channel => channel.value)).toEqual(['chat-channel'])
+  })
+
+  it('目标协议加载分组失败时显示错误并阻止保存', async () => {
+    mockCopyResources()
+    vi.mocked(api.getChannelPools).mockRejectedValue(new Error('目标分组读取失败'))
+    const { props, editor, emit } = setupCopyForm()
+    props.show = true
+    await nextTick()
+    await nextTick()
+    expect(editor.poolLoadError.value).toBe('目标分组读取失败')
+    editor.formRef.value = { validate: vi.fn().mockResolvedValue({ valid: true }) }
+    await editor.handleSubmit()
+    expect(emit).not.toHaveBeenCalledWith('save', expect.anything())
+  })
+})
 const submit = (state: State) => (state.handleSubmit as () => Promise<void>)()
 const setupForm = async (saving = false) => {
   let state!: State

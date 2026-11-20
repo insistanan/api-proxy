@@ -1,9 +1,9 @@
 // 渠道弹窗编排：连接独立草稿、快速输入和模型探测，管理校验、提交与关闭。
-import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted, toRaw } from 'vue'
 import type { Channel, ChannelPool, ChannelStatus } from '@/api'
 import { api, channelApiByType } from '@/api'
 import { imagesModelOptions, imagesProtocolLabel, isImagesServiceType, validateImagesOutputSettings } from '@/features/channels/utils/imagesChannelProtocol'
-import { useChannelEditor, buildImagesOutputSettings, EMBEDDINGS_DIMENSIONS_DEFAULT, validateEmbeddingsDimensions, supportsChannelClientIdentity } from '@/features/channels/composables/useChannelEditor'
+import { useChannelEditor, buildImagesOutputSettings, EMBEDDINGS_DIMENSIONS_DEFAULT, validateEmbeddingsDimensions, supportsChannelClientIdentity, type ChannelFormState } from '@/features/channels/composables/useChannelEditor'
 import { compileImagesExtraParams } from '@/features/channels/utils/imagesExtraParams'
 
 import { useQuickChannelDraft } from '@/features/channels/composables/useQuickChannelDraft'
@@ -16,6 +16,8 @@ export interface ChannelModalProps {
   show: boolean
   saving?: boolean
   channel?: Channel | null
+  copySource?: Channel | null
+  copySourceType?: ApiTab
   channelType: ApiTab
   initialPoolId?: string
 }
@@ -53,7 +55,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
 
   // 返回详细模式时，只同步本次在快速模式中改变的字段，保留详细草稿的其余编辑。
   const toggleMode = () => {
-    if (props.saving) return
+    if (props.saving || props.copySource) return
     providerDrawerOpen.value = false
     if (isQuickMode.value) {
       const next = quickTransferValues()
@@ -117,7 +119,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
 
   // 处理快速添加提交
   const handleQuickSubmit = () => {
-    if (props.saving) return
+    if (props.saving || props.copySource) return
     if (!isQuickFormValid.value) return
 
     const channelData = {
@@ -272,7 +274,28 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
   })
 
   // 表单草稿经 useChannelEditor（R5，方案 8.1）：草稿独立于 store，取消不落盘。
-  const { form, resetForm: resetFormDraft, loadChannelData: loadChannelDataDraft, buildPayload } = useChannelEditor(() => props.channelType)
+  const { form, resetForm: resetFormDraft, loadChannelData: loadChannelDataDraft, loadChannelCopy, buildPayload } = useChannelEditor(() => props.channelType)
+  const copyDrafts = new Map<ApiTab, ChannelFormState>()
+  let copyDraftType: ApiTab | null = null
+
+  const loadCopyDraft = () => {
+    resetForm()
+    const cached = copyDrafts.get(props.channelType)
+    if (cached) {
+      Object.assign(form, cached)
+    } else if (props.copySource) {
+      loadChannelCopy(props.copySource, props.copySourceType ?? props.channelType)
+      // 旧配置中的 Chat 别名与 OpenAI 兼容类型等价。
+      if (form.serviceType === 'chat') form.serviceType = 'openai'
+      const supported = props.channelType === 'images'
+        ? isImagesServiceType(form.serviceType)
+        : serviceTypeOptions.value.some(option => option.value === form.serviceType)
+      if (!supported) form.serviceType = ''
+    }
+    baseUrlsText.value = form.baseUrls.length ? form.baseUrls.join('\n') : form.baseUrl
+    isQuickMode.value = false
+    copyDraftType = props.channelType
+  }
 
   const identityServiceType = computed(() => isQuickMode.value && !props.channel ? quickServiceType.value : form.serviceType)
   const supportsClientIdentity = computed(() => supportsChannelClientIdentity(props.channelType, identityServiceType.value))
@@ -400,7 +423,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
   const baseUrlsText = ref('')
 
   const applyProviderPreset = (preset: ChannelPreset) => {
-    if (props.saving || props.channel) return
+    if (props.saving || props.channel || props.copySource) return
     const endpoint = resolveChannelPreset(preset, props.channelType)
     if (!endpoint) {
       submitError.value = '当前入口暂不支持此渠道商的上游协议'
@@ -469,6 +492,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
     fetchingModels,
     fetchModelsError,
     targetChannelOptions,
+    mappingTargetChannelsError,
     targetChannelModelOptions,
     targetChannelModelStatus,
     targetModelOptionsByChannel,
@@ -599,18 +623,21 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
   })
 
   const loadVisionChannels = async () => {
+    const revision = resourceRevision
+    const kind = props.channelType
     visionChannelsLoading.value = true
     visionChannelsError.value = ''
     try {
       const [owned, shared] = await Promise.all([
-        channelApiByType(props.channelType).getChannels(),
+        channelApiByType(kind).getChannels(),
         api.getVisionChannels()
       ])
+      if (revision !== resourceRevision) return
       // 合并本协议渠道（用于同分组选择）与跨协议公用池；按协议 + ID 去重。
       const merged = new Map<string, Channel>()
       for (const channel of owned.channels || []) {
         if (!channel.id) continue
-        merged.set(`${props.channelType}:${channel.id}`, { ...channel, kind: props.channelType })
+        merged.set(`${kind}:${channel.id}`, { ...channel, kind })
       }
       for (const channel of shared.channels || []) {
         if (!channel.id) continue
@@ -618,27 +645,33 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
       }
       visionChannels.value = Array.from(merged.values())
     } catch (error) {
+      if (revision !== resourceRevision) return
       visionChannels.value = []
       visionChannelsError.value = `加载图片理解渠道失败：${error instanceof Error ? error.message : String(error)}`
     } finally {
-      visionChannelsLoading.value = false
+      if (revision === resourceRevision) visionChannelsLoading.value = false
     }
   }
 
   const loadPools = async () => {
+    const revision = resourceRevision
+    const kind = props.channelType
     poolsLoading.value = true
     poolLoadError.value = ''
     try {
-      const response = await api.getChannelPools(props.channelType)
-      pools.value = response.pools || []
+      const response = await api.getChannelPools(kind)
+      if (revision !== resourceRevision) return
+      if (!Array.isArray(response.pools)) throw new Error('渠道分组响应格式无效')
+      pools.value = response.pools
       if (!poolOptions.value.some(pool => pool.value === form.poolId)) {
         poolLoadError.value = '所选分组不存在或不可用，请重新选择分组'
       }
     } catch (error) {
+      if (revision !== resourceRevision) return
       pools.value = []
       poolLoadError.value = error instanceof Error ? error.message : '加载分组失败'
     } finally {
-      poolsLoading.value = false
+      if (revision === resourceRevision) poolsLoading.value = false
     }
   }
 
@@ -662,7 +695,9 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
     }
   })
 
-  watch([() => form.poolId, visionChannelOptions], () => {
+  watch([() => form.poolId, visionChannelOptions, visionChannelsLoading], () => {
+    if (props.copySource && copyDraftType !== props.channelType) return
+    if (visionChannelsLoading.value || visionChannelsError.value) return
     if (form.visionLayerChannelId && !visionChannelOptions.value.some(option => option.value === form.visionLayerChannelId)) {
       form.visionLayerChannelId = ''
     }
@@ -804,11 +839,31 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
     resetForm()
   }
 
+  // 每次切换协议或关闭弹窗都使旧请求失效，避免迟到响应覆盖当前候选。
+  let resourceRevision = 0
+  watch([() => props.show, () => props.channelType], () => {
+    resourceRevision++
+  }, { flush: 'sync' })
+
+  const loadProtocolResources = () => {
+    pools.value = []
+    visionChannels.value = []
+    visionChannelsError.value = ''
+    visionChannelsLoading.value = false
+    if (isConversationProtocol(props.channelType)) void loadVisionChannels()
+    void loadPools()
+    void loadMappingTargetChannels()
+  }
+
   // 监听props变化
   watch(
     () => props.show,
     newShow => {
-      if (!newShow) providerDrawerOpen.value = false
+      if (!newShow) {
+        providerDrawerOpen.value = false
+        copyDrafts.clear()
+        copyDraftType = null
+      }
       if (newShow) {
         // 无论是编辑还是新增，都先清理密钥错误状态
         apiKeyError.value = ''
@@ -818,25 +873,29 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
         duplicateKeyIndex.value = -1
         imagesExtraParamsError.value = ''
         imagesOutputError.value = ''
-        // 图片理解只属于对话类入口协议，透传协议不加载相关渠道。
-        if (isConversationProtocol(props.channelType)) {
-          void loadVisionChannels()
-        }
-        void loadPools()
-        void loadMappingTargetChannels()
-
+        copyDrafts.clear()
         if (props.channel) {
           // 编辑模式：使用表单模式
           isQuickMode.value = false
           loadChannelData(props.channel)
+        } else if (props.copySource) {
+          loadCopyDraft()
         } else {
           // 添加模式：默认使用快速模式
           isQuickMode.value = true
           resetForm()
         }
+        loadProtocolResources()
       }
     }
   )
+
+  watch(() => props.channelType, (_kind, previousKind) => {
+    if (!props.show || !props.copySource || copyDraftType !== previousKind) return
+    copyDrafts.set(previousKind, globalThis.structuredClone(toRaw(form)))
+    loadCopyDraft()
+    loadProtocolResources()
+  })
 
   watch(
     () => props.channel,
@@ -930,6 +989,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
     fetchingModels,
     fetchModelsError,
     targetChannelOptions,
+    mappingTargetChannelsError,
     targetModelOptionsByChannel,
     targetStatusByChannel,
     keyModelsStatus,

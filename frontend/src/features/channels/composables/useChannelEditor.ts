@@ -5,7 +5,8 @@
 import { reactive, toValue, type MaybeRefOrGetter } from 'vue'
 import type { Channel, ChannelStatus } from '@/api'
 import { rowsFromImagesExtraParams, type ImagesExtraParamRow } from '@/features/channels/utils/imagesExtraParams'
-import type { ImagesOutputFormat } from '@/types/channel'
+import type { ApiTab, ImagesOutputFormat } from '@/types/channel'
+import { isConversationProtocol } from '@/features/channels/services/channel-api'
 import { imagesGIFDefaults } from '@/features/channels/utils/imagesChannelProtocol'
 
 /** 表单草稿：AddChannelModal 的唯一可编辑状态本体。 */
@@ -324,5 +325,57 @@ export function useChannelEditor(channelType: MaybeRefOrGetter<string>) {
   const buildPayload = (isEditing: boolean, imagesExtraParams?: Record<string, string>) =>
     buildChannelPayload(form, toValue(channelType), isEditing, imagesExtraParams)
 
-  return { form, resetForm, loadChannelData, buildPayload }
+  /** 同协议复制配置；跨协议沿用连接信息，并按目标入口初始化专属配置。 */
+  const loadChannelCopy = (channel: Channel, sourceType: ApiTab): void => {
+    resetForm()
+    loadChannelData(channel)
+    form.name = `${channel.name} (副本)`
+    form.status = 'active'
+    form.poolId = 'default'
+    if (sourceType === toValue(channelType)) return
+
+    const defaults = defaultChannelForm(toValue(channelType))
+    // 跨协议不能把原先转给其他渠道的模型悄悄改成由当前供应商处理。
+    form.modelMapping = Object.fromEntries(Object.entries(form.modelMapping)
+      .map(([source, targets]) => [source, targets.filter(target => !channel.modelMappingChannels?.[source]?.[target])] as const)
+      .filter(([, targets]) => targets.length > 0))
+    Object.assign(form, {
+      visionCapable: defaults.visionCapable,
+      excludeFromConversation: defaults.excludeFromConversation,
+      visionLayerEnabled: defaults.visionLayerEnabled,
+      visionLayerChannelId: defaults.visionLayerChannelId,
+      visionLayerModel: defaults.visionLayerModel,
+      injectDummyThoughtSignature: defaults.injectDummyThoughtSignature,
+      stripThoughtSignature: defaults.stripThoughtSignature,
+      disablePromptCacheKey: defaults.disablePromptCacheKey,
+      reasoningOutputMode: defaults.reasoningOutputMode,
+      reasoningEffort: defaults.reasoningEffort,
+      parseEmbeddedReasoning: defaults.parseEmbeddedReasoning,
+      defaultModel: defaults.defaultModel,
+      responsesModel: defaults.responsesModel,
+      imagesExtraParams: defaults.imagesExtraParams,
+      imagesForceNonStream: defaults.imagesForceNonStream,
+      imagesOutputFormat: defaults.imagesOutputFormat,
+      imagesFrameCount: defaults.imagesFrameCount,
+      imagesFrameDurationMs: defaults.imagesFrameDurationMs,
+      embeddingsDimensions: defaults.embeddingsDimensions,
+      modelMappingChannels: {}
+    })
+    // 对话入口之间保留模型名；其他入口使用不同类型的模型，必须重新配置。
+    if (!isConversationProtocol(sourceType) || !isConversationProtocol(toValue(channelType))) {
+      form.modelMapping = {}
+    } else if (sourceType === 'chat' && channel.defaultModel?.trim()) {
+      form.modelMapping = { '*': [channel.defaultModel.trim()] }
+    }
+    if (toValue(channelType) === 'chat') {
+      const targets = form.modelMapping['*']
+      // 只有唯一的本渠道通配映射才能无歧义地转换为 Chat 默认模型。
+      if (targets?.length === 1) {
+        form.defaultModel = targets[0]
+      }
+      form.modelMapping = {}
+    }
+  }
+
+  return { form, resetForm, loadChannelData, loadChannelCopy, buildPayload }
 }

@@ -1,6 +1,7 @@
 <template>
 <v-form ref="formRef" @submit.prevent="handleSubmit">
   <v-alert v-if="submitError" type="error" variant="tonal" class="mb-4" role="alert">{{ submitError }}</v-alert>
+  <v-alert v-if="mappingTargetChannelsError" type="error" variant="tonal" class="mb-4" role="alert">{{ mappingTargetChannelsError }}</v-alert>
   <v-row>
     <v-col cols="12">
       <div class="form-section-heading">
@@ -627,6 +628,7 @@ const {
   fetchingModels,
   fetchModelsError,
   targetChannelOptions,
+  mappingTargetChannelsError,
   targetModelOptionsByChannel,
   targetStatusByChannel,
   handleFetchModels,

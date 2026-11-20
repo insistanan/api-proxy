@@ -1,5 +1,5 @@
 // 渠道编辑器的模型探测与候选缓存；只操作传入的草稿，不提交渠道配置。
-import { computed, ref, type Ref } from 'vue'
+import { computed, ref, watch, type Ref } from 'vue'
 import { fetchUpstreamModels, channelApiByType, ApiError } from '@/api'
 import { imagesModelOptions, imagesProtocolLabel } from '@/features/channels/utils/imagesChannelProtocol'
 import type { ChannelFormState } from '@/features/channels/composables/useChannelEditor'
@@ -22,6 +22,7 @@ export function useChannelModels(
   // 模型映射的目标渠道：候选渠道列表（同协议、可用、排除本渠道），以及各目标渠道的模型候选缓存。
   // 键为目标渠道 ID；本渠道的候选沿用上面的 targetModelOptions（键为空串）。
   const targetChannelOptions = ref<Array<{ title: string; value: string }>>([])
+  const mappingTargetChannelsError = ref('')
   const targetChannelModelOptions = ref<Record<string, Array<{ title: string; value: string }>>>({})
   const targetChannelModelStatus = ref<Record<string, { loading: boolean; error: string }>>({})
   const targetModelOptionsByChannel = computed(() => ({
@@ -45,6 +46,18 @@ export function useChannelModels(
     modelCount?: number
   }
   const keyModelsStatus = ref<Map<string, KeyModelsStatus>>(new Map())
+  let requestRevision = 0
+  watch([() => props.show, () => props.channelType], () => {
+    requestRevision++
+    targetChannelOptions.value = []
+    mappingTargetChannelsError.value = ''
+    targetModelOptions.value = []
+    fetchingModels.value = false
+    fetchModelsError.value = ''
+    targetChannelModelOptions.value = {}
+    targetChannelModelStatus.value = {}
+    keyModelsStatus.value.clear()
+  }, { flush: 'sync' })
 
   const handleFetchModels = (channelId: string) => {
     if (channelId) {
@@ -56,20 +69,27 @@ export function useChannelModels(
 
   // 加载模型映射的目标渠道候选（同协议、可用，排除本渠道）
   const loadMappingTargetChannels = async () => {
+    const revision = requestRevision
+    const kind = props.channelType
+    mappingTargetChannelsError.value = ''
     try {
-      const response = await channelApiByType(props.channelType).listMappingTargets(props.channel?.id)
-      targetChannelOptions.value = (response.channels || []).map(channel => ({
-        title: `${channel.name}（${props.channelType === 'images' ? imagesProtocolLabel(channel.serviceType) : channel.serviceType}）`,
+      const response = await channelApiByType(kind).listMappingTargets(props.channel?.id)
+      if (revision !== requestRevision) return
+      if (!Array.isArray(response.channels)) throw new Error('模型映射目标渠道响应格式无效')
+      targetChannelOptions.value = response.channels.map(channel => ({
+        title: `${channel.name}（${kind === 'images' ? imagesProtocolLabel(channel.serviceType) : channel.serviceType}）`,
         value: channel.id
       }))
     } catch (error) {
-      console.error('加载模型映射目标渠道失败:', error)
+      if (revision !== requestRevision) return
+      mappingTargetChannelsError.value = `加载模型映射目标渠道失败：${error instanceof Error ? error.message : String(error)}`
       targetChannelOptions.value = []
     }
   }
 
   // 获取指定目标渠道的模型列表（使用目标渠道自身的密钥，服务端完成探测）。成功后按渠道缓存，失败不缓存以便重试。
   const fetchChannelTargetModels = async (channelId: string) => {
+    const revision = requestRevision
     if (targetChannelModelOptions.value[channelId] || targetChannelModelStatus.value[channelId]?.loading) {
       return
     }
@@ -81,6 +101,7 @@ export function useChannelModels(
 
     try {
       const response = await channelApiByType(props.channelType).listMappingTargetModels(channelId)
+      if (revision !== requestRevision) return
       const options = response.data
         .map(model => model.id)
         .sort()
@@ -91,6 +112,7 @@ export function useChannelModels(
         [channelId]: { loading: false, error: '' }
       }
     } catch (error) {
+      if (revision !== requestRevision) return
       const message = error instanceof Error ? error.message : '未知错误'
       targetChannelModelStatus.value = {
         ...targetChannelModelStatus.value,
@@ -100,6 +122,7 @@ export function useChannelModels(
   }
 
   const fetchTargetModels = async () => {
+    const revision = requestRevision
   const modelBaseUrl = props.channelType === 'images' && isQuickMode.value
       ? detectedBaseUrl.value
       : form.baseUrl
@@ -146,6 +169,7 @@ export function useChannelModels(
           proxyMode: form.proxyMode,
           proxyUrl: form.proxyMode === 'custom' ? form.proxyUrl.trim() : ''
         })
+        if (revision !== requestRevision) return []
 
         keyModelsStatus.value.set(apiKey, {
           loading: false,
@@ -156,6 +180,7 @@ export function useChannelModels(
 
         return response.data
       } catch (error) {
+        if (revision !== requestRevision) return []
         let errorMsg = '未知错误'
         let statusCode = 0
 
@@ -179,6 +204,7 @@ export function useChannelModels(
 
     try {
       const results = await Promise.all(keyPromises)
+      if (revision !== requestRevision) return
 
       // 合并新获取的模型列表到现有列表
       const allModels = new Set<string>(targetModelOptions.value.map(opt => opt.value))
@@ -205,7 +231,7 @@ export function useChannelModels(
           : '所有 API Key 都无法获取模型列表,请检查 API 密钥列表中的错误信息'
       }
     } finally {
-      fetchingModels.value = false
+      if (revision === requestRevision) fetchingModels.value = false
     }
   }
 
@@ -214,6 +240,7 @@ export function useChannelModels(
     fetchingModels,
     fetchModelsError,
     targetChannelOptions,
+    mappingTargetChannelsError,
     targetChannelModelOptions,
     targetChannelModelStatus,
     targetModelOptionsByChannel,

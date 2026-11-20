@@ -81,6 +81,7 @@
       :vision-channels="sharedVisionChannels"
       @add-channel="openAddChannel"
       @edit="editChannel"
+      @duplicate="copyChannel"
       @delete="handleDeleteChannel"
       @ping="pingChannel"
       @refresh="refreshChannels"
@@ -100,8 +101,10 @@
 
     <AddChannelModal
       v-model:show="dialogStore.showAddChannelModal"
+      v-model:channel-type="dialogStore.channelType"
       :channel="dialogStore.editingChannel"
-      :channel-type="dialogStore.channelType"
+      :copy-source="dialogStore.copyingChannel"
+      :copy-source-type="dialogStore.copySourceType"
       :initial-pool-id="dialogStore.initialPoolId"
       :saving="channelStore.isSavingChannel || channelStore.isDeletingChannel"
       @save="handleSaveChannel"
@@ -124,6 +127,7 @@
 // 渠道页：概览、路由开关、流量统计与渠道编排。
 // 渠道数据由 channelStore 持有；本页负责进入时加载、停留期间自动刷新、离开时停止。
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import ConfirmDialog from '@/shared/components/common/ConfirmDialog.vue'
 import { useConfirm } from '@/shared/composables/useConfirm'
 import { deletionImpactWarning } from '@/features/channels/utils/deletionImpact'
@@ -152,6 +156,7 @@ import { defineLazyChart } from '@/shared/utils/lazyChart'
 const GlobalStatsChart = defineLazyChart(() => import('@/features/channels/components/dashboard/GlobalStatsChart.vue'))
 
 const channelStore = useChannelStore()
+const router = useRouter()
 const dialogStore = useDialogStore()
 const preferencesStore = usePreferencesStore()
 const authStore = useAuthStore()
@@ -202,12 +207,22 @@ const refreshChannels = async () => {
 
 const openAddChannel = (poolId = 'default') => dialogStore.openAddChannelModal(channelType.value, poolId)
 const editChannel = (channel: Channel) => dialogStore.openEditChannelModal(channel, channel.kind ?? channelType.value)
+const copyChannel = (channel: Channel) => dialogStore.openCopyChannelModal(channel, channel.kind ?? channelType.value)
 const handleSaveChannel = async (
   channel: Omit<Channel, 'id' | 'index' | 'latency'>,
   options?: { isQuickAdd?: boolean }
 ) => {
+  const copying = !!dialogStore.copyingChannel
+  const targetType = dialogStore.channelType
   await saveChannel(channel, options, handleAuthError)
   await refreshVisionChannelPool()
+  if (copying && !dialogStore.showAddChannelModal && targetType !== channelType.value) {
+    try {
+      await router.push(`/channels/${targetType}`)
+    } catch (error) {
+      showToast(`渠道已创建，但切换协议失败：${error instanceof Error ? error.message : '未知错误'}`, 'warning')
+    }
+  }
 }
 const handleDeleteChannel = async (channelId: number, kind?: ApiTab) => {
   if (preparingDelete.value || pendingConfirm.value || channelStore.isDeletingChannel || channelStore.isSavingChannel) return

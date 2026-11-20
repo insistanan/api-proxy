@@ -81,7 +81,7 @@
                   </template>
                   <v-list-item-title>编辑</v-list-item-title>
                 </v-list-item>
-                <v-list-item @click="emit('duplicate', channel.index)">
+                <v-list-item @click="emit('duplicate', channel)">
                   <template #prepend>
                     <v-icon size="small">mdi-content-copy</v-icon>
                   </template>
@@ -199,7 +199,7 @@ const emit = defineEmits<{
   edit: [channel: Channel]
   delete: [index: number]
   enable: [index: number]
-  duplicate: [index: number]
+  duplicate: [channel: Channel]
   vision: [channel: Channel]
   status: [index: number, status: ChannelStatus]
 }>()
