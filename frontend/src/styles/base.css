@@ -1,0 +1,17 @@
+@layer base {
+  .ui-expand-enter-active, .ui-expand-leave-active { @apply transition-opacity duration-150; }
+  .ui-expand-enter-from, .ui-expand-leave-to { @apply opacity-0; }
+  html { @apply bg-background font-sans text-foreground antialiased; text-rendering: optimizeLegibility; }
+  body { @apply m-0 min-w-80; }
+  button, [role='button'], summary { @apply touch-manipulation cursor-pointer; }
+  button:disabled { @apply cursor-not-allowed; }
+  :where(a, button, input, textarea, select, summary, [tabindex], [role='button']):focus-visible { @apply outline-2 outline-offset-2 outline-ring; }
+  code, pre { @apply font-mono; font-variant-ligatures: none; }
+  code { @apply rounded-badge bg-primary/8 px-1.5 py-0.5 text-[0.875em]; }
+  ::selection { @apply bg-primary/20; }
+  ::-webkit-scrollbar { @apply size-[7px]; }
+  ::-webkit-scrollbar-thumb { @apply rounded-full bg-muted-foreground/35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}

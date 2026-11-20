@@ -1,9 +1,9 @@
 <template>
   <div class="conversation-view">
     <PageHeader title="对话" description="查看会话状态、真实输入与请求链路，追踪一次对话使用的渠道和模型。" />
-    <v-card class="conversation-toolbar mb-4 pa-4" rounded="lg">
+    <UiCard class="conversation-toolbar mb-4 p-4" rounded="lg">
       <div class="conversation-filters">
-        <v-text-field
+        <UiInput
           v-model="searchText"
           label="搜索对话"
           variant="outlined"
@@ -14,7 +14,7 @@
           @keyup.enter="loadConversations()"
         />
 
-        <v-select
+        <UiSelect
           v-model="kindFilter"
           :items="kindItems"
           label="类型"
@@ -25,7 +25,7 @@
           clearable
         />
 
-        <v-select
+        <UiSelect
           v-model="statusFilter"
           :items="statusItems"
           label="状态"
@@ -35,7 +35,7 @@
           class="filter-field"
         />
 
-        <v-select
+        <UiSelect
           v-model="orderMode"
           :items="orderItems"
           label="排序"
@@ -46,26 +46,27 @@
           prepend-inner-icon="mdi-sort"
         />
 
-        <v-btn color="primary" prepend-icon="mdi-refresh" variant="tonal" :loading="loading" @click="loadConversations()">
+        <UiButton color="primary" prepend-icon="mdi-refresh" variant="tonal" :loading="loading" @click="loadConversations()">
           刷新
-        </v-btn>
+        </UiButton>
 
-        <v-btn color="error" prepend-icon="mdi-delete" variant="tonal" :disabled="conversations.length === 0" @click="openDeleteAllDialog">
+        <UiButton color="error" prepend-icon="mdi-delete" variant="tonal" :disabled="conversations.length === 0" @click="openDeleteAllDialog">
           清空全部
-        </v-btn>
+        </UiButton>
 
-        <div class="conversation-count text-body-2 text-medium-emphasis">
+        <div class="conversation-count text-sm text-muted-foreground">
           本页 {{ conversations.length }} 条 · 共 {{ totalConversations }} 条
         </div>
       </div>
-    </v-card>
+    </UiCard>
 
-    <v-alert v-if="loadError" type="error" variant="tonal" density="compact" class="mb-4">{{ loadError }}<span v-if="conversations.length">；下方保留上次成功加载的结果。</span></v-alert>
+    <UiAlert v-if="loadError" type="error" variant="tonal" density="compact" class="mb-4">{{ loadError }}<span v-if="conversations.length">；下方保留上次成功加载的结果。</span></UiAlert>
 
-    <v-card rounded="lg">
-      <v-data-table-server
+    <UiCard rounded="lg">
+      <UiDataTable
         v-model:page="page"
         v-model:items-per-page="pageSize"
+        server
         :items-length="totalConversations"
         :items-per-page-options="[10, 25, 50, 100]"
         :headers="headers"
@@ -82,7 +83,7 @@
             </button>
             <div class="conversation-id-row">
               <span class="conversation-id font-mono" :title="item.id">{{ formatConversationID(item.id) }}</span>
-              <v-btn
+              <UiButton
                 icon="mdi-content-copy"
                 size="x-small"
                 variant="text"
@@ -102,19 +103,19 @@
               共 {{ conversationPrompts(item).length }} 条真实输入
             </div>
           </div>
-          <span v-else class="text-medium-emphasis">--</span>
+          <span v-else class="text-muted-foreground">--</span>
         </template>
 
         <template #[`item.protocol`]="{ item }">
           <div class="protocol-model">
-            <v-chip size="x-small" variant="tonal" class="text-uppercase">{{ item.apiKind }}</v-chip>
+            <UiBadge size="x-small" variant="tonal" class="uppercase">{{ item.apiKind }}</UiBadge>
             <span class="model-name">{{ formatModelChain(item) }}</span>
           </div>
         </template>
 
         <template #[`item.activity`]="{ item }">
           <div v-if="item.isSending" class="activity-active">
-            <v-chip
+            <UiBadge
               size="small"
               color="success"
               variant="tonal"
@@ -122,12 +123,12 @@
               class="sending-chip"
             >
               发送中 {{ formatDurationSince(item.lastRequestAt || item.lastSeenAt) }}
-            </v-chip>
-            <span v-if="(item.activeRequests || 0) > 1" class="text-caption text-medium-emphasis">
+            </UiBadge>
+            <span v-if="(item.activeRequests || 0) > 1" class="text-xs text-muted-foreground">
               {{ item.activeRequests }} 个并发请求
             </span>
           </div>
-          <span v-else class="text-caption text-medium-emphasis">
+          <span v-else class="text-xs text-muted-foreground">
             {{ formatIdleText(item) }}
           </span>
         </template>
@@ -135,7 +136,7 @@
         <template #[`item.requests`]="{ item }">
           <div class="request-stats">
             <span><strong>{{ item.requestCount }}</strong> 请求</span>
-            <span :class="item.errorCount > 0 ? 'text-error' : 'text-medium-emphasis'">
+            <span :class="item.errorCount > 0 ? 'text-destructive' : 'text-muted-foreground'">
               <strong>{{ item.errorCount }}</strong> 错误
             </span>
           </div>
@@ -147,28 +148,28 @@
               <span class="routing-label">最近</span>
               <span>#{{ item.lastResolved.channelIndex }} {{ item.lastResolved.channelName || item.lastResolved.kind }}</span>
             </div>
-            <div v-else class="text-medium-emphasis">尚未解析</div>
+            <div v-else class="text-muted-foreground">尚未解析</div>
             <div v-if="item.routeOverride" class="routing-line text-primary">
               <span class="routing-label">固定</span>
               <span>#{{ item.routeOverride.channelIndex }} {{ item.routeOverride.channelName || item.routeOverride.kind }}</span>
             </div>
-            <div v-else class="text-caption text-medium-emphasis">默认调度</div>
+            <div v-else class="text-xs text-muted-foreground">默认调度</div>
           </div>
         </template>
 
         <template #[`item.timestamps`]="{ item }">
           <div class="timestamp-summary">
             <span>{{ formatDateTime(item.firstSeenAt) }}</span>
-            <span class="text-caption text-medium-emphasis">活动 {{ formatDateTime(item.lastSeenAt) }}</span>
+            <span class="text-xs text-muted-foreground">活动 {{ formatDateTime(item.lastSeenAt) }}</span>
           </div>
         </template>
 
         <template #[`item.actions`]="{ item }">
           <div class="conversation-actions">
-            <v-btn icon="mdi-history" size="small" variant="text" title="查看上下文与轨迹" aria-label="查看上下文与轨迹" @click="openTraceDialog(item)" />
-            <v-btn icon="mdi-pencil" size="small" variant="text" title="命名" aria-label="命名对话" @click="openNameDialog(item)" />
-            <v-btn icon="mdi-swap-horizontal" size="small" variant="text" title="固定渠道" aria-label="固定渠道" @click="openRouteDialog(item)" />
-            <v-btn
+            <UiButton icon="mdi-history" size="small" variant="text" title="查看上下文与轨迹" aria-label="查看上下文与轨迹" @click="openTraceDialog(item)" />
+            <UiButton icon="mdi-pencil" size="small" variant="text" title="命名" aria-label="命名对话" @click="openNameDialog(item)" />
+            <UiButton icon="mdi-swap-horizontal" size="small" variant="text" title="固定渠道" aria-label="固定渠道" @click="openRouteDialog(item)" />
+            <UiButton
               v-if="item.routeOverride"
               icon="mdi-close"
               size="small"
@@ -178,20 +179,20 @@
               aria-label="清除固定渠道"
               @click="clearRoute(item)"
             />
-            <v-btn icon="mdi-delete" size="small" variant="text" color="error" title="删除" aria-label="删除对话" @click="openDeleteDialog(item)" />
+            <UiButton icon="mdi-delete" size="small" variant="text" color="error" title="删除" aria-label="删除对话" @click="openDeleteDialog(item)" />
           </div>
         </template>
-      </v-data-table-server>
-    </v-card>
+      </UiDataTable>
+    </UiCard>
 
     <AppDialog v-model="routeDialog" title="设置固定渠道" size="md">
-      <div class="mb-3 text-body-2 text-medium-emphasis">
+      <div class="mb-3 text-sm text-muted-foreground">
         {{ editingConversation?.id }}
       </div>
       <div class="mb-3">
-        <v-chip size="small" variant="tonal">{{ editingConversation?.apiKind }}</v-chip>
+        <UiBadge size="small" variant="tonal">{{ editingConversation?.apiKind }}</UiBadge>
       </div>
-      <v-select
+      <UiSelect
         v-model="selectedChannelIndex"
         :items="routeChannelItems"
         label="渠道"
@@ -201,14 +202,14 @@
         class="mt-3"
       />
       <template #actions>
-        <v-btn variant="text" @click="routeDialog = false">取消</v-btn>
-        <v-btn color="primary" :loading="saving" @click="saveRoute">保存</v-btn>
+        <UiButton variant="text" @click="routeDialog = false">取消</UiButton>
+        <UiButton color="primary" :loading="saving" @click="saveRoute">保存</UiButton>
       </template>
     </AppDialog>
 
     <AppDialog v-model="nameDialog" title="给对话命名" size="md">
-      <div class="text-body-2 text-medium-emphasis mb-3">{{ editingNameConversation?.id }}</div>
-      <v-text-field
+      <div class="text-sm text-muted-foreground mb-3">{{ editingNameConversation?.id }}</div>
+      <UiInput
         v-model="conversationName"
         label="对话名称"
         maxlength="120"
@@ -219,8 +220,8 @@
         @keyup.enter="saveName"
       />
       <template #actions>
-        <v-btn variant="text" @click="nameDialog = false">取消</v-btn>
-        <v-btn color="primary" :loading="saving" @click="saveName">保存</v-btn>
+        <UiButton variant="text" @click="nameDialog = false">取消</UiButton>
+        <UiButton color="primary" :loading="saving" @click="saveName">保存</UiButton>
       </template>
     </AppDialog>
 
@@ -235,7 +236,7 @@
 
     <AppDialog v-model="deleteAllDialog" title="清空全部对话" size="md">
       此操作会删除全部对话、图片理解结果、固定渠道设置和 Responses 持久化会话链，且无法恢复。
-      <v-text-field
+      <UiInput
         v-model="deleteAllConfirmation"
         label="输入 清空全部 以确认"
         variant="outlined"
@@ -245,128 +246,128 @@
         @keyup.enter="deleteAllConversations"
       />
       <template #actions>
-        <v-btn variant="text" @click="deleteAllDialog = false">取消</v-btn>
-        <v-btn color="error" :disabled="deleteAllConfirmation !== '清空全部'" :loading="saving" @click="deleteAllConversations">清空全部</v-btn>
+        <UiButton variant="text" @click="deleteAllDialog = false">取消</UiButton>
+        <UiButton color="error" :disabled="deleteAllConfirmation !== '清空全部'" :loading="saving" @click="deleteAllConversations">清空全部</UiButton>
       </template>
     </AppDialog>
 
     <!-- 详情 Dialog -->
     <AppDialog v-model="detailDialog" :title="selectedConversation ? `对话详情 · ${displayConversationName(selectedConversation)}` : '对话详情'" size="xl">
           <!-- ID & Meta -->
-          <div class="d-flex flex-wrap align-center justify-space-between mb-4 ga-2">
-            <div class="d-flex align-center ga-2">
+          <div class="flex flex-wrap items-center justify-between mb-4 gap-2">
+            <div class="flex items-center gap-2">
               <div>
-                <div class="text-caption text-medium-emphasis">内部对话 ID</div>
-                <span class="text-subtitle-1 font-weight-bold font-mono conversation-detail-id">{{ selectedConversation?.id }}</span>
+                <div class="text-xs text-muted-foreground">内部对话 ID</div>
+                <span class="text-base font-medium font-bold font-mono conversation-detail-id">{{ selectedConversation?.id }}</span>
               </div>
-              <v-btn icon="mdi-content-copy" size="x-small" variant="text" color="primary" title="复制ID" @click="copyText(selectedConversation?.id || '')" />
+              <UiButton icon="mdi-content-copy" size="x-small" variant="text" color="primary" title="复制ID" @click="copyText(selectedConversation?.id || '')" />
             </div>
-            <div class="d-flex align-center ga-2">
-              <v-chip size="small" color="primary" variant="tonal" class="text-uppercase">{{ selectedConversation?.apiKind }}</v-chip>
-              <v-chip v-if="selectedConversation?.isSending" size="small" color="success" variant="tonal" prepend-icon="mdi-loading" class="sending-chip">
+            <div class="flex items-center gap-2">
+              <UiBadge size="small" color="primary" variant="tonal" class="uppercase">{{ selectedConversation?.apiKind }}</UiBadge>
+              <UiBadge v-if="selectedConversation?.isSending" size="small" color="success" variant="tonal" prepend-icon="mdi-loading" class="sending-chip">
                 发送中<span v-if="(selectedConversation?.activeRequests || 0) > 1"> · {{ selectedConversation?.activeRequests }} 个请求</span>
-              </v-chip>
-              <v-chip v-else size="small" color="grey" variant="tonal">已完成/空闲</v-chip>
+              </UiBadge>
+              <UiBadge v-else size="small" color="grey" variant="tonal">已完成/空闲</UiBadge>
             </div>
           </div>
 
-          <form class="d-flex align-start flex-wrap ga-2 mb-4" @submit.prevent="saveDetailName">
-            <v-text-field v-model="detailName" label="对话名称" placeholder="为对话命名" maxlength="120" counter="120" variant="outlined" density="compact" :disabled="savingName" />
-            <v-btn type="submit" color="primary" :loading="savingName" :disabled="!detailName.trim() || detailName.trim() === (selectedConversation?.name || '')">保存名称</v-btn>
-            <v-btn variant="tonal" prepend-icon="mdi-history" @click="traceDialog = true">查看上下文与轨迹</v-btn>
+          <form class="flex items-start flex-wrap gap-2 mb-4" @submit.prevent="saveDetailName">
+            <UiInput v-model="detailName" label="对话名称" placeholder="为对话命名" maxlength="120" counter="120" variant="outlined" density="compact" :disabled="savingName" />
+            <UiButton type="submit" color="primary" :loading="savingName" :disabled="!detailName.trim() || detailName.trim() === (selectedConversation?.name || '')">保存名称</UiButton>
+            <UiButton variant="tonal" prepend-icon="mdi-history" @click="traceDialog = true">查看上下文与轨迹</UiButton>
           </form>
 
           <!-- Grid Info -->
-          <v-row class="mb-2" dense>
-            <v-col cols="12" sm="6">
+          <div class="grid grid-cols-12 gap-2 mb-2" >
+            <div class="min-w-0 col-span-12 sm:col-span-6"  >
               <div class="info-card">
                 <span class="info-label">请求模型</span>
                 <span class="info-value font-mono">{{ selectedConversation?.lastModel || '--' }}</span>
               </div>
-            </v-col>
-            <v-col cols="12" sm="6">
+            </div>
+            <div class="min-w-0 col-span-12 sm:col-span-6"  >
               <div class="info-card">
                 <span class="info-label">实际路由模型</span>
                 <span class="info-value font-mono">{{ selectedConversation?.lastResolvedModel || '--' }}</span>
               </div>
-            </v-col>
-            <v-col cols="12" sm="6">
+            </div>
+            <div class="min-w-0 col-span-12 sm:col-span-6"  >
               <div class="info-card">
                 <span class="info-label">首次看到时间</span>
-                <span class="info-value text-caption">{{ selectedConversation?.firstSeenAt ? formatDateTime(selectedConversation.firstSeenAt) : '--' }}</span>
+                <span class="info-value text-xs">{{ selectedConversation?.firstSeenAt ? formatDateTime(selectedConversation.firstSeenAt) : '--' }}</span>
               </div>
-            </v-col>
-            <v-col cols="12" sm="6">
+            </div>
+            <div class="min-w-0 col-span-12 sm:col-span-6"  >
               <div class="info-card">
                 <span class="info-label">最近活动时间</span>
-                <span class="info-value text-caption">{{ selectedConversation?.lastSeenAt ? formatDateTime(selectedConversation.lastSeenAt) : '--' }}</span>
+                <span class="info-value text-xs">{{ selectedConversation?.lastSeenAt ? formatDateTime(selectedConversation.lastSeenAt) : '--' }}</span>
               </div>
-            </v-col>
-            <v-col cols="12" sm="4">
+            </div>
+            <div class="min-w-0 col-span-12 sm:col-span-4"  >
               <div class="info-card text-center">
                 <span class="info-label">总请求次数</span>
-                <span class="info-value text-h6 text-primary">{{ selectedConversation?.requestCount || 0 }}</span>
+                <span class="info-value text-lg text-primary">{{ selectedConversation?.requestCount || 0 }}</span>
               </div>
-            </v-col>
-            <v-col cols="12" sm="4">
+            </div>
+            <div class="min-w-0 col-span-12 sm:col-span-4"  >
               <div class="info-card text-center">
                 <span class="info-label">总错误次数</span>
-                <span class="info-value text-h6 text-error">{{ selectedConversation?.errorCount || 0 }}</span>
+                <span class="info-value text-lg text-destructive">{{ selectedConversation?.errorCount || 0 }}</span>
               </div>
-            </v-col>
-            <v-col cols="12" sm="4">
+            </div>
+            <div class="min-w-0 col-span-12 sm:col-span-4"  >
               <div class="info-card text-center">
                 <span class="info-label">固定渠道</span>
-                <span class="info-value text-body-2">
+                <span class="info-value text-sm">
                   <span v-if="selectedConversation?.routeOverride">
                     #{{ selectedConversation.routeOverride.channelIndex }}
                   </span>
-                  <span v-else class="text-medium-emphasis">默认调度</span>
+                  <span v-else class="text-muted-foreground">默认调度</span>
                 </span>
               </div>
-            </v-col>
-            <v-col v-if="selectedConversation?.clientFamily || selectedConversation?.identitySource" cols="12">
+            </div>
+            <div v-if="selectedConversation?.clientFamily || selectedConversation?.identitySource" class="min-w-0 col-span-12" >
               <div class="info-card info-card--horizontal">
                 <span class="info-label">客户端身份</span>
                 <span class="info-value font-mono">
                   {{ selectedConversation?.clientFamily || '未知客户端' }}
-                  <span v-if="selectedConversation?.identitySource" class="text-medium-emphasis"> · {{ selectedConversation.identitySource }}</span>
+                  <span v-if="selectedConversation?.identitySource" class="text-muted-foreground"> · {{ selectedConversation.identitySource }}</span>
                 </span>
               </div>
-            </v-col>
-          </v-row>
+            </div>
+          </div>
 
           <div class="mt-4">
-            <div class="text-subtitle-2 font-weight-bold mb-2 d-flex align-center ga-2">
+            <div class="text-sm font-medium font-bold mb-2 flex items-center gap-2">
               <span class="prompt-section-marker" aria-hidden="true"></span>
               <span>图片指纹（{{ selectedConversation?.imageFingerprints?.length || 0 }}）</span>
             </div>
-            <div v-if="!selectedConversation?.imageFingerprints?.length" class="text-caption text-medium-emphasis">
+            <div v-if="!selectedConversation?.imageFingerprints?.length" class="text-xs text-muted-foreground">
               该对话尚未收到图片。
             </div>
             <div v-else class="image-fingerprint-list">
               <div v-for="fingerprint in selectedConversation.imageFingerprints" :key="fingerprint" class="image-fingerprint-item">
                 <span class="font-mono">{{ fingerprint }}</span>
-                <v-btn size="x-small" icon="mdi-content-copy" variant="text" color="primary" title="复制图片指纹" @click="copyText(fingerprint)" />
+                <UiButton size="x-small" icon="mdi-content-copy" variant="text" color="primary" title="复制图片指纹" @click="copyText(fingerprint)" />
               </div>
             </div>
           </div>
 
           <!-- 错误信息 (如果有) -->
-          <v-alert
+          <UiAlert
             v-if="selectedConversation?.lastError"
             type="error"
             variant="tonal"
             icon="mdi-alert-circle"
             title="最近一次请求报错"
-            class="mb-4 text-caption border-error border"
+            class="mb-4 text-xs border-error border"
             density="compact"
           >
-            <div class="d-flex align-start justify-space-between mt-1">
+            <div class="flex items-start justify-between mt-1">
               <pre class="error-pre">{{ selectedConversation.lastError }}</pre>
-              <v-btn size="x-small" icon="mdi-content-copy" variant="text" color="error" title="复制报错" @click="copyText(selectedConversation.lastError || '')" />
+              <UiButton size="x-small" icon="mdi-content-copy" variant="text" color="error" title="复制报错" @click="copyText(selectedConversation.lastError || '')" />
             </div>
-          </v-alert>
+          </UiAlert>
 
           <CommandSafetyHistory
             v-if="detailDialog && selectedConversation"
@@ -375,31 +376,31 @@
 
           <!-- 提示词详情 -->
           <div class="mt-4">
-            <div class="text-subtitle-2 font-weight-bold mb-3 d-flex align-center ga-2">
+            <div class="text-sm font-medium font-bold mb-3 flex items-center gap-2">
               <span class="prompt-section-marker" aria-hidden="true"></span>
               <span>对话提示词历史</span>
             </div>
             <!-- 保存该会话前 3 条不同的真实用户输入；展示与复制均使用完整原文 -->
 
             <!-- 无提示词 -->
-            <div v-if="!selectedConversation || conversationPrompts(selectedConversation).length === 0" class="prompt-empty text-center py-4 rounded text-medium-emphasis text-body-2">
+            <div v-if="!selectedConversation || conversationPrompts(selectedConversation).length === 0" class="prompt-empty text-center py-4 rounded text-muted-foreground text-sm">
               暂无提示词记录
             </div>
 
             <!-- 提示词卡片列表 -->
-            <div v-else class="d-flex flex-column ga-3">
+            <div v-else class="flex flex-col gap-3">
               <div
                 v-for="(prompt, idx) in conversationPrompts(selectedConversation)"
                 :key="idx"
                 class="prompt-detail-card"
               >
                 <div class="prompt-card-header">
-                  <v-chip size="x-small" color="primary" variant="flat" class="font-weight-bold">
+                  <UiBadge size="x-small" color="primary" variant="flat" class="font-bold">
                     输入 #{{ idx + 1 }}
-                  </v-chip>
-                  <v-spacer />
-                  <span class="prompt-length text-caption text-medium-emphasis">{{ prompt.length.toLocaleString() }} 字符</span>
-                  <v-btn
+                  </UiBadge>
+                  <span class="flex-1" ></span>
+                  <span class="prompt-length text-xs text-muted-foreground">{{ prompt.length.toLocaleString() }} 字符</span>
+                  <UiButton
                     size="x-small"
                     variant="text"
                     icon="mdi-content-copy"
@@ -415,7 +416,7 @@
             </div>
           </div>
       <template #actions>
-        <v-btn
+        <UiButton
           v-if="selectedConversation"
           color="error"
           variant="tonal"
@@ -423,12 +424,12 @@
           @click="openDeleteDialog(selectedConversation)"
         >
           删除对话
-        </v-btn>
-        <v-spacer />
-        <v-btn color="primary" variant="tonal" prepend-icon="mdi-swap-horizontal" @click="openRouteOverrideFromDetail()">
+        </UiButton>
+        <span class="flex-1" ></span>
+        <UiButton color="primary" variant="tonal" prepend-icon="mdi-swap-horizontal" @click="openRouteOverrideFromDetail()">
           去固定该会话渠道
-        </v-btn>
-        <v-btn variant="outlined" @click="detailDialog = false">关闭</v-btn>
+        </UiButton>
+        <UiButton variant="outlined" @click="detailDialog = false">关闭</UiButton>
       </template>
     </AppDialog>
     <ConversationTraceDialog v-if="traceDialog && selectedConversation" v-model="traceDialog" :conversation="selectedConversation" />
@@ -436,7 +437,14 @@
 </template>
 
 <script setup lang="ts">
-import PageHeader from '@/shared/components/common/PageHeader.vue'
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiCard from '@/shared/ui/card/Card.vue'
+import UiDataTable from '@/shared/ui/data/DataTable.vue'
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
+import UiBadge from '@/shared/ui/feedback/Badge.vue'
+import UiInput from '@/shared/ui/field/Input.vue'
+import UiSelect from '@/shared/ui/select/Select.vue'
+import PageHeader from '@/shared/components/layout/PageHeader.vue'
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import CommandSafetyHistory from '@/features/observability/components/conversation/CommandSafetyHistory.vue'
 import ConversationTraceDialog from '@/features/observability/components/conversation/ConversationTraceDialog.vue'
@@ -444,8 +452,8 @@ import { api, type ConversationEntry, type ConversationKind, type ConversationRo
 import { API_TABS } from '@/features/channels'
 import { useToast } from '@/shared/composables/useToast'
 import { useClipboard } from '@/shared/composables/useClipboard'
-import ConfirmDialog from '@/shared/components/common/ConfirmDialog.vue'
-import AppDialog from '@/shared/components/common/AppDialog.vue'
+import ConfirmDialog from '@/shared/components/overlay/ConfirmDialog.vue'
+import AppDialog from '@/shared/components/overlay/AppDialog.vue'
 
 const { showToast } = useToast()
 const { copyText: copyToClipboard } = useClipboard()

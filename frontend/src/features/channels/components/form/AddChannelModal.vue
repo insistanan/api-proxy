@@ -1,28 +1,28 @@
 <template>
-  <v-dialog :model-value="show" max-width="900" :persistent="saving" @update:model-value="$emit('update:show', $event)">
-    <v-card rounded="lg" class="dialog-card-shell">
-      <v-card-title class="d-flex align-center ga-3 dialog-card-header">
-        <v-avatar color="primary" variant="tonal" size="40" class="dialog-header-avatar">
-          <v-icon size="20">{{ isEditing ? 'mdi-pencil' : 'mdi-plus' }}</v-icon>
-        </v-avatar>
-        <div class="flex-grow-1">
-          <div class="text-h6 font-weight-bold">
+  <UiDialog :model-value="show" max-width="900" :persistent="saving" @update:model-value="$emit('update:show', $event)">
+    <UiCard rounded="lg" class="dialog-card-shell">
+      <div class="ui-card-title px-4 pt-4 text-base font-semibold flex items-center gap-3 dialog-card-header">
+        <div    class="inline-flex size-10 shrink-0 items-center justify-center rounded-control bg-primary/12 text-primary dialog-header-avatar">
+          <UiIcon size="20">{{ isEditing ? 'mdi-pencil' : 'mdi-plus' }}</UiIcon>
+        </div>
+        <div class="grow">
+          <div class="text-lg font-bold">
             {{ isEditing ? '编辑渠道' : isCopying ? '复制渠道' : '添加新渠道' }}
           </div>
-          <div class="text-body-2 text-medium-emphasis dialog-card-subtitle">
+          <div class="text-sm text-muted-foreground dialog-card-subtitle">
             {{ entryLabel }} 入口 · {{ isQuickMode && !isEditing && !isCopying ? '粘贴地址和密钥，快速创建渠道' : '连接信息、模型映射与渠道策略' }}
           </div>
         </div>
-        <div class="d-flex align-center ga-2 header-actions">
-          <v-btn v-if="!isEditing && !isCopying && isPresetProtocol(channelType)" variant="tonal" size="small" :disabled="saving" :aria-expanded="editor.providerDrawerOpen.value" @click="editor.providerDrawerOpen.value = true">
+        <div class="flex items-center gap-2 header-actions">
+          <UiButton v-if="!isEditing && !isCopying && isPresetProtocol(channelType)" variant="tonal" size="small" :disabled="saving" :aria-expanded="editor.providerDrawerOpen.value" @click="editor.providerDrawerOpen.value = true">
             常见渠道商
-          </v-btn>
+          </UiButton>
           <!-- 模式切换按钮（仅在添加模式显示） -->
-          <v-btn v-if="!isEditing && !isCopying" variant="outlined" size="small" class="mode-toggle-btn" :disabled="saving" @click="toggleMode">
-            <v-icon start size="16">{{ isQuickMode ? 'mdi-form-textbox' : 'mdi-lightning-bolt' }}</v-icon>
+          <UiButton v-if="!isEditing && !isCopying" variant="outlined" size="small" class="mode-toggle-btn" :disabled="saving" @click="toggleMode">
+            <UiIcon start size="16">{{ isQuickMode ? 'mdi-form-textbox' : 'mdi-lightning-bolt' }}</UiIcon>
             {{ isQuickMode ? '详细配置' : '快速添加' }}
-          </v-btn>
-          <v-btn
+          </UiButton>
+          <UiButton
             icon
             size="small"
             variant="text"
@@ -32,16 +32,16 @@
             :disabled="saving"
             @click="handleCancel"
           >
-            <v-icon size="18">mdi-close</v-icon>
-          </v-btn>
+            <UiIcon size="18">mdi-close</UiIcon>
+          </UiButton>
         </div>
-      </v-card-title>
+      </div>
 
-      <v-card-text class="dialog-card-body">
+      <div class="p-4 dialog-card-body">
         <fieldset :disabled="saving" :inert="saving" class="agent-config-editor">
           <template v-if="isCopying">
-            <p class="text-body-2 text-medium-emphasis mb-4">从 {{ copySourceLabel }} 的“{{ copySource?.name }}”创建新渠道，可修改连接信息、分组与模型配置。</p>
-            <v-select
+            <p class="text-sm text-muted-foreground mb-4">从 {{ copySourceLabel }} 的“{{ copySource?.name }}”创建新渠道，可修改连接信息、分组与模型配置。</p>
+            <UiSelect
               :model-value="channelType"
               label="目标协议"
               :items="protocolOptions"
@@ -50,20 +50,20 @@
               class="mb-4"
               @update:model-value="selectTargetProtocol"
             />
-            <v-alert v-if="channelType !== (copySourceType ?? channelType)" type="info" variant="tonal" class="mb-4">
+            <UiAlert v-if="channelType !== (copySourceType ?? channelType)" type="info" variant="tonal" class="mb-4">
               请确认供应商支持所选上游服务类型和模型。跨协议复制已重新初始化专属策略，并移除转发到原协议其他渠道的模型映射。
-            </v-alert>
+            </UiAlert>
           </template>
           <!-- 两种模式共用同一个草稿与表单引用 -->
           <ChannelQuickForm v-if="!isEditing && !isCopying && isQuickMode" :editor="editor" />
           <ChannelDetailedForm v-else :editor="editor" />
         </fieldset>
-      </v-card-text>
+      </div>
 
-      <v-card-actions class="dialog-card-actions">
-        <v-spacer />
-        <v-btn variant="text" :disabled="saving" @click="handleCancel"> 取消 </v-btn>
-        <v-btn
+      <div class="flex flex-wrap items-center gap-2 px-4 py-3 dialog-card-actions">
+        <span class="flex-1" ></span>
+        <UiButton variant="text" :disabled="saving" @click="handleCancel"> 取消 </UiButton>
+        <UiButton
           v-if="!isEditing && !isCopying && isQuickMode"
           color="primary"
           variant="elevated"
@@ -73,8 +73,8 @@
           @click="handleQuickSubmit"
         >
           创建渠道
-        </v-btn>
-        <v-btn
+        </UiButton>
+        <UiButton
           v-else
           color="primary"
           variant="elevated"
@@ -84,14 +84,20 @@
           @click="handleSubmit"
         >
           {{ isEditing ? '更新渠道' : isCopying ? '确认复制' : '创建渠道' }}
-        </v-btn>
-      </v-card-actions>
+        </UiButton>
+      </div>
       <ChannelProviderDrawer v-model="editor.providerDrawerOpen.value" :channel-type="channelType" @select="editor.applyProviderPreset" />
-    </v-card>
-  </v-dialog>
+    </UiCard>
+  </UiDialog>
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiCard from '@/shared/ui/card/Card.vue'
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
+import UiIcon from '@/shared/ui/icon/Icon.vue'
+import UiDialog from '@/shared/ui/overlay/Dialog.vue'
+import UiSelect from '@/shared/ui/select/Select.vue'
 // 渠道弹窗入口：保持公开事件，编排逻辑与两种表单分别维护。
 import type { Channel } from '@/api'
 import { computed } from 'vue'

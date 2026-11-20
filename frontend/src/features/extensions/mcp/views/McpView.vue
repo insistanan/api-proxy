@@ -2,76 +2,76 @@
   <div class="mcp-page">
     <div class="mcp-header-sticky">
       <PageHeader title="MCP" description="集中管理工具服务器，按客户端启用与分发。开关自动保存，内容编辑后需点击保存。">
-          <v-chip v-if="dirty" color="warning" size="small" label>有未保存的修改</v-chip>
-          <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="saving" @click="reloadList">刷新</v-btn>
-          <v-btn variant="tonal" prepend-icon="mdi-plus" :disabled="!editable" @click="openCreate">新增 MCP</v-btn>
-          <v-btn color="primary" prepend-icon="mdi-content-save" :disabled="!editable || (!dirty && !needsSync)" :loading="saving" @click="saveList">{{ dirty ? '保存' : needsSync ? '重新分发' : '保存' }}</v-btn>
+          <UiBadge v-if="dirty" color="warning" size="small" label>有未保存的修改</UiBadge>
+          <UiButton variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="saving" @click="reloadList">刷新</UiButton>
+          <UiButton variant="tonal" prepend-icon="mdi-plus" :disabled="!editable" @click="openCreate">新增 MCP</UiButton>
+          <UiButton color="primary" prepend-icon="mdi-content-save" :disabled="!editable || (!dirty && !needsSync)" :loading="saving" @click="saveList">{{ dirty ? '保存' : needsSync ? '重新分发' : '保存' }}</UiButton>
       </PageHeader>
     </div>
 
-    <v-alert v-if="loadError" type="error" variant="tonal" class="mb-5" closable @click:close="loadError = ''">{{ loadError }}</v-alert>
-    <v-alert v-if="saveError" type="error" variant="tonal" class="mb-5" closable @click:close="saveError = ''">{{ saveError }}</v-alert>
-    <v-alert v-if="toggleNotice" type="success" variant="tonal" density="compact" class="mb-5" closable @click:close="toggleNotice = ''">{{ toggleNotice }}</v-alert>
-    <v-alert v-if="saveResults" :type="saveResultsAllOk ? 'success' : 'warning'" variant="tonal" class="mb-5" closable @click:close="saveResults = null">
-      <div class="font-weight-medium mb-1">{{ saveResultsAllOk ? '列表已保存，各智能体配置已更新' : '列表已保存，但以下智能体配置文件未更新' }}</div>
-      <div v-for="result in saveResults" :key="result.key" class="text-body-2">
+    <UiAlert v-if="loadError" type="error" variant="tonal" class="mb-5" closable @click:close="loadError = ''">{{ loadError }}</UiAlert>
+    <UiAlert v-if="saveError" type="error" variant="tonal" class="mb-5" closable @click:close="saveError = ''">{{ saveError }}</UiAlert>
+    <UiAlert v-if="toggleNotice" type="success" variant="tonal" density="compact" class="mb-5" closable @click:close="toggleNotice = ''">{{ toggleNotice }}</UiAlert>
+    <UiAlert v-if="saveResults" :type="saveResultsAllOk ? 'success' : 'warning'" variant="tonal" class="mb-5" closable @click:close="saveResults = null">
+      <div class="font-medium mb-1">{{ saveResultsAllOk ? '列表已保存，各智能体配置已更新' : '列表已保存，但以下智能体配置文件未更新' }}</div>
+      <div v-for="result in saveResults" :key="result.key" class="text-sm">
         {{ result.name }}：{{ result.ok ? '已写入' : `未更新（${result.error || '后端未返回错误原因'}）` }}
         <code v-if="result.path" class="ml-1">{{ result.path }}</code>
       </div>
-    </v-alert>
+    </UiAlert>
 
     <DisclosureSection v-if="agentStatuses.length" title="客户端配置位置" description="查看配置文件路径与读取状态；修改后客户端可能需要重新加载配置。" icon="mdi-folder-open" class="mb-5">
       <div class="agent-grid">
         <div v-for="status in agentStatuses" :key="status.key">
-          <div class="d-flex align-center flex-wrap ga-2 mb-1">
-            <span class="font-weight-medium">{{ status.name }}</span>
-            <v-chip size="x-small" label :color="status.error ? 'error' : status.exists ? 'success' : undefined">{{ agentStatusLabel(status) }}</v-chip>
+          <div class="flex items-center flex-wrap gap-2 mb-1">
+            <span class="font-medium">{{ status.name }}</span>
+            <UiBadge size="x-small" label :color="status.error ? 'error' : status.exists ? 'success' : undefined">{{ agentStatusLabel(status) }}</UiBadge>
           </div>
           <code class="agent-path" :title="status.path">{{ status.path || '未解析到配置路径' }}</code>
-          <div v-if="status.error" class="text-caption text-error mt-1">{{ status.error }}</div>
+          <div v-if="status.error" class="text-xs text-destructive mt-1">{{ status.error }}</div>
         </div>
       </div>
     </DisclosureSection>
 
     <div class="list-toolbar mb-4">
-      <v-text-field v-model="search" class="mcp-search" label="搜索名称、命令或地址" prepend-inner-icon="mdi-magnify" clearable hide-details density="compact" />
-      <span class="text-body-2 text-medium-emphasis" aria-live="polite">{{ servers.length }} 个已管理 · {{ discoveredRows.length }} 个从应用发现</span>
-      <v-spacer />
-      <span class="text-caption text-medium-emphasis">开关自动保存 · 内容编辑后保存</span>
+      <UiInput v-model="search" class="mcp-search" label="搜索名称、命令或地址" prepend-inner-icon="mdi-magnify" clearable hide-details density="compact" />
+      <span class="text-sm text-muted-foreground" aria-live="polite">{{ servers.length }} 个已管理 · {{ discoveredRows.length }} 个从应用发现</span>
+      <span class="flex-1" ></span>
+      <span class="text-xs text-muted-foreground">开关自动保存 · 内容编辑后保存</span>
     </div>
 
-    <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-4" />
+    <UiProgress v-if="loading" indeterminate color="primary" class="mb-4" />
 
-    <v-card elevation="0" class="mcp-list-card">
-      <v-table density="comfortable">
+    <UiCard elevation="0" class="mcp-list-card">
+      <UiTable density="comfortable">
         <thead>
           <tr>
             <th class="server-column">名称 / 命令或地址</th>
             <th v-for="agent in AGENT_OPTIONS" :key="agent.key" class="text-center agent-column">
               <div>{{ agent.label }}</div>
-              <div class="text-caption text-medium-emphasis mt-1">{{ activeLabel(agent.key) }}</div>
-              <div v-if="dirty" class="text-caption text-primary">{{ draftCount(agent.key) }} 个已选</div>
+              <div class="text-xs text-muted-foreground mt-1">{{ activeLabel(agent.key) }}</div>
+              <div v-if="dirty" class="text-xs text-primary">{{ draftCount(agent.key) }} 个已选</div>
             </th>
             <th class="text-right">操作</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="!loading && filteredManaged.length === 0 && filteredDiscovered.length === 0">
-            <td :colspan="AGENT_OPTIONS.length + 2" class="text-center text-medium-emphasis py-10">{{ !loaded ? '列表未加载，请刷新重试' : search ? '没有匹配的 MCP' : '未发现 MCP，可点击“新增 MCP”添加' }}</td>
+            <td :colspan="AGENT_OPTIONS.length + 2" class="text-center text-muted-foreground py-10">{{ !loaded ? '列表未加载，请刷新重试' : search ? '没有匹配的 MCP' : '未发现 MCP，可点击“新增 MCP”添加' }}</td>
           </tr>
           <tr v-for="{ server, index } in filteredManaged" :key="`managed:${index}`">
             <td class="server-cell">
-              <div class="d-flex align-center flex-wrap ga-2 mb-1">
-                <span class="font-weight-bold">{{ server.name }}</span>
-                <v-chip size="x-small" variant="outlined">{{ server.transport }}</v-chip>
-                <v-chip v-if="!server.agents.length" size="x-small" variant="outlined">未启用</v-chip>
-                <v-chip v-if="hasDrift(server)" size="x-small" color="warning" variant="tonal">应用配置有差异</v-chip>
+              <div class="flex items-center flex-wrap gap-2 mb-1">
+                <span class="font-bold">{{ server.name }}</span>
+                <UiBadge size="x-small" variant="outlined">{{ server.transport }}</UiBadge>
+                <UiBadge v-if="!server.agents.length" size="x-small" variant="outlined">未启用</UiBadge>
+                <UiBadge v-if="hasDrift(server)" size="x-small" color="warning" variant="tonal">应用配置有差异</UiBadge>
               </div>
               <code class="mcp-target" :title="targetText(server)">{{ targetText(server) }}</code>
-              <div v-if="server.agentConfigs" class="text-caption text-medium-emphasis mt-1" :title="variantDetails(server)">按应用保留启动方式（悬停查看）</div>
+              <div v-if="server.agentConfigs" class="text-xs text-muted-foreground mt-1" :title="variantDetails(server)">按应用保留启动方式（悬停查看）</div>
             </td>
             <td v-for="agent in AGENT_OPTIONS" :key="agent.key" class="text-center">
-              <v-btn
+              <UiButton
                 :icon="actualEnabled(server, agent.key) ? 'mdi-checkbox-marked' : 'mdi-checkbox-blank-outline'"
                 :color="actualEnabled(server, agent.key) ? 'primary' : undefined"
                 variant="text"
@@ -83,27 +83,27 @@
                 @click="setAgentEnabled(index, agent.key, !actualEnabled(server, agent.key))"
               />
             </td>
-            <td class="text-right text-no-wrap">
-              <v-tooltip text="编辑" location="top" theme="dark"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-pencil" variant="text" size="small" :aria-label="`编辑 ${server.name}`" :disabled="!editable" @click="openEdit(index)" /></template></v-tooltip>
-              <v-tooltip text="删除" location="top" theme="dark"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-delete" color="error" variant="text" size="small" :aria-label="`删除 ${server.name}`" :disabled="!editable" @click="confirmDelete(index)" /></template></v-tooltip>
+            <td class="text-right whitespace-nowrap">
+              <UiTooltip text="编辑" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-pencil" variant="text" size="small" :aria-label="`编辑 ${server.name}`" :disabled="!editable" @click="openEdit(index)" /></template></UiTooltip>
+              <UiTooltip text="删除" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-delete" color="error" variant="text" size="small" :aria-label="`删除 ${server.name}`" :disabled="!editable" @click="confirmDelete(index)" /></template></UiTooltip>
             </td>
           </tr>
           <tr v-for="row in filteredDiscovered" :key="row.key" class="discovered-row">
             <td class="server-cell">
-              <div class="d-flex align-center flex-wrap ga-2 mb-1">
-                <span class="font-weight-bold">{{ row.name }}</span>
-                <v-chip v-if="row.server" size="x-small" variant="outlined">{{ row.server.transport }}</v-chip>
-                <v-chip size="x-small" color="info" variant="tonal">从应用发现</v-chip>
-                <v-chip v-if="row.conflict" size="x-small" color="warning" variant="tonal">同名配置不同</v-chip>
+              <div class="flex items-center flex-wrap gap-2 mb-1">
+                <span class="font-bold">{{ row.name }}</span>
+                <UiBadge v-if="row.server" size="x-small" variant="outlined">{{ row.server.transport }}</UiBadge>
+                <UiBadge size="x-small" color="info" variant="tonal">从应用发现</UiBadge>
+                <UiBadge v-if="row.conflict" size="x-small" color="warning" variant="tonal">同名配置不同</UiBadge>
               </div>
               <code v-if="row.server" class="mcp-target" :title="targetText(row.server)">{{ targetText(row.server) }}</code>
-              <div class="text-caption text-medium-emphasis mt-1">来源：{{ sourceLabels(row.sources) }}</div>
-              <div v-if="row.server && row.sources.length > 1" class="text-caption text-medium-emphasis mt-1" :title="variantDetails(row.server)">按应用保留启动方式（悬停查看）</div>
-              <div v-if="row.error" class="text-caption text-error mt-1">{{ row.error }}</div>
-              <div v-if="row.warning" class="text-caption text-warning mt-1">{{ row.warning }}</div>
+              <div class="text-xs text-muted-foreground mt-1">来源：{{ sourceLabels(row.sources) }}</div>
+              <div v-if="row.server && row.sources.length > 1" class="text-xs text-muted-foreground mt-1" :title="variantDetails(row.server)">按应用保留启动方式（悬停查看）</div>
+              <div v-if="row.error" class="text-xs text-destructive mt-1">{{ row.error }}</div>
+              <div v-if="row.warning" class="text-xs text-warning mt-1">{{ row.warning }}</div>
             </td>
             <td v-for="agent in AGENT_OPTIONS" :key="agent.key" class="text-center">
-              <v-btn
+              <UiButton
                 v-if="row.server"
                 :icon="actualEnabled(row.server, agent.key) ? 'mdi-checkbox-marked' : 'mdi-checkbox-blank-outline'"
                 :color="actualEnabled(row.server, agent.key) ? 'primary' : undefined"
@@ -115,52 +115,52 @@
                 :aria-pressed="actualEnabled(row.server, agent.key)"
                 @click="toggleServer(row.server, agent.key, !actualEnabled(row.server, agent.key))"
               />
-              <span v-else class="text-caption text-medium-emphasis">{{ row.sources.includes(agent.key) ? '无法识别' : '—' }}</span>
+              <span v-else class="text-xs text-muted-foreground">{{ row.sources.includes(agent.key) ? '无法识别' : '—' }}</span>
             </td>
-            <td class="text-right text-no-wrap">
-              <v-tooltip text="编辑" location="top" theme="dark"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-pencil" variant="text" size="small" :aria-label="`编辑 ${row.name}`" :disabled="!editable || !row.server" @click="openDetectedEdit(row)" /></template></v-tooltip>
-              <v-tooltip text="删除" location="top" theme="dark"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-delete" color="error" variant="text" size="small" :aria-label="`删除 ${row.name}`" :disabled="!editable || !row.server" @click="confirmDetectedDelete(row)" /></template></v-tooltip>
+            <td class="text-right whitespace-nowrap">
+              <UiTooltip text="编辑" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-pencil" variant="text" size="small" :aria-label="`编辑 ${row.name}`" :disabled="!editable || !row.server" @click="openDetectedEdit(row)" /></template></UiTooltip>
+              <UiTooltip text="删除" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-delete" color="error" variant="text" size="small" :aria-label="`删除 ${row.name}`" :disabled="!editable || !row.server" @click="confirmDetectedDelete(row)" /></template></UiTooltip>
             </td>
           </tr>
         </tbody>
-      </v-table>
-    </v-card>
+      </UiTable>
+    </UiCard>
 
     <AppDialog v-model="dialogOpen" :title="editingIndex === null && !editingSource ? '新增 MCP' : '编辑 MCP'" description="支持粘贴启动命令自动识别，或分项填写连接信息。" size="lg">
-      <v-alert v-if="formError" type="error" variant="tonal" density="compact" class="mb-4">{{ formError }}</v-alert>
-      <v-alert v-if="importHint" type="info" variant="tonal" density="compact" class="mb-4">{{ importHint }}</v-alert>
-      <v-btn-toggle :model-value="inputMode" mandatory divided color="primary" density="comfortable" class="mb-4" @update:model-value="setInputMode">
-        <v-btn value="command">粘贴命令</v-btn>
-        <v-btn value="fields">分项填写</v-btn>
-      </v-btn-toggle>
-      <v-row>
-        <v-col cols="12" md="6"><v-text-field v-model="form.name" label="名称" hint="仅允许字母、数字、下划线和连字符，1–64 个字符" persistent-hint /></v-col>
-        <v-col cols="12" md="6"><v-select :model-value="form.transport" :items="TRANSPORT_OPTIONS" label="传输方式" @update:model-value="onTransportChange" /></v-col>
-      </v-row>
+      <UiAlert v-if="formError" type="error" variant="tonal" density="compact" class="mb-4">{{ formError }}</UiAlert>
+      <UiAlert v-if="importHint" type="info" variant="tonal" density="compact" class="mb-4">{{ importHint }}</UiAlert>
+      <UiToggleGroup :model-value="inputMode" mandatory divided color="primary" density="comfortable" class="mb-4" @update:model-value="setInputMode">
+        <UiButton value="command">粘贴命令</UiButton>
+        <UiButton value="fields">分项填写</UiButton>
+      </UiToggleGroup>
+      <div class="grid grid-cols-12 gap-4">
+        <div class="min-w-0 col-span-12 md:col-span-6"  ><UiInput v-model="form.name" label="名称" hint="仅允许字母、数字、下划线和连字符，1–64 个字符" persistent-hint /></div>
+        <div class="min-w-0 col-span-12 md:col-span-6"  ><UiSelect :model-value="form.transport" :items="TRANSPORT_OPTIONS" label="传输方式" @update:model-value="onTransportChange" /></div>
+      </div>
       <template v-if="inputMode === 'command' && form.transport === 'stdio'">
-        <v-textarea :model-value="commandText" label="MCP 启动命令" placeholder="npx -y @playwright/mcp@latest --extension" hint="粘贴完整命令，自动识别命令、参数和名称；支持带引号的路径与参数。" persistent-hint rows="3" :error-messages="commandParseError" @update:model-value="applyCommandText" />
-        <div v-if="form.command && !commandParseError" class="command-preview mt-3 mb-4 text-body-2">
+        <UiTextarea :model-value="commandText" label="MCP 启动命令" placeholder="npx -y @playwright/mcp@latest --extension" hint="粘贴完整命令，自动识别命令、参数和名称；支持带引号的路径与参数。" persistent-hint rows="3" :error-messages="commandParseError" @update:model-value="applyCommandText" />
+        <div v-if="form.command && !commandParseError" class="command-preview mt-3 mb-4 text-sm">
           <div>命令：<code>{{ form.command }}</code></div>
           <JsonPreviewTrigger :data="form.argsText" title="MCP 参数">参数：<code>{{ form.argsText }}</code></JsonPreviewTrigger>
           <JsonPreviewTrigger v-if="form.envText !== '{}'" :data="form.envText" title="MCP 环境变量">环境变量：<code>{{ form.envText }}</code></JsonPreviewTrigger>
         </div>
       </template>
       <template v-else-if="form.transport === 'stdio'">
-        <v-text-field v-model="form.command" label="命令" placeholder="例如 npx" />
-        <JsonPreviewTrigger :data="form.argsText" title="MCP 参数"><v-textarea v-model="form.argsText" label="参数" hint="支持 JSON 字符串数组，或每行一个参数（忽略空行）" persistent-hint rows="3" no-resize /></JsonPreviewTrigger>
-        <JsonPreviewTrigger :data="form.envText" title="MCP 环境变量"><v-textarea v-model="form.envText" label="环境变量" hint="支持 JSON 对象，或每行一个 KEY=VALUE" persistent-hint rows="3" no-resize /></JsonPreviewTrigger>
+        <UiInput v-model="form.command" label="命令" placeholder="例如 npx" />
+        <JsonPreviewTrigger :data="form.argsText" title="MCP 参数"><UiTextarea v-model="form.argsText" label="参数" hint="支持 JSON 字符串数组，或每行一个参数（忽略空行）" persistent-hint rows="3" no-resize /></JsonPreviewTrigger>
+        <JsonPreviewTrigger :data="form.envText" title="MCP 环境变量"><UiTextarea v-model="form.envText" label="环境变量" hint="支持 JSON 对象，或每行一个 KEY=VALUE" persistent-hint rows="3" no-resize /></JsonPreviewTrigger>
       </template>
       <template v-else>
-        <v-text-field v-model="form.url" label="URL" placeholder="https://example.com/mcp" />
-        <JsonPreviewTrigger :data="form.headersText" title="MCP 请求头"><v-textarea v-model="form.headersText" label="请求头" hint="支持 JSON 对象，或每行一个 KEY=VALUE" persistent-hint rows="3" no-resize /></JsonPreviewTrigger>
+        <UiInput v-model="form.url" label="URL" placeholder="https://example.com/mcp" />
+        <JsonPreviewTrigger :data="form.headersText" title="MCP 请求头"><UiTextarea v-model="form.headersText" label="请求头" hint="支持 JSON 对象，或每行一个 KEY=VALUE" persistent-hint rows="3" no-resize /></JsonPreviewTrigger>
       </template>
-      <div class="text-subtitle-2 mt-2 mb-1">分发到</div>
-      <div class="d-flex flex-wrap ga-4">
-        <v-checkbox v-for="agent in AGENT_OPTIONS" :key="agent.key" v-model="form.agents" :value="agent.key" :label="agent.label" density="compact" hide-details />
+      <div class="text-sm font-medium mt-2 mb-1">分发到</div>
+      <div class="flex flex-wrap gap-4">
+        <UiCheckbox v-for="agent in AGENT_OPTIONS" :key="agent.key" v-model="form.agents" :value="agent.key" :label="agent.label" density="compact" hide-details />
       </div>
       <template #actions>
-        <v-btn variant="text" @click="dialogOpen = false">取消</v-btn>
-        <v-btn color="primary" @click="submitForm">应用到列表</v-btn>
+        <UiButton variant="text" @click="dialogOpen = false">取消</UiButton>
+        <UiButton color="primary" @click="submitForm">应用到列表</UiButton>
       </template>
     </AppDialog>
 
@@ -185,12 +185,24 @@
 </template>
 
 <script setup lang="ts">
-import JsonPreviewTrigger from '@/shared/components/common/JsonPreviewTrigger.vue'
-import PageHeader from '@/shared/components/common/PageHeader.vue'
-import DisclosureSection from '@/shared/components/common/DisclosureSection.vue'
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiToggleGroup from '@/shared/ui/button/ToggleGroup.vue'
+import UiCard from '@/shared/ui/card/Card.vue'
+import UiCheckbox from '@/shared/ui/check/Checkbox.vue'
+import UiTable from '@/shared/ui/data/Table.vue'
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
+import UiBadge from '@/shared/ui/feedback/Badge.vue'
+import UiProgress from '@/shared/ui/feedback/Progress.vue'
+import UiInput from '@/shared/ui/field/Input.vue'
+import UiTextarea from '@/shared/ui/field/Textarea.vue'
+import UiTooltip from '@/shared/ui/overlay/Tooltip.vue'
+import UiSelect from '@/shared/ui/select/Select.vue'
+import JsonPreviewTrigger from '@/shared/components/data/JsonPreviewTrigger.vue'
+import PageHeader from '@/shared/components/layout/PageHeader.vue'
+import DisclosureSection from '@/shared/components/layout/DisclosureSection.vue'
 import { computed, onMounted, reactive, ref } from 'vue'
-import ConfirmDialog from '@/shared/components/common/ConfirmDialog.vue'
-import AppDialog from '@/shared/components/common/AppDialog.vue'
+import ConfirmDialog from '@/shared/components/overlay/ConfirmDialog.vue'
+import AppDialog from '@/shared/components/overlay/AppDialog.vue'
 import { useConfirm } from '@/shared/composables/useConfirm'
 import { api, ApiError } from '@/api'
 import { formatMcpCommand, parseMcpCommand } from '@/features/extensions/mcp/utils/mcpCommand'
@@ -825,30 +837,28 @@ onMounted(loadList)
 </script>
 
 <style scoped>
-.mcp-page { max-width: 1440px; margin: 0 auto; }
+@reference "@/styles/index.css";
+
+.mcp-page { @apply max-w-360 [margin:0_auto]; }
 .mcp-header-sticky {
-  position: sticky;
-  top: var(--v-layout-top, 0px);
-  z-index: 4;
-  background: rgb(var(--v-theme-background));
-  box-shadow: 0 -32px 0 0 rgb(var(--v-theme-background));
+  @apply sticky [top:var(--app-header-height,_0px)] [z-index:4] bg-background [box-shadow:0_-32px_0_0_var(--background)];
 }
-.list-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; }
-.mcp-search { flex: 0 1 400px; min-width: 220px; }
-.agent-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); }
-.agent-path { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mcp-list-card { border: 1px solid rgba(var(--v-theme-on-surface), 0.12); border-radius: 12px; overflow: hidden; }
-.mcp-list-card :deep(thead) { background: rgba(var(--v-theme-on-surface), 0.04); }
-.mcp-list-card :deep(tbody tr:nth-child(even)) { background: rgba(var(--v-theme-on-surface), 0.025); }
-.mcp-list-card :deep(tbody tr:hover) { background: rgba(var(--v-theme-primary), 0.04); }
-.server-column { width: 100%; }
-.agent-column { min-width: 108px; white-space: nowrap; }
-.server-cell { padding-top: 16px !important; padding-bottom: 16px !important; }
-.mcp-target { display: block; max-width: min(660px, 48vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; line-height: 1.6; }
-.command-preview { padding: 12px; border-radius: 6px; background: rgba(var(--v-theme-on-surface), 0.04); overflow-wrap: anywhere; }
+.list-toolbar { @apply flex items-center flex-wrap gap-4; }
+.mcp-search { @apply [flex:0_1_400px] min-w-55; }
+.agent-grid { @apply grid gap-4 [grid-template-columns:repeat(auto-fit,_minmax(min(100%,_260px),_1fr))]; }
+.agent-path { @apply block overflow-hidden text-ellipsis whitespace-nowrap; }
+.mcp-list-card { @apply [border:1px_solid_color-mix(in_srgb,_var(--foreground)_12%,_transparent)] rounded-card overflow-hidden; }
+.mcp-list-card :deep(thead) { @apply [background:color-mix(in_srgb,_var(--foreground)_4%,_transparent)]; }
+.mcp-list-card :deep(tbody tr:nth-child(even)) { @apply [background:color-mix(in_srgb,_var(--foreground)_2.5%,_transparent)]; }
+.mcp-list-card :deep(tbody tr:hover) { @apply [background:color-mix(in_srgb,_var(--primary)_4%,_transparent)]; }
+.server-column { @apply w-full; }
+.agent-column { @apply min-w-27 whitespace-nowrap; }
+.server-cell { @apply pt-4! pb-4!; }
+.mcp-target { @apply block [max-width:min(660px,_48vw)] overflow-hidden text-ellipsis whitespace-nowrap [font-size:13px] [line-height:1.6]; }
+.command-preview { @apply p-3 rounded-badge [background:color-mix(in_srgb,_var(--foreground)_4%,_transparent)] [overflow-wrap:anywhere]; }
 @media (max-width: 600px) {
-  .mcp-search { flex-basis: 100%; }
-  .agent-column { min-width: 90px; }
-  .mcp-target { max-width: 260px; }
+  .mcp-search { @apply [flex-basis:100%]; }
+  .agent-column { @apply min-w-22.5; }
+  .mcp-target { @apply max-w-65; }
 }
 </style>

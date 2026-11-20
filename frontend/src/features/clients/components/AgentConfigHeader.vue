@@ -8,7 +8,7 @@
 
 <script setup lang="ts">
 import { useRoute } from 'vue-router'
-import PageHeader from '@/shared/components/common/PageHeader.vue'
+import PageHeader from '@/shared/components/layout/PageHeader.vue'
 import { findNavigation } from '@/router/navigation'
 
 defineProps<{
@@ -18,3 +18,5 @@ defineProps<{
 
 const route = useRoute()
 </script>
+
+<style src="@/features/clients/styles/agent-config.css"></style>

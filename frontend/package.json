@@ -19,16 +19,20 @@
   "dependencies": {
     "@mdi/js": "^7.4.47",
     "apexcharts": "^5.3.6",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "pinia": "^3.0.4",
     "pinia-plugin-persistedstate": "^4.7.1",
+    "reka-ui": "^2.11.0",
+    "tailwind-merge": "^3.7.1",
     "vue": "^3.5.26",
     "vue-router": "4",
     "vue3-apexcharts": "^1.10.0",
-    "vuedraggable": "^4.1.0",
-    "vuetify": "^3.11.6"
+    "vuedraggable": "^4.1.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
+    "@tailwindcss/vite": "^4.3.5",
     "@typescript-eslint/eslint-plugin": "^8.53.0",
     "@typescript-eslint/parser": "^8.53.0",
     "@vitejs/plugin-vue": "^6.0.3",
@@ -36,10 +40,10 @@
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.5",
     "eslint-plugin-vue": "^10.7.0",
-    "sass-embedded": "^1.97.2",
+    "jsdom": "^31.0.1",
+    "tailwindcss": "^4.3.5",
     "typescript": "^5.9.3",
     "vite": "^7.3.1",
-    "vite-plugin-vuetify": "^2.1.2",
     "vitest": "^4.0.17",
     "vue-eslint-parser": "^10.2.0",
     "vue-tsc": "^3.2.2"

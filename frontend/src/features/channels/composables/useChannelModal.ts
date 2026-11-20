@@ -780,12 +780,12 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
     }, 2000)
   }
 
-  // Vuetify 字段错误与自定义参数错误共用展开和定位流程。
+  // 字段校验和自定义参数校验共用展开和定位流程。
   const revealFormError = async () => {
     await nextTick()
     const formElement = formRef.value?.$el as HTMLElement | undefined
     if (!formElement) return
-    const errorSelector = '.v-input--error, [data-form-error="true"]'
+    const errorSelector = '[aria-invalid="true"], [data-form-error="true"]'
     for (const section of ['connection', 'compatibility', 'advanced'] as const) {
       if (formElement.querySelector(`[data-form-section="${section}"]`)?.querySelector(errorSelector)) {
         detailedSections[section] = true

@@ -5,10 +5,10 @@
       <aside ref="panel" class="provider-panel" aria-label="常见渠道商" tabindex="-1">
         <header class="provider-heading">
           <div><h3>常见渠道商</h3><p>自动填入地址与上游协议</p></div>
-          <v-btn icon="mdi-close" variant="text" size="small" aria-label="关闭渠道商列表" @click="close(true)" />
+          <UiButton icon="mdi-close" variant="text" size="small" aria-label="关闭渠道商列表" @click="close(true)" />
         </header>
         <div class="provider-search">
-          <v-text-field v-model="query" placeholder="搜索渠道商" aria-label="搜索渠道商" prepend-inner-icon="mdi-magnify" hide-details density="compact" clearable />
+          <UiInput v-model="query" placeholder="搜索渠道商" aria-label="搜索渠道商" prepend-inner-icon="mdi-magnify" hide-details density="compact" clearable />
         </div>
         <div class="provider-list">
           <button v-for="item in items" :key="item.preset.id" type="button" class="provider-item" :disabled="!item.endpoint" @click="select(item.preset)">
@@ -32,9 +32,11 @@
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiInput from '@/shared/ui/field/Input.vue'
 import { computed, nextTick, ref, watch } from 'vue'
 import type { ApiTab } from '@/features/channels/services/channel-api'
-import EmptyState from '@/shared/components/common/EmptyState.vue'
+import EmptyState from '@/shared/components/feedback/EmptyState.vue'
 import { CHANNEL_PRESETS, presetProtocolLabels, resolveChannelPreset, type ChannelPreset } from '@/features/channels/utils/channelPresets'
 
 const props = defineProps<{ modelValue: boolean; channelType: ApiTab }>()
@@ -89,32 +91,34 @@ watch(() => props.modelValue, async (open, _previous, onCleanup) => {
 </script>
 
 <style scoped>
-.provider-layer { position: absolute; inset: 0; z-index: 5; overflow: hidden; border-radius: inherit; }
-.provider-scrim { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.24); }
-.provider-panel { position: absolute; inset: 0 0 0 auto; width: min(440px, 100%); display: flex; flex-direction: column; background: rgb(var(--v-theme-surface)); border-left: 1px solid rgba(var(--v-theme-outline), 0.25); box-shadow: -8px 0 28px rgba(0, 0, 0, 0.16); outline: none; }
-.provider-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 22px 20px 16px; }
-.provider-heading h3 { font-size: 1rem; }
-.provider-heading p, footer { font-size: 0.75rem; line-height: 1.6; color: rgb(var(--v-theme-on-surface-variant)); }
-.provider-heading p { margin-top: 4px; }
-.provider-search { padding: 0 20px 16px; }
-.provider-list { overflow-y: auto; flex: 1; min-height: 0; padding: 0 12px 12px; }
-.provider-item { display: flex; align-items: flex-start; gap: 12px; width: 100%; padding: 16px 8px; border-bottom: 1px solid rgba(var(--v-theme-outline), 0.16); border-radius: 4px; text-align: left; transition: background 120ms; }
-.provider-item:hover:not(:disabled), .provider-item:focus-visible { background: rgba(var(--v-theme-primary), 0.08); }
-.provider-item:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: -2px; }
-.provider-item:disabled { opacity: 0.45; cursor: not-allowed; }
-.provider-mark { display: grid; place-items: center; width: 34px; height: 34px; flex-shrink: 0; border-radius: 10px; background: rgba(var(--v-theme-primary), 0.12); color: rgb(var(--v-theme-primary)); font-weight: 700; }
-.provider-info { display: flex; flex-direction: column; min-width: 0; flex: 1; gap: 4px; }
-.provider-name { font-weight: 600; font-size: 0.875rem; }
-.provider-protocols, .provider-url { font-size: 0.6875rem; line-height: 1.5; color: rgb(var(--v-theme-on-surface-variant)); }
-.provider-url { overflow-wrap: anywhere; }
-.provider-route { flex-shrink: 0; padding: 3px 5px; border-radius: 4px; font-size: 0.625rem; background: rgba(var(--v-theme-on-surface), 0.06); }
-.provider-route.is-native { color: rgb(var(--v-theme-success)); background: rgba(var(--v-theme-success), 0.1); }
-footer { padding: 14px 20px; border-top: 1px solid rgba(var(--v-theme-outline), 0.2); }
-.provider-drawer-enter-active, .provider-drawer-leave-active { transition: opacity 180ms ease; }
-.provider-drawer-enter-active .provider-panel, .provider-drawer-leave-active .provider-panel { transition: transform 180ms ease; }
-.provider-drawer-enter-from, .provider-drawer-leave-to { opacity: 0; }
-.provider-drawer-enter-from .provider-panel, .provider-drawer-leave-to .provider-panel { transform: translateX(100%); }
+@reference "@/styles/index.css";
+
+.provider-layer { @apply absolute [inset:0] [z-index:5] overflow-hidden [border-radius:inherit]; }
+.provider-scrim { @apply absolute [inset:0] [background:rgba(0,_0,_0,_0.24)]; }
+.provider-panel { @apply absolute [inset:0_0_0_auto] [width:min(440px,_100%)] flex flex-col [background:var(--surface)] [border-left:1px_solid_color-mix(in_srgb,_var(--outline)_25%,_transparent)] shadow-popover [outline:none]; }
+.provider-heading { @apply flex items-center justify-between gap-3 [padding:22px_20px_16px]; }
+.provider-heading h3 { @apply [font-size:1rem]; }
+.provider-heading p, footer { @apply [font-size:0.75rem] [line-height:1.6] text-muted-foreground; }
+.provider-heading p { @apply mt-1; }
+.provider-search { @apply [padding:0_20px_16px]; }
+.provider-list { @apply overflow-y-auto [flex:1] min-h-0 [padding:0_12px_12px]; }
+.provider-item { @apply flex items-start gap-3 w-full [padding:16px_8px] [border-bottom:1px_solid_color-mix(in_srgb,_var(--outline)_16%,_transparent)] rounded-badge text-left [transition:background_120ms]; }
+.provider-item:hover:not(:disabled), .provider-item:focus-visible { @apply [background:color-mix(in_srgb,_var(--primary)_8%,_transparent)]; }
+.provider-item:focus-visible { @apply [outline:2px_solid_var(--primary)] [outline-offset:-2px]; }
+.provider-item:disabled { @apply opacity-45 cursor-not-allowed; }
+.provider-mark { @apply grid [place-items:center] w-8.5 h-8.5 shrink-0 rounded-control [background:color-mix(in_srgb,_var(--primary)_12%,_transparent)] text-primary font-bold; }
+.provider-info { @apply flex flex-col min-w-0 [flex:1] gap-1; }
+.provider-name { @apply font-semibold [font-size:0.875rem]; }
+.provider-protocols, .provider-url { @apply [font-size:0.6875rem] [line-height:1.5] text-muted-foreground; }
+.provider-url { @apply [overflow-wrap:anywhere]; }
+.provider-route { @apply shrink-0 [padding:3px_5px] rounded-badge [font-size:0.625rem] [background:color-mix(in_srgb,_var(--foreground)_6%,_transparent)]; }
+.provider-route.is-native { @apply text-success [background:color-mix(in_srgb,_var(--success)_10%,_transparent)]; }
+footer { @apply [padding:14px_20px] [border-top:1px_solid_color-mix(in_srgb,_var(--outline)_20%,_transparent)]; }
+.provider-drawer-enter-active, .provider-drawer-leave-active { @apply [transition:opacity_180ms_ease]; }
+.provider-drawer-enter-active .provider-panel, .provider-drawer-leave-active .provider-panel { @apply [transition:transform_180ms_ease]; }
+.provider-drawer-enter-from, .provider-drawer-leave-to { @apply opacity-0; }
+.provider-drawer-enter-from .provider-panel, .provider-drawer-leave-to .provider-panel { @apply [transform:translateX(100%)]; }
 @media (prefers-reduced-motion: reduce) {
-  .provider-layer, .provider-layer .provider-panel, .provider-item { transition: none; }
+  .provider-layer, .provider-layer .provider-panel, .provider-item { @apply [transition:none]; }
 }
 </style>

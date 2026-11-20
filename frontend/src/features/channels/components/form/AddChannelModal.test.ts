@@ -1,13 +1,12 @@
 // 表单提交入口回归：校验失败不保存，Images 参数先编译，再交给编辑器组装。
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createRenderer, createSSRApp, nextTick, reactive, ref, type Ref, type SetupContext } from 'vue'
+import { createRenderer, createSSRApp, nextTick, reactive, type Ref, type SetupContext } from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import type { ChannelFormState } from '@/features/channels/composables/useChannelEditor'
 import AddChannelModal from '@/features/channels/components/form/AddChannelModal.vue'
 import { api, type ApiTab, type Channel, type ChannelPool, type MappingTargetChannel, type MappingTargetChannelsResponse } from '@/api'
 import { useChannelModal } from '@/features/channels/composables/useChannelModal'
 
-vi.mock('vuetify', () => ({ useTheme: () => ({ current: ref({ dark: false }) }) }))
 vi.mock('@/shared/stores/auth', () => ({ useAuthStore: () => ({ apiKey: null, clearAuth: vi.fn() }) }))
 
 type State = Record<string, unknown>
@@ -18,7 +17,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-// 使用最小渲染宿主保留真实的生命周期和 watcher，不需要启动浏览器或渲染 Vuetify。
+// 使用最小渲染宿主保留真实的生命周期和 watcher，不需要启动浏览器或渲染基础控件。
 const setupCopyForm = () => {
   vi.stubGlobal('document', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
   const source: Channel = {

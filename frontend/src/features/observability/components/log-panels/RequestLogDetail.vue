@@ -1,21 +1,21 @@
 <template>
   <div class="request-log-detail">
-    <v-alert v-if="error" type="error" variant="tonal">{{ error }}</v-alert>
-    <div v-if="loading" class="pa-4 text-center">正在加载请求详情…</div>
+    <UiAlert v-if="error" type="error" variant="tonal">{{ error }}</UiAlert>
+    <div v-if="loading" class="p-4 text-center">正在加载请求详情…</div>
     <template v-else-if="detail">
       <div class="detail-meta">
         <code>{{ requestId }}</code>
-        <v-chip size="small" :color="logStatus(detail.summary).color" variant="tonal">{{ logStatus(detail.summary).label }}</v-chip>
-        <span v-if="detail.summary.durationMs != null" class="text-caption">网关总耗时 {{ detail.summary.durationMs.toLocaleString() }} ms</span>
-        <span v-if="detail.summary.clientStatusCode" class="text-caption">网关写出 HTTP {{ detail.summary.clientStatusCode }}</span>
-        <v-btn size="small" variant="text" @click="copyId">复制 ID</v-btn>
-        <v-btn size="small" variant="text" :loading="loading" @click="load(true)">刷新</v-btn>
-        <v-btn v-if="parentRequestId" size="small" variant="text" @click="emit('locate', parentRequestId)">查看原请求</v-btn>
+        <UiBadge size="small" :color="logStatus(detail.summary).color" variant="tonal">{{ logStatus(detail.summary).label }}</UiBadge>
+        <span v-if="detail.summary.durationMs != null" class="text-xs">网关总耗时 {{ detail.summary.durationMs.toLocaleString() }} ms</span>
+        <span v-if="detail.summary.clientStatusCode" class="text-xs">网关写出 HTTP {{ detail.summary.clientStatusCode }}</span>
+        <UiButton size="small" variant="text" @click="copyId">复制 ID</UiButton>
+        <UiButton size="small" variant="text" :loading="loading" @click="load(true)">刷新</UiButton>
+        <UiButton v-if="parentRequestId" size="small" variant="text" @click="emit('locate', parentRequestId)">查看原请求</UiButton>
       </div>
       <div v-if="detail.summary.errorMessage || currentCallAttempt?.errorMessage" class="attempt-error mb-4">
         <div class="attempt-error__heading">
           <strong>{{ currentCallAttempt?.errorType || detail.summary.errorType || '调用未正常完成' }}</strong>
-          <v-btn size="x-small" variant="text" prepend-icon="mdi-content-copy" @click="copyError">复制完整原因</v-btn>
+          <UiButton size="x-small" variant="text" prepend-icon="mdi-content-copy" @click="copyError">复制完整原因</UiButton>
         </div>
         <pre>{{ currentCallAttempt?.errorMessage || detail.summary.errorMessage }}</pre>
       </div>
@@ -32,7 +32,7 @@
               <span class="attempt-timeline__content">
                 <span class="attempt-timeline__heading">
                   <strong>第 {{ index + 1 }} 次</strong>
-                  <v-chip size="x-small" :color="attempt.success ? 'success' : 'error'" variant="tonal">{{ attempt.success ? '成功' : (attempt.status || '失败') }}</v-chip>
+                  <UiBadge size="x-small" :color="attempt.success ? 'success' : 'error'" variant="tonal">{{ attempt.success ? '成功' : (attempt.status || '失败') }}</UiBadge>
                   <time>{{ formatAttemptTime(attempt.timestamp) }}</time>
                 </span>
                 <span class="attempt-timeline__meta">{{ attempt.channelName || '无渠道' }} · {{ attempt.resolvedModel || attempt.model || '--' }} · 上游 {{ formatDuration(attempt.durationMs) }} · 首字 {{ formatDuration(attempt.firstTokenMs) }}</span>
@@ -53,31 +53,36 @@
         <span v-if="detail.contextChange.comparable">与前序调用相比：新增 {{ detail.contextChange.added }} 块 · 移除 {{ detail.contextChange.removed }} 块 · 估算净变化 {{ detail.contextChange.estimatedDelta > 0 ? '+' : '' }}{{ detail.contextChange.estimatedDelta.toLocaleString() }} Token</span>
         <p>{{ detail.contextChange.notice }}</p>
         <p v-if="detail.contextChange.orderChanged">内容块相同，但排列顺序发生变化。</p>
-        <v-btn size="small" variant="text" @click="emit('locate', detail.contextChange.previousRequestId)">查看前序调用</v-btn>
+        <UiButton size="small" variant="text" @click="emit('locate', detail.contextChange.previousRequestId)">查看前序调用</UiButton>
       </div>
-      <v-select v-if="attempts.length > 1" v-model="selectedAttempt" :items="attemptItems" label="上游尝试" density="compact" hide-details class="mb-4" />
-      <v-alert v-if="currentAttempt?.admission" type="info" variant="tonal" density="compact" class="mb-4">{{ currentAttempt.admission.body }}</v-alert>
-      <v-alert v-if="currentAttempt?.error" type="warning" variant="tonal" density="compact" class="mb-4">{{ currentAttempt.error.body }}</v-alert>
-      <v-tabs v-model="phase" density="compact">
-        <v-tab value="client">入口输入</v-tab>
-        <v-tab value="upstream">发送上游</v-tab>
-        <v-tab value="response">上游响应</v-tab>
-      </v-tabs>
+      <UiSelect v-if="attempts.length > 1" v-model="selectedAttempt" :items="attemptItems" label="上游尝试" density="compact" hide-details class="mb-4" />
+      <UiAlert v-if="currentAttempt?.admission" type="info" variant="tonal" density="compact" class="mb-4">{{ currentAttempt.admission.body }}</UiAlert>
+      <UiAlert v-if="currentAttempt?.error" type="warning" variant="tonal" density="compact" class="mb-4">{{ currentAttempt.error.body }}</UiAlert>
+      <UiTabs v-model="phase" density="compact">
+        <UiButton role="tab" variant="text" value="client">入口输入</UiButton>
+        <UiButton role="tab" variant="text" value="upstream">发送上游</UiButton>
+        <UiButton role="tab" variant="text" value="response">上游响应</UiButton>
+      </UiTabs>
       <div v-if="currentLog" class="phase-content">
-        <p v-if="phase === 'client'" class="text-caption text-medium-emphasis mb-3">入口输入在内容安全处理后采集，媒体已省略；摘要不能用于重放请求。</p>
+        <p v-if="phase === 'client'" class="text-xs text-muted-foreground mb-3">入口输入在内容安全处理后采集，媒体已省略；摘要不能用于重放请求。</p>
         <ContextSnapshotPanel v-if="currentContext && bodyAvailable" :snapshot="currentContext" :body="currentLog.body || ''" />
-        <div class="text-caption text-medium-emphasis phase-meta">{{ currentLog.method }} {{ currentLog.url }} <span v-if="currentLog.statusCode"> · HTTP {{ currentLog.statusCode }}</span></div>
-        <v-alert v-if="bodyNotice" type="info" variant="tonal" density="compact" class="mb-3">{{ bodyNotice }}</v-alert>
+        <div class="text-xs text-muted-foreground phase-meta">{{ currentLog.method }} {{ currentLog.url }} <span v-if="currentLog.statusCode"> · HTTP {{ currentLog.statusCode }}</span></div>
+        <UiAlert v-if="bodyNotice" type="info" variant="tonal" density="compact" class="mb-3">{{ bodyNotice }}</UiAlert>
         <SessionInspector v-if="bodyAvailable" :body="currentLog.body || ''" :method="currentLog.method" :url="currentLog.url" :replayable="phase !== 'response' && currentLog.phase !== 'client_input' && !currentLog.truncated" wrap />
         <details v-if="currentLog.headers" class="mt-4" :open="headersOpen" @toggle="headersOpen = ($event.target as HTMLElement).hasAttribute('open')"><summary>请求头与响应头</summary><JsonBodyPane v-if="headersOpen" :body="currentLog.headers" title="请求头与响应头" :meta="requestId" wrap /></details>
       </div>
-      <div v-else class="pa-4 text-medium-emphasis">此阶段没有正文记录。</div>
+      <div v-else class="p-4 text-muted-foreground">此阶段没有正文记录。</div>
       <details v-if="synth?.body" class="mt-4" :open="synthOpen" @toggle="synthOpen = ($event.target as HTMLElement).hasAttribute('open')"><summary>流式响应的结构化合成</summary><SessionInspector v-if="synthOpen" :body="synth.body" :replayable="false" wrap /></details>
     </template>
   </div>
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
+import UiBadge from '@/shared/ui/feedback/Badge.vue'
+import UiTabs from '@/shared/ui/navigation/Tabs.vue'
+import UiSelect from '@/shared/ui/select/Select.vue'
 // 完整详情按需加载，共用日志 store 缓存；一次只挂载一个阶段的正文。
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { useLogSession } from '@/features/observability/composables/useLogSession'
@@ -178,33 +183,35 @@ onBeforeUnmount(() => { revision++ })
 </script>
 
 <style scoped>
-.detail-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
-.detail-meta code { overflow-wrap: anywhere; }
-.attempt-error { padding: 12px 14px; color: rgb(var(--v-theme-on-error-container)); border: 1px solid rgba(var(--v-theme-error), .28); border-radius: 8px; background: rgba(var(--v-theme-error), .08); }
-.attempt-error__heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.attempt-error pre { max-height: 220px; margin: 8px 0 0; overflow: auto; font: 12px/1.6 inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
-.attempt-section { margin: 18px 0; padding: 14px; border: 1px solid rgba(var(--v-theme-outline), .18); border-radius: 10px; background: rgba(var(--v-theme-surface-bright), .3); }
-.attempt-section__heading { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; font-size: 12px; }
-.attempt-section__heading span { color: rgb(var(--v-theme-on-surface-variant)); }
-.attempt-timeline { margin: 0; padding: 0; list-style: none; }
-.attempt-timeline li { position: relative; }
-.attempt-timeline button { display: flex; width: 100%; padding: 0; color: inherit; text-align: left; background: transparent; border: 0; cursor: pointer; }
-.attempt-timeline__rail { position: relative; width: 24px; flex: 0 0 24px; }
-.attempt-timeline__rail::before { position: absolute; z-index: 1; top: 18px; left: 7px; width: 9px; height: 9px; background: rgb(var(--v-theme-success)); border: 2px solid rgb(var(--v-theme-surface)); border-radius: 50%; content: ''; box-shadow: 0 0 0 1px rgba(var(--v-theme-success), .4); }
-.attempt-timeline__rail::after { position: absolute; top: 28px; bottom: -8px; left: 11px; width: 1px; background: rgba(var(--v-theme-outline), .35); content: ''; }
-.attempt-timeline li:last-child .attempt-timeline__rail::after { display: none; }
-.attempt-timeline li.failed .attempt-timeline__rail::before { background: rgb(var(--v-theme-error)); box-shadow: 0 0 0 1px rgba(var(--v-theme-error), .4); }
-.attempt-timeline__content { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid transparent; border-radius: 8px; }
-.attempt-timeline li.active .attempt-timeline__content { border-color: rgba(var(--v-theme-primary), .35); background: rgba(var(--v-theme-primary), .07); }
-.attempt-timeline button:hover .attempt-timeline__content { background: rgba(var(--v-theme-primary), .05); }
-.attempt-timeline__heading { display: flex; align-items: center; gap: 8px; }
-.attempt-timeline__heading time { margin-left: auto; color: rgb(var(--v-theme-on-surface-variant)); font-size: 11px; font-variant-numeric: tabular-nums; }
-.attempt-timeline__meta, .attempt-timeline__tokens { color: rgb(var(--v-theme-on-surface-variant)); font-size: 12px; overflow-wrap: anywhere; }
-.selected-attempt-meta { display: flex; gap: 8px 16px; flex-wrap: wrap; margin: 8px 0 0 24px; padding: 10px 12px; color: rgb(var(--v-theme-on-surface-variant)); font-size: 11px; border-top: 1px solid rgba(var(--v-theme-outline), .16); }
-.selected-attempt-meta code { overflow-wrap: anywhere; }
-.phase-content { padding-top: 16px; }
-.phase-meta { overflow-wrap: anywhere; margin-bottom: 12px; }
-.context-change { margin-bottom: 16px; font-size: 13px; }
-.context-change p { color: rgba(var(--v-theme-on-surface), 0.65); margin-top: 6px; }
-summary { cursor: pointer; padding: 8px 0; }
+@reference "@/styles/index.css";
+
+.detail-meta { @apply flex items-center gap-2 flex-wrap mb-4; }
+.detail-meta code { @apply [overflow-wrap:anywhere]; }
+.attempt-error { @apply [padding:12px_14px] text-destructive [border:1px_solid_color-mix(in_srgb,_var(--destructive)_28%,_transparent)] rounded-control [background:color-mix(in_srgb,_var(--destructive)_8%,_transparent)]; }
+.attempt-error__heading { @apply flex items-center justify-between gap-3; }
+.attempt-error pre { @apply max-h-55 [margin:8px_0_0] overflow-auto [font:12px/1.6_inherit] whitespace-pre-wrap [overflow-wrap:anywhere]; }
+.attempt-section { @apply [margin:18px_0] p-3.5 [border:1px_solid_color-mix(in_srgb,_var(--outline)_18%,_transparent)] rounded-control [background:color-mix(in_srgb,_var(--surface-bright)_30%,_transparent)]; }
+.attempt-section__heading { @apply flex justify-between gap-3 flex-wrap mb-2.5 [font-size:12px]; }
+.attempt-section__heading span { @apply text-muted-foreground; }
+.attempt-timeline { @apply m-0 p-0 [list-style:none]; }
+.attempt-timeline li { @apply relative; }
+.attempt-timeline button { @apply flex w-full p-0 [color:inherit] text-left [background:transparent] border-0 cursor-pointer; }
+.attempt-timeline__rail { @apply relative w-6 [flex:0_0_24px]; }
+.attempt-timeline__rail::before { @apply absolute [z-index:1] top-4.5 [left:7px] [width:9px] [height:9px] bg-success [border:2px_solid_var(--surface)] rounded-full [content:''] [box-shadow:0_0_0_1px_color-mix(in_srgb,_var(--success)_40%,_transparent)]; }
+.attempt-timeline__rail::after { @apply absolute top-7 [bottom:-8px] [left:11px] [width:1px] [background:color-mix(in_srgb,_var(--outline)_35%,_transparent)] [content:'']; }
+.attempt-timeline li:last-child .attempt-timeline__rail::after { @apply hidden; }
+.attempt-timeline li.failed .attempt-timeline__rail::before { @apply bg-destructive [box-shadow:0_0_0_1px_color-mix(in_srgb,_var(--destructive)_40%,_transparent)]; }
+.attempt-timeline__content { @apply flex min-w-0 [flex:1] flex-col gap-1 [padding:10px_12px] [border:1px_solid_transparent] rounded-control; }
+.attempt-timeline li.active .attempt-timeline__content { @apply [border-color:color-mix(in_srgb,_var(--primary)_35%,_transparent)] [background:color-mix(in_srgb,_var(--primary)_7%,_transparent)]; }
+.attempt-timeline button:hover .attempt-timeline__content { @apply [background:color-mix(in_srgb,_var(--primary)_5%,_transparent)]; }
+.attempt-timeline__heading { @apply flex items-center gap-2; }
+.attempt-timeline__heading time { @apply ml-auto text-muted-foreground [font-size:11px] tabular-nums; }
+.attempt-timeline__meta, .attempt-timeline__tokens { @apply text-muted-foreground [font-size:12px] [overflow-wrap:anywhere]; }
+.selected-attempt-meta { @apply flex [gap:8px_16px] flex-wrap [margin:8px_0_0_24px] [padding:10px_12px] text-muted-foreground [font-size:11px] [border-top:1px_solid_color-mix(in_srgb,_var(--outline)_16%,_transparent)]; }
+.selected-attempt-meta code { @apply [overflow-wrap:anywhere]; }
+.phase-content { @apply pt-4; }
+.phase-meta { @apply [overflow-wrap:anywhere] mb-3; }
+.context-change { @apply mb-4 [font-size:13px]; }
+.context-change p { @apply [color:color-mix(in_srgb,_var(--foreground)_65%,_transparent)] mt-1.5; }
+summary { @apply cursor-pointer [padding:8px_0]; }
 </style>

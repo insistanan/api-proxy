@@ -1,11 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createSSRApp, nextTick, ref } from 'vue'
+import { createSSRApp, nextTick } from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import { useChannelModal } from '@/features/channels/composables/useChannelModal'
 import { CHANNEL_PRESETS, resolveChannelPreset } from '@/features/channels/utils/channelPresets'
 import type { ApiTab } from '@/features/channels/services/channel-api'
 
-vi.mock('vuetify', () => ({ useTheme: () => ({ current: ref({ dark: false }) }) }))
 vi.mock('@/shared/stores/auth', () => ({ useAuthStore: () => ({ apiKey: null, clearAuth: vi.fn() }) }))
 
 async function setup(entry: ApiTab) {

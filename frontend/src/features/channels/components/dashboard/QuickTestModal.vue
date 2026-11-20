@@ -1,14 +1,15 @@
 <template>
   <AppDialog :model-value="isOpen" title="快捷测试" size="lg" @update:model-value="value => { if (!value) close() }">
     <template #header-actions>
-      <v-chip v-if="channel" size="small" color="primary" variant="tonal">
+      <UiBadge v-if="channel" size="small" color="primary" variant="tonal">
         {{ channel.name }}
-      </v-chip>
+      </UiBadge>
     </template>
 
     <!-- 模型选择 -->
-    <v-combobox
-      v-model="selectedModel"
+    <UiSelect
+v-model="selectedModel" searchable
+      creatable
       :items="modelOptions"
       item-title="title"
       item-value="value"
@@ -23,17 +24,17 @@
       clearable
     >
       <template #no-data>
-        <div class="text-center pa-4 text-medium-emphasis">
+        <div class="text-center p-4 text-muted-foreground">
           <template v-if="isLoadingModels">正在从上游获取模型列表...</template>
           <template v-else-if="modelLoadError">暂时无法显示模型列表，仍可直接输入模型名称</template>
           <template v-else>未找到匹配模型，可直接输入模型名称</template>
         </div>
       </template>
-    </v-combobox>
+    </UiSelect>
 
     <div v-if="modelLoadError" class="model-load-error mb-4" role="alert">
       <span>{{ modelLoadError }}</span>
-      <v-btn
+      <UiButton
         size="small"
         variant="text"
         color="warning"
@@ -42,10 +43,10 @@
         @click="loadModels"
       >
         重新获取
-      </v-btn>
+      </UiButton>
     </div>
 
-    <v-select
+    <UiSelect
       v-model="selectedThinking"
       :items="thinkingOptions"
       label="思考档位"
@@ -56,7 +57,7 @@
     />
 
     <!-- 测试输入 -->
-    <v-textarea
+    <UiTextarea
       v-model="testMessage"
       label="测试消息"
       variant="outlined"
@@ -68,8 +69,8 @@
     />
 
     <!-- 发送按钮 -->
-    <div class="d-flex justify-end mb-4">
-      <v-btn
+    <div class="flex justify-end mb-4">
+      <UiButton
         color="success"
         prepend-icon="mdi-send"
         :disabled="!canSend"
@@ -77,37 +78,44 @@
         @click="sendTest"
       >
         发送测试
-      </v-btn>
+      </UiButton>
     </div>
 
     <!-- 响应结果 -->
-    <v-card v-if="responseText || responseError || isSending" variant="outlined" class="response-area">
-      <v-card-title class="text-subtitle-2 pa-3 bg-surface">
-        <v-icon size="small" class="mr-2">mdi-message-reply-text</v-icon>
+    <UiCard v-if="responseText || responseError || isSending" variant="outlined" class="response-area">
+      <div class="ui-card-title px-4 pt-4 text-base font-semibold text-sm font-medium p-3 bg-card">
+        <UiIcon size="small" class="mr-2">mdi-message-reply-text</UiIcon>
         响应结果
-      </v-card-title>
-      <v-divider />
-      <v-card-text class="pa-4" style="max-height: 300px; overflow-y: auto;">
+      </div>
+      <hr class="border-0 border-t border-border" />
+      <div class="p-4 p-4" style="max-height: 300px; overflow-y: auto;">
         <div v-if="responseError" class="error-message" role="alert">
-          <v-icon color="error" class="mr-2">mdi-alert-circle</v-icon>
-          <span class="text-error">{{ responseError }}</span>
+          <UiIcon color="error" class="mr-2">mdi-alert-circle</UiIcon>
+          <span class="text-destructive">{{ responseError }}</span>
         </div>
-        <div v-else-if="isSending && !responseText" class="text-center text-medium-emphasis py-4">
-          <v-progress-circular indeterminate size="32" />
+        <div v-else-if="isSending && !responseText" class="text-center text-muted-foreground py-4">
+          <UiSpinner indeterminate size="32" />
           <div class="mt-2">正在发送请求...</div>
         </div>
         <div v-else class="response-text">{{ responseText }}</div>
-      </v-card-text>
-    </v-card>
+      </div>
+    </UiCard>
   </AppDialog>
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiCard from '@/shared/ui/card/Card.vue'
+import UiBadge from '@/shared/ui/feedback/Badge.vue'
+import UiSpinner from '@/shared/ui/feedback/Spinner.vue'
+import UiTextarea from '@/shared/ui/field/Textarea.vue'
+import UiIcon from '@/shared/ui/icon/Icon.vue'
+import UiSelect from '@/shared/ui/select/Select.vue'
 import { ref, computed, watch } from 'vue'
 import type { Channel } from '@/api'
 import { api, testChannelWithModel } from '@/api'
 import type { ApiTab } from '@/features/channels/services/channel-api'
-import AppDialog from '@/shared/components/common/AppDialog.vue'
+import AppDialog from '@/shared/components/overlay/AppDialog.vue'
 
 const props = defineProps<{
   modelValue: boolean
@@ -251,51 +259,29 @@ watch([() => props.modelValue, () => props.channel?.id], ([newVal]) => {
 </script>
 
 <style scoped>
+@reference "@/styles/index.css";
+
 .response-area {
-  border: 1px solid rgba(var(--v-border-color), 0.2);
+  @apply [border:1px_solid_color-mix(in_srgb,_var(--outline)_20%,_transparent)];
 }
 
 .response-text {
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: 'Consolas', 'Monaco', monospace;
-  font-size: 14px;
-  line-height: 1.6;
+  @apply whitespace-pre-wrap [word-break:break-word] [font-family:'Consolas',_'Monaco',_monospace] [font-size:14px] [line-height:1.6];
 }
 
 .error-message {
-  display: flex;
-  align-items: center;
-  color: rgb(var(--v-theme-error));
-  padding: 12px;
-  background: rgba(var(--v-theme-error), 0.1);
-  border-radius: 8px;
+  @apply flex items-center text-destructive p-3 [background:color-mix(in_srgb,_var(--destructive)_10%,_transparent)] rounded-control;
 }
 
 .model-load-error {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: -8px;
-  padding: 8px 12px;
-  color: rgb(var(--v-theme-warning));
-  background: rgba(var(--v-theme-warning), 0.08);
-  border: 1px solid rgba(var(--v-theme-warning), 0.24);
-  border-radius: 6px;
-  font-size: 0.75rem;
-  line-height: 1.5;
-  word-break: break-word;
+  @apply flex flex-wrap items-center justify-between gap-3 [margin-top:-8px] [padding:8px_12px] text-warning [background:color-mix(in_srgb,_var(--warning)_8%,_transparent)] [border:1px_solid_color-mix(in_srgb,_var(--warning)_24%,_transparent)] rounded-badge [font-size:0.75rem] [line-height:1.5] [word-break:break-word];
 }
 
 .model-load-error span {
-  flex: 1 1 320px;
-  min-width: 0;
+  @apply [flex:1_1_320px] min-w-0;
 }
 
-.model-load-error .v-btn {
-  flex: 0 0 auto;
-  margin-left: auto;
+.model-load-error .ui-button {
+  @apply [flex:0_0_auto] ml-auto;
 }
 </style>

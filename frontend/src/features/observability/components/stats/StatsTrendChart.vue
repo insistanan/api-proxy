@@ -5,11 +5,11 @@
         <h3>{{ currentMode.label }}</h3>
         <p>{{ currentMode.description }}</p>
       </div>
-      <v-btn-toggle :model-value="mode" mandatory density="compact" variant="outlined" divided color="primary" @update:model-value="emit('update:mode', $event)">
-        <v-btn v-for="item in modes" :key="item.value" :value="item.value" size="small">{{ item.shortLabel }}</v-btn>
-      </v-btn-toggle>
+      <UiToggleGroup :model-value="mode" mandatory density="compact" variant="outlined" divided color="primary" @update:model-value="emit('update:mode', $event)">
+        <UiButton v-for="item in modes" :key="item.value" :value="item.value" size="small">{{ item.shortLabel }}</UiButton>
+      </UiToggleGroup>
     </div>
-    <v-progress-linear :active="loading" :indeterminate="loading" color="primary" height="2" />
+    <UiProgress :active="loading" :indeterminate="loading" color="primary" height="2" />
     <div v-if="!hasData && !loading" class="trend-empty">
       <EmptyState variant="inline" icon="mdi-chart-timeline-variant" title="当前范围没有调用数据" description="可以扩大时间范围、清除筛选，或检查调用日志保留策略。" />
     </div>
@@ -18,10 +18,10 @@
       <details class="trend-data">
         <summary>按时间段查日志</summary>
         <div class="trend-data__scroll">
-          <v-table density="compact">
+          <UiTable density="compact">
             <thead><tr><th>时间</th><th>尝试</th><th>成功</th><th>失败/中止</th><th>输入</th><th>输出</th><th>平均耗时</th></tr></thead>
-            <tbody><tr v-for="(point, index) in points" :key="point.timestamp"><td><v-btn size="x-small" variant="text" color="primary" :disabled="loading || !point.requestCount" @click="emit('pointSelect', index)">{{ formatShortDateTime(point.timestamp) }}</v-btn></td><td>{{ point.requestCount }}</td><td>{{ point.successCount }}</td><td>{{ point.failureCount }}</td><td>{{ point.inputTokens }}</td><td>{{ point.outputTokens }}</td><td>{{ formatStatMs(point.avgDurationMs) }}</td></tr></tbody>
-          </v-table>
+            <tbody><tr v-for="(point, index) in points" :key="point.timestamp"><td><UiButton size="x-small" variant="text" color="primary" :disabled="loading || !point.requestCount" @click="emit('pointSelect', index)">{{ formatShortDateTime(point.timestamp) }}</UiButton></td><td>{{ point.requestCount }}</td><td>{{ point.successCount }}</td><td>{{ point.failureCount }}</td><td>{{ point.inputTokens }}</td><td>{{ point.outputTokens }}</td><td>{{ formatStatMs(point.avgDurationMs) }}</td></tr></tbody>
+          </UiTable>
         </div>
       </details>
     </template>
@@ -29,15 +29,18 @@
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiToggleGroup from '@/shared/ui/button/ToggleGroup.vue'
+import UiTable from '@/shared/ui/data/Table.vue'
+import UiProgress from '@/shared/ui/feedback/Progress.vue'
 import { computed } from 'vue'
-import { useChartDarkTheme } from '@/shared/composables/useChartDarkTheme'
 import type { ApexOptions } from 'apexcharts'
 import type { RequestStatsPoint } from '@/types/metrics'
 import { defineLazyChart } from '@/shared/utils/lazyChart'
-import { chartThemeColors, GLOBAL_STATS_COLORS, CHART_PALETTE } from '@/shared/utils/chartPalette'
+import { useChartColors } from '@/shared/theme'
 import { formatCompactNumber, formatStatMs } from '@/features/observability/utils/statsFormat'
 import { formatShortDateTime } from '@/shared/utils/datetime'
-import EmptyState from '@/shared/components/common/EmptyState.vue'
+import EmptyState from '@/shared/components/feedback/EmptyState.vue'
 
 export type StatsTrendMode = 'traffic' | 'tokens' | 'cache' | 'latency' | 'errors'
 
@@ -63,7 +66,7 @@ const currentMode = computed(() => modes.find(item => item.value === props.mode)
 const chartType = computed(() => props.mode === 'errors' ? 'bar' : props.mode === 'latency' ? 'line' : 'area')
 const height = computed(() => props.compact ? 220 : 320)
 const hasData = computed(() => props.points.some(point => point.requestCount > 0 || point.inputTokens > 0 || point.outputTokens > 0))
-const isDark = useChartDarkTheme()
+const chartColors = useChartColors()
 
 const series = computed(() => {
   const points = props.points
@@ -95,17 +98,17 @@ const series = computed(() => {
 })
 const colors = computed(() => {
   switch (props.mode) {
-    case 'traffic': return [GLOBAL_STATS_COLORS.traffic.primary, GLOBAL_STATS_COLORS.traffic.success, CHART_PALETTE.danger]
-    case 'tokens': return [GLOBAL_STATS_COLORS.tokens.input, GLOBAL_STATS_COLORS.tokens.output]
-    case 'cache': return [CHART_PALETTE.teal, CHART_PALETTE.copper]
-    case 'latency': return [CHART_PALETTE.rose, CHART_PALETTE.blue]
-    case 'errors': return [CHART_PALETTE.danger, CHART_PALETTE.ochre]
+    case 'traffic': return [chartColors.value.indigo, chartColors.value.jade, chartColors.value.danger]
+    case 'tokens': return [chartColors.value.violet, chartColors.value.copper]
+    case 'cache': return [chartColors.value.teal, chartColors.value.copper]
+    case 'latency': return [chartColors.value.rose, chartColors.value.blue]
+    case 'errors': return [chartColors.value.danger, chartColors.value.ochre]
     default: return []
   }
 })
 const longRange = computed(() => props.from && props.to ? new Date(props.to).getTime() - new Date(props.from).getTime() > 36 * 3600000 : false)
 const chartOptions = computed<ApexOptions>(() => {
-  const colorsForTheme = chartThemeColors(isDark.value)
+  const colorsForTheme = chartColors.value
   const latency = props.mode === 'latency'
   return {
     chart: {
@@ -113,7 +116,7 @@ const chartOptions = computed<ApexOptions>(() => {
       toolbar: { show: true, tools: { download: false, selection: true, zoom: true, zoomin: true, zoomout: true, pan: false, reset: true } },
       zoom: { enabled: true, type: 'x', autoScaleYaxis: true }
     },
-    theme: { mode: isDark.value ? 'dark' : 'light' },
+    theme: { mode: chartColors.value.isDark ? 'dark' : 'light' },
     colors: colors.value,
     dataLabels: { enabled: false },
     stroke: { curve: 'straight', width: props.mode === 'errors' ? 0 : 2, dashArray: 0 },
@@ -130,7 +133,7 @@ const chartOptions = computed<ApexOptions>(() => {
     },
     legend: { show: true, position: 'top', horizontalAlign: 'right', fontSize: '12px', labels: { colors: colorsForTheme.text }, markers: { size: 6, strokeWidth: 0, shape: 'circle' }, itemMargin: { horizontal: 12 } },
     tooltip: {
-      theme: isDark.value ? 'dark' : 'light', shared: true, intersect: false,
+      theme: chartColors.value.isDark ? 'dark' : 'light', shared: true, intersect: false,
       x: { format: 'yyyy-MM-dd HH:mm' },
       y: { formatter: (value: number) => latency ? formatStatMs(value) : `${formatStatNumberLocal(value)}${props.mode === 'traffic' || props.mode === 'errors' ? ' 次' : ' Token'}` }
     },
@@ -144,14 +147,16 @@ function handlePointSelect(_event: unknown, _seriesIndex: number, config: { data
 </script>
 
 <style scoped>
-.trend-panel { position: relative; min-width: 0; padding: 18px 20px 12px; border: 1px solid rgba(var(--v-theme-outline), .18); border-radius: 12px; background: rgb(var(--v-theme-surface)); }
-.trend-panel__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
-h3 { margin: 0; font-size: 15px; font-weight: 650; }
-p { margin: 5px 0 0; color: rgb(var(--v-theme-on-surface-variant)); font-size: 12px; }
-.trend-empty { min-height: 260px; display: grid; place-items: center; }
-.trend-data { margin-top: 4px; color: rgb(var(--v-theme-on-surface-variant)); font-size: 12px; }
-.trend-data summary { padding: 8px 0; cursor: pointer; }
-.trend-data__scroll { max-height: 300px; overflow: auto; }
-@media (max-width: 900px) { .trend-panel__header { flex-direction: column; } .trend-panel__header .v-btn-toggle { max-width: 100%; overflow-x: auto; } }
-@media (max-width: 600px) { .trend-panel { padding: 14px 10px 10px; } }
+@reference "@/styles/index.css";
+
+.trend-panel { @apply relative min-w-0 [padding:18px_20px_12px] [border:1px_solid_color-mix(in_srgb,_var(--outline)_18%,_transparent)] rounded-card bg-card; }
+.trend-panel__header { @apply flex items-start justify-between gap-4 mb-3; }
+h3 { @apply m-0 [font-size:15px] [font-weight:650]; }
+p { @apply [margin:5px_0_0] text-muted-foreground [font-size:12px]; }
+.trend-empty { @apply min-h-65 grid [place-items:center]; }
+.trend-data { @apply mt-1 text-muted-foreground [font-size:12px]; }
+.trend-data summary { @apply [padding:8px_0] cursor-pointer; }
+.trend-data__scroll { @apply max-h-75 overflow-auto; }
+@media (max-width: 900px) { .trend-panel__header { @apply flex-col; } .trend-panel__header .ui-toggle-group { @apply max-w-full overflow-x-auto; } }
+@media (max-width: 600px) { .trend-panel { @apply [padding:14px_10px_10px]; } }
 </style>

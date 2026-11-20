@@ -1,18 +1,18 @@
 <template>
-  <v-card variant="outlined" rounded="lg">
-    <v-card-title class="d-flex align-center justify-space-between pa-4 pb-2">
-      <div class="d-flex align-center ga-2">
-        <v-icon color="primary">mdi-swap-horizontal</v-icon>
-        <span class="text-body-1 font-weight-bold">模型重定向 (可选)</span>
+  <UiCard variant="outlined" rounded="lg">
+    <div class="ui-card-title px-4 pt-4 text-base font-semibold flex items-center justify-between p-4 pb-2">
+      <div class="flex items-center gap-2">
+        <UiIcon color="primary">mdi-swap-horizontal</UiIcon>
+        <span class="text-base font-bold">模型重定向 (可选)</span>
       </div>
-    </v-card-title>
+    </div>
 
-    <v-card-text class="pt-2">
+    <div class="p-4 pt-2">
 
       <!-- 现有映射列表 -->
       <div v-if="Object.keys(modelValue).length" class="mb-4">
-        <v-list density="compact" class="bg-transparent">
-          <v-list-item
+        <UiList density="compact" class="bg-transparent">
+          <UiListItem
             v-for="[source, targets] in Object.entries(modelValue)"
             :key="source"
             class="mb-2"
@@ -21,60 +21,60 @@
             color="surface-variant"
           >
             <template #prepend>
-              <v-icon size="small" color="primary">mdi-arrow-right</v-icon>
+              <UiIcon size="small" color="primary">mdi-arrow-right</UiIcon>
             </template>
-            <v-list-item-title>
-              <div class="d-flex flex-column ga-1">
-                <div class="d-flex align-center ga-2">
-                  <code class="text-caption font-weight-bold">{{ source }}</code>
-                  <v-icon size="small" color="primary">mdi-arrow-right</v-icon>
-                  <v-chip size="x-small" color="info" variant="tonal">{{ targets.length }} 个备选</v-chip>
+            <span class="block">
+              <div class="flex flex-col gap-1">
+                <div class="flex items-center gap-2">
+                  <code class="text-xs font-bold">{{ source }}</code>
+                  <UiIcon size="small" color="primary">mdi-arrow-right</UiIcon>
+                  <UiBadge size="x-small" color="info" variant="tonal">{{ targets.length }} 个备选</UiBadge>
                 </div>
                 <draggable
                   :list="targets"
                   :item-key="getTargetKey"
                   handle=".mapping-target-drag-handle"
-                  class="d-flex flex-wrap ga-1 mt-1"
+                  class="flex flex-wrap gap-1 mt-1"
                   :animation="150"
                   ghost-class="mapping-target-ghost"
                   @change="reorderTargets(source, targets)"
                 >
                   <template #item="{ element: target }">
-                    <v-chip
+                    <UiBadge
                       size="x-small"
                       closable
                       :color="isChannelUnavailable(source, target) ? 'warning' : undefined"
                       @click:close.stop="removeTarget(source, target)"
                     >
-                      <v-icon size="12" class="mapping-target-drag-handle mr-1" title="拖拽调整优先级">
+                      <UiIcon size="12" class="mapping-target-drag-handle mr-1" title="拖拽调整优先级">
                         mdi-drag-vertical
-                      </v-icon>
-                      <code class="text-caption">{{ target }}</code>
-                      <span v-if="allowTargetChannel && getTargetChannelId(source, target)" class="text-caption ml-1">
+                      </UiIcon>
+                      <code class="text-xs">{{ target }}</code>
+                      <span v-if="allowTargetChannel && getTargetChannelId(source, target)" class="text-xs ml-1">
                         @ {{ getTargetChannelLabel(source, target) }}
                       </span>
-                    </v-chip>
+                    </UiBadge>
                   </template>
                 </draggable>
               </div>
-            </v-list-item-title>
+            </span>
             <template #append>
-              <v-btn size="small" color="error" icon variant="text" title="删除所有映射" @click="removeSource(source)">
-                <v-icon size="small" color="error">mdi-delete</v-icon>
-              </v-btn>
+              <UiButton size="small" color="error" icon variant="text" title="删除所有映射" @click="removeSource(source)">
+                <UiIcon size="small" color="error">mdi-delete</UiIcon>
+              </UiButton>
             </template>
-          </v-list-item>
-        </v-list>
+          </UiListItem>
+        </UiList>
       </div>
 
       <!-- 添加新映射 -->
-      <div v-if="allowWildcard" class="d-flex align-center ga-2 mb-3">
-        <v-btn size="small" color="primary" variant="tonal" @click="localSource = '*'">
+      <div v-if="allowWildcard" class="flex items-center gap-2 mb-3">
+        <UiButton size="small" color="primary" variant="tonal" @click="localSource = '*'">
           使用 * 匹配任意源模型
-        </v-btn>
+        </UiButton>
       </div>
-      <div class="d-flex align-center ga-2">
-        <v-select
+      <div class="flex items-center gap-2">
+        <UiSelect
           v-if="strictSourceSelection"
           v-model="localSource"
           label="客户端图片模型"
@@ -87,9 +87,10 @@
           class="flex-1-1"
           clearable
         />
-        <v-combobox
-          v-else
-          v-model="localSource"
+        <UiSelect
+v-else v-model="localSource"
+          searchable
+          creatable
           label="源模型名"
           :items="sourceOptions"
           item-title="title"
@@ -102,8 +103,8 @@
           clearable
           @keyup.enter="addMapping"
         />
-        <v-icon color="primary">mdi-arrow-right</v-icon>
-        <v-select
+        <UiIcon color="primary">mdi-arrow-right</UiIcon>
+        <UiSelect
           v-if="allowTargetChannel"
           v-model="localChannelId"
           label="目标渠道（可选）"
@@ -118,8 +119,8 @@
           clearable
           no-data-text="没有可用的同协议渠道"
         />
-        <v-icon v-if="allowTargetChannel" color="primary">mdi-arrow-right</v-icon>
-        <v-select
+        <UiIcon v-if="allowTargetChannel" color="primary">mdi-arrow-right</UiIcon>
+        <UiSelect
           v-if="strictTargetSelection && allowTargetChannel"
           v-model="localTarget"
           label="图片生成工具模型"
@@ -131,9 +132,10 @@
           class="flex-1-1"
           clearable
         />
-        <v-combobox
-          v-else-if="strictTargetSelection"
-          v-model="localTarget"
+        <UiSelect
+v-else-if="strictTargetSelection" v-model="localTarget"
+          searchable
+          creatable
           label="图片生成工具模型"
           :placeholder="targetPlaceholder"
           :items="availableTargetOptions"
@@ -146,9 +148,10 @@
           clearable
           @keyup.enter="addMapping"
         />
-        <v-combobox
-          v-else
-          v-model="localTarget"
+        <UiSelect
+v-else v-model="localTarget"
+          searchable
+          creatable
           label="目标模型名"
           :placeholder="targetPlaceholder"
           :items="availableTargetOptions"
@@ -161,26 +164,33 @@
           @focus="fetchModels"
           @keyup.enter="addMapping"
         />
-        <v-btn
+        <UiButton
           color="secondary"
           variant="elevated"
           :disabled="!isValid"
           @click="addMapping"
         >
           添加
-        </v-btn>
+        </UiButton>
       </div>
-      <div v-if="targetError" class="text-error text-caption mt-2">
+      <div v-if="targetError" class="text-destructive text-xs mt-2">
         {{ targetError }}
       </div>
-      <div v-else-if="localSource && existingTargets.length" class="text-caption text-medium-emphasis mt-2">
+      <div v-else-if="localSource && existingTargets.length" class="text-xs text-muted-foreground mt-2">
         当前源模型已配置 {{ existingTargets.length }} 个目标，可继续追加。
       </div>
-    </v-card-text>
-  </v-card>
+    </div>
+  </UiCard>
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiCard from '@/shared/ui/card/Card.vue'
+import UiBadge from '@/shared/ui/feedback/Badge.vue'
+import UiIcon from '@/shared/ui/icon/Icon.vue'
+import UiList from '@/shared/ui/navigation/List.vue'
+import UiListItem from '@/shared/ui/navigation/ListItem.vue'
+import UiSelect from '@/shared/ui/select/Select.vue'
 import { ref, computed, watch } from 'vue'
 import draggable from 'vuedraggable'
 
@@ -347,15 +357,17 @@ const removeSource = (source: string) => {
 </script>
 
 <style scoped>
+@reference "@/styles/index.css";
+
 .mapping-target-drag-handle {
-  cursor: grab;
+  @apply cursor-grab;
 }
 
 .mapping-target-drag-handle:active {
-  cursor: grabbing;
+  @apply cursor-grabbing;
 }
 
 .mapping-target-ghost {
-  opacity: 0.45;
+  @apply opacity-45;
 }
 </style>

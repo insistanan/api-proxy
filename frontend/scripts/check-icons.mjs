@@ -1,13 +1,13 @@
 #!/usr/bin/env node
-// 图标注册扫描: 所有 mdi-* 用法必须已在 src/plugins/vuetify.ts 的 iconMap 中注册。
-// 未注册图标会在运行时降级为 help-circle 占位, 破坏 UI —— 由本脚本在提交前拦截。
+// 图标注册扫描: 所有 mdi-* 用法必须已在 src/shared/ui/icon/icons.ts 的 iconMap 中注册。
+// 在构建前检查所有图标引用是否已注册。
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const rootDir = resolve(fileURLToPath(new URL('..', import.meta.url)).replace(/[\\/]scripts[\\/]?$/, ''))
 const srcDir = join(rootDir, 'src')
-const pluginFile = join(srcDir, 'plugins', 'vuetify.ts')
+const pluginFile = join(srcDir, 'shared', 'ui', 'icon', 'icons.ts')
 
 const EXTS = new Set(['.vue', '.ts', '.js'])
 const USAGE_RE = /mdi-[a-z0-9-]+/g
@@ -51,7 +51,7 @@ const usage = collectUsage()
 const unregistered = [...usage.keys()].filter((k) => !registered.has(k))
 
 if (unregistered.length > 0) {
-  console.error('[FAIL] 未注册的 mdi 图标 (请先在 src/plugins/vuetify.ts 的 iconMap 注册):')
+  console.error('[FAIL] 未注册的 mdi 图标 (请先在 src/shared/ui/icon/icons.ts 的 iconMap 注册):')
   for (const icon of unregistered) {
     const files = [...usage.get(icon)].join(', ')
     console.error(`  - mdi-${icon}   (${files})`)

@@ -1,0 +1,10 @@
+:root, [data-palette='ink'] { --primary: #3e4da8; --primary-foreground: #fff; --palette-tint: 0%; }
+[data-palette='ocean'] { --primary: #126591; --primary-foreground: #fff; --palette-tint: 5%; --chart-1: #227ca6; --chart-10: #388ba3; }
+[data-palette='forest'] { --primary: #236e4e; --primary-foreground: #fff; --palette-tint: 5%; --chart-1: #388167; --chart-10: #5b8654; }
+[data-palette='sunset'] { --primary: #a24b20; --primary-foreground: #fff; --palette-tint: 6%; --chart-1: #bc633c; --chart-10: #c1804a; }
+[data-palette='rose'] { --primary: #a33566; --primary-foreground: #fff; --palette-tint: 5%; --chart-1: #b45d84; --chart-10: #9d68a7; }
+[data-theme-mode='dark'], [data-theme-mode='dark'] [data-palette='ink'] { --primary: #8c99e6; --primary-foreground: #0c0f15; }
+[data-theme-mode='dark'][data-palette='ocean'], [data-theme-mode='dark'] [data-palette='ocean'] { --primary: #7cc8ee; --primary-foreground: #08202d; }
+[data-theme-mode='dark'][data-palette='forest'], [data-theme-mode='dark'] [data-palette='forest'] { --primary: #7bcea2; --primary-foreground: #0d2418; }
+[data-theme-mode='dark'][data-palette='sunset'], [data-theme-mode='dark'] [data-palette='sunset'] { --primary: #efad7d; --primary-foreground: #2e1a0a; }
+[data-theme-mode='dark'][data-palette='rose'], [data-theme-mode='dark'] [data-palette='rose'] { --primary: #efa1c5; --primary-foreground: #301123; }

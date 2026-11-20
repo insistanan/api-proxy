@@ -2,8 +2,7 @@
 import { computed, ref } from 'vue'
 import type { ApexOptions } from 'apexcharts'
 import { api, type ApiTab, type Channel, type ChannelLogEntry } from '@/api'
-import { useChartDarkTheme } from '@/shared/composables/useChartDarkTheme'
-import { CHART_PALETTE, CHART_STATUS_COLORS, chartThemeColors } from '@/shared/utils/chartPalette'
+import { useChartColors } from '@/shared/theme'
 import { formatShortDateTime } from '@/shared/utils/datetime'
 
 export function useChannelLogs(props: { channelType: ApiTab }) {
@@ -13,7 +12,7 @@ export function useChannelLogs(props: { channelType: ApiTab }) {
   const isLoadingLogs = ref(false)
   const logsError = ref('')
 
-  const isDark = useChartDarkTheme()
+  const chartColors = useChartColors()
   const trendModes = [
     { value: 'traffic', label: '请求' },
     { value: 'tokens', label: 'Token' },
@@ -88,8 +87,8 @@ export function useChannelLogs(props: { channelType: ApiTab }) {
   })
 
   const logTrendChartOptions = computed<ApexOptions>(() => {
-    const mode = isDark.value ? 'dark' : 'light'
-    const colors = chartThemeColors(isDark.value)
+    const mode = chartColors.value.isDark ? 'dark' : 'light'
+    const colors = chartColors.value
     const axisLabel = trendMode.value === 'duration' ? (value: number) => value === 0 ? '0' : formatDurationMs(value) : formatCompactNumber
     const valueLabel = trendMode.value === 'duration' ? formatDurationMs : formatNumber
     const points = logTrendBuckets.value
@@ -98,10 +97,10 @@ export function useChannelLogs(props: { channelType: ApiTab }) {
     const padding = points.length === 1 ? 60000 : 30000
     const longRange = first !== undefined && last !== undefined && last - first > 24 * 3600000
     const seriesColors = {
-      traffic: [CHART_STATUS_COLORS.success, CHART_STATUS_COLORS.failure],
-      tokens: [CHART_PALETTE.violet, CHART_PALETTE.copper],
-      cache: [CHART_PALETTE.teal, CHART_PALETTE.ochre],
-      duration: [CHART_PALETTE.indigo]
+      traffic: [chartColors.value.success, chartColors.value.failure],
+      tokens: [chartColors.value.violet, chartColors.value.copper],
+      cache: [chartColors.value.teal, chartColors.value.ochre],
+      duration: [chartColors.value.indigo]
     }
     return {
       theme: { mode },

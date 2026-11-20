@@ -1,10 +1,10 @@
 <template>
   <section aria-label="日志存储状态">
-    <v-alert v-if="logs.storageError" type="error" variant="tonal" density="compact">{{ logs.storageError }}</v-alert>
+    <UiAlert v-if="logs.storageError" type="error" variant="tonal" density="compact">{{ logs.storageError }}</UiAlert>
     <template v-if="logs.storage">
-      <v-alert v-if="logs.storage.bodyCapturePaused" type="warning" variant="tonal" density="compact">日志预算已触发，新请求仅记录元数据；占用降至预算的 90% 后恢复。可在运行日志搜索 Logger-Budget 查看切换记录。</v-alert>
-      <v-alert v-if="logs.storage.writeError || logs.storage.maintenance.cleanupError || logs.storage.maintenance.budgetError" type="error" variant="tonal" density="compact" class="mt-2">{{ [logs.storage.writeError, logs.storage.maintenance.cleanupError, logs.storage.maintenance.budgetError].filter(Boolean).join('；') }}</v-alert>
-      <v-alert v-if="logs.storage.queue?.rejectedWrites" type="warning" variant="tonal" density="compact" class="mt-2">本次启动有 {{ logs.storage.queue.rejectedWrites }} 条日志未被接收，相关调用的记录可能不完整。最近一次：{{ logs.storage.queue.lastRejectedError }}<span v-if="logs.storage.queue.lastRejectedAt">（{{ formatDateTime(logs.storage.queue.lastRejectedAt) }}）</span></v-alert>
+      <UiAlert v-if="logs.storage.bodyCapturePaused" type="warning" variant="tonal" density="compact">日志预算已触发，新请求仅记录元数据；占用降至预算的 90% 后恢复。可在运行日志搜索 Logger-Budget 查看切换记录。</UiAlert>
+      <UiAlert v-if="logs.storage.writeError || logs.storage.maintenance.cleanupError || logs.storage.maintenance.budgetError" type="error" variant="tonal" density="compact" class="mt-2">{{ [logs.storage.writeError, logs.storage.maintenance.cleanupError, logs.storage.maintenance.budgetError].filter(Boolean).join('；') }}</UiAlert>
+      <UiAlert v-if="logs.storage.queue?.rejectedWrites" type="warning" variant="tonal" density="compact" class="mt-2">本次启动有 {{ logs.storage.queue.rejectedWrites }} 条日志未被接收，相关调用的记录可能不完整。最近一次：{{ logs.storage.queue.lastRejectedError }}<span v-if="logs.storage.queue.lastRejectedAt">（{{ formatDateTime(logs.storage.queue.lastRejectedAt) }}）</span></UiAlert>
       <details class="storage-details">
         <summary>日志占用 {{ mib(logs.storage.usedBytes) }}<span v-if="logs.storage.policy.budgetMB"> / {{ logs.storage.policy.budgetMB }} MiB</span> · 存储与清理状态</summary>
         <p>已占用页 {{ mib(logs.storage.usedBytes) }} · 可复用页 {{ mib(logs.storage.freeBytes) }} · 主库文件 {{ mib(logs.storage.databaseBytes) }} · WAL {{ mib(logs.storage.walBytes) }}</p>
@@ -18,13 +18,15 @@
         <p v-if="logs.storage.maintenance.cleanupDeferred">当前写入积压，自动清理暂缓，待写入回落后继续。</p>
         <p>主库文件包含空闲页，WAL 可复用；自动清理不会执行 VACUUM，文件大小可能不会立即下降。</p>
         <p v-for="event in logs.storage.budgetEvents" :key="event.timestamp">{{ formatDateTime(event.timestamp) }} · {{ event.paused ? '正文采集降为元数据' : '预算限制解除，按采集配置记录' }} · {{ mib(event.usedBytes) }}</p>
-        <v-btn size="small" variant="text" :loading="logs.storageLoading" @click="logs.loadStorageStatus()">刷新存储状态</v-btn>
+        <UiButton size="small" variant="text" :loading="logs.storageLoading" @click="logs.loadStorageStatus()">刷新存储状态</UiButton>
       </details>
     </template>
   </section>
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
 import { onBeforeUnmount, onMounted } from 'vue'
 import { useLogsStore } from '@/features/observability/stores/logs'
 import { formatDateTime } from '@/shared/utils/datetime'
@@ -43,7 +45,9 @@ onBeforeUnmount(() => { disposed = true; if (timer) clearTimeout(timer) })
 </script>
 
 <style scoped>
-.storage-details { color: rgba(var(--v-theme-on-surface), 0.75); font-size: 13px; margin: 8px 0 16px; }
-summary { cursor: pointer; padding: 6px 0; }
-p { margin: 6px 0; }
+@reference "@/styles/index.css";
+
+.storage-details { @apply [color:color-mix(in_srgb,_var(--foreground)_75%,_transparent)] [font-size:13px] [margin:8px_0_16px]; }
+summary { @apply cursor-pointer [padding:6px_0]; }
+p { @apply [margin:6px_0]; }
 </style>

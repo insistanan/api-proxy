@@ -1,10 +1,12 @@
 <template>
   <div>
-    <v-select :model-value="selection" :items="items" item-title="title" item-value="id" :label="multiple ? '使用的数据集' : '已发布的意图数据集'" :multiple="multiple" :chips="multiple" clearable :loading="loading" :error-messages="error" :hint="requirePublished ? '只显示已有可用索引的数据集' : '数据集用途与向量模型必须一致'" persistent-hint @update:model-value="select" />
-    <v-btn variant="text" size="small" to="/datasets" class="mb-3">管理数据集与向量索引</v-btn>
+    <UiSelect :model-value="selection" :items="items" item-title="title" item-value="id" :label="multiple ? '使用的数据集' : '已发布的意图数据集'" :multiple="multiple" :chips="multiple" clearable :loading="loading" :error-messages="error" :hint="requirePublished ? '只显示已有可用索引的数据集' : '数据集用途与向量模型必须一致'" persistent-hint @update:model-value="select" />
+    <UiButton variant="text" size="small" to="/datasets" class="mb-3">管理数据集与向量索引</UiButton>
   </div>
 </template>
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiSelect from '@/shared/ui/select/Select.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import type { EmbeddingProfile } from '@/types'
 import { useDatasetsStore } from '@/features/extensions/datasets/stores/datasets'

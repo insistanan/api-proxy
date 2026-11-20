@@ -1,6 +1,6 @@
 import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
-import vuetify from 'vite-plugin-vuetify'
+import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'path'
 
 export default defineConfig(({ mode }) => {
@@ -14,15 +14,7 @@ export default defineConfig(({ mode }) => {
     // 使用绝对路径，适配 Go 嵌入式部署
     base: '/',
 
-    plugins: [
-      vue(),
-      vuetify({
-        autoImport: false, // 禁用自动导入，使用手动配置的图标
-        styles: {
-          configFile: 'src/styles/settings.scss'
-        }
-      })
-    ],
+    plugins: [vue(), tailwindcss()],
     resolve: {
       alias: {
         '@': resolve(__dirname, 'src')
@@ -49,17 +41,10 @@ export default defineConfig(({ mode }) => {
         }
       }
     },
-    css: {
-      preprocessorOptions: {
-        scss: {
-          silenceDeprecations: ['import', 'global-builtin', 'if-function']
-        }
-      }
-    },
 	build: {
 	  outDir: 'dist',
 	  emptyOutDir: true,
-	  // ApexCharts 与 Vuetify 已拆为独立 vendor chunk；两者压缩后约 520-590 kB。
+	  // ApexCharts 单独拆包，页面继续按路由懒加载。
 	  chunkSizeWarningLimit: 600,
       // 确保资源路径正确
       assetsDir: 'assets',
@@ -69,9 +54,6 @@ export default defineConfig(({ mode }) => {
 		  manualChunks(id) {
 			if (id.includes('/node_modules/apexcharts/') || id.includes('/node_modules/vue3-apexcharts/')) {
 			  return 'charts-vendor'
-			}
-			if (id.includes('/node_modules/vuetify/')) {
-			  return 'vuetify-vendor'
 			}
 			if (id.includes('/node_modules/@mdi/js/')) {
 			  return 'mdi-icons'

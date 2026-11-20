@@ -1,0 +1,5 @@
+export { useTheme } from './useTheme'
+export { installTheme } from './runtime'
+export { THEME_OPTIONS, THEME_PRESETS } from './catalog'
+export type { ThemeSettings } from './types'
+export { chartColor, useChartColors } from './charts'

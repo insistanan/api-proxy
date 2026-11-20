@@ -6,18 +6,12 @@ import type { ApiTab } from '@/types'
  * 用户偏好设置 Store
  *
  * 职责：
- * - 管理暗色模式偏好（light/dark/auto）
  * - 管理 Fuzzy 模式开关
  * - 管理全局统计面板展开状态
  * - 自动持久化到 localStorage
  */
-export type ThemePreference = 'light' | 'dark' | 'auto'
-
 export const usePreferencesStore = defineStore('preferences', () => {
   // ===== 状态 =====
-
-  // 暗色模式偏好
-  const darkModePreference = ref<ThemePreference>('auto')
 
   // 服务端开关按入口协议镜像；加载前保持未知，不使用旧的全局缓存。
   const fuzzyModeByProtocol = ref<Partial<Record<ApiTab, boolean>>>({})
@@ -30,13 +24,6 @@ export const usePreferencesStore = defineStore('preferences', () => {
   const showGlobalStats = ref(false)
 
   // ===== 操作方法 =====
-
-  /**
-   * 设置暗色模式
-   */
-  function setDarkMode(mode: ThemePreference) {
-    darkModePreference.value = mode
-  }
 
   /**
    * 设置 Fuzzy 模式
@@ -55,14 +42,12 @@ export const usePreferencesStore = defineStore('preferences', () => {
 
   return {
     // 状态
-    darkModePreference,
     fuzzyModeByProtocol,
     claudeCodeDisguiseEnabled,
     codexDisguiseEnabled,
     showGlobalStats,
 
     // 方法
-    setDarkMode,
     setFuzzyMode,
     setClientDisguise,
   }

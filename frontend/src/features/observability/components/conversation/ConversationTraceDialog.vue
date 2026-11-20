@@ -1,11 +1,11 @@
 <template>
   <AppDialog v-model="visible" :title="`${conversation.name || conversation.firstPrompt || '未命名对话'} · 上下文与轨迹`" size="xl">
-    <div class="d-flex align-center flex-wrap ga-2 mb-4">
+    <div class="flex items-center flex-wrap gap-2 mb-4">
       <code class="trace-key">{{ groupKey }}</code>
-      <v-spacer />
-      <v-btn variant="tonal" size="small" prepend-icon="mdi-refresh" :loading="logs.roundsLoading" @click="refresh">刷新</v-btn>
+      <span class="flex-1" ></span>
+      <UiButton variant="tonal" size="small" prepend-icon="mdi-refresh" :loading="logs.roundsLoading" @click="refresh">刷新</UiButton>
     </div>
-    <v-alert v-if="logs.roundsError" type="error" variant="tonal" class="mb-4">{{ logs.roundsError }}</v-alert>
+    <UiAlert v-if="logs.roundsError" type="error" variant="tonal" class="mb-4">{{ logs.roundsError }}</UiAlert>
     <ContextTrend :group-key="groupKey" :version="String(version)" @locate="locate" />
     <EmptyState v-if="!logs.roundsLoading && !logs.roundsError && !logs.requests.length" variant="inline" icon="mdi-history" title="暂无会话日志" description="该对话尚未保存日志，或日志已按保留策略清理。对话信息仍可正常查看和命名。" />
     <ConversationLogTimeline v-else :group-key="groupKey" :requests="logs.requests" :highlight-request-id="highlightRequestId" @inspect="inspect" />
@@ -16,10 +16,12 @@
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { ConversationEntry } from '@/types/conversation'
-import AppDialog from '@/shared/components/common/AppDialog.vue'
-import EmptyState from '@/shared/components/common/EmptyState.vue'
+import AppDialog from '@/shared/components/overlay/AppDialog.vue'
+import EmptyState from '@/shared/components/feedback/EmptyState.vue'
 import ContextTrend from '@/features/observability/components/context/ContextTrend.vue'
 import ConversationLogTimeline from '@/features/observability/components/conversation/ConversationLogTimeline.vue'
 import RequestLogDetail from '@/features/observability/components/log-panels/RequestLogDetail.vue'
@@ -62,5 +64,7 @@ onBeforeUnmount(() => logs.reset())
 </script>
 
 <style scoped>
-.trace-key { overflow-wrap: anywhere; }
+@reference "@/styles/index.css";
+
+.trace-key { @apply [overflow-wrap:anywhere]; }
 </style>

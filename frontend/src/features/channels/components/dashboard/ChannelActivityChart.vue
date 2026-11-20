@@ -38,15 +38,15 @@ const gradientID = (key: string) => `gradient-${props.channelType}-${props.chann
 </script>
 
 <style scoped>
+@reference "@/styles/index.css";
+
 .activity-chart-bg {
-  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-  pointer-events: none; z-index: 0; opacity: 0.16; overflow: hidden;
-  border-radius: inherit; transition: opacity 0.2s ease;
+  @apply absolute top-0 left-0 w-full h-full pointer-events-none [z-index:0] opacity-16 overflow-hidden [border-radius:inherit] [transition:opacity_0.2s_ease];
 }
-:global(.channel-row:hover) .activity-chart-bg { opacity: 0.28; }
-.activity-bar { transition: none; }
-.activity-bar-latest { filter: brightness(1.08); }
+:global(.channel-row:hover) .activity-chart-bg { @apply opacity-28; }
+.activity-bar { @apply [transition:none]; }
+.activity-bar-latest { @apply [filter:brightness(1.08)]; }
 @media (prefers-reduced-motion: reduce) {
-  .activity-chart-bg, .activity-bar { transition: none !important; animation: none !important; }
+  .activity-chart-bg, .activity-bar { @apply [transition:none]! [animation:none]!; }
 }
 </style>

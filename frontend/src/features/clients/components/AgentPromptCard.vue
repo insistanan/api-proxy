@@ -1,22 +1,22 @@
 <template>
-  <v-card elevation="0" class="settings-card agent-config-panel agent-prompt-card">
+  <UiCard elevation="0" class="settings-card agent-config-panel agent-prompt-card">
     <div class="agent-config-panel-header">
       <div>
-        <div class="agent-config-panel-title d-flex align-center ga-2">
-          <v-icon size="18">mdi-text</v-icon>
+        <div class="agent-config-panel-title flex items-center gap-2">
+          <UiIcon size="18">mdi-text</UiIcon>
           全局提示词 · {{ info?.displayName || agent }}
-          <v-chip v-if="statusChip" :color="statusChip.color" size="x-small" label>
-            <v-icon start size="12">{{ statusChip.icon }}</v-icon>
+          <UiBadge v-if="statusChip" :color="statusChip.color" size="x-small" label>
+            <UiIcon start size="12">{{ statusChip.icon }}</UiIcon>
             {{ statusChip.text }}
-          </v-chip>
+          </UiBadge>
         </div>
         <div class="agent-config-panel-subtitle">
           {{ subtitle }}
         </div>
       </div>
-      <div class="agent-config-panel-actions d-flex ga-1">
-        <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="load">刷新</v-btn>
-        <v-btn
+      <div class="agent-config-panel-actions flex gap-1">
+        <UiButton variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="load">刷新</UiButton>
+        <UiButton
           v-if="!editing"
           variant="text"
           prepend-icon="mdi-pencil"
@@ -24,22 +24,22 @@
           @click="startEdit"
         >
           编辑
-        </v-btn>
+        </UiButton>
       </div>
     </div>
-    <v-divider />
-    <v-card-text class="pa-5">
-      <v-alert v-if="loadError" type="error" variant="tonal" density="compact" class="mb-4">{{ loadError }}</v-alert>
+    <hr class="border-0 border-t border-border" />
+    <div class="p-4 p-5">
+      <UiAlert v-if="loadError" type="error" variant="tonal" density="compact" class="mb-4">{{ loadError }}</UiAlert>
 
       <div class="prompt-file-path mb-4">
         <code>{{ info?.path || '路径不可用' }}</code>
-        <span v-if="info" class="text-caption text-medium-emphasis ml-2">
+        <span v-if="info" class="text-xs text-muted-foreground ml-2">
           {{ info.exists ? `${formatSize(info.sizeBytes)} · 更新于 ${formatTime(info.updatedAt)}` : '尚未创建，保存后将创建该文件' }}
         </span>
       </div>
 
       <template v-if="editing">
-        <v-textarea
+        <UiTextarea
           v-model="draft"
           variant="outlined"
           density="comfortable"
@@ -50,35 +50,35 @@
           class="prompt-editor mb-3"
           spellcheck="false"
         />
-        <div v-if="saveError" class="text-caption text-error mb-3">
+        <div v-if="saveError" class="text-xs text-destructive mb-3">
           {{ saveError }}
-          <div v-if="saveDetail" class="text-medium-emphasis">{{ saveDetail }}</div>
+          <div v-if="saveDetail" class="text-muted-foreground">{{ saveDetail }}</div>
         </div>
-        <div class="d-flex ga-2">
-          <v-btn color="primary" prepend-icon="mdi-content-save" :loading="saving" @click="save">保存提示词</v-btn>
-          <v-btn variant="text" :disabled="saving" @click="cancelEdit">取消</v-btn>
+        <div class="flex gap-2">
+          <UiButton color="primary" prepend-icon="mdi-content-save" :loading="saving" @click="save">保存提示词</UiButton>
+          <UiButton variant="text" :disabled="saving" @click="cancelEdit">取消</UiButton>
         </div>
       </template>
 
       <template v-else>
-        <div v-if="info?.readError" class="text-caption text-error mb-3">{{ info.readError }}</div>
+        <div v-if="info?.readError" class="text-xs text-destructive mb-3">{{ info.readError }}</div>
         <pre v-else class="prompt-preview">{{ info?.content || '（提示词文件为空或尚未创建）' }}</pre>
       </template>
 
       <template v-if="!editing">
-        <v-divider class="my-5" />
+        <hr class="border-0 border-t border-border my-5" />
 
         <!-- 一键配置提示词：把设置页维护的通用提示词版本写入该文件 -->
-        <div class="d-flex align-center ga-2 mb-2">
-          <v-icon size="18">mdi-lightning-bolt</v-icon>
-          <span class="text-subtitle-2 font-weight-bold">一键配置提示词</span>
+        <div class="flex items-center gap-2 mb-2">
+          <UiIcon size="18">mdi-lightning-bolt</UiIcon>
+          <span class="text-sm font-medium font-bold">一键配置提示词</span>
         </div>
-        <div v-if="promptEntries.length === 0" class="text-body-2 text-medium-emphasis">
+        <div v-if="promptEntries.length === 0" class="text-sm text-muted-foreground">
           尚未维护通用提示词版本，请先前往 <router-link to="/settings">设置 · 通用提示词</router-link> 创建。
         </div>
         <template v-else>
-          <div class="d-flex flex-wrap align-center ga-3">
-            <v-select
+          <div class="flex flex-wrap items-center gap-3">
+            <UiSelect
               v-model="selectedVersion"
               :items="promptVersionItems"
               item-title="title"
@@ -90,7 +90,7 @@
               hide-details
               class="prompt-version-select"
             />
-            <v-btn
+            <UiButton
               color="primary"
               variant="tonal"
               prepend-icon="mdi-download"
@@ -99,19 +99,19 @@
               @click="applyPromptVersion"
             >
               写入该版本
-            </v-btn>
+            </UiButton>
           </div>
-          <div class="text-caption text-medium-emphasis mt-2">
+          <div class="text-xs text-muted-foreground mt-2">
             写入会整体替换当前提示词文件（原文件自动保存 .bak 备份）{{ activeVersionHint }}
           </div>
-          <div v-if="applyError" class="text-caption text-error mt-2">
+          <div v-if="applyError" class="text-xs text-destructive mt-2">
             {{ applyError }}
-            <div v-if="applyDetail" class="text-medium-emphasis">{{ applyDetail }}</div>
+            <div v-if="applyDetail" class="text-muted-foreground">{{ applyDetail }}</div>
           </div>
         </template>
       </template>
-    </v-card-text>
-  </v-card>
+    </div>
+  </UiCard>
   <ConfirmDialog
     :model-value="pendingConfirm !== null"
     :message="pendingConfirm?.message ?? ''"
@@ -125,6 +125,13 @@
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiCard from '@/shared/ui/card/Card.vue'
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
+import UiBadge from '@/shared/ui/feedback/Badge.vue'
+import UiTextarea from '@/shared/ui/field/Textarea.vue'
+import UiIcon from '@/shared/ui/icon/Icon.vue'
+import UiSelect from '@/shared/ui/select/Select.vue'
 // 智能体客户端配置页"全局提示词"卡片：
 // 读取并展示各智能体（Claude Code / Codex / OpenCode / pi / DSH）的全局提示词文件
 // （如 Claude Code 的 ~/.claude/CLAUDE.md、其余各家约定的 AGENTS.md），
@@ -134,7 +141,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { api, ApiError, type AgentPromptAgent, type AgentPromptFile, type PromptEntry } from '@/api'
 import { formatDateTime } from '@/shared/utils/datetime'
-import ConfirmDialog from '@/shared/components/common/ConfirmDialog.vue'
+import ConfirmDialog from '@/shared/components/overlay/ConfirmDialog.vue'
 import { useConfirm } from '@/shared/composables/useConfirm'
 
 const props = defineProps<{
@@ -309,35 +316,25 @@ onMounted(() => {
 </script>
 
 <style scoped>
+@reference "@/styles/index.css";
+
 .prompt-file-path {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
+  @apply flex items-baseline flex-wrap;
 }
 
 .prompt-file-path code {
-  overflow-wrap: anywhere;
-  font-size: 0.85rem;
+  @apply [overflow-wrap:anywhere] [font-size:0.85rem];
 }
 
 .prompt-preview {
-  max-height: 360px;
-  overflow: auto;
-  padding: 12px 14px;
-  background: rgba(var(--v-theme-surface-variant), 0.45);
-  border-radius: 6px;
-  font-size: 0.85rem;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  @apply max-h-90 overflow-auto [padding:12px_14px] [background:color-mix(in_srgb,_var(--surface-variant)_45%,_transparent)] rounded-badge [font-size:0.85rem] [line-height:1.6] whitespace-pre-wrap [overflow-wrap:anywhere];
 }
 
 .prompt-editor :deep(textarea) {
-  font-family: inherit;
-  line-height: 1.6;
+  @apply [font-family:inherit] [line-height:1.6];
 }
 
 .prompt-version-select {
-  min-width: 240px;
+  @apply min-w-60;
 }
 </style>

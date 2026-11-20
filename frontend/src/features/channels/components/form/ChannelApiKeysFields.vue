@@ -1,23 +1,23 @@
 <template>
-<v-card variant="outlined" rounded="lg" :color="form.apiKeys.length === 0 ? 'error' : undefined">
-  <v-card-title class="d-flex align-center justify-space-between flex-wrap ga-2 pa-4 pb-2">
-    <div class="d-flex align-center flex-wrap ga-2">
-      <v-icon :color="form.apiKeys.length > 0 ? 'primary' : 'error'">mdi-key</v-icon>
-      <span class="text-body-1 font-weight-bold">API 密钥 *</span>
-      <v-chip v-if="form.apiKeys.length" size="x-small" variant="tonal">{{ form.apiKeys.length }} 个</v-chip>
-      <v-chip v-if="form.apiKeys.length === 0" size="x-small" color="error" variant="tonal">
+<UiCard variant="outlined" rounded="lg" :color="form.apiKeys.length === 0 ? 'error' : undefined">
+  <div class="ui-card-title px-4 pt-4 text-base font-semibold flex items-center justify-between flex-wrap gap-2 p-4 pb-2">
+    <div class="flex items-center flex-wrap gap-2">
+      <UiIcon :color="form.apiKeys.length > 0 ? 'primary' : 'error'">mdi-key</UiIcon>
+      <span class="text-base font-bold">API 密钥 *</span>
+      <UiBadge v-if="form.apiKeys.length" size="x-small" variant="tonal">{{ form.apiKeys.length }} 个</UiBadge>
+      <UiBadge v-if="form.apiKeys.length === 0" size="x-small" color="error" variant="tonal">
         至少需要一个密钥
-      </v-chip>
+      </UiBadge>
     </div>
-    <span class="text-caption text-medium-emphasis">支持多个密钥</span>
-  </v-card-title>
+    <span class="text-xs text-muted-foreground">支持多个密钥</span>
+  </div>
 
-  <v-card-text class="pt-2">
-    <div v-if="copyNotice" class="text-caption text-medium-emphasis mb-3" role="status">{{ copyNotice }}</div>
+  <div class="p-4 pt-2">
+    <div v-if="copyNotice" class="text-xs text-muted-foreground mb-3" role="status">{{ copyNotice }}</div>
     <!-- 现有密钥列表 -->
     <div v-if="form.apiKeys.length" class="mb-4">
-      <v-list density="compact" class="bg-transparent">
-        <v-list-item
+      <UiList density="compact" class="bg-transparent">
+        <UiListItem
           v-for="(key, index) in form.apiKeys"
           :key="index"
           class="mb-2"
@@ -27,62 +27,62 @@
           :class="{ 'animate-pulse': duplicateKeyIndex === index }"
         >
           <template #prepend>
-            <v-icon size="small" :color="duplicateKeyIndex === index ? 'error' : 'primary'">
+            <UiIcon size="small" :color="duplicateKeyIndex === index ? 'error' : 'primary'">
               {{ duplicateKeyIndex === index ? 'mdi-alert' : 'mdi-key' }}
-            </v-icon>
+            </UiIcon>
           </template>
 
-          <v-list-item-title>
-            <div class="d-flex align-center justify-space-between flex-wrap ga-2">
-              <code class="text-caption">{{ maskApiKey(key) }}</code>
-              <div class="d-flex align-center ga-1">
+          <span class="block">
+            <div class="flex items-center justify-between flex-wrap gap-2">
+              <code class="text-xs">{{ maskApiKey(key) }}</code>
+              <div class="flex items-center gap-1">
                 <!-- Models 状态标签 -->
-                <v-chip
+                <UiBadge
                   v-if="keyModelsStatus.get(key)?.loading"
                   size="x-small"
                   color="info"
                   variant="tonal"
                 >
-                  <v-icon start size="12">mdi-loading</v-icon>
+                  <UiIcon start size="12">mdi-loading</UiIcon>
                   检测中...
-                </v-chip>
-                <v-chip
+                </UiBadge>
+                <UiBadge
                   v-else-if="keyModelsStatus.get(key)?.success"
                   size="x-small"
                   color="success"
                   variant="tonal"
                 >
                   models {{ keyModelsStatus.get(key)?.statusCode }} ({{ keyModelsStatus.get(key)?.modelCount }} 个)
-                </v-chip>
-                <v-tooltip
+                </UiBadge>
+                <UiTooltip
                   v-else-if="keyModelsStatus.get(key)?.error"
                   :text="keyModelsStatus.get(key)?.error"
                   location="top"
                   max-width="300"
                 >
                   <template #activator="{ props: tooltipProps }">
-                    <v-chip
+                    <UiBadge
                       v-bind="tooltipProps"
                       size="x-small"
                       color="error"
                       variant="tonal"
                     >
                       models {{ keyModelsStatus.get(key)?.statusCode || 'ERR' }}
-                    </v-chip>
+                    </UiBadge>
                   </template>
-                </v-tooltip>
+                </UiTooltip>
                 <!-- 重复密钥标签 -->
-                <v-chip v-if="duplicateKeyIndex === index" size="x-small" color="error" variant="text">
+                <UiBadge v-if="duplicateKeyIndex === index" size="x-small" color="error" variant="text">
                   重复密钥
-                </v-chip>
+                </UiBadge>
               </div>
             </div>
-          </v-list-item-title>
+          </span>
 
           <template #append>
-            <div class="d-flex align-center ga-1">
+            <div class="flex items-center gap-1">
               <!-- 置顶/置底：仅首尾密钥显示 -->
-              <v-tooltip
+              <UiTooltip
                 v-if="index === form.apiKeys.length - 1 && form.apiKeys.length > 1"
                 text="置顶"
                 location="top"
@@ -90,7 +90,7 @@
                 content-class="key-tooltip"
               >
                 <template #activator="{ props: tooltipProps }">
-                  <v-btn
+                  <UiButton
                     v-bind="tooltipProps"
                     size="small"
                     color="warning"
@@ -100,11 +100,11 @@
                     aria-label="将密钥移到首位"
                     @click="moveApiKeyToTop(index)"
                   >
-                    <v-icon size="small">mdi-arrow-up-bold</v-icon>
-                  </v-btn>
+                    <UiIcon size="small">mdi-arrow-up-bold</UiIcon>
+                  </UiButton>
                 </template>
-              </v-tooltip>
-              <v-tooltip
+              </UiTooltip>
+              <UiTooltip
                 v-if="index === 0 && form.apiKeys.length > 1"
                 text="置底"
                 location="top"
@@ -112,7 +112,7 @@
                 content-class="key-tooltip"
               >
                 <template #activator="{ props: tooltipProps }">
-                  <v-btn
+                  <UiButton
                     v-bind="tooltipProps"
                     size="small"
                     color="warning"
@@ -122,18 +122,18 @@
                     aria-label="将密钥移到末位"
                     @click="moveApiKeyToBottom(index)"
                   >
-                    <v-icon size="small">mdi-arrow-down-bold</v-icon>
-                  </v-btn>
+                    <UiIcon size="small">mdi-arrow-down-bold</UiIcon>
+                  </UiButton>
                 </template>
-              </v-tooltip>
-              <v-tooltip
+              </UiTooltip>
+              <UiTooltip
                 :text="copiedKeyIndex === index ? '已复制!' : '复制密钥'"
                 location="top"
                 :open-delay="150"
                 content-class="key-tooltip"
               >
                 <template #activator="{ props: tooltipProps }">
-                  <v-btn
+                  <UiButton
                     v-bind="tooltipProps"
                     size="small"
                     :color="copiedKeyIndex === index ? 'success' : 'primary'"
@@ -142,15 +142,15 @@
                     aria-label="复制密钥"
                     @click="copyApiKey(key, index)"
                   >
-                    <v-icon size="small">{{
+                    <UiIcon size="small">{{
                       copiedKeyIndex === index ? 'mdi-check' : 'mdi-content-copy'
-                    }}</v-icon>
-                  </v-btn>
+                    }}</UiIcon>
+                  </UiButton>
                 </template>
-              </v-tooltip>
-              <v-tooltip text="删除密钥" location="top" :open-delay="150" content-class="key-tooltip">
+              </UiTooltip>
+              <UiTooltip text="删除密钥" location="top" :open-delay="150" content-class="key-tooltip">
                 <template #activator="{ props: tooltipProps }">
-                  <v-btn
+                  <UiButton
                     v-bind="tooltipProps"
                     size="small"
                     color="error"
@@ -159,19 +159,19 @@
                     aria-label="删除密钥"
                     @click="removeApiKey(index)"
                   >
-                    <v-icon size="small" color="error">mdi-close</v-icon>
-                  </v-btn>
+                    <UiIcon size="small" color="error">mdi-close</UiIcon>
+                  </UiButton>
                 </template>
-              </v-tooltip>
+              </UiTooltip>
             </div>
           </template>
-        </v-list-item>
-      </v-list>
+        </UiListItem>
+      </UiList>
     </div>
 
     <!-- 添加新密钥 -->
-    <div class="d-flex align-start ga-3">
-      <v-text-field
+    <div class="flex items-start gap-3">
+      <UiInput
         v-model="newApiKey"
         label="添加新的API密钥"
         placeholder="输入完整的API密钥"
@@ -181,11 +181,11 @@
         type="password"
         :error="!!apiKeyError"
         :error-messages="apiKeyError"
-        class="flex-grow-1"
+        class="grow"
         @keydown.enter.prevent="addApiKey"
         @input="handleApiKeyInput"
       />
-      <v-btn
+      <UiButton
         color="primary"
         variant="elevated"
         size="large"
@@ -195,13 +195,21 @@
         @click="addApiKey"
       >
         添加
-      </v-btn>
+      </UiButton>
     </div>
-  </v-card-text>
-</v-card>
+  </div>
+</UiCard>
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiCard from '@/shared/ui/card/Card.vue'
+import UiBadge from '@/shared/ui/feedback/Badge.vue'
+import UiInput from '@/shared/ui/field/Input.vue'
+import UiIcon from '@/shared/ui/icon/Icon.vue'
+import UiList from '@/shared/ui/navigation/List.vue'
+import UiListItem from '@/shared/ui/navigation/ListItem.vue'
+import UiTooltip from '@/shared/ui/overlay/Tooltip.vue'
 // 密钥列表与输入共用父级编辑草稿，切换模式或取消时不写入已保存配置。
 import type { useChannelModal } from '@/features/channels/composables/useChannelModal'
 

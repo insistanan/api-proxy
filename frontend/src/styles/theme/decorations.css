@@ -1,0 +1,9 @@
+:root {
+  --wave-opacity: 0.13;
+  --glow-opacity: 0.18;
+}
+
+[data-theme-mode='dark'] {
+  --wave-opacity: 0.1;
+  --glow-opacity: 0.14;
+}

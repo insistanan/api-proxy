@@ -1,28 +1,28 @@
 <template>
-  <v-card elevation="0" class="settings-card agent-config-panel">
+  <UiCard elevation="0" class="settings-card agent-config-panel">
     <div class="agent-config-panel-header">
       <div>
         <div class="agent-config-panel-title">模型目录</div>
       </div>
-      <v-btn color="primary" variant="tonal" prepend-icon="mdi-plus" @click="openCreateForm">新增模型</v-btn>
+      <UiButton color="primary" variant="tonal" prepend-icon="mdi-plus" @click="openCreateForm">新增模型</UiButton>
     </div>
-    <v-divider />
-    <v-card-text class="pa-5">
-      <v-alert v-if="settings?.modelsError" type="warning" variant="tonal" density="compact" class="mb-4">
+    <hr class="border-0 border-t border-border" />
+    <div class="p-4 p-5">
+      <UiAlert v-if="settings?.modelsError" type="warning" variant="tonal" density="compact" class="mb-4">
         models.json 解析失败：{{ settings.modelsError }}
-      </v-alert>
-      <v-alert v-else-if="settings?.builtinError" type="warning" variant="tonal" density="compact" class="mb-4">
+      </UiAlert>
+      <UiAlert v-else-if="settings?.builtinError" type="warning" variant="tonal" density="compact" class="mb-4">
         内置模型清单获取失败：{{ settings.builtinError }}
-      </v-alert>
+      </UiAlert>
 
       <section class="agent-config-callout mb-4">
         <div class="agent-config-callout__title">
-          <v-icon size="18">mdi-lightning-bolt</v-icon>
+          <UiIcon size="18">mdi-lightning-bolt</UiIcon>
           默认模型
         </div>
-        <v-row>
-          <v-col cols="12" sm="5">
-            <v-select
+        <div class="grid grid-cols-12 gap-4">
+          <div class="min-w-0 col-span-12 sm:col-span-5"  >
+            <UiSelect
               v-model="defaultModel"
               :items="modelOptions"
               item-title="title"
@@ -32,9 +32,9 @@
               density="comfortable"
               :disabled="!selectableModels.length"
             />
-          </v-col>
-          <v-col cols="12" sm="4">
-            <v-select
+          </div>
+          <div class="min-w-0 col-span-12 sm:col-span-4"  >
+            <UiSelect
               v-model="defaultEffort"
               :items="effortOptions"
               label="推理强度"
@@ -42,9 +42,9 @@
               density="comfortable"
               :disabled="!defaultModel"
             />
-          </v-col>
-          <v-col cols="12" sm="3" class="d-flex align-center">
-            <v-btn
+          </div>
+          <div   class="min-w-0 col-span-12 sm:col-span-3 flex items-center">
+            <UiButton
               color="primary"
               prepend-icon="mdi-content-save"
               :loading="savingDefault"
@@ -53,12 +53,12 @@
               @click="saveDefault"
             >
               写入 config.toml
-            </v-btn>
-          </v-col>
-        </v-row>
+            </UiButton>
+          </div>
+        </div>
       </section>
 
-      <v-table v-if="models.length" density="comfortable">
+      <UiTable v-if="models.length" density="comfortable">
         <thead>
           <tr>
             <th>模型</th>
@@ -71,29 +71,29 @@
         <tbody>
           <tr v-for="model in models" :key="model.slug">
             <td>
-              <div class="d-flex align-center ga-2">
-                <span class="font-weight-medium">{{ model.slug }}</span>
-                <v-chip v-if="model.builtin" size="x-small" variant="tonal">内置</v-chip>
-                <v-chip v-if="settings?.model === model.slug" size="x-small" color="primary" variant="tonal">默认</v-chip>
+              <div class="flex items-center gap-2">
+                <span class="font-medium">{{ model.slug }}</span>
+                <UiBadge v-if="model.builtin" size="x-small" variant="tonal">内置</UiBadge>
+                <UiBadge v-if="settings?.model === model.slug" size="x-small" color="primary" variant="tonal">默认</UiBadge>
               </div>
-              <div v-if="model.displayName || model.description" class="text-caption text-medium-emphasis">
+              <div v-if="model.displayName || model.description" class="text-xs text-muted-foreground">
                 {{ model.displayName }}<template v-if="model.description"> · {{ model.description }}</template>
               </div>
             </td>
             <td>
-              <div class="d-flex ga-1">
-                <v-chip size="x-small" variant="tonal" prepend-icon="mdi-text">文本</v-chip>
-                <v-chip v-if="model.supportsImage" size="x-small" variant="tonal" color="primary" prepend-icon="mdi-image">图片</v-chip>
+              <div class="flex gap-1">
+                <UiBadge size="x-small" variant="tonal" prepend-icon="mdi-text">文本</UiBadge>
+                <UiBadge v-if="model.supportsImage" size="x-small" variant="tonal" color="primary" prepend-icon="mdi-image">图片</UiBadge>
               </div>
             </td>
-            <td class="text-no-wrap">{{ formatContextWindow(model.contextWindow) }}</td>
+            <td class="whitespace-nowrap">{{ formatContextWindow(model.contextWindow) }}</td>
             <td>
               <div>{{ model.defaultReasoningLevel }}</div>
-              <div class="text-caption text-medium-emphasis">{{ model.reasoningLevels.join(' / ') }}</div>
+              <div class="text-xs text-muted-foreground">{{ model.reasoningLevels.join(' / ') }}</div>
             </td>
-            <td class="text-right text-no-wrap">
-              <v-btn icon="mdi-pencil" size="small" variant="text" title="编辑" @click="openEditForm(model)" />
-              <v-btn
+            <td class="text-right whitespace-nowrap">
+              <UiButton icon="mdi-pencil" size="small" variant="text" title="编辑" @click="openEditForm(model)" />
+              <UiButton
                 v-if="!model.builtin"
                 icon="mdi-delete"
                 size="small"
@@ -106,13 +106,13 @@
             </td>
           </tr>
         </tbody>
-      </v-table>
-      <v-alert v-else type="info" variant="tonal" density="compact">尚未登记自定义模型。</v-alert>
+      </UiTable>
+      <UiAlert v-else type="info" variant="tonal" density="compact">尚未登记自定义模型。</UiAlert>
 
       <AppDialog v-model="form.visible" :title="form.editing ? `编辑模型：${form.slug}` : '新增模型'" size="lg">
-        <v-row>
-          <v-col cols="12" sm="6">
-            <v-text-field
+        <div class="grid grid-cols-12 gap-4">
+          <div class="min-w-0 col-span-12 sm:col-span-6"  >
+            <UiInput
               v-if="!form.editing"
               v-model.trim="form.slug"
               label="Slug"
@@ -120,19 +120,19 @@
               density="comfortable"
               placeholder="例如 my-deepseek"
             />
-            <v-text-field v-else v-model="form.slug" label="Slug" variant="outlined" density="comfortable" disabled />
-          </v-col>
-          <v-col cols="12" sm="6">
-            <v-text-field v-model.trim="form.displayName" label="显示名称" variant="outlined" density="comfortable" placeholder="留空则使用 slug" />
-          </v-col>
-          <v-col cols="12" sm="6">
-            <v-text-field v-model.trim="form.description" label="描述" variant="outlined" density="comfortable" />
-          </v-col>
-          <v-col cols="12" sm="4">
-            <v-switch v-model="form.supportsImage" color="primary" label="图片输入" />
-          </v-col>
-          <v-col cols="12" sm="4">
-            <v-text-field
+            <UiInput v-else v-model="form.slug" label="Slug" variant="outlined" density="comfortable" disabled />
+          </div>
+          <div class="min-w-0 col-span-12 sm:col-span-6"  >
+            <UiInput v-model.trim="form.displayName" label="显示名称" variant="outlined" density="comfortable" placeholder="留空则使用 slug" />
+          </div>
+          <div class="min-w-0 col-span-12 sm:col-span-6"  >
+            <UiInput v-model.trim="form.description" label="描述" variant="outlined" density="comfortable" />
+          </div>
+          <div class="min-w-0 col-span-12 sm:col-span-4"  >
+            <UiSwitch v-model="form.supportsImage" color="primary" label="图片输入" />
+          </div>
+          <div class="min-w-0 col-span-12 sm:col-span-4"  >
+            <UiInput
               v-model.number="form.contextWindow"
               type="number"
               label="上下文窗口"
@@ -140,9 +140,9 @@
               density="comfortable"
               min="1"
             />
-          </v-col>
-          <v-col cols="12" sm="4">
-            <v-select
+          </div>
+          <div class="min-w-0 col-span-12 sm:col-span-4"  >
+            <UiSelect
               v-model="form.defaultReasoningLevel"
               :items="formReasoningLevels"
               label="默认推理档位"
@@ -150,17 +150,17 @@
               density="comfortable"
               :disabled="!formReasoningLevels.length"
             />
-          </v-col>
-        </v-row>
+          </div>
+        </div>
         <template #actions>
-          <v-btn variant="text" @click="closeForm">取消</v-btn>
-          <v-btn color="primary" prepend-icon="mdi-content-save" :loading="savingModel" :disabled="!formValid" @click="saveModel">
+          <UiButton variant="text" @click="closeForm">取消</UiButton>
+          <UiButton color="primary" prepend-icon="mdi-content-save" :loading="savingModel" :disabled="!formValid" @click="saveModel">
             {{ form.editing ? '保存修改' : '新增模型' }}
-          </v-btn>
+          </UiButton>
         </template>
       </AppDialog>
-    </v-card-text>
-  </v-card>
+    </div>
+  </UiCard>
   <ConfirmDialog
     :model-value="pendingConfirm !== null"
     :message="pendingConfirm?.message ?? ''"
@@ -174,6 +174,15 @@
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiCard from '@/shared/ui/card/Card.vue'
+import UiSwitch from '@/shared/ui/check/Switch.vue'
+import UiTable from '@/shared/ui/data/Table.vue'
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
+import UiBadge from '@/shared/ui/feedback/Badge.vue'
+import UiInput from '@/shared/ui/field/Input.vue'
+import UiIcon from '@/shared/ui/icon/Icon.vue'
+import UiSelect from '@/shared/ui/select/Select.vue'
 // 模型目录（models.json）管理面板。
 // 数据来源：
 // - catalogModels：models.json 的全部条目（内置复制品 builtin=true + 自定义条目）
@@ -185,8 +194,8 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { api, type CodexCatalogModel, type CodexSettings, type SaveCodexModelCatalog } from '@/api'
 import { useToast } from '@/shared/composables/useToast'
-import ConfirmDialog from '@/shared/components/common/ConfirmDialog.vue'
-import AppDialog from '@/shared/components/common/AppDialog.vue'
+import ConfirmDialog from '@/shared/components/overlay/ConfirmDialog.vue'
+import AppDialog from '@/shared/components/overlay/AppDialog.vue'
 import { useConfirm } from '@/shared/composables/useConfirm'
 
 const { showToast } = useToast()

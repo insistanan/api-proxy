@@ -2,29 +2,29 @@
   <section class="pool-section">
     <header class="section-header">
       <div class="section-heading-mark">
-        <v-icon size="20" color="primary">mdi-swap-horizontal</v-icon>
-        <div class="text-subtitle-2 font-weight-bold">渠道分组</div>
-        <v-chip size="x-small" color="primary" variant="tonal">{{ pools.length }}</v-chip>
+        <UiIcon size="20" color="primary">mdi-swap-horizontal</UiIcon>
+        <div class="text-sm font-medium font-bold">渠道分组</div>
+        <UiBadge size="x-small" color="primary" variant="tonal">{{ pools.length }}</UiBadge>
         <slot name="heading"></slot>
       </div>
       <p class="pool-guide">拖动渠道调整故障转移顺序，或移入其他已展开的分组。</p>
       <div class="pool-header-actions">
-        <v-btn size="small" variant="text" :disabled="!poolViews.length" @click="toggleAllPools">
+        <UiButton size="small" variant="text" :disabled="!poolViews.length" @click="toggleAllPools">
           {{ allPoolsCollapsed ? '展开全部' : '收起全部' }}
-        </v-btn>
-        <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-plus" @click="openCreateDialog">
+        </UiButton>
+        <UiButton size="small" color="primary" variant="tonal" prepend-icon="mdi-plus" @click="openCreateDialog">
           新建分组
-        </v-btn>
+        </UiButton>
       </div>
     </header>
 
-    <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-3" />
+    <UiProgress v-if="loading" indeterminate color="primary" class="mb-3" />
     <div v-else class="pool-grid">
       <div v-for="(column, columnIndex) in poolColumns" :key="columnIndex" class="pool-column">
       <section
         v-for="{ pool, order } in column"
         :key="pool.id"
-        class="pool-card"
+        class="pool-card panel-surface"
         :class="{ 'is-default': pool.id === 'default', 'is-collapsed': collapsedPools.has(pool.id) }"
         :style="{ order }"
       >
@@ -39,7 +39,7 @@
         <template v-else>
         <header class="pool-card-header">
           <button type="button" class="pool-card-toggle" :aria-expanded="!collapsedPools.has(pool.id)" :aria-controls="`pool-${channelType}-${pool.id}`" @click="togglePool(pool.id)">
-            <v-icon size="18">{{ collapsedPools.has(pool.id) ? 'mdi-chevron-right' : 'mdi-chevron-down' }}</v-icon>
+            <UiIcon size="18">{{ collapsedPools.has(pool.id) ? 'mdi-chevron-right' : 'mdi-chevron-down' }}</UiIcon>
             <span class="pool-identity">
             <span class="pool-name" :title="pool.name">{{ pool.name }}</span>
             <span class="pool-rule" :title="pool.id === 'default' ? undefined : pool.modelMatcher">
@@ -48,13 +48,13 @@
             </span>
             </span>
           </button>
-          <div class="d-flex align-center ga-1">
+          <div class="flex items-center gap-1">
             <span class="pool-channel-count">{{ pool.channels.length }} 个渠道</span>
-            <v-btn icon="mdi-plus" size="x-small" variant="text" :title="`添加渠道到 ${pool.name}`" :aria-label="`添加渠道到 ${pool.name}`" @click="emit('addChannel', pool.id)" />
-            <v-btn v-if="pool.id !== 'default'" icon size="x-small" variant="text" title="编辑分组" :aria-label="`编辑分组 ${pool.name}`" @click="openEditDialog(pool)">
-              <v-icon size="small">mdi-pencil</v-icon>
-            </v-btn>
-            <v-btn
+            <UiButton icon="mdi-plus" size="x-small" variant="text" :title="`添加渠道到 ${pool.name}`" :aria-label="`添加渠道到 ${pool.name}`" @click="emit('addChannel', pool.id)" />
+            <UiButton v-if="pool.id !== 'default'" icon size="x-small" variant="text" title="编辑分组" :aria-label="`编辑分组 ${pool.name}`" @click="openEditDialog(pool)">
+              <UiIcon size="small">mdi-pencil</UiIcon>
+            </UiButton>
+            <UiButton
               v-if="pool.id !== 'default'"
               icon
               size="x-small"
@@ -64,8 +64,8 @@
               :aria-label="`删除分组 ${pool.name}`"
               @click="openDeletePoolDialog(pool)"
             >
-              <v-icon size="small">mdi-delete</v-icon>
-            </v-btn>
+              <UiIcon size="small">mdi-delete</UiIcon>
+            </UiButton>
           </div>
         </header>
         <div :id="`pool-${channelType}-${pool.id}`">
@@ -98,12 +98,12 @@
                 :move_to_bottom="() => moveChannel(pool, index, pool.channels.length - 1)"
               >
                 <div class="pool-channel-row" @click="emit('edit', element)">
-                  <span class="drag-handle"><v-icon size="small">mdi-drag-vertical</v-icon></span>
+                  <span class="drag-handle"><UiIcon size="small">mdi-drag-vertical</UiIcon></span>
                   <span class="pool-index">{{ index + 1 }}</span>
                   <ChannelStatusBadge :status="element.status || 'active'" />
                   <div class="pool-channel-main">
-                    <span class="font-weight-medium">{{ element.name }}</span>
-                    <span class="text-caption text-medium-emphasis">{{ channelServiceLabel(props.channelType, element.serviceType) }}</span>
+                    <span class="font-medium">{{ element.name }}</span>
+                    <span class="text-xs text-muted-foreground">{{ channelServiceLabel(props.channelType, element.serviceType) }}</span>
                   </div>
                 </div>
               </slot>
@@ -120,16 +120,16 @@
 
   <section class="vision-pool-section">
     <header class="vision-pool-header">
-      <div class="d-flex align-center ga-2">
-        <v-icon size="small" color="primary">mdi-image-search-outline</v-icon>
-        <span class="text-subtitle-2">公用纯图片理解池</span>
-        <v-chip size="x-small">{{ visionChannels.length }}</v-chip>
+      <div class="flex items-center gap-2">
+        <UiIcon size="small" color="primary">mdi-image-search-outline</UiIcon>
+        <span class="text-sm font-medium">公用纯图片理解池</span>
+        <UiBadge size="x-small">{{ visionChannels.length }}</UiBadge>
       </div>
       <span class="section-inline-label">图片理解渠道</span>
     </header>
     <div class="vision-channel-list">
       <div v-for="channel in visionChannels" :key="`${channel.kind ?? channelType}-${channel.index}`" class="vision-channel-row" @click="emit('edit', channel)">
-        <v-icon size="small" color="primary">mdi-image-search-outline</v-icon>
+        <UiIcon size="small" color="primary">mdi-image-search-outline</UiIcon>
         <button
           v-if="canToggleVisionStatus(channel)"
           type="button"
@@ -141,20 +141,20 @@
           <ChannelStatusBadge :status="channel.status || 'active'" />
         </button>
         <ChannelStatusBadge v-else :status="channel.status || 'active'" />
-        <span class="font-weight-medium text-truncate">{{ channel.name }}</span>
-        <v-chip v-if="channel.kind && channel.kind !== props.channelType" size="x-small" variant="text">
+        <span class="font-medium truncate">{{ channel.name }}</span>
+        <UiBadge v-if="channel.kind && channel.kind !== props.channelType" size="x-small" variant="text">
           {{ protocolLabel(channel.kind) }}
-        </v-chip>
-        <span class="text-caption text-medium-emphasis">{{ channelServiceLabel(channel.kind ?? props.channelType, channel.serviceType) }}</span>
-        <v-spacer />
-        <v-chip size="x-small" variant="outlined">
-          <v-icon start size="x-small">mdi-key</v-icon>{{ channel.apiKeys?.length || 0 }}
-        </v-chip>
+        </UiBadge>
+        <span class="text-xs text-muted-foreground">{{ channelServiceLabel(channel.kind ?? props.channelType, channel.serviceType) }}</span>
+        <span class="flex-1" ></span>
+        <UiBadge size="x-small" variant="outlined">
+          <UiIcon start size="x-small">mdi-key</UiIcon>{{ channel.apiKeys?.length || 0 }}
+        </UiBadge>
         <div class="vision-channel-actions" @click.stop>
           <slot name="vision-actions" :channel="channel" ></slot>
-          <v-btn icon size="x-small" color="error" variant="text" title="删除渠道" @click="emit('delete', channel.index, channel.kind)">
-            <v-icon size="small">mdi-delete</v-icon>
-          </v-btn>
+          <UiButton icon size="x-small" color="error" variant="text" title="删除渠道" @click="emit('delete', channel.index, channel.kind)">
+            <UiIcon size="small">mdi-delete</UiIcon>
+          </UiButton>
         </div>
       </div>
       <EmptyState v-if="visionChannels.length === 0" variant="inline" icon="mdi-image-multiple-outline" title="暂无公用图片理解渠道" description="在渠道的编排设置中把它加入公用池后，会显示在这里。" />
@@ -162,9 +162,10 @@
   </section>
 
   <AppDialog v-model="poolDialog" :title="editingPool ? '编辑分组' : '新建分组'" size="sm">
-    <v-text-field v-model="poolName" label="名称" variant="outlined" density="compact" autofocus />
-    <v-combobox
-      v-model="poolMatcher"
+    <UiInput v-model="poolName" label="名称" variant="outlined" density="compact" autofocus />
+    <UiSelect
+v-model="poolMatcher" searchable
+      creatable
       label="模型名称包含"
       :items="matcherOptions"
       variant="outlined"
@@ -172,8 +173,8 @@
       @keyup.enter="savePool"
     />
     <template #actions>
-      <v-btn variant="text" @click="poolDialog = false">取消</v-btn>
-      <v-btn color="primary" :loading="saving" :disabled="!poolName.trim() || !normalizedPoolMatcher" @click="savePool">保存</v-btn>
+      <UiButton variant="text" @click="poolDialog = false">取消</UiButton>
+      <UiButton color="primary" :loading="saving" :disabled="!poolName.trim() || !normalizedPoolMatcher" @click="savePool">保存</UiButton>
     </template>
   </AppDialog>
 
@@ -188,6 +189,12 @@
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiBadge from '@/shared/ui/feedback/Badge.vue'
+import UiProgress from '@/shared/ui/feedback/Progress.vue'
+import UiInput from '@/shared/ui/field/Input.vue'
+import UiIcon from '@/shared/ui/icon/Icon.vue'
+import UiSelect from '@/shared/ui/select/Select.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import draggable from 'vuedraggable'
 import { api, ApiError, type Channel, type ChannelPool, type ChannelDeletionImpact, type VisionChannel } from '@/api'
@@ -198,9 +205,9 @@ import { API_TAB_LABELS, type ApiTab } from '@/features/channels/services/channe
 import { useChannelStore } from '@/features/channels/stores/channel'
 import { FREE_POOL_ID } from '@/features/channels/services/free-channels'
 import FreeChannelPool from '@/features/channels/components/dashboard/FreeChannelPool.vue'
-import AppDialog from '@/shared/components/common/AppDialog.vue'
-import EmptyState from '@/shared/components/common/EmptyState.vue'
-import ConfirmDialog from '@/shared/components/common/ConfirmDialog.vue'
+import AppDialog from '@/shared/components/overlay/AppDialog.vue'
+import EmptyState from '@/shared/components/feedback/EmptyState.vue'
+import ConfirmDialog from '@/shared/components/overlay/ConfirmDialog.vue'
 
 const props = defineProps<{
   channels: Channel[]
@@ -445,150 +452,111 @@ const deletePool = async () => {
 </script>
 
 <style scoped>
-.pool-section { container-type: inline-size; container-name: channel-pools; }
-.pool-guide { flex: 1 1 320px; min-width: 0; margin: 0; color: rgb(var(--v-theme-on-surface-variant)); font-size: 0.8125rem; line-height: 1.6; }
-.pool-card-toggle { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; min-height: 36px; text-align: start; }
+@reference "@/styles/index.css";
+
+.pool-section { @apply [container-type:inline-size] [container-name:channel-pools]; }
+.pool-guide { @apply [flex:1_1_320px] min-w-0 m-0 text-muted-foreground [font-size:0.8125rem] [line-height:1.6]; }
+.pool-card-toggle { @apply flex items-center gap-2 [flex:1] min-w-0 min-h-9 text-start; }
 .section-header, .vision-pool-header {
-  display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px;
+  @apply flex items-center justify-between gap-4 mb-3;
 }
-.section-heading-mark { display: flex; align-items: center; gap: 8px; }
-.pool-header-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.section-heading-mark { @apply flex items-center gap-2; }
+.pool-header-actions { @apply flex items-center gap-2 shrink-0; }
 .section-inline-label {
-  color: rgba(var(--v-theme-on-surface), 0.48);
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  @apply [color:color-mix(in_srgb,_var(--foreground)_48%,_transparent)] [font-size:11px] [letter-spacing:0.04em] [text-transform:uppercase];
 }
-.section-header { flex-wrap: wrap; }
+.section-header { @apply flex-wrap; }
 .pool-grid {
-  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; align-items: start;
+  @apply grid [grid-template-columns:repeat(2,_minmax(0,_1fr))] gap-4.5 items-start;
 }
-.pool-column { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.pool-column { @apply flex flex-col gap-4.5 min-w-0; }
 .pool-card {
-  background: rgb(var(--v-theme-surface));
-  border: 1px solid rgba(var(--v-theme-outline), 0.24);
-  border-radius: var(--cut-md);
-  min-width: 0;
-  overflow: hidden;
-  container-type: inline-size;
-  transition: border-color 0.2s ease;
+  @apply min-w-0 overflow-hidden [container-type:inline-size] [transition:border-color_0.2s_ease];
 }
 .pool-card:hover {
-  border-color: rgba(var(--v-theme-primary), 0.4);
+  @apply [border-color:color-mix(in_srgb,_var(--primary)_40%,_transparent)];
 }
 
 .pool-card-header {
-  min-height: 42px;
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 4px 9px 4px 12px;
-  border-bottom: 1px solid rgba(var(--v-theme-outline), 0.2);
-  background: rgba(var(--v-theme-surface-variant), 0.25);
+  @apply min-h-10.5 flex items-center justify-between gap-2.5 [padding:4px_9px_4px_12px] [border-bottom:1px_solid_color-mix(in_srgb,_var(--outline)_20%,_transparent)] [background:color-mix(in_srgb,_var(--surface-variant)_25%,_transparent)];
 }
-.pool-card.is-collapsed .pool-card-header { border-bottom-color: transparent; }
-.pool-channel-count { flex-shrink: 0; padding-inline: 4px; color: rgb(var(--v-theme-on-surface-variant)); font-size: 0.75rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.pool-card.is-default .pool-card-header { background: color-mix(in srgb, rgb(var(--v-theme-primary)) 8%, rgb(var(--v-theme-surface))); }
-.v-theme--dark .pool-card-header { background: rgba(255, 255, 255, 0.035); }
-.pool-identity { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.pool-card.is-collapsed .pool-card-header { @apply [border-bottom-color:transparent]; }
+.pool-channel-count { @apply shrink-0 px-1 text-muted-foreground [font-size:0.75rem] whitespace-nowrap tabular-nums; }
+.pool-card.is-default .pool-card-header { @apply [background:color-mix(in_srgb,_var(--primary)_8%,_var(--surface))]; }
+:global([data-theme-mode='dark']) .pool-card-header { @apply [background:color-mix(in_srgb,_var(--foreground)_3.5%,_transparent)]; }
+.pool-identity { @apply flex items-baseline gap-2 min-w-0; }
 .pool-name {
-  flex-shrink: 0; max-width: 65%; font-size: 0.875rem;
-  font-weight: 650; line-height: 1.4;
-  letter-spacing: -0.01em;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  @apply shrink-0 [max-width:65%] [font-size:0.875rem] [font-weight:650] [line-height:1.4] [letter-spacing:-0.01em] overflow-hidden text-ellipsis whitespace-nowrap;
 }
 .pool-rule {
-  display: block;
-  font-size: 0.6875rem;
-  font-family: var(--font-mono);
-  color: rgb(var(--v-theme-on-surface-variant));
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  @apply block [font-size:0.6875rem] font-mono text-muted-foreground overflow-hidden text-ellipsis whitespace-nowrap;
 }
-.pool-card.is-default .pool-rule::before { content: '兜底  /  '; color: rgb(var(--v-theme-primary)); font-weight: 700; }
+.pool-card.is-default .pool-rule::before { @apply [content:'兜底_/_'] text-primary font-bold; }
 .pool-channel-list {
-  padding: 6px; display: flex; flex-direction: column; gap: 5px; min-height: 48px;
+  @apply p-1.5 flex flex-col [gap:5px] min-h-12;
 }
-.pool-drag-item { min-width: 0; }
+.pool-drag-item { @apply min-w-0; }
 /* 拖拽三态：拖起 / 落位占位 / 跟随指针。只改颜色与透明度，避免拖拽过程触发重排。 */
-.pool-drag-item.pool-chosen { cursor: grabbing; }
+.pool-drag-item.pool-chosen { @apply cursor-grabbing; }
 .pool-drag-item.pool-chosen :deep(.channel-row),
 .pool-drag-item.pool-chosen .pool-channel-row {
-  border-color: rgba(var(--v-theme-primary), 0.55);
-  background: rgba(var(--v-theme-primary), 0.06);
+  @apply [border-color:color-mix(in_srgb,_var(--primary)_55%,_transparent)] [background:color-mix(in_srgb,_var(--primary)_6%,_transparent)];
 }
-.pool-drag-item.pool-ghost { opacity: 0.45; }
+.pool-drag-item.pool-ghost { @apply opacity-45; }
 .pool-drag-item.pool-ghost :deep(.channel-row),
 .pool-drag-item.pool-ghost .pool-channel-row {
-  border: 1px dashed rgb(var(--v-theme-primary));
-  background: rgba(var(--v-theme-primary), 0.04);
+  @apply [border:1px_dashed_var(--primary)] [background:color-mix(in_srgb,_var(--primary)_4%,_transparent)];
 }
-.pool-drag-item.pool-dragging { cursor: grabbing; }
+.pool-drag-item.pool-dragging { @apply cursor-grabbing; }
 .pool-drag-item.pool-dragging :deep(.channel-row),
 .pool-drag-item.pool-dragging .pool-channel-row {
-  border-color: rgb(var(--v-theme-primary));
-  box-shadow: 0 12px 28px -14px rgba(0, 0, 0, 0.55);
+  @apply border-primary shadow-popover;
 }
-.drag-handle { cursor: grab; }
-.drag-handle:active { cursor: grabbing; }
+.drag-handle { @apply cursor-grab; }
+.drag-handle:active { @apply cursor-grabbing; }
 .pool-channel-row, .vision-channel-row {
-  display: flex; align-items: center; gap: 8px; min-width: 0;
-  padding: 8px 10px;
-  border: 1px solid rgba(var(--v-theme-outline), 0.2);
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background 0.16s ease, border-color 0.16s ease;
+  @apply flex items-center gap-2 min-w-0 [padding:8px_10px] [border:1px_solid_color-mix(in_srgb,_var(--outline)_20%,_transparent)] rounded-control cursor-pointer [transition:background_0.16s_ease,_border-color_0.16s_ease];
 }
 .pool-channel-row:hover, .vision-channel-row:hover {
-  background: rgba(var(--v-theme-primary), 0.07);
-  border-color: rgba(var(--v-theme-primary), 0.4);
+  @apply [background:color-mix(in_srgb,_var(--primary)_7%,_transparent)] [border-color:color-mix(in_srgb,_var(--primary)_40%,_transparent)];
 }
-.vision-channel-actions { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+.vision-channel-actions { @apply flex items-center gap-0.5 [flex:0_0_auto]; }
 .pool-index {
-  display: inline-grid; place-items: center;
-  width: 22px; height: 22px; flex: 0 0 auto;
-  background: rgb(var(--v-theme-primary));
-  color: rgb(var(--v-theme-on-primary));
-  font-size: 11px; font-weight: 800;
-  font-family: var(--font-mono);
-  border: none;
-  border-radius: 6px;
+  @apply inline-grid [place-items:center] w-5.5 h-5.5 [flex:0_0_auto] bg-primary text-primary-foreground [font-size:11px] font-extrabold font-mono [border:none] rounded-badge;
 }
 .pool-channel-main {
-  min-width: 0; flex: 1;
-  display: flex; align-items: baseline; gap: 7px; overflow: hidden;
+  @apply min-w-0 [flex:1] flex items-baseline [gap:7px] overflow-hidden;
 }
 .pool-channel-main span:first-child {
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  @apply overflow-hidden text-ellipsis whitespace-nowrap;
 }
 .vision-pool-section {
-  margin-top: 22px; padding: 14px 0;
-  border-top: 1px solid rgba(var(--v-theme-outline), 0.2);
+  @apply mt-5.5 [padding:14px_0] [border-top:1px_solid_color-mix(in_srgb,_var(--outline)_20%,_transparent)];
 }
 .vision-channel-list {
-  display: flex; flex-direction: column; gap: 6px; padding: 10px;
-  border: 1px solid rgba(var(--v-theme-outline), 0.24);
-  border-radius: var(--cut-md);
-  background: rgb(var(--v-theme-surface));
+  @apply flex flex-col gap-1.5 p-2.5 [border:1px_solid_color-mix(in_srgb,_var(--outline)_24%,_transparent)] rounded-control [background:var(--surface)];
 }
 .vision-status-toggle {
-  display: inline-flex; padding: 0; border: 0; background: transparent; cursor: pointer;
+  @apply inline-flex p-0 border-0 [background:transparent] cursor-pointer;
 }
-.vision-status-toggle:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: 2px; }
-.vision-status-toggle :deep(.badge-content) { cursor: pointer; }
+.vision-status-toggle:focus-visible { @apply [outline:2px_solid_var(--primary)] [outline-offset:2px]; }
+.vision-status-toggle :deep(.badge-content) { @apply cursor-pointer; }
 @container channel-pools (max-width: 1120px) {
   /* inline-size 容器不提供内容宽度，单列必须拉伸，避免缩放后卡片收缩到零宽。 */
-  .pool-grid { display: flex; flex-direction: column; align-items: stretch; }
-  .pool-column { display: contents; }
-  .pool-card { width: 100%; }
+  .pool-grid { @apply flex flex-col items-stretch; }
+  .pool-column { @apply [display:contents]; }
+  .pool-card { @apply w-full; }
 }
 @media (max-width: 900px) {
-  .section-header, .vision-pool-header { align-items: flex-start; flex-direction: column; }
+  .section-header, .vision-pool-header { @apply items-start flex-col; }
   /* 列布局下 flex-basis 会变成高度，说明文字不能继续占用桌面的 320px 基准。 */
-  .pool-guide { flex: initial; }
-  .pool-channel-row, .vision-channel-row { flex-wrap: wrap; }
+  .pool-guide { @apply [flex:initial]; }
+  .pool-channel-row, .vision-channel-row { @apply flex-wrap; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .pool-card,
   .pool-channel-row,
-  .vision-channel-row { transition: none !important; }
+  .vision-channel-row { @apply [transition:none]!; }
 }
 </style>

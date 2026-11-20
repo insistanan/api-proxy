@@ -6,12 +6,12 @@
     size="xl"
     @update:model-value="value => { if (!value) closeLogsDialog() }"
   >
-    <div v-if="isLoadingLogs" class="d-flex align-center justify-center py-8">
-      <v-progress-circular indeterminate color="primary" />
+    <div v-if="isLoadingLogs" class="flex items-center justify-center py-8">
+      <UiSpinner indeterminate color="primary" />
     </div>
-    <v-alert v-else-if="logsError" type="error" variant="tonal" density="compact">
+    <UiAlert v-else-if="logsError" type="error" variant="tonal" density="compact">
       {{ logsError }}
-    </v-alert>
+    </UiAlert>
     <div v-else class="channel-log-content" :style="statusColors">
       <template v-if="channelLogs.length">
         <dl class="log-summary">
@@ -22,22 +22,22 @@
         </dl>
         <section class="log-trend-panel">
           <div class="log-trend-header">
-            <div class="text-caption text-medium-emphasis">最近记录 · 按分钟聚合</div>
-            <v-btn-toggle v-model="trendMode" mandatory density="compact" variant="tonal" color="primary" aria-label="趋势指标">
-              <v-btn v-for="mode in trendModes" :key="mode.value" :value="mode.value" size="small">{{ mode.label }}</v-btn>
-            </v-btn-toggle>
+            <div class="text-xs text-muted-foreground">最近记录 · 按分钟聚合</div>
+            <UiToggleGroup v-model="trendMode" mandatory density="compact" variant="tonal" color="primary" aria-label="趋势指标">
+              <UiButton v-for="mode in trendModes" :key="mode.value" :value="mode.value" size="small">{{ mode.label }}</UiButton>
+            </UiToggleGroup>
           </div>
           <apexchart type="bar" height="168" :options="logTrendChartOptions" :series="logTrendSeries" />
         </section>
       </template>
 
       <div class="log-records-header">
-        <span class="text-subtitle-2">最近记录</span>
-        <v-btn v-if="logsChannel" :to="allLogsRoute" variant="text" color="primary" size="small">筛选历史日志</v-btn>
+        <span class="text-sm font-medium">最近记录</span>
+        <UiButton v-if="logsChannel" :to="allLogsRoute" variant="text" color="primary" size="small">筛选历史日志</UiButton>
       </div>
 
       <div class="channel-logs-table-shell">
-        <v-table density="compact" class="channel-logs-table">
+        <UiTable density="compact" class="channel-logs-table">
           <colgroup>
             <col class="log-col-time" />
             <col class="log-col-status" />
@@ -82,7 +82,7 @@
                 </td>
                 <td class="log-duration-cell">{{ formatDurationMs(log.durationMs) }}</td>
                 <td class="log-detail-cell">
-                  <v-btn
+                  <UiButton
                     :icon="expandedAttemptId === log.attemptId ? 'mdi-chevron-up' : 'mdi-chevron-down'"
                     size="x-small" variant="text"
                     :title="log.errorType || log.errorMessage ? '查看错误与连接详情' : '查看连接详情'"
@@ -112,20 +112,25 @@
               </tr>
             </template>
           </tbody>
-        </v-table>
+        </UiTable>
       </div>
     </div>
   </AppDialog>
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiToggleGroup from '@/shared/ui/button/ToggleGroup.vue'
+import UiTable from '@/shared/ui/data/Table.vue'
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
+import UiSpinner from '@/shared/ui/feedback/Spinner.vue'
 import { computed, ref, watch } from 'vue'
-import { CHART_STATUS_COLORS } from '@/shared/utils/chartPalette'
+import { chartColor } from '@/shared/theme'
 import { formatDateTime } from '@/shared/utils/datetime'
 import { defineLazyChart } from '@/shared/utils/lazyChart'
 import type { useChannelLogs } from '@/features/channels/composables/useChannelLogs'
-import AppDialog from '@/shared/components/common/AppDialog.vue'
-import EmptyState from '@/shared/components/common/EmptyState.vue'
+import AppDialog from '@/shared/components/overlay/AppDialog.vue'
+import EmptyState from '@/shared/components/feedback/EmptyState.vue'
 
 const apexchart = defineLazyChart(() => import('vue3-apexcharts'))
 const props = defineProps<{ viewer: ReturnType<typeof useChannelLogs>; channelType: string }>()
@@ -139,8 +144,8 @@ const {
 const expandedAttemptId = ref<string | null>(null)
 watch([showLogsDialog, logsChannel], () => { expandedAttemptId.value = null })
 const statusColors = {
-  '--log-success': CHART_STATUS_COLORS.success,
-  '--log-failure': CHART_STATUS_COLORS.failure
+  '--log-success': chartColor('success'),
+  '--log-failure': chartColor('failure')
 }
 
 const allLogsRoute = computed(() => ({

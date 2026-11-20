@@ -75,6 +75,12 @@ export default [
         MouseEvent: 'readonly',
         // DOM API（按 lint 实际使用补全，R6 环境声明修正）
         HTMLElement: 'readonly',
+        HTMLInputElement: 'readonly',
+        HTMLTextAreaElement: 'readonly',
+        HTMLSelectElement: 'readonly',
+        HTMLDetailsElement: 'readonly',
+        Storage: 'readonly',
+        StorageEvent: 'readonly',
         Element: 'readonly',
         ResizeObserver: 'readonly',
         PointerEvent: 'readonly',

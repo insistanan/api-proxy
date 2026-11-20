@@ -2,19 +2,20 @@
   <JsonPreviewTrigger class="json-body-pane" :data="body || ''" :title="title" :meta="meta">
     <div v-if="isLarge && !loaded" class="json-body-toolbar">
       <span>正文约 {{ formattedSize }}，载入后再渲染</span>
-      <v-btn size="small" variant="tonal" prepend-icon="mdi-chevron-down" @click="loaded = true">
+      <UiButton size="small" variant="tonal" prepend-icon="mdi-chevron-down" @click="loaded = true">
         载入正文
-      </v-btn>
+      </UiButton>
     </div>
     <ClampText v-else :text="formattedBody" :wrap="wrap" :max-height="320" />
   </JsonPreviewTrigger>
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
 // 原始正文视图：大正文先懒载入，再由 ClampText 统一做限高预览与展开。
 import { computed, ref, watch } from 'vue'
 import ClampText from './ClampText.vue'
-import JsonPreviewTrigger from '@/shared/components/common/JsonPreviewTrigger.vue'
+import JsonPreviewTrigger from '@/shared/components/data/JsonPreviewTrigger.vue'
 
 const LARGE_BODY_CHARS = 64 * 1024
 
@@ -62,19 +63,13 @@ const formattedBody = computed(() => {
 </script>
 
 <style scoped>
+@reference "@/styles/index.css";
+
 .json-body-pane {
-  min-height: 0;
+  @apply min-h-0;
 }
 
 .json-body-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 14px;
-  font-size: 13px;
-  color: rgb(var(--v-theme-on-surface));
-  background: rgba(var(--v-theme-surface-variant), 0.3);
-  border-radius: 8px;
+  @apply flex items-center justify-between gap-3 [padding:12px_14px] [font-size:13px] text-foreground [background:color-mix(in_srgb,_var(--surface-variant)_30%,_transparent)] rounded-control;
 }
 </style>

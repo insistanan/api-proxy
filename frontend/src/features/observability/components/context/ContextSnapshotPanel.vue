@@ -16,7 +16,7 @@
     <details v-if="snapshot.items?.length" @toggle="browseOpen = ($event.target as HTMLElement).hasAttribute('open')">
       <summary>按内容块浏览 · {{ snapshot.items.length }} 项{{ snapshot.itemsLimited ? '（仅列出前 256 项）' : '' }}</summary>
       <template v-if="browseOpen">
-        <v-select v-model="selectedPath" :items="itemChoices" label="选择指令、工具定义或消息内容" density="compact" hide-details class="mb-3" />
+        <UiSelect v-model="selectedPath" :items="itemChoices" label="选择指令、工具定义或消息内容" density="compact" hide-details class="mb-3" />
         <JsonBodyPane :body="selectedBody" title="上下文内容块" :meta="selectedPath" wrap />
       </template>
     </details>
@@ -24,6 +24,7 @@
 </template>
 
 <script setup lang="ts">
+import UiSelect from '@/shared/ui/select/Select.vue'
 import { computed, ref, watch } from 'vue'
 import type { ContextSnapshot } from '@/types/logs'
 import { contextKind, estimatedLabel } from '@/features/observability/utils/contextPresentation'
@@ -49,13 +50,15 @@ watch(() => props.snapshot, () => { selectedPath.value = props.snapshot.items?.[
 </script>
 
 <style scoped>
-.context-snapshot { padding: 14px 0; border-bottom: 1px solid rgba(var(--v-theme-on-surface), 0.12); margin-bottom: 16px; }
-.context-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; }
-.context-heading span, .context-notice { font-size: 12px; color: rgba(var(--v-theme-on-surface), 0.65); }
-.context-notice { margin: 8px 0 12px; }
-.composition { display: flex; height: 8px; overflow: hidden; border-radius: 3px; gap: 1px; }
-.context-legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 12px 0; font-size: 12px; }
-.context-legend span { display: flex; gap: 6px; align-items: center; }
-.context-legend i { width: 8px; height: 8px; border-radius: 2px; }
-summary { padding: 8px 0; cursor: pointer; font-size: 13px; }
+@reference "@/styles/index.css";
+
+.context-snapshot { @apply [padding:14px_0] [border-bottom:1px_solid_color-mix(in_srgb,_var(--foreground)_12%,_transparent)] mb-4; }
+.context-heading { @apply flex items-baseline flex-wrap gap-3; }
+.context-heading span, .context-notice { @apply [font-size:12px] [color:color-mix(in_srgb,_var(--foreground)_65%,_transparent)]; }
+.context-notice { @apply [margin:8px_0_12px]; }
+.composition { @apply flex h-2 overflow-hidden rounded-badge [gap:1px]; }
+.context-legend { @apply flex flex-wrap [gap:8px_18px] [margin:12px_0] [font-size:12px]; }
+.context-legend span { @apply flex gap-1.5 items-center; }
+.context-legend i { @apply w-2 h-2 rounded-badge; }
+summary { @apply [padding:8px_0] cursor-pointer [font-size:13px]; }
 </style>

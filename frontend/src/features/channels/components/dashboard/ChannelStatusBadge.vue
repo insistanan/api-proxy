@@ -1,16 +1,16 @@
 <template>
   <div class="status-badge" :class="statusClass">
-    <v-tooltip location="top" content-class="status-tooltip" :open-on-focus="false">
+    <UiTooltip location="top" content-class="status-tooltip" :open-on-focus="false">
       <template #activator="{ props: tooltipProps }">
         <div class="badge-content" v-bind="tooltipProps" :aria-label="statusLabel">
-          <v-icon :size="iconSize" class="status-icon">{{ statusIcon }}</v-icon>
+          <UiIcon :size="iconSize" class="status-icon">{{ statusIcon }}</UiIcon>
           <span v-if="showLabel" class="status-label">{{ statusLabel }}</span>
         </div>
       </template>
       <div class="tooltip-content">
-        <div class="font-weight-bold mb-1">{{ statusLabel }}</div>
+        <div class="font-bold mb-1">{{ statusLabel }}</div>
         <template v-if="metrics">
-          <div class="text-caption" style="line-height: 1.6;">
+          <div class="text-xs" style="line-height: 1.6;">
             <div>请求数: {{ metrics.requestCount }}</div>
             <div>成功率: {{ metrics.successRate === undefined ? '—' : metrics.successRate.toFixed(1) + '%' }}</div>
             <div>连续失败: {{ metrics.consecutiveFailures }}</div>
@@ -22,13 +22,15 @@
             <div v-if="metrics.lastFailureAt">最后失败: {{ formatTime(metrics.lastFailureAt) }}</div>
           </div>
         </template>
-        <div v-else class="text-caption text-medium-emphasis">暂无指标数据</div>
+        <div v-else class="text-xs text-muted-foreground">暂无指标数据</div>
       </div>
-    </v-tooltip>
+    </UiTooltip>
   </div>
 </template>
 
 <script setup lang="ts">
+import UiIcon from '@/shared/ui/icon/Icon.vue'
+import UiTooltip from '@/shared/ui/overlay/Tooltip.vue'
 import { computed } from 'vue'
 import type { ChannelStatus, ChannelMetrics } from '@/api'
 import { formatDateTime } from '@/shared/utils/datetime'
@@ -90,11 +92,13 @@ const formatTime = (dateStr: string): string => {
 </script>
 
 <style scoped>
-.status-badge { --status-color: var(--v-theme-on-surface-variant); display: inline-flex; align-items: center; }
-.status-active { --status-color: var(--v-theme-success); }
-.status-suspended, .status-circuit-half-open { --status-color: var(--v-theme-warning); }
-.status-disabled, .status-error, .status-circuit-open { --status-color: var(--v-theme-error); }
-.badge-content { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 6px; border: 1px solid rgba(var(--status-color), 0.22); background: rgba(var(--status-color), 0.08); color: rgb(var(--status-color)); font-size: 0.75rem; cursor: help; white-space: nowrap; }
-.status-label { font-size: 0.75rem; font-weight: 500; }
-.tooltip-content { max-width: 260px; }
+@reference "@/styles/index.css";
+
+.status-badge { --status-color: var(--muted-foreground); @apply inline-flex items-center; }
+.status-active { --status-color: var(--success); }
+.status-suspended, .status-circuit-half-open { --status-color: var(--warning); }
+.status-disabled, .status-error, .status-circuit-open { --status-color: var(--destructive); }
+.badge-content { @apply inline-flex items-center gap-1 [padding:4px_8px] rounded-badge [border:1px_solid_color-mix(in_srgb,_var(--status-color)_22%,_transparent)] [background:color-mix(in_srgb,_var(--status-color)_8%,_transparent)] [color:var(--status-color)] [font-size:0.75rem] cursor-help whitespace-nowrap; }
+.status-label { @apply [font-size:0.75rem] font-medium; }
+.tooltip-content { @apply max-w-65; }
 </style>

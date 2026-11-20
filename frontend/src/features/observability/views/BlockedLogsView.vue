@@ -1,9 +1,9 @@
 <template>
   <div class="blocked-logs-view">
     <PageHeader title="拦截记录" description="查看内容安全命中、危险命令与审批结果，可按入口、规则和时间筛选。">
-        <v-chip size="small" variant="tonal">{{ total }}</v-chip>
-        <v-btn variant="tonal" prepend-icon="mdi-refresh" :loading="loading" @click="loadLogs">刷新</v-btn>
-        <v-btn
+        <UiBadge size="small" variant="tonal">{{ total }}</UiBadge>
+        <UiButton variant="tonal" prepend-icon="mdi-refresh" :loading="loading" @click="loadLogs">刷新</UiButton>
+        <UiButton
           color="error"
           variant="tonal"
           prepend-icon="mdi-delete"
@@ -11,13 +11,13 @@
           @click="clearDialog = true"
         >
           清空全部
-        </v-btn>
+        </UiButton>
     </PageHeader>
 
     <section class="filters" aria-label="拦截记录筛选">
-      <v-select v-model="apiType" :items="apiTypeItems" label="API 类型" density="compact" hide-details />
-      <v-select v-model="blockType" :items="blockTypeItems" label="拦截类型" density="compact" hide-details />
-      <v-select
+      <UiSelect v-model="apiType" :items="apiTypeItems" label="API 类型" density="compact" hide-details />
+      <UiSelect v-model="blockType" :items="blockTypeItems" label="拦截类型" density="compact" hide-details />
+      <UiSelect
         v-model="category"
         :items="categoryItems"
         label="类别"
@@ -25,7 +25,7 @@
         hide-details
         :disabled="Boolean(blockType)"
       />
-      <v-switch
+      <UiSwitch
         v-model="activeOnly"
         label="仅活跃会话"
         density="compact"
@@ -33,18 +33,18 @@
         color="primary"
         class="filter-switch"
       />
-      <v-text-field v-model="fromTime" type="datetime-local" label="开始时间" density="compact" hide-details />
-      <v-text-field v-model="toTime" type="datetime-local" label="结束时间" density="compact" hide-details />
-      <v-btn color="primary" prepend-icon="mdi-magnify" class="filter-action" @click="applyFilters">应用</v-btn>
-      <v-btn variant="text" class="filter-action" :disabled="!hasFilters" @click="resetFilters">重置</v-btn>
+      <UiInput v-model="fromTime" type="datetime-local" label="开始时间" density="compact" hide-details />
+      <UiInput v-model="toTime" type="datetime-local" label="结束时间" density="compact" hide-details />
+      <UiButton color="primary" prepend-icon="mdi-magnify" class="filter-action" @click="applyFilters">应用</UiButton>
+      <UiButton variant="text" class="filter-action" :disabled="!hasFilters" @click="resetFilters">重置</UiButton>
     </section>
 
-    <v-alert v-if="error" type="error" variant="tonal" density="compact" closable @click:close="error = ''">
+    <UiAlert v-if="error" type="error" variant="tonal" density="compact" closable @click:close="error = ''">
       {{ error }}
-    </v-alert>
+    </UiAlert>
 
     <div class="table-frame">
-      <v-table density="compact" class="blocked-logs-table">
+      <UiTable density="compact" class="blocked-logs-table">
         <thead>
           <tr>
             <th class="expand-column"><span class="sr-only">展开状态</span></th>
@@ -59,8 +59,8 @@
         </thead>
         <tbody>
           <tr v-if="loading">
-            <td colspan="8" class="text-center text-medium-emphasis py-10">
-              <v-progress-circular indeterminate size="24" width="2" color="primary" />
+            <td colspan="8" class="text-center text-muted-foreground py-10">
+              <UiSpinner indeterminate size="24" width="2" color="primary" />
             </td>
           </tr>
           <tr v-else-if="groups.length === 0">
@@ -81,12 +81,12 @@
                 @keydown.space.prevent="toggleGroup(group.key)"
               >
                 <td class="expand-cell">
-                  <v-icon size="20" :icon="isExpanded(group.key) ? 'mdi-chevron-down' : 'mdi-chevron-right'" />
+                  <UiIcon size="20" :icon="isExpanded(group.key) ? 'mdi-chevron-down' : 'mdi-chevron-right'" />
                 </td>
                 <td class="time-cell">{{ formatTime(group.latestTimestamp) }}</td>
                 <td class="identity-cell" :title="group.conversationId || group.latestLog?.requestId || ''">
-                  <div class="font-weight-medium">{{ groupIdentityLabel(group) }}</div>
-                  <div class="text-caption text-medium-emphasis">
+                  <div class="font-medium">{{ groupIdentityLabel(group) }}</div>
+                  <div class="text-xs text-muted-foreground">
                     {{
                       group.conversationId
                         ? `${group.count} 条记录`
@@ -96,7 +96,7 @@
                 </td>
                 <td>
                   <div class="chip-list">
-                    <v-chip
+                    <UiBadge
                       v-for="value in group.apiTypes || []"
                       :key="value"
                       size="x-small"
@@ -104,12 +104,12 @@
                       variant="tonal"
                     >
                       {{ apiTypeLabel(value) }}
-                    </v-chip>
+                    </UiBadge>
                   </div>
                 </td>
                 <td class="type-cell">
                   <div class="chip-list">
-                    <v-chip
+                    <UiBadge
                       v-for="value in group.blockTypes || []"
                       :key="value"
                       size="x-small"
@@ -117,17 +117,17 @@
                       variant="tonal"
                     >
                       {{ blockTypeLabel(value) }}
-                    </v-chip>
+                    </UiBadge>
                   </div>
                 </td>
                 <td class="metadata-cell">
-                  <div class="font-weight-medium">{{ group.latestLog?.model || '--' }}</div>
-                  <div class="text-caption text-medium-emphasis">{{ group.latestLog?.channelName || '--' }}</div>
+                  <div class="font-medium">{{ group.latestLog?.model || '--' }}</div>
+                  <div class="text-xs text-muted-foreground">{{ group.latestLog?.channelName || '--' }}</div>
                 </td>
                 <td class="snippet-cell" :title="group.latestLog?.promptSnippet || ''">
                   {{ snippetPreview(group.latestLog?.promptSnippet) || '--' }}
                 </td>
-                <td class="action-cell text-medium-emphasis">
+                <td class="action-cell text-muted-foreground">
                   {{ isExpanded(group.key) ? '收起' : '展开' }}
                 </td>
               </tr>
@@ -137,8 +137,8 @@
               >
                 <td class="detail-marker"><span aria-hidden="true"></span></td>
                 <td colspan="7" class="detail-state-cell">
-                  <v-progress-circular v-if="groupDetail(group.key)?.loading" indeterminate size="18" width="2" />
-                  <v-alert
+                  <UiSpinner v-if="groupDetail(group.key)?.loading" indeterminate size="18" width="2" />
+                  <UiAlert
                     v-else-if="groupDetail(group.key)?.error"
                     type="error"
                     variant="text"
@@ -146,7 +146,7 @@
                     class="mb-0"
                   >
                     {{ groupDetail(group.key)?.error }}
-                  </v-alert>
+                  </UiAlert>
                 </td>
               </tr>
               <template v-if="isExpanded(group.key) && groupDetail(group.key)">
@@ -157,7 +157,7 @@
                   :class="{ 'repeat-row': repeated }"
                 >
                   <td class="detail-marker">
-                    <v-btn
+                    <UiButton
                       v-if="repeatCount > 1"
                       :icon="expandedRepeats.has(repeatKey) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
                       variant="text"
@@ -171,31 +171,31 @@
                   <td class="time-cell">{{ formatTime(entry.timestamp) }}</td>
                   <td class="request-id-cell" :title="entry.requestId || ''">
                     <div>{{ entry.requestId || '--' }}</div>
-                    <div class="text-caption text-medium-emphasis">
+                    <div class="text-xs text-muted-foreground">
                       {{ repeatCount > 1 ? `相同片段 · 已加载 ${repeatCount} 条` : '请求 ID' }}
                     </div>
                   </td>
                   <td>
-                    <v-chip size="x-small" :color="apiTypeColor(entry.apiType)" variant="tonal">
+                    <UiBadge size="x-small" :color="apiTypeColor(entry.apiType)" variant="tonal">
                       {{ apiTypeLabel(entry.apiType) }}
-                    </v-chip>
+                    </UiBadge>
                   </td>
                   <td class="type-cell">
-                    <v-chip size="x-small" :color="blockTypeColor(entry.blockType)" variant="tonal">
+                    <UiBadge size="x-small" :color="blockTypeColor(entry.blockType)" variant="tonal">
                       {{ blockTypeLabel(entry.blockType) }}
-                    </v-chip>
-                    <v-chip
+                    </UiBadge>
+                    <UiBadge
                       v-if="parseBlockedLogSnippet(entry.promptSnippet).mode === 'mask'"
                       size="x-small"
                       color="info"
                       variant="tonal"
                       class="ml-1"
-                    >已脱敏</v-chip>
-                    <div class="text-caption text-medium-emphasis mt-1">{{ ruleLabel(entry.ruleName) }}</div>
+                    >已脱敏</UiBadge>
+                    <div class="text-xs text-muted-foreground mt-1">{{ ruleLabel(entry.ruleName) }}</div>
                   </td>
                   <td class="metadata-cell">
-                    <div class="font-weight-medium">{{ entry.model || '--' }}</div>
-                    <div class="text-caption text-medium-emphasis">{{ entry.channelName || '--' }}</div>
+                    <div class="font-medium">{{ entry.model || '--' }}</div>
+                    <div class="text-xs text-muted-foreground">{{ entry.channelName || '--' }}</div>
                   </td>
                   <td class="snippet-cell" :title="entry.command || entry.promptSnippet || ''">
                     <span v-if="isDangerousCmdType(entry.blockType) && entry.command" class="command-text">
@@ -204,7 +204,7 @@
                     <template v-else>{{ snippetPreview(entry.promptSnippet) || '--' }}</template>
                   </td>
                   <td class="action-cell">
-                    <v-chip
+                    <UiBadge
                       v-if="isDangerousCmdType(entry.blockType) && entry.conversationId && conversationDecision(entry)"
                       size="x-small"
                       :color="conversationDecision(entry) === 'allow' ? 'success' : 'error'"
@@ -212,10 +212,10 @@
                       class="decision-chip"
                     >
                       {{ conversationDecision(entry) === 'allow' ? '已加白' : '已加黑' }}
-                    </v-chip>
-                    <v-tooltip v-if="isDangerousCmdType(entry.blockType) && entry.conversationId && entry.commandHash" text="放行本会话的同命令及执行上下文">
+                    </UiBadge>
+                    <UiTooltip v-if="isDangerousCmdType(entry.blockType) && entry.conversationId && entry.commandHash" text="放行本会话的同命令及执行上下文">
                       <template #activator="{ props }">
-                        <v-btn
+                        <UiButton
                           v-bind="props"
                           icon="mdi-check-circle-outline"
                           color="success"
@@ -227,10 +227,10 @@
                           @click.stop="applyGateDecision(entry, 'allow')"
                         />
                       </template>
-                    </v-tooltip>
-                    <v-tooltip v-if="isDangerousCmdType(entry.blockType) && entry.conversationId && entry.commandHash" text="拦截本会话的同命令及执行上下文">
+                    </UiTooltip>
+                    <UiTooltip v-if="isDangerousCmdType(entry.blockType) && entry.conversationId && entry.commandHash" text="拦截本会话的同命令及执行上下文">
                       <template #activator="{ props }">
-                        <v-btn
+                        <UiButton
                           v-bind="props"
                           icon="mdi-block-helper"
                           color="error"
@@ -242,13 +242,13 @@
                           @click.stop="applyGateDecision(entry, 'block')"
                         />
                       </template>
-                    </v-tooltip>
-                    <v-tooltip
+                    </UiTooltip>
+                    <UiTooltip
                       v-if="entry.conversationId && conversationDecision(entry)"
                       text="解除名单（恢复 AI 审查）"
                     >
                       <template #activator="{ props }">
-                        <v-btn
+                        <UiButton
                           v-bind="props"
                           icon="mdi-playlist-remove"
                           variant="text"
@@ -259,10 +259,10 @@
                           @click.stop="removeGateDecision(entry)"
                         />
                       </template>
-                    </v-tooltip>
-                    <v-tooltip text="查看详情">
+                    </UiTooltip>
+                    <UiTooltip text="查看详情">
                       <template #activator="{ props }">
-                        <v-btn
+                        <UiButton
                           v-bind="props"
                           icon="mdi-open-in-new"
                           variant="text"
@@ -272,10 +272,10 @@
                           @click.stop="openDetail(entry.id)"
                         />
                       </template>
-                    </v-tooltip>
-                    <v-tooltip text="删除记录">
+                    </UiTooltip>
+                    <UiTooltip text="删除记录">
                       <template #activator="{ props }">
-                        <v-btn
+                        <UiButton
                           v-bind="props"
                           icon="mdi-delete"
                           color="error"
@@ -286,39 +286,39 @@
                           @click.stop="openDelete(entry)"
                         />
                       </template>
-                    </v-tooltip>
+                    </UiTooltip>
                   </td>
                 </tr>
                 <tr v-if="hasMoreEntries(group.key)" class="detail-row detail-more-row">
                   <td class="detail-marker"><span aria-hidden="true"></span></td>
                   <td colspan="7" class="detail-more-cell">
-                    <v-btn
+                    <UiButton
                       variant="tonal"
                       size="small"
                       :loading="groupDetail(group.key)?.loading"
                       @click.stop="loadMoreEntries(group.key)"
                     >
                       加载更多（{{ loadedCount(group.key) }} / {{ group.count }}）
-                    </v-btn>
+                    </UiButton>
                   </td>
                 </tr>
               </template>
             </template>
           </template>
         </tbody>
-      </v-table>
+      </UiTable>
     </div>
 
     <footer class="pagination-bar">
-      <div class="text-body-2 text-medium-emphasis">{{ totalGroups }} 个会话 · {{ total }} 条记录</div>
-      <v-pagination
+      <div class="text-sm text-muted-foreground">{{ totalGroups }} 个会话 · {{ total }} 条记录</div>
+      <UiPagination
         v-model="page"
         :length="pageCount"
         :total-visible="5"
         density="comfortable"
         aria-label="拦截记录会话分页"
       />
-      <v-select
+      <UiSelect
         v-model="pageSize"
         :items="pageSizeItems"
         label="每页"
@@ -329,10 +329,10 @@
     </footer>
 
     <AppDialog v-model="detailDialog" title="拦截详情" size="lg">
-      <v-chip v-if="selectedLog" size="small" :color="blockTypeColor(selectedLog.blockType)" variant="tonal" class="mb-3">
+      <UiBadge v-if="selectedLog" size="small" :color="blockTypeColor(selectedLog.blockType)" variant="tonal" class="mb-3">
         {{ blockTypeLabel(selectedLog.blockType) }}
-      </v-chip>
-      <v-progress-linear v-if="detailLoading" indeterminate color="primary" />
+      </UiBadge>
+      <UiProgress v-if="detailLoading" indeterminate color="primary" />
       <dl v-else-if="selectedLog" class="detail-grid">
         <dt>时间</dt>
         <dd>{{ formatTime(selectedLog.timestamp) }}</dd>
@@ -359,12 +359,12 @@
           <dd>{{ selectedLog.aiReview.reused ? '复用同会话结论' : '本次复核' }}</dd>
           <dt>AI 复核日志</dt>
           <dd>
-            <v-btn
+            <UiButton
               v-if="selectedLog.aiReview.requestId"
               size="small"
               variant="tonal"
               :to="{ path: '/logs', query: { tab: 'system', id: selectedLog.aiReview.requestId } }"
-            >查看复核请求与响应</v-btn>
+            >查看复核请求与响应</UiButton>
           </dd>
         </template>
         <template v-if="isDangerousCmdType(selectedLog.blockType)">
@@ -379,7 +379,7 @@
         </dd>
       </dl>
       <template #actions>
-        <v-btn variant="text" @click="detailDialog = false">关闭</v-btn>
+        <UiButton variant="text" @click="detailDialog = false">关闭</UiButton>
       </template>
     </AppDialog>
 
@@ -404,11 +404,23 @@
 </template>
 
 <script setup lang="ts">
-import JsonPreviewTrigger from '@/shared/components/common/JsonPreviewTrigger.vue'
-import PageHeader from '@/shared/components/common/PageHeader.vue'
-import AppDialog from '@/shared/components/common/AppDialog.vue'
-import ConfirmDialog from '@/shared/components/common/ConfirmDialog.vue'
-import EmptyState from '@/shared/components/common/EmptyState.vue'
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiSwitch from '@/shared/ui/check/Switch.vue'
+import UiPagination from '@/shared/ui/data/Pagination.vue'
+import UiTable from '@/shared/ui/data/Table.vue'
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
+import UiBadge from '@/shared/ui/feedback/Badge.vue'
+import UiProgress from '@/shared/ui/feedback/Progress.vue'
+import UiSpinner from '@/shared/ui/feedback/Spinner.vue'
+import UiInput from '@/shared/ui/field/Input.vue'
+import UiIcon from '@/shared/ui/icon/Icon.vue'
+import UiTooltip from '@/shared/ui/overlay/Tooltip.vue'
+import UiSelect from '@/shared/ui/select/Select.vue'
+import JsonPreviewTrigger from '@/shared/components/data/JsonPreviewTrigger.vue'
+import PageHeader from '@/shared/components/layout/PageHeader.vue'
+import AppDialog from '@/shared/components/overlay/AppDialog.vue'
+import ConfirmDialog from '@/shared/components/overlay/ConfirmDialog.vue'
+import EmptyState from '@/shared/components/feedback/EmptyState.vue'
 import { formatDateTime } from '@/shared/utils/datetime'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import {

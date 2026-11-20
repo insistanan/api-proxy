@@ -43,7 +43,7 @@ Download the executable for your platform from [Releases](../../releases). Linux
 
 ### Build from Source
 
-Requirements: Go 1.26.10, Node 24.16.0, and make. Install dependencies in `frontend/` first with `npm ci` or Bun 1.4.4's `bun install --frozen-lockfile`. The root Makefile calls npm; on Windows, `npm run check` runs the quality gate without make.
+Local builds require Go, Node.js, npm, and make. Install dependencies in `frontend/` with `npm ci` or `bun install --frozen-lockfile`. Tool versions and PowerShell build commands are covered in the [toolchain](docs/技术栈.md) and [development guide](docs/开发说明.md#常用命令).
 
 ```bash
 make build   # frontend build → embed → Go compile, output: dist/api-proxy-go
@@ -74,7 +74,7 @@ Images channels support either native **Images API** or **Responses API** upstre
 | [docs/架构说明.md](docs/架构说明.md) | Architecture diagrams, request flow, scheduling, data storage, auth model |
 | [docs/规范与不变量.md](docs/规范与不变量.md) | Code conventions and key invariants |
 | [docs/技术栈.md](docs/技术栈.md) | Dependencies and toolchain overview |
-| [docs/历史说明.md](docs/历史说明.md) | Version history and key milestones |
+| [前端设计系统与主题](docs/前端设计系统与主题.md) | Theme controls, frontend structure, components, and styling |
 
 For the full version history see [CHANGELOG.md](CHANGELOG.md) (Chinese).
 

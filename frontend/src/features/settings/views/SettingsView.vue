@@ -4,40 +4,45 @@
 
     <div class="settings-layout">
       <nav class="settings-nav" aria-label="设置分类">
-        <v-list v-model:selected="selectedSections" nav mandatory density="compact" bg-color="transparent">
-          <v-list-item v-for="section in settingsSections" :key="section.key" :value="section.key" :prepend-icon="section.icon" :title="section.label" color="primary" :aria-current="activeSection === section.key ? 'page' : undefined">
+        <UiList v-model:selected="selectedSections" nav mandatory density="compact" bg-color="transparent">
+          <UiListItem v-for="section in settingsSections" :key="section.key" :value="section.key" :prepend-icon="section.icon" :title="section.label" color="primary" :aria-current="activeSection === section.key ? 'page' : undefined">
             <template #append><span v-if="!loading && dirtySections[section.key]" class="settings-dirty-dot" aria-label="有未保存的修改"></span></template>
-          </v-list-item>
-        </v-list>
+          </UiListItem>
+        </UiList>
       </nav>
 
       <div class="settings-content">
-        <v-alert v-if="loadError" type="error" variant="tonal" density="compact" class="mb-5">
+        <section v-if="activeSection === 'appearance'" aria-labelledby="appearance-title">
+          <h2 id="appearance-title" class="mb-5 text-lg font-semibold">外观</h2>
+          <ThemePanel />
+        </section>
+        <template v-else>
+        <UiAlert v-if="loadError" type="error" variant="tonal" density="compact" class="mb-5">
           {{ loadError }}
-        </v-alert>
+        </UiAlert>
 
-        <v-skeleton-loader v-if="loading" type="list-item-two-line, list-item-two-line, list-item-two-line" />
-        <v-btn v-else-if="loadError" variant="tonal" prepend-icon="mdi-refresh" @click="loadSettings">重新加载设置</v-btn>
+        <div v-if="loading" class="min-h-28 animate-pulse rounded-card bg-muted"  ></div>
+        <UiButton v-else-if="loadError" variant="tonal" prepend-icon="mdi-refresh" @click="loadSettings">重新加载设置</UiButton>
 
         <section v-else-if="activeSection === 'network'" aria-labelledby="network-settings-title">
           <div class="section-heading">
             <div>
-              <h2 id="network-settings-title" class="text-h6 font-weight-bold">网络</h2>
+              <h2 id="network-settings-title" class="text-lg font-bold">网络</h2>
             </div>
           </div>
 
-          <v-form ref="formRef" @submit.prevent="saveNetworkSettings">
+          <UiForm ref="formRef" @submit.prevent="saveNetworkSettings">
             <div class="setting-row">
               <div class="setting-copy">
-                <div class="text-body-1 font-weight-medium">全局上游代理</div>
-                <div class="text-body-2 text-medium-emphasis mt-1">用于网关访问上游服务；单个渠道可选择继承、直连或独立代理。</div>
+                <div class="text-base font-medium">全局上游代理</div>
+                <div class="text-sm text-muted-foreground mt-1">用于网关访问上游服务；单个渠道可选择继承、直连或独立代理。</div>
               </div>
-              <v-switch v-model="proxyEnabled" color="primary" inset hide-details aria-label="启用全局上游代理" />
+              <UiSwitch v-model="proxyEnabled" color="primary" inset hide-details aria-label="启用全局上游代理" />
             </div>
 
-            <v-expand-transition>
+            <Transition name="ui-expand">
               <div v-if="proxyEnabled" class="proxy-editor">
-                <v-text-field
+                <UiInput
                   v-model="proxyUrl"
                   label="代理地址"
                   placeholder="http://127.0.0.1:7897"
@@ -49,18 +54,18 @@
                   :rules="[proxyUrlRule]"
                 />
               </div>
-            </v-expand-transition>
+            </Transition>
 
-            <v-alert v-if="notice" :type="notice.type" variant="tonal" density="compact" class="mt-5">
+            <UiAlert v-if="notice" :type="notice.type" variant="tonal" density="compact" class="mt-5">
               {{ notice.message }}
-            </v-alert>
+            </UiAlert>
 
             <div class="settings-actions">
-              <v-btn type="submit" color="primary" prepend-icon="mdi-content-save" :loading="saving" :disabled="!networkDirty">
+              <UiButton type="submit" color="primary" prepend-icon="mdi-content-save" :loading="saving" :disabled="!networkDirty">
                 保存网络设置
-              </v-btn>
+              </UiButton>
             </div>
-          </v-form>
+          </UiForm>
         </section>
 
         <GatewaySettingsSection v-else-if="activeSection === 'gateway'" :editor="gatewayEditor" />
@@ -76,40 +81,40 @@
         <section v-else aria-labelledby="content-safety-settings-title">
           <div class="section-heading">
             <div>
-              <h2 id="content-safety-settings-title" class="text-h6 font-weight-bold">内容安全</h2>
+              <h2 id="content-safety-settings-title" class="text-lg font-bold">内容安全</h2>
             </div>
-            <v-btn variant="text" prepend-icon="mdi-format-list-bulleted" to="/blocked-logs">拦截记录</v-btn>
+            <UiButton variant="text" prepend-icon="mdi-format-list-bulleted" to="/blocked-logs">拦截记录</UiButton>
           </div>
 
           <form @submit.prevent="(!contentSafety.dangerousCmd.enabled || !contentSafety.dangerousCmd.aiGate.enabled || gateSelectionValid) && saveContentSafetySettings()">
             <div class="safety-group">
               <div class="setting-row safety-master-row">
                 <div class="setting-copy">
-                  <div class="text-body-1 font-weight-medium">敏感数据处置</div>
+                  <div class="text-base font-medium">敏感数据处置</div>
                 </div>
-                <v-btn-toggle
+                <UiToggleGroup
                   v-model="contentSafety.sensitiveData.mode"
                   mandatory
                   divided
                   density="compact"
                   class="mode-toggle"
                 >
-                  <v-btn value="block" prepend-icon="mdi-shield-lock" selected-class="disposal-toggle__block">
+                  <UiButton value="block" prepend-icon="mdi-shield-lock" selected-class="disposal-toggle__block">
                     阻断
-                  </v-btn>
-                  <v-btn value="mask" prepend-icon="mdi-eye-off" selected-class="disposal-toggle__mask">
+                  </UiButton>
+                  <UiButton value="mask" prepend-icon="mdi-eye-off" selected-class="disposal-toggle__mask">
                     可逆脱敏
-                  </v-btn>
-                </v-btn-toggle>
+                  </UiButton>
+                </UiToggleGroup>
               </div>
             </div>
 
             <div class="safety-group">
               <div class="setting-row safety-master-row">
                 <div class="setting-copy">
-                  <div class="text-body-1 font-weight-medium">敏感词检测</div>
+                  <div class="text-base font-medium">敏感词检测</div>
                 </div>
-                <v-switch
+                <UiSwitch
                   v-model="contentSafety.sensitiveWord.enabled"
                   color="primary"
                   inset
@@ -118,7 +123,7 @@
                 />
               </div>
               <div class="option-grid" :class="{ 'options-disabled': !contentSafety.sensitiveWord.enabled }">
-                <v-switch
+                <UiSwitch
                   v-for="item in sensitiveWordCategories"
                   :key="item.key"
                   v-model="contentSafety.sensitiveWord[item.key]"
@@ -135,9 +140,9 @@
             <div class="safety-group">
               <div class="setting-row safety-master-row">
                 <div class="setting-copy">
-                  <div class="text-body-1 font-weight-medium">个人信息保护</div>
+                  <div class="text-base font-medium">个人信息保护</div>
                 </div>
-                <v-switch
+                <UiSwitch
                   v-model="contentSafety.sensitiveInfo.enabled"
                   color="primary"
                   inset
@@ -146,7 +151,7 @@
                 />
               </div>
               <div class="option-grid" :class="{ 'options-disabled': !contentSafety.sensitiveInfo.enabled }">
-                <v-checkbox
+                <UiCheckbox
                   v-for="item in sensitiveInfoRules"
                   :key="item.value"
                   v-model="contentSafety.sensitiveInfo.enabledRules"
@@ -158,34 +163,34 @@
                   hide-details
                 />
               </div>
-              <v-expand-transition>
+              <Transition name="ui-expand">
                 <div
                   v-if="
                     contentSafety.sensitiveInfo.enabled && contentSafety.sensitiveInfo.enabledRules.includes('ip_address')
                   "
                   class="mode-setting-row ip-scope-row"
                 >
-                  <span class="text-body-2">IP 掩码范围</span>
-                  <v-btn-toggle
+                  <span class="text-sm">IP 掩码范围</span>
+                  <UiToggleGroup
                     v-model="contentSafety.sensitiveInfo.ipMaskScope"
                     mandatory
                     divided
                     density="compact"
                     class="mode-toggle"
                   >
-                    <v-btn value="public" selected-class="scope-toggle__selected">仅公网地址</v-btn>
-                    <v-btn value="all" selected-class="scope-toggle__selected">全部地址</v-btn>
-                  </v-btn-toggle>
+                    <UiButton value="public" selected-class="scope-toggle__selected">仅公网地址</UiButton>
+                    <UiButton value="all" selected-class="scope-toggle__selected">全部地址</UiButton>
+                  </UiToggleGroup>
                 </div>
-              </v-expand-transition>
+              </Transition>
             </div>
 
             <div class="safety-group">
               <div class="setting-row safety-master-row">
                 <div class="setting-copy">
-                  <div class="text-body-1 font-weight-medium">凭据保护</div>
+                  <div class="text-base font-medium">凭据保护</div>
                 </div>
-                <v-switch
+                <UiSwitch
                   v-model="contentSafety.credential.enabled"
                   color="error"
                   inset
@@ -194,7 +199,7 @@
                 />
               </div>
               <div class="option-grid" :class="{ 'options-disabled': !contentSafety.credential.enabled }">
-                <v-checkbox
+                <UiCheckbox
                   v-for="item in credentialRules"
                   :key="item.value"
                   v-model="contentSafety.credential.enabledRules"
@@ -211,10 +216,10 @@
             <div class="safety-group">
               <div class="setting-row safety-master-row">
                 <div class="setting-copy">
-                  <div class="text-body-1 font-weight-medium">危险命令检测</div>
-                  <div class="text-body-2 text-medium-emphasis mt-1">检查 Bash、exec_command 等已知执行工具；普通回复和代码示例直接放行。</div>
+                  <div class="text-base font-medium">危险命令检测</div>
+                  <div class="text-sm text-muted-foreground mt-1">检查 Bash、exec_command 等已知执行工具；普通回复和代码示例直接放行。</div>
                 </div>
-                <v-switch
+                <UiSwitch
                   v-model="contentSafety.dangerousCmd.enabled"
                   color="warning"
                   inset
@@ -223,7 +228,7 @@
                 />
               </div>
               <div class="option-grid" :class="{ 'options-disabled': !contentSafety.dangerousCmd.enabled }">
-                <v-checkbox
+                <UiCheckbox
                   v-for="item in dangerousCommandRules"
                   :key="item.value"
                   v-model="contentSafety.dangerousCmd.enabledRules"
@@ -235,17 +240,17 @@
                   hide-details
                 />
               </div>
-              <v-expand-transition>
+              <Transition name="ui-expand">
                 <div v-if="contentSafety.dangerousCmd.enabled" class="ai-gate-panel">
                   <div class="setting-row ai-gate-head-row">
                     <div class="setting-copy">
-                      <div class="text-body-1 font-weight-medium">
-                        <v-icon size="18" class="mr-1" color="warning">mdi-brain</v-icon>
+                      <div class="text-base font-medium">
+                        <UiIcon size="18" class="mr-1" color="warning">mdi-brain</UiIcon>
                         AI 闸门
                       </div>
-                      <div class="text-body-2 text-medium-emphasis mt-1">模型审批最多等待 10 秒。判定危险后进入确认窗口；审批失败时拦截该工具调用。</div>
+                      <div class="text-sm text-muted-foreground mt-1">模型审批最多等待 10 秒。判定危险后进入确认窗口；审批失败时拦截该工具调用。</div>
                     </div>
-                    <v-switch
+                    <UiSwitch
                       v-model="contentSafety.dangerousCmd.aiGate.enabled"
                       color="warning"
                       inset
@@ -254,7 +259,7 @@
                     />
                   </div>
                   <div v-if="contentSafety.dangerousCmd.aiGate.enabled" class="ai-gate-options">
-                    <v-select
+                    <UiSelect
                       v-model="contentSafety.dangerousCmd.aiGate.protocol"
                       :items="gateProtocolItems"
                       label="审批协议"
@@ -264,7 +269,7 @@
                       @update:model-value="resetGateTarget"
                     />
                     <ChannelPicker v-model="contentSafety.dangerousCmd.aiGate.channelId" v-model:selected-model="contentSafety.dangerousCmd.aiGate.model" :options="eligibleGateChannels" :loading="gateChannelsLoading" :error="gateChannelsError" show-model allow-auto label="判断渠道" model-label="审批模型" class="ai-gate-channel-picker" @valid="gateSelectionValid = $event" />
-                    <v-text-field
+                    <UiInput
                       v-model.number="contentSafety.dangerousCmd.aiGate.waitSeconds"
                       type="number"
                       min="3"
@@ -276,20 +281,20 @@
                     />
                   </div>
                   <SemanticSafetySettings v-if="contentSafety.dangerousCmd.semantic" v-model="contentSafety.dangerousCmd.semantic" :dangerous-enabled="contentSafety.dangerousCmd.enabled" :gate-enabled="contentSafety.dangerousCmd.aiGate.enabled" />
-                  <div v-if="contentSafety.dangerousCmd.aiGate.enabled" class="text-body-2 text-medium-emphasis mt-2">
+                  <div v-if="contentSafety.dangerousCmd.aiGate.enabled" class="text-sm text-muted-foreground mt-2">
                     {{ gateProtocolHint }}
                   </div>
                 </div>
-              </v-expand-transition>
+              </Transition>
             </div>
 
             <div class="safety-group">
               <div class="setting-row safety-master-row">
                 <div class="setting-copy">
-                  <div class="text-body-1 font-weight-medium">白名单</div>
+                  <div class="text-base font-medium">白名单</div>
                   <!-- 命中工具名的 tool_result 与 tool_argument 跳过全部检测，并在拦截记录里留审计条目 -->
                 </div>
-                <v-switch
+                <UiSwitch
                   v-model="contentSafety.whitelist.enabled"
                   color="success"
                   inset
@@ -297,8 +302,9 @@
                   aria-label="启用白名单放行"
                 />
               </div>
-              <v-combobox
-                v-model="contentSafety.whitelist.toolNames"
+              <UiSelect
+v-model="contentSafety.whitelist.toolNames" searchable
+                creatable
                 :disabled="!contentSafety.whitelist.enabled"
                 label="放行工具名"
                 placeholder="例如 tavily-search、tavily_search"
@@ -315,13 +321,13 @@
             <div class="safety-group">
               <div class="setting-row safety-master-row">
                 <div class="setting-copy">
-                  <div class="text-body-1 font-weight-medium">
-                    <v-icon size="18" class="mr-1" color="success">mdi-check-underline-circle</v-icon>
+                  <div class="text-base font-medium">
+                    <UiIcon size="18" class="mr-1" color="success">mdi-check-underline-circle</UiIcon>
                     放行字面量
                   </div>
                   <!-- 与命中片段完全相等的字符串跳过全部检测维度（整段相等跳过整个字段，子串相等丢弃该命中），出厂含 127.0.0.1 等回环地址 -->
                 </div>
-                <v-switch
+                <UiSwitch
                   v-model="contentSafety.allowlist.enabled"
                   color="success"
                   inset
@@ -329,8 +335,9 @@
                   aria-label="启用放行字面量"
                 />
               </div>
-              <v-combobox
-                v-model="contentSafety.allowlist.entries"
+              <UiSelect
+v-model="contentSafety.allowlist.entries" searchable
+                creatable
                 :disabled="!contentSafety.allowlist.enabled"
                 label="放行字面量"
                 placeholder="例如 10.0.0.5、sk-demo-12345"
@@ -347,13 +354,13 @@
             <div class="safety-group">
               <div class="setting-row safety-master-row">
                 <div class="setting-copy">
-                  <div class="text-body-1 font-weight-medium">
-                    <v-icon size="18" class="mr-1" color="warning">mdi-regex</v-icon>
+                  <div class="text-base font-medium">
+                    <UiIcon size="18" class="mr-1" color="warning">mdi-regex</UiIcon>
                     自定义检测规则
                   </div>
                   <!-- 自定义正则命中后走可逆脱敏（占位符发给模型，回答自动还原）；保护项目代号、内部人名等只有你自己知道的敏感信息。依赖"敏感数据处置 = 可逆脱敏" -->
                 </div>
-                <v-switch
+                <UiSwitch
                   v-model="contentSafety.customRules.enabled"
                   color="warning"
                   inset
@@ -363,7 +370,7 @@
               </div>
               <div v-if="contentSafety.customRules.enabled" class="custom-rules-editor">
                 <div v-for="(rule, index) in contentSafety.customRules.rules" :key="index" class="custom-rule-row">
-                  <v-text-field
+                  <UiInput
                     v-model="rule.name"
                     label="规则名"
                     density="compact"
@@ -371,7 +378,7 @@
                     hide-details
                     class="custom-rule-name"
                   />
-                  <v-text-field
+                  <UiInput
                     v-model="rule.type"
                     label="类型前缀"
                     density="compact"
@@ -379,7 +386,7 @@
                     hide-details
                     class="custom-rule-type"
                   />
-                  <v-text-field
+                  <UiInput
                     v-model="rule.pattern"
                     label="正则表达式"
                     density="compact"
@@ -387,7 +394,7 @@
                     hide-details
                     class="custom-rule-pattern"
                   />
-                  <v-btn
+                  <UiButton
                     icon
                     size="small"
                     variant="text"
@@ -395,10 +402,10 @@
                     aria-label="删除规则"
                     @click="contentSafety.customRules.rules.splice(index, 1)"
                   >
-                    <v-icon size="18">mdi-delete</v-icon>
-                  </v-btn>
+                    <UiIcon size="18">mdi-delete</UiIcon>
+                  </UiButton>
                 </div>
-                <v-btn
+                <UiButton
                   variant="tonal"
                   size="small"
                   color="primary"
@@ -407,20 +414,20 @@
                   @click="addCustomRule"
                 >
                   添加规则
-                </v-btn>
+                </UiButton>
               </div>
             </div>
 
             <div class="safety-group">
               <div class="setting-row safety-master-row">
                 <div class="setting-copy">
-                  <div class="text-body-1 font-weight-medium">
-                    <v-icon size="18" class="mr-1" color="primary">mdi-bell-ring</v-icon>
+                  <div class="text-base font-medium">
+                    <UiIcon size="18" class="mr-1" color="primary">mdi-bell-ring</UiIcon>
                     危险命令桌面通知
                   </div>
                   <!-- 危险命令 AI 闸门弹窗时同步发送浏览器系统通知（仅本浏览器生效） -->
                 </div>
-                <v-switch
+                <UiSwitch
                   :model-value="desktopNotifyEnabled"
                   color="primary"
                   inset
@@ -429,7 +436,7 @@
                   @update:model-value="toggleDesktopNotify"
                 />
               </div>
-              <v-alert
+              <UiAlert
                 v-if="desktopNotifyNotice"
                 :type="desktopNotifyNotice.type"
                 variant="tonal"
@@ -437,15 +444,15 @@
                 class="mx-4 mt-2"
               >
                 {{ desktopNotifyNotice.message }}
-              </v-alert>
+              </UiAlert>
             </div>
 
-            <v-alert v-if="notice" :type="notice.type" variant="tonal" density="compact" class="mt-5">
+            <UiAlert v-if="notice" :type="notice.type" variant="tonal" density="compact" class="mt-5">
               {{ notice.message }}
-            </v-alert>
+            </UiAlert>
 
             <div class="settings-actions">
-              <v-btn
+              <UiButton
                 type="submit"
                 color="primary"
                 prepend-icon="mdi-content-save"
@@ -453,20 +460,32 @@
                 :disabled="!contentSafetyDirty || (contentSafety.dangerousCmd.enabled && contentSafety.dangerousCmd.aiGate.enabled && !gateSelectionValid)"
               >
                 保存内容安全设置
-              </v-btn>
+              </UiButton>
             </div>
           </form>
         </section>
+        </template>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiToggleGroup from '@/shared/ui/button/ToggleGroup.vue'
+import UiCheckbox from '@/shared/ui/check/Checkbox.vue'
+import UiSwitch from '@/shared/ui/check/Switch.vue'
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
+import UiInput from '@/shared/ui/field/Input.vue'
+import UiForm from '@/shared/ui/form/Form.vue'
+import UiIcon from '@/shared/ui/icon/Icon.vue'
+import UiList from '@/shared/ui/navigation/List.vue'
+import UiListItem from '@/shared/ui/navigation/ListItem.vue'
+import UiSelect from '@/shared/ui/select/Select.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import PageHeader from '@/shared/components/common/PageHeader.vue'
-import ChannelPicker from '@/shared/components/common/ChannelPicker.vue'
+import PageHeader from '@/shared/components/layout/PageHeader.vue'
+import ChannelPicker from '@/shared/components/domain/ChannelPicker.vue'
 import {
   api,
   type ContentSafetySettings,
@@ -488,6 +507,7 @@ import ExtensionsSettingsSection from '@/features/settings/components/Extensions
 import { useExtensionsSettings } from '@/features/settings/composables/useExtensionsSettings'
 import { defaultContentSafety, normalizeContentSafety } from '@/features/settings/utils/contentSafetyForm'
 import SemanticSafetySettings from '@/features/settings/components/SemanticSafetySettings.vue'
+import ThemePanel from '@/shared/theme/components/ThemePanel.vue'
 import type { SettingsSection, SettingsNotice as Notice } from '@/features/settings/composables/types'
 
 type SensitiveWordToggle =
@@ -564,6 +584,7 @@ const gateProtocolHint = computed(() => {
 
 const formRef = ref()
 const settingsSections: Array<{ key: SettingsSection; label: string; icon: string }> = [
+  { key: 'appearance', label: '外观', icon: 'mdi-eye-dropper' },
   { key: 'network', label: '网络连接', icon: 'mdi-web' },
   { key: 'gateway', label: '请求与日志', icon: 'mdi-text' },
   { key: 'content-safety', label: '内容安全', icon: 'mdi-shield-alert' },
@@ -629,6 +650,7 @@ const networkDirty = computed(() =>
 )
 const contentSafetyDirty = computed(() => JSON.stringify(contentSafety.value) !== savedContentSafety.value)
 const dirtySections = computed<Record<SettingsSection, boolean>>(() => ({
+  appearance: false,
   network: networkDirty.value,
   gateway: gatewayEditor.gatewayDirty.value,
   'content-safety': contentSafetyDirty.value,

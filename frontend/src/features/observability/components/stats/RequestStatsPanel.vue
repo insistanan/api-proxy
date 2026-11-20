@@ -6,42 +6,42 @@
         <p>从持久化调用日志聚合，按上游尝试计数，可逐层反查原始记录。</p>
       </div>
       <div class="stats-actions">
-        <v-select v-model="autoRefreshSeconds" :items="refreshItems" label="自动刷新" density="compact" hide-details class="refresh-select" />
-        <v-btn variant="tonal" size="small" prepend-icon="mdi-download" :disabled="loading || !stats?.dataPoints.length" @click="exportStats">导出统计</v-btn>
-        <v-btn variant="tonal" size="small" prepend-icon="mdi-refresh" :loading="loading" @click="refreshData()">刷新</v-btn>
-        <v-btn size="small" color="primary" variant="outlined" prepend-icon="mdi-text-box-search-outline" :disabled="loading || !stats" @click="openLogs()">查看日志</v-btn>
+        <UiSelect v-model="autoRefreshSeconds" :items="refreshItems" label="自动刷新" density="compact" hide-details class="refresh-select" />
+        <UiButton variant="tonal" size="small" prepend-icon="mdi-download" :disabled="loading || !stats?.dataPoints.length" @click="exportStats">导出统计</UiButton>
+        <UiButton variant="tonal" size="small" prepend-icon="mdi-refresh" :loading="loading" @click="refreshData()">刷新</UiButton>
+        <UiButton size="small" color="primary" variant="outlined" prepend-icon="mdi-text-box-search-outline" :disabled="loading || !stats" @click="openLogs()">查看日志</UiButton>
       </div>
     </div>
 
     <div class="stats-filters">
-      <v-btn-toggle v-model="selectedDuration" mandatory density="compact" variant="outlined" divided color="primary" class="duration-toggle">
-        <v-btn v-for="item in durationItems" :key="item.value" :value="item.value" size="small">{{ item.title }}</v-btn>
-      </v-btn-toggle>
+      <UiToggleGroup v-model="selectedDuration" mandatory density="compact" variant="outlined" divided color="primary" class="duration-toggle">
+        <UiButton v-for="item in durationItems" :key="item.value" :value="item.value" size="small">{{ item.title }}</UiButton>
+      </UiToggleGroup>
       <template v-if="selectedDuration === 'custom'">
-        <v-text-field v-model="fromTime" type="datetime-local" label="开始时间" density="compact" hide-details />
-        <v-text-field v-model="toTime" type="datetime-local" label="结束时间" density="compact" hide-details />
-        <v-btn color="primary" size="small" variant="flat" @click="applyCustomRange">应用范围</v-btn>
+        <UiInput v-model="fromTime" type="datetime-local" label="开始时间" density="compact" hide-details />
+        <UiInput v-model="toTime" type="datetime-local" label="结束时间" density="compact" hide-details />
+        <UiButton color="primary" size="small" variant="flat" @click="applyCustomRange">应用范围</UiButton>
       </template>
-      <v-btn size="small" variant="text" :aria-expanded="showFilters" @click="showFilters = !showFilters">
+      <UiButton size="small" variant="text" :aria-expanded="showFilters" @click="showFilters = !showFilters">
         {{ showFilters ? '收起筛选' : '筛选' }}{{ activeFilterCount ? ` · ${activeFilterCount}` : '' }}
-      </v-btn>
-      <v-switch v-model="comparePrevious" label="对比上期" color="primary" density="compact" hide-details class="compare-switch" />
+      </UiButton>
+      <UiSwitch v-model="comparePrevious" label="对比上期" color="primary" density="compact" hide-details class="compare-switch" />
     </div>
     <div v-if="showFilters" class="stats-filters extra-filters">
-      <v-select v-if="showProtocol" v-model="selectedType" :items="protocolItems" label="协议" density="compact" hide-details clearable class="filter-field" />
-      <v-autocomplete v-model="selectedChannel" :items="stats?.facets.channels || []" label="渠道" density="compact" hide-details clearable class="filter-field" />
-      <v-autocomplete v-model="selectedModel" :items="stats?.facets.models || []" label="模型" density="compact" hide-details clearable class="filter-field" />
-      <v-select v-model="selectedStatus" :items="statusItems" label="状态" density="compact" hide-details class="filter-field" />
-      <v-select v-model="selectedErrorType" :items="stats?.errors.map(item => item.name) || []" label="错误类型" density="compact" hide-details clearable class="filter-field" />
-      <v-combobox v-model="selectedUpstream" :items="stats?.upstreams?.map(item => item.name) || []" label="上游地址" density="compact" hide-details clearable class="filter-field" />
-      <v-combobox v-model="selectedKeyMask" :items="stats?.keys?.map(item => item.name) || []" label="密钥掩码" density="compact" hide-details clearable class="filter-field" />
-      <v-btn size="small" variant="text" :disabled="!activeFilterCount" @click="clearFilters">清除筛选</v-btn>
+      <UiSelect v-if="showProtocol" v-model="selectedType" :items="protocolItems" label="协议" density="compact" hide-details clearable class="filter-field" />
+      <UiSelect v-model="selectedChannel" searchable :items="stats?.facets.channels || []" label="渠道" density="compact" hide-details clearable class="filter-field" />
+      <UiSelect v-model="selectedModel" searchable :items="stats?.facets.models || []" label="模型" density="compact" hide-details clearable class="filter-field" />
+      <UiSelect v-model="selectedStatus" :items="statusItems" label="状态" density="compact" hide-details class="filter-field" />
+      <UiSelect v-model="selectedErrorType" :items="stats?.errors.map(item => item.name) || []" label="错误类型" density="compact" hide-details clearable class="filter-field" />
+      <UiSelect v-model="selectedUpstream" searchable creatable :items="stats?.upstreams?.map(item => item.name) || []" label="上游地址" density="compact" hide-details clearable class="filter-field" />
+      <UiSelect v-model="selectedKeyMask" searchable creatable :items="stats?.keys?.map(item => item.name) || []" label="密钥掩码" density="compact" hide-details clearable class="filter-field" />
+      <UiButton size="small" variant="text" :disabled="!activeFilterCount" @click="clearFilters">清除筛选</UiButton>
     </div>
 
-    <v-alert v-if="errorMessage" type="error" variant="tonal" density="compact" class="my-3" closable @click:close="errorMessage = ''">
+    <UiAlert v-if="errorMessage" type="error" variant="tonal" density="compact" class="my-3" closable @click:close="errorMessage = ''">
       {{ errorMessage }}<span v-if="stats">；下方保留上一次成功加载的数据。</span>
-    </v-alert>
-    <v-progress-linear :active="loading" :indeterminate="loading" color="primary" height="2" class="mt-3" />
+    </UiAlert>
+    <UiProgress :active="loading" :indeterminate="loading" color="primary" height="2" class="mt-3" />
 
     <template v-if="stats">
       <StatsMetricCards :summary="stats.summary" :previous="comparePrevious ? stats.previousSummary : undefined" :compact="compact" class="mt-3" />
@@ -61,11 +61,19 @@
         <span>{{ formatDateTime(stats.from) }} — {{ formatDateTime(stats.to) }}</span>
       </div>
     </template>
-    <div v-else-if="loading" class="stats-initial-loading"><v-progress-circular indeterminate color="primary" /><span>正在汇总调用记录…</span></div>
+    <div v-else-if="loading" class="stats-initial-loading"><UiSpinner indeterminate color="primary" /><span>正在汇总调用记录…</span></div>
   </section>
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiToggleGroup from '@/shared/ui/button/ToggleGroup.vue'
+import UiSwitch from '@/shared/ui/check/Switch.vue'
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
+import UiProgress from '@/shared/ui/feedback/Progress.vue'
+import UiSpinner from '@/shared/ui/feedback/Spinner.vue'
+import UiInput from '@/shared/ui/field/Input.vue'
+import UiSelect from '@/shared/ui/select/Select.vue'
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { api, type LogAPIType, type RequestStatsDrill, type RequestStatsParams, type RequestStatsResponse, type StatsDuration } from '@/api'
 import type { RequestStatsDimensionSort } from '@/types/metrics'
@@ -262,19 +270,21 @@ defineExpose({ refreshData, startAutoRefresh, stopAutoRefresh })
 </script>
 
 <style scoped>
-.request-stats { min-width: 0; }
-.stats-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
-.stats-heading h2 { margin: 0; font-size: 17px; }
-.stats-heading p { margin: 5px 0 0; color: rgb(var(--v-theme-on-surface-variant)); font-size: 12px; }
-.stats-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; margin-left: auto; }
-.refresh-select { width: 112px; flex: 0 0 112px; }
-.stats-filters { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px; border: 1px solid rgba(var(--v-theme-outline), .18); border-radius: 12px; background: rgba(var(--v-theme-surface-bright), .35); }
-.extra-filters { margin-top: 6px; }
-.duration-toggle { flex-shrink: 0; }
-.filter-field { flex: 1 1 145px; min-width: 135px; max-width: 220px; }
-.compare-switch { flex: 0 0 auto; margin-left: 4px; }
-.stats-footnote { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 10px; color: rgb(var(--v-theme-on-surface-variant)); font-size: 11px; }
-.stats-initial-loading { display: flex; align-items: center; justify-content: center; gap: 12px; min-height: 220px; color: rgb(var(--v-theme-on-surface-variant)); }
-@media (max-width: 900px) { .stats-heading { align-items: flex-start; flex-direction: column; } .stats-actions { justify-content: flex-start; margin-left: 0; } .duration-toggle { max-width: 100%; overflow-x: auto; } }
-@media (max-width: 600px) { .stats-filters { align-items: stretch; } .stats-filters > :deep(.v-input), .stats-filters > :deep(.v-btn) { flex: 1 1 140px; max-width: none; } .refresh-select { flex-basis: 100px; } }
+@reference "@/styles/index.css";
+
+.request-stats { @apply min-w-0; }
+.stats-heading { @apply flex items-center justify-between gap-4 mb-3.5; }
+.stats-heading h2 { @apply m-0 [font-size:17px]; }
+.stats-heading p { @apply [margin:5px_0_0] text-muted-foreground [font-size:12px]; }
+.stats-actions { @apply flex items-center justify-end gap-2 flex-wrap ml-auto; }
+.refresh-select { @apply w-28 [flex:0_0_112px]; }
+.stats-filters { @apply flex items-center gap-2.5 flex-wrap p-3 [border:1px_solid_color-mix(in_srgb,_var(--outline)_18%,_transparent)] rounded-card [background:color-mix(in_srgb,_var(--surface-bright)_35%,_transparent)]; }
+.extra-filters { @apply mt-1.5; }
+.duration-toggle { @apply shrink-0; }
+.filter-field { @apply [flex:1_1_145px] [min-width:135px] max-w-55; }
+.compare-switch { @apply [flex:0_0_auto] ml-1; }
+.stats-footnote { @apply flex justify-between gap-3 flex-wrap mt-2.5 text-muted-foreground [font-size:11px]; }
+.stats-initial-loading { @apply flex items-center justify-center gap-3 min-h-55 text-muted-foreground; }
+@media (max-width: 900px) { .stats-heading { @apply items-start flex-col; } .stats-actions { @apply justify-start ml-0; } .duration-toggle { @apply max-w-full overflow-x-auto; } }
+@media (max-width: 600px) { .stats-filters { @apply items-stretch; } .stats-filters > :deep(.ui-field-root), .stats-filters > :deep(.ui-button) { @apply [flex:1_1_140px] [max-width:none]; } .refresh-select { @apply [flex-basis:100px]; } }
 </style>

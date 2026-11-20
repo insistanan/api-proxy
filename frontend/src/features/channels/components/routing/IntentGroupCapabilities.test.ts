@@ -1,35 +1,34 @@
-import { describe, expect, it } from 'vitest'
-import { createSSRApp, defineComponent, h } from 'vue'
+import { describe, expect, it, vi } from 'vitest'
+import { createSSRApp, type SetupContext } from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import IntentGroupCapabilities from '@/features/channels/components/routing/IntentGroupCapabilities.vue'
 import type { IntentGroupCapability } from '@/features/channels/services/intent'
+
+const { fields } = vi.hoisted(() => ({ fields: new Map<string, { value: unknown; edit: (value: unknown) => void }>() }))
+vi.mock('@/shared/ui/select/Select.vue', () => ({ default: control }))
+vi.mock('@/shared/ui/check/Switch.vue', () => ({ default: control }))
+vi.mock('@/shared/ui/field/Input.vue', () => ({ default: control }))
+
+const control = vi.hoisted(() => ({
+  inheritAttrs: false,
+  props: ['modelValue', 'label'],
+  emits: ['update:modelValue'],
+  setup(props: { modelValue: unknown; label?: string }, { attrs, emit }: SetupContext<{ 'update:modelValue': [value: unknown] }>) {
+    fields.set(String(attrs['aria-label']), { value: props.modelValue, edit: value => emit('update:modelValue', value) })
+    return () => null
+  },
+}))
 
 const pools = [{ id: 'grok', name: 'grok' }, { id: 'gemini', name: 'gemini' }, { id: 'code', name: '代码组' }]
 
 // 通过实际模板和表单事件验证已有分组的显示与编辑，不使用浏览器。
 async function renderEditor(model: IntentGroupCapability[]) {
   let changed: IntentGroupCapability[] | undefined
-  const fields = new Map<string, { value: unknown; edit: (value: unknown) => void }>()
-  const control = defineComponent({
-    inheritAttrs: false,
-    props: {
-      modelValue: { type: [Array, Number, Boolean], required: true },
-      label: { type: String, default: '' }
-    },
-    emits: ['update:modelValue'],
-    setup(props, { attrs, emit }) {
-      fields.set(String(attrs['aria-label']), { value: props.modelValue, edit: value => emit('update:modelValue', value) })
-      return () => h('label', props.label)
-    }
-  })
+  fields.clear()
   const app = createSSRApp(IntentGroupCapabilities, {
     modelValue: model, pools, tasks: [], disabled: false, useFeedback: false,
     'onUpdate:modelValue': (value: IntentGroupCapability[]) => { changed = value }
   })
-  app.component('VSelect', control)
-  app.component('VSwitch', control)
-  app.component('VCombobox', control)
-  app.component('VTextField', control)
   const html = await renderToString(app)
   return { html, fields, changed: () => changed }
 }

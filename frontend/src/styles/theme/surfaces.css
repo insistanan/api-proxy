@@ -1,0 +1,29 @@
+:root, [data-surface='soft'] {
+  --card: var(--surface);
+  --surface-blur: 0px;
+  --surface-border-width: 1px;
+  --shadow-card: 0 1px 2px color-mix(in srgb, var(--foreground) 4%, transparent);
+  --shadow-popover: 0 8px 28px #0002;
+  --shadow-dialog: 0 20px 60px #0004;
+  --border-card: var(--border);
+  --border-soft: color-mix(in srgb, var(--outline) 22%, transparent);
+}
+[data-surface='flat'] { --card: var(--surface); --shadow-card: none; --surface-blur: 0px; --surface-border-width: 1px; }
+[data-surface='raised'] {
+  --card: var(--surface);
+  --shadow-card: 0 3px 0 color-mix(in srgb, var(--outline) 35%, transparent), 0 8px 18px #0002;
+  --surface-border-width: 2px;
+  --surface-blur: 0px;
+}
+[data-surface='glass'] {
+  --card: color-mix(in srgb, var(--surface) var(--surface-opacity), transparent);
+  --surface-blur: 18px;
+  --surface-border-width: 1px;
+  --shadow-card: 0 6px 24px #0001;
+}
+:root, [data-opacity='100'] { --surface-opacity: 100%; }
+[data-opacity='92'] { --surface-opacity: 92%; }
+[data-opacity='85'] { --surface-opacity: 85%; }
+@supports not (backdrop-filter: blur(1px)) {
+  [data-surface='glass'] { --card: var(--surface); }
+}

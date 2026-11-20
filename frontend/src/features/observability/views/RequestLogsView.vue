@@ -3,17 +3,17 @@
     <PageHeader title="请求与会话观测" description="查看上游尝试、会话轨迹，以及模型每次调用的上下文与变化。" />
     <LogStorageStatus />
     <div class="logs-toolbar">
-      <v-tabs v-model="activeTab" color="primary" density="comfortable" class="logs-tabs">
-        <v-tab value="request">模型调用</v-tab>
-        <v-tab value="stats">统计概览</v-tab>
-        <v-tab value="system">会话轨迹</v-tab>
-        <v-tab value="runtime">运行日志</v-tab>
-      </v-tabs>
+      <UiTabs v-model="activeTab" color="primary" density="comfortable" class="logs-tabs">
+        <UiButton role="tab" variant="text" value="request">模型调用</UiButton>
+        <UiButton role="tab" variant="text" value="stats">统计概览</UiButton>
+        <UiButton role="tab" variant="text" value="system">会话轨迹</UiButton>
+        <UiButton role="tab" variant="text" value="runtime">运行日志</UiButton>
+      </UiTabs>
     </div>
 
     <div v-show="activeTab === 'request'" class="request-tab-panel">
       <div class="logs-actions mb-4">
-        <v-text-field
+        <UiInput
           v-model="searchText"
           label="搜索请求、会话、渠道、模型或错误"
           prepend-inner-icon="mdi-magnify"
@@ -23,47 +23,47 @@
           class="log-search-field"
           @keyup.enter="resetAndLoad"
         />
-        <v-select v-model="datePreset" :items="datePresetItems" label="时间范围" density="compact" variant="outlined" hide-details class="date-preset-select" />
-        <v-select v-model="typeFilter" :items="typeItems" label="入口类型" density="compact" hide-details class="type-filter-select" />
-        <v-select v-model="statusFilter" :items="logStatusItems" label="状态" density="compact" hide-details class="type-filter-select" />
-        <v-select v-model="sortField" :items="sortItems" label="排序字段" density="compact" hide-details class="type-filter-select" />
-        <v-btn variant="outlined" size="small" class="sort-order-button" @click="sortOrder = sortOrder === 'desc' ? 'asc' : 'desc'">
+        <UiSelect v-model="datePreset" :items="datePresetItems" label="时间范围" density="compact" variant="outlined" hide-details class="date-preset-select" />
+        <UiSelect v-model="typeFilter" :items="typeItems" label="入口类型" density="compact" hide-details class="type-filter-select" />
+        <UiSelect v-model="statusFilter" :items="logStatusItems" label="状态" density="compact" hide-details class="type-filter-select" />
+        <UiSelect v-model="sortField" :items="sortItems" label="排序字段" density="compact" hide-details class="type-filter-select" />
+        <UiButton variant="outlined" size="small" class="sort-order-button" @click="sortOrder = sortOrder === 'desc' ? 'asc' : 'desc'">
           {{ sortOrder === 'desc' ? '降序' : '升序' }}
-        </v-btn>
-        <span class="logs-count text-body-2 text-medium-emphasis" role="status">共 {{ totalLogs.toLocaleString() }} 次尝试</span>
-        <v-btn color="primary" variant="tonal" size="small" prepend-icon="mdi-refresh" :loading="loading" @click="loadLogs">刷新</v-btn>
-        <v-btn variant="tonal" size="small" prepend-icon="mdi-download" :disabled="!requestLogs.length" @click="exportCurrentPage">导出本页</v-btn>
-        <v-btn color="error" variant="tonal" size="small" prepend-icon="mdi-broom" @click="openPurgeDialog">清理日志</v-btn>
+        </UiButton>
+        <span class="logs-count text-sm text-muted-foreground" role="status">共 {{ totalLogs.toLocaleString() }} 次尝试</span>
+        <UiButton color="primary" variant="tonal" size="small" prepend-icon="mdi-refresh" :loading="loading" @click="loadLogs">刷新</UiButton>
+        <UiButton variant="tonal" size="small" prepend-icon="mdi-download" :disabled="!requestLogs.length" @click="exportCurrentPage">导出本页</UiButton>
+        <UiButton color="error" variant="tonal" size="small" prepend-icon="mdi-broom" @click="openPurgeDialog">清理日志</UiButton>
       </div>
 
       <details class="advanced-filters mb-4">
         <summary>更多筛选与自定义时间</summary>
         <div class="advanced-filters__grid">
-          <v-text-field v-model="channelFilter" label="渠道名称（精确）" density="compact" hide-details clearable />
-          <v-text-field v-model="modelFilter" label="实际模型（精确）" density="compact" hide-details clearable />
-          <v-text-field v-model="errorTypeFilter" label="错误类型" density="compact" hide-details clearable />
-          <v-text-field v-model="upstreamFilter" label="上游地址" density="compact" hide-details clearable />
-          <v-text-field v-model="keyMaskFilter" label="密钥掩码" density="compact" hide-details clearable />
-          <v-select v-model="retriedFilter" :items="booleanFilterItems" label="是否重试" density="compact" hide-details />
-          <v-select v-model="streamFilter" :items="booleanFilterItems" label="是否流式" density="compact" hide-details />
-          <v-text-field v-if="datePreset === 'custom'" v-model="fromTime" type="datetime-local" label="开始时间" density="compact" hide-details />
-          <v-text-field v-if="datePreset === 'custom'" v-model="toTime" type="datetime-local" label="结束时间" density="compact" hide-details />
-          <v-btn variant="text" color="primary" prepend-icon="mdi-filter-remove-outline" @click="clearFilters">清除全部筛选</v-btn>
+          <UiInput v-model="channelFilter" label="渠道名称（精确）" density="compact" hide-details clearable />
+          <UiInput v-model="modelFilter" label="实际模型（精确）" density="compact" hide-details clearable />
+          <UiInput v-model="errorTypeFilter" label="错误类型" density="compact" hide-details clearable />
+          <UiInput v-model="upstreamFilter" label="上游地址" density="compact" hide-details clearable />
+          <UiInput v-model="keyMaskFilter" label="密钥掩码" density="compact" hide-details clearable />
+          <UiSelect v-model="retriedFilter" :items="booleanFilterItems" label="是否重试" density="compact" hide-details />
+          <UiSelect v-model="streamFilter" :items="booleanFilterItems" label="是否流式" density="compact" hide-details />
+          <UiInput v-if="datePreset === 'custom'" v-model="fromTime" type="datetime-local" label="开始时间" density="compact" hide-details />
+          <UiInput v-if="datePreset === 'custom'" v-model="toTime" type="datetime-local" label="结束时间" density="compact" hide-details />
+          <UiButton variant="text" color="primary" prepend-icon="mdi-filter-remove-outline" @click="clearFilters">清除全部筛选</UiButton>
         </div>
       </details>
 
-      <v-alert v-if="purgeNotice" type="success" variant="tonal" density="compact" class="mb-4" closable @click:close="purgeNotice = ''">
+      <UiAlert v-if="purgeNotice" type="success" variant="tonal" density="compact" class="mb-4" closable @click:close="purgeNotice = ''">
         {{ purgeNotice }}
-      </v-alert>
+      </UiAlert>
 
-      <v-alert v-if="error" type="error" variant="tonal" density="compact" class="mb-4">
+      <UiAlert v-if="error" type="error" variant="tonal" density="compact" class="mb-4">
         {{ error }}
         <span v-if="requestLogs.length">；下方保留上次成功加载的结果。</span>
-      </v-alert>
+      </UiAlert>
 
-      <v-card variant="flat" class="logs-table-card" :aria-busy="loading">
-        <v-progress-linear :active="loading" :indeterminate="loading" color="primary" height="2" />
-        <v-table density="comfortable" class="request-logs-table" fixed-header>
+      <UiCard variant="flat" class="logs-table-card" :aria-busy="loading">
+        <UiProgress :active="loading" :indeterminate="loading" color="primary" height="2" />
+        <UiTable density="comfortable" class="request-logs-table" fixed-header>
           <thead>
             <tr>
               <th>时间</th>
@@ -81,66 +81,66 @@
           </thead>
           <tbody>
             <tr v-if="loading && requestLogs.length === 0">
-              <td colspan="11" class="text-center text-medium-emphasis py-8">
-                <v-progress-circular indeterminate size="24" width="2" color="primary" />
+              <td colspan="11" class="text-center text-muted-foreground py-8">
+                <UiSpinner indeterminate size="24" width="2" color="primary" />
               </td>
             </tr>
             <tr v-else-if="!loading && requestLogs.length === 0">
               <td colspan="11"><EmptyState variant="inline" icon="mdi-text-box-search-outline" title="暂无请求日志" description="当前筛选条件下没有请求记录，可放宽时间范围或更换模型。" /></td>
             </tr>
             <tr v-for="log in requestLogs" :key="log.attemptId">
-              <td class="text-no-wrap">{{ formatTime(log.timestamp) }}</td>
+              <td class="whitespace-nowrap">{{ formatTime(log.timestamp) }}</td>
               <td>
-                <v-chip size="x-small" :color="entryColor(log.apiType)" variant="tonal">
+                <UiBadge size="x-small" :color="entryColor(log.apiType)" variant="tonal">
                   {{ entryLabel(log.apiType) }}
-                </v-chip>
+                </UiBadge>
               </td>
               <td class="channel-cell">
-                <div class="font-weight-medium">{{ log.channelName || `#${log.channelIndex}` }}</div>
-                <div class="text-caption text-medium-emphasis">{{ log.baseUrl || '--' }}</div>
+                <div class="font-medium">{{ log.channelName || `#${log.channelIndex}` }}</div>
+                <div class="text-xs text-muted-foreground">{{ log.baseUrl || '--' }}</div>
               </td>
               <td>
-                <v-chip size="x-small" :color="statusColor(log.status)" variant="tonal">
+                <UiBadge size="x-small" :color="statusColor(log.status)" variant="tonal">
                   {{ formatStatus(log) }}
-                </v-chip>
-                <div class="text-caption text-medium-emphasis">{{ formatStatusMeta(log) }}</div>
+                </UiBadge>
+                <div class="text-xs text-muted-foreground">{{ formatStatusMeta(log) }}</div>
               </td>
               <td class="model-cell">
                 <div>{{ log.transform || log.resolvedModel || log.model || '--' }}</div>
-                <div v-if="log.keyMask" class="text-caption text-medium-emphasis">{{ log.keyMask }}</div>
+                <div v-if="log.keyMask" class="text-xs text-muted-foreground">{{ log.keyMask }}</div>
               </td>
-              <td class="text-no-wrap">
+              <td class="whitespace-nowrap">
                 <div>首 {{ formatSeconds(log.firstTokenMs) }}</div>
-                <div class="text-caption text-medium-emphasis">总 {{ formatSeconds(log.durationMs) }}</div>
+                <div class="text-xs text-muted-foreground">总 {{ formatSeconds(log.durationMs) }}</div>
               </td>
-              <td class="text-no-wrap">
+              <td class="whitespace-nowrap">
                 {{ formatPair(log.inputTokens, log.outputTokens) }}
-                <div class="text-caption text-medium-emphasis">
+                <div class="text-xs text-muted-foreground">
                   {{ formatPairPercent(log.inputTokens, log.outputTokens, 'I', 'O') }}
                 </div>
               </td>
-              <td class="text-no-wrap">
+              <td class="whitespace-nowrap">
                 <div>{{ formatNumber(log.cacheReadTokens) }}</div>
-                <div class="text-caption text-medium-emphasis">命中 {{ formatCacheHitRate(log) }}</div>
+                <div class="text-xs text-muted-foreground">命中 {{ formatCacheHitRate(log) }}</div>
               </td>
-              <td class="text-no-wrap performance-cell">
+              <td class="whitespace-nowrap performance-cell">
                 <div>{{ formatTPS(log.tps) }}</div>
-                <div class="text-caption text-medium-emphasis">TPM {{ formatTPM(log.tpm) }}</div>
+                <div class="text-xs text-muted-foreground">TPM {{ formatTPM(log.tpm) }}</div>
               </td>
               <td class="error-cell">
                 <button v-if="log.errorType || log.errorMessage" type="button" class="error-summary" aria-label="查看完整终止或失败原因" @click="selectedFailure = log">
                   <span class="error-summary__heading">
                     <span>{{ formatErrorType(log.errorType) }}</span>
-                    <v-icon size="16" aria-hidden="true">mdi-chevron-right</v-icon>
+                    <UiIcon size="16" aria-hidden="true">mdi-chevron-right</UiIcon>
                   </span>
                   <span v-if="log.errorMessage" class="error-summary__message">{{ log.errorMessage }}</span>
                 </button>
-                <span v-else class="text-medium-emphasis">--</span>
+                <span v-else class="text-muted-foreground">--</span>
               </td>
               <td class="action-cell">
-                <v-tooltip text="查看流量详情">
+                <UiTooltip text="查看流量详情">
                   <template #activator="{ props: tooltipProps }">
-                    <v-btn
+                    <UiButton
                       v-bind="tooltipProps"
                       icon="mdi-text-box-search-outline"
                       size="small"
@@ -150,10 +150,10 @@
                       @click="openCallDetail(log.requestId)"
                     />
                   </template>
-                </v-tooltip>
-                <v-tooltip text="查看详情日志">
+                </UiTooltip>
+                <UiTooltip text="查看详情日志">
                   <template #activator="{ props: tooltipProps }">
-                    <v-btn
+                    <UiButton
                       v-bind="tooltipProps"
                       icon="mdi-file-find-outline"
                       size="small"
@@ -163,17 +163,17 @@
                       @click="openSystemLog(log.requestId)"
                     />
                   </template>
-                </v-tooltip>
+                </UiTooltip>
               </td>
             </tr>
           </tbody>
-        </v-table>
+        </UiTable>
         <div class="logs-table-footer">
-          <span class="text-caption text-medium-emphasis">第 {{ page }} / {{ totalPages }} 页 · 当前 {{ requestLogs.length }} 条</span>
-          <v-select v-model="pageSize" :items="[25, 50, 100]" label="每页" density="compact" hide-details class="page-size-select" />
-          <v-pagination v-model="page" :length="totalPages" :total-visible="5" density="compact" size="small" />
+          <span class="text-xs text-muted-foreground">第 {{ page }} / {{ totalPages }} 页 · 当前 {{ requestLogs.length }} 条</span>
+          <UiSelect v-model="pageSize" :items="[25, 50, 100]" label="每页" density="compact" hide-details class="page-size-select" />
+          <UiPagination v-model="page" :length="totalPages" :total-visible="5" density="compact" size="small" />
         </div>
-      </v-card>
+      </UiCard>
     </div>
 
     <div v-show="activeTab === 'stats'" class="stats-tab-panel">
@@ -195,11 +195,11 @@
     <RuntimeLogsPanel v-if="activeTab === 'runtime'" />
 
     <AppDialog v-model="purgeDialog" title="清理日志" description="清理 logs.db 全部日志（运行日志、请求正文、请求记录），不可恢复，清理后自动收缩数据库文件。" size="sm" :busy="purging">
-      <v-btn-toggle v-model="purgeScope" mandatory density="compact" variant="outlined" divided class="mb-3">
-        <v-btn value="day" size="small">按天清理</v-btn>
-        <v-btn value="all" size="small">清理全部</v-btn>
-      </v-btn-toggle>
-      <v-select
+      <UiToggleGroup v-model="purgeScope" mandatory density="compact" variant="outlined" divided class="mb-3">
+        <UiButton value="day" size="small">按天清理</UiButton>
+        <UiButton value="all" size="small">清理全部</UiButton>
+      </UiToggleGroup>
+      <UiSelect
         v-if="purgeScope === 'day'"
         v-model="purgeDate"
         :items="purgeDateItems"
@@ -211,12 +211,12 @@
         :loading="purgeDatesLoading"
         no-data-text="数据库中暂无可清理的日志"
       />
-      <v-alert v-if="purgeError" type="error" variant="tonal" density="compact" class="mt-3">
+      <UiAlert v-if="purgeError" type="error" variant="tonal" density="compact" class="mt-3">
         {{ purgeError }}
-      </v-alert>
+      </UiAlert>
       <template #actions>
-        <v-btn variant="text" :disabled="purging" @click="purgeDialog = false">取消</v-btn>
-        <v-btn
+        <UiButton variant="text" :disabled="purging" @click="purgeDialog = false">取消</UiButton>
+        <UiButton
           color="error"
           variant="flat"
           prepend-icon="mdi-delete"
@@ -225,17 +225,31 @@
           @click="confirmPurge"
         >
           {{ purgeScope === 'all' ? '确认清理全部' : '确认清理该日' }}
-        </v-btn>
+        </UiButton>
       </template>
     </AppDialog>
   </div>
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiToggleGroup from '@/shared/ui/button/ToggleGroup.vue'
+import UiCard from '@/shared/ui/card/Card.vue'
+import UiPagination from '@/shared/ui/data/Pagination.vue'
+import UiTable from '@/shared/ui/data/Table.vue'
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
+import UiBadge from '@/shared/ui/feedback/Badge.vue'
+import UiProgress from '@/shared/ui/feedback/Progress.vue'
+import UiSpinner from '@/shared/ui/feedback/Spinner.vue'
+import UiInput from '@/shared/ui/field/Input.vue'
+import UiIcon from '@/shared/ui/icon/Icon.vue'
+import UiTabs from '@/shared/ui/navigation/Tabs.vue'
+import UiTooltip from '@/shared/ui/overlay/Tooltip.vue'
+import UiSelect from '@/shared/ui/select/Select.vue'
 import { computed, onMounted, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
-import PageHeader from '@/shared/components/common/PageHeader.vue'
-import AppDialog from '@/shared/components/common/AppDialog.vue'
-import EmptyState from '@/shared/components/common/EmptyState.vue'
+import PageHeader from '@/shared/components/layout/PageHeader.vue'
+import AppDialog from '@/shared/components/overlay/AppDialog.vue'
+import EmptyState from '@/shared/components/feedback/EmptyState.vue'
 import LogStorageStatus from '@/features/observability/components/log-panels/LogStorageStatus.vue'
 import { useRoute, useRouter } from 'vue-router'
 import RequestFailureDialog from '@/features/observability/components/log-panels/RequestFailureDialog.vue'
@@ -684,151 +698,109 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+@reference "@/styles/index.css";
+
 .request-logs-view {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+  @apply flex flex-col gap-4;
   /* 视口高度减去顶栏与内容区上下内边距，表格在页面内滚动。 */
-  height: calc(100dvh - var(--v-layout-top) - 48px);
-  min-height: 0;
-  overflow: hidden;
+  @apply [height:calc(100dvh_-_var(--app-header-height)_-_48px)] min-h-0 overflow-hidden;
 }
 
-.request-logs-view > :deep(.page-header) { flex-shrink: 0; margin-bottom: 0; }
+.request-logs-view > :deep(.page-header) { @apply shrink-0 mb-0; }
 
 .logs-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 16px;
-  padding: 0;
-  flex-shrink: 0;
-  border-bottom: 1px solid rgba(var(--v-theme-outline), 0.24);
+  @apply flex items-center justify-start gap-4 p-0 shrink-0 [border-bottom:1px_solid_color-mix(in_srgb,_var(--outline)_24%,_transparent)];
 }
 
 .logs-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  justify-content: flex-start;
-  padding: 16px;
-  background: rgb(var(--v-theme-surface));
-  border: 1px solid rgba(var(--v-theme-outline), 0.24);
-  border-radius: var(--cut-md);
+  @apply flex items-center gap-2.5 flex-wrap justify-start p-4 [background:var(--surface)] [border:1px_solid_color-mix(in_srgb,_var(--outline)_24%,_transparent)] rounded-control;
 }
 
 .logs-tabs {
-  flex: 0 0 auto;
+  @apply [flex:0_0_auto];
 }
 
-.logs-tabs :deep(.v-tab) {
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: 0;
-  min-width: 96px;
+.logs-tabs :deep([role=tab]) {
+  @apply [font-size:14px] font-semibold [letter-spacing:0] min-w-24;
 }
 
 .date-preset-select, .type-filter-select {
-  flex: 0 1 180px;
-  min-width: 144px;
+  @apply [flex:0_1_180px] min-w-36;
 }
-.logs-count { flex: 1; white-space: nowrap; }
+.logs-count { @apply [flex:1] whitespace-nowrap; }
 
 .system-tab-active > :deep(.system-logs-panel) {
-  flex: 1 1 auto;
-  min-height: 0;
+  @apply [flex:1_1_auto] min-h-0;
 }
 
 .request-tab-panel {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-  padding-right: 2px;
+  @apply [flex:1_1_auto] min-h-0 flex flex-col overflow-y-auto pr-0.5;
 }
 
-.stats-tab-panel { flex: 1 1 auto; min-height: 0; padding: 2px; overflow-y: auto; }
-.log-search-field { flex: 1 1 280px; min-width: 240px; }
-.sort-order-button { min-height: 40px; }
-.advanced-filters { flex-shrink: 0; padding: 10px 16px; color: rgb(var(--v-theme-on-surface-variant)); border: 1px solid rgba(var(--v-theme-outline), .2); border-radius: var(--cut-md); background: rgba(var(--v-theme-surface-bright), .3); }
-.advanced-filters summary { font-size: 12px; cursor: pointer; user-select: none; }
-.advanced-filters__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; align-items: center; padding-top: 14px; }
-.logs-table-footer { display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; padding: 8px 12px; border-top: 1px solid rgba(var(--v-theme-outline), .18); }
-.logs-table-footer > span { margin-right: auto; }
-.page-size-select { width: 90px; flex: 0 0 90px; }
-.performance-cell { min-width: 92px; }
+.stats-tab-panel { @apply [flex:1_1_auto] min-h-0 p-0.5 overflow-y-auto; }
+.log-search-field { @apply [flex:1_1_280px] min-w-60; }
+.sort-order-button { @apply min-h-10; }
+.advanced-filters { @apply shrink-0 [padding:10px_16px] text-muted-foreground [border:1px_solid_color-mix(in_srgb,_var(--outline)_20%,_transparent)] rounded-control [background:color-mix(in_srgb,_var(--surface-bright)_30%,_transparent)]; }
+.advanced-filters summary { @apply [font-size:12px] cursor-pointer [user-select:none]; }
+.advanced-filters__grid { @apply grid [grid-template-columns:repeat(auto-fit,_minmax(190px,_1fr))] gap-3 items-center pt-3.5; }
+.logs-table-footer { @apply flex items-center justify-end gap-3 flex-wrap [padding:8px_12px] [border-top:1px_solid_color-mix(in_srgb,_var(--outline)_18%,_transparent)]; }
+.logs-table-footer > span { @apply mr-auto; }
+.page-size-select { @apply w-22.5 [flex:0_0_90px]; }
+.performance-cell { @apply min-w-23; }
 
 .action-cell {
-  white-space: nowrap;
+  @apply whitespace-nowrap;
 }
 
 .logs-table-card {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
+  @apply flex flex-col [flex:1] min-h-0 overflow-hidden;
 }
 
 .request-logs-table {
-  flex: 1;
-  min-height: 0;
+  @apply [flex:1] min-h-0;
 }
-.request-logs-table :deep(table) { min-width: 1240px; }
-.request-tab-panel .logs-actions { flex-shrink: 0; }
+.request-logs-table :deep(table) { @apply min-w-310; }
+.request-tab-panel .logs-actions { @apply shrink-0; }
 
 .request-logs-table :deep(th) {
-  font-size: 12px;
-  font-weight: 700;
-  color: rgb(var(--v-theme-on-surface));
-  background: rgba(var(--v-theme-primary), 0.08);
-  white-space: nowrap;
+  @apply [font-size:12px] font-bold text-foreground [background:color-mix(in_srgb,_var(--primary)_8%,_transparent)] whitespace-nowrap;
 }
 
 .request-logs-table :deep(td) {
-  vertical-align: top;
-  font-size: 13px;
-  padding-block: 12px;
-  font-variant-numeric: tabular-nums;
+  @apply [vertical-align:top] [font-size:13px] py-3 tabular-nums;
 }
 
-.error-summary { display: flex; flex-direction: column; gap: 4px; width: 100%; min-height: 44px; padding: 0; text-align: left; border-radius: 4px; }
-.error-summary__heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-weight: 600; color: rgb(var(--v-theme-on-surface)); }
-.error-summary__heading > span { min-width: 0; }
-.error-summary__heading .v-icon { flex-shrink: 0; color: rgb(var(--v-theme-on-surface-variant)); }
-.error-summary:hover .error-summary__heading { color: rgb(var(--v-theme-primary)); }
-.error-summary__message { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: rgb(var(--v-theme-on-surface-variant)); font-size: 0.75rem; line-height: 1.5; }
+.error-summary { @apply flex flex-col gap-1 w-full min-h-11 p-0 text-left rounded-badge; }
+.error-summary__heading { @apply flex items-center justify-between gap-2 font-semibold text-foreground; }
+.error-summary__heading > span { @apply min-w-0; }
+.error-summary__heading .ui-icon { @apply shrink-0 text-muted-foreground; }
+.error-summary:hover .error-summary__heading { @apply text-primary; }
+.error-summary__message { @apply [display:-webkit-box] [-webkit-line-clamp:2] [-webkit-box-orient:vertical] overflow-hidden text-muted-foreground [font-size:0.75rem] [line-height:1.5]; }
 
 .channel-cell,
 .model-cell,
 .error-cell {
-  min-width: 150px;
-  max-width: 260px;
-  overflow-wrap: anywhere;
+  @apply min-w-37.5 max-w-65 [overflow-wrap:anywhere];
 }
 
 .dialog-title {
-  font-weight: 700;
+  @apply font-bold;
 }
 
 @media (max-width: 600px) {
   .request-logs-view {
-    height: calc(100dvh - var(--v-layout-top) - 32px);
-    min-height: 480px;
+    @apply [height:calc(100dvh_-_var(--app-header-height)_-_32px)] min-h-120;
   }
-  .date-preset-select, .type-filter-select { flex: 1 1 140px; }
+  .date-preset-select, .type-filter-select { @apply [flex:1_1_140px]; }
 }
 
 @media (max-width: 900px) {
   .logs-toolbar {
-    align-items: flex-start;
-    flex-direction: column;
+    @apply items-start flex-col;
   }
 
   .logs-actions {
-    justify-content: flex-start;
+    @apply justify-start;
   }
 }
 </style>

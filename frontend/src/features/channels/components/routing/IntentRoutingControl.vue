@@ -1,200 +1,213 @@
 <template>
-  <v-btn :variant="saved?.enabled ? 'tonal' : 'outlined'" :color="saved?.enabled ? 'primary' : undefined" :loading="loading" :aria-pressed="!!saved?.enabled" aria-label="配置当前协议的意图匹配" @click="open">
-    <v-icon start size="18">mdi-server-network</v-icon>
-    意图匹配 <span class="ml-2 text-caption">{{ saved ? saved.enabled ? '开' : '关' : '未知' }}</span>
-  </v-btn>
+  <UiButton :variant="saved?.enabled ? 'tonal' : 'outlined'" :color="saved?.enabled ? 'primary' : undefined" :loading="loading" :aria-pressed="!!saved?.enabled" aria-label="配置当前协议的意图匹配" @click="open">
+    <UiIcon start size="18">mdi-server-network</UiIcon>
+    意图匹配 <span class="ml-2 text-xs">{{ saved ? saved.enabled ? '开' : '关' : '未知' }}</span>
+  </UiButton>
   <AppDialog v-model="show" :title="protocol + ' · 意图匹配'" size="xl" :busy="saving || indexing || localBusy">
-    <v-alert v-if="error" type="error" variant="tonal" class="mb-5">{{ error }}</v-alert>
-    <v-form v-if="draft" :disabled="saving || indexing" class="intent-stack" @submit.prevent>
-      <v-switch v-model="draft.enabled" color="primary" label="启用意图分流" hint="关闭后沿用网关原有的渠道选择" persistent-hint />
+    <UiAlert v-if="error" type="error" variant="tonal" class="mb-5">{{ error }}</UiAlert>
+    <UiForm v-if="draft" :disabled="saving || indexing" class="intent-stack" @submit.prevent>
+      <UiSwitch v-model="draft.enabled" color="primary" label="启用意图分流" hint="关闭后沿用网关原有的渠道选择" persistent-hint />
       <section class="intent-stack" aria-labelledby="intent-step-routing">
-        <div class="d-flex flex-wrap align-center justify-space-between ga-3">
+        <div class="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h3 id="intent-step-routing" class="text-subtitle-1">怎么识别任务</h3>
-            <p class="text-body-2 text-medium-emphasis mb-0">选择识别方式，再设置适合各类任务的分组。</p>
+            <h3 id="intent-step-routing" class="text-base font-medium">怎么识别任务</h3>
+            <p class="text-sm text-muted-foreground mb-0">选择识别方式，再设置适合各类任务的分组。</p>
           </div>
-          <v-chip v-if="simpleMode === 'builtin'" color="primary" variant="tonal">推荐</v-chip>
+          <UiBadge v-if="simpleMode === 'builtin'" color="primary" variant="tonal">推荐</UiBadge>
         </div>
-        <v-radio-group v-model="simpleMode" hide-details>
+        <UiRadioGroup v-model="simpleMode" hide-details>
           <div class="intent-strategies">
             <div v-for="mode in simpleModes" :key="mode.value" class="intent-strategy" :class="{ 'intent-strategy-selected': simpleMode === mode.value }" role="radio" :aria-checked="simpleMode === mode.value" :tabindex="saving || indexing ? -1 : 0" @click="chooseMode(mode.value)" @keydown.enter.prevent="chooseMode(mode.value)" @keydown.space.prevent="chooseMode(mode.value)">
-              <v-radio :label="mode.title" :value="mode.value" />
-              <p class="text-caption text-medium-emphasis ml-8 mb-0">{{ mode.description }}</p>
+              <UiRadio :label="mode.title" :value="mode.value" />
+              <p class="text-xs text-muted-foreground ml-8 mb-0">{{ mode.description }}</p>
             </div>
           </div>
-        </v-radio-group>
+        </UiRadioGroup>
         <template v-if="simpleMode === 'hybrid'">
-          <v-select :model-value="hybridCombination" :items="hybridCombinations" label="混合组合" @update:model-value="selectHybridCombination" />
-          <p class="text-body-2 text-medium-emphasis">固定顺序：{{ recognitionStages.map(stage => stageTitles[stage]).join(' → ') }}。可靠识别后停止；未识别才继续，调用失败按下方异常处理执行。</p>
+          <UiSelect :model-value="hybridCombination" :items="hybridCombinations" label="混合组合" @update:model-value="selectHybridCombination" />
+          <p class="text-sm text-muted-foreground">固定顺序：{{ recognitionStages.map(stage => stageTitles[stage]).join(' → ') }}。可靠识别后停止；未识别才继续，调用失败按下方异常处理执行。</p>
         </template>
         <template v-if="usesEmbedding">
-          <v-select :model-value="draft.embeddingSource" :items="[{ title: '一键下载本地模型', value: 'local' }, { title: '使用已配置的 Embeddings 渠道', value: 'remote' }]" label="向量模型来源" @update:model-value="selectEmbeddingSource" />
+          <UiSelect :model-value="draft.embeddingSource" :items="[{ title: '一键下载本地模型', value: 'local' }, { title: '使用已配置的 Embeddings 渠道', value: 'remote' }]" label="向量模型来源" @update:model-value="selectEmbeddingSource" />
           <template v-if="draft.embeddingSource === 'local'">
             <LocalEmbeddingSettings @status="updateLocalStatus" @busy="localBusy = $event" />
-            <v-btn v-if="localStatus?.ready && draft.embeddingModel !== localStatus.manifest.modelName" variant="tonal" @click="useLocalEmbedding">使用已安装的模型 {{ localStatus.manifest.modelName }}</v-btn>
-            <p v-if="draft.embeddingModel" class="text-body-2">当前向量模型：{{ draft.embeddingModel }}</p>
+            <UiButton v-if="localStatus?.ready && draft.embeddingModel !== localStatus.manifest.modelName" variant="tonal" @click="useLocalEmbedding">使用已安装的模型 {{ localStatus.manifest.modelName }}</UiButton>
+            <p v-if="draft.embeddingModel" class="text-sm">当前向量模型：{{ draft.embeddingModel }}</p>
           </template>
           <ChannelPicker v-else v-model="draft.embeddingChannel" v-model:selected-model="draft.embeddingModel" :options="embeddingOptions" show-model model-label="向量模型" :disabled="saving || indexing" />
           <div class="intent-inline-status">
-            <span class="text-body-2" :class="vectorReason ? 'text-warning' : 'text-primary'">{{ vectorReason || '向量模型已就绪' }}</span>
+            <span class="text-sm" :class="vectorReason ? 'text-warning' : 'text-primary'">{{ vectorReason || '向量模型已就绪' }}</span>
           </div>
           <DatasetPicker v-model="draft.datasetIds" kind="intent" :multiple="false" :profile="embeddingProfile" :refresh-key="datasetRefresh" />
-          <v-alert v-if="indexError" type="warning" variant="tonal">{{ indexError }}</v-alert>
-          <p class="text-body-2 text-medium-emphasis">数据集和请求使用同一套向量配置。更换本地模型、渠道、渠道映射后的模型、版本或前缀后，须重新计算并发布索引；旧模型索引仍保留。</p>
-          <p class="text-caption text-medium-emphasis mb-0">内置样本已保存在本地，可在数据集页面直接查看、审核并保存，再构建索引。</p>
-          <v-btn variant="tonal" :loading="indexing" :disabled="indexing || localBusy || !!vectorReason" @click="prepareSemanticIndex">{{ draft.datasetIds?.length ? '按当前模型重新构建并发布索引' : '采用内置样本并构建索引' }}</v-btn>
+          <UiAlert v-if="indexError" type="warning" variant="tonal">{{ indexError }}</UiAlert>
+          <p class="text-sm text-muted-foreground">数据集和请求使用同一套向量配置。更换本地模型、渠道、渠道映射后的模型、版本或前缀后，须重新计算并发布索引；旧模型索引仍保留。</p>
+          <p class="text-xs text-muted-foreground mb-0">内置样本已保存在本地，可在数据集页面直接查看、审核并保存，再构建索引。</p>
+          <UiButton variant="tonal" :loading="indexing" :disabled="indexing || localBusy || !!vectorReason" @click="prepareSemanticIndex">{{ draft.datasetIds?.length ? '按当前模型重新构建并发布索引' : '采用内置样本并构建索引' }}</UiButton>
         </template>
         <template v-if="usesAssistant">
-          <v-select :model-value="draft.classifier" :items="assistantClassifiers" label="判断类型" @update:model-value="selectClassifier" />
-          <v-alert v-if="!classifierOptions.length" type="warning" variant="tonal">{{ usesDecisions ? '没有可用的 Decisions 渠道，请先添加并启用渠道。' : '没有可用的辅助判断渠道，请先启用渠道并配置密钥。' }}</v-alert>
+          <UiSelect :model-value="draft.classifier" :items="assistantClassifiers" label="判断类型" @update:model-value="selectClassifier" />
+          <UiAlert v-if="!classifierOptions.length" type="warning" variant="tonal">{{ usesDecisions ? '没有可用的 Decisions 渠道，请先添加并启用渠道。' : '没有可用的辅助判断渠道，请先启用渠道并配置密钥。' }}</UiAlert>
           <template v-else>
             <ChannelPicker v-model="draft.classifierChannel" v-model:selected-model="draft.classifierModel" :options="classifierOptions" label="判断渠道" show-model model-label="判断模型" :disabled="saving || indexing" />
           </template>
         </template>
-        <div v-if="simpleMode === 'custom'" class="d-flex flex-wrap align-center ga-3">
-          <span class="text-body-2 text-medium-emphasis">当前使用自定义模式：{{ strategyTitle(draft.strategy) }}</span>
-          <v-btn variant="tonal" size="small" @click="simpleMode = 'builtin'">改用内置规则与分组能力</v-btn>
+        <div v-if="simpleMode === 'custom'" class="flex flex-wrap items-center gap-3">
+          <span class="text-sm text-muted-foreground">当前使用自定义模式：{{ strategyTitle(draft.strategy) }}</span>
+          <UiButton variant="tonal" size="small" @click="simpleMode = 'builtin'">改用内置规则与分组能力</UiButton>
         </div>
-        <p class="text-body-2 text-medium-emphasis">意图分流命中时优先选择目标分组，代替原来的模型分组选组；客户端请求模型仍用于渠道内模型映射。人工固定、会话驻留和工具续轮保护优先。</p>
+        <p class="text-sm text-muted-foreground">意图分流命中时优先选择目标分组，代替原来的模型分组选组；客户端请求模型仍用于渠道内模型映射。人工固定、会话驻留和工具续轮保护优先。</p>
       </section>
-      <v-divider />
+      <hr class="border-0 border-t border-border" />
       <section v-if="draft.strategy === 'auto'" ref="groupsSection" class="intent-stack" aria-labelledby="intent-step-groups">
-        <div class="d-flex flex-wrap align-center justify-space-between ga-3">
-          <h3 id="intent-step-groups" class="text-subtitle-1">第 2 步 · 分组能力</h3>
-          <span class="text-body-2 text-medium-emphasis">{{ configuredGroups }} / {{ pools.length }} 个分组已配置能力</span>
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <h3 id="intent-step-groups" class="text-base font-medium">第 2 步 · 分组能力</h3>
+          <span class="text-sm text-muted-foreground">{{ configuredGroups }} / {{ pools.length }} 个分组已配置能力</span>
         </div>
         <IntentGroupCapabilities v-model="groups" :pools="pools" :tasks="options.tasks ?? []" :disabled="saving || indexing" :use-feedback="!!draft.useFeedback" />
       </section>
-      <v-divider />
+      <hr class="border-0 border-t border-border" />
       <section class="intent-stack" aria-labelledby="intent-step-preview">
-        <h3 id="intent-step-preview" class="text-subtitle-1">第 3 步 · 试一条</h3>
-        <v-combobox v-model="previewModel" :items="requestModels" :return-object="false" label="模拟客户端请求模型" hint="用于展示原分组与意图分组下的模型映射，不是辅助判断模型。" persistent-hint clearable @update:model-value="previewModel ||= ''" />
-        <v-textarea v-model="previewText" label="模拟用户任务" rows="3" placeholder="例如：排查并修复 Go 服务中的并发死锁" hint="只预览当前草稿；远程判断和向量匹配会调用辅助模型。" />
-        <div><v-btn variant="tonal" :loading="previewing" :disabled="!previewText.trim() || !!vectorReason || !!classifierReason || !!indexError || indexChecking" @click="preview">测试匹配</v-btn></div>
-        <v-alert v-if="decision?.routing" type="info" variant="tonal">
+        <h3 id="intent-step-preview" class="text-base font-medium">第 3 步 · 试一条</h3>
+        <UiSelect v-model="previewModel" searchable creatable :items="requestModels" :return-object="false" label="模拟客户端请求模型" hint="用于展示原分组与意图分组下的模型映射，不是辅助判断模型。" persistent-hint clearable @update:model-value="previewModel ||= ''" />
+        <UiTextarea v-model="previewText" label="模拟用户任务" rows="3" placeholder="例如：排查并修复 Go 服务中的并发死锁" hint="只预览当前草稿；远程判断和向量匹配会调用辅助模型。" />
+        <div><UiButton variant="tonal" :loading="previewing" :disabled="!previewText.trim() || !!vectorReason || !!classifierReason || !!indexError || indexChecking" @click="preview">测试匹配</UiButton></div>
+        <UiAlert v-if="decision?.routing" type="info" variant="tonal">
           请求模型：{{ decision.routing.requestedModel }}；原路由分组：{{ decision.routing.originalPools.join('、') || '无' }}；本次预览分组：{{ decision.routing.selectedPools.join('、') || '无' }}。
           <div v-for="(candidate, index) in decision.routing.candidates" :key="index">{{ candidate.channel }} → {{ candidate.model }}</div>
-          <div class="text-caption">这里只展示配置中的候选，不调用任务模型，也不模拟实际会话固定、健康检查及故障转移。</div>
-        </v-alert>
-        <p v-if="decision?.trace?.stages?.length" class="text-body-2">{{ decision.trace.stages.map(stage => `${stageTitles[stage.stage] ?? stage.stage}：${stage.matched ? '已识别' : '未可靠识别'}`).join(' → ') }}</p>
+          <div class="text-xs">这里只展示配置中的候选，不调用任务模型，也不模拟实际会话固定、健康检查及故障转移。</div>
+        </UiAlert>
+        <p v-if="decision?.trace?.stages?.length" class="text-sm">{{ decision.trace.stages.map(stage => `${stageTitles[stage.stage] ?? stage.stage}：${stage.matched ? '已识别' : '未可靠识别'}`).join(' → ') }}</p>
         <IntentMatchTrace v-if="decision" :decision="decision" :tasks="options.tasks ?? []" preview />
       </section>
-      <v-expansion-panels variant="accordion">
-        <v-expansion-panel title="路由保护与异常处理（可选）">
-          <v-expansion-panel-text>
+      <UiAccordion variant="accordion">
+        <UiAccordionItem title="路由保护与异常处理（可选）">
+          <div class="px-4 pb-4">
             <div class="intent-stack">
-              <v-select v-if="simpleMode === 'custom'" v-model="draft.strategy" :items="strategies" label="自定义匹配模式" item-title="title" item-value="value" />
+              <UiSelect v-if="simpleMode === 'custom'" v-model="draft.strategy" :items="strategies" label="自定义匹配模式" item-title="title" item-value="value" />
               <template v-if="draft.strategy !== 'auto'">
-                <v-alert v-if="!draft.routes.length" type="info" variant="tonal">添加规则映射后即可启用。</v-alert>
-                <div class="d-flex flex-wrap align-center justify-space-between ga-3">
-                  <h3 class="text-subtitle-1">{{ draft.strategy === 'regex' ? '正则规则' : '规则映射' }}</h3>
-                  <v-btn variant="tonal" size="small" :disabled="saving" @click="addRoute">添加映射</v-btn>
+                <UiAlert v-if="!draft.routes.length" type="info" variant="tonal">添加规则映射后即可启用。</UiAlert>
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                  <h3 class="text-base font-medium">{{ draft.strategy === 'regex' ? '正则规则' : '规则映射' }}</h3>
+                  <UiButton variant="tonal" size="small" :disabled="saving" @click="addRoute">添加映射</UiButton>
                 </div>
-                <v-expansion-panels variant="accordion" class="mb-5">
-                  <v-expansion-panel v-for="(route, index) in draft.routes" :key="index">
-                    <v-expansion-panel-title>{{ poolName(route.poolId) }} · {{ route.description || route.id || '待配置' }}</v-expansion-panel-title>
-                    <v-expansion-panel-text>
+                <UiAccordion variant="accordion" class="mb-5">
+                  <UiAccordionItem v-for="(route, index) in draft.routes" :key="index">
+                    <summary class="cursor-pointer px-4 py-3 font-medium">{{ poolName(route.poolId) }} · {{ route.description || route.id || '待配置' }}</summary>
+                    <div class="px-4 pb-4">
                       <div class="intent-stack pt-2">
-                        <v-select v-model="route.poolId" :items="pools" item-title="name" item-value="id" label="目标分组" />
-                        <v-text-field v-model="route.description" label="任务说明" />
-                        <v-text-field v-if="draft.strategy === 'semantic'" v-model="route.label" label="数据集类别" hint="与样本 label 一致，留空使用映射 ID" persistent-hint />
-                        <v-textarea v-if="draft.strategy === 'regex'" :model-value="route.patterns.join('\n')" label="正则表达式，每行一条" rows="3" @update:model-value="route.patterns = lines($event)" />
-                        <v-textarea v-if="draft.strategy === 'semantic' && !draft.datasetIds?.length" :model-value="route.examples.join('\n')" label="任务例句，每行一句" rows="3" @update:model-value="route.examples = lines($event)" />
-                        <v-select v-model="route.tier" :items="tiers" label="难度等级" />
-                        <v-text-field v-if="draft.strategy === 'adaptive'" v-model.number="route.cost" type="number" min="0" label="相对成本" />
-                        <v-text-field v-model="route.id" label="映射 ID" hint="已自动生成，用于稳定引用" persistent-hint />
-                        <v-btn variant="text" color="error" @click="draft.routes.splice(index, 1)">移除映射</v-btn>
+                        <UiSelect v-model="route.poolId" :items="pools" item-title="name" item-value="id" label="目标分组" />
+                        <UiInput v-model="route.description" label="任务说明" />
+                        <UiInput v-if="draft.strategy === 'semantic'" v-model="route.label" label="数据集类别" hint="与样本 label 一致，留空使用映射 ID" persistent-hint />
+                        <UiTextarea v-if="draft.strategy === 'regex'" :model-value="route.patterns.join('\n')" label="正则表达式，每行一条" rows="3" @update:model-value="route.patterns = lines($event)" />
+                        <UiTextarea v-if="draft.strategy === 'semantic' && !draft.datasetIds?.length" :model-value="route.examples.join('\n')" label="任务例句，每行一句" rows="3" @update:model-value="route.examples = lines($event)" />
+                        <UiSelect v-model="route.tier" :items="tiers" label="难度等级" />
+                        <UiInput v-if="draft.strategy === 'adaptive'" v-model.number="route.cost" type="number" min="0" label="相对成本" />
+                        <UiInput v-model="route.id" label="映射 ID" hint="已自动生成，用于稳定引用" persistent-hint />
+                        <UiButton variant="text" color="error" @click="draft.routes.splice(index, 1)">移除映射</UiButton>
                       </div>
-                    </v-expansion-panel-text>
-                  </v-expansion-panel>
-                </v-expansion-panels>
+                    </div>
+                  </UiAccordionItem>
+                </UiAccordion>
               </template>
-              <v-select v-if="simpleMode === 'custom' && draft.strategy === 'auto'" v-model="draft.taskMatcher" :items="[{ title: '内置规则', value: 'builtin' }, { title: '向量数据集', value: 'semantic' }]" label="旧配置任务识别来源" />
-              <v-select v-if="needsClassifier && simpleMode === 'custom'" :model-value="draft.classifier" :items="classifiers" label="旧配置判断方式" @update:model-value="selectClassifier" />
+              <UiSelect v-if="simpleMode === 'custom' && draft.strategy === 'auto'" v-model="draft.taskMatcher" :items="[{ title: '内置规则', value: 'builtin' }, { title: '向量数据集', value: 'semantic' }]" label="旧配置任务识别来源" />
+              <UiSelect v-if="needsClassifier && simpleMode === 'custom'" :model-value="draft.classifier" :items="classifiers" label="旧配置判断方式" @update:model-value="selectClassifier" />
               <template v-if="needsClassifier && draft.classifier !== 'heuristic' && simpleMode === 'custom'">
-                <v-alert v-if="!classifierOptions.length" type="warning" variant="tonal">{{ usesDecisions ? '没有可用的 Decisions 渠道，请先添加并启用渠道。' : '没有可用的辅助判断渠道，请先启用渠道并配置密钥。' }}</v-alert>
+                <UiAlert v-if="!classifierOptions.length" type="warning" variant="tonal">{{ usesDecisions ? '没有可用的 Decisions 渠道，请先添加并启用渠道。' : '没有可用的辅助判断渠道，请先启用渠道并配置密钥。' }}</UiAlert>
                 <template v-else>
                   <ChannelPicker v-model="draft.classifierChannel" v-model:selected-model="draft.classifierModel" :options="classifierOptions" label="判断渠道" show-model model-label="判断模型" />
                 </template>
               </template>
-              <v-expansion-panels variant="accordion">
-                <v-expansion-panel title="会话稳定性"><v-expansion-panel-text>
+              <UiAccordion variant="accordion">
+                <UiAccordionItem title="会话稳定性"><div class="px-4 pb-4">
                   <div class="intent-fields">
-                    <v-text-field v-model.number="draft.minResidenceSeconds" type="number" min="30" label="最短驻留时间（秒）" hint="新任务至少在原组停留多久，避免反复切换；默认 300 秒。" persistent-hint />
-                    <v-text-field v-model.number="draft.minTurns" type="number" min="1" label="切换前最少用户轮次" hint="至少完成多少轮后才重新判断分组；默认 4 轮。工具续轮始终保护原来源。" persistent-hint />
+                    <UiInput v-model.number="draft.minResidenceSeconds" type="number" min="30" label="最短驻留时间（秒）" hint="新任务至少在原组停留多久，避免反复切换；默认 300 秒。" persistent-hint />
+                    <UiInput v-model.number="draft.minTurns" type="number" min="1" label="切换前最少用户轮次" hint="至少完成多少轮后才重新判断分组；默认 4 轮。工具续轮始终保护原来源。" persistent-hint />
                   </div>
-                  <v-switch v-if="draft.strategy === 'auto'" v-model="draft.useFeedback" label="同能力分组参考反馈与相对成本" hide-details />
-                  <v-switch v-if="draft.strategy === 'adaptive'" v-model="draft.observeOnly" label="自适应选组仅观察建议" hide-details />
-                </v-expansion-panel-text></v-expansion-panel>
-                <v-expansion-panel title="未命中与失败"><v-expansion-panel-text>
+                  <UiSwitch v-if="draft.strategy === 'auto'" v-model="draft.useFeedback" label="同能力分组参考反馈与相对成本" hide-details />
+                  <UiSwitch v-if="draft.strategy === 'adaptive'" v-model="draft.observeOnly" label="自适应选组仅观察建议" hide-details />
+                </div></UiAccordionItem>
+                <UiAccordionItem title="未命中与失败"><div class="px-4 pb-4">
                   <div class="intent-stack">
-                    <v-select v-model="draft.unmatched" :items="[{ title: '沿用客户端模型的原路由', value: 'original' }, { title: '返回未命中错误', value: 'error' }, { title: '使用指定分组', value: 'fallback' }]" label="识别不出来时" hint="所有已选识别方式都未可靠命中时执行。" persistent-hint />
-                    <v-select v-if="draft.unmatched === 'fallback'" v-model="draft.fallbackPoolId" :items="pools" item-title="name" item-value="id" label="未命中目标分组" />
-                    <v-select v-model="draft.failurePolicy" :items="[{ title: '沿用原路由并记录失败', value: 'keep' }, { title: '返回明确错误', value: 'error' }]" label="辅助判断失败或超时" />
-                    <v-text-field v-model.number="draft.timeoutMs" type="number" min="100" max="30000" label="识别总超时（毫秒）" hint="混合模式共用这个时间预算，超时视为调用失败。" persistent-hint />
+                    <UiSelect v-model="draft.unmatched" :items="[{ title: '沿用客户端模型的原路由', value: 'original' }, { title: '返回未命中错误', value: 'error' }, { title: '使用指定分组', value: 'fallback' }]" label="识别不出来时" hint="所有已选识别方式都未可靠命中时执行。" persistent-hint />
+                    <UiSelect v-if="draft.unmatched === 'fallback'" v-model="draft.fallbackPoolId" :items="pools" item-title="name" item-value="id" label="未命中目标分组" />
+                    <UiSelect v-model="draft.failurePolicy" :items="[{ title: '沿用原路由并记录失败', value: 'keep' }, { title: '返回明确错误', value: 'error' }]" label="辅助判断失败或超时" />
+                    <UiInput v-model.number="draft.timeoutMs" type="number" min="100" max="30000" label="识别总超时（毫秒）" hint="混合模式共用这个时间预算，超时视为调用失败。" persistent-hint />
                   </div>
-                </v-expansion-panel-text></v-expansion-panel>
-                <v-expansion-panel v-if="usesEmbedding" title="高级向量参数"><v-expansion-panel-text>
+                </div></UiAccordionItem>
+                <UiAccordionItem v-if="usesEmbedding" title="高级向量参数"><div class="px-4 pb-4">
                   <div class="intent-stack">
                     <EmbeddingProfileFields v-model="embeddingProfile" hide-timeout hide-source />
                     <div class="intent-fields">
-                      <v-text-field v-model.number="draft.threshold" type="number" min="0" max="1" step="0.01" label="语义命中阈值" hint="相似度低于此值不采纳；默认 0.75。" persistent-hint />
-                      <v-text-field v-model.number="draft.switchMargin" type="number" min="0" max="1" step="0.01" label="最小相似度差值" hint="最佳与次佳类别太接近时不采纳；默认 0.15。" persistent-hint />
+                      <UiInput v-model.number="draft.threshold" type="number" min="0" max="1" step="0.01" label="语义命中阈值" hint="相似度低于此值不采纳；默认 0.75。" persistent-hint />
+                      <UiInput v-model.number="draft.switchMargin" type="number" min="0" max="1" step="0.01" label="最小相似度差值" hint="最佳与次佳类别太接近时不采纳；默认 0.15。" persistent-hint />
                     </div>
-                    <div v-if="simpleMode === 'custom'"><v-btn variant="tonal" :loading="indexing" :disabled="saving || indexing || !!vectorReason" @click="buildIndex">增量构建并发布索引</v-btn></div>
-                    <p class="text-caption text-medium-emphasis">模型或前缀变化后需重新构建索引。</p>
+                    <div v-if="simpleMode === 'custom'"><UiButton variant="tonal" :loading="indexing" :disabled="saving || indexing || !!vectorReason" @click="buildIndex">增量构建并发布索引</UiButton></div>
+                    <p class="text-xs text-muted-foreground">模型或前缀变化后需重新构建索引。</p>
                   </div>
-                </v-expansion-panel-text></v-expansion-panel>
-              </v-expansion-panels>
+                </div></UiAccordionItem>
+              </UiAccordion>
             </div>
-          </v-expansion-panel-text>
-        </v-expansion-panel>
-        <v-expansion-panel title="最近路由与任务反馈" @group:selected="loadEvents"><v-expansion-panel-text>
+          </div>
+        </UiAccordionItem>
+        <UiAccordionItem title="最近路由与任务反馈" @group:selected="loadEvents"><div class="px-4 pb-4">
         <section class="intent-stack">
-          <div class="d-flex flex-wrap align-center justify-space-between ga-3"><h3 class="text-subtitle-1">最近路由与任务反馈</h3><v-btn variant="text" :loading="eventsLoading" @click="loadEvents">刷新记录</v-btn></div>
-          <p class="text-body-2 text-medium-emphasis">记录实际选组和判断耗时；满意度由你评价，不会自动训练模型。</p>
+          <div class="flex flex-wrap items-center justify-between gap-3"><h3 class="text-base font-medium">最近路由与任务反馈</h3><UiButton variant="text" :loading="eventsLoading" @click="loadEvents">刷新记录</UiButton></div>
+          <p class="text-sm text-muted-foreground">记录实际选组和判断耗时；满意度由你评价，不会自动训练模型。</p>
           <EmptyState v-if="!events.length" variant="inline" icon="mdi-history" title="暂无路由记录" description="先保存并启用意图匹配，再发送新任务，这里会记录实际命中的分组与判断耗时。" />
           <div v-for="event in events" :key="event.requestId" class="intent-event">
             <div>{{ event.target.poolId ? event.decision.trace?.groups.find(group => group.poolId === event.target.poolId)?.name ?? poolName(event.target.poolId) : '未确认执行目标' }} · {{ event.target.model || '未记录模型' }} · {{ event.success ? '已交付' : event.status === 'pending' ? '已确认目标，未记录完成' : '未完成' }}</div>
-            <div v-if="event.decision.task" class="text-body-2">{{ taskName(event.decision.task) }} · {{ tierName(event.decision.tier) }}</div>
-            <div class="text-caption text-medium-emphasis">{{ event.decision.trace?.classified ? '已执行分类' : event.decision.trace ? '本轮未分类' : '旧记录未保存分类过程' }} · {{ event.decision.reason }}<template v-if="event.decision.trace?.classified"> · {{ event.decision.durationMs }} ms</template></div>
-            <div class="text-caption text-medium-emphasis">{{ event.requestId }} · {{ formatDateTime(event.at) }}</div>
+            <div v-if="event.decision.task" class="text-sm">{{ taskName(event.decision.task) }} · {{ tierName(event.decision.tier) }}</div>
+            <div class="text-xs text-muted-foreground">{{ event.decision.trace?.classified ? '已执行分类' : event.decision.trace ? '本轮未分类' : '旧记录未保存分类过程' }} · {{ event.decision.reason }}<template v-if="event.decision.trace?.classified"> · {{ event.decision.durationMs }} ms</template></div>
+            <div class="text-xs text-muted-foreground">{{ event.requestId }} · {{ formatDateTime(event.at) }}</div>
             <details class="intent-event-detail" @toggle="toggleEvent(event.requestId, $event)"><summary>查看输入与匹配过程</summary><IntentMatchTrace v-if="expandedEvents.has(event.requestId)" :decision="event.decision" :tasks="options.tasks ?? []" :target="event.target" /></details>
-            <div v-if="event.success && !event.control && event.feedback === undefined" class="d-flex ga-2 mt-2">
-              <v-btn size="small" variant="text" :disabled="feedbackBusy" @click="feedback(event, true)">效果满意</v-btn>
-              <v-btn size="small" variant="text" :disabled="feedbackBusy" @click="feedback(event, false)">效果不满意</v-btn>
+            <div v-if="event.success && !event.control && event.feedback === undefined" class="flex gap-2 mt-2">
+              <UiButton size="small" variant="text" :disabled="feedbackBusy" @click="feedback(event, true)">效果满意</UiButton>
+              <UiButton size="small" variant="text" :disabled="feedbackBusy" @click="feedback(event, false)">效果不满意</UiButton>
             </div>
-            <span v-else-if="event.feedback !== undefined" class="text-caption">已记录：{{ event.feedback ? '满意' : '不满意' }}</span>
+            <span v-else-if="event.feedback !== undefined" class="text-xs">已记录：{{ event.feedback ? '满意' : '不满意' }}</span>
           </div>
         </section>
-        </v-expansion-panel-text></v-expansion-panel>
-      </v-expansion-panels>
-    </v-form>
+        </div></UiAccordionItem>
+      </UiAccordion>
+    </UiForm>
     <template #actions>
-      <span v-if="vectorReason || classifierReason || indexError" class="text-caption text-error mr-auto" role="status">{{ vectorReason || classifierReason || indexError }}</span>
-      <v-btn :disabled="saving || indexing || localBusy" @click="show = false">取消</v-btn>
-      <v-btn color="primary" variant="flat" :loading="saving" :disabled="!draft || indexing || localBusy || (draft.enabled && (!!vectorReason || !!classifierReason || !!indexError || indexChecking))" @click="save">保存当前协议</v-btn>
+      <span v-if="vectorReason || classifierReason || indexError" class="text-xs text-destructive mr-auto" role="status">{{ vectorReason || classifierReason || indexError }}</span>
+      <UiButton :disabled="saving || indexing || localBusy" @click="show = false">取消</UiButton>
+      <UiButton color="primary" variant="flat" :loading="saving" :disabled="!draft || indexing || localBusy || (draft.enabled && (!!vectorReason || !!classifierReason || !!indexError || indexChecking))" @click="save">保存当前协议</UiButton>
     </template>
   </AppDialog>
   <AppDialog v-if="simpleMode === 'custom'" v-model="vectorGuide" title="先准备向量模型" size="md" :busy="localBusy">
     <div class="intent-stack">
-      <p class="text-body-2">语义匹配需要本地模型就绪，或配置已有 Embeddings 渠道。</p>
+      <p class="text-sm">语义匹配需要本地模型就绪，或配置已有 Embeddings 渠道。</p>
       <LocalEmbeddingSettings @status="updateLocalStatus" @busy="localBusy = $event" />
-      <v-btn v-if="localStatus?.ready" variant="tonal" @click="continueWithLocalEmbedding">使用本地模型并继续</v-btn>
-      <v-divider />
-      <v-btn v-if="options.embeddings.length" variant="tonal" @click="useRemoteEmbedding">使用已有 Embeddings 渠道</v-btn>
-      <p v-else class="text-body-2 text-medium-emphasis">暂无可用的 Embeddings 渠道，请先添加并启用渠道、配置密钥。</p>
+      <UiButton v-if="localStatus?.ready" variant="tonal" @click="continueWithLocalEmbedding">使用本地模型并继续</UiButton>
+      <hr class="border-0 border-t border-border" />
+      <UiButton v-if="options.embeddings.length" variant="tonal" @click="useRemoteEmbedding">使用已有 Embeddings 渠道</UiButton>
+      <p v-else class="text-sm text-muted-foreground">暂无可用的 Embeddings 渠道，请先添加并启用渠道、配置密钥。</p>
       <template v-if="draft && draft.embeddingSource === 'remote' && options.embeddings.length">
-        <v-select v-model="draft.embeddingChannel" :items="options.embeddings" item-title="name" item-value="id" label="Embeddings 渠道" @update:model-value="selectEmbeddingChannel" />
-        <v-text-field v-model="draft.embeddingModel" label="向量模型名称" />
-        <v-btn variant="tonal" :disabled="!draft.embeddingChannel || !draft.embeddingModel.trim()" @click="continueWithRemoteEmbedding">选择渠道并继续</v-btn>
+        <UiSelect v-model="draft.embeddingChannel" :items="options.embeddings" item-title="name" item-value="id" label="Embeddings 渠道" @update:model-value="selectEmbeddingChannel" />
+        <UiInput v-model="draft.embeddingModel" label="向量模型名称" />
+        <UiButton variant="tonal" :disabled="!draft.embeddingChannel || !draft.embeddingModel.trim()" @click="continueWithRemoteEmbedding">选择渠道并继续</UiButton>
       </template>
     </div>
-    <template #actions><v-btn :disabled="localBusy" @click="vectorGuide = false">{{ vectorReason ? '稍后配置' : '完成' }}</v-btn></template>
+    <template #actions><UiButton :disabled="localBusy" @click="vectorGuide = false">{{ vectorReason ? '稍后配置' : '完成' }}</UiButton></template>
   </AppDialog>
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiRadio from '@/shared/ui/check/Radio.vue'
+import UiRadioGroup from '@/shared/ui/check/RadioGroup.vue'
+import UiSwitch from '@/shared/ui/check/Switch.vue'
+import UiAccordion from '@/shared/ui/disclosure/Accordion.vue'
+import UiAccordionItem from '@/shared/ui/disclosure/AccordionItem.vue'
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
+import UiBadge from '@/shared/ui/feedback/Badge.vue'
+import UiInput from '@/shared/ui/field/Input.vue'
+import UiTextarea from '@/shared/ui/field/Textarea.vue'
+import UiForm from '@/shared/ui/form/Form.vue'
+import UiIcon from '@/shared/ui/icon/Icon.vue'
+import UiSelect from '@/shared/ui/select/Select.vue'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useChannelStore } from '@/features/channels/stores/channel'
 import { useIntentStore } from '@/features/channels/stores/intent'
@@ -206,9 +219,9 @@ import { datasetsApi } from '@/features/extensions/datasets'
 import { DatasetPicker, EmbeddingProfileFields } from '@/features/extensions/datasets/ui'
 import IntentGroupCapabilities from '@/features/channels/components/routing/IntentGroupCapabilities.vue'
 import IntentMatchTrace from '@/features/channels/components/routing/IntentMatchTrace.vue'
-import AppDialog from '@/shared/components/common/AppDialog.vue'
-import EmptyState from '@/shared/components/common/EmptyState.vue'
-import ChannelPicker from '@/shared/components/common/ChannelPicker.vue'
+import AppDialog from '@/shared/components/overlay/AppDialog.vue'
+import EmptyState from '@/shared/components/feedback/EmptyState.vue'
+import ChannelPicker from '@/shared/components/domain/ChannelPicker.vue'
 import { formatDateTime } from '@/shared/utils/datetime'
 import { ApiError } from '@/shared/services/http'
 
@@ -576,15 +589,17 @@ watch([() => draft.value ? embeddingProfile.value : undefined, () => draft.value
 </script>
 
 <style scoped>
-.intent-stack { display: grid; gap: 22px; }
-.intent-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 20px; }
-.intent-strategies { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-.intent-strategy { padding: 8px 12px; border: 1px solid rgba(var(--v-theme-outline), 0.25); border-radius: 8px; }
-.intent-strategy { cursor: pointer; }
-.intent-strategy-selected, .intent-strategy:focus-visible { border-color: rgb(var(--v-theme-primary)); background: rgba(var(--v-theme-primary), 0.08); outline: none; }
-.intent-strategy-disabled { opacity: 0.55; }
-.intent-event-detail { min-width: 0; }
-.intent-event-detail > summary { cursor: pointer; padding: 12px 0; min-height: 44px; }
-.intent-event { display: grid; gap: 6px; padding: 16px 0; border-bottom: 1px solid rgba(var(--v-theme-outline), 0.2); overflow-wrap: anywhere; }
-@media (max-width: 650px) { .intent-fields, .intent-strategies { grid-template-columns: minmax(0, 1fr); } }
+@reference "@/styles/index.css";
+
+.intent-stack { @apply grid gap-5.5; }
+.intent-fields { @apply grid [grid-template-columns:repeat(2,_minmax(0,_1fr))] [gap:22px_20px]; }
+.intent-strategies { @apply grid [grid-template-columns:repeat(2,_minmax(0,_1fr))] gap-2.5; }
+.intent-strategy { @apply [padding:8px_12px] [border:1px_solid_color-mix(in_srgb,_var(--outline)_25%,_transparent)] rounded-control; }
+.intent-strategy { @apply cursor-pointer; }
+.intent-strategy-selected, .intent-strategy:focus-visible { @apply border-primary [background:color-mix(in_srgb,_var(--primary)_8%,_transparent)] [outline:none]; }
+.intent-strategy-disabled { @apply opacity-55; }
+.intent-event-detail { @apply min-w-0; }
+.intent-event-detail > summary { @apply cursor-pointer [padding:12px_0] min-h-11; }
+.intent-event { @apply grid gap-1.5 [padding:16px_0] [border-bottom:1px_solid_color-mix(in_srgb,_var(--outline)_20%,_transparent)] [overflow-wrap:anywhere]; }
+@media (max-width: 650px) { .intent-fields, .intent-strategies { @apply [grid-template-columns:minmax(0,_1fr)]; } }
 </style>

@@ -1,0 +1,3 @@
+:root, [data-radius='standard'] { --radius-control: 8px; --radius-card: 14px; --radius-dialog: 16px; --radius-badge: 6px; }
+[data-radius='square'] { --radius-control: 0px; --radius-card: 0px; --radius-dialog: 0px; --radius-badge: 0px; }
+[data-radius='rounded'] { --radius-control: 16px; --radius-card: 24px; --radius-dialog: 28px; --radius-badge: 12px; }

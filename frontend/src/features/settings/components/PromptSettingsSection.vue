@@ -2,21 +2,21 @@
   <section aria-labelledby="prompts-settings-title">
     <div class="section-heading">
       <div>
-        <h2 id="prompts-settings-title" class="text-h6 font-weight-bold">通用提示词</h2>
+        <h2 id="prompts-settings-title" class="text-lg font-bold">通用提示词</h2>
         <!-- 集中维护带版本号的全局提示词，可一键写入各智能体客户端的提示词文件 -->
       </div>
-      <v-chip v-if="promptActiveVersion" size="small" color="success" label>
-        <v-icon start size="12">mdi-check-circle</v-icon>
+      <UiBadge v-if="promptActiveVersion" size="small" color="success" label>
+        <UiIcon start size="12">mdi-check-circle</UiIcon>
         生效版本：{{ promptActiveVersion }}
-      </v-chip>
+      </UiBadge>
     </div>
 
-    <v-alert v-if="promptNotice" :type="promptNotice.type" variant="tonal" density="compact" class="mb-5">
+    <UiAlert v-if="promptNotice" :type="promptNotice.type" variant="tonal" density="compact" class="mb-5">
       {{ promptNotice.message }}
-    </v-alert>
+    </UiAlert>
 
-    <div class="prompt-version-bar d-flex flex-wrap align-center ga-3 mb-5">
-      <v-select
+    <div class="prompt-version-bar flex flex-wrap items-center gap-3 mb-5">
+      <UiSelect
         v-model="selectedPromptEntry"
         :items="promptEntries"
         :item-title="promptEntryTitle"
@@ -28,10 +28,10 @@
         max-width="280px"
         class="prompt-version-select"
       />
-      <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-plus" @click="addPromptVersion">
+      <UiButton size="small" variant="tonal" color="primary" prepend-icon="mdi-plus" @click="addPromptVersion">
         新建版本
-      </v-btn>
-      <v-btn
+      </UiButton>
+      <UiButton
         size="small"
         variant="tonal"
         color="success"
@@ -40,8 +40,8 @@
         @click="setActivePromptVersion"
       >
         设为生效版本
-      </v-btn>
-      <v-btn
+      </UiButton>
+      <UiButton
         size="small"
         variant="text"
         color="error"
@@ -50,13 +50,13 @@
         @click="askRemovePromptVersion"
       >
         删除版本
-      </v-btn>
+      </UiButton>
     </div>
 
     <template v-if="selectedPromptEntry">
-      <v-row>
-        <v-col cols="12" sm="4">
-          <v-text-field
+      <div class="grid grid-cols-12 gap-4">
+        <div class="min-w-0 col-span-12 sm:col-span-4"  >
+          <UiInput
             v-model.trim="selectedPromptEntry.version"
             label="版本号"
             variant="outlined"
@@ -64,9 +64,9 @@
             placeholder="例如 v1、2026-09"
             hide-details
           />
-        </v-col>
-        <v-col cols="12" sm="8">
-          <v-text-field
+        </div>
+        <div class="min-w-0 col-span-12 sm:col-span-8"  >
+          <UiInput
             v-model.trim="selectedPromptEntry.note"
             label="备注（可选）"
             variant="outlined"
@@ -74,9 +74,9 @@
             placeholder="该版本的说明"
             hide-details
           />
-        </v-col>
-      </v-row>
-      <v-textarea
+        </div>
+      </div>
+      <UiTextarea
         v-model="selectedPromptEntry.content"
         label="提示词内容"
         variant="outlined"
@@ -87,7 +87,7 @@
         class="mt-4 prompt-content-editor"
         spellcheck="false"
       />
-      <div class="text-caption text-medium-emphasis mt-1">
+      <div class="text-xs text-muted-foreground mt-1">
         更新时间：{{ formatPromptTime(selectedPromptEntry.updatedAt) }}（保存后刷新）
       </div>
     </template>
@@ -101,7 +101,7 @@
     />
 
     <div class="settings-actions">
-      <v-btn
+      <UiButton
         color="primary"
         prepend-icon="mdi-content-save"
         :loading="saving"
@@ -109,7 +109,7 @@
         @click="savePromptSettings"
       >
         保存通用提示词
-      </v-btn>
+      </UiButton>
     </div>
   </section>
   <ConfirmDialog
@@ -125,9 +125,16 @@
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
+import UiBadge from '@/shared/ui/feedback/Badge.vue'
+import UiInput from '@/shared/ui/field/Input.vue'
+import UiTextarea from '@/shared/ui/field/Textarea.vue'
+import UiIcon from '@/shared/ui/icon/Icon.vue'
+import UiSelect from '@/shared/ui/select/Select.vue'
 import type { usePromptSettings } from '@/features/settings/composables/usePromptSettings'
-import ConfirmDialog from '@/shared/components/common/ConfirmDialog.vue'
-import EmptyState from '@/shared/components/common/EmptyState.vue'
+import ConfirmDialog from '@/shared/components/overlay/ConfirmDialog.vue'
+import EmptyState from '@/shared/components/feedback/EmptyState.vue'
 import { useConfirm } from '@/shared/composables/useConfirm'
 
 const props = defineProps<{ editor: ReturnType<typeof usePromptSettings> }>()

@@ -13,12 +13,12 @@
       @toggle-vision-status="toggleChannelPrimaryStatus"
     >
       <template #heading>
-        <v-chip size="x-small" :color="isMultiChannelMode ? 'success' : 'warning'" variant="tonal">
+        <UiBadge size="x-small" :color="isMultiChannelMode ? 'success' : 'warning'" variant="tonal">
           {{ isMultiChannelMode ? '多渠道模式' : '单渠道模式' }}
-        </v-chip>
+        </UiBadge>
       </template>
       <template #free-summary="{ channel }">
-        <span class="channel-concurrency text-caption" title="当前在免费渠道处理中的独立对话数">
+        <span class="channel-concurrency text-xs" title="当前在免费渠道处理中的独立对话数">
           并发对话 <strong>{{ getChannelMetrics(channel.index)?.activeConversations ?? '—' }}</strong>
         </span>
       </template>
@@ -38,7 +38,7 @@
           >
             <div class="channel-row-main">
               <div class="drag-handle" title="拖动调整顺序" @click.stop>
-                <v-icon size="small">mdi-drag-vertical</v-icon>
+                <UiIcon size="small">mdi-drag-vertical</UiIcon>
               </div>
               <span class="priority-number" title="故障转移优先级">{{ index + 1 }}</span>
               <div class="channel-name">
@@ -58,27 +58,27 @@
                 >
                   <ChannelStatusBadge size="small" :status="element.status || 'active'" :metrics="getChannelMetrics(element.index)" />
                 </button>
-                <v-chip v-if="isInPromotion(element)" size="x-small" color="info" variant="tonal" title="促销期">
-                  <v-icon start size="12">mdi-rocket-launch</v-icon>
+                <UiBadge v-if="isInPromotion(element)" size="x-small" color="info" variant="tonal" title="促销期">
+                  <UiIcon start size="12">mdi-rocket-launch</UiIcon>
                   {{ formatPromotionRemaining(element.promotionUntil, element.promotionCount) }}
-                </v-chip>
-                <v-chip v-if="element.temporary" size="x-small" color="warning" variant="tonal" :title="`临时渠道 · ${formatDateTime(element.temporaryUntil)} 到期`">
+                </UiBadge>
+                <UiBadge v-if="element.temporary" size="x-small" color="warning" variant="tonal" :title="`临时渠道 · ${formatDateTime(element.temporaryUntil)} 到期`">
                   临时
-                </v-chip>
-                <v-icon v-if="element.visionCapable" size="14" class="channel-vision-icon" title="支持图片理解" aria-label="支持图片理解">
+                </UiBadge>
+                <UiIcon v-if="element.visionCapable" size="14" class="channel-vision-icon" title="支持图片理解" aria-label="支持图片理解">
                   mdi-image-search-outline
-                </v-icon>
+                </UiIcon>
               </div>
               <div class="channel-actions" @click.stop>
-                <v-btn
+                <UiButton
                   size="x-small"
                   variant="text"
                   class="channel-keys"
                   :title="`${element.apiKeys?.length || 0} 个密钥`"
                   :aria-label="`编辑 ${element.name} 的 ${element.apiKeys?.length || 0} 个密钥`"
                   @click="$emit('edit', element)"
-                ><v-icon start size="12">mdi-key</v-icon>{{ element.apiKeys?.length || 0 }}</v-btn>
-                <v-btn
+                ><UiIcon start size="12">mdi-key</UiIcon>{{ element.apiKeys?.length || 0 }}</UiButton>
+                <UiButton
                   :icon="expandedChannelIndex === element.index ? 'mdi-chevron-up' : 'mdi-chevron-down'"
                   size="x-small"
                   variant="text"
@@ -142,7 +142,7 @@
           </div>
 
           <!-- 展开的图表区域 -->
-          <v-expand-transition>
+          <Transition name="ui-expand">
             <div v-if="expandedChannelIndex === element.index" class="channel-chart-wrapper">
               <KeyTrendChart
                 :key="`chart-${channelType}-${element.index}`"
@@ -151,7 +151,7 @@
                 @close="expandedChannelIndex = null"
               />
             </div>
-          </v-expand-transition>
+          </Transition>
         </div>
       </template>
 
@@ -166,7 +166,7 @@
       </template>
     </ChannelPoolGrid>
 
-    <v-divider class="my-2" />
+    <hr class="border-0 border-t border-border my-2" />
 
     <ChannelReservePools
       :inactive-channels="inactiveChannels"
@@ -194,6 +194,9 @@
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiBadge from '@/shared/ui/feedback/Badge.vue'
+import UiIcon from '@/shared/ui/icon/Icon.vue'
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { api, ApiError, channelApiByType, type ApiTab, type Channel, type ChannelMetrics, type ChannelStatus, type ChannelRecentActivity, type VisionChannel } from '@/api'
 import { useChannelActivity } from '@/features/channels/composables/useChannelActivity'

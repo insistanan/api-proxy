@@ -1,6 +1,6 @@
 <template>
   <div class="channel-metrics" :style="statusColors" @click.stop>
-    <v-tooltip v-if="metrics" location="top" :open-delay="200" :open-on-focus="false">
+    <UiTooltip v-if="metrics" location="top" :open-delay="200" :open-on-focus="false">
       <template #activator="{ props: tooltipProps }">
         <div v-bind="tooltipProps" class="metrics-visual">
           <div class="metric-row" :class="successLevel">
@@ -16,27 +16,28 @@
         </div>
       </template>
       <div class="metrics-tooltip">
-        <div class="text-caption font-weight-bold mb-1">请求统计</div>
+        <div class="text-xs font-bold mb-1">请求统计</div>
         <div v-for="item in windows" :key="item.key" class="metrics-tooltip-row">
           <span>{{ item.label }}:</span>
           <span>{{ formatStats(metrics.timeWindows?.[item.key]) }}</span>
         </div>
-        <div class="text-caption font-weight-bold mt-2 mb-1">缓存统计 (Token)</div>
+        <div class="text-xs font-bold mt-2 mb-1">缓存统计 (Token)</div>
         <div v-for="item in windows" :key="item.key" class="metrics-tooltip-row">
           <span>{{ item.label }}:</span>
           <span>{{ formatCacheStats(metrics.timeWindows?.[item.key]) }}</span>
         </div>
       </div>
-    </v-tooltip>
+    </UiTooltip>
     <span v-else class="metrics-empty">--</span>
   </div>
 </template>
 
 <script setup lang="ts">
+import UiTooltip from '@/shared/ui/overlay/Tooltip.vue'
 // 渠道行的成功率 / 缓存命中率指标条。只接收本渠道的指标快照，其他渠道刷新时不重新渲染。
 import { computed } from 'vue'
 import type { ChannelMetrics } from '@/api'
-import { CHART_STATUS_COLORS } from '@/shared/utils/chartPalette'
+import { chartColor } from '@/shared/theme'
 import {
   formatCacheStats,
   formatStats,
@@ -47,10 +48,10 @@ import {
 
 const props = defineProps<{ metrics?: ChannelMetrics }>()
 const statusColors = {
-  '--metric-success': CHART_STATUS_COLORS.success,
-  '--metric-warning': CHART_STATUS_COLORS.warning,
-  '--metric-failure': CHART_STATUS_COLORS.failure,
-  '--metric-info': CHART_STATUS_COLORS.info
+  '--metric-success': chartColor('success'),
+  '--metric-warning': chartColor('warning'),
+  '--metric-failure': chartColor('failure'),
+  '--metric-info': chartColor('info')
 }
 
 const windows = [
@@ -66,20 +67,22 @@ const cacheRate = computed(() => shouldShowCacheHitRate(recent.value) ? getCache
 </script>
 
 <style scoped>
-.channel-metrics { min-width: 0; }
-.metrics-visual { width: 100%; display: grid; gap: 6px; }
-.metric-row { display: grid; grid-template-columns: 28px minmax(80px, 1fr) 38px; align-items: center; gap: 9px; }
-.metric-label { color: rgb(var(--v-theme-on-surface-variant)); }
-.metric-track { display: block; height: 6px; overflow: hidden; border-radius: 3px; background: rgba(var(--v-theme-on-surface), 0.10); }
-.metric-fill { display: block; height: 100%; border-radius: inherit; background: currentColor; }
-.metric-row strong { text-align: end; font-variant-numeric: tabular-nums; }
-.metrics-empty { color: rgb(var(--v-theme-on-surface-variant)); }
-.metrics-visual strong { font-weight: 650; }
-.high { color: var(--metric-success); }
-.medium { color: var(--metric-warning); }
-.low { color: var(--metric-failure); }
-.cache-rate { color: var(--metric-info); }
-.metrics-tooltip { font-size: 0.8125rem; line-height: 1.6; }
-.metrics-tooltip-row { display: flex; justify-content: space-between; gap: 16px; padding: 2px 0; }
-.metrics-tooltip-row span:first-child { opacity: 0.75; }
+@reference "@/styles/index.css";
+
+.channel-metrics { @apply min-w-0; }
+.metrics-visual { @apply w-full grid gap-1.5; }
+.metric-row { @apply grid [grid-template-columns:28px_minmax(80px,_1fr)_38px] items-center [gap:9px]; }
+.metric-label { @apply text-muted-foreground; }
+.metric-track { @apply block h-1.5 overflow-hidden rounded-badge [background:color-mix(in_srgb,_var(--foreground)_10%,_transparent)]; }
+.metric-fill { @apply block h-full [border-radius:inherit] [background:currentColor]; }
+.metric-row strong { @apply text-end tabular-nums; }
+.metrics-empty { @apply text-muted-foreground; }
+.metrics-visual strong { @apply [font-weight:650]; }
+.high { @apply [color:var(--metric-success)]; }
+.medium { @apply [color:var(--metric-warning)]; }
+.low { @apply [color:var(--metric-failure)]; }
+.cache-rate { @apply [color:var(--metric-info)]; }
+.metrics-tooltip { @apply [font-size:0.8125rem] [line-height:1.6]; }
+.metrics-tooltip-row { @apply flex justify-between gap-4 [padding:2px_0]; }
+.metrics-tooltip-row span:first-child { @apply opacity-75; }
 </style>

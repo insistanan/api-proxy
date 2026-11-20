@@ -2,9 +2,9 @@
   <section class="context-trend" aria-label="全会话上下文趋势">
     <div class="trend-heading">
       <div><strong>上下文趋势</strong><p v-if="overview">全会话 {{ overview.calls }} 次调用 · {{ overview.knownCalls }} 次有可比较快照</p></div>
-      <v-chip v-if="peakPoint" size="small" variant="tonal" color="secondary">峰值 {{ estimatedLabel(peakPoint.peak?.estimatedTokens || 0) }}</v-chip>
+      <UiBadge v-if="peakPoint" size="small" variant="tonal" color="secondary">峰值 {{ estimatedLabel(peakPoint.peak?.estimatedTokens || 0) }}</UiBadge>
     </div>
-    <v-alert v-if="error" type="error" variant="tonal" density="compact">{{ error }} <v-btn size="small" variant="text" @click="load">重试</v-btn></v-alert>
+    <UiAlert v-if="error" type="error" variant="tonal" density="compact">{{ error }} <UiButton size="small" variant="text" @click="load">重试</UiButton></UiAlert>
     <p v-else-if="!overview">{{ loading ? '正在读取会话摘要…' : '暂无趋势数据' }}</p>
     <p v-else-if="overview.calls === 0">暂无会话日志，记录可能尚未生成或已清理。</p>
     <template v-if="overview && overview.calls > 0">
@@ -12,8 +12,8 @@
       <template v-if="overview.knownCalls">
         <apexchart type="bar" height="230" :options="chartOptions" :series="series" @data-point-selection="selectPoint" />
         <div class="trend-selection">
-          <v-select v-model="selectedPointIndex" :items="pointItems" label="选择趋势点" density="compact" hide-details clearable />
-          <v-btn size="small" variant="tonal" color="primary" :disabled="!selectedPoint?.requestId" @click="selectedPoint?.requestId && emit('locate', selectedPoint.requestId)">定位调用</v-btn>
+          <UiSelect v-model="selectedPointIndex" :items="pointItems" label="选择趋势点" density="compact" hide-details clearable />
+          <UiButton size="small" variant="tonal" color="primary" :disabled="!selectedPoint?.requestId" @click="selectedPoint?.requestId && emit('locate', selectedPoint.requestId)">定位调用</UiButton>
           <span v-if="selectedDelta != null" :class="selectedDelta > 0 ? 'delta-up' : selectedDelta < 0 ? 'delta-down' : ''">
             较前一快照 {{ selectedDelta > 0 ? '+' : '' }}{{ selectedDelta.toLocaleString() }} Token
           </span>
@@ -21,10 +21,10 @@
         <details class="trend-data">
           <summary>查看上下文估算数据</summary>
           <div class="trend-data__scroll">
-            <v-table density="compact">
+            <UiTable density="compact">
               <thead><tr><th>时间</th><th>调用 / 有快照</th><th>峰值估算</th><th>请求</th></tr></thead>
-              <tbody><tr v-for="(point, index) in overview.points" :key="index"><td>{{ formatDateTime(point.firstAt) }}</td><td>{{ point.calls }} / {{ point.knownCalls }}</td><td>{{ point.peak ? estimatedLabel(point.peak.estimatedTokens) : '--' }}</td><td><v-btn size="x-small" variant="text" color="primary" :disabled="!point.requestId" @click="point.requestId && emit('locate', point.requestId)">{{ point.requestId?.slice(0, 8) || '--' }}</v-btn></td></tr></tbody>
-            </v-table>
+              <tbody><tr v-for="(point, index) in overview.points" :key="index"><td>{{ formatDateTime(point.firstAt) }}</td><td>{{ point.calls }} / {{ point.knownCalls }}</td><td>{{ point.peak ? estimatedLabel(point.peak.estimatedTokens) : '--' }}</td><td><UiButton size="x-small" variant="text" color="primary" :disabled="!point.requestId" @click="point.requestId && emit('locate', point.requestId)">{{ point.requestId?.slice(0, 8) || '--' }}</UiButton></td></tr></tbody>
+            </UiTable>
           </div>
         </details>
       </template>
@@ -35,15 +35,19 @@
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiTable from '@/shared/ui/data/Table.vue'
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
+import UiBadge from '@/shared/ui/feedback/Badge.vue'
+import UiSelect from '@/shared/ui/select/Select.vue'
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
-import { useChartDarkTheme } from '@/shared/composables/useChartDarkTheme'
 import type { ApexOptions } from 'apexcharts'
 import { api, ApiError } from '@/api'
 import type { ContextOverview, ContextTrendPoint } from '@/types/logs'
 import { contextKind, estimatedLabel } from '@/features/observability/utils/contextPresentation'
 import { formatDateTime } from '@/shared/utils/datetime'
 import { defineLazyChart } from '@/shared/utils/lazyChart'
-import { chartThemeColors } from '@/shared/utils/chartPalette'
+import { useChartColors } from '@/shared/theme'
 
 const apexchart = defineLazyChart(() => import('vue3-apexcharts'))
 const props = defineProps<{ groupKey: string; version: string }>()
@@ -52,7 +56,7 @@ const overview = shallowRef<ContextOverview | null>(null)
 const loading = ref(false)
 const error = ref('')
 const selectedPointIndex = ref<number | null>(null)
-const isDark = useChartDarkTheme()
+const chartColors = useChartColors()
 let revision = 0
 let loadedKey = ''
 const peakPoint = computed(() => overview.value?.points.reduce<ContextTrendPoint | undefined>((highest, point) => (point.peak?.estimatedTokens || 0) > (highest?.peak?.estimatedTokens || 0) ? point : highest, undefined))
@@ -73,10 +77,10 @@ const series = computed(() => kinds.value.map(kind => ({
   })) || []
 })))
 const chartOptions = computed<ApexOptions>(() => {
-  const colors = chartThemeColors(isDark.value)
+  const colors = chartColors.value
   return {
     chart: { type: 'bar', stacked: true, background: 'transparent', animations: { enabled: false }, toolbar: { show: false } },
-    theme: { mode: isDark.value ? 'dark' : 'light' },
+    theme: { mode: chartColors.value.isDark ? 'dark' : 'light' },
     colors: kinds.value.map(kind => contextKind(kind).color),
     plotOptions: { bar: { columnWidth: '72%', borderRadius: 2 } },
     dataLabels: { enabled: false },
@@ -84,7 +88,7 @@ const chartOptions = computed<ApexOptions>(() => {
     xaxis: { type: 'datetime', labels: { datetimeUTC: false, format: 'MM/dd HH:mm', style: { colors: colors.text, fontSize: '11px' } }, axisBorder: { show: false }, axisTicks: { show: false } },
     yaxis: { min: 0, title: { text: '估算 Token', style: { color: colors.text, fontWeight: 400 } }, labels: { style: { colors: colors.text, fontSize: '11px' }, formatter: (value: number) => new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 1 }).format(value) } },
     legend: { show: true, position: 'top', horizontalAlign: 'left', fontSize: '11px', labels: { colors: colors.text }, markers: { size: 5, strokeWidth: 0 }, itemMargin: { horizontal: 8 } },
-    tooltip: { theme: isDark.value ? 'dark' : 'light', shared: true, intersect: false, x: { format: 'yyyy-MM-dd HH:mm:ss' }, y: { formatter: (value: number) => estimatedLabel(Math.round(value)) } },
+    tooltip: { theme: chartColors.value.isDark ? 'dark' : 'light', shared: true, intersect: false, x: { format: 'yyyy-MM-dd HH:mm:ss' }, y: { formatter: (value: number) => estimatedLabel(Math.round(value)) } },
     noData: { text: '暂无可比较快照', style: { color: colors.text } }
   }
 })
@@ -111,17 +115,19 @@ onBeforeUnmount(() => { revision++ })
 </script>
 
 <style scoped>
-.context-trend { margin-bottom: 20px; padding: 16px; border: 1px solid rgba(var(--v-theme-outline), .18); border-radius: 12px; background: rgba(var(--v-theme-surface-bright), .25); }
-.trend-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.trend-heading p, .trend-description, .trend-scale { margin: 5px 0 0; color: rgb(var(--v-theme-on-surface-variant)); font-size: 12px; }
-.trend-description { margin-bottom: 8px; }
-.trend-selection { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.trend-selection .v-input { flex: 1 1 260px; }
-.trend-selection > span { font-size: 12px; font-variant-numeric: tabular-nums; }
-.delta-up { color: rgb(var(--v-theme-warning)); }
-.delta-down { color: rgb(var(--v-theme-success)); }
-.trend-data { margin-top: 8px; color: rgb(var(--v-theme-on-surface-variant)); font-size: 12px; }
-.trend-data summary { padding: 6px 0; cursor: pointer; }
-.trend-data__scroll { max-height: 260px; overflow: auto; }
-.trend-scale { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+@reference "@/styles/index.css";
+
+.context-trend { @apply mb-5 p-4 [border:1px_solid_color-mix(in_srgb,_var(--outline)_18%,_transparent)] rounded-card [background:color-mix(in_srgb,_var(--surface-bright)_25%,_transparent)]; }
+.trend-heading { @apply flex items-start justify-between gap-3; }
+.trend-heading p, .trend-description, .trend-scale { @apply [margin:5px_0_0] text-muted-foreground [font-size:12px]; }
+.trend-description { @apply mb-2; }
+.trend-selection { @apply flex items-center gap-2.5 flex-wrap; }
+.trend-selection .ui-field-root { @apply [flex:1_1_260px]; }
+.trend-selection > span { @apply [font-size:12px] tabular-nums; }
+.delta-up { @apply text-warning; }
+.delta-down { @apply text-success; }
+.trend-data { @apply mt-2 text-muted-foreground [font-size:12px]; }
+.trend-data summary { @apply [padding:6px_0] cursor-pointer; }
+.trend-data__scroll { @apply max-h-65 overflow-auto; }
+.trend-scale { @apply flex justify-between gap-3 flex-wrap mt-2; }
 </style>

@@ -12,9 +12,9 @@
         role="alert"
       >
         <div class="gate-notif__head">
-          <v-icon size="18" :color="item.aiVerdict === 'allow' ? 'warning' : 'error'">
+          <UiIcon size="18" :color="item.aiVerdict === 'allow' ? 'warning' : 'error'">
             {{ item.aiVerdict === 'allow' ? 'mdi-shield-check' : 'mdi-shield-alert' }}
-          </v-icon>
+          </UiIcon>
           <span class="gate-notif__title">
             {{ item.aiVerdict === 'allow' ? '危险命令已放行（可否决）' : '危险命令待确认' }}
           </span>
@@ -29,7 +29,7 @@
         <div v-if="item.aiReason" class="gate-notif__reason">AI：{{ item.aiReason }}</div>
         <div class="gate-notif__actions">
           <template v-if="item.aiVerdict === 'block'">
-            <v-btn
+            <UiButton
               size="small"
               variant="flat"
               color="success"
@@ -38,8 +38,8 @@
               @click="decide(item, 'allow')"
             >
               放行本命令
-            </v-btn>
-            <v-btn
+            </UiButton>
+            <UiButton
               size="small"
               variant="tonal"
               color="error"
@@ -48,10 +48,10 @@
               @click="decide(item, 'block')"
             >
               拦截
-            </v-btn>
+            </UiButton>
           </template>
           <template v-else>
-            <v-btn
+            <UiButton
               size="small"
               variant="flat"
               color="error"
@@ -60,10 +60,10 @@
               @click="decide(item, 'block')"
             >
               否决并拦截
-            </v-btn>
+            </UiButton>
           </template>
         </div>
-        <v-progress-linear
+        <UiProgress
           :model-value="progressOf(item)"
           :color="item.aiVerdict === 'allow' ? 'warning' : 'error'"
           height="3"
@@ -76,6 +76,9 @@
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiProgress from '@/shared/ui/feedback/Progress.vue'
+import UiIcon from '@/shared/ui/icon/Icon.vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { api, type GatePending } from '@/api'
 import { useAuthStore } from '@/shared/stores/auth'
@@ -270,103 +273,67 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+@reference "@/styles/index.css";
+
 .gate-notif-stack {
-  position: fixed;
-  top: 72px;
-  right: 20px;
-  z-index: 2400;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  width: min(420px, calc(100vw - 40px));
-  pointer-events: none;
-  max-height: calc(100vh - 88px);
-  overflow-y: auto;
+  @apply fixed top-18 right-5 [z-index:2400] flex flex-col gap-3 [width:min(420px,_calc(100vw_-_40px))] pointer-events-none [max-height:calc(100vh_-_88px)] overflow-y-auto;
 }
 
 .gate-notif {
-  pointer-events: auto;
-  border-radius: 10px;
-  padding: 14px 16px 12px;
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  background: rgb(var(--v-theme-surface));
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
+  @apply pointer-events-auto rounded-control [padding:14px_16px_12px] [border:1px_solid_var(--border)] [background:var(--surface)] shadow-popover;
 }
 
 /* AI 判危险（等待放行）用 error 色调；AI 判安全（已放行可否决）用 warning 色调 */
 .gate-notif--block {
-  border-left: 4px solid rgb(var(--v-theme-error));
+  @apply [border-left:4px_solid_var(--destructive)];
 }
 
 .gate-notif--allow {
-  border-left: 4px solid rgb(var(--v-theme-warning));
+  @apply [border-left:4px_solid_var(--warning)];
 }
 
 .gate-notif__head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  @apply flex items-center gap-2;
 }
 
 .gate-notif__title {
-  font-weight: 600;
-  font-size: 0.95rem;
+  @apply font-semibold [font-size:0.95rem];
 }
 
 .gate-notif__meta {
-  margin-left: auto;
-  font-size: 0.75rem;
-  opacity: 0.72;
-  white-space: nowrap;
+  @apply ml-auto [font-size:0.75rem] opacity-72 whitespace-nowrap;
 }
 
 .gate-notif__command {
-  margin: 10px 0 8px;
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: rgba(var(--v-theme-surface-variant), 0.5);
-  font-family: 'Cascadia Code', 'JetBrains Mono', Consolas, monospace;
-  font-size: 0.8rem;
-  white-space: pre-wrap;
-  word-break: break-all;
-  max-height: 120px;
-  overflow-y: auto;
+  @apply [margin:10px_0_8px] [padding:8px_10px] rounded-badge [background:color-mix(in_srgb,_var(--surface-variant)_50%,_transparent)] [font-family:'Cascadia_Code',_'JetBrains_Mono',_Consolas,_monospace] [font-size:0.8rem] whitespace-pre-wrap [word-break:break-all] max-h-30 overflow-y-auto;
 }
 
 .gate-notif__reason {
-  font-size: 0.78rem;
-  opacity: 0.82;
-  margin-bottom: 8px;
+  @apply [font-size:0.78rem] opacity-82 mb-2;
 }
 
 .gate-notif__actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
+  @apply flex gap-2 flex-wrap;
 }
 
 .gate-notif__progress {
-  margin-top: 10px;
+  @apply mt-2.5;
 }
 
 /* 进出动画 */
 .gate-notif-enter-active,
 .gate-notif-leave-active {
-  transition: all 220ms ease;
+  @apply [transition:all_220ms_ease];
 }
 
 .gate-notif-enter-from,
 .gate-notif-leave-to {
-  opacity: 0;
-  transform: translateX(24px);
+  @apply opacity-0 [transform:translateX(24px)];
 }
 
 @media (max-width: 600px) {
   .gate-notif-stack {
-    top: 64px;
-    right: 8px;
-    left: 8px;
-    width: auto;
+    @apply top-16 right-2 left-2 w-auto;
   }
 }
 </style>

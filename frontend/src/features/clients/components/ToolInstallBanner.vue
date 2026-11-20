@@ -1,43 +1,43 @@
 <template>
-  <v-card elevation="0" class="settings-card agent-config-panel tool-install-banner mb-5">
+  <UiCard elevation="0" class="settings-card agent-config-panel tool-install-banner mb-5">
     <div class="agent-config-panel-header">
       <div>
-        <div class="agent-config-panel-title d-flex align-center ga-2">
+        <div class="agent-config-panel-title flex items-center gap-2">
           {{ info?.displayName || '工具' }} 安装与版本
-          <v-chip v-if="statusBadge" :color="statusBadge.color" size="x-small" label>
-            <v-icon start size="12">{{ statusBadge.icon }}</v-icon>
+          <UiBadge v-if="statusBadge" :color="statusBadge.color" size="x-small" label>
+            <UiIcon start size="12">{{ statusBadge.icon }}</UiIcon>
             {{ statusBadge.text }}
-          </v-chip>
+          </UiBadge>
         </div>
         <div class="agent-config-panel-subtitle">
           {{ checking ? '正在检测…' : `检测于 ${detectedAtText}` }}
           <template v-if="!checking && latestFromCacheNote">（1 小时内复用上次检测结果）</template>
         </div>
       </div>
-      <v-btn variant="text" prepend-icon="mdi-refresh" :loading="checking" @click="check(true)">重新检测</v-btn>
+      <UiButton variant="text" prepend-icon="mdi-refresh" :loading="checking" @click="check(true)">重新检测</UiButton>
     </div>
-    <v-divider />
-    <v-card-text class="pa-5">
-      <div v-if="loadError" class="text-caption text-error mb-2">{{ loadError }}</div>
-      <v-progress-linear v-if="checking && !info" indeterminate color="primary" />
+    <hr class="border-0 border-t border-border" />
+    <div class="p-4 p-5">
+      <div v-if="loadError" class="text-xs text-destructive mb-2">{{ loadError }}</div>
+      <UiProgress v-if="checking && !info" indeterminate color="primary" />
       <template v-if="info">
-        <div class="d-flex flex-wrap align-center ga-2 mb-4">
-          <span class="text-body-2 text-medium-emphasis">当前版本</span>
+        <div class="flex flex-wrap items-center gap-2 mb-4">
+          <span class="text-sm text-muted-foreground">当前版本</span>
           <code class="tool-install-banner__version">{{ info.current || (info.currentError ? '未知' : '未安装') }}</code>
-          <v-icon v-if="info.current" icon="mdi-arrow-right" size="16" />
-          <span class="text-body-2 text-medium-emphasis">最新版本</span>
+          <UiIcon v-if="info.current" icon="mdi-arrow-right" size="16" />
+          <span class="text-sm text-muted-foreground">最新版本</span>
           <code class="tool-install-banner__version">{{ info.latest || '未知' }}</code>
         </div>
 
-        <div v-if="info.currentError" class="text-caption text-error mb-2">{{ info.currentError }}</div>
-        <div v-if="info.latestError" class="text-caption text-error mb-2">{{ info.latestError }}</div>
-        <div v-if="copyError" class="text-caption text-error mb-2">{{ copyError }}</div>
+        <div v-if="info.currentError" class="text-xs text-destructive mb-2">{{ info.currentError }}</div>
+        <div v-if="info.latestError" class="text-xs text-destructive mb-2">{{ info.latestError }}</div>
+        <div v-if="copyError" class="text-xs text-destructive mb-2">{{ copyError }}</div>
 
         <div class="tool-install-banner__cmd">
           <code>{{ info.installCmd }}</code>
-          <v-tooltip location="top" :text="copied ? '已复制' : '复制命令'">
+          <UiTooltip location="top" :text="copied ? '已复制' : '复制命令'">
             <template #activator="{ props: activatorProps }">
-              <v-btn
+              <UiButton
                 v-bind="activatorProps"
                 icon
                 size="small"
@@ -45,17 +45,23 @@
                 :color="copied ? 'success' : undefined"
                 @click="copyInstallCmd"
               >
-                <v-icon>{{ copied ? 'mdi-check' : 'mdi-content-copy' }}</v-icon>
-              </v-btn>
+                <UiIcon>{{ copied ? 'mdi-check' : 'mdi-content-copy' }}</UiIcon>
+              </UiButton>
             </template>
-          </v-tooltip>
+          </UiTooltip>
         </div>
       </template>
-    </v-card-text>
-  </v-card>
+    </div>
+  </UiCard>
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiCard from '@/shared/ui/card/Card.vue'
+import UiBadge from '@/shared/ui/feedback/Badge.vue'
+import UiProgress from '@/shared/ui/feedback/Progress.vue'
+import UiIcon from '@/shared/ui/icon/Icon.vue'
+import UiTooltip from '@/shared/ui/overlay/Tooltip.vue'
 // CLI 工具安装横幅：客户端配置页（GPT / Claude Code / OpenCode / pi）顶部展示
 // 工具的当前版本、npm 最新版本与当前平台的安装命令。
 // 后端成功结果缓存 1 小时，失败结果缓存 1 分钟；"重新检测"绕过缓存。
@@ -185,23 +191,17 @@ onMounted(() => check(false))
 </script>
 
 <style scoped>
+@reference "@/styles/index.css";
+
 .tool-install-banner__version {
-  padding: 2px 8px;
-  font-weight: 650;
+  @apply [padding:2px_8px] [font-weight:650];
 }
 
 .tool-install-banner__cmd {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 10px 8px 10px 14px;
-  background: rgba(var(--v-theme-surface-variant), 0.45);
-  border-radius: 6px;
+  @apply flex items-center justify-between gap-2 [padding:10px_8px_10px_14px] [background:color-mix(in_srgb,_var(--surface-variant)_45%,_transparent)] rounded-badge;
 }
 
 .tool-install-banner__cmd code {
-  overflow-wrap: anywhere;
-  font-size: 0.85rem;
+  @apply [overflow-wrap:anywhere] [font-size:0.85rem];
 }
 </style>

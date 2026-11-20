@@ -1,18 +1,18 @@
 <template>
   <div class="session-inspector">
     <div v-if="!compact" class="inspector-toolbar mb-2">
-      <div class="d-flex align-center ga-2">
-        <v-btn-toggle v-model="viewMode" mandatory density="compact" variant="outlined" divided>
-          <v-btn value="structured" size="small">
+      <div class="flex items-center gap-2">
+        <UiToggleGroup v-model="viewMode" mandatory density="compact" variant="outlined" divided>
+          <UiButton value="structured" size="small">
             对话内容
-          </v-btn>
-          <v-btn value="raw" size="small" prepend-icon="mdi-code-json">
+          </UiButton>
+          <UiButton value="raw" size="small" prepend-icon="mdi-code-json">
             原始 JSON
-          </v-btn>
-        </v-btn-toggle>
+          </UiButton>
+        </UiToggleGroup>
       </div>
-      <div class="d-flex align-center ga-2">
-        <v-btn
+      <div class="flex items-center gap-2">
+        <UiButton
           v-if="replayable"
           size="small"
           variant="tonal"
@@ -22,26 +22,26 @@
           @click="copyCurlCommand"
         >
           {{ curlCopied ? '已复制 cURL' : '复制为 cURL' }}
-        </v-btn>
-        <v-btn
+        </UiButton>
+        <UiButton
           size="small"
           variant="tonal"
           prepend-icon="mdi-content-copy"
           @click="copyRawBody"
         >
           {{ rawCopied ? '已复制' : '复制正文' }}
-        </v-btn>
+        </UiButton>
       </div>
     </div>
 
-    <v-alert v-if="copyError" type="error" variant="tonal" density="compact" class="mb-2">{{ copyError }}</v-alert>
-    <div v-if="viewMode === 'structured' && needsExpansion" class="pa-4 text-medium-emphasis">
+    <UiAlert v-if="copyError" type="error" variant="tonal" density="compact" class="mb-2">{{ copyError }}</UiAlert>
+    <div v-if="viewMode === 'structured' && needsExpansion" class="p-4 text-muted-foreground">
       结构化正文较大，展开后再解析与渲染。
-      <v-btn size="small" variant="text" @click="structuredExpanded = true">展开内容</v-btn>
+      <UiButton size="small" variant="text" @click="structuredExpanded = true">展开内容</UiButton>
     </div>
     <!-- 轨迹视图：按 user / reasoning / tool_calls / tool 结果 / assistant 内容顺序展开 -->
     <div v-else-if="viewMode === 'structured' && blocks.length > 0" class="trace-list">
-      <v-alert v-if="parsed.notice" type="warning" variant="tonal" density="compact">{{ parsed.notice }}</v-alert>
+      <UiAlert v-if="parsed.notice" type="warning" variant="tonal" density="compact">{{ parsed.notice }}</UiAlert>
       <div
         v-for="(block, index) in blocks"
         :key="index"
@@ -74,13 +74,16 @@
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiToggleGroup from '@/shared/ui/button/ToggleGroup.vue'
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
 // 协议解析由纯函数负责；大正文与长内容展开后才解析或渲染。
 import { computed, ref, watch } from 'vue'
 import { buildTraceBlocks, parseSessionBody } from '@/features/observability/utils/sessionPresentation'
 import ClampText from '@/features/observability/components/common/ClampText.vue'
 import JsonBodyPane from '@/features/observability/components/common/JsonBodyPane.vue'
-import EmptyState from '@/shared/components/common/EmptyState.vue'
-import JsonPreviewTrigger from '@/shared/components/common/JsonPreviewTrigger.vue'
+import EmptyState from '@/shared/components/feedback/EmptyState.vue'
+import JsonPreviewTrigger from '@/shared/components/data/JsonPreviewTrigger.vue'
 import { useClipboard } from '@/shared/composables/useClipboard'
 
 const props = withDefaults(
@@ -152,96 +155,70 @@ async function copyCurlCommand() {
 </script>
 
 <style scoped>
+@reference "@/styles/index.css";
+
 .session-inspector {
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  min-width: 0;
+  @apply flex flex-col w-full min-w-0;
 }
 
 .inspector-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px;
+  @apply flex items-center justify-between flex-wrap gap-2;
 }
 
 .trace-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  @apply flex flex-col gap-2.5;
 }
 
 .trace-block {
-  --trace-color: var(--v-theme-secondary);
-  border-left: 3px solid rgba(var(--trace-color), 0.85);
-  border-radius: 8px;
-  background: rgba(var(--v-theme-surface-variant), 0.32);
-  padding: 8px 12px 10px;
-  min-width: 0;
+  --trace-color: var(--secondary);
+  @apply [border-left:3px_solid_color-mix(in_srgb,_var(--trace-color)_85%,_transparent)] rounded-control [background:color-mix(in_srgb,_var(--surface-variant)_32%,_transparent)] [padding:8px_12px_10px] min-w-0;
 }
 
 .trace-user {
-  --trace-color: var(--v-theme-primary);
+  --trace-color: var(--primary);
 }
 
 .trace-assistant {
-  --trace-color: var(--v-theme-success);
+  --trace-color: var(--success);
 }
 
 .trace-reasoning {
-  --trace-color: var(--v-theme-info);
+  --trace-color: var(--info);
 }
 
 .trace-tool_call {
-  --trace-color: var(--v-theme-warning);
+  --trace-color: var(--warning);
 }
 
 .trace-tool_result {
-  --trace-color: var(--v-theme-success);
+  --trace-color: var(--success);
 }
 
 .trace-system {
-  --trace-color: var(--v-theme-secondary);
+  --trace-color: var(--secondary);
 }
 
 .trace-error {
-  --trace-color: var(--v-theme-error);
+  --trace-color: var(--destructive);
 }
 
 .trace-block-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 4px;
+  @apply flex items-baseline justify-between gap-3 mb-1;
 }
 
 .trace-label {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
-  font-weight: 700;
-  color: rgb(var(--trace-color));
+  @apply [font-family:ui-monospace,_SFMono-Regular,_Menlo,_Consolas,_monospace] [font-size:12px] font-bold [color:var(--trace-color)];
 }
 
 .trace-meta {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11px;
-  color: rgba(var(--v-theme-on-surface), 0.55);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  @apply [font-family:ui-monospace,_SFMono-Regular,_Menlo,_Consolas,_monospace] [font-size:11px] [color:color-mix(in_srgb,_var(--foreground)_55%,_transparent)] overflow-hidden text-ellipsis whitespace-nowrap;
 }
 
 .trace-history {
-  margin: 0;
+  @apply m-0;
 }
 
 .trace-history > summary {
-  cursor: pointer;
-  font-size: 12px;
-  color: rgba(var(--v-theme-on-surface), 0.7);
-  padding: 2px 0;
+  @apply cursor-pointer [font-size:12px] [color:color-mix(in_srgb,_var(--foreground)_70%,_transparent)] [padding:2px_0];
 }
 </style>

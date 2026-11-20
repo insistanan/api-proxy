@@ -2,37 +2,37 @@
   <div class="agent-config-page opencode-page">
     <AgentConfigHeader title="OpenCode 配置">
       <template #default>
-        <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="editorBusy" @click="loadConfig">刷新</v-btn>
-        <v-btn color="primary" prepend-icon="mdi-content-save" :loading="saving" :disabled="loading || editorBusy || !config" @click="saveConfig">保存配置</v-btn>
+        <UiButton variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="editorBusy" @click="loadConfig">刷新</UiButton>
+        <UiButton color="primary" prepend-icon="mdi-content-save" :loading="saving" :disabled="loading || editorBusy || !config" @click="saveConfig">保存配置</UiButton>
       </template>
     </AgentConfigHeader>
 
-    <v-alert v-if="loadError" type="error" variant="tonal" class="mb-5" closable @click:close="loadError = ''">
+    <UiAlert v-if="loadError" type="error" variant="tonal" class="mb-5" closable @click:close="loadError = ''">
       {{ loadError }}
-    </v-alert>
+    </UiAlert>
 
     <ToolInstallBanner tool="opencode" class="mb-5" />
 
-    <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-5" />
+    <UiProgress v-if="loading" indeterminate color="primary" class="mb-5" />
 
     <fieldset v-else :disabled="editorBusy" :inert="editorBusy" class="agent-config-editor">
       <AgentConfigLocation
         :label="config?.exists ? '当前配置文件' : '首次保存将创建配置文件'"
         :path="config?.path"
       >
-        <v-chip v-if="config?.jsonc" size="x-small" label>JSONC 将在保存后规范化为 JSON</v-chip>
+        <UiBadge v-if="config?.jsonc" size="x-small" label>JSONC 将在保存后规范化为 JSON</UiBadge>
       </AgentConfigLocation>
 
-      <v-row class="agent-provider-layout">
-        <v-col cols="12" lg="4">
-          <v-card class="provider-list-card" elevation="0">
+      <div class="grid grid-cols-12 gap-4 agent-provider-layout">
+        <div class="min-w-0 col-span-12 lg:col-span-4"  >
+          <UiCard class="provider-list-card" elevation="0">
             <div class="agent-config-panel-header">
               <div class="agent-config-panel-title">提供商</div>
-              <v-btn icon="mdi-plus" size="small" variant="text" title="添加提供商" aria-label="添加提供商" @click="addProvider" />
+              <UiButton icon="mdi-plus" size="small" variant="text" title="添加提供商" aria-label="添加提供商" @click="addProvider" />
             </div>
-            <v-divider />
-            <v-list v-if="providers.length" density="comfortable" nav class="py-2">
-              <v-list-item
+            <hr class="border-0 border-t border-border" />
+            <UiList v-if="providers.length" density="comfortable" nav class="py-2">
+              <UiListItem
                 v-for="provider in providers"
                 :key="provider.id"
                 :active="selectedProviderId === provider.id"
@@ -42,41 +42,41 @@
                 @click="selectedProviderId = provider.id"
               >
                 <template #prepend>
-                  <v-icon size="20">mdi-server-network</v-icon>
+                  <UiIcon size="20">mdi-server-network</UiIcon>
                 </template>
                 <template #append>
-                  <v-chip size="x-small" :color="protocolColor(provider.protocol)" label>{{ protocolLabel(provider.protocol) }}</v-chip>
+                  <UiBadge size="x-small" :color="protocolColor(provider.protocol)" label>{{ protocolLabel(provider.protocol) }}</UiBadge>
                 </template>
-              </v-list-item>
-            </v-list>
+              </UiListItem>
+            </UiList>
             <EmptyState v-else variant="inline" icon="mdi-server-network" title="尚未配置提供商">
-              <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-plus" @click="addProvider">添加提供商</v-btn>
+              <UiButton size="small" color="primary" variant="tonal" prepend-icon="mdi-plus" @click="addProvider">添加提供商</UiButton>
             </EmptyState>
-          </v-card>
-        </v-col>
+          </UiCard>
+        </div>
 
-        <v-col cols="12" lg="8">
-          <v-card v-if="selectedProvider" elevation="0" class="provider-editor-card">
+        <div class="min-w-0 col-span-12 lg:col-span-8"  >
+          <UiCard v-if="selectedProvider" elevation="0" class="provider-editor-card">
             <div class="agent-config-panel-header">
               <div>
                 <div class="agent-config-panel-title">{{ selectedProvider.name || '新提供商' }}</div>
                 <!-- 配置会写入 OpenCode 标准 provider 字段 -->
               </div>
               <div class="agent-config-panel-actions">
-                <v-btn color="error" variant="text" size="small" prepend-icon="mdi-delete" @click="removeProvider(selectedProvider.id)">删除</v-btn>
+                <UiButton color="error" variant="text" size="small" prepend-icon="mdi-delete" @click="removeProvider(selectedProvider.id)">删除</UiButton>
               </div>
             </div>
-            <v-divider />
+            <hr class="border-0 border-t border-border" />
 
-            <v-card-text class="pa-5">
+            <div class="p-4 p-5">
               <!-- 连接本代理 -->
               <section class="agent-config-callout mb-5 channel-quick-pick">
                 <div class="agent-config-callout__title">
-                  <v-icon size="18">mdi-lightning-bolt</v-icon>
+                  <UiIcon size="18">mdi-lightning-bolt</UiIcon>
                   连接本代理
                 </div>
                 <div>
-                  <v-select
+                  <UiSelect
                     v-model="quickPickType"
                     label="模型协议"
                     variant="outlined"
@@ -88,24 +88,24 @@
                 </div>
               </section>
 
-              <v-row>
-                <v-col cols="12" sm="6">
-                  <v-text-field v-model.trim="selectedProvider.id" label="提供商标识" variant="outlined" density="comfortable" :disabled="providerIdInUse" @update:model-value="selectedProviderId = $event" />
-                </v-col>
-                <v-col cols="12" sm="6">
-                  <v-text-field v-model.trim="selectedProvider.name" label="显示名称" variant="outlined" density="comfortable" placeholder="例如 DeepSeek" />
-                </v-col>
-                <v-col cols="12" sm="6">
-                  <v-select v-model="selectedProvider.protocol" label="协议" variant="outlined" density="comfortable" :items="protocols" item-title="title" item-value="value" @update:model-value="applyProtocolNpm(selectedProvider)" />
-                </v-col>
-                <v-col v-if="selectedProvider.protocol === 'custom'" cols="12" sm="6">
-                  <v-text-field v-model.trim="selectedProvider.npm" label="AI SDK 包" variant="outlined" density="comfortable" placeholder="例如 @ai-sdk/provider" />
-                </v-col>
-                <v-col :cols="selectedProvider.protocol === 'custom' ? 12 : 6">
-                  <v-text-field v-model.trim="selectedProvider.baseUrl" label="Base URL" variant="outlined" density="comfortable" placeholder="例如 http://127.0.0.1:8080/v1" />
-                </v-col>
-                <v-col cols="12">
-                  <v-text-field
+              <div class="grid grid-cols-12 gap-4">
+                <div class="min-w-0 col-span-12 sm:col-span-6"  >
+                  <UiInput v-model.trim="selectedProvider.id" label="提供商标识" variant="outlined" density="comfortable" :disabled="providerIdInUse" @update:model-value="selectedProviderId = $event" />
+                </div>
+                <div class="min-w-0 col-span-12 sm:col-span-6"  >
+                  <UiInput v-model.trim="selectedProvider.name" label="显示名称" variant="outlined" density="comfortable" placeholder="例如 DeepSeek" />
+                </div>
+                <div class="min-w-0 col-span-12 sm:col-span-6"  >
+                  <UiSelect v-model="selectedProvider.protocol" label="协议" variant="outlined" density="comfortable" :items="protocols" item-title="title" item-value="value" @update:model-value="applyProtocolNpm(selectedProvider)" />
+                </div>
+                <div v-if="selectedProvider.protocol === 'custom'" class="min-w-0 col-span-12 sm:col-span-6"  >
+                  <UiInput v-model.trim="selectedProvider.npm" label="AI SDK 包" variant="outlined" density="comfortable" placeholder="例如 @ai-sdk/provider" />
+                </div>
+                <div :class="(selectedProvider.protocol === 'custom' ? 12 : 6) === 6 ? 'col-span-6' : 'col-span-12'" class="min-w-0" >
+                  <UiInput v-model.trim="selectedProvider.baseUrl" label="Base URL" variant="outlined" density="comfortable" placeholder="例如 http://127.0.0.1:8080/v1" />
+                </div>
+                <div class="min-w-0 col-span-12" >
+                  <UiInput
                     v-model="selectedProvider.apiKey"
                     label="API Key"
                     type="password"
@@ -115,112 +115,112 @@
                     @update:model-value="onAPIKeyInput(selectedProvider)"
                   >
                     <template #append-inner>
-                      <v-btn v-if="selectedProvider.apiKeyPresent" icon="mdi-delete" size="x-small" variant="text" title="清除已保存密钥" @click="clearAPIKey(selectedProvider)" />
+                      <UiButton v-if="selectedProvider.apiKeyPresent" icon="mdi-delete" size="x-small" variant="text" title="清除已保存密钥" @click="clearAPIKey(selectedProvider)" />
                     </template>
-                  </v-text-field>
-                </v-col>
-              </v-row>
-
-              <v-expansion-panels variant="accordion" class="mt-2">
-                <v-expansion-panel title="请求头与高级提供商选项">
-                  <v-expansion-panel-text>
-                    <v-row>
-                      <v-col cols="12" md="6">
-                        <JsonPreviewTrigger :data="selectedProvider.headersText" title="OpenCode 请求头"><v-textarea v-model="selectedProvider.headersText" label="请求头 JSON" variant="outlined" density="comfortable" rows="5" auto-grow placeholder="{&#10;  &quot;X-Custom-Header&quot;: &quot;value&quot;&#10;}" /></JsonPreviewTrigger>
-                      </v-col>
-                      <v-col cols="12" md="6">
-                        <JsonPreviewTrigger :data="selectedProvider.optionsText" title="OpenCode 提供商选项"><v-textarea v-model="selectedProvider.optionsText" label="高级 provider options JSON" variant="outlined" density="comfortable" rows="5" auto-grow placeholder="{&#10;  &quot;timeout&quot;: 600000&#10;}" /></JsonPreviewTrigger>
-                      </v-col>
-                    </v-row>
-                  </v-expansion-panel-text>
-                </v-expansion-panel>
-              </v-expansion-panels>
-
-              <div class="d-flex align-center justify-space-between mt-7 mb-3">
-                <div>
-                  <div class="text-subtitle-1 font-weight-bold">模型</div>
+                  </UiInput>
                 </div>
-                <div class="d-flex ga-2">
-                  <v-btn size="small" color="secondary" variant="tonal" prepend-icon="mdi-download" :disabled="!quickPickType" @click="importProxyModelsToProvider">导入本代理模型</v-btn>
-                  <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-plus" @click="addModel(selectedProvider)">添加模型</v-btn>
+              </div>
+
+              <UiAccordion variant="accordion" class="mt-2">
+                <UiAccordionItem title="请求头与高级提供商选项">
+                  <div class="px-4 pb-4">
+                    <div class="grid grid-cols-12 gap-4">
+                      <div class="min-w-0 col-span-12 md:col-span-6"  >
+                        <JsonPreviewTrigger :data="selectedProvider.headersText" title="OpenCode 请求头"><UiTextarea v-model="selectedProvider.headersText" label="请求头 JSON" variant="outlined" density="comfortable" rows="5" auto-grow placeholder="{&#10;  &quot;X-Custom-Header&quot;: &quot;value&quot;&#10;}" /></JsonPreviewTrigger>
+                      </div>
+                      <div class="min-w-0 col-span-12 md:col-span-6"  >
+                        <JsonPreviewTrigger :data="selectedProvider.optionsText" title="OpenCode 提供商选项"><UiTextarea v-model="selectedProvider.optionsText" label="高级 provider options JSON" variant="outlined" density="comfortable" rows="5" auto-grow placeholder="{&#10;  &quot;timeout&quot;: 600000&#10;}" /></JsonPreviewTrigger>
+                      </div>
+                    </div>
+                  </div>
+                </UiAccordionItem>
+              </UiAccordion>
+
+              <div class="flex items-center justify-between mt-7 mb-3">
+                <div>
+                  <div class="text-base font-medium font-bold">模型</div>
+                </div>
+                <div class="flex gap-2">
+                  <UiButton size="small" color="secondary" variant="tonal" prepend-icon="mdi-download" :disabled="!quickPickType" @click="importProxyModelsToProvider">导入本代理模型</UiButton>
+                  <UiButton size="small" color="primary" variant="tonal" prepend-icon="mdi-plus" @click="addModel(selectedProvider)">添加模型</UiButton>
                 </div>
               </div>
 
               <EmptyState v-if="selectedProvider.models.length === 0" variant="inline" icon="mdi-format-list-bulleted" title="添加至少一个模型后，它才会出现在 OpenCode 的模型列表。" />
-              <v-expansion-panels v-else variant="accordion" class="model-panels">
-                <v-expansion-panel v-for="model in selectedProvider.models" :key="model.localId">
+              <UiAccordion v-else variant="accordion" class="model-panels">
+                <UiAccordionItem v-for="model in selectedProvider.models" :key="model.localId">
                   <template #title>
-                    <div class="d-flex align-center ga-2 overflow-hidden">
-                      <span class="font-weight-medium text-truncate">{{ model.name || model.key || '新模型' }}</span>
-                      <span v-if="model.key" class="text-caption text-medium-emphasis text-truncate">{{ model.key }}</span>
+                    <div class="flex items-center gap-2 overflow-hidden">
+                      <span class="font-medium truncate">{{ model.name || model.key || '新模型' }}</span>
+                      <span v-if="model.key" class="text-xs text-muted-foreground truncate">{{ model.key }}</span>
                     </div>
                   </template>
-                  <v-expansion-panel-text>
-                    <v-row>
-                      <v-col cols="12" sm="6">
-                        <v-text-field v-model.trim="model.key" label="模型标识" variant="outlined" density="comfortable" placeholder="例如 deepseek-v4-pro" />
-                      </v-col>
-                      <v-col cols="12" sm="6">
-                        <v-text-field v-model.trim="model.name" label="显示名称" variant="outlined" density="comfortable" placeholder="例如 DeepSeek V4 Pro" />
-                      </v-col>
-                      <v-col cols="12">
-                        <v-text-field v-model.trim="model.apiModelId" label="上游模型 ID（可选）" variant="outlined" density="comfortable" placeholder="留空时使用模型标识；用于上游名称与 OpenCode 名称不同的情况" />
-                      </v-col>
-                      <v-col cols="12" sm="4">
-                        <v-text-field v-model.number="model.contextLimit" label="上下文长度" type="number" min="0" variant="outlined" density="comfortable" />
-                      </v-col>
-                      <v-col cols="12" sm="4">
-                        <v-text-field v-model.number="model.inputLimit" label="最大输入 Token" type="number" min="0" variant="outlined" density="comfortable" />
-                      </v-col>
-                      <v-col cols="12" sm="4">
-                        <v-text-field v-model.number="model.outputLimit" label="最大输出 Token" type="number" min="0" variant="outlined" density="comfortable" />
-                      </v-col>
-                      <v-col cols="12" class="d-flex align-center">
-                        <v-switch v-model="model.supportsImage" label="支持图片输入（识图）" color="primary" density="compact" hide-details />
+                  <div class="px-4 pb-4">
+                    <div class="grid grid-cols-12 gap-4">
+                      <div class="min-w-0 col-span-12 sm:col-span-6"  >
+                        <UiInput v-model.trim="model.key" label="模型标识" variant="outlined" density="comfortable" placeholder="例如 deepseek-v4-pro" />
+                      </div>
+                      <div class="min-w-0 col-span-12 sm:col-span-6"  >
+                        <UiInput v-model.trim="model.name" label="显示名称" variant="outlined" density="comfortable" placeholder="例如 DeepSeek V4 Pro" />
+                      </div>
+                      <div class="min-w-0 col-span-12" >
+                        <UiInput v-model.trim="model.apiModelId" label="上游模型 ID（可选）" variant="outlined" density="comfortable" placeholder="留空时使用模型标识；用于上游名称与 OpenCode 名称不同的情况" />
+                      </div>
+                      <div class="min-w-0 col-span-12 sm:col-span-4"  >
+                        <UiInput v-model.number="model.contextLimit" label="上下文长度" type="number" min="0" variant="outlined" density="comfortable" />
+                      </div>
+                      <div class="min-w-0 col-span-12 sm:col-span-4"  >
+                        <UiInput v-model.number="model.inputLimit" label="最大输入 Token" type="number" min="0" variant="outlined" density="comfortable" />
+                      </div>
+                      <div class="min-w-0 col-span-12 sm:col-span-4"  >
+                        <UiInput v-model.number="model.outputLimit" label="最大输出 Token" type="number" min="0" variant="outlined" density="comfortable" />
+                      </div>
+                      <div  class="min-w-0 col-span-12 flex items-center">
+                        <UiSwitch v-model="model.supportsImage" label="支持图片输入（识图）" color="primary" density="compact" hide-details />
                         <!-- 开启后写入 options.attachment 与 options.modalities；本项目有图片理解层兜底 -->
-                      </v-col>
-                    </v-row>
+                      </div>
+                    </div>
 
                     <!-- Variants 配置 -->
                     <div class="variants-section mt-4">
-                      <div class="d-flex align-center justify-space-between mb-2">
+                      <div class="flex items-center justify-between mb-2">
                         <div>
-                          <div class="text-subtitle-2 font-weight-bold">思考等级 Variants</div>
+                          <div class="text-sm font-medium font-bold">思考等级 Variants</div>
                           <!-- 开启后可在 OpenCode TUI 中按 Ctrl+T 切换思考等级 -->
                         </div>
-                        <v-switch v-model="model.variantsEnabled" color="primary" density="compact" hide-details />
+                        <UiSwitch v-model="model.variantsEnabled" color="primary" density="compact" hide-details />
                       </div>
-                      <v-expand-transition>
+                      <Transition name="ui-expand">
                         <div v-show="model.variantsEnabled" class="variants-list pl-1">
-                          <div v-for="(variant, vi) in model.variants" :key="vi" class="variant-row d-flex align-center ga-2 mb-2">
-                            <v-checkbox v-model="variant.enabled" density="compact" hide-details class="flex-grow-0" />
-                            <v-text-field v-model.trim="variant.name" label="变体名称" variant="outlined" density="compact" hide-details style="max-width: 160px;" placeholder="high" />
-                            <v-select v-model="variant.reasoningEffort" label="reasoningEffort" variant="outlined" density="compact" hide-details :items="reasoningEfforts" item-title="title" item-value="value" style="max-width: 200px;" />
-                            <v-btn icon="mdi-delete" size="x-small" variant="text" @click="model.variants.splice(vi, 1)" />
+                          <div v-for="(variant, vi) in model.variants" :key="vi" class="variant-row flex items-center gap-2 mb-2">
+                            <UiCheckbox v-model="variant.enabled" density="compact" hide-details class="grow-0" />
+                            <UiInput v-model.trim="variant.name" label="变体名称" variant="outlined" density="compact" hide-details style="max-width: 160px;" placeholder="high" />
+                            <UiSelect v-model="variant.reasoningEffort" label="reasoningEffort" variant="outlined" density="compact" hide-details :items="reasoningEfforts" item-title="title" item-value="value" style="max-width: 200px;" />
+                            <UiButton icon="mdi-delete" size="x-small" variant="text" @click="model.variants.splice(vi, 1)" />
                           </div>
-                          <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" @click="model.variants.push({ name: '', reasoningEffort: 'medium', enabled: true })">添加变体</v-btn>
+                          <UiButton size="small" variant="tonal" prepend-icon="mdi-plus" @click="model.variants.push({ name: '', reasoningEffort: 'medium', enabled: true })">添加变体</UiButton>
                         </div>
-                      </v-expand-transition>
+                      </Transition>
                     </div>
 
-                    <v-col cols="12" class="pa-0 mt-4">
-                      <JsonPreviewTrigger :data="model.optionsText" title="OpenCode 模型选项"><v-textarea v-model="model.optionsText" label="模型高级 options JSON" variant="outlined" density="comfortable" rows="3" auto-grow placeholder='{ "key": "value" }' /></JsonPreviewTrigger>
-                    </v-col>
-                  </v-expansion-panel-text>
-                </v-expansion-panel>
-              </v-expansion-panels>
-            </v-card-text>
-          </v-card>
+                    <div  class="min-w-0 col-span-12 p-0 mt-4">
+                      <JsonPreviewTrigger :data="model.optionsText" title="OpenCode 模型选项"><UiTextarea v-model="model.optionsText" label="模型高级 options JSON" variant="outlined" density="comfortable" rows="3" auto-grow placeholder='{ "key": "value" }' /></JsonPreviewTrigger>
+                    </div>
+                  </div>
+                </UiAccordionItem>
+              </UiAccordion>
+            </div>
+          </UiCard>
 
-          <v-card v-else elevation="0" class="empty-editor d-flex align-center justify-center text-center pa-8">
+          <UiCard v-else elevation="0" class="empty-editor flex items-center justify-center text-center p-8">
             <div>
-              <v-icon size="44" color="primary" class="mb-3">mdi-cog</v-icon>
-              <div class="text-subtitle-1 font-weight-bold">选择或添加一个提供商</div>
+              <UiIcon size="44" color="primary" class="mb-3">mdi-cog</UiIcon>
+              <div class="text-base font-medium font-bold">选择或添加一个提供商</div>
               <!-- 在这里配置 OpenCode 使用的协议、密钥和模型。 -->
             </div>
-          </v-card>
-        </v-col>
-      </v-row>
+          </UiCard>
+        </div>
+      </div>
 
     </fieldset>
 
@@ -239,14 +239,29 @@
 </template>
 
 <script setup lang="ts">
-import JsonPreviewTrigger from '@/shared/components/common/JsonPreviewTrigger.vue'
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiCard from '@/shared/ui/card/Card.vue'
+import UiCheckbox from '@/shared/ui/check/Checkbox.vue'
+import UiSwitch from '@/shared/ui/check/Switch.vue'
+import UiAccordion from '@/shared/ui/disclosure/Accordion.vue'
+import UiAccordionItem from '@/shared/ui/disclosure/AccordionItem.vue'
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
+import UiBadge from '@/shared/ui/feedback/Badge.vue'
+import UiProgress from '@/shared/ui/feedback/Progress.vue'
+import UiInput from '@/shared/ui/field/Input.vue'
+import UiTextarea from '@/shared/ui/field/Textarea.vue'
+import UiIcon from '@/shared/ui/icon/Icon.vue'
+import UiList from '@/shared/ui/navigation/List.vue'
+import UiListItem from '@/shared/ui/navigation/ListItem.vue'
+import UiSelect from '@/shared/ui/select/Select.vue'
+import JsonPreviewTrigger from '@/shared/components/data/JsonPreviewTrigger.vue'
 import { computed, onMounted, ref } from 'vue'
 import AgentConfigHeader from '@/features/clients/components/AgentConfigHeader.vue'
 import AgentConfigLocation from '@/features/clients/components/AgentConfigLocation.vue'
 import AgentPromptCard from '@/features/clients/components/AgentPromptCard.vue'
 import ToolInstallBanner from '@/features/clients/components/ToolInstallBanner.vue'
-import ConfirmDialog from '@/shared/components/common/ConfirmDialog.vue'
-import EmptyState from '@/shared/components/common/EmptyState.vue'
+import ConfirmDialog from '@/shared/components/overlay/ConfirmDialog.vue'
+import EmptyState from '@/shared/components/feedback/EmptyState.vue'
 import { api, type OpenCodeConfig, type OpenCodeProtocol, type OpenCodeProvider, type OpenCodeVariant, type SaveOpenCodeProvider, type ApiTab } from '@/api'
 import { useProxyProtocolPick, defaultQuickPickTypeOptions } from '@/features/clients/composables/useProxyProtocolPick'
 import { filterProxyModelsByKind, importProxyModels, buildOpenCodeModel } from '@/features/clients/utils/proxyModelImport'
@@ -647,6 +662,8 @@ onMounted(loadConfig)
 </script>
 
 <style scoped>
-.variants-section { border: 1px solid rgba(var(--v-theme-on-surface), 0.12); border-radius: 8px; padding: 12px 16px; }
-.variant-row { flex-wrap: nowrap; }
+@reference "@/styles/index.css";
+
+.variants-section { @apply [border:1px_solid_color-mix(in_srgb,_var(--foreground)_12%,_transparent)] rounded-control [padding:12px_16px]; }
+.variant-row { @apply flex-nowrap; }
 </style>

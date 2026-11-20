@@ -2,37 +2,37 @@
   <div class="agent-config-page dsh-page">
     <AgentConfigHeader title="DSH 配置">
       <template #default>
-        <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="loadSettings">刷新</v-btn>
-        <v-btn color="primary" prepend-icon="mdi-content-save" :loading="saving" :disabled="loading" @click="saveSettings">保存配置</v-btn>
+        <UiButton variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="loadSettings">刷新</UiButton>
+        <UiButton color="primary" prepend-icon="mdi-content-save" :loading="saving" :disabled="loading" @click="saveSettings">保存配置</UiButton>
       </template>
     </AgentConfigHeader>
 
-    <v-alert v-if="error" type="error" variant="tonal" class="mb-5" closable @click:close="error = ''">{{ error }}</v-alert>
+    <UiAlert v-if="error" type="error" variant="tonal" class="mb-5" closable @click:close="error = ''">{{ error }}</UiAlert>
     <ToolInstallBanner tool="dsh" class="mb-5" />
-    <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-5" />
+    <UiProgress v-if="loading" indeterminate color="primary" class="mb-5" />
 
     <template v-else>
       <AgentConfigLocation
         :label="settings?.exists ? '当前配置文件' : '首次保存将创建配置文件'"
         :path="settings?.path"
       >
-        <v-chip v-if="settings?.writable" size="x-small" color="success" label>可写</v-chip>
-        <v-chip v-else size="x-small" color="error" label>不可写</v-chip>
+        <UiBadge v-if="settings?.writable" size="x-small" color="success" label>可写</UiBadge>
+        <UiBadge v-else size="x-small" color="error" label>不可写</UiBadge>
       </AgentConfigLocation>
 
       <!-- 默认模型（置顶，方便快速选定启动模型） -->
-      <v-card elevation="0" class="settings-card agent-config-panel mb-5">
+      <UiCard elevation="0" class="settings-card agent-config-panel mb-5">
         <div class="agent-config-panel-header">
           <div>
             <div class="agent-config-panel-title">默认模型</div>
             <!-- 写入 settings.yaml 的 agent-default-model 字段；DSH 启动时自动选择该模型 -->
           </div>
         </div>
-        <v-divider />
-        <v-card-text class="pa-5">
-          <v-row>
-            <v-col cols="12" sm="6">
-              <v-select
+        <hr class="border-0 border-t border-border" />
+        <div class="p-4 p-5">
+          <div class="grid grid-cols-12 gap-4">
+            <div class="min-w-0 col-span-12 sm:col-span-6"  >
+              <UiSelect
                 v-model="defaultModelProvider"
                 label="默认提供商"
                 variant="outlined"
@@ -40,9 +40,9 @@
                 :items="providerKeys"
                 clearable
               />
-            </v-col>
-            <v-col cols="12" sm="6">
-              <v-select
+            </div>
+            <div class="min-w-0 col-span-12 sm:col-span-6"  >
+              <UiSelect
                 v-model="defaultModelModel"
                 label="默认模型"
                 variant="outlined"
@@ -53,22 +53,22 @@
                 clearable
                 :disabled="!defaultModelProvider"
               />
-            </v-col>
-          </v-row>
-        </v-card-text>
-      </v-card>
+            </div>
+          </div>
+        </div>
+      </UiCard>
 
-      <v-row class="agent-provider-layout">
+      <div class="grid grid-cols-12 gap-4 agent-provider-layout">
         <!-- 提供商列表 -->
-        <v-col cols="12" lg="4">
-          <v-card class="provider-list-card" elevation="0">
+        <div class="min-w-0 col-span-12 lg:col-span-4"  >
+          <UiCard class="provider-list-card" elevation="0">
             <div class="agent-config-panel-header">
               <div class="agent-config-panel-title">提供商</div>
-              <v-btn icon="mdi-plus" size="small" variant="text" title="添加提供商" aria-label="添加提供商" @click="addProvider" />
+              <UiButton icon="mdi-plus" size="small" variant="text" title="添加提供商" aria-label="添加提供商" @click="addProvider" />
             </div>
-            <v-divider />
-            <v-list v-if="providerKeys.length" density="comfortable" nav class="py-2">
-              <v-list-item
+            <hr class="border-0 border-t border-border" />
+            <UiList v-if="providerKeys.length" density="comfortable" nav class="py-2">
+              <UiListItem
                 v-for="key in providerKeys"
                 :key="key"
                 :active="selectedProviderKey === key"
@@ -77,41 +77,41 @@
                 rounded="sm"
                 @click="selectedProviderKey = key"
               >
-                <template #prepend><v-icon size="20">mdi-server-network</v-icon></template>
+                <template #prepend><UiIcon size="20">mdi-server-network</UiIcon></template>
                 <template #append>
-                  <v-chip v-if="providers[key]?.api" size="x-small" :color="protocolColor(providers[key]!.api!)" label>{{ protocolLabel(providers[key]!.api!) }}</v-chip>
+                  <UiBadge v-if="providers[key]?.api" size="x-small" :color="protocolColor(providers[key]!.api!)" label>{{ protocolLabel(providers[key]!.api!) }}</UiBadge>
                 </template>
-              </v-list-item>
-            </v-list>
+              </UiListItem>
+            </UiList>
             <EmptyState v-else variant="inline" icon="mdi-server-network" title="尚未配置提供商">
-              <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-plus" @click="addProvider">添加提供商</v-btn>
+              <UiButton size="small" color="primary" variant="tonal" prepend-icon="mdi-plus" @click="addProvider">添加提供商</UiButton>
             </EmptyState>
-          </v-card>
-        </v-col>
+          </UiCard>
+        </div>
 
         <!-- 提供商编辑器 -->
-        <v-col cols="12" lg="8">
-          <v-card v-if="selectedProvider" elevation="0" class="provider-editor-card">
+        <div class="min-w-0 col-span-12 lg:col-span-8"  >
+          <UiCard v-if="selectedProvider" elevation="0" class="provider-editor-card">
             <div class="agent-config-panel-header">
               <div>
                 <div class="agent-config-panel-title">{{ selectedProvider.displayName || selectedProviderKey || '新提供商' }}</div>
                 <!-- 写入 DSH settings.yaml 的 llm-pi-ai.providers 字段 -->
               </div>
               <div class="agent-config-panel-actions">
-                <v-btn color="error" variant="text" size="small" prepend-icon="mdi-delete" @click="removeProvider(selectedProviderKey)">删除</v-btn>
+                <UiButton color="error" variant="text" size="small" prepend-icon="mdi-delete" @click="removeProvider(selectedProviderKey)">删除</UiButton>
               </div>
             </div>
-            <v-divider />
+            <hr class="border-0 border-t border-border" />
 
-            <v-card-text class="pa-5">
+            <div class="p-4 p-5">
               <!-- 连接本代理 -->
               <section class="agent-config-callout mb-5 channel-quick-pick">
                 <div class="agent-config-callout__title">
-                  <v-icon size="18">mdi-lightning-bolt</v-icon>
+                  <UiIcon size="18">mdi-lightning-bolt</UiIcon>
                   连接本代理
                 </div>
                 <div>
-                  <v-select
+                  <UiSelect
                     v-model="quickPickType"
                     label="模型协议"
                     variant="outlined"
@@ -123,9 +123,9 @@
                 </div>
               </section>
 
-              <v-row>
-                <v-col cols="12" sm="6">
-                  <v-text-field
+              <div class="grid grid-cols-12 gap-4">
+                <div class="min-w-0 col-span-12 sm:col-span-6"  >
+                  <UiInput
                     v-model.trim="routeIdDraft"
                     label="路由标识 (route id)"
                     variant="outlined"
@@ -133,12 +133,12 @@
                     @blur="commitRouteId"
                     @keyup.enter="commitRouteId"
                   />
-                </v-col>
-                <v-col cols="12" sm="6">
-                  <v-text-field v-model.trim="selectedProvider.displayName" label="显示名称" variant="outlined" density="comfortable" placeholder="例如 Local Proxy" />
-                </v-col>
-                <v-col cols="12" sm="6">
-                  <v-select
+                </div>
+                <div class="min-w-0 col-span-12 sm:col-span-6"  >
+                  <UiInput v-model.trim="selectedProvider.displayName" label="显示名称" variant="outlined" density="comfortable" placeholder="例如 Local Proxy" />
+                </div>
+                <div class="min-w-0 col-span-12 sm:col-span-6"  >
+                  <UiSelect
                     v-model="selectedProvider.api"
                     label="API 协议"
                     variant="outlined"
@@ -147,21 +147,21 @@
                     item-title="title"
                     item-value="value"
                   />
-                </v-col>
-                <v-col cols="12" sm="6">
-                  <v-text-field v-model.trim="selectedProvider.baseURL" label="Base URL" variant="outlined" density="comfortable" placeholder="例如 http://127.0.0.1:9996" />
-                </v-col>
-                <v-col cols="12">
-                  <v-text-field
+                </div>
+                <div class="min-w-0 col-span-12 sm:col-span-6"  >
+                  <UiInput v-model.trim="selectedProvider.baseURL" label="Base URL" variant="outlined" density="comfortable" placeholder="例如 http://127.0.0.1:9996" />
+                </div>
+                <div class="min-w-0 col-span-12" >
+                  <UiInput
                     v-model.trim="selectedProvider.apiKeyEnv"
                     label="凭据引用名 (apiKeyEnv，可自动生成)"
                     variant="outlined"
                     density="comfortable"
                     placeholder="留空自动生成，例如 LOCAL_API_KEY"
                   />
-                </v-col>
-                <v-col cols="12">
-                  <v-text-field
+                </div>
+                <div class="min-w-0 col-span-12" >
+                  <UiInput
                     v-model="selectedProvider.apiKey"
                     label="API Key"
                     type="password"
@@ -172,7 +172,7 @@
                     @update:model-value="onAPIKeyInput(selectedProvider)"
                   >
                     <template #append-inner>
-                      <v-btn
+                      <UiButton
                         v-if="selectedProvider.apiKeyPresent"
                         icon="mdi-delete"
                         size="x-small"
@@ -182,71 +182,71 @@
                         @click.stop="clearAPIKey(selectedProvider)"
                       />
                     </template>
-                  </v-text-field>
+                  </UiInput>
                   <!-- 若系统存在同名环境变量，DSH 官方规则会优先使用环境值；通常无需手动设置环境变量。 -->
-                </v-col>
-              </v-row>
+                </div>
+              </div>
 
               <!-- 模型列表 -->
-              <div class="d-flex align-center justify-space-between mt-7 mb-3">
+              <div class="flex items-center justify-between mt-7 mb-3">
                 <div>
-                  <div class="text-subtitle-1 font-weight-bold">模型</div>
+                  <div class="text-base font-medium font-bold">模型</div>
                 </div>
-                <div class="d-flex ga-2">
-                  <v-btn size="small" color="secondary" variant="tonal" prepend-icon="mdi-download" :disabled="!quickPickType" @click="importProxyModelsToProvider">导入本代理模型</v-btn>
-                  <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-plus" @click="addModel(selectedProvider)">添加模型</v-btn>
+                <div class="flex gap-2">
+                  <UiButton size="small" color="secondary" variant="tonal" prepend-icon="mdi-download" :disabled="!quickPickType" @click="importProxyModelsToProvider">导入本代理模型</UiButton>
+                  <UiButton size="small" color="primary" variant="tonal" prepend-icon="mdi-plus" @click="addModel(selectedProvider)">添加模型</UiButton>
                 </div>
               </div>
 
               <EmptyState v-if="!selectedProvider.models || selectedProvider.models.length === 0" variant="inline" icon="mdi-format-list-bulleted" title="添加至少一个模型后，它才会出现在 DSH 的模型选择器中。" />
-              <v-expansion-panels v-else variant="accordion" class="model-panels">
-                <v-expansion-panel v-for="(model, idx) in selectedProvider.models" :key="idx">
+              <UiAccordion v-else variant="accordion" class="model-panels">
+                <UiAccordionItem v-for="(model, idx) in selectedProvider.models" :key="idx">
                   <template #title>
-                    <div class="d-flex align-center ga-2 overflow-hidden">
-                      <span class="font-weight-medium text-truncate">{{ model.name || model.id || '新模型' }}</span>
-                      <span v-if="model.id" class="text-caption text-medium-emphasis text-truncate">{{ model.id }}</span>
+                    <div class="flex items-center gap-2 overflow-hidden">
+                      <span class="font-medium truncate">{{ model.name || model.id || '新模型' }}</span>
+                      <span v-if="model.id" class="text-xs text-muted-foreground truncate">{{ model.id }}</span>
                     </div>
                   </template>
-                  <v-expansion-panel-text>
-                    <v-row>
-                      <v-col cols="12" sm="6">
-                        <v-text-field v-model.trim="model.id" label="模型 ID" variant="outlined" density="comfortable" placeholder="例如 opus、deepseek" />
-                      </v-col>
-                      <v-col cols="12" sm="6">
-                        <v-text-field v-model.trim="model.name" label="显示名称" variant="outlined" density="comfortable" placeholder="例如 Claude Opus" />
-                      </v-col>
-                    </v-row>
+                  <div class="px-4 pb-4">
+                    <div class="grid grid-cols-12 gap-4">
+                      <div class="min-w-0 col-span-12 sm:col-span-6"  >
+                        <UiInput v-model.trim="model.id" label="模型 ID" variant="outlined" density="comfortable" placeholder="例如 opus、deepseek" />
+                      </div>
+                      <div class="min-w-0 col-span-12 sm:col-span-6"  >
+                        <UiInput v-model.trim="model.name" label="显示名称" variant="outlined" density="comfortable" placeholder="例如 Claude Opus" />
+                      </div>
+                    </div>
 
                     <!-- 输入模态 -->
-                    <div class="d-flex align-center ga-4 mt-3 mb-3">
-                      <span class="text-subtitle-2 font-weight-bold">输入模态</span>
-                      <v-checkbox v-model="modelInputFlags[model.id || `__${idx}`].text" label="文本" density="compact" hide-details />
-                      <v-checkbox v-model="modelInputFlags[model.id || `__${idx}`].image" label="图片" density="compact" hide-details />
+                    <div class="flex items-center gap-4 mt-3 mb-3">
+                      <span class="text-sm font-medium font-bold">输入模态</span>
+                      <UiCheckbox v-model="modelInputFlags[model.id || `__${idx}`].text" label="文本" density="compact" hide-details />
+                      <UiCheckbox v-model="modelInputFlags[model.id || `__${idx}`].image" label="图片" density="compact" hide-details />
                     </div>
 
                     <!-- 推理等级 -->
                     <div class="reasoning-section mt-4">
-                      <div class="d-flex align-center justify-space-between mb-2">
+                      <div class="flex items-center justify-between mb-2">
                         <div>
-                          <div class="text-subtitle-2 font-weight-bold">推理等级 (Reasoning Efforts)</div>
+                          <div class="text-sm font-medium font-bold">推理等级 (Reasoning Efforts)</div>
                         </div>
-                        <v-switch v-model="modelReasoningEnabled[model.id || `__${idx}`]" color="primary" density="compact" hide-details :label="modelReasoningEnabled[model.id || `__${idx}`] ? '支持' : '不支持'" />
+                        <UiSwitch v-model="modelReasoningEnabled[model.id || `__${idx}`]" color="primary" density="compact" hide-details :label="modelReasoningEnabled[model.id || `__${idx}`] ? '支持' : '不支持'" />
                       </div>
-                      <v-expand-transition>
+                      <Transition name="ui-expand">
                         <div v-show="modelReasoningEnabled[model.id || `__${idx}`]" class="reasoning-levels pl-1">
-                          <div v-for="level in reasoningLevels" :key="level.value" class="reasoning-row d-flex align-center ga-2 mb-2">
-                            <v-checkbox v-model="modelReasoningFlags[model.id || `__${idx}`][level.value]" density="compact" hide-details class="flex-grow-0" />
-                            <v-chip :color="level.color" size="small" label>{{ level.title }}</v-chip>
-                            <span class="text-caption text-medium-emphasis">{{ level.description }}</span>
+                          <div v-for="level in reasoningLevels" :key="level.value" class="reasoning-row flex items-center gap-2 mb-2">
+                            <UiCheckbox v-model="modelReasoningFlags[model.id || `__${idx}`][level.value]" density="compact" hide-details class="grow-0" />
+                            <UiBadge :color="level.color" size="small" label>{{ level.title }}</UiBadge>
+                            <span class="text-xs text-muted-foreground">{{ level.description }}</span>
                           </div>
                         </div>
-                      </v-expand-transition>
+                      </Transition>
                     </div>
 
                     <!-- 上下文与输出限制（对应 DSH settings.yaml 的 contextWindow / maxTokens 字段） -->
-                    <v-row class="mt-4">
-                      <v-col cols="12" sm="6">
-                        <v-text-field
+                    <div class="grid grid-cols-12 gap-4 mt-4">
+                      <div class="min-w-0 col-span-12 sm:col-span-6"  >
+                        <UiInput
                           v-model.number="model.contextWindow"
                           label="最大上下文 (contextWindow)"
                           variant="outlined"
@@ -255,9 +255,9 @@
                           min="1"
                           placeholder="例如 131072"
                         />
-                      </v-col>
-                      <v-col cols="12" sm="6">
-                        <v-text-field
+                      </div>
+                      <div class="min-w-0 col-span-12 sm:col-span-6"  >
+                        <UiInput
                           v-model.number="model.maxTokens"
                           label="最大输出长度 (maxTokens)"
                           variant="outlined"
@@ -266,27 +266,27 @@
                           min="1"
                           placeholder="例如 8192"
                         />
-                      </v-col>
-                    </v-row>
-
-                    <div class="d-flex justify-end mt-4">
-                      <v-btn size="small" variant="text" color="error" prepend-icon="mdi-delete" @click="removeModel(selectedProvider, idx)">删除模型</v-btn>
+                      </div>
                     </div>
-                  </v-expansion-panel-text>
-                </v-expansion-panel>
-              </v-expansion-panels>
-            </v-card-text>
-          </v-card>
 
-          <v-card v-else elevation="0" class="empty-editor d-flex align-center justify-center text-center pa-8">
+                    <div class="flex justify-end mt-4">
+                      <UiButton size="small" variant="text" color="error" prepend-icon="mdi-delete" @click="removeModel(selectedProvider, idx)">删除模型</UiButton>
+                    </div>
+                  </div>
+                </UiAccordionItem>
+              </UiAccordion>
+            </div>
+          </UiCard>
+
+          <UiCard v-else elevation="0" class="empty-editor flex items-center justify-center text-center p-8">
             <div>
-              <v-icon size="44" color="primary" class="mb-3">mdi-cog</v-icon>
-              <div class="text-subtitle-1 font-weight-bold">选择或添加一个提供商</div>
+              <UiIcon size="44" color="primary" class="mb-3">mdi-cog</UiIcon>
+              <div class="text-base font-medium font-bold">选择或添加一个提供商</div>
               <!-- 在这里配置 DSH 使用的协议、API Key 和模型。 -->
             </div>
-          </v-card>
-        </v-col>
-      </v-row>
+          </UiCard>
+        </div>
+      </div>
     </template>
 
     <AgentPromptCard agent="dsh" class="mt-5" />
@@ -304,13 +304,27 @@
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiCard from '@/shared/ui/card/Card.vue'
+import UiCheckbox from '@/shared/ui/check/Checkbox.vue'
+import UiSwitch from '@/shared/ui/check/Switch.vue'
+import UiAccordion from '@/shared/ui/disclosure/Accordion.vue'
+import UiAccordionItem from '@/shared/ui/disclosure/AccordionItem.vue'
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
+import UiBadge from '@/shared/ui/feedback/Badge.vue'
+import UiProgress from '@/shared/ui/feedback/Progress.vue'
+import UiInput from '@/shared/ui/field/Input.vue'
+import UiIcon from '@/shared/ui/icon/Icon.vue'
+import UiList from '@/shared/ui/navigation/List.vue'
+import UiListItem from '@/shared/ui/navigation/ListItem.vue'
+import UiSelect from '@/shared/ui/select/Select.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import AgentConfigHeader from '@/features/clients/components/AgentConfigHeader.vue'
 import AgentConfigLocation from '@/features/clients/components/AgentConfigLocation.vue'
 import AgentPromptCard from '@/features/clients/components/AgentPromptCard.vue'
 import ToolInstallBanner from '@/features/clients/components/ToolInstallBanner.vue'
-import ConfirmDialog from '@/shared/components/common/ConfirmDialog.vue'
-import EmptyState from '@/shared/components/common/EmptyState.vue'
+import ConfirmDialog from '@/shared/components/overlay/ConfirmDialog.vue'
+import EmptyState from '@/shared/components/feedback/EmptyState.vue'
 import { api, type DSHSettings, type DSHProvider, type DSHModel, type SaveDSHSettings, type ApiTab } from '@/api'
 import { useProxyProtocolPick, defaultQuickPickTypeOptions } from '@/features/clients/composables/useProxyProtocolPick'
 import { filterProxyModelsByKind, importProxyModels, buildDSHModel } from '@/features/clients/utils/proxyModelImport'
@@ -743,6 +757,8 @@ onMounted(loadSettings)
 </script>
 
 <style scoped>
-.reasoning-section { border: 1px solid rgba(var(--v-theme-on-surface), 0.12); border-radius: 8px; padding: 12px 16px; }
-.reasoning-row { flex-wrap: nowrap; }
+@reference "@/styles/index.css";
+
+.reasoning-section { @apply [border:1px_solid_color-mix(in_srgb,_var(--foreground)_12%,_transparent)] rounded-control [padding:12px_16px]; }
+.reasoning-row { @apply flex-nowrap; }
 </style>

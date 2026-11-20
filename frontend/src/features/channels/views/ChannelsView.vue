@@ -4,22 +4,22 @@
     <PageHeader :title="`${navigation?.label} 渠道`" :description="navigation?.description">
       <ChannelTableDrawer :channel-type="channelType" :channels="channels">
         <template #activator="{ props: activatorProps }">
-          <v-btn v-bind="activatorProps" variant="tonal" prepend-icon="mdi-format-list-bulleted">模型列表</v-btn>
+          <UiButton v-bind="activatorProps" variant="tonal" prepend-icon="mdi-format-list-bulleted">模型列表</UiButton>
         </template>
       </ChannelTableDrawer>
-      <v-tooltip text="刷新" location="bottom">
+      <UiTooltip text="刷新" location="bottom">
         <template #activator="{ props: tooltipProps }">
-          <v-btn v-bind="tooltipProps" icon="mdi-refresh" variant="text" aria-label="刷新" @click="refreshChannels" />
+          <UiButton v-bind="tooltipProps" icon="mdi-refresh" variant="text" aria-label="刷新" @click="refreshChannels" />
         </template>
-      </v-tooltip>
-      <v-btn color="info" variant="tonal" prepend-icon="mdi-speedometer" :loading="channelStore.isPingingAll" @click="pingAllChannels">
+      </UiTooltip>
+      <UiButton color="info" variant="tonal" prepend-icon="mdi-speedometer" :loading="channelStore.isPingingAll" @click="pingAllChannels">
         测试延迟
-      </v-btn>
-      <v-btn color="primary" prepend-icon="mdi-plus" @click="openAddChannel()">添加渠道</v-btn>
+      </UiButton>
+      <UiButton color="primary" prepend-icon="mdi-plus" @click="openAddChannel()">添加渠道</UiButton>
     </PageHeader>
 
     <!-- 概览与路由开关合并为一行，把首屏高度留给渠道列表。 -->
-    <section class="channel-overview" aria-label="渠道概览">
+    <section class="channel-overview panel-surface" aria-label="渠道概览">
       <dl class="overview-stats">
         <div class="overview-stat">
           <dt>渠道</dt>
@@ -39,9 +39,9 @@
 
       <div class="overview-modes">
         <IntentRoutingControl v-if="intentProtocol" :key="intentProtocol" :protocol="intentProtocol" />
-        <v-tooltip v-for="mode in modes" :key="mode.key" location="bottom" content-class="status-tooltip">
+        <UiTooltip v-for="mode in modes" :key="mode.key" location="bottom" content-class="status-tooltip">
           <template #activator="{ props: tooltipProps }">
-            <v-btn
+            <UiButton
               v-bind="tooltipProps"
               :variant="mode.enabled ? 'tonal' : 'outlined'"
               :color="mode.enabled ? mode.color : undefined"
@@ -52,13 +52,13 @@
               :class="{ 'is-off': !mode.enabled }"
               @click="mode.toggle"
             >
-              <v-icon start size="18">{{ mode.unknown ? 'mdi-alert-circle-outline' : mode.icon }}</v-icon>
+              <UiIcon start size="18">{{ mode.unknown ? 'mdi-alert-circle-outline' : mode.icon }}</UiIcon>
               {{ mode.label }}
               <span class="mode-state">{{ mode.unknown ? '未知' : mode.enabled ? '开' : '关' }}</span>
-            </v-btn>
+            </UiButton>
           </template>
           <span>{{ mode.tooltip }}</span>
-        </v-tooltip>
+        </UiTooltip>
       </div>
     </section>
 
@@ -89,15 +89,15 @@
       @success="showToast($event, 'info')"
     />
 
-    <v-card v-else>
+    <UiCard v-else>
       <EmptyState
         icon="mdi-server-network"
         title="暂无渠道"
         :description="`添加第一个上游渠道后，即可通过本代理转发 ${navigation?.label} 请求。`"
       >
-        <v-btn color="primary" prepend-icon="mdi-plus" @click="openAddChannel()">添加渠道</v-btn>
+        <UiButton color="primary" prepend-icon="mdi-plus" @click="openAddChannel()">添加渠道</UiButton>
       </EmptyState>
-    </v-card>
+    </UiCard>
 
     <AddChannelModal
       v-model:show="dialogStore.showAddChannelModal"
@@ -124,16 +124,20 @@
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiCard from '@/shared/ui/card/Card.vue'
+import UiIcon from '@/shared/ui/icon/Icon.vue'
+import UiTooltip from '@/shared/ui/overlay/Tooltip.vue'
 // 渠道页：概览、路由开关、流量统计与渠道编排。
 // 渠道数据由 channelStore 持有；本页负责进入时加载、停留期间自动刷新、离开时停止。
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import ConfirmDialog from '@/shared/components/common/ConfirmDialog.vue'
+import ConfirmDialog from '@/shared/components/overlay/ConfirmDialog.vue'
 import { useConfirm } from '@/shared/composables/useConfirm'
 import { deletionImpactWarning } from '@/features/channels/utils/deletionImpact'
-import PageHeader from '@/shared/components/common/PageHeader.vue'
-import EmptyState from '@/shared/components/common/EmptyState.vue'
-import DisclosureSection from '@/shared/components/common/DisclosureSection.vue'
+import PageHeader from '@/shared/components/layout/PageHeader.vue'
+import EmptyState from '@/shared/components/feedback/EmptyState.vue'
+import DisclosureSection from '@/shared/components/layout/DisclosureSection.vue'
 import ChannelOrchestration from '@/features/channels/components/dashboard/ChannelOrchestration.vue'
 import ChannelTableDrawer from '@/features/channels/components/dashboard/ChannelTableDrawer.vue'
 import AddChannelModal from '@/features/channels/components/form/AddChannelModal.vue'
@@ -286,23 +290,25 @@ onUnmounted(() => channelStore.stopAutoRefresh())
 </script>
 
 <style scoped>
-.channel-overview { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 24px; margin-bottom: 16px; padding: 12px 20px; background: rgb(var(--v-theme-surface)); border: 1px solid rgba(var(--v-theme-outline), 0.24); border-radius: var(--cut-md); }
-.overview-stats { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 32px; margin: 0; }
-.overview-stat { display: flex; align-items: baseline; gap: 8px; }
-.overview-stat dt { color: rgb(var(--v-theme-on-surface-variant)); font-size: 0.8125rem; }
-.overview-stat dd { margin: 0; font-size: 1.25rem; font-weight: 650; line-height: 1.4; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
-.overview-stat small { margin-left: 2px; font-size: 0.8125rem; font-weight: 400; color: rgb(var(--v-theme-on-surface-variant)); }
-.overview-status { display: flex; align-items: center; gap: 8px; font-size: 0.9375rem !important; --status: var(--v-theme-on-surface-variant); }
-.overview-status.is-ok { --status: var(--v-theme-success); }
-.overview-status.is-error { --status: var(--v-theme-error); }
-.overview-status__dot { width: 8px; height: 8px; border-radius: 50%; background: rgb(var(--status)); box-shadow: 0 0 0 3px rgba(var(--status), 0.18); }
-.overview-modes { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.mode-control.is-off { color: rgb(var(--v-theme-on-surface-variant)); }
-.mode-state { margin-left: 8px; padding: 1px 6px; font-size: 0.75rem; border-radius: 4px; background: rgba(var(--v-theme-on-surface), 0.08); }
-.channels-empty { display: flex; flex-direction: column; align-items: center; padding: 56px 24px; text-align: center; }
+@reference "@/styles/index.css";
+
+.channel-overview { @apply flex items-center justify-between flex-wrap [gap:12px_24px] mb-4 [padding:12px_20px] ; }
+.overview-stats { @apply flex items-center flex-wrap [gap:8px_32px] m-0; }
+.overview-stat { @apply flex items-baseline gap-2; }
+.overview-stat dt { @apply text-muted-foreground [font-size:0.8125rem]; }
+.overview-stat dd { @apply m-0 [font-size:1.25rem] [font-weight:650] [line-height:1.4] tabular-nums [letter-spacing:-0.02em]; }
+.overview-stat small { @apply ml-0.5 [font-size:0.8125rem] font-normal text-muted-foreground; }
+.overview-status { @apply flex items-center gap-2 [font-size:0.9375rem]!; --status: var(--muted-foreground); }
+.overview-status.is-ok { --status: var(--success); }
+.overview-status.is-error { --status: var(--destructive); }
+.overview-status__dot { @apply w-2 h-2 rounded-full [background:var(--status)] [box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--status)_18%,_transparent)]; }
+.overview-modes { @apply flex items-center flex-wrap gap-2; }
+.mode-control.is-off { @apply text-muted-foreground; }
+.mode-state { @apply ml-2 [padding:1px_6px] [font-size:0.75rem] rounded-badge [background:color-mix(in_srgb,_var(--foreground)_8%,_transparent)]; }
+.channels-empty { @apply flex flex-col items-center [padding:56px_24px] text-center; }
 @media (max-width: 600px) {
-  .channel-overview { padding: 12px; }
-  .overview-stats { gap: 8px 20px; }
-  .overview-modes, .overview-modes .mode-control { width: 100%; }
+  .channel-overview { @apply p-3; }
+  .overview-stats { @apply [gap:8px_20px]; }
+  .overview-modes, .overview-modes .mode-control { @apply w-full; }
 }
 </style>

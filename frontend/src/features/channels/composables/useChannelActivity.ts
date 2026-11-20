@@ -4,7 +4,7 @@
 // 活跃度索引、历史峰值与波形柱的派生计算。
 import { computed, ref, watch, type Ref } from 'vue'
 import type { ChannelRecentActivity } from '@/api'
-import { CHART_STATUS_COLORS } from '@/shared/utils/chartPalette'
+import { chartColor } from '@/shared/theme'
 
 /** 波形柱的健康档位，与成功率颜色对应。 */
 export type ActivityLevel = 'idle' | 'ok' | 'warn' | 'bad'
@@ -106,7 +106,7 @@ export function useChannelActivity(recentActivity: Ref<ChannelRecentActivity[]>)
         const y = 100 - height
 
         // 保留成功率的健康分级，柱状图使用低饱和的统一状态色。
-        let color: string = CHART_STATUS_COLORS.success
+        let color: string = chartColor('success')
         let level: ActivityLevel = 'idle'
 
         if (requests > 0) {
@@ -114,16 +114,16 @@ export function useChannelActivity(recentActivity: Ref<ChannelRecentActivity[]>)
           const successRate = (successCount / requests) * 100
 
           if (successRate < 20) {
-            color = CHART_STATUS_COLORS.failure
+            color = chartColor('failure')
             level = 'bad'
           } else if (successRate < 40) {
-            color = CHART_STATUS_COLORS.warning
+            color = chartColor('warning')
             level = 'bad'
           } else if (successRate < 80) {
-            color = CHART_STATUS_COLORS.warning
+            color = chartColor('warning')
             level = 'warn'
           } else {
-            color = CHART_STATUS_COLORS.success
+            color = chartColor('success')
             level = 'ok'
           }
         }

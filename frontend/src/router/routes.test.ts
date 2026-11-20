@@ -2,6 +2,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import router from './index'
+import { useTheme } from '@/shared/theme'
 import { usePreferencesStore } from '@/shared/stores/preferences'
 import { channelMenuActions } from '@/features/channels/components/dashboard/ChannelQuickMenu.vue'
 
@@ -28,9 +29,10 @@ describe('评测功能移除后的入口契约', () => {
     const preferences = usePreferencesStore()
     expect(Object.keys(preferences.$state).some(key => key.startsWith('eval'))).toBe(false)
     expect(preferences).not.toHaveProperty('setEvalLastSelection')
-    preferences.setDarkMode('dark')
+    const theme = useTheme()
+    theme.update({ mode: 'dark' })
     preferences.setClientDisguise('messages', true)
-    expect(preferences.darkModePreference).toBe('dark')
+    expect(theme.settings.mode).toBe('dark')
     expect(preferences.claudeCodeDisguiseEnabled).toBe(true)
   })
 })

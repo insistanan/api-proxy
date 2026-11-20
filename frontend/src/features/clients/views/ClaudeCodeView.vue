@@ -2,50 +2,50 @@
   <div class="agent-config-page claude-code-page">
     <AgentConfigHeader title="Claude Code 配置">
       <template #default>
-        <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="loadSettings">刷新</v-btn>
-        <v-btn color="primary" prepend-icon="mdi-content-save" :loading="saving" :disabled="loading" @click="saveSettings">保存配置</v-btn>
+        <UiButton variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="loadSettings">刷新</UiButton>
+        <UiButton color="primary" prepend-icon="mdi-content-save" :loading="saving" :disabled="loading" @click="saveSettings">保存配置</UiButton>
       </template>
     </AgentConfigHeader>
 
-    <v-alert v-if="error" type="error" variant="tonal" class="mb-5" closable @click:close="error = ''">{{ error }}</v-alert>
+    <UiAlert v-if="error" type="error" variant="tonal" class="mb-5" closable @click:close="error = ''">{{ error }}</UiAlert>
     <ToolInstallBanner tool="claude" class="mb-5" />
-    <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-5" />
+    <UiProgress v-if="loading" indeterminate color="primary" class="mb-5" />
 
     <template v-else>
       <AgentConfigLocation
         :label="settings?.exists ? '当前配置文件' : '首次保存将创建配置文件'"
         :path="settings?.path"
       >
-        <v-chip v-if="settings?.jsonc" size="x-small" label>JSONC 将在保存后规范化为 JSON</v-chip>
+        <UiBadge v-if="settings?.jsonc" size="x-small" label>JSONC 将在保存后规范化为 JSON</UiBadge>
       </AgentConfigLocation>
 
-      <v-row>
-        <v-col cols="12">
-          <v-card elevation="0" class="settings-card agent-config-panel h-100">
+      <div class="grid grid-cols-12 gap-4">
+        <div class="min-w-0 col-span-12" >
+          <UiCard elevation="0" class="settings-card agent-config-panel h-full">
             <div class="agent-config-panel-header">
               <div class="agent-config-panel-title">代理连接</div>
             </div>
-            <v-divider />
-            <v-card-text class="pa-5">
+            <hr class="border-0 border-t border-border" />
+            <div class="p-4 p-5">
               <!-- 连接本代理（固定 messages 协议） -->
               <section class="agent-config-callout mb-4 channel-quick-pick">
                 <div class="agent-config-callout__title">
-                  <v-icon size="18">mdi-lightning-bolt</v-icon>
+                  <UiIcon size="18">mdi-lightning-bolt</UiIcon>
                   连接本代理
                 </div>
                 <div>
-                  <v-btn color="primary" variant="tonal" prepend-icon="mdi-link-variant" :loading="connecting" @click="connectToProxy">一键连接本代理（{{ defaultBaseUrl || 'http://localhost:...' }}）</v-btn>
+                  <UiButton color="primary" variant="tonal" prepend-icon="mdi-link-variant" :loading="connecting" @click="connectToProxy">一键连接本代理（{{ defaultBaseUrl || 'http://localhost:...' }}）</UiButton>
                   <!-- Claude Code 固定走 messages 协议，点击后自动填充 Base URL 与访问密钥，模型可一键导入 -->
                 </div>
               </section>
 
-              <v-divider class="my-4" />
-              <v-text-field v-model.trim="baseUrl" label="Anthropic Base URL" variant="outlined" density="comfortable" placeholder="例如 http://127.0.0.1:8080" />
-              <v-radio-group v-model="credentialKind" inline class="mt-2 mb-1" hide-details>
-                <v-radio label="认证令牌" value="authToken" />
-                <v-radio label="API Key" value="apiKey" />
-              </v-radio-group>
-              <v-text-field
+              <hr class="border-0 border-t border-border my-4" />
+              <UiInput v-model.trim="baseUrl" label="Anthropic Base URL" variant="outlined" density="comfortable" placeholder="例如 http://127.0.0.1:8080" />
+              <UiRadioGroup v-model="credentialKind" inline class="mt-2 mb-1" hide-details>
+                <UiRadio label="认证令牌" value="authToken" />
+                <UiRadio label="API Key" value="apiKey" />
+              </UiRadioGroup>
+              <UiInput
                 v-model="credential"
                 :label="credentialKind === 'authToken' ? 'ANTHROPIC_AUTH_TOKEN' : 'ANTHROPIC_API_KEY'"
                 type="password"
@@ -55,45 +55,45 @@
                 @update:model-value="onCredentialInput"
               >
                 <template #append-inner>
-                  <v-btn v-if="credentialPresent" icon="mdi-delete" size="x-small" variant="text" title="清除已保存密钥" @click="clearCredential" />
+                  <UiButton v-if="credentialPresent" icon="mdi-delete" size="x-small" variant="text" title="清除已保存密钥" @click="clearCredential" />
                 </template>
-              </v-text-field>
-            </v-card-text>
-          </v-card>
-        </v-col>
-      </v-row>
+              </UiInput>
+            </div>
+          </UiCard>
+        </div>
+      </div>
 
-      <v-card elevation="0" class="settings-card agent-config-panel mt-5">
+      <UiCard elevation="0" class="settings-card agent-config-panel mt-5">
         <div class="agent-config-panel-header">
           <div>
             <div class="agent-config-panel-subtitle">为空时不会写入对应环境变量，Claude Code 将使用自身默认模型。每个模型族可独立勾选 1M 上下文。</div>
           </div>
           <div class="agent-config-panel-actions">
-            <v-btn size="small" color="secondary" variant="tonal" prepend-icon="mdi-download" :loading="importing" @click="importModelDefaultsFromProxy">导入本代理模型</v-btn>
+            <UiButton size="small" color="secondary" variant="tonal" prepend-icon="mdi-download" :loading="importing" @click="importModelDefaultsFromProxy">导入本代理模型</UiButton>
           </div>
         </div>
-        <v-divider />
-        <v-card-text class="pa-5">
-          <v-row v-for="item in modelDefaults" :key="item.family" class="model-default-row">
-            <v-col cols="12" sm="3" class="d-flex align-center pt-sm-5">
-              <v-chip :color="familyColor(item.family)" label>{{ familyTitle(item.family) }}</v-chip>
-            </v-col>
-            <v-col cols="12" sm="5">
-              <v-text-field v-model.trim="item.model" label="模型标识" variant="outlined" density="comfortable" :placeholder="`${familyTitle(item.family)} 默认模型`" />
-            </v-col>
-            <v-col cols="12" sm="3">
-              <v-text-field v-model.trim="item.name" label="显示名称" variant="outlined" density="comfortable" placeholder="可选" />
-            </v-col>
-            <v-col cols="12" sm="1" class="d-flex align-center justify-center pt-sm-5">
-              <v-tooltip text="启用 1M 上下文（写入模型标识追加 [1m] 后缀）">
+        <hr class="border-0 border-t border-border" />
+        <div class="p-4 p-5">
+          <div v-for="item in modelDefaults" :key="item.family" class="grid grid-cols-12 gap-4 model-default-row">
+            <div   class="min-w-0 col-span-12 sm:col-span-3 flex items-center sm:pt-5">
+              <UiBadge :color="familyColor(item.family)" label>{{ familyTitle(item.family) }}</UiBadge>
+            </div>
+            <div class="min-w-0 col-span-12 sm:col-span-5"  >
+              <UiInput v-model.trim="item.model" label="模型标识" variant="outlined" density="comfortable" :placeholder="`${familyTitle(item.family)} 默认模型`" />
+            </div>
+            <div class="min-w-0 col-span-12 sm:col-span-3"  >
+              <UiInput v-model.trim="item.name" label="显示名称" variant="outlined" density="comfortable" placeholder="可选" />
+            </div>
+            <div   class="min-w-0 col-span-12 sm:col-span-1 flex items-center justify-center sm:pt-5">
+              <UiTooltip text="启用 1M 上下文（写入模型标识追加 [1m] 后缀）">
                 <template #activator="{ props }">
-                  <v-checkbox v-model="item.supports1M" v-bind="props" label="1M" density="compact" hide-details color="primary" />
+                  <UiCheckbox v-model="item.supports1M" v-bind="props" label="1M" density="compact" hide-details color="primary" />
                 </template>
-              </v-tooltip>
-            </v-col>
-          </v-row>
-        </v-card-text>
-      </v-card>
+              </UiTooltip>
+            </div>
+          </div>
+        </div>
+      </UiCard>
     </template>
 
     <AgentPromptCard agent="claude-code" class="mt-5" />
@@ -101,6 +101,17 @@
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiCard from '@/shared/ui/card/Card.vue'
+import UiCheckbox from '@/shared/ui/check/Checkbox.vue'
+import UiRadio from '@/shared/ui/check/Radio.vue'
+import UiRadioGroup from '@/shared/ui/check/RadioGroup.vue'
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
+import UiBadge from '@/shared/ui/feedback/Badge.vue'
+import UiProgress from '@/shared/ui/feedback/Progress.vue'
+import UiInput from '@/shared/ui/field/Input.vue'
+import UiIcon from '@/shared/ui/icon/Icon.vue'
+import UiTooltip from '@/shared/ui/overlay/Tooltip.vue'
 import { onMounted, ref } from 'vue'
 import AgentConfigHeader from '@/features/clients/components/AgentConfigHeader.vue'
 import AgentConfigLocation from '@/features/clients/components/AgentConfigLocation.vue'
@@ -242,5 +253,7 @@ onMounted(loadSettings)
 </script>
 
 <style scoped>
-.model-default-row + .model-default-row { border-top: 1px solid rgba(var(--v-theme-on-surface), 0.1); }
+@reference "@/styles/index.css";
+
+.model-default-row + .model-default-row { @apply [border-top:1px_solid_color-mix(in_srgb,_var(--foreground)_10%,_transparent)]; }
 </style>

@@ -1,29 +1,33 @@
 <template>
   <div class="local-embedding">
-    <p class="text-body-2">安装位置：<code class="install-path">{{ status?.installPath || catalog?.installPath || '正在读取安装位置' }}</code></p>
-    <p class="text-body-2" role="status" aria-live="polite">{{ status?.platform }} · {{ phaseText }}</p>
-    <v-alert v-if="actionError || statusError || status?.error" type="error" variant="tonal">{{ actionError || statusError || status?.error }}</v-alert>
+    <p class="text-sm">安装位置：<code class="install-path">{{ status?.installPath || catalog?.installPath || '正在读取安装位置' }}</code></p>
+    <p class="text-sm" role="status" aria-live="polite">{{ status?.platform }} · {{ phaseText }}</p>
+    <UiAlert v-if="actionError || statusError || status?.error" type="error" variant="tonal">{{ actionError || statusError || status?.error }}</UiAlert>
     <div class="local-presets">
-      <v-alert v-if="catalog?.error || catalogError" type="warning" variant="tonal">{{ catalog?.error || catalogError }}<span v-if="catalog?.stale">；下方保留上次成功清单，刷新成功后才能安装。</span></v-alert>
-      <v-alert v-else-if="catalog && !catalog.presets.length" type="info" variant="tonal">推荐清单没有适合当前平台的模型，可使用已配置的 Embeddings 渠道。</v-alert>
-      <v-select v-if="catalog?.presets.length" v-model="presetId" :items="catalog.presets" item-title="name" item-value="id" label="推荐向量模型" :disabled="busy" />
-      <p v-if="selectedPreset" class="text-body-2 text-medium-emphasis">{{ selectedPreset.description }} · 约 {{ (selectedPreset.sizeBytes / 1024 / 1024).toFixed(0) }} MiB</p>
-      <div class="d-flex flex-wrap ga-2">
-        <v-btn v-if="catalog?.presets.length" color="primary" variant="flat" :disabled="busy || catalogLoading || status?.running || !presetId || !!catalog.error || !!catalogError" @click="run('preset')">下载并启动</v-btn>
-        <v-btn variant="text" :loading="catalogLoading" :disabled="busy || catalogLoading" @click="loadPresets">刷新推荐清单</v-btn>
+      <UiAlert v-if="catalog?.error || catalogError" type="warning" variant="tonal">{{ catalog?.error || catalogError }}<span v-if="catalog?.stale">；下方保留上次成功清单，刷新成功后才能安装。</span></UiAlert>
+      <UiAlert v-else-if="catalog && !catalog.presets.length" type="info" variant="tonal">推荐清单没有适合当前平台的模型，可使用已配置的 Embeddings 渠道。</UiAlert>
+      <UiSelect v-if="catalog?.presets.length" v-model="presetId" :items="catalog.presets" item-title="name" item-value="id" label="推荐向量模型" :disabled="busy" />
+      <p v-if="selectedPreset" class="text-sm text-muted-foreground">{{ selectedPreset.description }} · 约 {{ (selectedPreset.sizeBytes / 1024 / 1024).toFixed(0) }} MiB</p>
+      <div class="flex flex-wrap gap-2">
+        <UiButton v-if="catalog?.presets.length" color="primary" variant="flat" :disabled="busy || catalogLoading || status?.running || !presetId || !!catalog.error || !!catalogError" @click="run('preset')">下载并启动</UiButton>
+        <UiButton variant="text" :loading="catalogLoading" :disabled="busy || catalogLoading" @click="loadPresets">刷新推荐清单</UiButton>
       </div>
     </div>
-    <v-progress-linear v-if="busy" indeterminate color="primary" :aria-label="phaseText" />
-    <p class="text-caption text-medium-emphasis">网关重启后需手动启动。助手使用 2 个 CPU 线程；状态就绪后可构建索引。</p>
-    <div class="d-flex flex-wrap ga-2">
-      <v-btn color="primary" :disabled="busy || !status?.installed || status.running" @click="run('start')">启动并预热</v-btn>
-      <v-btn variant="outlined" :disabled="busy || !status?.running" @click="run('stop')">停止</v-btn>
-      <v-btn variant="text" :disabled="!!action" @click="refresh">刷新状态</v-btn>
+    <UiProgress v-if="busy" indeterminate color="primary" :aria-label="phaseText" />
+    <p class="text-xs text-muted-foreground">网关重启后需手动启动。助手使用 2 个 CPU 线程；状态就绪后可构建索引。</p>
+    <div class="flex flex-wrap gap-2">
+      <UiButton color="primary" :disabled="busy || !status?.installed || status.running" @click="run('start')">启动并预热</UiButton>
+      <UiButton variant="outlined" :disabled="busy || !status?.running" @click="run('stop')">停止</UiButton>
+      <UiButton variant="text" :disabled="!!action" @click="refresh">刷新状态</UiButton>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
+import UiProgress from '@/shared/ui/feedback/Progress.vue'
+import UiSelect from '@/shared/ui/select/Select.vue'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { intentApi, intentErrorText, type LocalPresets, type LocalStatus } from '@/features/channels/services/intent'
 
@@ -83,7 +87,9 @@ onUnmounted(() => { mounted = false; clearInterval(timer) })
 </script>
 
 <style scoped>
-.local-embedding { display: grid; gap: 16px; padding-top: 8px; }
-.local-presets { display: grid; gap: 12px; }
-.install-path { overflow-wrap: anywhere; }
+@reference "@/styles/index.css";
+
+.local-embedding { @apply grid gap-4 pt-2; }
+.local-presets { @apply grid gap-3; }
+.install-path { @apply [overflow-wrap:anywhere]; }
 </style>

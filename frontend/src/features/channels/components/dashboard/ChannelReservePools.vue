@@ -8,18 +8,18 @@
           <div class="channel-info">
             <div class="channel-info-main">
               <span
-                class="font-weight-medium channel-name-link"
+                class="font-medium channel-name-link"
                 tabindex="0"
                 role="button"
                 @click="$emit('edit', channel)"
                 @keydown.enter="$emit('edit', channel)"
                 @keydown.space.prevent="$emit('edit', channel)"
               >{{ channel.name }}</span>
-              <span class="text-caption text-disabled ml-2">{{ channelServiceLabel(channelType, channel.serviceType) }}</span>
-              <v-chip v-if="channel.temporary" size="x-small" color="warning" variant="tonal" class="ml-2">
+              <span class="text-xs text-muted-foreground/65 ml-2">{{ channelServiceLabel(channelType, channel.serviceType) }}</span>
+              <UiBadge v-if="channel.temporary" size="x-small" color="warning" variant="tonal" class="ml-2">
                 临时 {{ formatDateTime(channel.temporaryUntil) }}
-              </v-chip>
-              <v-tooltip
+              </UiBadge>
+              <UiTooltip
                 v-if="channel.visionCapable"
                 text="支持图片理解"
                 location="top"
@@ -27,18 +27,18 @@
                 :open-on-focus="false"
               >
                 <template #activator="{ props: tooltipProps }">
-                  <v-chip
+                  <UiBadge
                     v-bind="tooltipProps"
                     size="x-small"
                     color="primary"
                     variant="flat"
                     class="ml-2 vision-default-chip"
                   >
-                    <v-icon start size="12">mdi-image-search-outline</v-icon>
+                    <UiIcon start size="12">mdi-image-search-outline</UiIcon>
                     图片
-                  </v-chip>
+                  </UiBadge>
                 </template>
-              </v-tooltip>
+              </UiTooltip>
             </div>
             <div class="channel-info-meta">
               <ChannelMappingBlock
@@ -48,81 +48,81 @@
                 @edit="$emit('edit', channel)"
               />
             </div>
-            <div v-if="channel.description" class="channel-info-desc text-caption text-disabled">
+            <div v-if="channel.description" class="channel-info-desc text-xs text-muted-foreground/65">
               {{ channel.description }}
             </div>
           </div>
 
           <!-- API密钥数量 -->
           <div class="channel-keys">
-            <v-chip size="x-small" variant="outlined" color="grey" class="keys-chip" @click="$emit('edit', channel)">
-              <v-icon start size="x-small">mdi-key</v-icon>
+            <UiBadge size="x-small" variant="outlined" color="grey" class="keys-chip" @click="$emit('edit', channel)">
+              <UiIcon start size="x-small">mdi-key</UiIcon>
               {{ channel.apiKeys?.length || 0 }}
-            </v-chip>
+            </UiBadge>
           </div>
 
           <!-- 操作按钮 -->
           <div class="channel-actions">
-            <v-btn size="small" color="success" variant="tonal" @click="emit('enable', channel.index)">
-              <v-icon start size="small">mdi-play-circle</v-icon>
+            <UiButton size="small" color="success" variant="tonal" @click="emit('enable', channel.index)">
+              <UiIcon start size="small">mdi-play-circle</UiIcon>
               启用
-            </v-btn>
+            </UiButton>
 
-            <v-menu>
+            <UiMenu>
               <template #activator="{ props: menuProps }">
-                <v-btn icon size="x-small" variant="text" v-bind="menuProps" :aria-label="`打开 ${channel.name} 的备用渠道菜单`">
-                  <v-icon size="small">mdi-dots-vertical</v-icon>
-                </v-btn>
+                <UiButton icon size="x-small" variant="text" v-bind="menuProps" :aria-label="`打开 ${channel.name} 的备用渠道菜单`">
+                  <UiIcon size="small">mdi-dots-vertical</UiIcon>
+                </UiButton>
               </template>
-              <v-list density="compact">
-                <v-list-item @click="$emit('edit', channel)">
+              <UiList density="compact">
+                <UiListItem @click="$emit('edit', channel)">
                   <template #prepend>
-                    <v-icon size="small">mdi-pencil</v-icon>
+                    <UiIcon size="small">mdi-pencil</UiIcon>
                   </template>
-                  <v-list-item-title>编辑</v-list-item-title>
-                </v-list-item>
-                <v-list-item @click="emit('duplicate', channel)">
+                  <span class="block">编辑</span>
+                </UiListItem>
+                <UiListItem @click="emit('duplicate', channel)">
                   <template #prepend>
-                    <v-icon size="small">mdi-content-copy</v-icon>
+                    <UiIcon size="small">mdi-content-copy</UiIcon>
                   </template>
-                  <v-list-item-title>复制渠道</v-list-item-title>
-                </v-list-item>
-                <v-list-item @click="emit('vision', channel)">
+                  <span class="block">复制渠道</span>
+                </UiListItem>
+                <UiListItem @click="emit('vision', channel)">
                   <template #prepend>
-                    <v-icon size="small" :color="channel.visionCapable ? 'success' : 'primary'">
+                    <UiIcon size="small" :color="channel.visionCapable ? 'success' : 'primary'">
                       {{ channel.visionCapable ? 'mdi-check-circle' : 'mdi-image-search-outline' }}
-                    </v-icon>
+                    </UiIcon>
                   </template>
-                  <v-list-item-title>
+                  <span class="block">
                     {{ channel.visionCapable ? '取消支持图片理解' : '设为支持图片理解' }}
-                  </v-list-item-title>
-                </v-list-item>
-                <v-divider />
-                <v-list-item @click="emit('enable', channel.index)">
+                  </span>
+                </UiListItem>
+                <hr class="border-0 border-t border-border" />
+                <UiListItem @click="emit('enable', channel.index)">
                   <template #prepend>
-                    <v-icon size="small" color="success">mdi-play-circle</v-icon>
+                    <UiIcon size="small" color="success">mdi-play-circle</UiIcon>
                   </template>
-                  <v-list-item-title>启用</v-list-item-title>
-                </v-list-item>
-                <v-list-item @click="emit('status', channel.index, 'deprecated')">
+                  <span class="block">启用</span>
+                </UiListItem>
+                <UiListItem @click="emit('status', channel.index, 'deprecated')">
                   <template #prepend>
-                    <v-icon size="small" color="grey">mdi-archive-clock-outline</v-icon>
+                    <UiIcon size="small" color="grey">mdi-archive-clock-outline</UiIcon>
                   </template>
-                  <v-list-item-title>移至弃用池</v-list-item-title>
-                </v-list-item>
-                <v-list-item @click="$emit('delete', channel.index)">
+                  <span class="block">移至弃用池</span>
+                </UiListItem>
+                <UiListItem @click="$emit('delete', channel.index)">
                   <template #prepend>
-                    <v-icon size="small" color="error">mdi-delete</v-icon>
+                    <UiIcon size="small" color="error">mdi-delete</UiIcon>
                   </template>
-                  <v-list-item-title>删除</v-list-item-title>
-                </v-list-item>
-              </v-list>
-            </v-menu>
+                  <span class="block">删除</span>
+                </UiListItem>
+              </UiList>
+            </UiMenu>
           </div>
         </div>
       </div>
 
-      <div v-else class="text-center py-4 text-medium-emphasis text-caption">所有渠道都处于活跃状态</div>
+      <div v-else class="text-center py-4 text-muted-foreground text-xs">所有渠道都处于活跃状态</div>
     </DisclosureSection>
 
     <!-- 弃用渠道池 (deprecated only) -->
@@ -132,14 +132,14 @@
           <div class="channel-info">
             <div class="channel-info-main">
               <span
-                class="font-weight-medium channel-name-link"
+                class="font-medium channel-name-link"
                 tabindex="0"
                 role="button"
                 @click="$emit('edit', channel)"
                 @keydown.enter="$emit('edit', channel)"
                 @keydown.space.prevent="$emit('edit', channel)"
               >{{ channel.name }}</span>
-              <span class="text-caption text-disabled ml-2">{{ channelServiceLabel(channelType, channel.serviceType) }}</span>
+              <span class="text-xs text-muted-foreground/65 ml-2">{{ channelServiceLabel(channelType, channel.serviceType) }}</span>
             </div>
             <div class="channel-info-meta">
               <ChannelMappingBlock
@@ -149,27 +149,27 @@
                 @edit="$emit('edit', channel)"
               />
             </div>
-            <div class="channel-info-desc text-caption text-disabled">
+            <div class="channel-info-desc text-xs text-muted-foreground/65">
               弃用时间：{{ formatDateTime(channel.deprecatedAt) }}
             </div>
           </div>
 
           <div class="channel-keys">
-            <v-chip size="x-small" variant="outlined" color="grey" class="keys-chip" @click="$emit('edit', channel)">
-              <v-icon start size="x-small">mdi-key</v-icon>
+            <UiBadge size="x-small" variant="outlined" color="grey" class="keys-chip" @click="$emit('edit', channel)">
+              <UiIcon start size="x-small">mdi-key</UiIcon>
               {{ channel.apiKeys?.length || 0 }}
-            </v-chip>
+            </UiBadge>
           </div>
 
           <div class="channel-actions">
-            <v-btn size="small" color="grey" variant="tonal" @click="emit('status', channel.index, 'disabled')">
-              <v-icon start size="small">mdi-archive-outline</v-icon>
+            <UiButton size="small" color="grey" variant="tonal" @click="emit('status', channel.index, 'disabled')">
+              <UiIcon start size="small">mdi-archive-outline</UiIcon>
               转备用
-            </v-btn>
-            <v-btn size="small" color="error" variant="text" @click="$emit('delete', channel.index)">
-              <v-icon start size="small">mdi-delete</v-icon>
+            </UiButton>
+            <UiButton size="small" color="error" variant="text" @click="$emit('delete', channel.index)">
+              <UiIcon start size="small">mdi-delete</UiIcon>
               删除
-            </v-btn>
+            </UiButton>
           </div>
         </div>
       </div>
@@ -180,14 +180,21 @@
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiBadge from '@/shared/ui/feedback/Badge.vue'
+import UiIcon from '@/shared/ui/icon/Icon.vue'
+import UiList from '@/shared/ui/navigation/List.vue'
+import UiListItem from '@/shared/ui/navigation/ListItem.vue'
+import UiMenu from '@/shared/ui/overlay/Menu.vue'
+import UiTooltip from '@/shared/ui/overlay/Tooltip.vue'
 // 备用与弃用资源池只负责展示和发出操作事件，配置写入由父级编排。
 import type { Channel, ChannelStatus } from '@/types'
 import type { ApiTab } from '@/features/channels/services/channel-api'
 import { channelServiceLabel } from '@/features/channels/utils/imagesChannelProtocol'
 import { formatDateTime } from '@/features/channels/utils/channelMetricsFormat'
 import ChannelMappingBlock from '@/features/channels/components/dashboard/ChannelMappingBlock.vue'
-import DisclosureSection from '@/shared/components/common/DisclosureSection.vue'
-import EmptyState from '@/shared/components/common/EmptyState.vue'
+import DisclosureSection from '@/shared/components/layout/DisclosureSection.vue'
+import EmptyState from '@/shared/components/feedback/EmptyState.vue'
 
 defineProps<{
   inactiveChannels: Channel[]

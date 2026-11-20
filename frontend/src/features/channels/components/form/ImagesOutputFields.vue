@@ -1,6 +1,6 @@
 <template>
   <div>
-    <v-select
+    <UiSelect
       :model-value="outputFormat"
       :items="imagesOutputFormatOptions"
       label="输出格式"
@@ -8,9 +8,9 @@
       density="comfortable"
       @update:model-value="$emit('update:outputFormat', $event)"
     />
-    <v-row v-if="outputFormat === 'gif'" class="mt-1">
-      <v-col cols="12" sm="6">
-        <v-text-field
+    <div v-if="outputFormat === 'gif'" class="grid grid-cols-12 gap-4 mt-1">
+      <div class="min-w-0 col-span-12 sm:col-span-6"  >
+        <UiInput
           :model-value="frameCount"
           label="GIF 帧数"
           type="number"
@@ -22,9 +22,9 @@
           density="comfortable"
           @update:model-value="$emit('update:frameCount', $event)"
         />
-      </v-col>
-      <v-col cols="12" sm="6">
-        <v-text-field
+      </div>
+      <div class="min-w-0 col-span-12 sm:col-span-6"  >
+        <UiInput
           :model-value="frameDurationMs"
           label="每帧时长（毫秒）"
           type="number"
@@ -36,12 +36,14 @@
           density="comfortable"
           @update:model-value="$emit('update:frameDurationMs', $event)"
         />
-      </v-col>
-    </v-row>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import UiInput from '@/shared/ui/field/Input.vue'
+import UiSelect from '@/shared/ui/select/Select.vue'
 // 快速添加和详细编辑共用输出表单，格式与 GIF 参数都写入独立渠道设置。
 import type { ImagesOutputFormat } from '@/types/channel'
 import { imagesOutputFormatOptions, validateImagesFrameCount, validateImagesFrameDuration } from '@/features/channels/utils/imagesChannelProtocol'

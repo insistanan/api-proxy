@@ -2,59 +2,59 @@
   <div class="skills-page">
     <div class="skills-header-sticky">
       <PageHeader title="Skills" description="发现、安装并管理各客户端使用的技能。">
-          <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="loadSkills">刷新</v-btn>
-          <v-btn variant="text" prepend-icon="mdi-sync" :loading="syncing" @click="syncManifest">同步到 Agent</v-btn>
-          <v-btn variant="text" prepend-icon="mdi-archive-outline" :loading="consolidating" @click="consolidateInstalledSkills">导入现有</v-btn>
-          <v-btn variant="text" prepend-icon="mdi-swap-horizontal" @click="showTranslatedNames = !showTranslatedNames">{{ showTranslatedNames ? '显示原名称' : '显示译名' }}</v-btn>
-          <v-btn variant="tonal" prepend-icon="mdi-magnify" @click="openDiscover">发现 Skill</v-btn>
-          <v-btn color="primary" prepend-icon="mdi-plus" @click="openImport">本地安装</v-btn>
+          <UiButton variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="loadSkills">刷新</UiButton>
+          <UiButton variant="text" prepend-icon="mdi-sync" :loading="syncing" @click="syncManifest">同步到 Agent</UiButton>
+          <UiButton variant="text" prepend-icon="mdi-archive-outline" :loading="consolidating" @click="consolidateInstalledSkills">导入现有</UiButton>
+          <UiButton variant="text" prepend-icon="mdi-swap-horizontal" @click="showTranslatedNames = !showTranslatedNames">{{ showTranslatedNames ? '显示原名称' : '显示译名' }}</UiButton>
+          <UiButton variant="tonal" prepend-icon="mdi-magnify" @click="openDiscover">发现 Skill</UiButton>
+          <UiButton color="primary" prepend-icon="mdi-plus" @click="openImport">本地安装</UiButton>
       </PageHeader>
     </div>
 
-    <v-alert v-if="error" type="error" variant="tonal" class="mb-5" closable @click:close="error = ''">{{ error }}</v-alert>
+    <UiAlert v-if="error" type="error" variant="tonal" class="mb-5" closable @click:close="error = ''">{{ error }}</UiAlert>
 
     <DisclosureSection v-model="sourcesExpanded" title="来源与安装位置" description="查看各客户端的技能目录、读写状态和备份位置。" icon="mdi-folder-open" class="mb-5">
       <div class="locations-strip">
-        <div class="text-caption text-medium-emphasis mb-2">已检查的本机目录</div>
-        <div class="d-flex flex-wrap ga-2">
-          <v-chip v-for="location in locations" :key="location.key" size="small" label :title="`${location.path}（点击筛选）`" :color="location.exists ? (location.readOnly ? 'info' : 'success') : undefined" :class="['location-chip', { 'location-chip--active': agentFilter === location.key }]" @click="filterByAgent(location.key)">
+        <div class="text-xs text-muted-foreground mb-2">已检查的本机目录</div>
+        <div class="flex flex-wrap gap-2">
+          <UiBadge v-for="location in locations" :key="location.key" size="small" label :title="`${location.path}（点击筛选）`" :color="location.exists ? (location.readOnly ? 'info' : 'success') : undefined" :class="['location-chip', { 'location-chip--active': agentFilter === location.key }]" @click="filterByAgent(location.key)">
             {{ location.agent }} · {{ location.exists ? (location.readOnly ? '只读' : '可安装') : '目录不存在' }}
-          </v-chip>
+          </UiBadge>
         </div>
       </div>
     </DisclosureSection>
 
-    <v-row class="mb-1">
-      <v-col cols="12" md="7">
-        <v-text-field v-model.trim="query" density="comfortable" variant="outlined" prepend-inner-icon="mdi-magnify" label="搜索名称、描述或来源" hide-details />
-      </v-col>
-      <v-col cols="12" md="5">
-        <v-select v-model="agentFilter" :items="agentOptions" item-title="title" item-value="value" label="来源" density="comfortable" variant="outlined" hide-details />
-      </v-col>
-    </v-row>
+    <div class="grid grid-cols-12 gap-4 mb-1">
+      <div class="min-w-0 col-span-12 md:col-span-7"  >
+        <UiInput v-model.trim="query" density="comfortable" variant="outlined" prepend-inner-icon="mdi-magnify" label="搜索名称、描述或来源" hide-details />
+      </div>
+      <div class="min-w-0 col-span-12 md:col-span-5"  >
+        <UiSelect v-model="agentFilter" :items="agentOptions" item-title="title" item-value="value" label="来源" density="comfortable" variant="outlined" hide-details />
+      </div>
+    </div>
 
-    <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-4" />
+    <UiProgress v-if="loading" indeterminate color="primary" class="mb-4" />
 
-    <v-card elevation="0" class="skills-list-card">
-      <v-table density="comfortable">
+    <UiCard elevation="0" class="skills-list-card">
+      <UiTable density="comfortable">
         <thead>
           <tr><th>Skill</th><th>来源</th><th>状态</th><th>启用 Agent</th><th>路径</th><th class="text-right">操作</th></tr>
         </thead>
         <tbody>
-          <tr v-if="!loading && filteredSkills.length === 0"><td colspan="6" class="text-center text-medium-emphasis py-10">未发现符合条件的 Skill</td></tr>
+          <tr v-if="!loading && filteredSkills.length === 0"><td colspan="6" class="text-center text-muted-foreground py-10">未发现符合条件的 Skill</td></tr>
           <tr v-for="skill in visibleSkills" :key="`${skill.locationKey}:${skill.name}`">
             <td>
-              <v-tooltip :text="skill.note || ''" :disabled="!skill.note" location="top" theme="dark"><template #activator="{ props }"><button v-bind="props" type="button" class="skill-name-button font-weight-medium" @click="openSkill(skill)">{{ displaySkillName(skill) }}<v-tooltip v-if="skill.translatedName" text="已翻译" location="top" theme="dark"><template #activator="{ props: tipProps }"><v-icon v-bind="tipProps" icon="mdi-translate" size="x-small" color="primary" class="ml-1" /></template></v-tooltip></button></template></v-tooltip>
-              <div class="text-caption text-medium-emphasis skill-description">{{ skill.description || '未读取到说明' }}</div>
+              <UiTooltip :text="skill.note || ''" :disabled="!skill.note" location="top" theme="dark"><template #activator="{ props }"><button v-bind="props" type="button" class="skill-name-button font-medium" @click="openSkill(skill)">{{ displaySkillName(skill) }}<UiTooltip v-if="skill.translatedName" text="已翻译" location="top" theme="dark"><template #activator="{ props: tipProps }"><UiIcon v-bind="tipProps" icon="mdi-translate" size="x-small" color="primary" class="ml-1" /></template></UiTooltip></button></template></UiTooltip>
+              <div class="text-xs text-muted-foreground skill-description">{{ skill.description || '未读取到说明' }}</div>
             </td>
             <td>
-              <v-chip size="small" label :color="skill.readOnly ? 'info' : undefined" :class="['source-chip', { 'source-chip--active': agentFilter === skill.locationKey }]" title="点击筛选此来源" @click="filterByAgent(skill.locationKey)">{{ skill.agent }}</v-chip>
-              <div v-if="skill.readOnly" class="text-caption text-medium-emphasis mt-1">只读来源</div>
+              <UiBadge size="small" label :color="skill.readOnly ? 'info' : undefined" :class="['source-chip', { 'source-chip--active': agentFilter === skill.locationKey }]" title="点击筛选此来源" @click="filterByAgent(skill.locationKey)">{{ skill.agent }}</UiBadge>
+              <div v-if="skill.readOnly" class="text-xs text-muted-foreground mt-1">只读来源</div>
             </td>
-            <td><v-chip size="small" :color="skill.valid ? 'success' : 'warning'" label>{{ skill.valid ? '有效' : skill.issue || '需检查' }}</v-chip></td>
+            <td><UiBadge size="small" :color="skill.valid ? 'success' : 'warning'" label>{{ skill.valid ? '有效' : skill.issue || '需检查' }}</UiBadge></td>
             <td class="agent-toggles-cell">
-              <div v-if="skill.locationKey === 'project'" class="d-flex flex-wrap ga-1">
-                <v-chip
+              <div v-if="skill.locationKey === 'project'" class="flex flex-wrap gap-1">
+                <UiBadge
                   v-for="agent in managedAgentItems"
                   :key="agent.key"
                   size="x-small"
@@ -68,97 +68,97 @@
                   @click="toggleSkillAgent(skill.name, agent.key)"
                 >
                   {{ agent.label }}
-                </v-chip>
+                </UiBadge>
               </div>
-              <span v-else class="text-caption text-medium-emphasis">—</span>
+              <span v-else class="text-xs text-muted-foreground">—</span>
             </td>
-            <td><div class="skill-path-cell"><code class="skill-path">{{ skill.path }}</code><v-tooltip text="复制路径" location="top" theme="dark"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-content-copy" variant="text" size="x-small" :aria-label="`复制 ${skill.name} 的路径`" @click="copySkillPath(skill.path)" /></template></v-tooltip></div></td>
-            <td class="text-right text-no-wrap">
-              <v-tooltip text="查看与翻译" location="top" theme="dark"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-text-box-search-outline" variant="text" size="small" @click="openSkill(skill)" /></template></v-tooltip>
-              <v-tooltip :text="skill.readOnly ? '只读来源不可复制' : '复制到其他 Agent'" location="top" theme="dark"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-content-copy" :disabled="skill.readOnly" variant="text" size="small" @click="openCopy(skill)" /></template></v-tooltip>
-              <v-tooltip :text="skill.readOnly ? '只读来源不可删除' : '删除'" location="top" theme="dark"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-delete" :disabled="skill.readOnly" color="error" variant="text" size="small" @click="confirmDelete(skill)" /></template></v-tooltip>
+            <td><div class="skill-path-cell"><code class="skill-path">{{ skill.path }}</code><UiTooltip text="复制路径" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-content-copy" variant="text" size="x-small" :aria-label="`复制 ${skill.name} 的路径`" @click="copySkillPath(skill.path)" /></template></UiTooltip></div></td>
+            <td class="text-right whitespace-nowrap">
+              <UiTooltip text="查看与翻译" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-text-box-search-outline" variant="text" size="small" @click="openSkill(skill)" /></template></UiTooltip>
+              <UiTooltip :text="skill.readOnly ? '只读来源不可复制' : '复制到其他 Agent'" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-content-copy" :disabled="skill.readOnly" variant="text" size="small" @click="openCopy(skill)" /></template></UiTooltip>
+              <UiTooltip :text="skill.readOnly ? '只读来源不可删除' : '删除'" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-delete" :disabled="skill.readOnly" color="error" variant="text" size="small" @click="confirmDelete(skill)" /></template></UiTooltip>
             </td>
           </tr>
         </tbody>
-      </v-table>
+      </UiTable>
       <div class="skills-pagination">
-        <span class="text-body-2 text-medium-emphasis" role="status">共 {{ filteredSkills.length }} 项 · 每页 {{ skillsPageSize }} 项</span>
-        <v-pagination v-if="skillsPageCount > 1" v-model="skillsPage" :length="skillsPageCount" :total-visible="3" density="compact" aria-label="技能列表分页" />
+        <span class="text-sm text-muted-foreground" role="status">共 {{ filteredSkills.length }} 项 · 每页 {{ skillsPageSize }} 项</span>
+        <UiPagination v-if="skillsPageCount > 1" v-model="skillsPage" :length="skillsPageCount" :total-visible="3" density="compact" aria-label="技能列表分页" />
       </div>
-    </v-card>
+    </UiCard>
 
     <AppDialog v-model="importDialog" title="安装 Skill" description="上传 ZIP 压缩包或 SKILL.md，选择要写入的 Agent 目录。" size="md" :busy="importing">
-      <v-file-input v-model="importFile" accept=".zip,.md,text/markdown,application/zip" label="ZIP 压缩包或 SKILL.md" variant="outlined" prepend-icon="mdi-paperclip" show-size />
-      <v-select v-model="importTargets" :items="writableLocations" item-title="agent" item-value="key" label="安装目标" variant="outlined" multiple chips />
-      <v-alert type="warning" density="compact" variant="tonal">项目 Skills 目录会始终同步保留一份。其他同名目标会被覆盖；ZIP 只接受单一 Skill 目录，且必须包含有效的 <code>SKILL.md</code>。</v-alert>
+      <UiFileInput v-model="importFile" accept=".zip,.md,text/markdown,application/zip" label="ZIP 压缩包或 SKILL.md" variant="outlined" prepend-icon="mdi-paperclip" show-size />
+      <UiSelect v-model="importTargets" :items="writableLocations" item-title="agent" item-value="key" label="安装目标" variant="outlined" multiple chips />
+      <UiAlert type="warning" density="compact" variant="tonal">项目 Skills 目录会始终同步保留一份。其他同名目标会被覆盖；ZIP 只接受单一 Skill 目录，且必须包含有效的 <code>SKILL.md</code>。</UiAlert>
       <template #actions>
-        <v-btn variant="text" :disabled="importing" @click="importDialog = false">取消</v-btn>
-        <v-btn color="primary" :disabled="!importFile || importTargets.length === 0" :loading="importing" @click="importSelected">安装</v-btn>
+        <UiButton variant="text" :disabled="importing" @click="importDialog = false">取消</UiButton>
+        <UiButton color="primary" :disabled="!importFile || importTargets.length === 0" :loading="importing" @click="importSelected">安装</UiButton>
       </template>
     </AppDialog>
 
     <AppDialog v-model="discoverDialog" title="发现 Skill" description="从 skills.sh 搜索并安装到本机，安装前会从 GitHub 校验 SKILL.md 和文件清单。" size="xl" :busy="remoteSearching">
-      <v-text-field v-model.trim="discoverQuery" label="搜索 Skill，例如 ui、testing、react" variant="outlined" hide-details="auto" clearable @keyup.enter="searchRemote">
-        <template #append-inner><v-btn icon="mdi-magnify" variant="text" size="small" :loading="remoteSearching" @click="searchRemote" /></template>
-      </v-text-field>
-      <v-alert v-if="discoverError" type="error" variant="tonal" class="mt-4">{{ discoverError }}</v-alert>
-      <v-progress-linear v-if="remoteSearching" indeterminate color="primary" class="mt-4" />
+      <UiInput v-model.trim="discoverQuery" label="搜索 Skill，例如 ui、testing、react" variant="outlined" hide-details="auto" clearable @keyup.enter="searchRemote">
+        <template #append-inner><UiButton icon="mdi-magnify" variant="text" size="small" :loading="remoteSearching" @click="searchRemote" /></template>
+      </UiInput>
+      <UiAlert v-if="discoverError" type="error" variant="tonal" class="mt-4">{{ discoverError }}</UiAlert>
+      <UiProgress v-if="remoteSearching" indeterminate color="primary" class="mt-4" />
       <EmptyState v-if="!remoteSearching && remoteResults.length === 0 && remoteSearched" variant="inline" icon="mdi-magnify-close" title="没有找到匹配的 Skill" description="换个关键词再搜一次，例如 ui、testing、react。" />
-      <v-table v-if="remoteResults.length" density="comfortable" class="mt-4 remote-results-table">
+      <UiTable v-if="remoteResults.length" density="comfortable" class="mt-4 remote-results-table">
         <thead><tr><th>Skill</th><th>来源</th><th>安装量</th><th class="text-right">操作</th></tr></thead>
         <tbody>
           <tr v-for="result in remoteResults" :key="result.id">
-            <td><div class="font-weight-medium">{{ result.name || result.skillId }}</div><div class="text-caption text-medium-emphasis">{{ result.skillId }}</div></td>
+            <td><div class="font-medium">{{ result.name || result.skillId }}</div><div class="text-xs text-muted-foreground">{{ result.skillId }}</div></td>
             <td><a v-if="result.repositoryUrl" :href="result.repositoryUrl" target="_blank" rel="noreferrer" class="source-link">{{ result.source }}</a><span v-else>{{ result.source }}</span></td>
             <td class="install-count-cell"><span class="install-count">{{ formatInstalls(result.installs) }}</span></td>
-            <td class="text-right"><v-btn size="small" variant="tonal" color="primary" :loading="remoteInspectingId === result.id" @click="inspectRemote(result.id)">查看并安装</v-btn></td>
+            <td class="text-right"><UiButton size="small" variant="tonal" color="primary" :loading="remoteInspectingId === result.id" @click="inspectRemote(result.id)">查看并安装</UiButton></td>
           </tr>
         </tbody>
-      </v-table>
+      </UiTable>
     </AppDialog>
 
     <AppDialog v-model="remotePreviewDialog" :title="`安装 ${remotePreview?.name || ''}`" :description="remotePreview?.source" size="lg" :busy="remoteInstalling">
-      <v-alert v-if="remoteError" type="error" variant="tonal" class="mb-4">{{ remoteError }}</v-alert>
-      <div v-if="remotePreview" class="text-body-2 mb-4">{{ remotePreview.description }}</div>
-      <div v-if="remotePreview" class="d-flex flex-wrap ga-2 mb-4">
-        <v-chip size="small" label>{{ remotePreview.files.length }} 个文件</v-chip>
-        <v-chip v-if="remotePreview.license" size="small" label>许可证：{{ remotePreview.license }}</v-chip>
-        <v-chip v-if="remotePreview.commit" size="small" label :title="remotePreview.commit">提交 {{ remotePreview.commit.slice(0, 7) }}</v-chip>
-        <v-chip v-if="remotePreview.containsScripts" size="small" color="warning" label>包含 scripts/，请先审阅</v-chip>
-        <v-btn v-if="remotePreview.repositoryUrl" :href="remotePreview.repositoryUrl" target="_blank" rel="noreferrer" size="small" variant="text" prepend-icon="mdi-open-in-new">GitHub 仓库</v-btn>
+      <UiAlert v-if="remoteError" type="error" variant="tonal" class="mb-4">{{ remoteError }}</UiAlert>
+      <div v-if="remotePreview" class="text-sm mb-4">{{ remotePreview.description }}</div>
+      <div v-if="remotePreview" class="flex flex-wrap gap-2 mb-4">
+        <UiBadge size="small" label>{{ remotePreview.files.length }} 个文件</UiBadge>
+        <UiBadge v-if="remotePreview.license" size="small" label>许可证：{{ remotePreview.license }}</UiBadge>
+        <UiBadge v-if="remotePreview.commit" size="small" label :title="remotePreview.commit">提交 {{ remotePreview.commit.slice(0, 7) }}</UiBadge>
+        <UiBadge v-if="remotePreview.containsScripts" size="small" color="warning" label>包含 scripts/，请先审阅</UiBadge>
+        <UiButton v-if="remotePreview.repositoryUrl" :href="remotePreview.repositoryUrl" target="_blank" rel="noreferrer" size="small" variant="text" prepend-icon="mdi-open-in-new">GitHub 仓库</UiButton>
       </div>
-      <v-select v-model="remoteTargets" :items="writableLocations" item-title="agent" item-value="key" label="安装目标" variant="outlined" multiple chips :disabled="remoteInstalling" />
-      <v-alert type="warning" density="compact" variant="tonal" class="mb-4">项目 Skills 目录会始终同步保留一份；其他目标中的同名 Skill 会被覆盖。远程内容只会写入文件，不会在服务端执行脚本。</v-alert>
-      <div v-if="remotePreview" class="file-list"><div class="text-caption text-medium-emphasis mb-2">将安装的文件</div><div v-for="file in remotePreview.files" :key="file.path" class="d-flex justify-space-between text-body-2"><code>{{ file.path }}</code><span class="text-medium-emphasis">{{ formatBytes(file.size) }}</span></div></div>
+      <UiSelect v-model="remoteTargets" :items="writableLocations" item-title="agent" item-value="key" label="安装目标" variant="outlined" multiple chips :disabled="remoteInstalling" />
+      <UiAlert type="warning" density="compact" variant="tonal" class="mb-4">项目 Skills 目录会始终同步保留一份；其他目标中的同名 Skill 会被覆盖。远程内容只会写入文件，不会在服务端执行脚本。</UiAlert>
+      <div v-if="remotePreview" class="file-list"><div class="text-xs text-muted-foreground mb-2">将安装的文件</div><div v-for="file in remotePreview.files" :key="file.path" class="flex justify-between text-sm"><code>{{ file.path }}</code><span class="text-muted-foreground">{{ formatBytes(file.size) }}</span></div></div>
       <template #actions>
-        <v-btn variant="text" :disabled="remoteInstalling" @click="remotePreviewDialog = false">取消</v-btn>
-        <v-btn color="primary" :disabled="!remotePreview || remoteTargets.length === 0" :loading="remoteInstalling" @click="installRemote">安装</v-btn>
+        <UiButton variant="text" :disabled="remoteInstalling" @click="remotePreviewDialog = false">取消</UiButton>
+        <UiButton color="primary" :disabled="!remotePreview || remoteTargets.length === 0" :loading="remoteInstalling" @click="installRemote">安装</UiButton>
       </template>
     </AppDialog>
 
     <AppDialog v-model="detailDialog" :title="selectedDisplayName" :description="selectedSkill?.path" size="xl">
-      <v-alert v-if="detailError" type="error" variant="tonal" class="mb-4">{{ detailError }}</v-alert>
-      <v-row>
-        <v-col cols="12" lg="6"><v-textarea :model-value="originalContent" label="原 Skill（只读）" variant="outlined" rows="19" readonly no-resize class="skill-editor" /></v-col>
-        <v-col cols="12" lg="6"><v-textarea v-model="translatedContent" label="中文翻译" variant="outlined" rows="19" no-resize class="skill-editor" /></v-col>
-      </v-row>
+      <UiAlert v-if="detailError" type="error" variant="tonal" class="mb-4">{{ detailError }}</UiAlert>
+      <div class="grid grid-cols-12 gap-4">
+        <div class="min-w-0 col-span-12 lg:col-span-6"  ><UiTextarea :model-value="originalContent" label="原 Skill（只读）" variant="outlined" rows="19" readonly no-resize class="skill-editor" /></div>
+        <div class="min-w-0 col-span-12 lg:col-span-6"  ><UiTextarea v-model="translatedContent" label="中文翻译" variant="outlined" rows="19" no-resize class="skill-editor" /></div>
+      </div>
       <template #actions>
-        <v-row align="end" class="detail-controls">
-          <v-col cols="12" md="6" lg="3"><v-text-field v-model="skillNote" label="全局备注" variant="outlined" clearable hide-details="auto" @keyup.enter="saveSkillNote"><template #append-inner><v-tooltip text="保存备注" location="top" theme="dark"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-content-save" variant="text" size="small" :loading="savingNote" :disabled="savingNote" @click="saveSkillNote" /></template></v-tooltip></template></v-text-field></v-col>
-          <v-col cols="12" md="6" lg="3"><v-select v-model="translationChannel" :items="chatChannels" item-title="name" item-value="index" label="Chat 渠道（可选）" variant="outlined" clearable /></v-col>
-          <v-col cols="12" md="6" lg="4"><v-combobox v-model="translationModel" :items="translationModelOptions" item-title="title" item-value="value" label="模型 ID（可选）" variant="outlined" clearable :loading="translationModelsLoading" :error-messages="translationModelsError || undefined" /></v-col>
-          <v-col cols="12" md="6" lg="2"><div class="detail-actions"><v-tooltip :text="selectedSkill?.readOnly ? '只读来源不可复制' : '复制到其他 Agent'" location="top" theme="dark"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-content-copy" :disabled="!selectedSkill || selectedSkill.readOnly" variant="tonal" @click="openSelectedCopy" /></template></v-tooltip><v-tooltip text="翻译并自动保存" location="top" theme="dark"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-translate" color="primary" :loading="translating" @click="translateSkill" /></template></v-tooltip><v-tooltip text="保存当前译文" location="top" theme="dark"><template #activator="{ props }"><v-btn v-bind="props" icon="mdi-content-save" :disabled="!translatedContent || savingBackup" :loading="savingBackup" @click="() => saveBackup()" /></template></v-tooltip></div></v-col>
-        </v-row>
+        <div  class="grid grid-cols-12 gap-4 detail-controls">
+          <div class="min-w-0 col-span-12 md:col-span-6 lg:col-span-3"   ><UiInput v-model="skillNote" label="全局备注" variant="outlined" clearable hide-details="auto" @keyup.enter="saveSkillNote"><template #append-inner><UiTooltip text="保存备注" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-content-save" variant="text" size="small" :loading="savingNote" :disabled="savingNote" @click="saveSkillNote" /></template></UiTooltip></template></UiInput></div>
+          <div class="min-w-0 col-span-12 md:col-span-6 lg:col-span-3"   ><UiSelect v-model="translationChannel" :items="chatChannels" item-title="name" item-value="index" label="Chat 渠道（可选）" variant="outlined" clearable /></div>
+          <div class="min-w-0 col-span-12 md:col-span-6 lg:col-span-4"   ><UiSelect v-model="translationModel" searchable creatable :items="translationModelOptions" item-title="title" item-value="value" label="模型 ID（可选）" variant="outlined" clearable :loading="translationModelsLoading" :error-messages="translationModelsError || undefined" /></div>
+          <div class="min-w-0 col-span-12 md:col-span-6 lg:col-span-2"   ><div class="detail-actions"><UiTooltip :text="selectedSkill?.readOnly ? '只读来源不可复制' : '复制到其他 Agent'" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-content-copy" :disabled="!selectedSkill || selectedSkill.readOnly" variant="tonal" @click="openSelectedCopy" /></template></UiTooltip><UiTooltip text="翻译并自动保存" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-translate" color="primary" :loading="translating" @click="translateSkill" /></template></UiTooltip><UiTooltip text="保存当前译文" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-content-save" :disabled="!translatedContent || savingBackup" :loading="savingBackup" @click="() => saveBackup()" /></template></UiTooltip></div></div>
+        </div>
       </template>
     </AppDialog>
 
     <AppDialog v-model="copyDialog" title="复制 Skill 到其他 Agent" size="md" :busy="copying">
-      <div class="text-body-2 mb-4">来源：<strong>{{ selectedSkill?.name }}</strong>（{{ selectedSkill?.agent }}）</div>
-      <v-select v-model="copyTargets" :items="copyTargetLocations" item-title="agent" item-value="key" label="复制目标" variant="outlined" multiple chips :disabled="copying" />
-      <v-alert type="warning" density="compact" variant="tonal">将复制 SKILL.md 以及 references、scripts 等附属文件。同名 Skill 会覆盖目标用户目录；内置和插件来源不可作为复制源或目标。</v-alert>
+      <div class="text-sm mb-4">来源：<strong>{{ selectedSkill?.name }}</strong>（{{ selectedSkill?.agent }}）</div>
+      <UiSelect v-model="copyTargets" :items="copyTargetLocations" item-title="agent" item-value="key" label="复制目标" variant="outlined" multiple chips :disabled="copying" />
+      <UiAlert type="warning" density="compact" variant="tonal">将复制 SKILL.md 以及 references、scripts 等附属文件。同名 Skill 会覆盖目标用户目录；内置和插件来源不可作为复制源或目标。</UiAlert>
       <template #actions>
-        <v-btn variant="text" :disabled="copying" @click="copyDialog = false">取消</v-btn>
-        <v-btn color="primary" :disabled="copyTargets.length === 0" :loading="copying" @click="copySelected">复制</v-btn>
+        <UiButton variant="text" :disabled="copying" @click="copyDialog = false">取消</UiButton>
+        <UiButton color="primary" :disabled="copyTargets.length === 0" :loading="copying" @click="copySelected">复制</UiButton>
       </template>
     </AppDialog>
 
@@ -174,11 +174,24 @@
 </template>
 
 <script setup lang="ts">
-import PageHeader from '@/shared/components/common/PageHeader.vue'
-import DisclosureSection from '@/shared/components/common/DisclosureSection.vue'
-import AppDialog from '@/shared/components/common/AppDialog.vue'
-import ConfirmDialog from '@/shared/components/common/ConfirmDialog.vue'
-import EmptyState from '@/shared/components/common/EmptyState.vue'
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiCard from '@/shared/ui/card/Card.vue'
+import UiPagination from '@/shared/ui/data/Pagination.vue'
+import UiTable from '@/shared/ui/data/Table.vue'
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
+import UiBadge from '@/shared/ui/feedback/Badge.vue'
+import UiProgress from '@/shared/ui/feedback/Progress.vue'
+import UiFileInput from '@/shared/ui/field/FileInput.vue'
+import UiInput from '@/shared/ui/field/Input.vue'
+import UiTextarea from '@/shared/ui/field/Textarea.vue'
+import UiIcon from '@/shared/ui/icon/Icon.vue'
+import UiTooltip from '@/shared/ui/overlay/Tooltip.vue'
+import UiSelect from '@/shared/ui/select/Select.vue'
+import PageHeader from '@/shared/components/layout/PageHeader.vue'
+import DisclosureSection from '@/shared/components/layout/DisclosureSection.vue'
+import AppDialog from '@/shared/components/overlay/AppDialog.vue'
+import ConfirmDialog from '@/shared/components/overlay/ConfirmDialog.vue'
+import EmptyState from '@/shared/components/feedback/EmptyState.vue'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { api, fetchUpstreamModels, channelApiByType, type Channel, type ManagedSkill, type RemoteSkillPreview, type SkillLocation, type SkillSearchResult } from '@/api'
 import { useAuthStore } from '@/shared/stores/auth'
@@ -771,38 +784,36 @@ onMounted(loadSkills)
 </script>
 
 <style scoped>
-.skills-page { max-width: 1440px; margin: 0 auto; }
+@reference "@/styles/index.css";
+
+.skills-page { @apply max-w-360 [margin:0_auto]; }
 .skills-header-sticky {
-  position: sticky;
-  top: var(--v-layout-top, 0px);
-  z-index: 4;
-  background: rgb(var(--v-theme-background));
-  box-shadow: 0 -32px 0 0 rgb(var(--v-theme-background));
+  @apply sticky [top:var(--app-header-height,_0px)] [z-index:4] bg-background [box-shadow:0_-32px_0_0_var(--background)];
 }
-.locations-strip { border: 1px solid rgba(var(--v-theme-on-surface), 0.12); border-radius: 6px; padding: 12px 16px; }
-.location-chip, .source-chip { cursor: pointer; }
-.location-chip:hover, .source-chip:hover { filter: brightness(0.96); }
-.location-chip--active, .source-chip--active { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: 1px; }
-.skills-list-card { border: 1px solid rgba(var(--v-theme-on-surface), 0.12); overflow-x: auto; }
-.skills-pagination { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 12px 16px; border-top: 1px solid rgba(var(--v-theme-outline), 0.2); }
-.skill-name-button { background: none; border: 0; color: inherit; cursor: pointer; font: inherit; padding: 0; text-align: left; text-decoration: none; }
-.skill-name-button:hover { color: rgb(var(--v-theme-primary)); text-decoration: underline; }
-.skill-description { max-width: 440px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.agent-toggles-cell { min-width: 240px; }
-.agent-toggle-chip { cursor: pointer; }
-.skill-path-cell { align-items: center; display: flex; gap: 2px; min-width: 0; }
-.skill-path { display: block; max-width: 310px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.detail-card { height: min(900px, calc(100vh - 48px)); max-height: calc(100vh - 48px); display: flex; flex-direction: column; overflow: hidden; }
-.detail-header, .detail-footer { flex: 0 0 auto; }
-.detail-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
-.detail-footer { background: rgb(var(--v-theme-surface)); }
-.detail-actions { align-items: center; display: flex; gap: 8px; justify-content: flex-end; min-height: 56px; }
-.skill-editor :deep(.v-field__input) { overflow-y: auto; }
-.discover-card { max-height: calc(100vh - 48px); overflow-y: auto; }
-.remote-results-table { border: 1px solid rgba(var(--v-theme-on-surface), 0.12); }
-.install-count-cell, .install-count { min-width: 84px; white-space: nowrap; }
-.source-link { color: rgb(var(--v-theme-primary)); text-decoration: none; }
-.source-link:hover { text-decoration: underline; }
-.file-list { max-height: 220px; overflow-y: auto; border: 1px solid rgba(var(--v-theme-on-surface), 0.12); border-radius: 6px; padding: 12px; }
-@media (max-width: 600px) { .skill-description, .skill-path { max-width: 180px; } .detail-card { height: calc(100vh - 24px); max-height: calc(100vh - 24px); } .detail-actions { justify-content: flex-start; } }
+.locations-strip { @apply [border:1px_solid_color-mix(in_srgb,_var(--foreground)_12%,_transparent)] rounded-badge [padding:12px_16px]; }
+.location-chip, .source-chip { @apply cursor-pointer; }
+.location-chip:hover, .source-chip:hover { @apply [filter:brightness(0.96)]; }
+.location-chip--active, .source-chip--active { @apply [outline:2px_solid_var(--primary)] [outline-offset:1px]; }
+.skills-list-card { @apply [border:1px_solid_color-mix(in_srgb,_var(--foreground)_12%,_transparent)] overflow-x-auto; }
+.skills-pagination { @apply flex items-center justify-between flex-wrap gap-3 [padding:12px_16px] [border-top:1px_solid_color-mix(in_srgb,_var(--outline)_20%,_transparent)]; }
+.skill-name-button { @apply [background:none] border-0 [color:inherit] cursor-pointer [font:inherit] p-0 text-left no-underline; }
+.skill-name-button:hover { @apply text-primary underline; }
+.skill-description { @apply max-w-110 whitespace-nowrap overflow-hidden text-ellipsis; }
+.agent-toggles-cell { @apply min-w-60; }
+.agent-toggle-chip { @apply cursor-pointer; }
+.skill-path-cell { @apply items-center flex gap-0.5 min-w-0; }
+.skill-path { @apply block max-w-77.5 overflow-hidden text-ellipsis whitespace-nowrap; }
+.detail-card { @apply [height:min(900px,_calc(100vh_-_48px))] [max-height:calc(100vh_-_48px)] flex flex-col overflow-hidden; }
+.detail-header, .detail-footer { @apply [flex:0_0_auto]; }
+.detail-body { @apply [flex:1_1_auto] min-h-0 overflow-y-auto; }
+.detail-footer { @apply [background:var(--surface)]; }
+.detail-actions { @apply items-center flex gap-2 justify-end min-h-14; }
+.skill-editor :deep(textarea) { @apply overflow-y-auto; }
+.discover-card { @apply [max-height:calc(100vh_-_48px)] overflow-y-auto; }
+.remote-results-table { @apply [border:1px_solid_color-mix(in_srgb,_var(--foreground)_12%,_transparent)]; }
+.install-count-cell, .install-count { @apply min-w-21 whitespace-nowrap; }
+.source-link { @apply text-primary no-underline; }
+.source-link:hover { @apply underline; }
+.file-list { @apply max-h-55 overflow-y-auto [border:1px_solid_color-mix(in_srgb,_var(--foreground)_12%,_transparent)] rounded-badge p-3; }
+@media (max-width: 600px) { .skill-description, .skill-path { @apply max-w-45; } .detail-card { @apply [height:calc(100vh_-_24px)] [max-height:calc(100vh_-_24px)]; } .detail-actions { @apply justify-start; } }
 </style>

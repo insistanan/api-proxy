@@ -1,40 +1,40 @@
 <template>
   <div class="key-trend-chart-container">
     <!-- Header -->
-    <div class="chart-header d-flex align-center justify-space-between mb-3 flex-wrap ga-2">
-      <div class="d-flex align-center ga-2">
-        <v-btn-toggle v-model="selectedDuration" mandatory density="compact" variant="outlined" divided :disabled="isLoading" color="primary">
-          <v-btn value="1h" size="small">1h</v-btn>
-          <v-btn value="6h" size="small">6h</v-btn>
-          <v-btn value="24h" size="small">24h</v-btn>
-          <v-btn value="today" size="small">今日</v-btn>
-        </v-btn-toggle>
-        <v-btn icon size="small" variant="text" :loading="isLoading" :disabled="isLoading" @click="refreshData">
-          <v-icon>mdi-refresh</v-icon>
-        </v-btn>
+    <div class="chart-header flex items-center justify-between mb-3 flex-wrap gap-2">
+      <div class="flex items-center gap-2">
+        <UiToggleGroup v-model="selectedDuration" mandatory density="compact" variant="outlined" divided :disabled="isLoading" color="primary">
+          <UiButton value="1h" size="small">1h</UiButton>
+          <UiButton value="6h" size="small">6h</UiButton>
+          <UiButton value="24h" size="small">24h</UiButton>
+          <UiButton value="today" size="small">今日</UiButton>
+        </UiToggleGroup>
+        <UiButton icon size="small" variant="text" :loading="isLoading" :disabled="isLoading" @click="refreshData()">
+          <UiIcon>mdi-refresh</UiIcon>
+        </UiButton>
       </div>
-      <v-btn-toggle v-model="selectedView" mandatory density="compact" variant="outlined" divided :disabled="isLoading" color="primary">
-        <v-btn value="traffic" size="small">
-          <v-icon start size="14">mdi-chart-line</v-icon>流量
-        </v-btn>
-        <v-btn value="tokens" size="small">
-          <v-icon start size="14">mdi-chart-areaspline</v-icon>Token I/O
-        </v-btn>
-        <v-btn value="cache" size="small">
-          <v-icon start size="14">mdi-database</v-icon>缓存
-        </v-btn>
-      </v-btn-toggle>
+      <UiToggleGroup v-model="selectedView" mandatory density="compact" variant="outlined" divided :disabled="isLoading" color="primary">
+        <UiButton value="traffic" size="small">
+          <UiIcon start size="14">mdi-chart-line</UiIcon>流量
+        </UiButton>
+        <UiButton value="tokens" size="small">
+          <UiIcon start size="14">mdi-chart-areaspline</UiIcon>Token I/O
+        </UiButton>
+        <UiButton value="cache" size="small">
+          <UiIcon start size="14">mdi-database</UiIcon>缓存
+        </UiButton>
+      </UiToggleGroup>
     </div>
 
     <!-- Loading -->
-    <div v-if="isLoading" class="d-flex justify-center align-center" style="height: 240px">
-      <v-progress-circular indeterminate size="28" color="primary" width="3" />
+    <div v-if="isLoading" class="flex justify-center items-center" style="height: 240px">
+      <UiSpinner indeterminate size="28" color="primary" width="3" />
     </div>
 
     <!-- Empty -->
-    <div v-else-if="!hasData" class="d-flex flex-column justify-center align-center text-medium-emphasis" style="height: 240px">
-      <v-icon size="44" class="mb-2" :color="isDark ? 'grey-darken-1' : 'grey-lighten-1'">mdi-chart-timeline-variant</v-icon>
-      <div class="text-caption">选定时间范围内没有 Key 使用记录</div>
+    <div v-else-if="!hasData" class="flex flex-col justify-center items-center text-muted-foreground" style="height: 240px">
+      <UiIcon size="44" class="mb-2 text-muted-foreground">mdi-chart-timeline-variant</UiIcon>
+      <div class="text-xs">选定时间范围内没有 Key 使用记录</div>
     </div>
 
     <!-- Chart -->
@@ -45,8 +45,11 @@
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiToggleGroup from '@/shared/ui/button/ToggleGroup.vue'
+import UiSpinner from '@/shared/ui/feedback/Spinner.vue'
+import UiIcon from '@/shared/ui/icon/Icon.vue'
 import { ref, shallowRef, computed, watch, onMounted, onUnmounted } from 'vue'
-import { useTheme } from 'vuetify'
 import VueApexCharts from 'vue3-apexcharts'
 import type { ApexOptions } from 'apexcharts'
 import { channelApiByType, type ChannelKeyMetricsHistoryResponse } from '@/api'
@@ -54,7 +57,7 @@ import type { ApiTab } from '@/features/channels/services/channel-api'
 import { useAutoRefresh } from '@/shared/composables/useAutoRefresh'
 import { useChartPreference, type ChartDuration } from '@/shared/composables/useChartPreference'
 import { useToast } from '@/shared/composables/useToast'
-import { CHART_PALETTE, CHART_SERIES_COLORS, cacheHitRateColor, chartThemeColors } from '@/shared/utils/chartPalette'
+import { useChartColors } from '@/shared/theme'
 import { formatShortDateTime } from '@/shared/utils/datetime'
 
 const apexchart = VueApexCharts
@@ -66,8 +69,7 @@ const props = defineProps<{
 
 type ViewMode = 'traffic' | 'tokens' | 'cache'
 
-const theme = useTheme()
-const isDark = computed(() => theme.global.current.value.dark)
+const chartColors = useChartColors()
 const { showToast } = useToast()
 
 const { selectedView, selectedDuration, loadPreferences } = useChartPreference<ViewMode>(
@@ -88,7 +90,7 @@ const { start: startAutoRefresh, stop: stopAutoRefresh } = useAutoRefresh(
 
 // 调色板 — 低饱和的十色环，与 Instrument Deck 主题同调；
 // 明暗主题共用一套中间明度值，切主题时不需要重算系列色
-const keyColors = CHART_SERIES_COLORS
+const keyColors = computed(() => chartColors.value.series)
 
 const FAILURE_RATE_THRESHOLD = 0.1
 
@@ -159,7 +161,7 @@ const failureAnnotations = computed(() => {
       annotations.push({
         x: point.timestamp - interval / 2,
         x2: point.timestamp + interval / 2,
-        fillColor: CHART_PALETTE.danger,
+        fillColor: chartColors.value.danger,
         opacity: getFailureOpacity(point.failureRate),
         label: { text: '' }
       })
@@ -168,17 +170,17 @@ const failureAnnotations = computed(() => {
   return annotations
 })
 
-const getThemeColors = computed(() => chartThemeColors(isDark.value))
+const getThemeColors = computed(() => chartColors.value)
 
 const getChartColors = (): string[] => {
   const keyCount = historyData.value?.keys?.length || 0
-  if (keyCount === 0) return keyColors
+  if (keyCount === 0) return keyColors.value
   if (selectedView.value === 'traffic') {
-    return historyData.value!.keys.map((_, i) => keyColors[i % keyColors.length])
+    return historyData.value!.keys.map((_, i) => keyColors.value[i % keyColors.value.length])
   }
   const colors: string[] = []
   for (let i = 0; i < keyCount; i++) {
-    const color = keyColors[i % keyColors.length]
+    const color = keyColors.value[i % keyColors.value.length]
     colors.push(color); colors.push(color)
   }
   return colors
@@ -243,7 +245,7 @@ const buildTrafficTooltip = ({ seriesIndex, dataPointIndex, w }: any): string =>
       const uniqueModels = Array.from(new Set(aggregated.models.flatMap(m => m.split(', '))).values()).filter(m => !!m)
       const modelStr = escapeHtml(uniqueModels.join(', '))
       if (aggregated.total > 0) {
-        keyStats.push({ keyMask: escapeHtml(keyData.keyMask), success: aggregated.success, failure: aggregated.failure, total: aggregated.total, color: keyColors[keyIndex % keyColors.length], model: modelStr })
+        keyStats.push({ keyMask: escapeHtml(keyData.keyMask), success: aggregated.success, failure: aggregated.failure, total: aggregated.total, color: keyColors.value[keyIndex % keyColors.value.length], model: modelStr })
         grandTotal += aggregated.total; grandFailure += aggregated.failure
       }
     }
@@ -254,23 +256,23 @@ const buildTrafficTooltip = ({ seriesIndex, dataPointIndex, w }: any): string =>
   const hasFailure = grandFailure > 0
 
   let html = `<div style="padding: 10px 14px; font-size: 12px; min-width: 220px;">`
-  html += `<div style="font-weight: 600; margin-bottom: 8px; color: ${hasFailure ? CHART_PALETTE.danger : 'inherit'}; border-bottom: 1px solid rgba(128,128,128,0.15); padding-bottom: 6px;">${timeStr}</div>`
+  html += `<div style="font-weight: 600; margin-bottom: 8px; color: ${hasFailure ? chartColors.value.danger : 'inherit'}; border-bottom: 1px solid var(--border); padding-bottom: 6px;">${timeStr}</div>`
   keyStats.forEach(stat => {
     const failureRate = stat.total > 0 ? (stat.failure / stat.total * 100).toFixed(0) : '0'
     const hasKeyFailure = stat.failure > 0
     html += `<div style="display: flex; align-items: center; margin: 5px 0; gap: 6px;">`
     html += `<span style="width: 8px; height: 8px; border-radius: 50%; background: ${stat.color}; flex-shrink: 0;"></span>`
-    html += `<span style="flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${stat.keyMask}${stat.model ? ` <span style="font-size: 10px; color: rgba(var(--v-theme-on-surface), 0.6);">(${stat.model})</span>` : ''}</span>`
+    html += `<span style="flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${stat.keyMask}${stat.model ? ` <span style="font-size: 10px; color: var(--muted-foreground);">(${stat.model})</span>` : ''}</span>`
     html += `<span style="font-weight: 600;">${stat.total}</span>`
     if (hasKeyFailure) {
-      html += `<span style="color: ${CHART_PALETTE.danger}; font-size: 11px; margin-left: 4px;">${stat.failure}失(${failureRate}%)</span>`
+      html += `<span style="color: ${chartColors.value.danger}; font-size: 11px; margin-left: 4px;">${stat.failure}失(${failureRate}%)</span>`
     }
     html += `</div>`
   })
   if (keyStats.length > 1) {
-    html += `<div style="border-top: 1px solid rgba(128,128,128,0.2); margin-top: 8px; padding-top: 6px; font-weight: 600; display: flex; justify-content: space-between;">`
+    html += `<div style="border-top: 1px solid var(--border); margin-top: 8px; padding-top: 6px; font-weight: 600; display: flex; justify-content: space-between;">`
     html += `<span>合计: ${grandTotal} 请求</span>`
-    if (hasFailure) html += `<span style="color: ${CHART_PALETTE.danger};">${grandFailure} 失败 (${grandFailureRate}%)</span>`
+    if (hasFailure) html += `<span style="color: ${chartColors.value.danger};">${grandFailure} 失败 (${grandFailureRate}%)</span>`
     html += `</div>`
   }
   html += `</div>`
@@ -308,7 +310,7 @@ const buildDualTooltip = ({ seriesIndex, dataPointIndex, w }: any): string => {
         if (totalRead + totalInput > 0) cacheHitRate = (totalRead / (totalRead + totalInput)) * 100
       }
       if (aggregated.val1 > 0 || aggregated.val2 > 0) {
-        keyStats.push({ keyMask: escapeHtml(keyData.keyMask), color: keyColors[keyIndex % keyColors.length], model: modelStr, val1: aggregated.val1, val2: aggregated.val2, cacheHitRate })
+        keyStats.push({ keyMask: escapeHtml(keyData.keyMask), color: keyColors.value[keyIndex % keyColors.value.length], model: modelStr, val1: aggregated.val1, val2: aggregated.val2, cacheHitRate })
       }
     }
   })
@@ -318,19 +320,19 @@ const buildDualTooltip = ({ seriesIndex, dataPointIndex, w }: any): string => {
   const label2 = mode === 'tokens' ? 'Output' : 'Cache Write'
 
   let html = `<div style="padding: 10px 14px; font-size: 12px; min-width: 240px;">`
-  html += `<div style="font-weight: 600; margin-bottom: 8px; border-bottom: 1px solid rgba(128,128,128,0.15); padding-bottom: 6px;">${timeStr}</div>`
+  html += `<div style="font-weight: 600; margin-bottom: 8px; border-bottom: 1px solid var(--border); padding-bottom: 6px;">${timeStr}</div>`
   keyStats.forEach(stat => {
-    html += `<div style="margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px dashed rgba(128,128,128,0.1);">`
+    html += `<div style="margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px dashed var(--border-soft);">`
     html += `<div style="display: flex; align-items: center; gap: 6px; font-weight: 500; margin-bottom: 3px;">`
     html += `<span style="width: 8px; height: 8px; border-radius: 50%; background: ${stat.color}; flex-shrink: 0;"></span>`
-    html += `<span style="flex: 1;">${stat.keyMask}${stat.model ? ` <span style="font-size: 10px; color: rgba(var(--v-theme-on-surface), 0.6); font-weight: normal;">(${stat.model})</span>` : ''}</span>`
+    html += `<span style="flex: 1;">${stat.keyMask}${stat.model ? ` <span style="font-size: 10px; color: var(--muted-foreground); font-weight: normal;">(${stat.model})</span>` : ''}</span>`
     html += `</div>`
-    html += `<div style="padding-left: 14px; display: flex; gap: 16px; font-size: 11px; color: rgba(var(--v-theme-on-surface), 0.6);">`
-    html += `<span>${label1}: <b style="color: rgb(var(--v-theme-on-surface));">${formatNumber(stat.val1)}</b></span>`
-    html += `<span>${label2}: <b style="color: rgb(var(--v-theme-on-surface));">${formatNumber(stat.val2)}</b></span>`
+    html += `<div style="padding-left: 14px; display: flex; gap: 16px; font-size: 11px; color: var(--muted-foreground);">`
+    html += `<span>${label1}: <b style="color: var(--foreground);">${formatNumber(stat.val1)}</b></span>`
+    html += `<span>${label2}: <b style="color: var(--foreground);">${formatNumber(stat.val2)}</b></span>`
     html += `</div>`
     if (stat.cacheHitRate !== undefined) {
-      const hitColor = cacheHitRateColor(stat.cacheHitRate)
+      const hitColor = stat.cacheHitRate >= 50 ? chartColors.value.jade : stat.cacheHitRate >= 20 ? chartColors.value.indigo : chartColors.value.copper
       html += `<div style="padding-left: 14px; font-size: 11px; color: ${hitColor}; margin-top: 2px;">缓存命中率: <b>${stat.cacheHitRate.toFixed(1)}%</b></div>`
     }
     html += `</div>`
@@ -382,7 +384,7 @@ const chartOptions = computed<ApexOptions>(() => {
         enabled: true, top: 0, left: 0, blur: 3, opacity: 0.08
       }
     },
-    theme: { mode: isDark.value ? 'dark' : 'light' },
+    theme: { mode: chartColors.value.isDark ? 'dark' : 'light' },
     colors: getChartColors(),
     fill: {
       type: 'gradient',
@@ -417,7 +419,7 @@ const chartOptions = computed<ApexOptions>(() => {
     yaxis: yaxisConfig,
     annotations: { xaxis: failureAnnotations.value },
     tooltip: {
-      theme: isDark.value ? 'dark' : 'light',
+      theme: chartColors.value.isDark ? 'dark' : 'light',
       x: { format: 'MM-dd HH:mm' },
       y: { formatter: (val: number) => formatTooltipValue(val, mode) },
       custom: mode === 'traffic' ? buildTrafficTooltip : buildDualTooltip,
@@ -497,18 +499,17 @@ defineExpose({ refreshData })
 </script>
 
 <style scoped>
+@reference "@/styles/index.css";
+
 .key-trend-chart-container {
-  padding: 16px 20px;
-  background: rgb(var(--v-theme-surface));
-  border-top: 1px solid rgba(var(--v-theme-outline), 0.15);
+  @apply [padding:16px_20px] [background:var(--surface)] [border-top:1px_solid_color-mix(in_srgb,_var(--outline)_15%,_transparent)];
 }
 
 .chart-header {
-  flex-wrap: wrap;
-  gap: 8px;
+  @apply flex-wrap gap-2;
 }
 
 .chart-area {
-  margin-top: 4px;
+  @apply mt-1;
 }
 </style>

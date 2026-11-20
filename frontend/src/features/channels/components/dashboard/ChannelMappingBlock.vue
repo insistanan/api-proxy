@@ -1,5 +1,5 @@
 <template>
-  <v-tooltip v-if="preview" location="top" :open-delay="200" :open-on-focus="false">
+  <UiTooltip v-if="preview" location="top" :open-delay="200" :open-on-focus="false">
     <template #activator="{ props: tooltipProps }">
       <button
         v-bind="tooltipProps"
@@ -8,25 +8,27 @@
         :aria-label="`模型映射 ${preview}，点击编辑渠道`"
         @click.stop="emit('edit')"
       >
-        <v-icon size="14" class="meta-block-icon">mdi-swap-horizontal</v-icon>
+        <UiIcon size="14" class="meta-block-icon">mdi-swap-horizontal</UiIcon>
         <span class="meta-block-label">映射</span>
         <span class="meta-block-value">{{ preview }}</span>
         <span v-if="entryCount > 1" class="meta-block-badge">{{ entryCount }} 条</span>
       </button>
     </template>
     <div class="mapping-tooltip">
-      <div class="text-caption font-weight-bold mb-1">模型映射</div>
+      <div class="text-xs font-bold mb-1">模型映射</div>
       <div v-for="(line, index) in fullLines" :key="index" class="mapping-tooltip-line">{{ line }}</div>
     </div>
-  </v-tooltip>
+  </UiTooltip>
   <span v-else class="meta-block meta-block--muted">
-    <v-icon size="14" class="meta-block-icon">mdi-swap-horizontal</v-icon>
+    <UiIcon size="14" class="meta-block-icon">mdi-swap-horizontal</UiIcon>
     <span class="meta-block-label">映射</span>
     <span class="meta-block-value">未配置</span>
   </span>
 </template>
 
 <script setup lang="ts">
+import UiIcon from '@/shared/ui/icon/Icon.vue'
+import UiTooltip from '@/shared/ui/overlay/Tooltip.vue'
 /**
  * 渠道的模型映射摘要块。渠道行副行、备用资源池、弃用池共用这一份，
  * 三处此前各写一遍同样的 chip + tooltip，改一处忘另一处的成本比抽组件高。
@@ -123,38 +125,36 @@ const fullLines = computed<string[]>(() => {
 </script>
 
 <style scoped>
-/* 基类 .meta-block 在 assets/style.css，这里只写映射块自己的配色与 tooltip */
+@reference "@/styles/index.css";
+
+.meta-block {
+  @apply inline-flex max-w-full items-center gap-1.25 rounded-control border border-border bg-muted/25 px-2 py-0.75 text-left text-xs leading-normal transition-colors;
+}
+.meta-block-icon, .meta-block-label, .meta-block-badge { @apply shrink-0; }
+.meta-block-label { @apply text-[10px] font-extrabold tracking-wide; }
+.meta-block-value { @apply truncate font-mono font-semibold; }
+.meta-block-badge { @apply rounded-badge bg-muted px-1.25 text-[10px] font-bold; }
+.meta-block--muted { @apply border-dashed text-muted-foreground; }
+.meta-block--muted .meta-block-value { @apply font-medium; }
 .meta-block--mapping {
-  border-color: rgba(var(--v-theme-secondary), 0.5);
-  background: color-mix(in srgb, rgb(var(--v-theme-secondary)) 10%, transparent);
-  color: rgb(var(--v-theme-on-surface));
-  cursor: pointer;
+  @apply [border-color:color-mix(in_srgb,_var(--secondary)_50%,_transparent)] [background:color-mix(in_srgb,_var(--secondary)_10%,_transparent)] text-foreground cursor-pointer;
 }
 .meta-block--mapping:hover,
 .meta-block--mapping:focus-visible {
-  border-color: rgb(var(--v-theme-secondary));
-  background: color-mix(in srgb, rgb(var(--v-theme-secondary)) 18%, transparent);
+  @apply border-secondary [background:color-mix(in_srgb,_var(--secondary)_18%,_transparent)];
 }
 .meta-block--mapping .meta-block-icon,
 .meta-block--mapping .meta-block-label {
-  color: rgb(var(--v-theme-secondary));
+  @apply text-secondary;
 }
 
 .mapping-tooltip {
-  min-width: 200px;
-  max-width: 420px;
-  font-size: 12px;
-  line-height: 1.6;
-  color: rgb(var(--v-theme-on-surface));
+  @apply min-w-50 max-w-105 [font-size:12px] [line-height:1.6] text-foreground;
 }
 .mapping-tooltip-line {
-  padding: 3px 0;
-  font-family: 'Fira Code', 'JetBrains Mono', monospace;
-  font-size: 11px;
-  color: rgba(var(--v-theme-on-surface), 0.85);
-  word-break: break-all;
+  @apply [padding:3px_0] [font-family:'Fira_Code',_'JetBrains_Mono',_monospace] [font-size:11px] [color:color-mix(in_srgb,_var(--foreground)_85%,_transparent)] [word-break:break-all];
 }
 .mapping-tooltip-line:not(:last-child) {
-  border-bottom: 1px solid rgba(var(--v-theme-outline), 0.15);
+  @apply [border-bottom:1px_solid_color-mix(in_srgb,_var(--outline)_15%,_transparent)];
 }
 </style>

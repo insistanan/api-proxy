@@ -1,37 +1,37 @@
 <template>
   <div class="availability-panel">
     <div class="availability-toolbar">
-      <v-text-field v-model="keyword" label="搜索模型或渠道" prepend-inner-icon="mdi-magnify" hide-details density="compact" clearable class="availability-search" />
-      <v-select v-model="poolFilter" :items="poolOptions" label="分组" hide-details density="compact" />
-      <v-select v-model="channelFilter" :items="channelOptions" label="渠道" hide-details density="compact" />
-      <v-select v-model="stateFilter" :items="stateOptions" label="观测状态" hide-details density="compact" />
+      <UiInput v-model="keyword" label="搜索模型或渠道" prepend-inner-icon="mdi-magnify" hide-details density="compact" clearable class="availability-search" />
+      <UiSelect v-model="poolFilter" :items="poolOptions" label="分组" hide-details density="compact" />
+      <UiSelect v-model="channelFilter" :items="channelOptions" label="渠道" hide-details density="compact" />
+      <UiSelect v-model="stateFilter" :items="stateOptions" label="观测状态" hide-details density="compact" />
     </div>
 
     <div class="availability-meta">
-      <span class="text-caption text-medium-emphasis">
+      <span class="text-xs text-muted-foreground">
         {{ snapshot ? `更新于 ${formatTime(snapshot.generatedAt)}` : '尚未加载观测数据' }}
         <span v-if="error && snapshot"> · 保留上次快照</span>
       </span>
       <div class="availability-actions">
-        <v-menu :close-on-content-click="false" max-width="360">
+        <UiMenu :close-on-content-click="false" max-width="360">
           <template #activator="{ props: menuProps }">
-            <v-btn v-bind="menuProps" variant="text" size="small" prepend-icon="mdi-information">统计口径</v-btn>
+            <UiButton v-bind="menuProps" variant="text" size="small" prepend-icon="mdi-information">统计口径</UiButton>
           </template>
-          <v-card class="pa-4 text-body-2 availability-help">
+          <UiCard class="p-4 text-sm availability-help">
             <p>每行对应一个渠道下的实际模型，包含配置中的模型和真实请求中出现的模型。</p>
             <p>仅统计真实请求中的上游尝试，不主动测试。参数错误、内容拒绝和客户端取消不计入成功率。</p>
             <p>状态参考最近 1 小时；正常需至少 {{ snapshot?.minSamples ?? 5 }} 个有效样本且成功率 ≥ 95%。未调用或样本不足时显示未知。</p>
             <p>趋势展示最近 24 个小时桶（含当前小时），灰色为无有效样本。免费池参考这些观测选模型，普通渠道调度不变。</p>
             <p>列表优先展示近 1 小时有有效请求的模型，按成功率降序；其次展示仅有 24 小时历史的模型，无有效样本的排在最后。</p>
-          </v-card>
-        </v-menu>
-        <v-btn variant="tonal" size="small" prepend-icon="mdi-refresh" :loading="loading" @click="refresh">刷新</v-btn>
+          </UiCard>
+        </UiMenu>
+        <UiButton variant="tonal" size="small" prepend-icon="mdi-refresh" :loading="loading" @click="refresh">刷新</UiButton>
       </div>
     </div>
-    <v-alert v-if="error" type="error" variant="tonal" density="compact" class="mx-6 mb-3" role="alert">{{ error }}</v-alert>
+    <UiAlert v-if="error" type="error" variant="tonal" density="compact" class="mx-6 mb-3" role="alert">{{ error }}</UiAlert>
 
-    <v-progress-linear :active="loading" indeterminate color="primary" aria-label="加载可用性观测" />
-    <v-table fixed-header class="availability-table" density="comfortable">
+    <UiProgress :active="loading" indeterminate color="primary" aria-label="加载可用性观测" />
+    <UiTable fixed-header class="availability-table" density="comfortable">
       <thead>
         <tr><th scope="col">实际模型</th><th scope="col">渠道 / 分组</th><th scope="col">状态</th><th scope="col">近 1 小时成功率</th><th scope="col">24 小时趋势</th><th scope="col">最近请求</th><th scope="col">明细</th></tr>
       </thead>
@@ -41,43 +41,43 @@
             <td class="model-cell"><strong class="model-name">{{ row.model }}</strong></td>
             <td class="channel-cell">
               <span>{{ row.channelName || '未命名渠道' }}</span>
-              <div class="text-caption text-medium-emphasis">{{ poolName(row) }}</div>
+              <div class="text-xs text-muted-foreground">{{ poolName(row) }}</div>
             </td>
-            <td><v-chip :color="stateMeta[row.state].color" size="small" variant="tonal">{{ stateMeta[row.state].label }}</v-chip></td>
+            <td><UiBadge :color="stateMeta[row.state].color" size="small" variant="tonal">{{ stateMeta[row.state].label }}</UiBadge></td>
             <td>
               <strong>{{ successRate(row.recent) }}</strong>
-              <div class="text-caption text-medium-emphasis">{{ eligible(row.recent) }} 次有效请求</div>
+              <div class="text-xs text-muted-foreground">{{ eligible(row.recent) }} 次有效请求</div>
             </td>
             <td>
               <div class="availability-trend" aria-label="每小时请求成功率，灰色表示没有有效样本">
-                <v-tooltip v-for="bucket in row.buckets" :key="bucket.from" :text="bucketText(bucket)" location="top">
+                <UiTooltip v-for="bucket in row.buckets" :key="bucket.from" :text="bucketText(bucket)" location="top">
                   <template #activator="{ props: tooltipProps }">
                     <span v-bind="tooltipProps" tabindex="0" :aria-label="bucketText(bucket)" :class="bucketTone(bucket)"></span>
                   </template>
-                </v-tooltip>
+                </UiTooltip>
               </div>
             </td>
-            <td class="text-caption last-seen">{{ formatTime(row.lastSeen) }}</td>
-            <td><v-btn size="small" variant="text" :aria-label="`${row.channelName} 的 ${row.model} 观测明细`" :aria-expanded="expanded === rowKey(row)" @click="toggle(row)">{{ expanded === rowKey(row) ? '收起' : '明细' }}</v-btn></td>
+            <td class="text-xs last-seen">{{ formatTime(row.lastSeen) }}</td>
+            <td><UiButton size="small" variant="text" :aria-label="`${row.channelName} 的 ${row.model} 观测明细`" :aria-expanded="expanded === rowKey(row)" @click="toggle(row)">{{ expanded === rowKey(row) ? '收起' : '明细' }}</UiButton></td>
           </tr>
           <tr v-if="expanded === rowKey(row)">
             <td colspan="7" class="availability-detail">
-              <p class="text-body-2 mb-2">24 小时成功率 {{ successRate(row) }} · {{ eligible(row) }} 次有效请求</p>
-              <p class="text-body-2 mb-3">
+              <p class="text-sm mb-2">24 小时成功率 {{ successRate(row) }} · {{ eligible(row) }} 次有效请求</p>
+              <p class="text-sm mb-3">
                 成功 {{ row.success }} · 上游故障 {{ row.failure }} · 不支持 {{ row.unsupported }} · 凭据／额度 {{ row.credential }} · 限流 {{ row.rateLimited }} · 排除 {{ row.ignored }}
               </p>
-              <p class="text-caption text-medium-emphasis mb-3">
+              <p class="text-xs text-muted-foreground mb-3">
                 未调用、最近 1 小时无有效结果或样本不足时显示未知。部分组合失败会标记降级，其他组合仍可能可用。
                 冷却优先参考 Retry-After，缺失时按 30 秒估计。仅统计当前配置中的 Key、URL 和协议；旧日志不追溯判定。
               </p>
               <div v-for="candidate in row.candidates" :key="candidate.id" class="candidate-row">
                 <span>{{ candidate.label }}<small>{{ candidate.endpoint }} · {{ candidate.protocol }}</small></span>
-                <v-chip :color="stateMeta[candidate.state].color" size="small">{{ stateMeta[candidate.state].label }}</v-chip>
+                <UiBadge :color="stateMeta[candidate.state].color" size="small">{{ stateMeta[candidate.state].label }}</UiBadge>
                 <span>{{ successRate(candidate) }} · {{ eligible(candidate) }} 个有效样本</span>
                 <span>{{ reasonLabel(candidate.lastReason) }}<small>{{ formatTime(candidate.lastSeen) }}</small></span>
                 <span v-if="candidate.state === 'cooling'">冷却至 {{ formatTime(candidate.cooldownUntil) }}</span>
               </div>
-              <p v-if="!row.candidates.length" class="text-body-2">当前没有配置 Key／URL 组合，无法判断可用性。</p>
+              <p v-if="!row.candidates.length" class="text-sm">当前没有配置 Key／URL 组合，无法判断可用性。</p>
             </td>
           </tr>
         </template>
@@ -90,15 +90,26 @@
           </td>
         </tr>
       </tbody>
-    </v-table>
+    </UiTable>
     <footer class="availability-footer">
-      <span class="text-caption text-medium-emphasis">共 {{ snapshot?.rows.length ?? 0 }} 条模型记录<span v-if="filteredRows.length !== snapshot?.rows.length && snapshot"> · 筛选后 {{ filteredRows.length }} 条</span></span>
-      <v-pagination v-if="pageCount > 1" v-model="page" :length="pageCount" :total-visible="3" density="comfortable" />
+      <span class="text-xs text-muted-foreground">共 {{ snapshot?.rows.length ?? 0 }} 条模型记录<span v-if="filteredRows.length !== snapshot?.rows.length && snapshot"> · 筛选后 {{ filteredRows.length }} 条</span></span>
+      <UiPagination v-if="pageCount > 1" v-model="page" :length="pageCount" :total-visible="3" density="comfortable" />
     </footer>
   </div>
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiCard from '@/shared/ui/card/Card.vue'
+import UiPagination from '@/shared/ui/data/Pagination.vue'
+import UiTable from '@/shared/ui/data/Table.vue'
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
+import UiBadge from '@/shared/ui/feedback/Badge.vue'
+import UiProgress from '@/shared/ui/feedback/Progress.vue'
+import UiInput from '@/shared/ui/field/Input.vue'
+import UiMenu from '@/shared/ui/overlay/Menu.vue'
+import UiTooltip from '@/shared/ui/overlay/Tooltip.vue'
+import UiSelect from '@/shared/ui/select/Select.vue'
 import { computed, onUnmounted, ref, watch } from 'vue'
 import type { ApiTab } from '@/features/channels/services/channel-api'
 import type { Channel } from '@/types/channel'
@@ -106,7 +117,7 @@ import { getModelAvailability } from '@/features/channels/services/model-availab
 import { useModelAvailabilityStore } from '@/features/channels/stores/modelAvailability'
 import { useChannelStore } from '@/features/channels/stores/channel'
 import type { AvailabilityCounts, AvailabilityState, ModelAvailabilityRow } from '@/types/model-availability'
-import EmptyState from '@/shared/components/common/EmptyState.vue'
+import EmptyState from '@/shared/components/feedback/EmptyState.vue'
 import { formatDateTime } from '@/shared/utils/datetime'
 
 const props = defineProps<{ channelType: ApiTab; channels: Channel[] }>()
@@ -248,41 +259,43 @@ onUnmounted(() => controller?.abort())
 </script>
 
 <style scoped>
-.availability-panel { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
-.availability-toolbar { display: grid; grid-template-columns: minmax(220px, 2fr) repeat(3, minmax(140px, 1fr)); align-items: center; gap: 12px; padding: 0 24px 12px; flex-shrink: 0; }
-.availability-meta, .availability-actions { display: flex; align-items: center; gap: 8px; }
-.availability-meta { justify-content: space-between; flex-wrap: wrap; padding: 0 24px 12px; flex-shrink: 0; }
-.availability-help { line-height: 1.7; }
-.availability-help p + p { margin-top: 12px; }
-.availability-table { flex: 1; min-width: 0; min-height: 0; border-radius: 0; }
-.availability-table :deep(.v-table__wrapper > table) { min-width: 1080px; }
-.availability-table th { white-space: nowrap; }
-.availability-table td { padding-top: 12px !important; padding-bottom: 12px !important; font-variant-numeric: tabular-nums; }
-.model-cell { min-width: 180px; max-width: 280px; overflow-wrap: anywhere; }
-.model-name { font-size: 0.8125rem; }
-.channel-cell { min-width: 140px; max-width: 200px; overflow-wrap: anywhere; }
-.last-seen { width: 140px; }
-.availability-trend { display: flex; gap: 3px; width: 220px; }
-.availability-trend span { flex: 1; height: 20px; border-radius: 2px; }
-.availability-trend span:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: 2px; }
-.is-empty { background: rgba(var(--v-theme-on-surface), 0.15); }
-.is-healthy { background: rgb(var(--v-theme-success)); }
-.is-degraded { background: rgb(var(--v-theme-warning)); }
-.availability-detail { padding: 16px !important; background: rgba(var(--v-theme-on-surface), 0.025); }
-.candidate-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; padding: 10px 0; border-top: 1px solid rgba(var(--v-theme-outline), 0.18); font-size: 0.8125rem; }
-.candidate-row small { display: block; margin-top: 4px; color: rgb(var(--v-theme-on-surface-variant)); }
-.candidate-row span { overflow-wrap: anywhere; }
-.availability-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; min-height: 60px; padding: 8px 24px; border-top: 1px solid rgba(var(--v-theme-outline), 0.24); flex-shrink: 0; }
+@reference "@/styles/index.css";
+
+.availability-panel { @apply flex flex-col [flex:1] min-w-0 min-h-0; }
+.availability-toolbar { @apply grid [grid-template-columns:minmax(220px,_2fr)_repeat(3,_minmax(140px,_1fr))] items-center gap-3 [padding:0_24px_12px] shrink-0; }
+.availability-meta, .availability-actions { @apply flex items-center gap-2; }
+.availability-meta { @apply justify-between flex-wrap [padding:0_24px_12px] shrink-0; }
+.availability-help { @apply [line-height:1.7]; }
+.availability-help p + p { @apply mt-3; }
+.availability-table { @apply [flex:1] min-w-0 min-h-0 rounded-none; }
+.availability-table :deep(table) { @apply min-w-270; }
+.availability-table th { @apply whitespace-nowrap; }
+.availability-table td { @apply pt-3! pb-3! tabular-nums; }
+.model-cell { @apply min-w-45 max-w-70 [overflow-wrap:anywhere]; }
+.model-name { @apply [font-size:0.8125rem]; }
+.channel-cell { @apply min-w-35 max-w-50 [overflow-wrap:anywhere]; }
+.last-seen { @apply w-35; }
+.availability-trend { @apply flex [gap:3px] w-55; }
+.availability-trend span { @apply [flex:1] h-5 rounded-badge; }
+.availability-trend span:focus-visible { @apply [outline:2px_solid_var(--primary)] [outline-offset:2px]; }
+.is-empty { @apply [background:color-mix(in_srgb,_var(--foreground)_15%,_transparent)]; }
+.is-healthy { @apply bg-success; }
+.is-degraded { @apply bg-warning; }
+.availability-detail { @apply p-4! [background:color-mix(in_srgb,_var(--foreground)_2.5%,_transparent)]; }
+.candidate-row { @apply flex flex-wrap items-center [gap:12px_24px] [padding:10px_0] [border-top:1px_solid_color-mix(in_srgb,_var(--outline)_18%,_transparent)] [font-size:0.8125rem]; }
+.candidate-row small { @apply block mt-1 text-muted-foreground; }
+.candidate-row span { @apply [overflow-wrap:anywhere]; }
+.availability-footer { @apply flex items-center justify-between flex-wrap gap-2 min-h-15 [padding:8px_24px] [border-top:1px_solid_color-mix(in_srgb,_var(--outline)_24%,_transparent)] shrink-0; }
 @media (max-width: 900px) {
-  .availability-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .availability-toolbar { @apply [grid-template-columns:repeat(2,_minmax(0,_1fr))] gap-2; }
 }
 @media (max-width: 700px) {
-  .availability-toolbar { padding: 0 16px 12px; }
-  .availability-meta { padding: 0 16px 12px; }
-  .availability-footer { padding: 8px 16px; }
+  .availability-toolbar { @apply [padding:0_16px_12px]; }
+  .availability-meta { @apply [padding:0_16px_12px]; }
+  .availability-footer { @apply [padding:8px_16px]; }
 }
 @media (max-height: 540px) {
-  .availability-panel { overflow-y: auto; }
-  .availability-table { flex: none; min-height: 160px; }
+  .availability-panel { @apply overflow-y-auto; }
+  .availability-table { @apply [flex:none] min-h-40; }
 }
 </style>

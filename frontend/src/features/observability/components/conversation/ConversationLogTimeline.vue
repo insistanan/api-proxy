@@ -1,13 +1,13 @@
 <template>
   <div class="conversation-timeline">
     <div class="timeline-actions">
-      <v-btn v-if="shownCount < requests.length || logs.nextRequestCursor" size="small" variant="text" :loading="logs.roundsLoading" @click="loadEarlier">加载更早的请求</v-btn>
-      <v-btn v-if="logs.anchored" size="small" variant="tonal" @click="logs.loadRounds({ latest: true })">回到最新请求</v-btn>
-      <v-btn size="small" variant="text" prepend-icon="mdi-unfold-more-horizontal" :disabled="!rows.length" @click="expandAll">展开当前调用</v-btn>
-      <v-btn size="small" variant="text" prepend-icon="mdi-chevron-up" :disabled="!opened.size" @click="collapseAll">全部收起</v-btn>
-      <span class="text-caption text-medium-emphasis">显示 {{ visible.length }} 次调用；一次用户轮次可能包含多次调用</span>
+      <UiButton v-if="shownCount < requests.length || logs.nextRequestCursor" size="small" variant="text" :loading="logs.roundsLoading" @click="loadEarlier">加载更早的请求</UiButton>
+      <UiButton v-if="logs.anchored" size="small" variant="tonal" @click="logs.loadRounds({ latest: true })">回到最新请求</UiButton>
+      <UiButton size="small" variant="text" prepend-icon="mdi-unfold-more-horizontal" :disabled="!rows.length" @click="expandAll">展开当前调用</UiButton>
+      <UiButton size="small" variant="text" prepend-icon="mdi-chevron-up" :disabled="!opened.size" @click="collapseAll">全部收起</UiButton>
+      <span class="text-xs text-muted-foreground">显示 {{ visible.length }} 次调用；一次用户轮次可能包含多次调用</span>
     </div>
-    <div v-if="!requests.length" class="pa-4 text-medium-emphasis">{{ logs.roundsLoading ? '正在加载调用…' : '此会话没有可用的请求记录。' }}</div>
+    <div v-if="!requests.length" class="p-4 text-muted-foreground">{{ logs.roundsLoading ? '正在加载调用…' : '此会话没有可用的请求记录。' }}</div>
     <details
       v-for="row in rows"
       :id="`log-round-${row.summary.requestId}`"
@@ -20,46 +20,46 @@
       <summary class="round-header">
         <span class="round-index" :title="row.summary.requestId">调用 #{{ row.summary.requestId.slice(0, 8) }}</span>
         <span class="round-time">{{ formatDateTime(row.summary.startedAt || row.summary.unixMilli) }}</span>
-        <v-chip size="x-small" :color="row.status.color" variant="tonal">{{ row.status.label }}</v-chip>
+        <UiBadge size="x-small" :color="row.status.color" variant="tonal">{{ row.status.label }}</UiBadge>
         <span v-if="row.summary.model" class="round-meta">{{ row.summary.model }}</span>
         <span v-if="row.summary.channelName" class="round-meta">{{ row.summary.channelName }}</span>
         <span class="round-meta">{{ row.summary.stream ? 'stream' : 'normal' }}</span>
         <span class="round-spacer"></span>
-        <v-icon class="round-chevron" icon="mdi-chevron-down" size="small" />
+        <UiIcon class="round-chevron" icon="mdi-chevron-down" size="small" />
       </summary>
       <div v-if="opened.has(row.summary.requestId)" class="round-content">
         <div class="round-actions">
-          <v-btn size="small" variant="text" prepend-icon="mdi-text-box-search-outline" @click="emit('inspect', row.summary.requestId)">流量详情</v-btn>
+          <UiButton size="small" variant="text" prepend-icon="mdi-text-box-search-outline" @click="emit('inspect', row.summary.requestId)">流量详情</UiButton>
         </div>
-        <v-alert v-if="logs.detailErrors[row.summary.requestId]" type="error" variant="tonal" density="compact">{{ logs.detailErrors[row.summary.requestId] }}</v-alert>
-        <v-btn v-if="!row.detail || logs.detailErrors[row.summary.requestId]" size="small" variant="text" @click="loadOpened">加载本轮内容</v-btn>
+        <UiAlert v-if="logs.detailErrors[row.summary.requestId]" type="error" variant="tonal" density="compact">{{ logs.detailErrors[row.summary.requestId] }}</UiAlert>
+        <UiButton v-if="!row.detail || logs.detailErrors[row.summary.requestId]" size="small" variant="text" @click="loadOpened">加载本轮内容</UiButton>
         <template v-if="row.detail">
           <ContextSnapshotPanel v-if="row.context && row.input" :snapshot="row.context" :body="row.input.body || ''" />
           <ToolTraceLinks v-if="row.detail.toolLinks" :links="row.detail.toolLinks" @locate="emit('inspect', $event)" />
           <div v-if="row.delta" class="delta-notice">{{ row.delta.notice }}</div>
           <details v-if="row.delta?.top" class="round-config">
             <summary>请求配置</summary>
-            <span v-if="row.delta.removedTopFields.length" class="text-caption">已移除：{{ row.delta.removedTopFields.join('、') }}</span>
+            <span v-if="row.delta.removedTopFields.length" class="text-xs">已移除：{{ row.delta.removedTopFields.join('、') }}</span>
             <JsonBodyPane :body="row.delta.top" title="本次请求配置" :meta="row.summary.requestId" wrap />
           </details>
           <div v-if="row.delta && !row.delta.repeated" class="trace-section">
             <div class="section-label">本次新增输入</div>
             <SessionInspector :body="row.delta.body" :replayable="false" compact history-input wrap />
           </div>
-          <div v-else-if="!row.delta" class="text-caption text-medium-emphasis">本次没有输入正文记录。</div>
+          <div v-else-if="!row.delta" class="text-xs text-muted-foreground">本次没有输入正文记录。</div>
           <div v-if="row.output" class="trace-section">
             <div class="section-label">模型回复</div>
             <SessionInspector :body="row.output.body || ''" :replayable="false" compact wrap />
           </div>
-          <div v-else class="text-caption text-medium-emphasis mt-3">{{ ['processing', 'retrying'].includes(row.detail.summary.status || '') ? '等待响应结束…' : '本次没有响应正文记录。' }}</div>
+          <div v-else class="text-xs text-muted-foreground mt-3">{{ ['processing', 'retrying'].includes(row.detail.summary.status || '') ? '等待响应结束…' : '本次没有响应正文记录。' }}</div>
           <details v-if="row.attempts.length > 1" class="round-config">
             <summary>{{ row.attempts.length }} 次上游尝试</summary>
-            <div v-for="attempt in row.attempts" :key="attempt.key" class="text-caption attempt-summary">
+            <div v-for="attempt in row.attempts" :key="attempt.key" class="text-xs attempt-summary">
               {{ attempt.label }} · {{ attempt.response?.statusCode || attempt.headers?.statusCode || '未收到响应' }}
-              <span v-if="attempt.error" class="text-error">{{ attempt.error.body }}</span>
+              <span v-if="attempt.error" class="text-destructive">{{ attempt.error.body }}</span>
             </div>
           </details>
-          <v-alert v-if="row.detail.summary.errorMessage" class="mt-3" type="warning" variant="tonal" density="compact">{{ row.detail.summary.errorMessage }}</v-alert>
+          <UiAlert v-if="row.detail.summary.errorMessage" class="mt-3" type="warning" variant="tonal" density="compact">{{ row.detail.summary.errorMessage }}</UiAlert>
         </template>
       </div>
     </details>
@@ -67,6 +67,10 @@
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
+import UiBadge from '@/shared/ui/feedback/Badge.vue'
+import UiIcon from '@/shared/ui/icon/Icon.vue'
 // 轮次摘要可分页；仅展开轮次和它的前一轮需要正文，增量始终来自实际请求。
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { conversationVersion, summaryVersion } from '@/features/observability/stores/logs'
@@ -171,73 +175,42 @@ onBeforeUnmount(() => { generation++ })
 </script>
 
 <style scoped>
-.timeline-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+@reference "@/styles/index.css";
+
+.timeline-actions { @apply flex items-center gap-2 flex-wrap mb-4; }
 .timeline-round {
-  border: 1px solid rgba(var(--v-theme-outline), 0.4);
-  border-left: 4px solid rgba(var(--v-theme-outline), 0.4);
-  border-radius: 10px;
-  background: rgb(var(--v-theme-surface));
-  margin-bottom: 16px;
-  overflow-wrap: anywhere;
+  @apply [border:1px_solid_color-mix(in_srgb,_var(--outline)_40%,_transparent)] [border-left:4px_solid_color-mix(in_srgb,_var(--outline)_40%,_transparent)] rounded-control bg-card mb-4 [overflow-wrap:anywhere];
 }
-.timeline-round.round-success { border-left-color: rgba(var(--v-theme-success), 0.75); }
-.timeline-round.round-warning { border-left-color: rgba(var(--v-theme-warning), 0.75); }
-.timeline-round.round-error { border-left-color: rgba(var(--v-theme-error), 0.8); }
-.timeline-round.round-info { border-left-color: rgba(var(--v-theme-info), 0.75); }
-.timeline-round.round-secondary { border-left-color: rgba(var(--v-theme-secondary), 0.6); }
-.timeline-round.highlighted { border-color: rgb(var(--v-theme-primary)); box-shadow: 0 0 0 1px rgb(var(--v-theme-primary)); }
+.timeline-round.round-success { @apply [border-left-color:color-mix(in_srgb,_var(--success)_75%,_transparent)]; }
+.timeline-round.round-warning { @apply [border-left-color:color-mix(in_srgb,_var(--warning)_75%,_transparent)]; }
+.timeline-round.round-error { @apply [border-left-color:color-mix(in_srgb,_var(--destructive)_80%,_transparent)]; }
+.timeline-round.round-info { @apply [border-left-color:color-mix(in_srgb,_var(--info)_75%,_transparent)]; }
+.timeline-round.round-secondary { @apply [border-left-color:color-mix(in_srgb,_var(--secondary)_60%,_transparent)]; }
+.timeline-round.highlighted { @apply border-primary [box-shadow:0_0_0_1px_var(--primary)]; }
 .round-header {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  padding: 12px 16px;
-  cursor: pointer;
-  background: rgb(var(--v-theme-surface));
-  border-bottom: 1px solid rgba(var(--v-theme-outline), 0.18);
-  border-radius: 10px 10px 0 0;
-  list-style: none;
-  font-size: 14px;
+  @apply sticky top-0 [z-index:2] flex items-center gap-2.5 flex-wrap [padding:12px_16px] cursor-pointer [background:var(--surface)] [border-bottom:1px_solid_color-mix(in_srgb,_var(--outline)_18%,_transparent)] [border-radius:10px_10px_0_0] [list-style:none] [font-size:14px];
 }
-.round-header::-webkit-details-marker { display: none; }
-.timeline-round:not([open]) .round-header { border-bottom-color: transparent; }
-.round-header:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: -2px; }
+.round-header::-webkit-details-marker { @apply hidden; }
+.timeline-round:not([open]) .round-header { @apply [border-bottom-color:transparent]; }
+.round-header:focus-visible { @apply [outline:2px_solid_var(--primary)] [outline-offset:-2px]; }
 .round-index {
-  font-size: 12px;
-  font-weight: 700;
-  padding: 2px 10px;
-  border-radius: 999px;
-  background: rgba(var(--v-theme-primary), 0.12);
-  color: rgb(var(--v-theme-primary));
-  white-space: nowrap;
+  @apply [font-size:12px] font-bold [padding:2px_10px] rounded-dialog [background:color-mix(in_srgb,_var(--primary)_12%,_transparent)] text-primary whitespace-nowrap;
 }
-.round-time { font-size: 13px; color: rgba(var(--v-theme-on-surface), 0.75); white-space: nowrap; }
-.round-meta { font-size: 12px; color: rgba(var(--v-theme-on-surface), 0.55); }
-.round-spacer { flex: 1 1 auto; }
-.round-chevron { color: rgb(var(--v-theme-primary)); transition: transform 0.15s ease; }
-.timeline-round[open] .round-chevron { transform: rotate(180deg); }
-.round-content { padding: 4px 16px 16px; }
-.round-actions { display: flex; justify-content: flex-end; }
+.round-time { @apply [font-size:13px] [color:color-mix(in_srgb,_var(--foreground)_75%,_transparent)] whitespace-nowrap; }
+.round-meta { @apply [font-size:12px] [color:color-mix(in_srgb,_var(--foreground)_55%,_transparent)]; }
+.round-spacer { @apply [flex:1_1_auto]; }
+.round-chevron { @apply text-primary [transition:transform_0.15s_ease]; }
+.timeline-round[open] .round-chevron { @apply [transform:rotate(180deg)]; }
+.round-content { @apply [padding:4px_16px_16px]; }
+.round-actions { @apply flex justify-end; }
 .delta-notice {
-  font-size: 13px;
-  color: rgba(var(--v-theme-on-surface), 0.75);
-  margin: 8px 0 12px;
-  padding: 6px 10px;
-  border-radius: 6px;
-  background: rgba(var(--v-theme-surface-variant), 0.35);
+  @apply [font-size:13px] [color:color-mix(in_srgb,_var(--foreground)_75%,_transparent)] [margin:8px_0_12px] [padding:6px_10px] rounded-badge [background:color-mix(in_srgb,_var(--surface-variant)_35%,_transparent)];
 }
-.round-config { margin: 12px 0; }
-.round-config > summary { cursor: pointer; padding: 8px 0; font-size: 13px; }
-.trace-section { margin-top: 4px; }
+.round-config { @apply [margin:12px_0]; }
+.round-config > summary { @apply cursor-pointer [padding:8px_0] [font-size:13px]; }
+.trace-section { @apply mt-1; }
 .section-label {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: rgba(var(--v-theme-on-surface), 0.55);
-  margin: 16px 0 8px;
+  @apply [font-size:12px] font-semibold [letter-spacing:0.02em] [color:color-mix(in_srgb,_var(--foreground)_55%,_transparent)] [margin:16px_0_8px];
 }
-.attempt-summary { padding: 6px 0; }
+.attempt-summary { @apply [padding:6px_0]; }
 </style>

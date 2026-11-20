@@ -1,5 +1,5 @@
 import { defineAsyncComponent, type Component } from 'vue'
-import ChartLoadStatus from '@/shared/components/common/ChartLoadStatus.vue'
+import ChartLoadStatus from '@/shared/components/feedback/ChartLoadStatus.vue'
 
 // 折叠状态不加载图表模块；加载失败必须在页面上显示，避免出现无法解释的空白区域。
 export function defineLazyChart<T extends Component>(loader: () => Promise<{ default: T }>) {

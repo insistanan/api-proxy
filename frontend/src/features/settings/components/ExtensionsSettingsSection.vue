@@ -2,15 +2,15 @@
   <section aria-labelledby="extensions-settings-title">
     <div class="section-heading">
       <div>
-        <h2 id="extensions-settings-title" class="text-h6 font-weight-bold">技能与 MCP</h2>
-        <div class="text-body-2 text-medium-emphasis mt-1">
+        <h2 id="extensions-settings-title" class="text-lg font-bold">技能与 MCP</h2>
+        <div class="text-sm text-muted-foreground mt-1">
           统一管理项目 Skills、启用清单 <code>skills-manifest.json</code> 与集中式 <code>mcp.json</code> 的存放路径及 Git 同步。
         </div>
       </div>
     </div>
 
-    <v-form ref="extensionsFormRef" @submit.prevent="saveExtensionsSettings">
-      <v-text-field
+    <UiForm ref="extensionsFormRef" @submit.prevent="saveExtensionsSettings">
+      <UiInput
         v-model="skillsDir"
         label="项目 Skills / MCP 目录路径"
         placeholder="D:\data\agent-skills"
@@ -24,7 +24,7 @@
         class="mb-4"
       />
 
-      <v-text-field
+      <UiInput
         v-model="skillsRepoUrl"
         label="Git 远程仓库地址（可选）"
         placeholder="git@github.com:yourname/agent-extensions.git 或 https://..."
@@ -38,16 +38,16 @@
         :rules="[skillsRepoUrlRule]"
       />
 
-      <v-alert type="warning" variant="tonal" density="compact" class="mt-4">
+      <UiAlert type="warning" variant="tonal" density="compact" class="mt-4">
         <strong>安全提示：</strong>该目录同时存放包含环境变量与请求头密钥的 <code>mcp.json</code>。如需配置 Git 远程仓库，请务必使用<strong>私有仓库</strong>。
-      </v-alert>
+      </UiAlert>
 
-      <v-alert v-if="extensionsNotice" :type="extensionsNotice.type" variant="tonal" density="compact" class="mt-4">
+      <UiAlert v-if="extensionsNotice" :type="extensionsNotice.type" variant="tonal" density="compact" class="mt-4">
         {{ extensionsNotice.message }}
-      </v-alert>
+      </UiAlert>
 
       <div class="settings-actions">
-        <v-btn
+        <UiButton
           type="submit"
           color="primary"
           prepend-icon="mdi-content-save"
@@ -55,20 +55,20 @@
           :disabled="!extensionsDirty"
         >
           保存扩展目录设置
-        </v-btn>
+        </UiButton>
       </div>
-    </v-form>
+    </UiForm>
 
-    <v-divider class="my-6" />
+    <hr class="border-0 border-t border-border my-6" />
 
-    <div class="d-flex align-center justify-space-between flex-wrap ga-2 mb-3">
+    <div class="flex items-center justify-between flex-wrap gap-2 mb-3">
       <div>
-        <div class="text-subtitle-1 font-weight-bold">Git 仓库同步</div>
-        <div class="text-caption text-medium-emphasis">
+        <div class="text-base font-medium font-bold">Git 仓库同步</div>
+        <div class="text-xs text-muted-foreground">
           拉取或克隆后会自动将 <code>skills-manifest.json</code> 与 <code>mcp.json</code> 分发到各本地 Agent。
         </div>
       </div>
-      <v-btn
+      <UiButton
         variant="text"
         size="small"
         prepend-icon="mdi-refresh"
@@ -77,54 +77,54 @@
         @click="loadGitStatus"
       >
         刷新状态
-      </v-btn>
+      </UiButton>
     </div>
 
-    <v-alert v-if="extensionsDirty" type="info" variant="tonal" density="compact" class="mb-4">
+    <UiAlert v-if="extensionsDirty" type="info" variant="tonal" density="compact" class="mb-4">
       当前目录或仓库地址有未保存的修改，请先点击「保存扩展目录设置」后再执行 Git 同步操作。
-    </v-alert>
+    </UiAlert>
 
-    <v-alert v-if="gitStatusError" type="error" variant="tonal" density="compact" class="mb-4">
+    <UiAlert v-if="gitStatusError" type="error" variant="tonal" density="compact" class="mb-4">
       {{ gitStatusError }}
-    </v-alert>
+    </UiAlert>
 
     <div v-if="gitStatus" class="ai-gate-panel mx-0">
-      <div class="d-flex flex-wrap align-center ga-2 mb-2">
-        <v-chip
+      <div class="flex flex-wrap items-center gap-2 mb-2">
+        <UiBadge
           size="small"
           label
           :color="!gitStatus.gitAvailable ? 'error' : gitStatus.isGitRepo ? 'success' : 'warning'"
         >
           {{ !gitStatus.gitAvailable ? '未检测到 Git 命令' : gitStatus.isGitRepo ? '独立 Git 仓库' : '未初始化 Git' }}
-        </v-chip>
-        <v-chip v-if="gitStatus.isGitRepo && gitStatus.branch" size="small" label prepend-icon="mdi-source-branch">
+        </UiBadge>
+        <UiBadge v-if="gitStatus.isGitRepo && gitStatus.branch" size="small" label prepend-icon="mdi-source-branch">
           {{ gitStatus.branch }}
-        </v-chip>
-        <v-chip v-if="gitStatus.isGitRepo && gitStatus.dirty" size="small" color="warning" label>
+        </UiBadge>
+        <UiBadge v-if="gitStatus.isGitRepo && gitStatus.dirty" size="small" color="warning" label>
           {{ gitStatus.changedFiles?.length || 0 }} 项未提交变更
-        </v-chip>
-        <v-chip v-if="gitStatus.isGitRepo && gitStatus.ahead > 0" size="small" color="info" label>
+        </UiBadge>
+        <UiBadge v-if="gitStatus.isGitRepo && gitStatus.ahead > 0" size="small" color="info" label>
           领先 {{ gitStatus.ahead }} 提交
-        </v-chip>
-        <v-chip v-if="gitStatus.isGitRepo && gitStatus.behind > 0" size="small" color="info" label>
+        </UiBadge>
+        <UiBadge v-if="gitStatus.isGitRepo && gitStatus.behind > 0" size="small" color="info" label>
           落后 {{ gitStatus.behind }} 提交
-        </v-chip>
+        </UiBadge>
       </div>
 
-      <div class="text-body-2 text-medium-emphasis">
+      <div class="text-sm text-muted-foreground">
         当前生效路径：<code>{{ gitStatus.skillsDir }}</code>
       </div>
-      <div v-if="gitStatus.remoteUrl" class="text-body-2 text-medium-emphasis mt-1">
+      <div v-if="gitStatus.remoteUrl" class="text-sm text-muted-foreground mt-1">
         Remote (origin)：<code>{{ gitStatus.remoteUrl }}</code>
       </div>
 
-      <div v-if="gitStatus.dirty && gitStatus.changedFiles?.length" class="text-caption text-medium-emphasis mt-2">
+      <div v-if="gitStatus.dirty && gitStatus.changedFiles?.length" class="text-xs text-muted-foreground mt-2">
         变更预览：{{ gitStatus.changedFiles.slice(0, 6).join('、') }}
         <span v-if="gitStatus.changedFiles.length > 6">等共 {{ gitStatus.changedFiles.length }} 项</span>
       </div>
 
-      <div class="d-flex flex-wrap align-center ga-2 mt-4">
-        <v-btn
+      <div class="flex flex-wrap items-center gap-2 mt-4">
+        <UiButton
           v-if="!gitStatus.isGitRepo"
           variant="tonal"
           color="primary"
@@ -134,9 +134,9 @@
           @click="initGitRepo"
         >
           初始化仓库
-        </v-btn>
+        </UiButton>
 
-        <v-btn
+        <UiButton
           v-if="!gitStatus.isGitRepo"
           variant="tonal"
           color="secondary"
@@ -146,10 +146,10 @@
           @click="cloneGitRepo"
         >
           从远程克隆
-        </v-btn>
+        </UiButton>
 
         <template v-if="gitStatus.isGitRepo">
-          <v-btn
+          <UiButton
             variant="tonal"
             color="primary"
             prepend-icon="mdi-cloud-download-outline"
@@ -158,9 +158,9 @@
             @click="pullGitRepo"
           >
             拉取并同步到 Agent
-          </v-btn>
+          </UiButton>
 
-          <v-btn
+          <UiButton
             color="primary"
             prepend-icon="mdi-cloud-upload-outline"
             :loading="gitActionLoading === 'push'"
@@ -168,11 +168,11 @@
             @click="pushGitRepo"
           >
             提交并推送
-          </v-btn>
+          </UiButton>
         </template>
       </div>
 
-      <v-text-field
+      <UiInput
         v-if="gitStatus.isGitRepo"
         v-model="commitMessage"
         label="提交说明（可选）"
@@ -184,13 +184,18 @@
       />
     </div>
 
-    <v-alert v-if="gitNotice" :type="gitNotice.type" variant="tonal" density="compact" class="mt-4">
+    <UiAlert v-if="gitNotice" :type="gitNotice.type" variant="tonal" density="compact" class="mt-4">
       {{ gitNotice.message }}
-    </v-alert>
+    </UiAlert>
   </section>
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
+import UiBadge from '@/shared/ui/feedback/Badge.vue'
+import UiInput from '@/shared/ui/field/Input.vue'
+import UiForm from '@/shared/ui/form/Form.vue'
 import type { useExtensionsSettings } from '@/features/settings/composables/useExtensionsSettings'
 
 const props = defineProps<{ editor: ReturnType<typeof useExtensionsSettings> }>()

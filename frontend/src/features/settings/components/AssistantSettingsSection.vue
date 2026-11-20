@@ -2,19 +2,19 @@
   <section aria-labelledby="assistant-settings-title">
     <div class="section-heading">
       <div>
-        <h2 id="assistant-settings-title" class="text-h6 font-weight-bold">AI 配置助手</h2>
+        <h2 id="assistant-settings-title" class="text-lg font-bold">AI 配置助手</h2>
       </div>
     </div>
 
-    <v-form @submit.prevent="channelSelectionValid && saveAssistantSettings()">
+    <UiForm @submit.prevent="channelSelectionValid && saveAssistantSettings()">
       <div class="setting-row">
         <div class="setting-copy">
-          <div class="text-body-1 font-weight-medium">模型分组</div>
-          <div class="text-body-2 text-medium-emphasis mt-1">使用分组匹配词选择模型，复用渠道的优先级和健康检查。</div>
+          <div class="text-base font-medium">模型分组</div>
+          <div class="text-sm text-muted-foreground mt-1">使用分组匹配词选择模型，复用渠道的优先级和健康检查。</div>
         </div>
       </div>
 
-      <v-select
+      <UiSelect
         v-model="assistantModel"
         :items="assistantModelItems"
         item-title="title"
@@ -27,9 +27,9 @@
       />
 
       <ChannelPicker v-model="assistantChannel" :options="assistantStatus?.channels ?? []" :error="assistantStatusError" allow-auto label="指定渠道" class="mt-5" @valid="channelSelectionValid = $event" />
-      <p class="text-caption text-medium-emphasis">自动选择按协议优先级调度；指定后固定使用该渠道。</p>
+      <p class="text-xs text-muted-foreground">自动选择按协议优先级调度；指定后固定使用该渠道。</p>
 
-      <v-alert
+      <UiAlert
         v-if="assistantStatus && !assistantStatusError"
         :type="assistantStatus.available ? 'info' : 'warning'"
         variant="tonal"
@@ -43,14 +43,14 @@
           </template>
         </template>
         <template v-else>{{ assistantStatus.reason || '当前没有可用的模型渠道' }}</template>
-      </v-alert>
+      </UiAlert>
 
-      <v-alert v-if="assistantNotice" :type="assistantNotice.type" variant="tonal" density="compact" class="mt-3">
+      <UiAlert v-if="assistantNotice" :type="assistantNotice.type" variant="tonal" density="compact" class="mt-3">
         {{ assistantNotice.message }}
-      </v-alert>
+      </UiAlert>
 
       <div class="settings-actions">
-        <v-btn
+        <UiButton
           type="submit"
           color="primary"
           prepend-icon="mdi-content-save"
@@ -58,16 +58,20 @@
           :disabled="!assistantDirty || !channelSelectionValid"
         >
           保存助手设置
-        </v-btn>
+        </UiButton>
       </div>
-    </v-form>
+    </UiForm>
   </section>
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
+import UiForm from '@/shared/ui/form/Form.vue'
+import UiSelect from '@/shared/ui/select/Select.vue'
 import { ref } from 'vue'
 import type { useAssistantSettings } from '@/features/settings/composables/useAssistantSettings'
-import ChannelPicker from '@/shared/components/common/ChannelPicker.vue'
+import ChannelPicker from '@/shared/components/domain/ChannelPicker.vue'
 
 const props = defineProps<{ editor: ReturnType<typeof useAssistantSettings> }>()
 const channelSelectionValid = ref(true)

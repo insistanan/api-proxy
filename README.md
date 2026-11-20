@@ -78,7 +78,7 @@ $env:PROXY_ACCESS_KEY="your-secure-key"
 
 ### 方式三：从源码编译构建
 
-本地构建环境要求：Go 1.26.10、Node.js 24.16.0（或 Bun 1.4.4）以及 `make`（Windows 用户建议在 Git Bash 中运行）。
+本地构建需要 Go、Node.js、npm 和 `make`。版本来源见[技术栈](docs/技术栈.md)，Windows PowerShell 构建方式见[开发说明](docs/开发说明.md#常用命令)。
 
 ```bash
 # 1. 准备前端依赖（在 frontend 目录执行）
@@ -123,7 +123,7 @@ make check   # 或 npm run check
 | [docs/架构说明.md](docs/架构说明.md) | 系统全景设计、请求生命周期流水线、稳定性控制体系与持久化架构 |
 | [docs/规范与不变量.md](docs/规范与不变量.md) | 后端运行状态不变量、前端交互规范、错误处理要求 |
 | [docs/技术栈.md](docs/技术栈.md) | 核心技术选型、依赖版本与运行时关键组件速查 |
-| [docs/历史说明.md](docs/历史说明.md) | 架构演进阶段与重大设计决策背后的思考 |
+| [前端设计系统与主题](docs/前端设计系统与主题.md) | 主题切换、前端目录职责、组件与样式维护 |
 
 完整版本变更记录见 [CHANGELOG.md](CHANGELOG.md)。
 

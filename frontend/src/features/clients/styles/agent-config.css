@@ -1,62 +1,41 @@
+@reference "@/styles/index.css";
+
 .agent-config-page {
-  width: 100%;
-  max-width: 1480px;
-  margin: 0 auto;
-  padding-bottom: 40px;
-  container-type: inline-size;
-  container-name: client-config;
+  @apply w-full max-w-370 [margin:0_auto] pb-10 [container-type:inline-size] [container-name:client-config];
 }
 
 /* 配置页的标题与保存动作固定在顶栏下方：长表单滚动时保存入口始终可见。
-   top 用 Vuetify 注入的顶栏高度；向上投影一段背景，避免内容从容器留白处穿过。 */
+   使用应用顶栏高度定位，并用背景遮住容器留白。 */
 .agent-config-header {
-  position: sticky;
-  top: var(--v-layout-top, 0px);
-  z-index: 4;
-  background: rgb(var(--v-theme-background));
-  box-shadow: 0 -32px 0 0 rgb(var(--v-theme-background));
+  @apply sticky [top:var(--app-header-height,_0px)] [z-index:4] bg-background [box-shadow:0_-32px_0_0_var(--background)];
 }
 
 .agent-config-editor {
-  border: 0;
-  margin: 0;
-  padding: 0;
-  min-width: 0;
+  @apply border-0 m-0 p-0 min-w-0;
 }
 
 .agent-config-panel-actions {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 8px;
+  @apply flex [flex:0_0_auto] items-center justify-end flex-wrap gap-2;
 }
 
 .agent-config-location {
-  margin-bottom: 20px;
+  @apply mb-5;
 }
 
-.agent-config-location :is(.v-alert__content, .agent-config-location__content) {
-  min-width: 0;
-  width: 100%;
+.agent-config-location :is(.ui-alert-content, .agent-config-location__content) {
+  @apply min-w-0 w-full;
 }
 
 .agent-config-location__content {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
+  @apply flex items-center flex-wrap gap-2;
 }
 
 .agent-config-location__label {
-  color: rgb(var(--v-theme-info));
-  font-weight: 650;
+  @apply text-info [font-weight:650];
 }
 
 .agent-config-location code {
-  max-width: 100%;
-  overflow-wrap: anywhere;
+  @apply max-w-full [overflow-wrap:anywhere];
 }
 
 .agent-config-page .agent-config-panel,
@@ -64,111 +43,82 @@
 .agent-config-page .provider-editor-card,
 .agent-config-page .settings-card,
 .agent-config-page .empty-editor {
-  overflow: hidden;
-  border-color: rgba(var(--v-theme-outline), 0.24) !important;
+  @apply overflow-hidden [border-color:color-mix(in_srgb,_var(--outline)_24%,_transparent)]!;
 }
 
 .agent-config-page .provider-list-card {
-  min-height: 360px;
+  @apply min-h-90;
 }
 
-.agent-config-page .provider-list-card .v-list-item {
-  min-height: 58px;
-  margin: 2px 8px;
+.agent-config-page .provider-list-card .ui-list-item {
+  @apply min-h-14.5 [margin:2px_8px];
 }
 
-.agent-config-page .provider-list-card .v-list-item--active {
-  border: 1px solid rgba(var(--v-theme-primary), 0.28);
+.agent-config-page .provider-list-card [data-active=true] {
+  @apply [border:1px_solid_color-mix(in_srgb,_var(--primary)_28%,_transparent)];
 }
 
 .agent-config-panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 68px;
-  padding: 14px 20px;
+  @apply flex items-center justify-between gap-4 min-h-17 [padding:14px_20px];
 }
 
 .agent-config-panel-title {
-  color: rgba(var(--v-theme-on-surface), 0.92);
-  font-size: 1rem;
-  font-weight: 750;
-  line-height: 1.35;
+  @apply [color:color-mix(in_srgb,_var(--foreground)_92%,_transparent)] [font-size:1rem] [font-weight:750] [line-height:1.35];
 }
 
 .agent-config-panel-subtitle {
-  margin-top: 3px;
-  color: rgba(var(--v-theme-on-surface), 0.58);
-  font-size: 0.75rem;
-  line-height: 1.4;
+  @apply [margin-top:3px] [color:color-mix(in_srgb,_var(--foreground)_58%,_transparent)] [font-size:0.75rem] [line-height:1.4];
 }
 
 .agent-config-callout {
-  padding: 14px 16px 16px;
-  background: rgba(var(--v-theme-primary), 0.07);
-  border: 1px solid rgba(var(--v-theme-primary), 0.3);
-  border-radius: var(--cut-md) var(--cut-xs) var(--cut-md) var(--cut-xs);
+  @apply [padding:14px_16px_16px] [background:color-mix(in_srgb,_var(--primary)_7%,_transparent)] [border:1px_solid_color-mix(in_srgb,_var(--primary)_30%,_transparent)] [border-radius:var(--radius-control)_var(--radius-badge)_var(--radius-control)_var(--radius-badge)];
 }
 
 .agent-config-callout__title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-  color: rgb(var(--v-theme-primary));
-  font-size: 0.875rem;
-  font-weight: 750;
+  @apply flex items-center gap-2 mb-3 text-primary [font-size:0.875rem] [font-weight:750];
 }
 
 .agent-config-page .empty-editor {
-  min-height: 390px;
+  @apply min-h-97.5;
 }
 
-.agent-config-page .model-panels .v-expansion-panel {
-  margin-bottom: 8px;
-  border-color: rgba(var(--v-theme-outline), 0.24) !important;
+.agent-config-page .model-panels .ui-accordion-item {
+  @apply mb-2 [border-color:color-mix(in_srgb,_var(--outline)_24%,_transparent)]!;
 }
 
 .agent-config-tabs {
-  margin-bottom: 20px;
-  border-bottom: 1px solid rgba(var(--v-theme-outline), 0.24);
+  @apply mb-5 [border-bottom:1px_solid_color-mix(in_srgb,_var(--outline)_24%,_transparent)];
 }
 
-.agent-config-tabs .v-tab {
-  min-height: 48px;
-  font-weight: 700;
+.agent-config-tabs [role=tab] {
+  @apply min-h-12 font-bold;
 }
 
 /* 侧栏占用的宽度也计入断点，避免窗口较宽但编辑区仍然拥挤。 */
 @container client-config (max-width: 1000px) {
-  .agent-provider-layout > .v-col { flex: 0 0 100%; max-width: 100%; }
-  .agent-config-page .provider-list-card { min-height: 0; }
-  .provider-list-card .v-list { max-height: 280px; overflow-y: auto; }
+  .agent-provider-layout > .grid > div { @apply [flex:0_0_100%] max-w-full; }
+  .agent-config-page .provider-list-card { @apply min-h-0; }
+  .provider-list-card .ui-list { @apply max-h-70 overflow-y-auto; }
 }
 
 @media (max-width: 600px) {
   .agent-config-page {
-    padding-bottom: 24px;
+    @apply pb-6;
   }
 
   .agent-config-location {
-    margin-bottom: 16px;
+    @apply mb-4;
   }
 
   .agent-config-panel-header {
-    align-items: flex-start;
-    flex-direction: column;
-    min-height: auto;
-    padding: 14px 16px;
+    @apply items-start flex-col min-h-auto [padding:14px_16px];
   }
 
   .agent-config-panel-actions {
-    width: 100%;
-    justify-content: flex-start;
+    @apply w-full justify-start;
   }
 
   .agent-config-tabs {
-    overflow-x: auto;
+    @apply overflow-x-auto;
   }
 }

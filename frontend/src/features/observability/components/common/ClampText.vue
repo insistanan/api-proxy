@@ -8,19 +8,20 @@
     >{{ text }}</pre>
     <div v-if="collapsible" class="clamp-footer">
       <span class="clamp-hint">{{ sizeLabel }}</span>
-      <v-btn
+      <UiButton
         size="x-small"
         variant="text"
         :prepend-icon="expanded ? 'mdi-chevron-up' : 'mdi-chevron-down'"
         @click="expanded = !expanded"
       >
         {{ expanded ? '收起' : '展开全文' }}
-      </v-btn>
+      </UiButton>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
 // 统一的长正文展示：折叠态只做限高预览且绝不内滚，展开后限 70vh 内滚。
 import { computed, ref, watch } from 'vue'
 
@@ -64,43 +65,34 @@ const bodyStyle = computed(() => ({
 </script>
 
 <style scoped>
+@reference "@/styles/index.css";
+
 .clamp-text {
-  min-width: 0;
+  @apply min-w-0;
 }
 
 .clamp-body {
-  margin: 0;
-  font-size: 12.5px;
-  line-height: 1.65;
-  color: rgb(var(--v-theme-on-surface));
-  white-space: pre;
-  word-break: break-word;
+  @apply m-0 [font-size:12.5px] [line-height:1.65] text-foreground whitespace-pre [word-break:break-word];
 }
 
 .clamp-body.wrap {
-  white-space: pre-wrap;
+  @apply whitespace-pre-wrap;
 }
 
 .clamp-body.clamped {
   /* 渐隐提示下方还有内容，同时避免出现内嵌滚动条。 */
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
+  @apply [mask-image:linear-gradient(to_bottom,_#000_calc(100%_-_28px),_transparent)] [-webkit-mask-image:linear-gradient(to_bottom,_#000_calc(100%_-_28px),_transparent)];
 }
 
 .font-mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  @apply [font-family:ui-monospace,_SFMono-Regular,_Menlo,_Consolas,_monospace];
 }
 
 .clamp-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 4px;
+  @apply flex items-center justify-between gap-3 mt-1;
 }
 
 .clamp-hint {
-  font-size: 11px;
-  color: rgba(var(--v-theme-on-surface), 0.55);
+  @apply [font-size:11px] [color:color-mix(in_srgb,_var(--foreground)_55%,_transparent)];
 }
 </style>

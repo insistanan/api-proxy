@@ -1,6 +1,6 @@
 <template>
   <div>
-    <v-select
+    <UiSelect
       :model-value="serviceType"
       label="上游 API 协议 *"
       :items="imagesProtocolOptions"
@@ -11,8 +11,9 @@
       density="comfortable"
       @update:model-value="$emit('update:serviceType', $event)"
     />
-    <v-combobox
-      v-if="serviceType === 'responses'"
+    <UiSelect
+v-if="serviceType === 'responses'" searchable
+      creatable
       :model-value="responsesModel"
       label="Responses 主模型（上游对话模型）*"
       placeholder="点选输入框查询上游模型，例如：gpt-6.1-sol"
@@ -33,6 +34,7 @@
 </template>
 
 <script setup lang="ts">
+import UiSelect from '@/shared/ui/select/Select.vue'
 // 快速添加与详细编辑共用协议表单，避免默认值、必填校验和提示文案漂移。
 import type { ChannelFormState } from '@/features/channels/composables/useChannelEditor'
 import { imagesProtocolOptions, isImagesServiceType } from '@/features/channels/utils/imagesChannelProtocol'

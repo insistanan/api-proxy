@@ -1,7 +1,7 @@
 <template>
-  <v-menu>
+  <UiMenu>
     <template #activator="{ props: menuProps }">
-      <v-btn
+      <UiButton
         icon
         size="x-small"
         variant="text"
@@ -9,87 +9,87 @@
         :aria-label="`打开 ${channel.name} 的快捷菜单`"
         v-bind="menuProps"
       >
-        <v-icon size="small">mdi-dots-vertical</v-icon>
-      </v-btn>
+        <UiIcon size="small">mdi-dots-vertical</UiIcon>
+      </UiButton>
     </template>
 
-    <v-list density="compact">
-      <v-list-item @click="emit('action', 'edit')">
-        <template #prepend><v-icon size="small">mdi-pencil</v-icon></template>
-        <v-list-item-title>编辑</v-list-item-title>
-      </v-list-item>
-      <v-list-item @click="emit('action', 'duplicate')">
-        <template #prepend><v-icon size="small">mdi-content-copy</v-icon></template>
-        <v-list-item-title>复制渠道</v-list-item-title>
-      </v-list-item>
-      <v-list-item @click="emit('action', 'toggleVision')">
+    <UiList density="compact">
+      <UiListItem @click="emit('action', 'edit')">
+        <template #prepend><UiIcon size="small">mdi-pencil</UiIcon></template>
+        <span class="block">编辑</span>
+      </UiListItem>
+      <UiListItem @click="emit('action', 'duplicate')">
+        <template #prepend><UiIcon size="small">mdi-content-copy</UiIcon></template>
+        <span class="block">复制渠道</span>
+      </UiListItem>
+      <UiListItem @click="emit('action', 'toggleVision')">
         <template #prepend>
-          <v-icon size="small" :color="channel.visionCapable ? 'success' : 'primary'">
+          <UiIcon size="small" :color="channel.visionCapable ? 'success' : 'primary'">
             {{ channel.visionCapable ? 'mdi-check-circle' : 'mdi-image-search-outline' }}
-          </v-icon>
+          </UiIcon>
         </template>
-        <v-list-item-title>
+        <span class="block">
           {{ channel.visionCapable ? '取消支持图片理解' : '设为支持图片理解' }}
-        </v-list-item-title>
-      </v-list-item>
-      <v-list-item @click="emit('action', 'copyConfig')">
+        </span>
+      </UiListItem>
+      <UiListItem @click="emit('action', 'copyConfig')">
         <template #prepend>
-          <v-icon size="small" :color="copied ? 'success' : 'primary'">
+          <UiIcon size="small" :color="copied ? 'success' : 'primary'">
             {{ copied ? 'mdi-check' : 'mdi-content-copy' }}
-          </v-icon>
+          </UiIcon>
         </template>
-        <v-list-item-title>{{ copied ? '已复制配置' : '复制配置' }}</v-list-item-title>
-      </v-list-item>
-      <v-list-item @click="emit('action', 'quickTest')">
-        <template #prepend><v-icon size="small" color="success">mdi-test-tube</v-icon></template>
-        <v-list-item-title>快捷测试</v-list-item-title>
-      </v-list-item>
-      <v-list-item @click="emit('action', 'ping')">
-        <template #prepend><v-icon size="small">mdi-speedometer</v-icon></template>
-        <v-list-item-title>测试延迟</v-list-item-title>
-      </v-list-item>
-      <v-list-item @click="emit('action', 'logs')">
-        <template #prepend><v-icon size="small">mdi-text-box-search-outline</v-icon></template>
-        <v-list-item-title>请求日志</v-list-item-title>
-      </v-list-item>
-      <v-list-item @click="emit('action', 'promotion')">
-        <template #prepend><v-icon size="small" color="info">mdi-rocket-launch</v-icon></template>
-        <v-list-item-title>抢优先级</v-list-item-title>
-      </v-list-item>
-      <v-list-item v-if="allowReorder && position > 0" @click="emit('moveTop')">
-        <template #prepend><v-icon size="small" color="primary">mdi-arrow-collapse-up</v-icon></template>
-        <v-list-item-title>置顶</v-list-item-title>
-      </v-list-item>
-      <v-list-item v-if="allowReorder && position < total - 1" @click="emit('moveBottom')">
-        <template #prepend><v-icon size="small" color="primary">mdi-arrow-collapse-down</v-icon></template>
-        <v-list-item-title>置底</v-list-item-title>
-      </v-list-item>
+        <span class="block">{{ copied ? '已复制配置' : '复制配置' }}</span>
+      </UiListItem>
+      <UiListItem @click="emit('action', 'quickTest')">
+        <template #prepend><UiIcon size="small" color="success">mdi-test-tube</UiIcon></template>
+        <span class="block">快捷测试</span>
+      </UiListItem>
+      <UiListItem @click="emit('action', 'ping')">
+        <template #prepend><UiIcon size="small">mdi-speedometer</UiIcon></template>
+        <span class="block">测试延迟</span>
+      </UiListItem>
+      <UiListItem @click="emit('action', 'logs')">
+        <template #prepend><UiIcon size="small">mdi-text-box-search-outline</UiIcon></template>
+        <span class="block">请求日志</span>
+      </UiListItem>
+      <UiListItem @click="emit('action', 'promotion')">
+        <template #prepend><UiIcon size="small" color="info">mdi-rocket-launch</UiIcon></template>
+        <span class="block">抢优先级</span>
+      </UiListItem>
+      <UiListItem v-if="allowReorder && position > 0" @click="emit('moveTop')">
+        <template #prepend><UiIcon size="small" color="primary">mdi-arrow-collapse-up</UiIcon></template>
+        <span class="block">置顶</span>
+      </UiListItem>
+      <UiListItem v-if="allowReorder && position < total - 1" @click="emit('moveBottom')">
+        <template #prepend><UiIcon size="small" color="primary">mdi-arrow-collapse-down</UiIcon></template>
+        <span class="block">置底</span>
+      </UiListItem>
 
-      <v-divider />
-      <v-list-item v-if="channel.status === 'suspended'" @click="emit('action', 'resume')">
-        <template #prepend><v-icon size="small" color="success">mdi-play-circle</v-icon></template>
-        <v-list-item-title>恢复 (重置指标)</v-list-item-title>
-      </v-list-item>
-      <v-list-item v-else @click="emit('action', 'suspend')">
-        <template #prepend><v-icon size="small" color="warning">mdi-pause-circle</v-icon></template>
-        <v-list-item-title>暂停</v-list-item-title>
-      </v-list-item>
-      <v-list-item @click="emit('action', 'disable')">
-        <template #prepend><v-icon size="small" color="error">mdi-stop-circle</v-icon></template>
-        <v-list-item-title>移至备用池</v-list-item-title>
-      </v-list-item>
-      <v-list-item @click="emit('action', 'deprecate')">
-        <template #prepend><v-icon size="small" color="grey">mdi-archive-clock-outline</v-icon></template>
-        <v-list-item-title>移至弃用池</v-list-item-title>
-      </v-list-item>
-      <v-list-item @click="emit('delete')">
+      <hr class="border-0 border-t border-border" />
+      <UiListItem v-if="channel.status === 'suspended'" @click="emit('action', 'resume')">
+        <template #prepend><UiIcon size="small" color="success">mdi-play-circle</UiIcon></template>
+        <span class="block">恢复 (重置指标)</span>
+      </UiListItem>
+      <UiListItem v-else @click="emit('action', 'suspend')">
+        <template #prepend><UiIcon size="small" color="warning">mdi-pause-circle</UiIcon></template>
+        <span class="block">暂停</span>
+      </UiListItem>
+      <UiListItem @click="emit('action', 'disable')">
+        <template #prepend><UiIcon size="small" color="error">mdi-stop-circle</UiIcon></template>
+        <span class="block">移至备用池</span>
+      </UiListItem>
+      <UiListItem @click="emit('action', 'deprecate')">
+        <template #prepend><UiIcon size="small" color="grey">mdi-archive-clock-outline</UiIcon></template>
+        <span class="block">移至弃用池</span>
+      </UiListItem>
+      <UiListItem @click="emit('delete')">
         <template #prepend>
-          <v-icon size="small" color="error">mdi-delete</v-icon>
+          <UiIcon size="small" color="error">mdi-delete</UiIcon>
         </template>
-        <v-list-item-title>删除</v-list-item-title>
-      </v-list-item>
-    </v-list>
-  </v-menu>
+        <span class="block">删除</span>
+      </UiListItem>
+    </UiList>
+  </UiMenu>
 </template>
 
 <script lang="ts">
@@ -101,6 +101,11 @@ export type ChannelMenuAction = (typeof channelMenuActions)[number]
 </script>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiIcon from '@/shared/ui/icon/Icon.vue'
+import UiList from '@/shared/ui/navigation/List.vue'
+import UiListItem from '@/shared/ui/navigation/ListItem.vue'
+import UiMenu from '@/shared/ui/overlay/Menu.vue'
 import type { Channel } from '@/api'
 
 withDefaults(defineProps<{

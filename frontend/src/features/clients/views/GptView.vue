@@ -2,14 +2,14 @@
   <div class="agent-config-page gpt-page">
     <AgentConfigHeader title="GPT 配置">
       <template #default>
-        <v-btn variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="loadSettings">刷新</v-btn>
-        <v-btn color="primary" prepend-icon="mdi-content-save" :loading="saving" :disabled="loading" @click="saveSettings">保存配置</v-btn>
+        <UiButton variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="loadSettings">刷新</UiButton>
+        <UiButton color="primary" prepend-icon="mdi-content-save" :loading="saving" :disabled="loading" @click="saveSettings">保存配置</UiButton>
       </template>
     </AgentConfigHeader>
 
-    <v-alert v-if="error" type="error" variant="tonal" class="mb-5" closable @click:close="error = ''">{{ error }}</v-alert>
+    <UiAlert v-if="error" type="error" variant="tonal" class="mb-5" closable @click:close="error = ''">{{ error }}</UiAlert>
     <ToolInstallBanner tool="codex" class="mb-5" />
-    <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-5" />
+    <UiProgress v-if="loading" indeterminate color="primary" class="mb-5" />
 
     <template v-else>
       <AgentConfigLocation
@@ -26,30 +26,31 @@
         class="mb-5"
       />
 
-      <v-card elevation="0" class="settings-card agent-config-panel">
+      <UiCard elevation="0" class="settings-card agent-config-panel">
         <div class="agent-config-panel-header">
           <div>
             <div class="agent-config-panel-title">代理连接</div>
           </div>
         </div>
-        <v-divider />
-        <v-card-text class="pa-5">
+        <hr class="border-0 border-t border-border" />
+        <div class="p-4 p-5">
           <section class="agent-config-callout mb-4 channel-quick-pick">
             <div class="agent-config-callout__title">
-              <v-icon size="18">mdi-lightning-bolt</v-icon>
+              <UiIcon size="18">mdi-lightning-bolt</UiIcon>
               连接本代理
             </div>
             <div>
-              <v-btn color="primary" variant="tonal" prepend-icon="mdi-link-variant" :loading="connecting" @click="connectToProxy">
+              <UiButton color="primary" variant="tonal" prepend-icon="mdi-link-variant" :loading="connecting" @click="connectToProxy">
                 一键连接本代理（{{ defaultBaseUrl || 'http://localhost:.../v1' }}）
-              </v-btn>
+              </UiButton>
             </div>
           </section>
 
-          <v-divider class="my-4" />
+          <hr class="border-0 border-t border-border my-4" />
 
-          <v-combobox
-            v-model="provider"
+          <UiSelect
+v-model="provider" searchable
+            creatable
             :items="providerOptions"
             item-title="title"
             item-value="value"
@@ -59,16 +60,16 @@
             density="comfortable"
             placeholder="选择已有 provider，或输入 provider 名称"
           >
-            <template #item="{ props, item }">
-              <v-list-item v-bind="props" :subtitle="item.raw.subtitle" />
+            <template #item="{ item }">
+              <span class="min-w-0"><span class="block">{{ item.title }}</span><span v-if="item.subtitle" class="block text-xs text-muted-foreground">{{ item.subtitle }}</span></span>
             </template>
-          </v-combobox>
+          </UiSelect>
 
-          <v-alert v-if="settings?.activeProvider" type="info" variant="tonal" density="compact" class="mt-3 mb-4">
+          <UiAlert v-if="settings?.activeProvider" type="info" variant="tonal" density="compact" class="mt-3 mb-4">
             当前 model_provider：<strong>{{ settings.activeProvider }}</strong>
-          </v-alert>
+          </UiAlert>
 
-          <v-text-field
+          <UiInput
             v-model.trim="baseUrl"
             label="Base URL"
             variant="outlined"
@@ -76,7 +77,7 @@
             placeholder="例如 http://localhost:9996/v1"
           />
 
-          <v-text-field
+          <UiInput
             v-model="apiKey"
             label="OPENAI_API_KEY"
             type="password"
@@ -87,11 +88,11 @@
             @update:model-value="onAPIKeyInput"
           >
             <template #append-inner>
-              <v-btn v-if="apiKeyPresent" icon="mdi-delete" size="x-small" variant="text" title="清除已保存 API Key" @click="clearAPIKey" />
+              <UiButton v-if="apiKeyPresent" icon="mdi-delete" size="x-small" variant="text" title="清除已保存 API Key" @click="clearAPIKey" />
             </template>
-          </v-text-field>
-        </v-card-text>
-      </v-card>
+          </UiInput>
+        </div>
+      </UiCard>
 
       <CodexModelCatalog :settings="settings" class="mb-5" @saved="loadSettings" />
     </template>
@@ -101,6 +102,13 @@
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiCard from '@/shared/ui/card/Card.vue'
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
+import UiProgress from '@/shared/ui/feedback/Progress.vue'
+import UiInput from '@/shared/ui/field/Input.vue'
+import UiIcon from '@/shared/ui/icon/Icon.vue'
+import UiSelect from '@/shared/ui/select/Select.vue'
 // Codex CLI 配置页：
 // - 代理连接：只修改所选 [model_providers.<provider>] 的 base_url，不切换根级 model_provider；
 //   Base URL 留空保存会删除该字段；一键连接会填充本代理 Responses 地址（Codex 固定走 Responses 协议）

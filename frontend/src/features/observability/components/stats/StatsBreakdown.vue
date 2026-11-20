@@ -5,10 +5,10 @@
         <h3>维度排行</h3>
         <p>最多显示前 20 项。{{ tab === 'keys' ? '相同的密钥掩码会合并统计。' : '点击名称应用筛选。' }}</p>
       </div>
-      <v-select v-model="sort" :items="sortItems" label="排序" class="breakdown-sort" variant="outlined" density="compact" hide-details />
+      <UiSelect v-model="sort" :items="sortItems" label="排序" class="breakdown-sort" variant="outlined" density="compact" hide-details />
     </div>
     <div class="breakdown-dimensions" aria-label="统计维度">
-      <v-btn
+      <UiButton
         v-for="dimension in dimensions"
         :key="dimension.key"
         :variant="tab === dimension.key ? 'tonal' : 'text'"
@@ -16,7 +16,7 @@
         :aria-pressed="tab === dimension.key"
         size="small"
         @click="tab = dimension.key"
-      >{{ dimension.label }}</v-btn>
+      >{{ dimension.label }}</UiButton>
     </div>
     <EmptyState v-if="!rows.length" variant="inline" icon="mdi-chart-box-outline" title="暂无维度数据" description="试试扩大时间范围或清除筛选。" />
     <div v-else class="breakdown-table-wrap" :aria-busy="loading">
@@ -38,7 +38,7 @@
             <td :title="formatStatNumber(row.inputTokens)">{{ formatCompactNumber(row.inputTokens) }}</td>
             <td :title="formatStatNumber(row.outputTokens)">{{ formatCompactNumber(row.outputTokens) }}</td>
             <td>{{ formatStatMs(row.avgDurationMs) }}</td>
-            <td><v-btn size="x-small" variant="text" color="primary" :disabled="loading" @click="select(row.name, true)">查看日志</v-btn></td>
+            <td><UiButton size="x-small" variant="text" color="primary" :disabled="loading" @click="select(row.name, true)">查看日志</UiButton></td>
           </tr>
         </tbody>
       </table>
@@ -47,10 +47,12 @@
 </template>
 
 <script setup lang="ts">
+import UiButton from '@/shared/ui/button/Button.vue'
+import UiSelect from '@/shared/ui/select/Select.vue'
 import { computed, ref } from 'vue'
 import type { RequestStatsDimensionSort, RequestStatsResponse } from '@/types/metrics'
 import { formatCompactNumber, formatStatMs, formatStatNumber, formatStatPercent } from '@/features/observability/utils/statsFormat'
-import EmptyState from '@/shared/components/common/EmptyState.vue'
+import EmptyState from '@/shared/components/feedback/EmptyState.vue'
 
 const dimensions = [
   { key: 'channels', label: '渠道' },
@@ -91,34 +93,31 @@ const select = (name: string, drill: boolean) => emit('select', { kind: tab.valu
 </script>
 
 <style scoped>
+@reference "@/styles/index.css";
+
 .breakdown-panel {
-  min-width: 0;
-  padding: 14px 16px;
-  border: 1px solid rgba(var(--v-theme-outline), 0.18);
-  border-radius: 12px;
-  background: rgb(var(--v-theme-surface));
+  @apply min-w-0 [padding:14px_16px] [border:1px_solid_color-mix(in_srgb,_var(--outline)_18%,_transparent)] rounded-card [background:var(--surface)];
 }
-.breakdown-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-.breakdown-sort { max-width: 160px; flex: 1 0 148px; }
-.breakdown-dimensions { display: flex; flex-wrap: wrap; gap: 3px; margin: 10px 0 5px; }
-h3 { margin: 0; font-size: 15px; }
-p { margin: 3px 0 0; color: rgb(var(--v-theme-on-surface-variant)); font-size: 12px; }
-.breakdown-table-wrap { overflow-x: auto; }
-.breakdown-table { width: 100%; min-width: 680px; border-collapse: collapse; font-size: 12px; }
-th, td { padding: 7px 8px; border-bottom: 1px solid rgba(var(--v-theme-outline), 0.14); }
-th { color: rgb(var(--v-theme-on-surface-variant)); font-weight: 500; text-align: start; }
-td { font-variant-numeric: tabular-nums; white-space: nowrap; }
-th:nth-child(n+2), td:nth-child(n+2) { text-align: end; }
-tbody tr:last-child td { border-bottom: 0; }
-tbody tr:hover { background: rgba(var(--v-theme-primary), 0.04); }
-.dimension-cell { min-width: 140px; max-width: 290px; width: 30%; }
+.breakdown-header { @apply flex items-center justify-between gap-2.5 flex-wrap; }
+.breakdown-sort { @apply max-w-40 [flex:1_0_148px]; }
+.breakdown-dimensions { @apply flex flex-wrap [gap:3px] [margin:10px_0_5px]; }
+h3 { @apply m-0 [font-size:15px]; }
+p { @apply [margin:3px_0_0] text-muted-foreground [font-size:12px]; }
+.breakdown-table-wrap { @apply overflow-x-auto; }
+.breakdown-table { @apply w-full min-w-170 [border-collapse:collapse] [font-size:12px]; }
+th, td { @apply [padding:7px_8px] [border-bottom:1px_solid_color-mix(in_srgb,_var(--outline)_14%,_transparent)]; }
+th { @apply text-muted-foreground font-medium text-start; }
+td { @apply tabular-nums whitespace-nowrap; }
+th:nth-child(n+2), td:nth-child(n+2) { @apply text-end; }
+tbody tr:last-child td { @apply [border-bottom:0]; }
+tbody tr:hover { @apply [background:color-mix(in_srgb,_var(--primary)_4%,_transparent)]; }
+.dimension-cell { @apply min-w-35 max-w-72.5 [width:30%]; }
 .dimension-cell button {
-  display: block; max-width: 100%; overflow: hidden; font-weight: 600;
-  text-align: start; text-overflow: ellipsis; white-space: nowrap; cursor: pointer;
+  @apply block max-w-full overflow-hidden font-semibold text-start text-ellipsis whitespace-nowrap cursor-pointer;
 }
-.dimension-cell button:hover { color: rgb(var(--v-theme-primary)); }
-.dimension-bar { height: 3px; margin-top: 4px; overflow: hidden; background: rgba(var(--v-theme-on-surface), 0.08); border-radius: 2px; }
-.dimension-bar span { display: block; height: 100%; background: rgba(var(--v-theme-primary), 0.7); }
-.metric-context { margin-inline-start: 6px; color: rgb(var(--v-theme-on-surface-variant)); }
-.has-failure { color: rgb(var(--v-theme-error)); }
+.dimension-cell button:hover { @apply text-primary; }
+.dimension-bar { @apply [height:3px] mt-1 overflow-hidden [background:color-mix(in_srgb,_var(--foreground)_8%,_transparent)] rounded-badge; }
+.dimension-bar span { @apply block h-full [background:color-mix(in_srgb,_var(--primary)_70%,_transparent)]; }
+.metric-context { @apply ms-1.5 text-muted-foreground; }
+.has-failure { @apply text-destructive; }
 </style>
