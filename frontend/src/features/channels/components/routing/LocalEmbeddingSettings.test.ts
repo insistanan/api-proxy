@@ -4,7 +4,7 @@ import { renderToString } from '@vue/server-renderer'
 import LocalEmbeddingSettings from '@/features/channels/components/routing/LocalEmbeddingSettings.vue'
 import type { LocalPresets, LocalStatus } from '@/features/channels/services/intent'
 
-const api = vi.hoisted(() => ({ local: vi.fn(), presets: vi.fn(), setPresetsUrl: vi.fn(), installPreset: vi.fn(), install: vi.fn(), localAction: vi.fn() }))
+const api = vi.hoisted(() => ({ local: vi.fn(), presets: vi.fn(), installPreset: vi.fn(), localAction: vi.fn() }))
 vi.mock('@/features/channels/services/intent', () => ({ intentApi: api, intentErrorText: (error: Error) => error.message }))
 type State = Record<string, unknown>
 const value = <T>(state: State, key: string) => (state[key] as Ref<T>).value
@@ -75,22 +75,19 @@ describe('本地向量安装的清单与阶段状态', () => {
     expect(value<string>(state, 'actionError')).toContain('运行时不可执行')
     expect(value<LocalStatus>(state, 'status').ready).toBe(false)
   })
-  it('清单地址可编辑、保存后可恢复默认', async () => {
+  it('清单刷新失败保留错误，重试成功后可安装推荐模型', async () => {
     const state = await setup()
-    expect(value<string>(state, 'presetsUrl')).toBe(status().presetsUrl)
-    expect(value<string>(state, 'defaultPresetsUrl')).toBe(catalog().defaultPresetsUrl)
-    const mirror = catalog()
-    mirror.presetsUrl = 'https://mirror.invalid/presets.json'
-    api.setPresetsUrl.mockResolvedValue(mirror)
-    ;(state.presetsUrl as Ref<string>).value = mirror.presetsUrl
-    await (state.savePresetsUrl as () => Promise<void>)()
-    expect(api.setPresetsUrl).toHaveBeenLastCalledWith(mirror.presetsUrl)
-    expect(value<string>(state, 'presetsUrl')).toBe(mirror.presetsUrl)
-    const defaults = catalog()
-    defaults.presetsUrl = defaults.defaultPresetsUrl
-    api.setPresetsUrl.mockResolvedValue(defaults)
-    await (state.resetPresetsUrl as () => Promise<void>)()
-    expect(api.setPresetsUrl).toHaveBeenLastCalledWith(defaults.defaultPresetsUrl)
-    expect(value<string>(state, 'presetsUrl')).toBe(defaults.defaultPresetsUrl)
+    api.presets.mockRejectedValueOnce(new Error('读取推荐清单失败'))
+    await (state.loadPresets as () => Promise<void>)()
+    expect(value<string>(state, 'catalogError')).toBe('读取推荐清单失败')
+    expect(value<boolean>(state, 'catalogLoading')).toBe(false)
+    const presets = catalog()
+    presets.presets = [{ id: 'cpu', name: 'CPU', description: '测试条目', sizeBytes: 100 }]
+    api.presets.mockResolvedValue(presets)
+    api.installPreset.mockResolvedValue({ ...status(), installed: true, running: true, ready: true, phase: 'ready' })
+    await (state.loadPresets as () => Promise<void>)()
+    expect(value<string>(state, 'catalogError')).toBe('')
+    await (state.run as (action: string) => Promise<void>)('preset')
+    expect(api.installPreset).toHaveBeenCalledWith('cpu')
   })
 })

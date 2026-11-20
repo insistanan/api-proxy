@@ -201,10 +201,17 @@ func TestCacheQuotaAndExplicitDeletion(t *testing.T) {
 	require.Error(t, s.Delete(ctx, d.ID, d.Revision-1))
 	indexes, err := s.List(ctx)
 	require.NoError(t, err)
-	stale := indexes[0].Indexes[0]
+	var published []IndexStatus
+	for _, item := range indexes {
+		if item.ID == d.ID {
+			published = item.Indexes
+		}
+	}
+	require.Len(t, published, 1)
+	stale := published[0]
 	stale.Revision--
 	require.ErrorContains(t, s.DeleteIndex(ctx, d.ID, stale), "重新发布")
-	require.NoError(t, s.DeleteIndex(ctx, d.ID, indexes[0].Indexes[0]))
+	require.NoError(t, s.DeleteIndex(ctx, d.ID, published[0]))
 	_, err = s.Search(ctx, []string{d.ID}, "intent", testProfile(), "翻译", "test")
 	require.ErrorContains(t, err, "尚未")
 	_, err = s.Build(ctx, d.ID, d.Revision, testProfile())

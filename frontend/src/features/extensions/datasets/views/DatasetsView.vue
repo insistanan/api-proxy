@@ -1,25 +1,37 @@
 <template>
   <div class="datasets-page">
-    <PageHeader title="数据集" description="管理意图和工具风险样本，提前计算向量，发布后跨请求复用。">
+    <PageHeader title="数据集" description="内置意图与工具风险样本已保存在本地，选择后即可查看和审核。">
       <v-btn variant="outlined" :disabled="busy" @click="create">新建数据集</v-btn>
-      <v-btn variant="tonal" :disabled="busy" @click="showBuiltin">内置起步样本</v-btn>
     </PageHeader>
     <v-alert v-if="error" type="error" variant="tonal" class="mb-4">{{ error }}</v-alert>
     <v-alert v-if="notice" type="success" variant="tonal" class="mb-4">{{ notice }}</v-alert>
-    <v-card class="mb-4">
-      <div class="dataset-toolbar pa-4">
-        <v-select :model-value="draft?.revision ? draft.id : undefined" :items="store.items" item-title="name" item-value="id" label="选择数据集" :disabled="busy" @update:model-value="selectDataset" />
-        <v-file-input label="导入数据集 JSON" accept="application/json,.json" :disabled="busy" @update:model-value="importFile" />
+    <v-card class="mb-4 pa-4">
+      <div class="dataset-toolbar mb-3">
+        <div>
+          <h2 class="text-subtitle-1">本地数据集 <span class="text-medium-emphasis">{{ store.items.length }}</span></h2>
+          <p class="text-caption text-medium-emphasis">选择下方数据集直接查看样本，审核并保存后再构建向量索引。</p>
+        </div>
+        <v-file-input label="导入自定义 JSON" accept="application/json,.json" density="compact" hide-details :disabled="busy" @update:model-value="importFile" />
+      </div>
+      <div v-if="store.items.length" class="dataset-list" aria-label="本地数据集">
+        <button v-for="item in store.items" :key="item.id" type="button" class="dataset-choice" :class="{ 'dataset-choice--selected': draft?.revision && draft.id === item.id }" :aria-pressed="!!draft?.revision && draft.id === item.id" :disabled="busy" @click="selectDataset(item.id)">
+          <span class="d-flex align-center justify-space-between ga-2">
+            <span class="text-subtitle-2">{{ item.name }}</span>
+            <v-chip size="x-small" variant="tonal">{{ item.kind === 'intent' ? '意图路由' : '工具安全' }}</v-chip>
+          </span>
+          <span class="text-body-2">{{ item.count }} 条样本 <span class="text-medium-emphasis">· {{ item.labels.length }} 个类别</span></span>
+          <span class="text-caption text-medium-emphasis">已审核 {{ item.approved }} / {{ item.count }} · {{ item.indexes.length ? `${item.indexes.length} 个已发布索引` : '尚未构建索引' }}</span>
+        </button>
       </div>
     </v-card>
     <v-progress-linear v-if="busy" indeterminate color="primary" class="mb-4" />
     <EmptyState
       v-if="!draft && !busy"
       icon="mdi-database-plus-outline"
-      title="还没有选择数据集"
-      description="选择已有数据集，或导入内置起步样本。样本先审核，再计算并发布向量索引。"
+      :title="store.items.length ? '请选择数据集' : '暂无本地数据集'"
+      description="选择上方数据集查看样本，也可以新建数据集或导入自己的 JSON。"
     >
-      <v-btn variant="outlined" @click="showBuiltin">导入内置起步样本</v-btn>
+      <v-btn variant="outlined" @click="create">新建数据集</v-btn>
     </EmptyState>
     <template v-if="draft">
       <div class="d-flex flex-wrap align-center ga-3 mb-4">
@@ -101,12 +113,6 @@
         <v-btn color="primary" @click="applySample">应用到草稿</v-btn>
       </template>
     </AppDialog>
-    <AppDialog v-model="builtinDialog" title="内置起步样本" description="这些是合成样本，不含真实用户日志，默认待审核。导入后审核所需样本，再构建索引。" size="md">
-      <v-list><v-list-item v-for="item in builtins" :key="item.id" :title="item.name" :subtitle="`${item.samples.length} 条 · ${item.kind}`"><template #append><v-btn variant="tonal" @click="importBuiltin(item)">导入草稿</v-btn></template></v-list-item></v-list>
-      <template #actions>
-        <v-btn variant="text" @click="builtinDialog = false">关闭</v-btn>
-      </template>
-    </AppDialog>
     <ConfirmDialog
       :model-value="pendingConfirm !== null"
       :message="pendingConfirm?.message ?? ''"
@@ -161,8 +167,6 @@ const sampleDialog = ref(false)
 const sample = ref<DatasetSample>()
 const sampleError = ref('')
 const editingID = ref('')
-const builtinDialog = ref(false)
-const builtins = ref<Dataset[]>([])
 const kinds = [{ title: '意图路由', value: 'intent' }, { title: '工具安全', value: 'safety' }]
 const splits = [{ title: '索引样本', value: 'index' }, { title: '独立评测', value: 'eval' }]
 const headers = [{ title: '类别', key: 'label' }, { title: '文本', key: 'text', sortable: false }, { title: '正反例', key: 'negative' }, { title: '集合', key: 'split' }, { title: '审核', key: 'approved' }, { title: '操作', key: 'actions', sortable: false }]
@@ -184,12 +188,11 @@ async function run(name: string, work: () => Promise<void>) {
   action.value = name; error.value = ''; notice.value = ''
   try { await work() } catch (cause) { error.value = intentErrorText(cause) } finally { action.value = '' }
 }
-function setDraft(value: Dataset, persisted: boolean) { draft.value = clone(value); saved.value = persisted ? JSON.stringify(value) : ''; selected.value = []; result.value = undefined; evaluation.value = undefined; tab.value = 'samples' }
-async function selectDataset(id: string) { if (!id || !(await mayDiscard())) return; await run('load', async () => { setDraft(await datasetsApi.get(id), true); const current = published.value[published.value.length - 1]; if (current) profile.value = clone(current.profile) }) }
+function setDraft(value: Dataset, persisted: boolean) { draft.value = clone(value); saved.value = persisted ? JSON.stringify(value) : ''; selected.value = []; search.value = ''; result.value = undefined; evaluation.value = undefined; tab.value = 'samples' }
+async function loadDataset(id: string) { setDraft(await datasetsApi.get(id), true); const current = published.value[published.value.length - 1]; profile.value = current ? clone(current.profile) : defaultEmbeddingProfile() }
+async function selectDataset(id: string) { if (busy.value || !id || (draft.value?.revision && draft.value.id === id) || !(await mayDiscard())) return; await run('load', () => loadDataset(id)) }
 async function create() { if (!busy.value && await mayDiscard()) setDraft({ id: '', name: '', kind: 'intent', description: '', revision: 0, samples: [] }, false) }
 async function save() { if (!draft.value) return; const value = clone(draft.value); await run('save', async () => { setDraft(await datasetsApi.save(value), true); notice.value = '数据集已保存，已发布索引保持不变。'; await store.load() }) }
-async function showBuiltin() { await run('builtin', async () => { builtins.value = await datasetsApi.builtin(); builtinDialog.value = true }) }
-async function importBuiltin(value: Dataset) { if (busy.value || !(await mayDiscard())) return; setDraft(value, false); builtinDialog.value = false }
 async function importFile(value: File | File[] | null) {
   const file = Array.isArray(value) ? value[0] : value
   if (!file || !(await mayDiscard())) return
@@ -245,12 +248,17 @@ async function build() { if (!draft.value) return; const current = draft.value; 
 async function preview() { if (!draft.value) return; const id = draft.value.id; await run('search', async () => { result.value = await datasetsApi.search(id, query.value, profile.value) }) }
 async function evaluate() { if (!draft.value) return; const id = draft.value.id; await run('evaluate', async () => { evaluation.value = await datasetsApi.evaluate(id, profile.value, threshold.value, margin.value) }) }
 watch([profile, query, threshold, margin, draft], () => { result.value = undefined; evaluation.value = undefined }, { deep: true })
-onMounted(() => run('load', () => store.load()))
+onMounted(() => run('load', async () => { await store.load(); const first = store.items[0]; if (first) await loadDataset(first.id) }))
 </script>
 
 <style scoped>
 .datasets-page { max-width: 1440px; margin: 0 auto; padding: 24px; }
-.dataset-toolbar, .dataset-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.dataset-toolbar, .dataset-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: center; }
+.dataset-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 12px; }
+.dataset-choice { display: grid; gap: 6px; padding: 14px 16px; min-width: 0; text-align: left; color: inherit; background: transparent; border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)); border-radius: 10px; cursor: pointer; overflow-wrap: anywhere; }
+.dataset-choice:hover:not(:disabled), .dataset-choice--selected { border-color: rgba(var(--v-theme-primary), 0.5); background: rgba(var(--v-theme-primary), 0.05); }
+.dataset-choice:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: 2px; }
+.dataset-choice:disabled { cursor: default; opacity: 0.65; }
 .dataset-editor { border: 0; padding: 0; margin: 0; min-width: 0; }
 .sample-search { flex: 1 1 280px; }
 .sample-text { max-width: 640px; white-space: pre-wrap; overflow-wrap: anywhere; padding: 10px 0; }

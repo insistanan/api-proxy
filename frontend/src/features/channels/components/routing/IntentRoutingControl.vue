@@ -41,7 +41,7 @@
           <DatasetPicker v-model="draft.datasetIds" kind="intent" :multiple="false" :profile="embeddingProfile" :refresh-key="datasetRefresh" />
           <v-alert v-if="indexError" type="warning" variant="tonal">{{ indexError }}</v-alert>
           <p class="text-body-2 text-medium-emphasis">数据集和请求使用同一套向量配置。更换本地模型、渠道、渠道映射后的模型、版本或前缀后，须重新计算并发布索引；旧模型索引仍保留。</p>
-          <p class="text-caption text-medium-emphasis mb-0">没有数据集时，可直接采用内置合成样本；仅索引样本会被确认并发布。</p>
+          <p class="text-caption text-medium-emphasis mb-0">内置样本已保存在本地，可在数据集页面直接查看、审核并保存，再构建索引。</p>
           <v-btn variant="tonal" :loading="indexing" :disabled="indexing || localBusy || !!vectorReason" @click="prepareSemanticIndex">{{ draft.datasetIds?.length ? '按当前模型重新构建并发布索引' : '采用内置样本并构建索引' }}</v-btn>
         </template>
         <template v-if="usesAssistant">
@@ -145,7 +145,6 @@
                     <p class="text-caption text-medium-emphasis">模型或前缀变化后需重新构建索引。</p>
                   </div>
                 </v-expansion-panel-text></v-expansion-panel>
-                <v-expansion-panel v-if="simpleMode === 'custom'" title="旧配置手动安装"><v-expansion-panel-text><LocalEmbeddingSettings manual-only @status="updateLocalStatus" @busy="localBusy = $event" /></v-expansion-panel-text></v-expansion-panel>
               </v-expansion-panels>
             </div>
           </v-expansion-panel-text>
@@ -201,7 +200,7 @@ import { useChannelStore } from '@/features/channels/stores/channel'
 import { useIntentStore } from '@/features/channels/stores/intent'
 import { useToast } from '@/shared/composables/useToast'
 import { intentApi, intentErrorText, intentPreviewFailure, type IntentConfig, type IntentDecision, type IntentEvent, type IntentGroupCapability, type IntentOptions, type IntentProtocol, type LocalStatus } from '@/features/channels/services/intent'
-import type { Dataset, EmbeddingProfile } from '@/types'
+import type { EmbeddingProfile } from '@/types'
 import LocalEmbeddingSettings from '@/features/channels/components/routing/LocalEmbeddingSettings.vue'
 import { datasetsApi } from '@/features/extensions/datasets'
 import { DatasetPicker, EmbeddingProfileFields } from '@/features/extensions/datasets/ui'
@@ -406,20 +405,9 @@ async function prepareSemanticIndex() {
   try {
     if (!draft.value.datasetIds?.length) {
       const existing = (await datasetsApi.list()).find(item => item.id === 'starter-intents-v2' && item.kind === 'intent')
-      if (existing) {
-        if (!existing.approved) throw new Error('检测到尚未审核的内置数据集。请到数据集页面审核样本后再构建索引；现有内容未被覆盖。')
-        draft.value.datasetIds = [existing.id]
-      } else {
-        const builtins = await datasetsApi.builtin()
-        const source = builtins.find(item => item.id === 'starter-intents-v2')
-        if (!source) throw new Error('内置意图样本不可用，请在数据集页面导入起步样本。')
-        const accepted: Dataset = {
-          ...source,
-          samples: source.samples.map(sample => ({ ...sample, approved: sample.split === 'index' }))
-        }
-        const savedDataset = await datasetsApi.save(accepted)
-        draft.value.datasetIds = [savedDataset.id]
-      }
+      if (!existing) throw new Error('未找到内置意图数据集，请到数据集页面新建数据集，并在此选择。')
+      if (!existing.approved) throw new Error('内置意图样本尚未审核，请到数据集页面审核并保存后再构建索引。')
+      draft.value.datasetIds = [existing.id]
     }
     await intentApi.buildIndex(props.protocol, draft.value)
     await checkIndex()

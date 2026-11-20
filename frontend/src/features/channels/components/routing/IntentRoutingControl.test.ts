@@ -136,7 +136,7 @@ describe('意图匹配编辑器', () => {
     mode.value = 'builtin'
     expect(value<IntentConfig>(state, 'draft')).toMatchObject({ strategy: 'auto', recognitionMode: 'builtin', taskMatcher: 'builtin', classifier: 'heuristic' })
   })
-  it('首次准备向量匹配只确认并索引内置索引样本，不把评测样本批准', async () => {
+  it('内置样本未审核时提示直接去数据集页面，不自动导入或批准', async () => {
     const original = config()
     original.strategy = 'auto'
     original.taskMatcher = 'semantic'
@@ -145,19 +145,25 @@ describe('意图匹配编辑器', () => {
     original.embeddingModel = 'embed-model'
     mocks.load.mockResolvedValue(original)
     mocks.options.mockResolvedValue({ classifiers: [], embeddings: [{ id: 'vector', name: '向量渠道', defaultModel: 'embed-model' }], tasks: [] } satisfies IntentOptions)
-    mocks.datasetBuiltin.mockResolvedValue([{
-      id: 'starter-intents-v2', name: '意图起步样本 v2', kind: 'intent', description: '合成样本', revision: 0,
-      samples: [
-        { id: 'index_row', label: 'debugging', text: '排查错误', family: 'index', split: 'index', approved: false, negative: false, source: 'test' },
-        { id: 'eval_row', label: 'debugging', text: '修复故障', family: 'eval', split: 'eval', approved: false, negative: false, source: 'test' }
-      ]
-    } satisfies Dataset])
+    mocks.datasetList.mockResolvedValue([{ id: 'starter-intents-v2', kind: 'intent', approved: 0 }])
     const state = await setup()
     await (state.prepareSemanticIndex as () => Promise<void>)()
-    const saved = mocks.datasetSave.mock.calls[0]![0] as Dataset
-    expect(saved.samples.map(sample => sample.approved)).toEqual([true, false])
-    expect(value<IntentConfig>(state, 'draft').datasetIds).toEqual(['starter-intents-v2'])
-    expect(mocks.buildIndex).toHaveBeenCalledWith('responses', expect.objectContaining({ datasetIds: ['starter-intents-v2'] }))
+    expect(value<string>(state, 'error')).toContain('审核并保存')
+    expect(mocks.datasetBuiltin).not.toHaveBeenCalled()
+    expect(mocks.datasetSave).not.toHaveBeenCalled()
+    expect(mocks.buildIndex).not.toHaveBeenCalled()
+  })
+  it('内置数据集已删除时不重新导入，提示选择其他数据集', async () => {
+    const original = config()
+    Object.assign(original, { strategy: 'auto', taskMatcher: 'semantic', embeddingChannel: 'vector', embeddingModel: 'embed-model' })
+    mocks.load.mockResolvedValue(original)
+    mocks.options.mockResolvedValue({ classifiers: [], embeddings: [{ id: 'vector', name: '向量渠道' }], tasks: [] } satisfies IntentOptions)
+    const state = await setup()
+    await (state.prepareSemanticIndex as () => Promise<void>)()
+    expect(value<string>(state, 'error')).toContain('未找到内置意图数据集')
+    expect(mocks.datasetBuiltin).not.toHaveBeenCalled()
+    expect(mocks.datasetSave).not.toHaveBeenCalled()
+    expect(mocks.buildIndex).not.toHaveBeenCalled()
   })
   it('切换已有 Embeddings 渠道带出默认模型，缺少模型时仍阻断保存', async () => {
     const original = config()

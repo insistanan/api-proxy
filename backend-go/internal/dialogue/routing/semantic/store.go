@@ -39,10 +39,14 @@ func New(path string, embedder Embedder) (*Service, error) {
 		`CREATE TABLE IF NOT EXISTS semantic_datasets(id TEXT PRIMARY KEY, data BLOB NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS semantic_vectors(id TEXT PRIMARY KEY, data BLOB NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS semantic_indexes(id TEXT PRIMARY KEY, data BLOB NOT NULL, vectors BLOB NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS semantic_builtin_initializations(id TEXT PRIMARY KEY)`,
 	} {
 		if _, err = db.Exec(query); err != nil {
 			return nil, errors.Join(err, db.Close())
 		}
+	}
+	if err = s.initializeBuiltins(); err != nil {
+		return nil, errors.Join(fmt.Errorf("初始化内置数据集失败: %w", err), db.Close())
 	}
 	if err = s.load(); err != nil {
 		return nil, errors.Join(err, db.Close())
@@ -51,6 +55,57 @@ func New(path string, embedder Embedder) (*Service, error) {
 }
 
 func (s *Service) Close() error { return s.db.Close() }
+
+// 每套内置样本仅初始化一次；已有内容不覆盖，用户删除后也不重新创建。
+func (s *Service) initializeBuiltins() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var count int
+	var total int64
+	if err := tx.QueryRow(`SELECT count(*),COALESCE(SUM(length(data)),0) FROM semantic_datasets`).Scan(&count, &total); err != nil {
+		return err
+	}
+	for _, d := range BuiltinDatasets() {
+		var initialized, exists bool
+		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM semantic_builtin_initializations WHERE id=?)`, d.ID).Scan(&initialized); err != nil {
+			return err
+		}
+		if initialized {
+			continue
+		}
+		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM semantic_datasets WHERE id=?)`, d.ID).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			if err := ValidateDataset(d); err != nil {
+				return err
+			}
+			d.Revision = 1
+			data, err := json.Marshal(d)
+			if err != nil {
+				return err
+			}
+			if count >= 32 {
+				return fmt.Errorf("添加 %q 将超过 32 个数据集上限，请先移除不再使用的数据集", d.ID)
+			}
+			if total+int64(len(data)) > maxDatasetTotalBytes {
+				return fmt.Errorf("添加 %q 将超过全部数据集 64 MiB 上限，请先移除不再使用的数据集", d.ID)
+			}
+			if _, err := tx.Exec(`INSERT INTO semantic_datasets(id,data) VALUES(?,?)`, d.ID, data); err != nil {
+				return err
+			}
+			count++
+			total += int64(len(data))
+		}
+		if _, err := tx.Exec(`INSERT INTO semantic_builtin_initializations(id) VALUES(?)`, d.ID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
 
 func (s *Service) load() error {
 	rows, err := s.db.Query(`SELECT data FROM semantic_datasets`)
