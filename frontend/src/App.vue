@@ -120,6 +120,7 @@
     <!-- 危险命令 AI 闸门：全局待确认通知（轮询 + 声音 + 浏览器系统通知） -->
     <GatePendingNotification v-if="isAuthenticated" />
     <JsonViewerDrawer v-if="isAuthenticated" />
+    <AppQuickActions v-if="isAuthenticated" />
   </div>
 </template>
 
@@ -141,6 +142,7 @@ import { useRoute } from 'vue-router'
 import AppHeader from '@/app/layout/AppHeader.vue'
 import AppBrand from '@/app/layout/AppBrand.vue'
 import AppNavigation from '@/app/layout/AppNavigation.vue'
+import AppQuickActions from '@/app/layout/AppQuickActions.vue'
 import VersionBadge from '@/app/layout/VersionBadge.vue'
 import ThemeTrigger from '@/shared/theme/components/ThemeTrigger.vue'
 import ThemeBackground from '@/shared/theme/components/ThemeBackground.vue'

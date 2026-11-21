@@ -1,9 +1,9 @@
 <template>
   <div>
     <!-- 备用资源池 (disabled only) -->
-    <DisclosureSection title="备用渠道" description="暂不参与调度，启用后回到所属分组。" icon="mdi-archive-outline" :count="inactiveChannels.length" lazy>
+    <DisclosureSection v-model="inactiveExpanded" title="备用渠道" description="暂不参与调度，启用后回到所属分组。" icon="mdi-archive-outline" :count="inactiveChannels.length" lazy>
       <div v-if="inactiveChannels.length > 0" class="inactive-pool">
-        <div v-for="channel in inactiveChannels" :key="channel.index" class="inactive-channel-row">
+        <div v-for="channel in inactiveChannels" :id="channel.id ? channelAnchorId(channelType, channel.id) : undefined" :key="channel.index" class="inactive-channel-row" tabindex="-1">
           <!-- 渠道信息 -->
           <div class="channel-info">
             <div class="channel-info-main">
@@ -127,9 +127,9 @@
     </DisclosureSection>
 
     <!-- 弃用渠道池 (deprecated only) -->
-    <DisclosureSection title="弃用渠道" description="可转为备用或手动删除；弃用超过 3 天后由后台清理。" icon="mdi-archive-clock-outline" :count="deprecatedChannels.length" lazy>
+    <DisclosureSection v-model="deprecatedExpanded" title="弃用渠道" description="可转为备用或手动删除；弃用超过 3 天后由后台清理。" icon="mdi-archive-clock-outline" :count="deprecatedChannels.length" lazy>
       <div v-if="deprecatedChannels.length > 0" class="inactive-pool deprecated-pool">
-        <div v-for="channel in deprecatedChannels" :key="channel.index" class="inactive-channel-row">
+        <div v-for="channel in deprecatedChannels" :id="channel.id ? channelAnchorId(channelType, channel.id) : undefined" :key="channel.index" class="inactive-channel-row" tabindex="-1">
           <div class="channel-info">
             <div class="channel-info-main">
               <span
@@ -191,6 +191,8 @@ import UiMenu from '@/shared/ui/overlay/Menu.vue'
 import UiTooltip from '@/shared/ui/overlay/Tooltip.vue'
 // 备用与弃用资源池只负责展示和发出操作事件，配置写入由父级编排。
 import type { Channel, ChannelStatus } from '@/types'
+import { nextTick, ref, watch } from 'vue'
+import { channelAnchorId } from '@/features/channels/utils/channelSearch'
 import type { ApiTab } from '@/features/channels/services/channel-api'
 import { channelServiceLabel } from '@/features/channels/utils/imagesChannelProtocol'
 import { formatDateTime } from '@/features/channels/utils/channelMetricsFormat'
@@ -199,11 +201,24 @@ import ChannelWebsiteLink from '@/features/channels/components/dashboard/Channel
 import DisclosureSection from '@/shared/components/layout/DisclosureSection.vue'
 import EmptyState from '@/shared/components/feedback/EmptyState.vue'
 
-defineProps<{
+const props = defineProps<{
   inactiveChannels: Channel[]
   deprecatedChannels: Channel[]
   channelType: ApiTab
 }>()
+
+const inactiveExpanded = ref(false)
+const deprecatedExpanded = ref(false)
+watch(() => props.channelType, () => { inactiveExpanded.value = false; deprecatedExpanded.value = false })
+
+async function revealChannel(channel: Channel) {
+  if (channel.excludeFromConversation) return
+  if (channel.status === 'disabled') inactiveExpanded.value = true
+  if (channel.status === 'deprecated') deprecatedExpanded.value = true
+  await nextTick()
+}
+
+defineExpose({ revealChannel })
 
 const emit = defineEmits<{
   edit: [channel: Channel]

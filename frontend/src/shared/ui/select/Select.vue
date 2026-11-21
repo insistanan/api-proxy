@@ -21,20 +21,31 @@
         :class="message ? 'border-destructive' : 'border-input'"
       >
         <Icon v-if="prependInnerIcon" :icon="prependInnerIcon" :size="16" class="text-muted-foreground" />
-        <ComboboxInput
-          :id="id"
-          :model-value="inputText"
-          :readonly="!searchable"
-          :placeholder="placeholder"
-          :aria-label="($attrs['aria-label'] as string) || label"
-          :aria-required="required || undefined"
-          :aria-invalid="!!message"
-          :aria-describedby="message || hint ? `${id}-message` : undefined"
-          class="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none! placeholder:text-muted-foreground/70 disabled:cursor-not-allowed"
-          @update:model-value="query = $event"
-          @focus="emit('focus', $event)"
-          @blur="validate"
-        />
+        <div :class="multiple && inlineChips ? 'flex min-w-0 flex-1 flex-wrap items-center gap-1 py-1' : 'contents'">
+          <template v-if="multiple && inlineChips && Array.isArray(modelValue)">
+            <span v-for="(value, index) in modelValue" :key="index" class="inline-flex max-w-full items-center gap-1 rounded-badge bg-primary/10 px-2 py-1 text-xs text-primary">
+              <span class="truncate" :title="titleFor(value)">{{ titleFor(value) }}</span>
+              <button v-if="closableChips" type="button" :disabled="disabled" :aria-label="`移除 ${titleFor(value)}`" class="shrink-0" @click.stop="remove(index)">
+                <Icon icon="mdi-close" :size="12" />
+              </button>
+            </span>
+          </template>
+          <ComboboxInput
+            :id="id"
+            :model-value="inputText"
+            :readonly="!searchable"
+            :placeholder="multiple && inlineChips && hasValue ? undefined : placeholder"
+            :aria-label="($attrs['aria-label'] as string) || label"
+            :aria-required="required || undefined"
+            :aria-invalid="!!message"
+            :aria-describedby="message || hint ? `${id}-message` : undefined"
+            class="min-w-0 flex-1 bg-transparent text-sm outline-none! placeholder:text-muted-foreground/70 disabled:cursor-not-allowed"
+            :class="multiple && inlineChips ? 'w-12 basis-12 py-1' : 'py-2'"
+            @update:model-value="query = $event"
+            @focus="emit('focus', $event)"
+            @blur="validate"
+          />
+        </div>
         <button
           v-if="clearable && hasValue"
           type="button"
@@ -48,7 +59,7 @@
           ><Icon :icon="loading ? 'mdi-loading' : 'mdi-chevron-down'" :class="loading ? 'animate-spin' : ''" :size="16"
         /></ComboboxTrigger>
       </ComboboxAnchor>
-      <div v-if="multiple && Array.isArray(modelValue) && modelValue.length" class="mt-1 flex flex-wrap gap-1">
+      <div v-if="multiple && !inlineChips && Array.isArray(modelValue) && modelValue.length" class="mt-1 flex flex-wrap gap-1">
         <span
           v-for="(value, index) in modelValue"
           :key="index"
@@ -139,6 +150,7 @@ const props = withDefaults(
     creatable?: boolean
     multiple?: boolean
     chips?: boolean
+    inlineChips?: boolean
     closableChips?: boolean
     clearable?: boolean
     label?: string

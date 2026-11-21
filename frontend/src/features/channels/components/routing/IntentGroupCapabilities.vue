@@ -1,17 +1,40 @@
 <template>
   <div class="capabilities">
-    <p class="text-sm text-muted-foreground">选择适合的任务即可参与自动匹配；默认接受所有难度，难度可进一步限制。</p>
     <EmptyState v-if="!pools.length" variant="inline" icon="mdi-swap-horizontal" title="当前协议暂无可配置的渠道分组" description="先在渠道编排中创建分组，再回来设置任务能力。" />
-    <section v-for="row in rows" :key="row.poolId" class="capability-row" :aria-label="row.name + '的任务能力'">
-      <div class="capability-name"><h4 class="text-sm font-medium">{{ row.name }}</h4><span class="text-xs" :class="row.tasks.length && row.tiers.length ? 'text-primary' : 'text-muted-foreground'">{{ row.tasks.length && row.tiers.length ? '已参与' : row.tasks.length || row.tiers.length ? '配置不完整' : '未参与' }}</span></div>
-      <div class="capability-fields">
-        <UiSelect searchable creatable :model-value="row.tasks" :items="tasks" item-title="name" item-value="id" :return-object="false" multiple chips closable-chips clearable label="适合的任务" :aria-label="row.name + '适合的任务'" :disabled="disabled" :error-messages="row.tiers.length && !row.tasks.length ? '请选择适合的任务，或清空难度以停用' : []" hide-details="auto" @update:model-value="update(row.poolId, { tasks: $event ?? [] })" />
-        <UiSwitch :model-value="isTierLimited(row.tiers)" label="限制处理难度" :aria-label="row.name + '限制处理难度'" :disabled="disabled || !row.tasks.length" hide-details @update:model-value="setTierLimit(row.poolId, !!$event)" />
-        <UiSelect v-if="isTierLimited(row.tiers)" :model-value="row.tiers" :items="tiers" multiple chips closable-chips label="允许的难度" :aria-label="row.name + '允许的难度'" :disabled="disabled" hide-details="auto" @update:model-value="update(row.poolId, { tiers: $event ?? [] })" />
-        <UiInput v-if="useFeedback" :model-value="row.cost" type="number" min="0" label="相对成本" :aria-label="row.name + '相对成本'" :disabled="disabled || !row.tasks.length && !row.tiers.length" hide-details="auto" @update:model-value="update(row.poolId, { cost: Number($event) })" />
-      </div>
-    </section>
-    <p v-if="pools.length" class="text-xs text-muted-foreground">多个分组都满足时，按渠道分组顺序选择{{ useFeedback ? '，并参考反馈与成本' : '' }}。</p>
+    <div v-else class="capability-table-wrap">
+      <table class="capability-table" aria-label="分组能力配置">
+        <thead>
+          <tr><th scope="col" class="capability-group-column">渠道分组</th><th scope="col">适合的任务</th><th scope="col" class="capability-tier-column">处理难度</th><th v-if="useFeedback" scope="col" class="capability-cost-column">相对成本</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in rows" :key="row.poolId" :aria-label="row.name + '的任务能力'">
+            <th scope="row" class="capability-name">
+              <span class="block text-sm font-medium">{{ row.name }}</span>
+              <span class="capability-status" :class="row.tasks.length && row.tiers.length ? 'text-primary' : row.tasks.length || row.tiers.length ? 'text-warning' : 'text-muted-foreground'">
+                <span class="size-1.5 shrink-0 rounded-full bg-current" aria-hidden="true"></span>
+                {{ row.tasks.length && row.tiers.length ? '已参与' : row.tasks.length || row.tiers.length ? '配置不完整' : '未参与' }}
+              </span>
+            </th>
+            <td>
+              <span class="capability-mobile-label">适合的任务</span>
+              <UiSelect searchable creatable :model-value="row.tasks" :items="tasks" item-title="name" item-value="id" :return-object="false" multiple chips inline-chips closable-chips clearable placeholder="选择任务…" :aria-label="row.name + '适合的任务'" :disabled="disabled" :error-messages="row.tiers.length && !row.tasks.length ? '请选择适合的任务，或清空难度以停用' : []" hide-details="auto" @update:model-value="update(row.poolId, { tasks: $event ?? [] })" />
+            </td>
+            <td>
+              <span class="capability-mobile-label">处理难度</span>
+              <div class="capability-tiers">
+                <UiSwitch :model-value="isTierLimited(row.tiers)" label="限制难度" :aria-label="row.name + '限制处理难度'" :disabled="disabled || !row.tasks.length" hide-details @update:model-value="setTierLimit(row.poolId, !!$event)" />
+                <span v-if="!isTierLimited(row.tiers)" class="text-xs text-muted-foreground">不限</span>
+                <UiSelect v-else class="w-full" :model-value="row.tiers" :items="tiers" multiple chips inline-chips closable-chips placeholder="选择难度…" :aria-label="row.name + '允许的难度'" :disabled="disabled" hide-details="auto" @update:model-value="update(row.poolId, { tiers: $event ?? [] })" />
+              </div>
+            </td>
+            <td v-if="useFeedback">
+              <span class="capability-mobile-label">相对成本</span>
+              <UiInput :model-value="row.cost" type="number" min="0" :aria-label="row.name + '相对成本'" :disabled="disabled || !row.tasks.length && !row.tiers.length" hide-details="auto" @update:model-value="update(row.poolId, { cost: Number($event) })" />
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 </template>
 <script setup lang="ts">
@@ -48,10 +71,33 @@ function setTierLimit(poolId: string, limited: boolean) {
 <style scoped>
 @reference "@/styles/index.css";
 
-.capabilities { @apply grid gap-5; }
-.capability-row { @apply grid [grid-template-columns:minmax(100px,_1fr)_minmax(0,_4fr)] items-start gap-5 [border-top:1px_solid_color-mix(in_srgb,_var(--outline)_20%,_transparent)] pt-5; }
-.capability-name { @apply pt-3.5 [overflow-wrap:anywhere]; }
-.capability-fields { @apply grid [grid-template-columns:minmax(0,_3fr)_minmax(0,_2fr)] items-start gap-4; }
-@media (max-width: 750px) { .capability-row { @apply [grid-template-columns:minmax(0,_1fr)] gap-3; } .capability-name { @apply pt-0; } }
-@media (max-width: 550px) { .capability-fields { @apply [grid-template-columns:minmax(0,_1fr)]; } }
+.capabilities { @apply min-w-0; }
+.capability-table-wrap { @apply overflow-hidden rounded-control border border-border; }
+.capability-table { @apply w-full table-fixed border-collapse text-left; }
+.capability-table thead { @apply bg-muted/35; }
+.capability-table thead th { @apply px-4 py-2.5 text-xs font-medium text-muted-foreground; }
+.capability-table tbody tr { @apply border-t border-border; }
+.capability-table tbody th, .capability-table td { @apply px-4 py-3 align-top; }
+.capability-group-column { @apply w-1/5; }
+.capability-tier-column { @apply w-[32%]; }
+.capability-cost-column { @apply w-28; }
+.capability-name { @apply [overflow-wrap:anywhere]; }
+.capability-status { @apply mt-1.5 inline-flex items-center gap-1.5 text-[11px] font-normal; }
+.capability-tiers { @apply flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1; }
+.capability-tiers :deep(.ui-switch) { @apply min-h-10 text-xs; }
+.capability-mobile-label { @apply hidden; }
+@media (max-width: 750px) {
+  .capability-table, .capability-table tbody { @apply block; }
+  .capability-table thead { @apply sr-only; }
+  .capability-table tbody tr { @apply grid grid-cols-2 gap-3 p-4; }
+  .capability-table tbody tr:first-child { @apply border-t-0; }
+  .capability-table tbody th, .capability-table td { @apply block min-w-0 p-0; }
+  .capability-table tbody th { @apply col-span-2 flex flex-wrap items-center justify-between gap-2; }
+  .capability-status { @apply mt-0; }
+  .capability-mobile-label { @apply mb-1.5 block text-xs font-medium text-muted-foreground; }
+}
+@media (max-width: 500px) {
+  .capability-table tbody tr { @apply grid-cols-1; }
+  .capability-table tbody th { @apply col-span-1; }
+}
 </style>

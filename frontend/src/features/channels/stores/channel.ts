@@ -42,6 +42,7 @@ export const useChannelStore = defineStore('channel', () => {
   const poolRevisions = perTab(() => 0)
   // 四个会话协议共享的公用图片理解池，渠道自带所属协议。
   const visionChannels = ref<VisionChannel[]>([])
+  const locateRequest = shallowRef<{ protocol: ApiTab; id: string } | null>(null)
 
   // 批量延迟测试加载状态
   const isPingingAll = ref(false)
@@ -315,6 +316,7 @@ export const useChannelStore = defineStore('channel', () => {
     dashboardCache.value = perTab(emptyDashboard)
     channelPoolsMap.value = perTab(() => [] as ChannelPool[])
     visionChannels.value = []
+    locateRequest.value = null
     for (const tab of API_TABS) poolRevisions[tab]++
     lastRefreshSuccess.value = null
     isPingingAll.value = false
@@ -327,6 +329,7 @@ export const useChannelStore = defineStore('channel', () => {
     channelsDataMap,
     channelPoolsMap,
     visionChannels,
+    locateRequest,
     isPingingAll,
     isSavingChannel,
     isDeletingChannel,

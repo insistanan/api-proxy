@@ -1,6 +1,7 @@
 <template>
   <div class="channel-orchestration">
     <ChannelPoolGrid
+      ref="poolGrid"
       :channels="channels"
       :channel-type="channelType"
       :shared-vision-channels="visionChannels"
@@ -172,6 +173,7 @@
     <hr class="border-0 border-t border-border my-2" />
 
     <ChannelReservePools
+      ref="reservePools"
       :inactive-channels="inactiveChannels"
       :deprecated-channels="deprecatedChannels"
       :channel-type="channelType"
@@ -250,6 +252,19 @@ const emit = defineEmits<{
   (_e: 'error', _message: string): void
   (_e: 'success', _message: string): void
 }>()
+
+const poolGrid = ref<InstanceType<typeof ChannelPoolGrid>>()
+const reservePools = ref<InstanceType<typeof ChannelReservePools>>()
+
+async function revealChannel(channel: Channel) {
+  if (!channel.excludeFromConversation && !channel.builtinProvider && ['disabled', 'deprecated'].includes(channel.status ?? '')) {
+    await reservePools.value?.revealChannel(channel)
+  } else {
+    await poolGrid.value?.revealChannel(channel)
+  }
+}
+
+defineExpose({ revealChannel })
 
 // 共享图片理解渠道可能来自其他协议；所有写操作必须回到渠道自身协议。
 const kindOf = (channel: Channel): ApiTab => channel.kind ?? props.channelType

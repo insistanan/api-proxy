@@ -1,4 +1,4 @@
-// useChannelActions 编排渠道业务操作，供渠道页调用（R5，方案 8.1）。
+// useChannelActions 编排渠道页及全局渠道弹窗的业务操作。
 // 已保存的渠道数据由 channelStore 管理，修改也通过 store 提交。
 // committed 错误表示配置已提交，但后续处理失败；此处统一提示用户刷新
 // 并查看实际状态，不自动重试，避免重复提交（R3）。
@@ -6,12 +6,31 @@ import { useChannelStore } from '@/features/channels/stores/channel'
 import { useDialogStore } from '@/features/channels/stores/dialog'
 import { ApiError, type ApiTab, type Channel } from '@/api'
 import type { ToastType } from '@/shared/composables/useToast'
+import { useAuthStore } from '@/shared/stores/auth'
 
 type ToastFn = (message: string, type: ToastType) => void
 
 export function useChannelActions(notify: ToastFn) {
   const channelStore = useChannelStore()
   const dialogStore = useDialogStore()
+  const authStore = useAuthStore()
+  const handleAuthError = (error: unknown) => {
+    if (error instanceof Error && error.message.includes('认证失败')) {
+      authStore.setAuthError('访问密钥无效或已过期，请重新输入')
+    } else {
+      notify(`操作失败: ${error instanceof Error ? error.message : '未知错误'}`, 'error')
+    }
+  }
+
+  // 公用图片理解池跨协议共享，任一协议的渠道修改都可能改变它。
+  const refreshVisionChannelPool = async () => {
+    try {
+      await channelStore.refreshVisionChannels()
+    } catch (error) {
+      handleAuthError(error)
+    }
+  }
+
   const reportError = (error: unknown, onAuthError?: (error: unknown) => void) => {
     if (onAuthError) onAuthError(error)
     else notify(error instanceof Error ? error.message : '渠道操作失败', 'error')
@@ -109,7 +128,9 @@ export function useChannelActions(notify: ToastFn) {
   }
 
   return {
+    handleAuthError,
     refreshChannels,
+    refreshVisionChannelPool,
     saveChannel,
     deleteChannel,
     pingChannel,

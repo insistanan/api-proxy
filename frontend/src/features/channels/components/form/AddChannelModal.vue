@@ -39,8 +39,8 @@
 
       <div class="p-4 dialog-card-body">
         <fieldset :disabled="saving" :inert="saving" class="agent-config-editor">
-          <template v-if="isCopying">
-            <p class="text-sm text-muted-foreground mb-4">从 {{ copySourceLabel }} 的“{{ copySource?.name }}”创建新渠道，可修改连接信息、分组与模型配置。</p>
+          <template v-if="canSelectProtocol">
+            <p v-if="isCopying" class="text-sm text-muted-foreground mb-4">从 {{ copySourceLabel }} 的“{{ copySource?.name }}”创建新渠道，可修改连接信息、分组与模型配置。</p>
             <UiSelect
               :model-value="channelType"
               label="目标协议"
@@ -50,7 +50,7 @@
               class="mb-4"
               @update:model-value="selectTargetProtocol"
             />
-            <UiAlert v-if="channelType !== (copySourceType ?? channelType)" type="info" variant="tonal" class="mb-4">
+            <UiAlert v-if="isCopying && channelType !== (copySourceType ?? channelType)" type="info" variant="tonal" class="mb-4">
               请确认供应商支持所选上游服务类型和模型。跨协议复制已重新初始化专属策略，并移除转发到原协议其他渠道的模型映射。
             </UiAlert>
           </template>
@@ -117,6 +117,7 @@ interface Props {
   copySourceType?: ApiTab
   channelType?: ApiTab
   initialPoolId?: string
+  allowProtocolChange?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -133,10 +134,11 @@ const emit = defineEmits<{
 const editor = useChannelModal(props, emit)
 const entryLabel = computed(() => findNavigation(`/channels/${props.channelType}`)?.label)
 const isCopying = computed(() => !!props.copySource)
+const canSelectProtocol = computed(() => !props.channel && (isCopying.value || props.allowProtocolChange))
 const copySourceLabel = computed(() => API_TAB_LABELS[props.copySourceType ?? props.channelType])
 const protocolOptions = API_TABS.map(value => ({ title: API_TAB_LABELS[value], value }))
 const selectTargetProtocol = (value: ApiTab) => {
-  if (!props.saving && API_TABS.includes(value)) emit('update:channelType', value)
+  if (canSelectProtocol.value && !props.saving && API_TABS.includes(value)) emit('update:channelType', value)
 }
 const {
   isEditing, isQuickMode, toggleMode,

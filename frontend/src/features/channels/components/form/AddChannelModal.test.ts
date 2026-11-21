@@ -18,14 +18,17 @@ afterEach(() => {
 })
 
 // 使用最小渲染宿主保留真实的生命周期和 watcher，不需要启动浏览器或渲染基础控件。
-const setupCopyForm = () => {
+const setupProtocolForm = (copying = true) => {
   vi.stubGlobal('document', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
   const source: Channel = {
     id: 'source-id', name: '供应商A', index: 2, poolId: 'source-pool',
     serviceType: 'responses', baseUrl: 'https://api.example.com/v1', apiKeys: ['sk-fixture-key'],
     modelMapping: { '*': ['model-a'] }
   }
-  const props = reactive({ show: false, saving: false, channelType: 'responses' as ApiTab, copySource: source, copySourceType: 'responses' as ApiTab })
+  const props = reactive({
+    show: false, saving: false, channelType: 'responses' as ApiTab,
+    copySource: copying ? source : null, copySourceType: 'responses' as ApiTab, allowProtocolChange: !copying
+  })
   let editor!: ReturnType<typeof useChannelModal>
   const emit = vi.fn()
   const renderer = createRenderer<Record<string, unknown>, Record<string, unknown>>({
@@ -60,7 +63,7 @@ const mappingCandidate = (id: string, name: string, serviceType: string): Mappin
 describe('复制渠道协议切换', () => {
   it('使用详细配置，默认兜底分组且排除 Free，切换协议保留各自的编辑草稿', async () => {
     mockCopyResources()
-    const { props, source, editor, emit } = setupCopyForm()
+    const { props, source, editor, emit } = setupProtocolForm()
     props.show = true
     await nextTick()
     await nextTick()
@@ -101,7 +104,7 @@ describe('复制渠道协议切换', () => {
         ? new Promise(resolve => { resolveTargets = resolve })
         : Promise.resolve({ channels: [mappingCandidate('chat-channel', 'Chat 渠道', 'openai')] })
     }))
-    const { props, editor } = setupCopyForm()
+    const { props, editor } = setupProtocolForm()
     props.show = true
     await nextTick()
     props.channelType = 'chat'
@@ -118,7 +121,7 @@ describe('复制渠道协议切换', () => {
   it('目标协议加载分组失败时显示错误并阻止保存', async () => {
     mockCopyResources()
     vi.mocked(api.getChannelPools).mockRejectedValue(new Error('目标分组读取失败'))
-    const { props, editor, emit } = setupCopyForm()
+    const { props, editor, emit } = setupProtocolForm()
     props.show = true
     await nextTick()
     await nextTick()
@@ -127,6 +130,37 @@ describe('复制渠道协议切换', () => {
     await editor.handleSubmit()
     expect(emit).not.toHaveBeenCalledWith('save', expect.anything())
   })
+})
+
+it('快捷添加切换目标协议时保留各自的输入和分组', async () => {
+  const extraPool = { ...defaultPool, id: 'responses-only', name: 'Responses 分组' }
+  const fixtureKey = `sk-${'x'.repeat(32)}`
+  mockCopyResources()
+  vi.mocked(api.getChannelPools).mockImplementation(async kind => ({
+    pools: kind === 'responses' ? [defaultPool, extraPool] : [defaultPool]
+  }))
+  const { props, editor, emit } = setupProtocolForm(false)
+  props.show = true
+  await nextTick()
+  await nextTick()
+  editor.quickInput.value = `https://proxy.example.com/v1\n${fixtureKey}`
+  editor.quickChannelName.value = 'Responses 草稿'
+  editor.parseQuickInput()
+  editor.form.poolId = extraPool.id
+  props.channelType = 'embeddings'
+  await nextTick()
+  await nextTick()
+  expect(editor.quickInput.value).toBe('')
+  expect(editor.form.poolId).toBe('default')
+  expect(editor.quickServiceType.value).toBe('openai')
+
+  props.channelType = 'responses'
+  await nextTick()
+  await nextTick()
+  editor.handleQuickSubmit()
+  expect(emit).toHaveBeenCalledWith('save', expect.objectContaining({
+    name: 'Responses 草稿', apiKeys: [fixtureKey], poolId: extraPool.id
+  }), { isQuickAdd: true })
 })
 const submit = (state: State) => (state.handleSubmit as () => Promise<void>)()
 const setupForm = async (saving = false) => {

@@ -7,23 +7,29 @@ import { api, ApiError, type Channel } from '@/api'
 import { useDialogStore } from '@/features/channels/stores/dialog'
 import { useChannelStore } from '@/features/channels/stores/channel'
 import ChannelsView from '@/features/channels/views/ChannelsView.vue'
+import ChannelEditorDialog from '@/features/channels/components/form/ChannelEditorDialog.vue'
 import type { ConfirmRequest } from '@/shared/composables/useConfirm'
 
 vi.mock('vue3-apexcharts', () => ({ default: {} }))
 const { push } = vi.hoisted(() => ({ push: vi.fn() }))
 vi.mock('vue-router', () => ({ useRouter: () => ({ push, currentRoute: { value: { params: { type: 'messages' } } } }) }))
-vi.mock('@/shared/stores/auth', () => ({ useAuthStore: () => ({ apiKey: null, clearAuth: vi.fn() }) }))
+vi.mock('@/shared/stores/auth', () => ({ useAuthStore: () => ({ apiKey: null, clearAuth: vi.fn(), setAuthError: vi.fn() }) }))
 
 type State = Record<string, unknown>
-const setupView = async () => {
+const setupComponent = async (component: typeof ChannelsView | typeof ChannelEditorDialog) => {
   let state!: State
-  const setup = (ChannelsView as unknown as { setup: (props: object, context: SetupContext) => State }).setup
+  const setup = (component as unknown as { setup: (props: object, context: SetupContext) => State }).setup
   await renderToString(createSSRApp({
     setup(_props, context) {
       state = setup({}, { ...context, expose: vi.fn() })
       return () => null
     }
   }))
+  return state
+}
+
+const setupView = async () => {
+  const state = await setupComponent(ChannelsView)
   const store = useChannelStore()
   const remove = vi.spyOn(store, 'deleteChannel').mockResolvedValue({ success: true, message: '渠道删除成功' })
   vi.spyOn(store, 'refreshChannels').mockResolvedValue(undefined)
@@ -35,6 +41,11 @@ const setupView = async () => {
     accept: state.acceptConfirm as () => Promise<void>,
     cancel: state.cancelConfirm as () => void
   }
+}
+
+const saveFromDialog = async (channel: Omit<Channel, 'id' | 'index' | 'latency'>) => {
+  const state = await setupComponent(ChannelEditorDialog)
+  await (state.handleSaveChannel as (payload: typeof channel) => Promise<void>)(channel)
 }
 
 beforeEach(() => { setActivePinia(createPinia()); push.mockReset().mockResolvedValue(undefined) })
@@ -56,7 +67,7 @@ describe('复制渠道保存', () => {
     expect(dialog.editingChannel).toBeNull()
     dialog.channelType = 'chat'
     const save = vi.spyOn(store, 'saveChannel').mockResolvedValue({ message: '渠道添加成功' })
-    await (state.handleSaveChannel as (channel: typeof payload) => Promise<void>)(payload)
+    await saveFromDialog(payload)
     expect(save).toHaveBeenCalledExactlyOnceWith(payload, null, undefined, 'chat')
     expect(push).toHaveBeenCalledExactlyOnceWith('/channels/chat')
     expect(dialog.showAddChannelModal).toBe(false)
@@ -69,7 +80,7 @@ describe('复制渠道保存', () => {
     const dialog = useDialogStore()
     dialog.channelType = 'chat'
     vi.spyOn(store, 'saveChannel').mockRejectedValue(new Error('写入失败'))
-    await (state.handleSaveChannel as (channel: typeof payload) => Promise<void>)(payload)
+    await saveFromDialog(payload)
     expect(dialog.showAddChannelModal).toBe(true)
     expect(dialog.copyingChannel?.id).toBe(source.id)
     expect(push).not.toHaveBeenCalled()
@@ -80,11 +91,24 @@ describe('复制渠道保存', () => {
     ;(state.copyChannel as (channel: Channel) => void)(source)
     useDialogStore().channelType = 'chat'
     const save = vi.spyOn(store, 'saveChannel').mockRejectedValue(new ApiError('收尾失败', 500, undefined, undefined, true))
-    await (state.handleSaveChannel as (channel: typeof payload) => Promise<void>)(payload)
+    await saveFromDialog(payload)
     expect(save).toHaveBeenCalledOnce()
     expect(useDialogStore().showAddChannelModal).toBe(false)
     expect(push).toHaveBeenCalledExactlyOnceWith('/channels/chat')
   })
+})
+
+it('全局添加保存到选定协议后留在当前页面', async () => {
+  const { store } = await setupView()
+  const dialog = useDialogStore()
+  dialog.openAddChannelModal('messages', 'default', true)
+  dialog.channelType = 'embeddings'
+  const payload = { name: '向量渠道', serviceType: 'openai' as const, baseUrl: 'https://api.example.com/v1', apiKeys: ['fixture-key'] }
+  const save = vi.spyOn(store, 'saveChannel').mockResolvedValue({ message: '渠道添加成功' })
+  await saveFromDialog(payload)
+  expect(save).toHaveBeenCalledExactlyOnceWith(payload, null, undefined, 'embeddings')
+  expect(dialog.showAddChannelModal).toBe(false)
+  expect(push).not.toHaveBeenCalled()
 })
 
 describe('渠道删除组件确认', () => {

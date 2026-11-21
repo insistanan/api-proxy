@@ -19,15 +19,17 @@ export const useDialogStore = defineStore('dialog', () => {
   const copySourceType = ref<ApiTab>('messages')
   const channelType = ref<ApiTab>('messages')
   const initialPoolId = ref('default')
+  const allowProtocolChange = ref(false)
 
   // ===== 操作方法 =====
 
   /**
    * 打开添加渠道对话框
    */
-  function openAddChannelModal(type: ApiTab, poolId = 'default') {
+  function openAddChannelModal(type: ApiTab, poolId = 'default', selectableProtocol = false) {
     channelType.value = type
     initialPoolId.value = poolId
+    allowProtocolChange.value = selectableProtocol
     editingChannel.value = null
     copyingChannel.value = null
     showAddChannelModal.value = true
@@ -39,6 +41,7 @@ export const useDialogStore = defineStore('dialog', () => {
   function openEditChannelModal(channel: Channel, type: ApiTab) {
     channelType.value = type
     initialPoolId.value = 'default'
+    allowProtocolChange.value = false
     editingChannel.value = channel
     copyingChannel.value = null
     showAddChannelModal.value = true
@@ -49,6 +52,7 @@ export const useDialogStore = defineStore('dialog', () => {
     channelType.value = type
     copySourceType.value = type
     initialPoolId.value = 'default'
+    allowProtocolChange.value = false
     editingChannel.value = null
     copyingChannel.value = channel
     showAddChannelModal.value = true
@@ -62,16 +66,14 @@ export const useDialogStore = defineStore('dialog', () => {
     editingChannel.value = null
     copyingChannel.value = null
     initialPoolId.value = 'default'
+    allowProtocolChange.value = false
   }
 
   /**
    * 重置所有对话框状态
    */
   function resetDialogState() {
-    showAddChannelModal.value = false
-    editingChannel.value = null
-    copyingChannel.value = null
-    initialPoolId.value = 'default'
+    closeAddChannelModal()
   }
 
   return {
@@ -82,6 +84,7 @@ export const useDialogStore = defineStore('dialog', () => {
     copySourceType,
     channelType,
     initialPoolId,
+    allowProtocolChange,
 
     // 方法
     openAddChannelModal,

@@ -74,6 +74,7 @@
 
     <ChannelOrchestration
       v-if="channels.length"
+      ref="orchestration"
       :channels="channels"
       :channel-type="channelType"
       :dashboard-metrics="channelStore.currentDashboardMetrics"
@@ -99,17 +100,6 @@
       </EmptyState>
     </UiCard>
 
-    <AddChannelModal
-      v-model:show="dialogStore.showAddChannelModal"
-      v-model:channel-type="dialogStore.channelType"
-      :channel="dialogStore.editingChannel"
-      :copy-source="dialogStore.copyingChannel"
-      :copy-source-type="dialogStore.copySourceType"
-      :initial-pool-id="dialogStore.initialPoolId"
-      :saving="channelStore.isSavingChannel || channelStore.isDeletingChannel"
-      @save="handleSaveChannel"
-    />
-
     <ConfirmDialog
       :model-value="pendingConfirm !== null"
       :message="pendingConfirm?.message ?? ''"
@@ -128,17 +118,16 @@ import UiIcon from '@/shared/ui/icon/Icon.vue'
 import UiTooltip from '@/shared/ui/overlay/Tooltip.vue'
 // 渠道页：概览、路由开关、流量统计与渠道编排。
 // 渠道数据由 channelStore 持有；本页负责进入时加载、停留期间自动刷新、离开时停止。
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import ConfirmDialog from '@/shared/components/overlay/ConfirmDialog.vue'
 import { useConfirm } from '@/shared/composables/useConfirm'
 import { deletionImpactWarning } from '@/features/channels/utils/deletionImpact'
+import { channelAnchorId } from '@/features/channels/utils/channelSearch'
 import PageHeader from '@/shared/components/layout/PageHeader.vue'
 import EmptyState from '@/shared/components/feedback/EmptyState.vue'
 import DisclosureSection from '@/shared/components/layout/DisclosureSection.vue'
 import ChannelOrchestration from '@/features/channels/components/dashboard/ChannelOrchestration.vue'
 import ChannelTableDrawer from '@/features/channels/components/dashboard/ChannelTableDrawer.vue'
-import AddChannelModal from '@/features/channels/components/form/AddChannelModal.vue'
 import IntentRoutingControl from '@/features/channels/components/routing/IntentRoutingControl.vue'
 import { isIntentProtocol } from '@/features/channels/services/intent'
 import { isConversationProtocol } from '@/features/channels/services/channel-api'
@@ -151,27 +140,17 @@ import { api, type ApiTab, type Channel } from '@/api'
 import { useChannelStore } from '@/features/channels/stores/channel'
 import { useDialogStore } from '@/features/channels/stores/dialog'
 import { usePreferencesStore } from '@/shared/stores/preferences'
-import { useAuthStore } from '@/shared/stores/auth'
 import { defineLazyChart } from '@/shared/utils/lazyChart'
 
 const GlobalStatsChart = defineLazyChart(() => import('@/features/channels/components/dashboard/GlobalStatsChart.vue'))
 
 const channelStore = useChannelStore()
-const router = useRouter()
 const dialogStore = useDialogStore()
 const preferencesStore = usePreferencesStore()
-const authStore = useAuthStore()
 const { showToast } = useToast()
 const { pending: pendingConfirm, askConfirm, acceptConfirm, cancelConfirm } = useConfirm()
 const preparingDelete = ref(false)
-
-const handleAuthError = (error: unknown): void => {
-  if (error instanceof Error && error.message.includes('认证失败')) {
-    authStore.setAuthError('访问密钥无效或已过期，请重新输入')
-  } else {
-    showToast(`操作失败: ${error instanceof Error ? error.message : '未知错误'}`, 'error')
-  }
-}
+const orchestration = ref<InstanceType<typeof ChannelOrchestration>>()
 
 // 协议类型以 store 中经过校验的 activeTab 为准，非法路由参数回落到 Messages。
 const channelType = computed(() => channelStore.activeTab)
@@ -191,39 +170,56 @@ const serviceStatus = computed(() => {
 })
 
 // 渠道写操作由 useChannelActions 编排（R5，方案 8.1）；已提交但收尾失败时由它提示刷新（R3）。
-const { refreshChannels: refreshAction, saveChannel, deleteChannel, pingChannel, pingAllChannels } = useChannelActions(showToast)
+const {
+  refreshChannels: refreshAction, refreshVisionChannelPool, handleAuthError,
+  deleteChannel, pingChannel, pingAllChannels
+} = useChannelActions(showToast)
 
-// 公用图片理解池跨协议共享；任何渠道写入都可能改变它，刷新时机跟随渠道列表。
-const refreshVisionChannelPool = async () => {
-  try {
-    await channelStore.refreshVisionChannels()
-  } catch (error) {
-    handleAuthError(error)
-  }
-}
 const refreshChannels = async () => {
   await Promise.all([refreshAction(handleAuthError), refreshVisionChannelPool()])
+}
+
+async function locateChannel(request: NonNullable<typeof channelStore.locateRequest>, isCurrent: () => boolean) {
+  try {
+    await channelStore.refreshChannels(request.protocol)
+    if (!isCurrent()) return
+    const channel = channels.value.find(item => item.id === request.id && item.status !== 'deleted')
+    if (!channel) throw new Error('目标渠道已移除或不再可用')
+    if (channel.excludeFromConversation && !sharedVisionChannels.value.some(item => item.id === channel.id && item.kind === request.protocol)) {
+      await channelStore.refreshVisionChannels()
+    }
+    await nextTick()
+    if (!isCurrent()) return
+    if (!orchestration.value) throw new Error('渠道编排尚未就绪，请重试')
+    await orchestration.value.revealChannel(channel)
+    await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()))
+    if (!isCurrent()) return
+    const target = document.getElementById(channelAnchorId(request.protocol, request.id))
+    if (!target) throw new Error(`“${channel.name}”未能显示在所属分组中，请刷新后重试`)
+    // 等折叠面板完成布局过渡，再计算滚动落点，避免定位后渠道又被挤出视口。
+    const transitions: Array<Promise<Awaited<ReturnType<Element['getAnimations']>>[number]>> = []
+    for (let parent = target.parentElement; parent && parent.id !== 'main-content'; parent = parent.parentElement) {
+      for (const animation of parent.getAnimations?.() ?? []) {
+        if (animation.playState === 'running' && animation.effect?.getComputedTiming().iterations !== Infinity) {
+          transitions.push(animation.finished)
+        }
+      }
+    }
+    await Promise.allSettled(transitions)
+    if (!isCurrent() || !target.isConnected) return
+    target.focus({ preventScroll: true })
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    target.scrollIntoView({ block: 'center', behavior: reduceMotion ? 'instant' : 'smooth' })
+  } catch (error) {
+    if (isCurrent()) showToast(error instanceof Error ? error.message : '定位渠道失败', 'warning')
+  } finally {
+    if (isCurrent()) channelStore.locateRequest = null
+  }
 }
 
 const openAddChannel = (poolId = 'default') => dialogStore.openAddChannelModal(channelType.value, poolId)
 const editChannel = (channel: Channel) => dialogStore.openEditChannelModal(channel, channel.kind ?? channelType.value)
 const copyChannel = (channel: Channel) => dialogStore.openCopyChannelModal(channel, channel.kind ?? channelType.value)
-const handleSaveChannel = async (
-  channel: Omit<Channel, 'id' | 'index' | 'latency'>,
-  options?: { isQuickAdd?: boolean }
-) => {
-  const copying = !!dialogStore.copyingChannel
-  const targetType = dialogStore.channelType
-  await saveChannel(channel, options, handleAuthError)
-  await refreshVisionChannelPool()
-  if (copying && !dialogStore.showAddChannelModal && targetType !== channelType.value) {
-    try {
-      await router.push(`/channels/${targetType}`)
-    } catch (error) {
-      showToast(`渠道已创建，但切换协议失败：${error instanceof Error ? error.message : '未知错误'}`, 'warning')
-    }
-  }
-}
 const handleDeleteChannel = async (channelId: number, kind?: ApiTab) => {
   if (preparingDelete.value || pendingConfirm.value || channelStore.isDeletingChannel || channelStore.isSavingChannel) return
   const targetKind = kind ?? channelType.value
@@ -278,11 +274,24 @@ const modes = computed(() => [
 watch(channelType, () => { cancelConfirm(); void refreshChannels() })
 
 onMounted(() => {
+  watch([() => channelStore.locateRequest, channelType], ([request, protocol], _oldValue, onCleanup) => {
+    if (!request) return
+    if (request.protocol !== protocol) {
+      channelStore.locateRequest = null
+      return
+    }
+    let current = true
+    onCleanup(() => { current = false })
+    void locateChannel(request, () => current && channelStore.locateRequest === request && channelType.value === protocol)
+  }, { flush: 'post', immediate: true })
   void refreshChannels()
   void routing.loadModes()
   channelStore.startAutoRefresh()
 })
-onUnmounted(() => channelStore.stopAutoRefresh())
+onUnmounted(() => {
+  channelStore.stopAutoRefresh()
+  channelStore.locateRequest = null
+})
 </script>
 
 <style scoped>
@@ -299,6 +308,9 @@ onUnmounted(() => channelStore.stopAutoRefresh())
 .overview-status.is-error { --status: var(--destructive); }
 .overview-status__dot { @apply w-2 h-2 rounded-full [background:var(--status)] [box-shadow:0_0_0_3px_color-mix(in_srgb,_var(--status)_18%,_transparent)]; }
 .overview-modes { @apply flex items-center flex-wrap gap-2; }
+.channels-view :deep([id^='channel-'][tabindex='-1']) { scroll-margin-block: calc(var(--app-header-height) + 1.5rem); }
+.channels-view :deep([id^='channel-'][tabindex='-1']:focus) { @apply rounded-control outline-2 outline-offset-2 outline-primary/70; animation: channel-locate 1800ms ease-out; }
+@keyframes channel-locate { from { background-color: color-mix(in srgb, var(--primary) 18%, transparent); } to { background-color: transparent; } }
 .mode-control.is-off { @apply text-muted-foreground; }
 .mode-state { @apply ml-2 [padding:1px_6px] [font-size:0.75rem] rounded-badge [background:color-mix(in_srgb,_var(--foreground)_8%,_transparent)]; }
 .channels-empty { @apply flex flex-col items-center [padding:56px_24px] text-center; }

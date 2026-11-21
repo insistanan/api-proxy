@@ -23,7 +23,9 @@
       <div v-for="(column, columnIndex) in poolColumns" :key="columnIndex" class="pool-column">
       <section
         v-for="{ pool, order } in column"
+        :id="pool.id === FREE_POOL_ID ? freeChannelAnchor : undefined"
         :key="pool.id"
+        :tabindex="pool.id === FREE_POOL_ID ? -1 : undefined"
         class="pool-card panel-surface"
         :class="{ 'is-default': pool.id === 'default', 'is-collapsed': collapsedPools.has(pool.id) }"
         :style="{ order }"
@@ -89,7 +91,7 @@
           @change="scheduleLayoutSave"
         >
           <template #item="{ element, index }">
-            <div class="pool-drag-item">
+            <div :id="element.id ? channelAnchorId(channelType, element.id) : undefined" class="pool-drag-item" tabindex="-1">
               <slot
                 name="channel"
                 :channel="element"
@@ -129,7 +131,7 @@
       <span class="section-inline-label">图片理解渠道</span>
     </header>
     <div class="vision-channel-list">
-      <div v-for="channel in visionChannels" :key="`${channel.kind ?? channelType}-${channel.index}`" class="vision-channel-row" @click="emit('edit', channel)">
+      <div v-for="channel in visionChannels" :id="channel.id ? channelAnchorId(channel.kind ?? channelType, channel.id) : undefined" :key="`${channel.kind ?? channelType}-${channel.index}`" class="vision-channel-row" tabindex="-1" @click="emit('edit', channel)">
         <UiIcon size="small" color="primary">mdi-image-search-outline</UiIcon>
         <button
           v-if="canToggleVisionStatus(channel)"
@@ -197,7 +199,7 @@ import UiProgress from '@/shared/ui/feedback/Progress.vue'
 import UiInput from '@/shared/ui/field/Input.vue'
 import UiIcon from '@/shared/ui/icon/Icon.vue'
 import UiSelect from '@/shared/ui/select/Select.vue'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import draggable from 'vuedraggable'
 import { api, ApiError, type Channel, type ChannelPool, type ChannelDeletionImpact, type VisionChannel } from '@/api'
 import { deletionImpactWarning } from '@/features/channels/utils/deletionImpact'
@@ -207,6 +209,7 @@ import { channelServiceLabel } from '@/features/channels/utils/imagesChannelProt
 import { API_TAB_LABELS, type ApiTab } from '@/features/channels/services/channel-api'
 import { useChannelStore } from '@/features/channels/stores/channel'
 import { FREE_POOL_ID } from '@/features/channels/services/free-channels'
+import { channelAnchorId } from '@/features/channels/utils/channelSearch'
 import FreeChannelPool from '@/features/channels/components/dashboard/FreeChannelPool.vue'
 import AppDialog from '@/shared/components/overlay/AppDialog.vue'
 import EmptyState from '@/shared/components/feedback/EmptyState.vue'
@@ -230,6 +233,10 @@ const emit = defineEmits<{
 
 const channelStore = useChannelStore()
 const pools = computed(() => channelStore.channelPoolsMap[props.channelType])
+const freeChannelAnchor = computed(() => {
+  const id = props.channels.find(channel => channel.builtinProvider)?.id
+  return id ? channelAnchorId(props.channelType, id) : undefined
+})
 const loading = ref(false)
 const saving = ref(false)
 const layoutSaving = ref(false)
@@ -262,19 +269,37 @@ let layoutSavePending = false
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error)
 const normalizedPoolMatcher = computed(() => String(poolMatcher.value ?? '').trim())
 
-const loadPools = async () => {
+let poolLoadRequest = 0
+let poolLoad: Promise<void> | undefined
+const loadPools = () => {
+  const request = ++poolLoadRequest
+  const protocol = props.channelType
   loading.value = true
-  try {
-    await channelStore.refreshChannelPools(props.channelType)
-  } catch (error) {
-    emit('error', `加载渠道分组失败：${errorMessage(error)}`)
-  } finally {
-    loading.value = false
-  }
+  poolLoad = (async () => {
+    try {
+      await channelStore.refreshChannelPools(protocol)
+    } catch (error) {
+      if (request === poolLoadRequest) emit('error', `加载渠道分组失败：${errorMessage(error)}`)
+    } finally {
+      if (request === poolLoadRequest) loading.value = false
+    }
+  })()
+  return poolLoad
 }
+
+async function revealChannel(channel: Channel) {
+  await poolLoad
+  const collapsed = new Set(collapsedPools.value)
+  collapsed.delete(channel.poolId || 'default')
+  collapsedPools.value = collapsed
+  await nextTick()
+}
+
+defineExpose({ revealChannel })
 
 onMounted(() => void loadPools())
 onBeforeUnmount(() => {
+  poolLoadRequest++
   if (layoutSaveTimer) clearTimeout(layoutSaveTimer)
 })
 watch(() => props.channelType, () => { deletePoolDialog.value = false; void loadPools() })

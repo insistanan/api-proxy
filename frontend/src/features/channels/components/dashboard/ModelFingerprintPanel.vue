@@ -13,7 +13,12 @@
           </span>
           <div class="min-w-0">
             <p class="text-sm font-semibold">{{ status }}</p>
-            <p v-if="task" class="mt-1 text-xs text-muted-foreground">{{ analysis ? `${analysis.used_outputs}/3 条有效样本` : `已完成 ${completeCount}/3 条采样` }} · {{ formatDateTime(task.createdAt) }}</p>
+            <template v-if="task">
+              <p class="mt-1 text-xs text-muted-foreground">{{ analysis ? `${analysis.used_outputs}/3 条有效样本` : `已完成 ${completeCount}/3 条采样` }} · {{ formatDateTime(task.createdAt) }}</p>
+              <p v-if="targetChanged" class="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                上次采样：{{ task.target.model }} · {{ task.target.effort || '默认思考档位' }} · 地址 {{ task.target.urlIndex + 1 }} / 密钥 {{ task.target.keyIndex + 1 }}
+              </p>
+            </template>
           </div>
         </div>
         <div class="flex flex-wrap items-center gap-2">
@@ -22,8 +27,12 @@
             <UiButton size="small" variant="text" color="warning" :disabled="pending" @click="cancel">停止</UiButton>
             <UiButton size="small" variant="tonal" color="primary" prepend-icon="mdi-arrow-right" @click="emit('background')">后台运行</UiButton>
           </template>
-          <UiButton v-else-if="samples.length" size="small" color="primary" prepend-icon="mdi-replay" :disabled="!retryableCount" :loading="pending" @click="retry()">{{ retryableCount ? `重测失败项（${retryableCount}）` : '采样已完成' }}</UiButton>
-          <UiButton v-else size="small" color="primary" prepend-icon="mdi-play-circle" :disabled="!canStart" :loading="pending" @click="start">开始检测</UiButton>
+          <template v-else>
+            <UiButton v-if="retryableCount && !targetChanged" size="small" variant="tonal" :disabled="busy" @click="retry()">补测失败项（{{ retryableCount }}）</UiButton>
+            <UiButton size="small" color="primary" :prepend-icon="task ? 'mdi-replay' : 'mdi-play-circle'" :disabled="!canStart" :loading="pending" @click="start">
+              {{ task ? '重新检测' : '开始检测' }}
+            </UiButton>
+          </template>
         </div>
       </div>
       <div v-if="task" class="mt-4 grid grid-cols-3 gap-2" aria-label="三条样本进度">
@@ -75,7 +84,7 @@
             <span class="flex size-7 shrink-0 items-center justify-center rounded-control text-xs font-semibold tabular-nums" :class="sampleAppearance(sample.state).surface">{{ sample.index + 1 }}</span>
             <span class="text-sm font-medium" :class="sampleAppearance(sample.state).text">{{ sampleState[sample.state] }}</span>
             <span class="text-xs tabular-nums text-muted-foreground">{{ sample.count }}/{{ sample.expectedCount }} 个整数<span v-if="sample.durationMs"> · {{ (sample.durationMs / 1000).toFixed(1) }}s</span></span>
-            <UiButton v-if="['failed', 'truncated', 'cancelled'].includes(sample.state)" size="x-small" variant="tonal" prepend-icon="mdi-replay" class="ml-auto" :disabled="busy" @click="retry(sample.index)">重试这一条</UiButton>
+            <UiButton v-if="!targetChanged && ['failed', 'truncated', 'cancelled'].includes(sample.state)" size="x-small" variant="tonal" prepend-icon="mdi-replay" class="ml-auto" :disabled="busy" @click="retry(sample.index)">重试这一条</UiButton>
           </div>
           <div v-if="sample.error" class="mx-3.5 mb-3 rounded-control bg-destructive/5 px-3 py-2 text-xs leading-5 text-destructive">
             <details v-if="sample.error.length > 160">
@@ -108,7 +117,6 @@
         <template v-if="task.sdkVersion"><dt>SDK</dt><dd>{{ task.sdkVersion }}</dd></template>
         <template v-if="task.dataSha256"><dt>数据摘要</dt><dd class="break-all font-mono">{{ task.dataSha256 }}</dd></template>
       </dl>
-      <div class="mt-3 flex justify-end"><UiButton size="small" variant="text" prepend-icon="mdi-plus" :disabled="busy || !canStart" @click="start">开始新一轮（3 条）</UiButton></div>
     </details>
   </div>
 </template>
@@ -187,6 +195,13 @@ const urlOptions = computed(() => urls.value.map((url, value) => {
 }))
 const keyOptions = computed(() => props.channel.apiKeys.map((_, value) => ({ title: `密钥 ${value + 1}`, value })))
 const canStart = computed(() => !!props.channel.id && !!props.model?.trim() && urls.value.length > 0 && keyOptions.value.length > 0)
+const targetChanged = computed(() => {
+  const target = task.value?.target
+  return !!target && (
+    target.model !== props.model?.trim() || target.effort !== props.effort ||
+    target.urlIndex !== urlIndex.value || target.keyIndex !== keyIndex.value
+  )
+})
 const sampleState: Record<FingerprintSample['state'], string> = {
   waiting: '正在采样', complete: '已完成', truncated: '被截断', failed: '失败', cancelled: '已停止'
 }
@@ -196,7 +211,7 @@ const decisionLabel = computed(() => analysis.value ? {
 const analysisReason = computed(() => {
   if (!analysis.value) return ''
   switch (analysis.value.evidence.method) {
-    case 'partial-sample-ranking': return '需要 3 条有效样本才能计算置信度，可重试失败样本。'
+    case 'partial-sample-ranking': return '需要 3 条有效样本才能计算置信度。'
     case 'complete-three-answers': return '有效样本不足，暂时无法评分。'
     case 'uncalibrated-ranking': return '参考库的置信度校准与评分器不匹配，当前仅提供排名。'
     case 'reference-calibrated-ranking': return ''
@@ -212,10 +227,10 @@ function stopViewing() {
 
 function applyTask(value: FingerprintTask | null, restoreTarget = false) {
   task.value = value
-  if (value && restoreTarget) {
+  if (value && running.value && restoreTarget) {
     urlIndex.value = value.target.urlIndex
     keyIndex.value = value.target.keyIndex
-    if (running.value) emit('target', value.target)
+    emit('target', value.target)
   }
   if (running.value && !disposed) pollTimer = setTimeout(() => { void refresh(false) }, 2000)
 }
@@ -276,7 +291,7 @@ async function cancel() {
 }
 
 async function retry(index?: number) {
-  if (!props.channel.id || !task.value || busy.value) return
+  if (!props.channel.id || !task.value || busy.value || targetChanged.value) return
   stopViewing()
   const active = new AbortController()
   controller = active

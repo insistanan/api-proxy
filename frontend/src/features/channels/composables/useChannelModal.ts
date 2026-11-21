@@ -20,6 +20,7 @@ export interface ChannelModalProps {
   copySourceType?: ApiTab
   channelType: ApiTab
   initialPoolId?: string
+  allowProtocolChange?: boolean
 }
 
 export interface ChannelModalEmit {
@@ -51,7 +52,8 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
     name: generatedChannelName.value,
     serviceType: isFixedOpenAIProtocol() ? 'openai' as const : detectedServiceType.value || getDefaultServiceTypeValue()
   })
-  let quickValuesBeforeReturn: ReturnType<typeof quickTransferValues> | null = null
+  type QuickTransferValues = ReturnType<typeof quickTransferValues>
+  let quickValuesBeforeReturn: QuickTransferValues | null = null
 
   // 返回详细模式时，只同步本次在快速模式中改变的字段，保留详细草稿的其余编辑。
   const toggleMode = () => {
@@ -146,7 +148,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
       proxyUrl: ''
     }
 
-    // 传递 isQuickAdd 标志，让 App.vue 知道需要进行后续处理
+    // 快速创建沿用渠道保存流程中的促销设置。
     emit('save', channelData, { isQuickAdd: true })
   }
 
@@ -275,14 +277,30 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
 
   // 表单草稿经 useChannelEditor（R5，方案 8.1）：草稿独立于 store，取消不落盘。
   const { form, resetForm: resetFormDraft, loadChannelData: loadChannelDataDraft, loadChannelCopy, buildPayload } = useChannelEditor(() => props.channelType)
-  const copyDrafts = new Map<ApiTab, ChannelFormState>()
-  let copyDraftType: ApiTab | null = null
+  const protocolDrafts = new Map<ApiTab, {
+    form: ChannelFormState
+    baseUrlsText: string
+    quickInput: string
+    quickChannelName: string
+    quickMode: boolean
+    presetEndpoint?: ChannelPresetEndpoint
+    quickValues: QuickTransferValues | null
+  }>()
+  let draftType: ApiTab | null = null
 
-  const loadCopyDraft = () => {
+  const loadProtocolDraft = () => {
     resetForm()
-    const cached = copyDrafts.get(props.channelType)
+    const cached = protocolDrafts.get(props.channelType)
     if (cached) {
-      Object.assign(form, cached)
+      Object.assign(form, cached.form)
+      baseUrlsText.value = cached.baseUrlsText
+      quickInput.value = cached.quickInput
+      quickChannelName.value = cached.quickChannelName
+      quickPresetEndpoint.value = cached.presetEndpoint
+      quickValuesBeforeReturn = cached.quickValues
+      isQuickMode.value = cached.quickMode
+      parseQuickInput()
+      form.serviceType = cached.form.serviceType
     } else if (props.copySource) {
       loadChannelCopy(props.copySource, props.copySourceType ?? props.channelType)
       // 旧配置中的 Chat 别名与 OpenAI 兼容类型等价。
@@ -291,10 +309,12 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
         ? isImagesServiceType(form.serviceType)
         : serviceTypeOptions.value.some(option => option.value === form.serviceType)
       if (!supported) form.serviceType = ''
+      baseUrlsText.value = form.baseUrls.length ? form.baseUrls.join('\n') : form.baseUrl
+      isQuickMode.value = false
+    } else {
+      isQuickMode.value = true
     }
-    baseUrlsText.value = form.baseUrls.length ? form.baseUrls.join('\n') : form.baseUrl
-    isQuickMode.value = false
-    copyDraftType = props.channelType
+    draftType = props.channelType
   }
 
   const identityServiceType = computed(() => isQuickMode.value && !props.channel ? quickServiceType.value : form.serviceType)
@@ -696,7 +716,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
   })
 
   watch([() => form.poolId, visionChannelOptions, visionChannelsLoading], () => {
-    if (props.copySource && copyDraftType !== props.channelType) return
+    if ((props.copySource || props.allowProtocolChange) && draftType !== props.channelType) return
     if (visionChannelsLoading.value || visionChannelsError.value) return
     if (form.visionLayerChannelId && !visionChannelOptions.value.some(option => option.value === form.visionLayerChannelId)) {
       form.visionLayerChannelId = ''
@@ -861,8 +881,8 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
     newShow => {
       if (!newShow) {
         providerDrawerOpen.value = false
-        copyDrafts.clear()
-        copyDraftType = null
+        protocolDrafts.clear()
+        draftType = null
       }
       if (newShow) {
         // 无论是编辑还是新增，都先清理密钥错误状态
@@ -873,27 +893,32 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
         duplicateKeyIndex.value = -1
         imagesExtraParamsError.value = ''
         imagesOutputError.value = ''
-        copyDrafts.clear()
+        protocolDrafts.clear()
         if (props.channel) {
           // 编辑模式：使用表单模式
           isQuickMode.value = false
           loadChannelData(props.channel)
-        } else if (props.copySource) {
-          loadCopyDraft()
         } else {
-          // 添加模式：默认使用快速模式
-          isQuickMode.value = true
-          resetForm()
+          loadProtocolDraft()
         }
         loadProtocolResources()
       }
-    }
+    },
+    { immediate: true }
   )
 
   watch(() => props.channelType, (_kind, previousKind) => {
-    if (!props.show || !props.copySource || copyDraftType !== previousKind) return
-    copyDrafts.set(previousKind, globalThis.structuredClone(toRaw(form)))
-    loadCopyDraft()
+    if (!props.show || props.channel || (!props.copySource && !props.allowProtocolChange) || draftType !== previousKind) return
+    protocolDrafts.set(previousKind, {
+      form: globalThis.structuredClone(toRaw(form)),
+      baseUrlsText: baseUrlsText.value,
+      quickInput: quickInput.value,
+      quickChannelName: quickChannelName.value,
+      quickMode: isQuickMode.value,
+      presetEndpoint: quickPresetEndpoint.value,
+      quickValues: quickValuesBeforeReturn
+    })
+    loadProtocolDraft()
     loadProtocolResources()
   })
 
@@ -923,6 +948,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
   })
 
   onUnmounted(() => {
+    resourceRevision++
     document.removeEventListener('keydown', handleKeydown)
     if (copyResetTimer) clearTimeout(copyResetTimer)
   })
