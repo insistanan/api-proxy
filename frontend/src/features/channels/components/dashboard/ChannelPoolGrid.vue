@@ -85,6 +85,7 @@
           drag-class="pool-dragging"
           class="pool-channel-list"
           :force-fallback="true"
+          :fallback-on-body="true"
           @change="scheduleLayoutSave"
         >
           <template #item="{ element, index }">

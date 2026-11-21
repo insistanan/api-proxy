@@ -160,9 +160,16 @@ onBeforeUnmount(() => {
 @reference "@/styles/index.css";
 
 .system-logs-panel { @apply flex flex-col gap-4 h-full min-h-0; }
-.system-toolbar { @apply flex items-center gap-3 flex-wrap; }
-.search-field { @apply [flex:1] min-w-50; }
-.type-field { @apply [flex:0_1_180px] min-w-37.5; }
+.system-toolbar {
+  display: grid;
+  grid-template-columns: minmax(130px, auto) minmax(260px, 1fr) repeat(3, minmax(150px, 180px)) auto;
+  align-items: end;
+  gap: 12px;
+}
+.system-toolbar > :first-child { align-self: end; padding-bottom: 8px; white-space: nowrap; }
+.system-toolbar > .ui-button { min-height: 40px; margin-bottom: 0; }
+.search-field { min-width: 0; }
+.type-field { min-width: 0; }
 .system-layout { @apply grid [grid-template-columns:280px_minmax(0,_1fr)] gap-5 [flex:1] min-h-0; }
 .system-list, .system-detail { @apply overflow-auto min-h-0; }
 .system-list { @apply [border-right:1px_solid_color-mix(in_srgb,_var(--foreground)_12%,_transparent)] pr-3; }
@@ -179,5 +186,12 @@ onBeforeUnmount(() => {
 .entry-time, .entry-model, .entry-meta { @apply [color:color-mix(in_srgb,_var(--foreground)_75%,_transparent)]; }
 .conversation-heading, .detail-dialog-heading { @apply flex justify-between items-center gap-3 flex-wrap pb-4; }
 @media (max-width: 800px) { .system-layout { @apply [grid-template-columns:210px_minmax(0,_1fr)] gap-3; } }
+@media (max-width: 1050px) {
+  .system-toolbar { grid-template-columns: minmax(0, 1fr) repeat(2, minmax(150px, 180px)); align-items: end; }
+  .system-toolbar > :first-child { grid-column: 1 / -1; padding: 0; }
+  .system-toolbar > .search-field { grid-column: 1 / -1; }
+  .system-toolbar > .ui-button { justify-self: start; }
+}
 @media (max-width: 600px) { .system-layout { @apply flex flex-col overflow-auto; } .system-list { @apply shrink-0 max-h-60 [border-right:0] [border-bottom:1px_solid_color-mix(in_srgb,_var(--foreground)_12%,_transparent)]; } .system-detail { @apply shrink-0 overflow-visible; } }
+@media (max-width: 520px) { .system-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); } .system-toolbar > .search-field { grid-column: 1 / -1; } .system-toolbar > .ui-button { grid-column: auto; } }
 </style>
