@@ -47,16 +47,35 @@ export function useChannelModels(
   }
   const keyModelsStatus = ref<Map<string, KeyModelsStatus>>(new Map())
   let requestRevision = 0
+  let modelRequestRevision = 0
+  const modelConnection = computed(() => {
+    const useDetected = props.channelType === 'images' && isQuickMode.value
+    return {
+      baseUrl: useDetected ? detectedBaseUrl.value : form.baseUrl,
+      baseUrls: [...(useDetected ? detectedBaseUrls.value : form.baseUrls)],
+      apiKeys: [...(useDetected ? detectedApiKeys.value : form.apiKeys)],
+      serviceType: form.serviceType,
+      insecureSkipVerify: form.insecureSkipVerify,
+      proxyMode: form.proxyMode,
+      proxyUrl: form.proxyMode === 'custom' ? form.proxyUrl.trim() : ''
+    }
+  })
+  const resetLocalModels = () => {
+    modelRequestRevision++
+    targetModelOptions.value = []
+    fetchingModels.value = false
+    fetchModelsError.value = ''
+    keyModelsStatus.value.clear()
+  }
+  // 连接信息变更后不能复用旧上游的候选，也不能让迟到响应写回新草稿。
+  watch(modelConnection, resetLocalModels, { flush: 'sync' })
   watch([() => props.show, () => props.channelType], () => {
     requestRevision++
     targetChannelOptions.value = []
     mappingTargetChannelsError.value = ''
-    targetModelOptions.value = []
-    fetchingModels.value = false
-    fetchModelsError.value = ''
+    resetLocalModels()
     targetChannelModelOptions.value = {}
     targetChannelModelStatus.value = {}
-    keyModelsStatus.value.clear()
   }, { flush: 'sync' })
 
   const handleFetchModels = (channelId: string) => {
@@ -64,7 +83,7 @@ export function useChannelModels(
       void fetchChannelTargetModels(channelId)
       return
     }
-    fetchTargetModels()
+    void fetchTargetModels()
   }
 
   // 加载模型映射的目标渠道候选（同协议、可用，排除本渠道）
@@ -122,54 +141,34 @@ export function useChannelModels(
   }
 
   const fetchTargetModels = async () => {
-    const revision = requestRevision
-  const modelBaseUrl = props.channelType === 'images' && isQuickMode.value
-      ? detectedBaseUrl.value
-      : form.baseUrl
-  const modelBaseUrls = props.channelType === 'images' && isQuickMode.value
-      ? detectedBaseUrls.value
-      : form.baseUrls
-  const modelApiKeys = props.channelType === 'images' && isQuickMode.value
-      ? detectedApiKeys.value
-      : form.apiKeys
-
-    if (!modelBaseUrl) {
+    if (fetchingModels.value) return
+    const revision = modelRequestRevision
+    const connection = modelConnection.value
+    if (!connection.baseUrl) {
       fetchModelsError.value = '请先填写 Base URL'
       return
     }
 
     // 无 API Key 时仍尝试一次空密钥探测（Ollama 等本地上游）
-  const keysToCheck = modelApiKeys.length > 0 ? modelApiKeys : ['']
-
-    // 如果已经有模型列表且所有 key 都已检测过,直接返回(缓存)
-    if (targetModelOptions.value.length > 0) {
-      const allKeysChecked = keysToCheck.every(key => keyModelsStatus.value.has(key))
-      if (allKeysChecked) {
-        return
-      }
-    }
+    const keysToCheck = connection.apiKeys.length > 0 ? [...new Set(connection.apiKeys)] : ['']
+    // 只缓存成功结果，重新打开下拉时允许失败的密钥重试。
+    const uncheckedKeys = keysToCheck.filter(key => !keyModelsStatus.value.get(key)?.success)
+    if (uncheckedKeys.length === 0) return
 
     fetchingModels.value = true
     fetchModelsError.value = ''
 
-  const uncheckedKeys = keysToCheck.filter(key => !keyModelsStatus.value.has(key))
-
-    if (uncheckedKeys.length === 0) {
-      fetchingModels.value = false
-      return
-    }
-
-  const keyPromises = uncheckedKeys.map(async (apiKey) => {
+    const fetchKeyModels = async (apiKey: string) => {
       keyModelsStatus.value.set(apiKey, { loading: true, success: false })
 
       try {
-        const response = await fetchUpstreamModels(modelBaseUrl, apiKey, form.serviceType, {
-          baseUrls: modelBaseUrls,
-          insecureSkipVerify: form.insecureSkipVerify,
-          proxyMode: form.proxyMode,
-          proxyUrl: form.proxyMode === 'custom' ? form.proxyUrl.trim() : ''
+        const response = await fetchUpstreamModels(connection.baseUrl, apiKey, connection.serviceType, {
+          baseUrls: connection.baseUrls,
+          insecureSkipVerify: connection.insecureSkipVerify,
+          proxyMode: connection.proxyMode,
+          proxyUrl: connection.proxyUrl
         })
-        if (revision !== requestRevision) return []
+        if (revision !== modelRequestRevision) return []
 
         keyModelsStatus.value.set(apiKey, {
           loading: false,
@@ -180,7 +179,7 @@ export function useChannelModels(
 
         return response.data
       } catch (error) {
-        if (revision !== requestRevision) return []
+        if (revision !== modelRequestRevision) return []
         let errorMsg = '未知错误'
         let statusCode = 0
 
@@ -200,11 +199,20 @@ export function useChannelModels(
 
         return []
       }
-    })
+    }
 
     try {
-      const results = await Promise.all(keyPromises)
-      if (revision !== requestRevision) return
+      // 限制多密钥探测并发，避免一次打开下拉就占满浏览器与上游连接。
+      const results: Array<Array<{ id: string }>> = []
+      let nextKey = 0
+      await Promise.all(Array.from({ length: Math.min(4, uncheckedKeys.length) }, async () => {
+        while (revision === modelRequestRevision) {
+          const apiKey = uncheckedKeys[nextKey++]
+          if (apiKey === undefined) return
+          results.push(await fetchKeyModels(apiKey))
+        }
+      }))
+      if (revision !== modelRequestRevision) return
 
       // 合并新获取的模型列表到现有列表
       const allModels = new Set<string>(targetModelOptions.value.map(opt => opt.value))
@@ -231,7 +239,7 @@ export function useChannelModels(
           : '所有 API Key 都无法获取模型列表,请检查 API 密钥列表中的错误信息'
       }
     } finally {
-      if (revision === requestRevision) fetchingModels.value = false
+      if (revision === modelRequestRevision) fetchingModels.value = false
     }
   }
 

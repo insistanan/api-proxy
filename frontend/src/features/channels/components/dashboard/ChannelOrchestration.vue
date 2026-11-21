@@ -33,7 +33,7 @@
         <div class="channel-item-wrapper">
           <div
             class="channel-row"
-            :class="{ 'is-suspended': element.status === 'suspended' }"
+            :class="{ 'is-suspended': element.status === 'suspended', 'has-live-traffic': (getChannelMetrics(element.index)?.activeConversations ?? 0) > 0 }"
             @click="toggleChannelChart(element.index)"
           >
             <div class="channel-row-main">
@@ -49,6 +49,7 @@
                   :aria-label="`编辑渠道 ${element.name}`"
                   @click.stop="$emit('edit', element)"
                 >{{ element.name }}</button>
+                <ChannelWebsiteLink :channel="element" />
                 <button
                   type="button"
                   class="channel-status-toggle"
@@ -104,12 +105,14 @@
               <div class="channel-route">
                 <ChannelMappingBlock :channel="element" :channel-type="channelType" :preview-limit="32" @edit="$emit('edit', element)" />
                 <a
+                  v-if="getWebsiteUrl(element)"
                   class="channel-service"
                   :href="getWebsiteUrl(element)"
                   target="_blank"
-                  rel="noopener"
+                  rel="noopener noreferrer"
                   :title="`打开 ${element.name} 的官网${element.description ? ' · ' + element.description : ''}`"
                 >{{ channelServiceLabel(channelType, element.serviceType) }}</a>
+                <span v-else class="channel-service">{{ channelServiceLabel(channelType, element.serviceType) }}</span>
               </div>
               <div class="channel-live-status">
                 <span
@@ -212,6 +215,7 @@ import {
   getWebsiteUrl
 } from '@/features/channels/utils/channelMetricsFormat'
 import ChannelStatusBadge from '@/features/channels/components/dashboard/ChannelStatusBadge.vue'
+import ChannelWebsiteLink from '@/features/channels/components/dashboard/ChannelWebsiteLink.vue'
 import ChannelActivityChart from '@/features/channels/components/dashboard/ChannelActivityChart.vue'
 import ChannelPoolGrid from '@/features/channels/components/dashboard/ChannelPoolGrid.vue'
 import ChannelQuickMenu, { type ChannelMenuAction } from '@/features/channels/components/dashboard/ChannelQuickMenu.vue'
@@ -341,7 +345,11 @@ watch(() => props.channelType, () => {
 
 const showsConversations = computed(() => ['messages', 'responses', 'chat', 'gemini'].includes(props.channelType))
 
-const metricsByChannel = computed(() => new Map(props.dashboardMetrics.map(metric => [metric.channelIndex, metric])))
+const metricsByChannel = computed<Map<number, ChannelMetrics>>(previous => new Map(props.dashboardMetrics.map(metric => {
+  const oldMetric = previous?.get(metric.channelIndex)
+  // 指标快照很小；未变化的渠道复用引用，避免每次轮询刷新其指标条和提示框。
+  return [metric.channelIndex, oldMetric && JSON.stringify(oldMetric) === JSON.stringify(metric) ? oldMetric : metric] as const
+})))
 const getChannelMetrics = (channelIndex: number): ChannelMetrics | undefined => metricsByChannel.value.get(channelIndex)
 
 const toggleVisionCapability = async (channel: Channel) => {

@@ -38,6 +38,10 @@
   --chart-8: #ca663f;
   --chart-9: #647d38;
   --chart-10: #5a73c4;
+  --chart-success: #228765;
+  --chart-warning: #ac791d;
+  --chart-failure: #c34567;
+  --chart-info: #387c9c;
 }
 [data-theme-mode='dark'][data-palette='pop'], [data-theme-mode='dark'] [data-palette='pop'] {
   --primary: #f392df;
@@ -66,6 +70,10 @@
   --chart-8: #f2ac86;
   --chart-9: #accc7c;
   --chart-10: #92b2f4;
+  --chart-success: #77d7ad;
+  --chart-warning: #ebc269;
+  --chart-failure: #f48ca6;
+  --chart-info: #81c8e3;
 }
 
 /* 清岚使用低饱和青蓝与雾灰表面，减轻长时间阅读的视觉负担。 */
@@ -97,6 +105,10 @@
   --chart-8: #b8796c;
   --chart-9: #7a915b;
   --chart-10: #5f7fb0;
+  --chart-success: #4e8874;
+  --chart-warning: #a17b40;
+  --chart-failure: #b06f79;
+  --chart-info: #528399;
 }
 [data-theme-mode='dark'][data-palette='breeze'], [data-theme-mode='dark'] [data-palette='breeze'] {
   --primary: #83c5cf;
@@ -125,4 +137,8 @@
   --chart-8: #d6a292;
   --chart-9: #a8bd8d;
   --chart-10: #96b5d9;
+  --chart-success: #8bc5af;
+  --chart-warning: #d6b87b;
+  --chart-failure: #d49da5;
+  --chart-info: #92bdcf;
 }

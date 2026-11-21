@@ -202,8 +202,7 @@ const refreshVisionChannelPool = async () => {
   }
 }
 const refreshChannels = async () => {
-  await refreshAction(handleAuthError)
-  await refreshVisionChannelPool()
+  await Promise.all([refreshAction(handleAuthError), refreshVisionChannelPool()])
 }
 
 const openAddChannel = (poolId = 'default') => dialogStore.openAddChannelModal(channelType.value, poolId)

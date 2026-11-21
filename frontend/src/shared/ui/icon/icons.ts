@@ -1,5 +1,7 @@
 import {
   mdiAccount,
+  mdiVolumeHigh,
+  mdiVolumeOff,
   mdiSwapVerticalBold,
   mdiPlayCircle,
   mdiDragVertical,
@@ -201,6 +203,8 @@ export const iconMap: Record<string, string> = {
   'swap-vertical-bold': mdiSwapVerticalBold,
   'drag-vertical': mdiDragVertical,
   'open-in-new': mdiOpenInNew,
+  'volume-high': mdiVolumeHigh,
+  'volume-off': mdiVolumeOff,
   'chevron-down': mdiChevronDown,
   'chevron-up': mdiChevronUp,
   'chevron-left': mdiChevronLeft,

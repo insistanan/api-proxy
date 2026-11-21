@@ -4,6 +4,7 @@
       v-if="versionInfo.currentVersion"
       type="button"
       class="version-badge"
+      data-header-hit
       :class="{ 'version-clickable': canOpenRelease, 'version-update': versionInfo.status === 'update-available' }"
       :aria-label="`当前版本 ${versionInfo.currentVersion}，查看版本信息`"
       @click="openRelease"

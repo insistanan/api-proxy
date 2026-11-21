@@ -107,11 +107,13 @@ export function formatCacheStats(stats?: TimeWindowStats): string {
 
 /** 官网 URL：优先 website 字段，否则从 baseUrl 提取协议+域名。 */
 export function getWebsiteUrl(channel: Channel): string {
-  if (channel.website) return channel.website
   try {
-    const url = new URL(channel.baseUrl)
-    return `${url.protocol}//${url.host}`
+    const url = new URL(channel.website || channel.baseUrl)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return ''
+    url.username = ''
+    url.password = ''
+    return channel.website ? url.href : url.origin
   } catch {
-    return channel.baseUrl
+    return ''
   }
 }

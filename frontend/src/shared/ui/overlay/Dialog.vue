@@ -9,12 +9,12 @@
   >
     <DialogTrigger v-if="$slots.activator" as-child><slot name="activator" :props="{}"></slot></DialogTrigger>
     <DialogPortal>
-      <DialogOverlay class="fixed inset-0 z-[200000] bg-black/45 backdrop-blur-[2px]" />
+      <DialogOverlay class="fixed inset-0 z-[200000] bg-black/45" />
       <DialogContent
         :aria-describedby="undefined"
         :class="
           cn(
-            'ui-dialog fixed z-[200001] overflow-auto border border-border bg-popover text-popover-foreground shadow-dialog outline-none [&>.ui-card]:border-0 [&>.ui-card]:bg-popover [&>.ui-card]:shadow-none',
+            'ui-dialog dialog-surface fixed z-[200001] overflow-auto border border-border text-popover-foreground shadow-dialog outline-none [&>.ui-card]:border-0 [&>.ui-card]:bg-transparent [&>.ui-card]:shadow-none',
             drawer
               ? 'inset-y-0 right-0 h-dvh w-[min(1360px,100vw)]'
               : 'top-1/2 left-1/2 max-h-[90dvh] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 rounded-dialog',

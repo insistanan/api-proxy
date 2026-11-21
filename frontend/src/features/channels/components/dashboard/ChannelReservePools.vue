@@ -15,6 +15,7 @@
                 @keydown.enter="$emit('edit', channel)"
                 @keydown.space.prevent="$emit('edit', channel)"
               >{{ channel.name }}</span>
+              <ChannelWebsiteLink :channel="channel" />
               <span class="text-xs text-muted-foreground/65 ml-2">{{ channelServiceLabel(channelType, channel.serviceType) }}</span>
               <UiBadge v-if="channel.temporary" size="x-small" color="warning" variant="tonal" class="ml-2">
                 临时 {{ formatDateTime(channel.temporaryUntil) }}
@@ -139,6 +140,7 @@
                 @keydown.enter="$emit('edit', channel)"
                 @keydown.space.prevent="$emit('edit', channel)"
               >{{ channel.name }}</span>
+              <ChannelWebsiteLink :channel="channel" />
               <span class="text-xs text-muted-foreground/65 ml-2">{{ channelServiceLabel(channelType, channel.serviceType) }}</span>
             </div>
             <div class="channel-info-meta">
@@ -193,6 +195,7 @@ import type { ApiTab } from '@/features/channels/services/channel-api'
 import { channelServiceLabel } from '@/features/channels/utils/imagesChannelProtocol'
 import { formatDateTime } from '@/features/channels/utils/channelMetricsFormat'
 import ChannelMappingBlock from '@/features/channels/components/dashboard/ChannelMappingBlock.vue'
+import ChannelWebsiteLink from '@/features/channels/components/dashboard/ChannelWebsiteLink.vue'
 import DisclosureSection from '@/shared/components/layout/DisclosureSection.vue'
 import EmptyState from '@/shared/components/feedback/EmptyState.vue'
 

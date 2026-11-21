@@ -1,6 +1,20 @@
-:root, [data-surface='soft'] {
-  --card: var(--surface);
-  --surface-blur: 0px;
+:root, .theme-preview {
+  --frost-card-opacity: 94%;
+  --frost-card-blur: 8px;
+  --frost-dialog-opacity: 93%;
+  --frost-dialog-blur: 14px;
+}
+[data-palette='pop'] { --frost-card-opacity: 94%; --frost-card-blur: 6px; --frost-dialog-opacity: 94%; --frost-dialog-blur: 12px; }
+[data-palette='breeze'] { --frost-card-opacity: 96%; --frost-card-blur: 6px; --frost-dialog-opacity: 95%; --frost-dialog-blur: 12px; }
+[data-palette='ocean'] { --frost-card-opacity: 92%; --frost-card-blur: 10px; --frost-dialog-opacity: 92%; --frost-dialog-blur: 16px; }
+[data-palette='forest'] { --frost-card-opacity: 94%; --frost-card-blur: 8px; --frost-dialog-opacity: 94%; --frost-dialog-blur: 14px; }
+[data-palette='sunset'] { --frost-card-opacity: 93%; --frost-card-blur: 10px; --frost-dialog-opacity: 93%; --frost-dialog-blur: 16px; }
+[data-palette='rose'] { --frost-card-opacity: 96%; --frost-card-blur: 5px; --frost-dialog-opacity: 96%; --frost-dialog-blur: 10px; }
+:root, .theme-preview, [data-surface='soft'] {
+  --card: color-mix(in srgb, var(--surface) var(--frost-card-opacity), transparent);
+  --dialog-surface: color-mix(in srgb, var(--popover) var(--frost-dialog-opacity), transparent);
+  --menu-surface: color-mix(in srgb, var(--popover) 97%, transparent);
+  --surface-blur: var(--frost-card-blur);
   --surface-border-width: 1px;
   --shadow-card: 0 1px 2px color-mix(in srgb, var(--foreground) 3%, transparent), 0 4px 14px color-mix(in srgb, var(--foreground) 2%, transparent);
   --shadow-popover: 0 4px 8px #0001, 0 12px 36px #0002;
@@ -8,22 +22,20 @@
   --border-card: var(--border);
   --border-soft: color-mix(in srgb, var(--outline) 22%, transparent);
 }
-[data-surface='flat'] { --card: var(--surface); --shadow-card: none; --surface-blur: 0px; --surface-border-width: 1px; }
+[data-surface='flat'] { --shadow-card: none; --surface-border-width: 1px; }
 [data-surface='raised'] {
-  --card: var(--surface);
   --shadow-card: 0 3px 0 color-mix(in srgb, var(--outline) 35%, transparent), 0 8px 18px #0002;
   --surface-border-width: 2px;
-  --surface-blur: 0px;
 }
 [data-surface='glass'] {
   --card: color-mix(in srgb, var(--surface) var(--surface-opacity), transparent);
   --surface-blur: 18px;
+  --dialog-surface: color-mix(in srgb, var(--popover) 90%, transparent);
+  --frost-dialog-blur: 20px;
   --surface-border-width: 1px;
   --shadow-card: 0 6px 24px #0001;
 }
 [data-surface='bold'] {
-  --card: var(--surface);
-  --surface-blur: 0px;
   --surface-border-width: 2px;
   --shadow-card: 3px 3px 0 color-mix(in srgb, var(--accent) 65%, var(--foreground));
   --shadow-popover: 4px 4px 0 color-mix(in srgb, var(--accent) 65%, var(--foreground));
@@ -33,5 +45,27 @@
 [data-opacity='92'] { --surface-opacity: 92%; }
 [data-opacity='85'] { --surface-opacity: 85%; }
 @supports not (backdrop-filter: blur(1px)) {
-  [data-surface='glass'] { --card: var(--surface); }
+  :root, .theme-preview, [data-surface] {
+    --card: var(--surface);
+    --dialog-surface: var(--popover);
+    --menu-surface: var(--popover);
+  }
+}
+
+/* 大容器负责透光；内部卡片与表单不重复采样背景，避免滚动时叠加滤镜。 */
+:where(.panel-surface .panel-surface, .ui-dialog .panel-surface) {
+  backdrop-filter: none;
+}
+.theme-preview .panel-surface { backdrop-filter: none; }
+@media (max-width: 640px), (prefers-reduced-motion: reduce) {
+  :root, .theme-preview, [data-surface] { --surface-blur: 4px; --frost-dialog-blur: 8px; }
+}
+@media (prefers-reduced-transparency: reduce) {
+  :root, .theme-preview, [data-surface] {
+    --card: var(--surface);
+    --dialog-surface: var(--popover);
+    --menu-surface: var(--popover);
+    --surface-blur: 0px;
+    --frost-dialog-blur: 0px;
+  }
 }

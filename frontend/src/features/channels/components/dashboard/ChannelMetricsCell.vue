@@ -74,7 +74,7 @@ const cacheRate = computed(() => shouldShowCacheHitRate(recent.value) ? getCache
 .metric-row { @apply grid [grid-template-columns:28px_minmax(80px,_1fr)_38px] items-center [gap:9px]; }
 .metric-label { @apply text-muted-foreground; }
 .metric-track { @apply block h-1.5 overflow-hidden rounded-badge [background:color-mix(in_srgb,_var(--foreground)_10%,_transparent)]; }
-.metric-fill { @apply block h-full [border-radius:inherit] [background:currentColor]; }
+.metric-fill { @apply relative block h-full overflow-hidden [border-radius:inherit] [background:currentColor]; }
 .metric-row strong { @apply text-end tabular-nums; }
 .metrics-empty { @apply text-muted-foreground; }
 .metrics-visual strong { @apply [font-weight:650]; }
@@ -85,4 +85,39 @@ const cacheRate = computed(() => shouldShowCacheHitRate(recent.value) ? getCache
 .metrics-tooltip { @apply [font-size:0.8125rem] [line-height:1.6]; }
 .metrics-tooltip-row { @apply flex justify-between gap-4 [padding:2px_0]; }
 .metrics-tooltip-row span:first-child { @apply opacity-75; }
+
+/* 纹理仅改变表现，百分比仍由真实宽度表达。 */
+[data-palette='pop'] .metric-track { height: 8px; }
+[data-palette='pop'] .metric-fill {
+  background-image: repeating-linear-gradient(-55deg, transparent 0 6px, #fff5 6px 9px, transparent 9px 14px);
+  background-size: 28px 100%;
+}
+[data-palette='forest'] .metric-fill {
+  background-image: repeating-linear-gradient(90deg, transparent 0 10px, var(--card) 10px 12px);
+}
+[data-palette='ocean'] .metric-fill::after,
+[data-palette='breeze'] .metric-fill::after,
+[data-palette='sunset'] .metric-fill::after,
+[data-surface='glass'] .metric-fill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 15%, #fff5 50%, transparent 85%);
+  transform: translateX(-100%);
+}
+[data-palette='breeze'] .metric-track { height: 5px; }
+[data-radius='square'] .metric-fill {
+  background-image: repeating-linear-gradient(90deg, transparent 0 7px, var(--card) 7px 9px);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .metric-fill { transition: width 320ms var(--ease-out); }
+  [data-palette='pop'] .channel-row.has-live-traffic .metric-fill { animation: metric-stripes 2s linear 3; }
+  .channel-row.has-live-traffic .metric-fill::after { animation: metric-light 3s ease-in-out 2; }
+}
+@media (prefers-reduced-motion: no-preference) and (hover: hover) {
+  [data-palette='pop'] .channel-row:is(:hover, :focus-within) .metric-fill { animation: metric-stripes 2s linear 2; }
+  .channel-row:is(:hover, :focus-within) .metric-fill::after { animation: metric-light 2.4s ease-in-out 1; }
+}
+@keyframes metric-stripes { to { background-position-x: 28px; } }
+@keyframes metric-light { to { transform: translateX(100%); } }
 </style>

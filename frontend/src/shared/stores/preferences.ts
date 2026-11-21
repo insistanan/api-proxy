@@ -22,6 +22,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
 
   // 全局统计面板展开状态
   const showGlobalStats = ref(false)
+  const headerSoundEnabled = ref(true)
 
   // ===== 操作方法 =====
 
@@ -46,6 +47,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
     claudeCodeDisguiseEnabled,
     codexDisguiseEnabled,
     showGlobalStats,
+    headerSoundEnabled,
 
     // 方法
     setFuzzyMode,

@@ -1,6 +1,6 @@
 // 执行真实组件 setup，验证暂停渠道的促销恢复顺序与部分提交错误。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createSSRApp, type Ref, type SetupContext } from 'vue'
+import { createSSRApp, reactive, type Ref, type SetupContext } from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import { api, ApiError, type Channel, type ChannelMetrics } from '@/api'
 import ChannelOrchestration from '@/features/channels/components/dashboard/ChannelOrchestration.vue'
@@ -44,6 +44,22 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks() })
 
 describe('手动恢复渠道', () => {
+  it('相同指标快照复用引用，实际变化后才向子组件提供新快照', async () => {
+    const metric: ChannelMetrics = {
+      channelIndex: 2, requestCount: 4, successCount: 4, failureCount: 0,
+      successRate: 100, errorRate: 0, consecutiveFailures: 0, latency: 0
+    }
+    const metrics = reactive([metric])
+    const { state } = await setupPromotion(metrics)
+    const getMetrics = state.getChannelMetrics as (index: number) => ChannelMetrics | undefined
+    const original = getMetrics(2)
+    metrics[0] = { ...metric }
+    expect(getMetrics(2)).toBe(original)
+    metrics[0] = { ...metric, activeConversations: 1 }
+    expect(getMetrics(2)).not.toBe(original)
+    expect(getMetrics(2)?.activeConversations).toBe(1)
+  })
+
   it.each(['open', 'half_open'] as const)('配置为 active、运行时为 %s 时点击徽章直接恢复', async circuitState => {
     const { state, emit } = await setupPromotion([{
       channelIndex: 2, requestCount: 4, successCount: 0, failureCount: 4,

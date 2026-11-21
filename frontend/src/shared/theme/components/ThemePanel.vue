@@ -37,7 +37,7 @@
             ></span>
             <div class="panel-surface flex h-full flex-col gap-2 p-2.5">
               <span class="flex items-center gap-1.5 border-b border-border/60 pb-2"><span class="size-2.5 rounded-full bg-primary"></span><span class="h-1.5 w-12 rounded-full bg-foreground/25"></span><span class="ml-auto h-3.5 w-7 rounded-badge bg-primary"></span></span>
-              <span class="flex min-h-0 flex-1 gap-2"><span class="w-7 rounded-control bg-muted"></span><span class="flex flex-1 flex-col gap-1.5"><span class="h-2 w-3/4 rounded-full bg-primary/25"></span><span class="h-1.5 w-full rounded-full bg-muted"></span><span class="h-1.5 w-2/3 rounded-full bg-muted"></span></span></span>
+              <span class="flex min-h-0 flex-1 gap-2" aria-hidden="true"><span class="w-7 rounded-control bg-muted"></span><span class="flex min-w-0 flex-1 flex-col gap-1.5"><span class="h-2 w-3/4 rounded-full bg-primary/25"></span><span class="theme-preview-meter h-1.5 w-full overflow-hidden rounded-full bg-muted"><span class="block h-full w-2/3 bg-success"></span></span><span class="theme-preview-activity flex min-h-2 flex-1 items-end gap-1"><span v-for="(height, index) in [40, 70, 50, 100, 65, 85, 55]" :key="index" class="w-1 bg-primary/45" :style="{ height: `${height}%` }"></span></span></span></span>
             </div>
           </div>
           <span class="flex items-center justify-between gap-2 px-3 pt-2.5 text-sm font-medium" :class="preset.description ? 'pb-1' : 'pb-2.5'">{{ preset.name }}<UiIcon v-if="theme.preset === preset.id" icon="mdi-check-circle" :size="16" class="text-primary" /></span>
@@ -60,7 +60,7 @@
       </label>
     </div>
     <p class="text-xs leading-6 text-muted-foreground">
-      主题即时应用并保存在当前浏览器。透明度只影响玻璃表面，菜单和弹窗保持清晰；明暗模式可独立跟随系统。
+      主题即时应用并保存在当前浏览器。各主题自带轻量磨砂，透明度选项调整玻璃卡片；明暗模式可独立跟随系统。
     </p>
     <button
       type="button"
@@ -87,3 +87,11 @@ function change(key: keyof typeof THEME_OPTIONS, value: string) {
   theme.update({ [key]: key === 'opacity' ? Number(value) : value } as Partial<ThemeSettings>)
 }
 </script>
+
+<style scoped>
+.theme-preview[data-palette='pop'] .theme-preview-meter > span { background-image: repeating-linear-gradient(-55deg, transparent 0 4px, #fff7 4px 6px); }
+.theme-preview[data-palette='pop'] .theme-preview-activity > span { border-radius: 3px 3px 0 0; background: var(--primary); }
+.theme-preview[data-palette='breeze'] .theme-preview-activity > span,
+.theme-preview[data-palette='ocean'] .theme-preview-activity > span { border-radius: 3px; }
+.theme-preview[data-radius='square'] .theme-preview-activity > span { border-radius: 0; }
+</style>

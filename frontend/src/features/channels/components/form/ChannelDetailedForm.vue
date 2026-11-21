@@ -92,7 +92,7 @@
     </div>
 
     <!-- 渠道状态（仅编辑时显示） -->
-    <div v-if="isEditing" class="min-w-0 col-span-12 md:col-span-6"  >
+    <div v-if="isEditing" class="min-w-0 col-span-12" >
       <UiSelect
         v-model="form.status"
         label="渠道状态"
@@ -103,7 +103,7 @@
     </div>
 
     <!-- 渠道分组 -->
-    <div :class="(isEditing ? 6 : 12) === 6 ? 'md:col-span-6' : 'md:col-span-12'" class="min-w-0 col-span-12"  >
+    <div :class="supportsConversationFeatures || channelType === 'embeddings' ? 'md:col-span-6' : ''" class="min-w-0 col-span-12" >
       <UiSelect
         v-model="form.poolId"
         label="渠道分组"
@@ -112,6 +112,18 @@
         :error-messages="poolLoadError"
         variant="outlined"
         density="comfortable"
+      />
+    </div>
+
+    <div v-if="supportsConversationFeatures" class="min-w-0 col-span-12 md:col-span-6">
+      <UiSelect
+        v-model="form.reasoningEffort"
+        label="思考控制"
+        :items="reasoningEffortItems"
+        variant="outlined"
+        density="comfortable"
+        :hint="reasoningEffortHint"
+        persistent-hint
       />
     </div>
 
@@ -138,18 +150,6 @@
         variant="outlined"
         density="comfortable"
         :rules="[embeddingsDimensionsRule]"
-      />
-    </div>
-
-    <div v-if="supportsConversationFeatures" class="min-w-0 col-span-12 md:col-span-6"  >
-      <UiSelect
-        v-model="form.reasoningEffort"
-        label="思考控制"
-        :items="reasoningEffortItems"
-        variant="outlined"
-        density="comfortable"
-        :hint="reasoningEffortHint"
-        persistent-hint
       />
     </div>
 

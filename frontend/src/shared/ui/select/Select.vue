@@ -32,6 +32,7 @@
           :aria-describedby="message || hint ? `${id}-message` : undefined"
           class="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none! placeholder:text-muted-foreground/70 disabled:cursor-not-allowed"
           @update:model-value="query = $event"
+          @focus="emit('focus', $event)"
           @blur="validate"
         />
         <button
@@ -68,7 +69,7 @@
           position="popper"
           :side-offset="4"
           :collision-padding="8"
-          class="z-[200010] max-h-[min(20rem,var(--reka-combobox-content-available-height))] min-w-(--reka-combobox-trigger-width) max-w-(--reka-combobox-content-available-width) overflow-auto overscroll-contain rounded-card border border-border bg-popover p-1 text-popover-foreground shadow-popover"
+          class="menu-surface z-[200010] max-h-[min(20rem,var(--reka-combobox-content-available-height))] min-w-(--reka-combobox-trigger-width) max-w-(--reka-combobox-content-available-width) overflow-auto overscroll-contain rounded-card border border-border p-1 text-popover-foreground shadow-popover"
           @escape-key-down.stop
         >
           <ComboboxViewport>
@@ -159,7 +160,11 @@ const props = withDefaults(
   }>(),
   { items: () => [], itemTitle: 'title', itemValue: 'value', menu: undefined }
 )
-const emit = defineEmits<{ 'update:modelValue': [value: T]; 'update:menu': [value: boolean] }>()
+const emit = defineEmits<{
+  'update:modelValue': [value: T]
+  'update:menu': [value: boolean]
+  focus: [event: Event]
+}>()
 const id = useId()
 const query = ref<string | null>(null)
 const localOpen = ref(false)
@@ -200,11 +205,11 @@ const keys = computed(() => {
     .map(option => option.key)
   return props.multiple ? selected : selected[0]
 })
-const filtered = computed(() =>
-  options.value.filter(
-    item => !props.searchable || item.title.toLocaleLowerCase().includes((query.value ?? '').toLocaleLowerCase())
-  )
-)
+const filtered = computed(() => {
+  const search = (query.value ?? '').toLocaleLowerCase()
+  if (!props.searchable || !search) return options.value
+  return options.value.filter(item => item.title.toLocaleLowerCase().includes(search))
+})
 const customValue = computed(() => {
   const value = query.value?.trim()
   return props.creatable &&

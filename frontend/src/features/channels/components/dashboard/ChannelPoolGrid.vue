@@ -142,6 +142,7 @@
         </button>
         <ChannelStatusBadge v-else :status="channel.status || 'active'" />
         <span class="font-medium truncate">{{ channel.name }}</span>
+        <ChannelWebsiteLink :channel="channel" />
         <UiBadge v-if="channel.kind && channel.kind !== props.channelType" size="x-small" variant="text">
           {{ protocolLabel(channel.kind) }}
         </UiBadge>
@@ -200,6 +201,7 @@ import draggable from 'vuedraggable'
 import { api, ApiError, type Channel, type ChannelPool, type ChannelDeletionImpact, type VisionChannel } from '@/api'
 import { deletionImpactWarning } from '@/features/channels/utils/deletionImpact'
 import ChannelStatusBadge from '@/features/channels/components/dashboard/ChannelStatusBadge.vue'
+import ChannelWebsiteLink from '@/features/channels/components/dashboard/ChannelWebsiteLink.vue'
 import { channelServiceLabel } from '@/features/channels/utils/imagesChannelProtocol'
 import { API_TAB_LABELS, type ApiTab } from '@/features/channels/services/channel-api'
 import { useChannelStore } from '@/features/channels/stores/channel'
@@ -483,7 +485,7 @@ const deletePool = async () => {
 .pool-card.is-collapsed .pool-card-header { @apply [border-bottom-color:transparent]; }
 .pool-channel-count { @apply shrink-0 px-1 text-muted-foreground [font-size:0.75rem] whitespace-nowrap tabular-nums; }
 .pool-card.is-default .pool-card-header { @apply [background:color-mix(in_srgb,_var(--primary)_8%,_var(--surface))]; }
-:global([data-theme-mode='dark']) .pool-card-header { @apply [background:color-mix(in_srgb,_var(--foreground)_3.5%,_transparent)]; }
+[data-theme-mode='dark'] .pool-card-header { @apply [background:color-mix(in_srgb,_var(--foreground)_3.5%,_transparent)]; }
 .pool-identity { @apply flex items-baseline gap-2 min-w-0; }
 .pool-name {
   @apply shrink-0 [max-width:65%] [font-size:0.875rem] [font-weight:650] [line-height:1.4] [letter-spacing:-0.01em] overflow-hidden text-ellipsis whitespace-nowrap;

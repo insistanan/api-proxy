@@ -1,6 +1,33 @@
 :root {
   --wave-opacity: 0.13;
   --glow-opacity: 0.18;
+  --page-motion: app-page-in;
+  --page-duration: 160ms;
+}
+
+[data-palette='pop'] { --page-motion: theme-page-pop; --page-duration: 260ms; }
+[data-palette='breeze'] { --page-motion: theme-page-calm; --page-duration: 200ms; }
+[data-palette='ocean'], [data-palette='sunset'] { --page-motion: theme-page-tide; --page-duration: 260ms; }
+[data-radius='square'] { --page-motion: theme-page-calm; --page-duration: 120ms; }
+
+@keyframes app-page-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes theme-page-pop {
+  from { opacity: 0; transform: translateY(6px) scale(.996); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes theme-page-calm { from { opacity: 0; } to { opacity: 1; } }
+@keyframes theme-page-tide { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+/* 交互反馈随主题变化，不移动表单或表格，避免点击目标漂移。 */
+@media (prefers-reduced-motion: no-preference) and (hover: hover) {
+  [data-palette='pop'] .ui-button:not(:disabled):not([aria-disabled='true']):hover {
+    translate: 0 -1px;
+    box-shadow: 2px 2px 0 color-mix(in srgb, var(--primary) 22%, transparent);
+  }
+  [data-palette='pop'] .ui-button:not(:disabled):not([aria-disabled='true']):active {
+    translate: 0 0;
+    box-shadow: none;
+  }
 }
 
 [data-theme-mode='dark'] {

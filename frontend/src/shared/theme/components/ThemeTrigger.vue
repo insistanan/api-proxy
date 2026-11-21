@@ -4,12 +4,19 @@
       :icon="theme.isDark ? 'mdi-weather-night' : 'mdi-white-balance-sunny'"
       variant="text"
       size="small"
+      class="header-tool"
+      data-header-hit
+      :aria-pressed="theme.isDark"
       :aria-label="theme.isDark ? '切换到亮色' : '切换到暗色'"
       @click="theme.update({ mode: theme.isDark ? 'light' : 'dark' })"
     />
     <Button
       variant="text"
       size="small"
+      class="header-tool"
+      :class="{ 'is-current': open }"
+      data-header-hit
+      :aria-expanded="open"
       prepend-icon="mdi-eye-dropper"
       aria-label="外观主题"
       title="外观主题"

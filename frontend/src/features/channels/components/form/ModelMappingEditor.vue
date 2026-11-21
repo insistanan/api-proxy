@@ -126,6 +126,7 @@ v-else v-model="localSource"
           label="图片生成工具模型"
           :placeholder="targetPlaceholder"
           :items="availableTargetOptions"
+          :loading="activeTargetStatus?.loading ?? false"
           variant="outlined"
           density="comfortable"
           hide-details
@@ -146,6 +147,7 @@ v-else-if="strictTargetSelection" v-model="localTarget"
           hide-details
           class="flex-1-1"
           clearable
+          :loading="activeTargetStatus?.loading ?? false"
           @keyup.enter="addMapping"
         />
         <UiSelect
@@ -161,7 +163,8 @@ v-else v-model="localTarget"
           hide-details
           class="flex-1-1"
           clearable
-          @focus="fetchModels"
+          :no-data-text="activeTargetStatus?.loading ? '正在获取模型…' : '暂无模型，可输入模型名'"
+          @update:menu="onTargetMenuChange"
           @keyup.enter="addMapping"
         />
         <UiButton
@@ -233,8 +236,7 @@ const channelNameById = computed(() => new Map(props.targetChannelOptions.map(op
 
 const activeTargetStatus = computed(() => props.targetStatusByChannel[selectedChannelId.value])
 
-// 目标渠道资源错误只在选择了具体渠道时展示；本渠道错误由表单上方的 Base URL 区域负责展示
-const targetError = computed(() => (selectedChannelId.value ? activeTargetStatus.value?.error ?? '' : ''))
+const targetError = computed(() => activeTargetStatus.value?.error ?? '')
 
 const existingTargets = computed(() => {
   const src = getStringValue(localSource.value)
@@ -286,8 +288,8 @@ const getTargetChannelLabel = (source: string, target: string): string => {
   return channelNameById.value.get(channelId) ?? '不可用渠道'
 }
 
-const fetchModels = () => {
-  emit('fetch-models', selectedChannelId.value)
+const onTargetMenuChange = (open: boolean) => {
+  if (open) emit('fetch-models', selectedChannelId.value)
 }
 
 /** 返回登记了目标渠道的副本：channelId 为空时移除该目标的登记，并剪掉空的源条目。 */

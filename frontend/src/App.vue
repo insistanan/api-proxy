@@ -1,5 +1,5 @@
 <template>
-  <div class="relative isolate min-h-dvh" :class="isAuthenticated && navigationBelow ? '[--app-header-height:104px]' : '[--app-header-height:56px]'">
+  <div class="relative isolate min-h-dvh" :style="{ '--app-header-height': `${headerHeight}px` }">
     <ThemeBackground />
     <a class="fixed top-2 left-4 z-50 -translate-y-[160%] rounded-control bg-primary px-4 py-3 text-primary-foreground focus:translate-y-0" href="#main-content">跳转到主要内容</a>
 
@@ -56,35 +56,36 @@
     </UiDialog>
 
     <!-- 顶栏平铺全部功能入口；宽度不足时导航下移到第二行，仍保持一次点击可达。 -->
-    <AppHeader :extended="isAuthenticated && navigationBelow">
-      <router-link to="/channels/messages" class="mr-2 flex shrink-0 items-center gap-2.5 font-semibold tracking-tight" aria-label="API Proxy 首页">
-        <span class="grid size-8 place-items-center rounded-control bg-primary text-primary-foreground"><UiIcon size="20">mdi-api</UiIcon></span>
-        <span class="hidden min-[601px]:inline">API Proxy</span>
-      </router-link>
+    <AppHeader :extended="isAuthenticated && navigationBelow" @height-change="headerHeight = $event">
+      <AppBrand />
 
       <AppNavigation v-if="isAuthenticated && !navigationBelow" />
       <span v-else class="flex-1" ></span>
 
-      <VersionBadge />
-
-      <UiTooltip text="设置" location="bottom">
-        <template #activator="{ props }">
-          <UiButton
-            v-bind="props"
-            icon="mdi-cog"
-            variant="text"
-            size="small"
-            to="/settings"
-            :active="false"
-            :color="route.name === 'settings' ? 'primary' : undefined"
-            aria-label="设置"
-          />
-        </template>
-      </UiTooltip>
-
-      <ThemeTrigger />
-
-      <UiButton v-if="isAuthenticated" icon="mdi-logout" variant="text" size="small" title="注销" aria-label="注销" @click="handleLogout" />
+      <div class="header-tools">
+        <VersionBadge class="header-version" />
+        <div class="header-utility-group" role="group" aria-label="界面与账户">
+          <UiTooltip text="设置" location="bottom">
+            <template #activator="{ props }">
+              <UiButton
+                v-bind="props"
+                icon="mdi-cog"
+                variant="text"
+                size="small"
+                class="header-tool"
+                :class="{ 'is-current': route.name === 'settings' }"
+                data-header-hit
+                to="/settings"
+                :aria-current="route.name === 'settings' ? 'page' : undefined"
+                aria-label="设置"
+              />
+            </template>
+          </UiTooltip>
+          <ThemeTrigger />
+          <HeaderSoundToggle />
+          <UiButton v-if="isAuthenticated" class="header-tool header-logout" data-header-hit icon="mdi-logout" variant="text" size="small" title="注销" aria-label="注销" @click="handleLogout" />
+        </div>
+      </div>
 
       <template v-if="isAuthenticated && navigationBelow" #extension>
         <AppNavigation />
@@ -139,7 +140,9 @@ import UiTooltip from '@/shared/ui/overlay/Tooltip.vue'
 import { onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import AppHeader from '@/app/layout/AppHeader.vue'
+import AppBrand from '@/app/layout/AppBrand.vue'
 import AppNavigation from '@/app/layout/AppNavigation.vue'
+import HeaderSoundToggle from '@/app/layout/HeaderSoundToggle.vue'
 import VersionBadge from '@/app/layout/VersionBadge.vue'
 import ThemeTrigger from '@/shared/theme/components/ThemeTrigger.vue'
 import ThemeBackground from '@/shared/theme/components/ThemeBackground.vue'
@@ -156,6 +159,7 @@ const { toasts, showToast } = useToast()
 // 全部入口排成一行约需 1400px，不足时把导航放到顶栏第二行并允许横向滚动。
 const navigationQuery = window.matchMedia('(width < 1440px)')
 const navigationBelow = ref(navigationQuery.matches)
+const headerHeight = ref(56)
 const updateNavigation = () => { navigationBelow.value = navigationQuery.matches }
 
 // 认证流程由 useAuthFlow 编排（R5，方案 8.1），状态本体在 authStore。
