@@ -79,11 +79,11 @@ onUnmounted(() => resizeObserver?.disconnect())
 .app-navigation { @apply flex items-center [flex:1_1_auto] min-w-0 gap-1; }
 .nav-viewport { @apply [flex:1] min-w-0 overflow-x-auto [overscroll-behavior-x:contain] [scrollbar-width:none]; }
 .nav-viewport::-webkit-scrollbar { @apply hidden; }
-.nav-track { @apply flex items-center gap-2 [width:max-content] [padding:6px_4px]; }
+.nav-track { @apply flex items-center gap-1 [width:max-content] [padding:6px_4px]; }
 .nav-group {
   --nav-tone: var(--primary);
   --nav-tone-foreground: var(--primary-foreground);
-  @apply relative flex shrink-0 items-center gap-0.5 rounded-card border p-1;
+  @apply relative flex shrink-0 items-center gap-0 rounded-card border p-0.5;
   border-color: color-mix(in srgb, var(--nav-tone) 16%, transparent);
   background: color-mix(in srgb, var(--nav-tone) 5%, var(--surface));
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--surface-bright) 45%, transparent);
@@ -91,7 +91,7 @@ onUnmounted(() => resizeObserver?.disconnect())
 .nav-group[data-nav-group='activity'] { --nav-tone: var(--info); --nav-tone-foreground: var(--info-foreground); }
 .nav-group[data-nav-group='clients'] { --nav-tone: var(--warning); --nav-tone-foreground: var(--warning-foreground); }
 .nav-group[data-nav-group='extensions'] { --nav-tone: var(--success); --nav-tone-foreground: var(--success-foreground); }
-.nav-link { @apply relative isolate flex min-h-8.5 items-center overflow-hidden rounded-control [padding:5px_9px] text-[13px] font-medium leading-6 whitespace-nowrap no-underline; color: var(--muted-foreground); }
+.nav-link { @apply relative isolate flex min-h-8.5 items-center overflow-hidden rounded-control [padding:4px_7px] text-[13px] font-medium leading-6 whitespace-nowrap no-underline; color: var(--muted-foreground); }
 .nav-link::before { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none; opacity: 0; background: linear-gradient(110deg, transparent 15%, color-mix(in srgb, var(--surface-bright) 25%, transparent) 50%, transparent 85%); transform: translateX(-100%); }
 .nav-link:hover, .nav-link:focus-visible { color: var(--foreground); background: color-mix(in srgb, var(--nav-tone) 12%, transparent); }
 .nav-link.is-active { color: var(--nav-tone-foreground); background: var(--nav-tone); font-weight: 750; box-shadow: inset 0 1px 0 #fff3, 0 2px 6px color-mix(in srgb, var(--nav-tone) 25%, transparent); }

@@ -55,7 +55,7 @@
       </UiCard>
     </UiDialog>
 
-    <!-- 顶栏平铺全部功能入口；宽度不足时导航下移到第二行，仍保持一次点击可达。 -->
+    <!-- 顶栏优先平铺全部入口；空间不足时导航下移到第二行。 -->
     <AppHeader :extended="isAuthenticated && navigationBelow" @height-change="headerHeight = $event">
       <AppBrand />
 
@@ -82,7 +82,6 @@
             </template>
           </UiTooltip>
           <ThemeTrigger />
-          <HeaderSoundToggle />
           <UiButton v-if="isAuthenticated" class="header-tool header-logout" data-header-hit icon="mdi-logout" variant="text" size="small" title="注销" aria-label="注销" @click="handleLogout" />
         </div>
       </div>
@@ -142,7 +141,6 @@ import { useRoute } from 'vue-router'
 import AppHeader from '@/app/layout/AppHeader.vue'
 import AppBrand from '@/app/layout/AppBrand.vue'
 import AppNavigation from '@/app/layout/AppNavigation.vue'
-import HeaderSoundToggle from '@/app/layout/HeaderSoundToggle.vue'
 import VersionBadge from '@/app/layout/VersionBadge.vue'
 import ThemeTrigger from '@/shared/theme/components/ThemeTrigger.vue'
 import ThemeBackground from '@/shared/theme/components/ThemeBackground.vue'
@@ -156,8 +154,8 @@ const route = useRoute()
 const authStore = useAuthStore()
 const { toasts, showToast } = useToast()
 
-// 全部入口排成一行约需 1400px，不足时把导航放到顶栏第二行并允许横向滚动。
-const navigationQuery = window.matchMedia('(width < 1440px)')
+// 窄屏把导航放到顶栏第二行，避免挤压品牌、版本和账户控件。
+const navigationQuery = window.matchMedia('(width < 1520px)')
 const navigationBelow = ref(navigationQuery.matches)
 const headerHeight = ref(56)
 const updateNavigation = () => { navigationBelow.value = navigationQuery.matches }

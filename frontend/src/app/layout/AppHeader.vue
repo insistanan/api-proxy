@@ -10,8 +10,8 @@
     @keydown="feedback.keyDown"
     @click="feedback.activate"
   >
-    <div class="mx-auto flex min-h-14 max-w-[1760px] items-center gap-2 px-3 sm:px-5"><slot></slot></div>
-    <div v-if="extended" class="mx-auto flex min-h-12 max-w-[1760px] items-center border-t border-border/60 px-2 sm:px-4">
+    <div class="flex min-h-14 w-full items-center gap-2 px-3 sm:px-5"><slot></slot></div>
+    <div v-if="extended" class="flex min-h-12 w-full items-center border-t border-border/60 px-2 sm:px-4">
       <slot name="extension"></slot>
     </div>
   </header>
@@ -74,7 +74,6 @@ onUnmounted(() => sizeObserver?.disconnect())
 }
 .header-shell :deep(.header-logout) { margin-left: 2px; }
 .header-shell :deep(.header-logout:hover) { color: var(--destructive); background: color-mix(in srgb, var(--destructive) 12%, transparent); }
-.header-shell :deep(.header-sound[aria-pressed='true']) { color: var(--primary); background: color-mix(in srgb, var(--primary) 10%, transparent); border-color: transparent; box-shadow: none; }
 .header-shell :deep([data-header-hit]) {
   transform-origin: center;
   transition: transform 180ms var(--ease-out), background-color 150ms ease, border-color 150ms ease, color 150ms ease, box-shadow 150ms ease;

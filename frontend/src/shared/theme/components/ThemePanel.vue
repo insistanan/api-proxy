@@ -59,6 +59,10 @@
         </select>
       </label>
     </div>
+    <div class="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-4">
+      <h3 class="text-sm font-semibold">界面音效</h3>
+      <UiSwitch v-model="preferences.headerSoundEnabled" label="播放交互音效" />
+    </div>
     <p class="text-xs leading-6 text-muted-foreground">
       主题即时应用并保存在当前浏览器。各主题自带轻量磨砂，透明度选项调整玻璃卡片；明暗模式可独立跟随系统。
     </p>
@@ -73,8 +77,11 @@
 </template>
 <script setup lang="ts">
 import { THEME_OPTIONS, THEME_PRESETS, useTheme, type ThemeSettings } from '@/shared/theme'
+import UiSwitch from '@/shared/ui/check/Switch.vue'
 import UiIcon from '@/shared/ui/icon/Icon.vue'
+import { usePreferencesStore } from '@/shared/stores/preferences'
 const theme = useTheme()
+const preferences = usePreferencesStore()
 const labels = {
   mode: '明暗模式',
   palette: '主题色',
