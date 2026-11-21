@@ -15,11 +15,29 @@
 
     <DisclosureSection v-model="sourcesExpanded" title="来源与安装位置" description="查看各客户端的技能目录、读写状态和备份位置。" icon="mdi-folder-open" class="mb-5">
       <div class="locations-strip">
-        <div class="text-xs text-muted-foreground mb-2">已检查的本机目录</div>
-        <div class="flex flex-wrap gap-2">
-          <UiBadge v-for="location in locations" :key="location.key" size="small" label :title="`${location.path}（点击筛选）`" :color="location.exists ? (location.readOnly ? 'info' : 'success') : undefined" :class="['location-chip', { 'location-chip--active': agentFilter === location.key }]" @click="filterByAgent(location.key)">
-            {{ location.agent }} · {{ location.exists ? (location.readOnly ? '只读' : '可安装') : '目录不存在' }}
-          </UiBadge>
+        <div class="locations-heading">
+          <div>
+            <div class="font-medium">已检查的本机目录</div>
+            <div class="text-xs text-muted-foreground mt-1">{{ locations.length }} 个位置 · {{ locations.filter(location => location.exists).length }} 个目录可用</div>
+          </div>
+          <UiButton v-if="agentFilter" variant="text" size="small" prepend-icon="mdi-filter-remove-outline" @click="agentFilter = ''">清除来源筛选</UiButton>
+        </div>
+        <div class="location-grid">
+          <div v-for="location in locations" :key="location.key" :class="['location-card', { 'location-card--active': agentFilter === location.key }]">
+            <div class="location-card-heading">
+              <button type="button" class="location-name" :aria-pressed="agentFilter === location.key" :title="`筛选 ${location.agent} 来源`" @click="filterByAgent(location.key)">
+                <UiIcon icon="mdi-folder-open" size="small" />
+                <span>{{ location.agent }}</span>
+              </button>
+              <UiBadge size="x-small" label :color="location.exists ? (location.readOnly ? 'info' : 'success') : 'secondary'">
+                {{ location.exists ? (location.readOnly ? '只读' : '可安装') : '目录不存在' }}
+              </UiBadge>
+            </div>
+            <div class="location-path-row">
+              <code class="location-path" :title="location.path">{{ location.path || '未解析到目录路径' }}</code>
+              <UiTooltip text="复制目录路径" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-content-copy" variant="text" size="x-small" :disabled="!location.path" :aria-label="`复制 ${location.agent} 目录路径`" @click="copySkillPath(location.path)" /></template></UiTooltip>
+            </div>
+          </div>
         </div>
       </div>
     </DisclosureSection>
@@ -36,9 +54,17 @@
     <UiProgress v-if="loading" indeterminate color="primary" class="mb-4" />
 
     <UiCard elevation="0" class="skills-list-card">
-      <UiTable density="comfortable">
+      <UiTable fixed-header density="comfortable" class="skills-table">
+        <colgroup>
+          <col class="skill-column" />
+          <col class="source-column" />
+          <col class="status-column" />
+          <col class="agents-column" />
+          <col class="path-column" />
+          <col class="actions-column" />
+        </colgroup>
         <thead>
-          <tr><th>Skill</th><th>来源</th><th>状态</th><th>启用 Agent</th><th>路径</th><th class="text-right">操作</th></tr>
+          <tr><th scope="col">Skill</th><th scope="col">来源</th><th scope="col">状态</th><th scope="col">启用 Agent</th><th scope="col">路径</th><th scope="col" class="text-right">操作</th></tr>
         </thead>
         <tbody>
           <tr v-if="!loading && filteredSkills.length === 0"><td colspan="6" class="text-center text-muted-foreground py-10">未发现符合条件的 Skill</td></tr>
@@ -51,7 +77,7 @@
               <UiBadge size="small" label :color="skill.readOnly ? 'info' : undefined" :class="['source-chip', { 'source-chip--active': agentFilter === skill.locationKey }]" title="点击筛选此来源" @click="filterByAgent(skill.locationKey)">{{ skill.agent }}</UiBadge>
               <div v-if="skill.readOnly" class="text-xs text-muted-foreground mt-1">只读来源</div>
             </td>
-            <td><UiBadge size="small" :color="skill.valid ? 'success' : 'warning'" label>{{ skill.valid ? '有效' : skill.issue || '需检查' }}</UiBadge></td>
+            <td class="status-cell"><UiBadge size="small" :color="skill.valid ? 'success' : 'warning'" label>{{ skill.valid ? '有效' : skill.issue || '需检查' }}</UiBadge></td>
             <td class="agent-toggles-cell">
               <div v-if="skill.locationKey === 'project'" class="flex flex-wrap gap-1">
                 <UiBadge
@@ -72,9 +98,10 @@
               </div>
               <span v-else class="text-xs text-muted-foreground">—</span>
             </td>
-            <td><div class="skill-path-cell"><code class="skill-path">{{ skill.path }}</code><UiTooltip text="复制路径" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-content-copy" variant="text" size="x-small" :aria-label="`复制 ${skill.name} 的路径`" @click="copySkillPath(skill.path)" /></template></UiTooltip></div></td>
+            <td><div class="skill-path-cell"><code class="skill-path" :title="skill.path">{{ skill.path }}</code><UiTooltip text="复制路径" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-content-copy" variant="text" size="small" :aria-label="`复制 ${skill.name} 的路径`" @click="copySkillPath(skill.path)" /></template></UiTooltip></div></td>
             <td class="text-right whitespace-nowrap">
               <UiTooltip text="查看与翻译" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-text-box-search-outline" variant="text" size="small" @click="openSkill(skill)" /></template></UiTooltip>
+              <UiTooltip text="一键翻译名称和内容" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-translate" color="primary" variant="text" size="small" :loading="translationStates[skillStateKey(skill)]?.translating" :disabled="loading || translationStates[skillStateKey(skill)]?.translating" :aria-label="`一键翻译 ${skill.name} 的名称和内容`" @click="translateSkillFromList(skill)" /></template></UiTooltip>
               <UiTooltip :text="skill.readOnly ? '只读来源不可复制' : '复制到其他 Agent'" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-content-copy" :disabled="skill.readOnly" variant="text" size="small" @click="openCopy(skill)" /></template></UiTooltip>
               <UiTooltip :text="skill.readOnly ? '只读来源不可删除' : '删除'" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-delete" :disabled="skill.readOnly" color="error" variant="text" size="small" @click="confirmDelete(skill)" /></template></UiTooltip>
             </td>
@@ -138,6 +165,7 @@
 
     <AppDialog v-model="detailDialog" :title="selectedDisplayName" :description="selectedSkill?.path" size="xl">
       <UiAlert v-if="detailError" type="error" variant="tonal" class="mb-4">{{ detailError }}</UiAlert>
+      <UiAlert v-else type="info" variant="tonal" density="compact" class="mb-4">{{ translationRecommendation }}</UiAlert>
       <div class="grid grid-cols-12 gap-4">
         <div class="min-w-0 col-span-12 lg:col-span-6"  ><UiTextarea :model-value="originalContent" label="原 Skill（只读）" variant="outlined" rows="19" readonly no-resize class="skill-editor" /></div>
         <div class="min-w-0 col-span-12 lg:col-span-6"  ><UiTextarea v-model="translatedContent" label="中文翻译" variant="outlined" rows="19" no-resize class="skill-editor" /></div>
@@ -145,8 +173,8 @@
       <template #actions>
         <div  class="grid grid-cols-12 gap-4 detail-controls">
           <div class="min-w-0 col-span-12 md:col-span-6 lg:col-span-3"   ><UiInput v-model="skillNote" label="全局备注" variant="outlined" clearable hide-details="auto" @keyup.enter="saveSkillNote"><template #append-inner><UiTooltip text="保存备注" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-content-save" variant="text" size="small" :loading="savingNote" :disabled="savingNote" @click="saveSkillNote" /></template></UiTooltip></template></UiInput></div>
-          <div class="min-w-0 col-span-12 md:col-span-6 lg:col-span-3"   ><UiSelect v-model="translationChannel" :items="chatChannels" item-title="name" item-value="index" label="Chat 渠道（可选）" variant="outlined" clearable /></div>
-          <div class="min-w-0 col-span-12 md:col-span-6 lg:col-span-4"   ><UiSelect v-model="translationModel" searchable creatable :items="translationModelOptions" item-title="title" item-value="value" label="模型 ID（可选）" variant="outlined" clearable :loading="translationModelsLoading" :error-messages="translationModelsError || undefined" /></div>
+          <div class="min-w-0 col-span-12 md:col-span-6 lg:col-span-3"   ><UiSelect v-model="translationChannel" :items="translationChannelOptions" item-title="title" item-value="value" label="翻译协议 / 渠道" variant="outlined" /></div>
+          <div class="min-w-0 col-span-12 md:col-span-6 lg:col-span-4"   ><UiSelect v-model="translationModel" searchable creatable :items="translationModelOptions" item-title="title" item-value="value" label="翻译模型" variant="outlined" clearable :loading="translationModelsLoading" :error-messages="translationModelsError || undefined" /></div>
           <div class="min-w-0 col-span-12 md:col-span-6 lg:col-span-2"   ><div class="detail-actions"><UiTooltip :text="selectedSkill?.readOnly ? '只读来源不可复制' : '复制到其他 Agent'" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-content-copy" :disabled="!selectedSkill || selectedSkill.readOnly" variant="tonal" @click="openSelectedCopy" /></template></UiTooltip><UiTooltip text="翻译并自动保存" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-translate" color="primary" :loading="translating" @click="translateSkill" /></template></UiTooltip><UiTooltip text="保存当前译文" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-content-save" :disabled="!translatedContent || savingBackup" :loading="savingBackup" @click="() => saveBackup()" /></template></UiTooltip></div></div>
         </div>
       </template>
@@ -192,14 +220,24 @@ import DisclosureSection from '@/shared/components/layout/DisclosureSection.vue'
 import AppDialog from '@/shared/components/overlay/AppDialog.vue'
 import ConfirmDialog from '@/shared/components/overlay/ConfirmDialog.vue'
 import EmptyState from '@/shared/components/feedback/EmptyState.vue'
-import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { api, fetchUpstreamModels, channelApiByType, type Channel, type ManagedSkill, type RemoteSkillPreview, type SkillLocation, type SkillSearchResult } from '@/api'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { api, fetchUpstreamModels, channelApiByType, type ApiTab, type AvailabilityCounts, type Channel, type ManagedSkill, type ModelAvailabilityRow, type RemoteSkillPreview, type SkillLocation, type SkillSearchResult } from '@/api'
+import { CONVERSATION_PROTOCOLS, getModelAvailability } from '@/features/channels'
 import { useAuthStore } from '@/shared/stores/auth'
 import { useToast } from '@/shared/composables/useToast'
 import { useClipboard } from '@/shared/composables/useClipboard'
+import { readSSEStream } from '@/shared/utils/sse'
 
 const { showToast } = useToast()
 const { copyText } = useClipboard()
+
+type TranslationApiTab = Extract<ApiTab, 'messages' | 'responses' | 'gemini' | 'chat'>
+type TranslationChannel = { protocol: TranslationApiTab; channel: Channel; key: string }
+type TranslationAvailability = { protocol: TranslationApiTab; row: ModelAvailabilityRow }
+const TRANSLATION_PROTOCOLS: readonly TranslationApiTab[] = CONVERSATION_PROTOCOLS
+const TRANSLATION_PROTOCOL_LABELS: Record<TranslationApiTab, string> = {
+  messages: 'Messages', responses: 'Responses', gemini: 'Gemini', chat: 'Chat'
+}
 
 const PROXY_BASE = import.meta.env.PROD
   ? ''
@@ -223,7 +261,12 @@ const locations = ref<SkillLocation[]>([])
 const skills = ref<ManagedSkill[]>([])
 const manifest = ref<Record<string, string[]>>({})
 const managedAgents = ref<string[]>([])
-const chatChannels = ref<Channel[]>([])
+const translationChannels = ref<TranslationChannel[]>([])
+const modelAvailabilityRows = ref<TranslationAvailability[]>([])
+const modelAvailabilityLoading = ref(false)
+const modelAvailabilityError = ref('')
+const translationChannelError = ref('')
+let modelAvailabilityController: AbortController | null = null
 const importDialog = ref(false)
 const importFile = ref<File | null>(null)
 const importTargets = ref<string[]>([])
@@ -250,7 +293,7 @@ type TranslationState = {
   translating: boolean
   translationRequestId: number
   saving: boolean
-  channel: number | null
+  channel: string | null
   model: string
   modelOptions: Array<{ title: string; value: string }>
   modelsLoading: boolean
@@ -264,6 +307,49 @@ const inactiveTranslationState: TranslationState = {
 }
 const translationModelRequestIds = new Map<string, number>()
 const showTranslatedNames = ref(false)
+
+const availabilitySampleSize = (row: AvailabilityCounts) => row.success + row.failure + row.unsupported + row.credential + row.rateLimited
+const availabilitySample = (row: ModelAvailabilityRow) => {
+  const recentTotal = availabilitySampleSize(row.recent)
+  if (recentTotal > 0) return { counts: row.recent, total: recentTotal, period: 0, label: '近 1 小时' }
+  const total = availabilitySampleSize(row)
+  return total > 0 ? { counts: row, total, period: 1, label: '24 小时' } : null
+}
+const rankedAvailabilityRows = computed(() => modelAvailabilityRows.value
+  .flatMap(({ protocol, row }) => {
+    const target = translationChannels.value.find(item => item.protocol === protocol && item.channel.id === row.channelId)
+    const sample = availabilitySample(row)
+    return target && sample ? [{ target, row, sample }] : []
+  })
+  .sort((left, right) => left.sample.period - right.sample.period
+    || right.sample.counts.success / right.sample.total - left.sample.counts.success / left.sample.total
+    || right.sample.total - left.sample.total
+    || right.row.lastSeen - left.row.lastSeen))
+const recommendedTranslation = computed(() => rankedAvailabilityRows.value[0] ?? null)
+const translationRecommendation = computed(() => {
+  if (modelAvailabilityLoading.value) return '正在读取模型观测数据，并为翻译推荐可用率最高的模型。'
+  const best = recommendedTranslation.value
+  if (!best) {
+    const errors = [translationChannelError.value, modelAvailabilityError.value].filter(Boolean).join('；')
+    return errors
+      ? `无法读取完整的模型统计：${errors}。将使用渠道默认模型或首个可用模型。`
+      : '暂无有效请求样本，将使用渠道默认模型或首个可用模型。'
+  }
+  const rate = (100 * best.sample.counts.success / best.sample.total).toFixed(1)
+  const partialError = [translationChannelError.value, modelAvailabilityError.value].filter(Boolean).join('；')
+  return `按模型观测推荐：${TRANSLATION_PROTOCOL_LABELS[best.target.protocol]} · ${best.target.channel.name} · ${best.row.model}（${best.sample.label}成功率 ${rate}%，${best.sample.total} 次有效请求）${partialError ? `。部分协议统计不可用：${partialError}` : '。'}`
+})
+const translationChannelOptions = computed(() => translationChannels.value.map(item => ({
+  title: `${TRANSLATION_PROTOCOL_LABELS[item.protocol]} · ${item.channel.name}`,
+  value: item.key
+})))
+const translationChannelByKey = (key: string) => translationChannels.value.find(item => item.key === key)
+const availabilityModelTitle = (model: string, channelKey: string) => {
+  const item = rankedAvailabilityRows.value.find(candidate => candidate.target.key === channelKey && candidate.row.model === model)
+  if (!item) return model
+  const rate = (100 * item.sample.counts.success / item.sample.total).toFixed(1)
+  return `${model} · ${item.sample.label} ${rate}%（${item.sample.total} 次）`
+}
 
 const skillStateKey = (skill: ManagedSkill) => `${skill.locationKey}:${skill.name}`
 const ensureTranslationState = (skill: ManagedSkill): TranslationState => {
@@ -283,7 +369,18 @@ const translatedContent = computed({ get: () => activeTranslationState.value.tra
 const detailError = computed({ get: () => activeTranslationState.value.error, set: value => { activeTranslationState.value.error = value } })
 const translating = computed(() => activeTranslationState.value.translating)
 const savingBackup = computed(() => activeTranslationState.value.saving)
-const translationChannel = computed({ get: () => activeTranslationState.value.channel, set: value => { activeTranslationState.value.channel = value } })
+const translationChannel = computed({
+  get: () => activeTranslationState.value.channel,
+  set: value => {
+    const skill = selectedSkill.value
+    if (!skill) return
+    const state = ensureTranslationState(skill)
+    if (state.channel === value) return
+    state.channel = value
+    state.model = ''
+    if (value) void loadTranslationModels(value, skill)
+  }
+})
 const translationModel = computed({ get: () => activeTranslationState.value.model, set: value => { activeTranslationState.value.model = value } })
 const translationModelOptions = computed(() => activeTranslationState.value.modelOptions)
 const translationModelsLoading = computed(() => activeTranslationState.value.modelsLoading)
@@ -326,15 +423,49 @@ const loadSkills = async () => {
     manifest.value = data.manifest ?? {}
     managedAgents.value = data.managedAgents ?? []
     try {
-      const channels = await channelApiByType('chat').getChannels()
-      chatChannels.value = channels.channels.filter(channel => channel.status !== 'deleted')
+      const channelResults = await Promise.allSettled(TRANSLATION_PROTOCOLS.map(protocol => channelApiByType(protocol).getChannels()))
+      translationChannels.value = channelResults.flatMap((result, index) => {
+        if (result.status !== 'fulfilled') return []
+        const protocol = TRANSLATION_PROTOCOLS[index]
+        return result.value.channels
+          .filter(channel => !channel.excludeFromConversation && channel.status !== 'deleted' && channel.status !== 'disabled' && channel.status !== 'suspended')
+          .map(channel => ({ protocol, channel, key: JSON.stringify([protocol, channel.id || channel.index]) }))
+      })
+      translationChannelError.value = channelResults.flatMap((result, index) => result.status === 'rejected'
+        ? [`${TRANSLATION_PROTOCOL_LABELS[TRANSLATION_PROTOCOLS[index]]} 渠道加载失败：${result.reason instanceof Error ? result.reason.message : String(result.reason)}`]
+        : []).join('；')
+      await loadTranslationAvailability()
     } catch (channelError) {
-      chatChannels.value = []
-      error.value = channelError instanceof Error ? `Skills 已加载，但 Chat 渠道不可用：${channelError.message}` : 'Skills 已加载，但 Chat 渠道不可用'
+      translationChannels.value = []
+      error.value = channelError instanceof Error ? `Skills 已加载，但翻译渠道不可用：${channelError.message}` : 'Skills 已加载，但翻译渠道不可用'
     }
   } catch (loadError) {
     error.value = loadError instanceof Error ? loadError.message : '加载 Skills 失败'
   } finally { loading.value = false }
+}
+
+const loadTranslationAvailability = async () => {
+  modelAvailabilityController?.abort()
+  const controller = new AbortController()
+  modelAvailabilityController = controller
+  modelAvailabilityLoading.value = true
+  modelAvailabilityError.value = ''
+  try {
+    const results = await Promise.allSettled(TRANSLATION_PROTOCOLS.map(protocol => getModelAvailability(protocol, controller.signal)))
+    if (modelAvailabilityController !== controller) return
+    modelAvailabilityRows.value = results.flatMap((result, index) => result.status === 'fulfilled'
+      ? result.value.rows.map(row => ({ protocol: TRANSLATION_PROTOCOLS[index], row }))
+      : [])
+    modelAvailabilityError.value = results.flatMap((result, index) => result.status === 'rejected'
+      ? [`${TRANSLATION_PROTOCOL_LABELS[TRANSLATION_PROTOCOLS[index]]} 统计读取失败：${result.reason instanceof Error ? result.reason.message : String(result.reason)}`]
+      : []).join('；')
+  } catch (availabilityError) {
+    if (controller.signal.aborted || modelAvailabilityController !== controller) return
+    modelAvailabilityRows.value = []
+    modelAvailabilityError.value = availabilityError instanceof Error ? availabilityError.message : '读取模型可用率失败'
+  } finally {
+    if (modelAvailabilityController === controller) modelAvailabilityLoading.value = false
+  }
 }
 
 const AGENT_SHORT_LABELS: Record<string, string> = {
@@ -406,20 +537,29 @@ const consolidateInstalledSkills = async () => {
   } finally { consolidating.value = false }
 }
 
-const loadTranslationModels = async (channelIndex: number, skill: ManagedSkill) => {
+const loadTranslationModels = async (channelKey: string, skill: ManagedSkill) => {
   const key = skillStateKey(skill)
   const requestId = (translationModelRequestIds.get(key) || 0) + 1
   translationModelRequestIds.set(key, requestId)
   const state = ensureTranslationState(skill)
-  const channel = chatChannels.value.find(item => item.index === channelIndex)
+  const selectedChannel = translationChannelByKey(channelKey)
+  const channel = selectedChannel?.channel
   state.modelOptions = []
   state.modelsError = ''
+  state.modelsLoading = false
 
-  if (!channel) {
-    state.modelsError = '未找到所选 Chat 渠道'
+  if (!channel || !selectedChannel) {
+    state.modelsError = '未找到所选协议渠道'
     return
   }
   const apiKey = channel.apiKeys.find(key => key.trim())
+  const observedModels = rankedAvailabilityRows.value
+    .filter(item => item.target.key === channelKey)
+    .map(item => item.row.model)
+  const configuredModel = channel.defaultModel?.trim()
+  const knownModels = [...new Set([...observedModels, ...(configuredModel ? [configuredModel] : [])])]
+  state.modelOptions = knownModels.map(id => ({ title: availabilityModelTitle(id, channelKey), value: id }))
+  state.model ||= knownModels[0] ?? ''
   if (!apiKey) {
     state.modelsError = '所选渠道未配置 API Key'
     return
@@ -435,14 +575,10 @@ const loadTranslationModels = async (channelIndex: number, skill: ManagedSkill) 
     })
     if (translationModelRequestIds.get(key) !== requestId) return
 
-    const options = (result.data || [])
-      .map(model => model.id.trim())
-      .filter(Boolean)
-      .map(id => ({ title: id, value: id }))
-    state.modelOptions = options
-    const configuredModel = channel.defaultModel?.trim()
-    state.model = configuredModel || options[0]?.value || ''
-    if (options.length === 0) state.modelsError = '未找到可用模型，可手动输入模型 ID'
+    const models = new Set([...knownModels, ...result.data.map(model => model.id.trim()).filter(Boolean)])
+    state.modelOptions = [...models].map(id => ({ title: availabilityModelTitle(id, channelKey), value: id }))
+    state.model ||= state.modelOptions[0]?.value ?? ''
+    if (!models.size) state.modelsError = '未找到可用模型，可手动输入模型 ID'
   } catch (modelError) {
     if (translationModelRequestIds.get(key) !== requestId) return
     state.modelsError = modelError instanceof Error ? modelError.message : '获取模型列表失败，可手动输入模型 ID'
@@ -450,18 +586,6 @@ const loadTranslationModels = async (channelIndex: number, skill: ManagedSkill) 
     if (translationModelRequestIds.get(key) === requestId) state.modelsLoading = false
   }
 }
-
-watch([selectedSkillKey, translationChannel], ([key, channelIndex], [previousKey, previousChannel]) => {
-  if (!selectedSkill.value || !key || key !== previousKey || channelIndex === previousChannel) return
-  const state = ensureTranslationState(selectedSkill.value)
-  const requestId = (translationModelRequestIds.get(key) || 0) + 1
-  translationModelRequestIds.set(key, requestId)
-  state.model = ''
-  state.modelOptions = []
-  state.modelsError = ''
-  state.modelsLoading = false
-  if (typeof channelIndex === 'number') void loadTranslationModels(channelIndex, selectedSkill.value)
-})
 
 const filterByAgent = (locationKey: string) => {
   agentFilter.value = agentFilter.value === locationKey ? '' : locationKey
@@ -532,9 +656,20 @@ const importSelected = async () => {
   } finally { importing.value = false }
 }
 
-const openSkill = async (skill: ManagedSkill) => {
+const openSkill = async (skill: ManagedSkill, translateImmediately = false) => {
   selectedSkill.value = skill
   const state = ensureTranslationState(skill)
+  if (!state.channel || !translationChannelByKey(state.channel)) {
+    const recommendation = recommendedTranslation.value
+    const fallbackChannel = translationChannels.value.find(item => item.channel.defaultModel?.trim()) ?? translationChannels.value[0]
+    const defaultChannel = recommendation?.target ?? fallbackChannel
+    state.channel = defaultChannel?.key ?? null
+    state.model = recommendation?.row.model ?? ''
+    state.modelOptions = []
+  }
+  const modelLoad = state.channel && !state.modelOptions.length && !state.modelsLoading
+    ? loadTranslationModels(state.channel, skill)
+    : undefined
   state.error = ''
   detailDialog.value = true
   try {
@@ -556,7 +691,14 @@ const openSkill = async (skill: ManagedSkill) => {
       state.error = '原 Skill 已更新，旧译文已清除'
     }
   }
-  catch (loadError) { state.error = loadError instanceof Error ? loadError.message : '读取 Skill 失败' }
+  catch (loadError) {
+    state.error = loadError instanceof Error ? loadError.message : '读取 Skill 失败'
+    return
+  }
+  if (translateImmediately) {
+    if (!state.model) await modelLoad
+    if (detailDialog.value && selectedSkillKey.value === skillStateKey(skill)) await translateSkill()
+  }
 }
 
 const openCopy = (skill: ManagedSkill) => {
@@ -607,17 +749,11 @@ const normalizeTranslationModel = (value: unknown): string => {
   return ''
 }
 
-const normalizeTranslationChannelIndex = (value: unknown): number | null => {
-  if (value === null || value === undefined || value === '') return null
-  const parsed = typeof value === 'number' ? value : Number(String(value).trim())
-  return Number.isInteger(parsed) && parsed >= 0 ? parsed : null
-}
-
 const translateSkill = async () => {
   const skill = selectedSkill.value
   if (!skill) return
   const state = ensureTranslationState(skill)
-  if (!state.original) return
+  if (!state.original || state.translating) return
   const original = state.original
   const requestId = ++state.translationRequestId
   const accessKey = useAuthStore().apiKey
@@ -626,19 +762,39 @@ const translateSkill = async () => {
   state.error = ''
   try {
     const model = normalizeTranslationModel(state.model)
-    const channelIndex = normalizeTranslationChannelIndex(state.channel)
-    const body: Record<string, unknown> = {
-      model: model || 'translate-skill', stream: true,
-      messages: [
-        { role: 'system', content: '你是专业技术翻译。将用户提供的 Agent Skill 英文内容完整翻译为简体中文。保留 YAML frontmatter 的原有字段名、name 值、代码块、文件路径、命令、URL 和 Markdown 结构；在 YAML frontmatter 中新增 display_name 字段，值为该 Skill 的简体中文名称。只翻译可读的自然语言。仅输出翻译后的完整 Markdown，不要解释。' },
-        { role: 'user', content: original }
-      ]
+    const selectedChannel = state.channel ? translationChannelByKey(state.channel) : undefined
+    if (!selectedChannel) throw new Error('请选择可用的文本生成协议渠道后再翻译')
+    if (!model) throw new Error('请选择或输入用于翻译的模型 ID')
+    const protocol = selectedChannel.protocol
+    const systemPrompt = '你是专业技术翻译。将用户提供的 Agent Skill 英文内容完整翻译为简体中文。保留 YAML frontmatter 的原有字段名、name 值、代码块、文件路径、命令、URL 和 Markdown 结构；在 YAML frontmatter 中新增 display_name 字段，值为该 Skill 的简体中文名称。只翻译可读的自然语言。仅输出翻译后的完整 Markdown，不要解释。'
+    const metadata = { channel_index: selectedChannel.channel.index }
+    let endpoint = '/v1/chat/completions'
+    let body: Record<string, unknown>
+    switch (protocol) {
+      case 'messages':
+        endpoint = '/v1/messages'
+        body = { model, system: systemPrompt, max_tokens: 8192, stream: true, messages: [{ role: 'user', content: original }], metadata }
+        break
+      case 'responses':
+        endpoint = '/v1/responses'
+        body = { model, instructions: systemPrompt, input: original, stream: true, metadata }
+        break
+      case 'gemini':
+        endpoint = `/v1beta/models/${encodeURIComponent(model.replace(/^models\//, ''))}:streamGenerateContent?alt=sse`
+        body = { systemInstruction: { parts: [{ text: systemPrompt }] }, contents: [{ role: 'user', parts: [{ text: original }] }], metadata }
+        break
+      default:
+        body = {
+          model, stream: true,
+          messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: original }],
+          metadata
+        }
+        break
     }
-    if (channelIndex !== null) body.metadata = { channel_index: channelIndex }
     const controller = new AbortController()
     const timeout = window.setTimeout(() => controller.abort(), 10 * 60 * 1000)
     try {
-      const response = await fetch(`${PROXY_BASE}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': accessKey }, body: JSON.stringify(body), signal: controller.signal })
+      const response = await fetch(`${PROXY_BASE}${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': accessKey }, body: JSON.stringify(body), signal: controller.signal })
       if (!response.ok) {
         const payload = await response.json().catch(() => null)
         const errorValue = payload?.error
@@ -649,8 +805,8 @@ const translateSkill = async () => {
             : ''
         throw new Error(errorMessage || `翻译请求失败 (${response.status})`)
       }
-      const translated = await readTranslationStream(response, value => { if (state.translationRequestId === requestId) state.translated = value })
-      if (!translated.trim()) throw new Error('翻译渠道未返回可用文本内容，请检查所选模型是否支持 Chat Completions 输出')
+      const translated = await readTranslationStream(response, value => { if (state.translationRequestId === requestId) state.translated = value }, protocol)
+      if (!translated.trim()) throw new Error(`翻译渠道未返回可用文本内容，请检查所选 ${TRANSLATION_PROTOCOL_LABELS[protocol]} 模型是否支持文本生成`)
       if (state.translationRequestId !== requestId) return
       state.translated = translated.trim()
     } finally {
@@ -666,64 +822,60 @@ const translateSkill = async () => {
   finally { if (state.translationRequestId === requestId) state.translating = false }
 }
 
-const readTranslationStream = async (response: Response, onUpdate: (translated: string) => void): Promise<string> => {
+const translateSkillFromList = (skill: ManagedSkill) => openSkill(skill, true)
+
+const readTranslationStream = async (response: Response, onUpdate: (translated: string) => void, protocol: TranslationApiTab): Promise<string> => {
   if (!response.body) throw new Error('翻译渠道未建立可读取的流式响应')
   if (response.headers.get('content-type')?.toLowerCase().includes('application/json')) {
-    const payload = await response.json().catch(() => null)
-    const translated = extractTranslationText(payload)
+    const payload = await response.json()
+    const translated = extractTranslationText(payload, protocol)
     if (translated) onUpdate(translated)
     return translated
   }
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let pending = ''
   let translated = ''
-  const appendDelta = (payload: unknown) => {
-    const delta = extractTranslationText(payload)
+  await readSSEStream<unknown>(response, payload => {
+    const delta = extractTranslationText(payload, protocol)
     if (delta) {
       translated += delta
       onUpdate(translated)
     }
-  }
-  const appendJSON = (data: string) => {
-    try { appendDelta(JSON.parse(data)) } catch { /* 仅处理符合 Chat Completions 结构的 JSON */ }
-  }
-  while (true) {
-    const { done, value } = await reader.read()
-    pending += decoder.decode(value || new Uint8Array(), { stream: !done })
-    const lines = pending.split(/\r?\n/)
-    pending = lines.pop() || ''
-    for (const line of lines) {
-      if (line.startsWith('data:')) {
-        const data = line.slice(5).trim()
-        if (data && data !== '[DONE]') appendJSON(data)
-      } else if (line.trim()) {
-        appendJSON(line.trim())
-      }
-    }
-    if (done) break
-  }
-  if (pending.startsWith('data:')) {
-    const data = pending.slice(5).trim()
-    if (data && data !== '[DONE]') {
-      appendJSON(data)
-    }
-  } else if (pending.trim()) {
-    appendJSON(pending.trim())
-  }
-  if (!translated) {
-    const fallback = extractTranslationTextFromResponse(pending)
-    if (fallback) {
-      translated = fallback
-      onUpdate(translated)
-    }
-  }
+  }, { strict: true })
   return translated
 }
 
-const extractTranslationText = (payload: unknown): string => {
+const extractTranslationText = (payload: unknown, protocol: TranslationApiTab): string => {
   if (!payload || typeof payload !== 'object') return ''
   const record = payload as Record<string, unknown>
+  if (record.error || record.type === 'response.failed' || record.type === 'response.incomplete') {
+    const error = record.error
+    const message = error && typeof error === 'object' ? (error as Record<string, unknown>).message : error
+    throw new Error(typeof message === 'string' ? message : '模型未能完成翻译')
+  }
+  if (protocol === 'messages') {
+    const delta = record.delta
+    if (delta && typeof delta === 'object' && typeof (delta as Record<string, unknown>).text === 'string') return (delta as Record<string, string>).text
+    return extractContent(record.content)
+  }
+  if (protocol === 'responses') {
+    if (record.type === 'response.output_text.delta' && typeof record.delta === 'string') return record.delta
+    if (typeof record.output_text === 'string') return record.output_text
+    if (Array.isArray(record.output)) {
+      return record.output.map(item => {
+        if (!item || typeof item !== 'object') return ''
+        return extractContent((item as Record<string, unknown>).content)
+      }).join('')
+    }
+    return extractContent(record.content)
+  }
+  if (protocol === 'gemini') {
+    const candidates = record.candidates
+    const candidate = Array.isArray(candidates) ? candidates[0] : undefined
+    if (candidate && typeof candidate === 'object') {
+      const content = (candidate as Record<string, unknown>).content
+      if (content && typeof content === 'object') return extractContent((content as Record<string, unknown>).parts)
+    }
+    return ''
+  }
   const choice = Array.isArray(record.choices) ? record.choices[0] : undefined
   if (!choice || typeof choice !== 'object') return extractContent(record.output_text ?? record.content)
   const choiceRecord = choice as Record<string, unknown>
@@ -739,12 +891,9 @@ const extractContent = (content: unknown): string => {
     if (typeof part === 'string') return part
     if (!part || typeof part !== 'object') return ''
     const partRecord = part as Record<string, unknown>
+    if (partRecord.thought === true || partRecord.type === 'thinking') return ''
     return typeof partRecord.text === 'string' ? partRecord.text : typeof partRecord.content === 'string' ? partRecord.content : ''
   }).join('')
-}
-
-const extractTranslationTextFromResponse = (data: string): string => {
-  try { return extractTranslationText(JSON.parse(data)) } catch { return '' }
 }
 
 const saveBackup = async ({ automatic = false, notify = true, skill = selectedSkill.value, state = skill ? ensureTranslationState(skill) : undefined, original = state?.original || '' }: { automatic?: boolean; notify?: boolean; skill?: ManagedSkill | null; state?: TranslationState; original?: string } = {}) => {
@@ -754,8 +903,9 @@ const saveBackup = async ({ automatic = false, notify = true, skill = selectedSk
   }
   state.saving = true
   try {
-    const channel = chatChannels.value.find(item => item.index === state.channel)
-    const result = await api.backupSkill({ locationKey: skill.locationKey, name: skill.name, original, translated: state.translated, model: state.model, channelName: channel?.name })
+    const channel = typeof state.channel === 'string' ? translationChannelByKey(state.channel) : undefined
+    const channelName = channel ? `${TRANSLATION_PROTOCOL_LABELS[channel.protocol]} · ${channel.channel.name}` : undefined
+    const result = await api.backupSkill({ locationKey: skill.locationKey, name: skill.name, original, translated: state.translated, model: state.model, channelName })
     const translatedName = translatedNameFromContent(state.translated)
     if (translatedName && translatedName !== skill.name) skill.translatedName = translatedName
     if (notify) showToast(automatic ? '翻译完成，已自动保存' : `翻译备份已保存到 ${result.path}`, 'success')
@@ -781,6 +931,7 @@ const installCountFormatter = new Intl.NumberFormat('zh-CN', { notation: 'compac
 const formatInstalls = (value: number) => installCountFormatter.format(value || 0).replace(/\s+/g, '')
 const formatBytes = (value: number) => value < 1024 ? `${value} B` : value < 1024 * 1024 ? `${(value / 1024).toFixed(1)} KB` : `${(value / (1024 * 1024)).toFixed(1)} MB`
 onMounted(loadSkills)
+onUnmounted(() => modelAvailabilityController?.abort())
 </script>
 
 <style scoped>
@@ -790,19 +941,41 @@ onMounted(loadSkills)
 .skills-header-sticky {
   @apply sticky [top:var(--app-header-height,_0px)] [z-index:4] bg-background [box-shadow:0_-32px_0_0_var(--background)];
 }
-.locations-strip { @apply [border:1px_solid_color-mix(in_srgb,_var(--foreground)_12%,_transparent)] rounded-badge [padding:12px_16px]; }
+.locations-strip { @apply [border:1px_solid_color-mix(in_srgb,_var(--foreground)_12%,_transparent)] rounded-card [padding:14px_16px]; }
+.locations-heading { @apply flex items-center justify-between gap-3 mb-3; }
+.location-grid { @apply grid gap-2 [grid-template-columns:repeat(auto-fill,_minmax(min(100%,_280px),_1fr))]; }
+.location-card { @apply min-w-0 rounded-control [border:1px_solid_color-mix(in_srgb,_var(--outline)_22%,_transparent)] [background:color-mix(in_srgb,_var(--foreground)_2.5%,_transparent)] [padding:10px_12px] transition-colors; }
+.location-card:hover { @apply [background:color-mix(in_srgb,_var(--primary)_5%,_transparent)]; }
+.location-card--active { @apply [border-color:var(--primary)] [background:color-mix(in_srgb,_var(--primary)_7%,_transparent)]; }
+.location-card-heading, .location-name, .location-path-row { @apply flex items-center min-w-0; }
+.location-card-heading { @apply justify-between gap-2 mb-2; }
+.location-name { @apply gap-2 [background:none] border-0 [color:inherit] cursor-pointer [font:inherit] font-medium p-0 text-left; }
+.location-name:hover { @apply text-primary; }
+.location-name span { @apply overflow-hidden text-ellipsis whitespace-nowrap; }
+.location-path-row { @apply gap-1; }
+.location-path { @apply min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-xs text-muted-foreground; }
 .location-chip, .source-chip { @apply cursor-pointer; }
 .location-chip:hover, .source-chip:hover { @apply [filter:brightness(0.96)]; }
 .location-chip--active, .source-chip--active { @apply [outline:2px_solid_var(--primary)] [outline-offset:1px]; }
 .skills-list-card { @apply overflow-hidden; }
+.skills-table { @apply [max-height:min(72vh,_760px)] overflow-auto; }
+.skills-table :deep(table) { @apply min-w-285 [table-layout:fixed]; }
+.skills-table :deep(thead th) { @apply sticky top-0 [z-index:2] whitespace-nowrap [background:var(--surface)] [box-shadow:0_1px_0_color-mix(in_srgb,_var(--outline)_28%,_transparent)]; }
+.skill-column { width: 27%; }
+.source-column { width: 13%; }
+.status-column { width: 9%; }
+.agents-column { width: 22%; }
+.path-column { width: 15%; }
+.actions-column { width: 14%; }
+.status-cell { @apply whitespace-nowrap; }
 .skills-pagination { @apply flex items-center justify-between flex-wrap gap-3 [padding:12px_16px] [border-top:1px_solid_color-mix(in_srgb,_var(--outline)_20%,_transparent)]; }
 .skill-name-button { @apply [background:none] border-0 [color:inherit] cursor-pointer [font:inherit] p-0 text-left no-underline; }
 .skill-name-button:hover { @apply text-primary underline; }
 .skill-description { @apply max-w-110 mt-1 line-clamp-2 whitespace-normal leading-5; }
-.agent-toggles-cell { @apply min-w-60; }
-.agent-toggle-chip { @apply cursor-pointer; }
+.agent-toggles-cell { @apply min-w-72; }
+.agent-toggle-chip { @apply min-h-8 cursor-pointer whitespace-nowrap; }
 .skill-path-cell { @apply items-center flex gap-0.5 min-w-0; }
-.skill-path { @apply block max-w-77.5 overflow-hidden text-ellipsis whitespace-nowrap; }
+.skill-path { @apply block min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap [font-size:12px]; }
 .detail-card { @apply [height:min(900px,_calc(100vh_-_48px))] [max-height:calc(100vh_-_48px)] flex flex-col overflow-hidden; }
 .detail-header, .detail-footer { @apply [flex:0_0_auto]; }
 .detail-body { @apply [flex:1_1_auto] min-h-0 overflow-y-auto; }
@@ -815,5 +988,12 @@ onMounted(loadSkills)
 .source-link { @apply text-primary no-underline; }
 .source-link:hover { @apply underline; }
 .file-list { @apply max-h-55 overflow-y-auto [border:1px_solid_color-mix(in_srgb,_var(--foreground)_12%,_transparent)] rounded-badge p-3; }
-@media (max-width: 600px) { .skill-description, .skill-path { @apply max-w-45; } .detail-card { @apply [height:calc(100vh_-_24px)] [max-height:calc(100vh_-_24px)]; } .detail-actions { @apply justify-start; } }
+@media (max-width: 600px) {
+  .locations-strip { @apply [padding:12px]; }
+  .locations-heading { @apply items-start; }
+  .skill-description { @apply max-w-45; }
+  .skills-table { @apply [max-height:70vh]; }
+  .detail-card { @apply [height:calc(100vh_-_24px)] [max-height:calc(100vh_-_24px)]; }
+  .detail-actions { @apply justify-start; }
+}
 </style>

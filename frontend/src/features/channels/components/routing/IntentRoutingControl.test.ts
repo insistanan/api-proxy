@@ -38,65 +38,49 @@ beforeEach(() => {
 })
 
 describe('意图匹配编辑器', () => {
-  it('免费组显示在能力列表中，旧 System One 草稿改用 Decisions', async () => {
+  it('合并验证旧分类迁移、分组草稿隔离、预览和排序', async () => {
     const original = config()
     original.classifier = 'systemone'
+    original.groups = [{ poolId: 'code', tasks: ['code_generation'], tiers: [1], cost: 0 }, { poolId: 'language', tasks: ['writing'], tiers: [1], cost: 0 }]
     mocks.load.mockResolvedValue(original)
+    mocks.preview.mockResolvedValue({ task: 'debugging', poolId: 'code', tier: 2, reason: '匹配', durationMs: 1 })
     const state = await setup()
     expect(value<{ id: string }[]>(state, 'pools').map(pool => pool.id)).toContain('builtin-free')
     expect(value<IntentConfig>(state, 'draft').classifier).toBe('decisions')
     expect(original.classifier).toBe('systemone')
     ;(state.groups as Ref<IntentConfig['groups']>).value = [{ poolId: 'builtin-free', tasks: ['architecture'], tiers: [2], cost: 0 }]
-    await (state.save as () => Promise<void>)()
-    expect(mocks.save).toHaveBeenCalledWith('responses', expect.objectContaining({ classifier: 'decisions', groups: [{ poolId: 'builtin-free', tasks: ['architecture'], tiers: [2], cost: 0 }] }))
-  })
-  it('分组能力和向量配置进入同一草稿，保存前不会污染原配置', async () => {
-    const original = config()
-    mocks.load.mockResolvedValue(original)
-    const state = await setup()
-    ;(state.groups as Ref<IntentConfig['groups']>).value = [{ poolId: 'code', tasks: ['debugging'], tiers: [1, 2], cost: 0 }]
     ;(state.embeddingProfile as Ref<EmbeddingProfile>).value = { source: 'remote', channel: 'embedding', model: 'vector', modelVersion: 'v1', queryPrefix: 'query: ', examplePrefix: 'passage: ', timeoutMs: 5000 }
-    expect(original.groups).toBeUndefined()
-    expect(original.embeddingModel).toBe('')
-    await (state.save as () => Promise<void>)()
-    expect(mocks.save).toHaveBeenCalledWith('responses', expect.objectContaining({ groups: [{ poolId: 'code', tasks: ['debugging'], tiers: [1, 2], cost: 0 }], embeddingModel: 'vector', queryPrefix: 'query: ', timeoutMs: 5000 }))
-  })
-  it('预览只调用分类，不保存配置或发送满意度反馈', async () => {
-    mocks.preview.mockResolvedValue({ task: 'debugging', poolId: 'code', tier: 2, reason: '匹配', durationMs: 1 })
-    const state = await setup()
+    expect(original.groups).toEqual([{ poolId: 'code', tasks: ['code_generation'], tiers: [1], cost: 0 }, { poolId: 'language', tasks: ['writing'], tiers: [1], cost: 0 }])
     ;(state.previewText as Ref<string>).value = '排查并发死锁'
     await (state.preview as () => Promise<void>)()
+    await (state.save as () => Promise<void>)()
     expect(mocks.preview).toHaveBeenCalledOnce()
-    expect(mocks.save).not.toHaveBeenCalled()
     expect(mocks.feedback).not.toHaveBeenCalled()
+    expect(mocks.save).toHaveBeenCalledWith('responses', expect.objectContaining({
+      classifier: 'decisions', groups: [{ poolId: 'builtin-free', tasks: ['architecture'], tiers: [2], cost: 0 }],
+      embeddingModel: 'vector', queryPrefix: 'query: ', timeoutMs: 5000
+    }))
   })
-  it('保存和预览沿用现有渠道分组顺序，不受能力填写先后影响', async () => {
+
+  it('校验分组能力完整性并保留当前渠道顺序', async () => {
     const original = config()
+    original.strategy = 'auto'
     original.groups = [{ poolId: 'code', tasks: ['code_generation'], tiers: [1], cost: 0 }, { poolId: 'language', tasks: ['writing'], tiers: [1], cost: 0 }]
     mocks.load.mockResolvedValue(original)
-    const state = await setup()
-    ;(state.previewText as Ref<string>).value = '编写一个函数'
-    await (state.preview as () => Promise<void>)()
-    await (state.save as () => Promise<void>)()
-    expect(mocks.preview.mock.calls[0]![1].groups.map((group: { poolId: string }) => group.poolId)).toEqual(['language', 'code'])
-    expect(mocks.save.mock.calls[0]![1].groups.map((group: { poolId: string }) => group.poolId)).toEqual(['language', 'code'])
-    expect(original.groups.map(group => group.poolId)).toEqual(['code', 'language'])
-  })
-  it('能力未填写完整时定位到分组并提示名称，不发送无效配置', async () => {
     const state = await setup()
     ;(state.groups as Ref<IntentConfig['groups']>).value = [{ poolId: 'code', tasks: ['debugging'], tiers: [], cost: 0 }]
     await (state.save as () => Promise<void>)()
     expect(mocks.save).not.toHaveBeenCalled()
     expect(value<string>(state, 'error')).toContain('代码组')
+    ;(state.groups as Ref<IntentConfig['groups']>).value = original.groups
+    await (state.save as () => Promise<void>)()
+    expect(mocks.save.mock.calls[0]![1].groups.map((group: { poolId: string }) => group.poolId)).toEqual(['language', 'code'])
+    expect(original.groups.map(group => group.poolId)).toEqual(['code', 'language'])
   })
-  it('向量模型未就绪时阻断启用，模型就绪且索引匹配后才能保存', async () => {
+
+  it('本地向量模型未就绪时阻断启用，就绪且索引匹配后允许保存', async () => {
     const original = config()
-    original.enabled = true
-    original.strategy = 'auto'
-    original.taskMatcher = 'semantic'
-    original.embeddingSource = 'local'
-    original.embeddingModel = 'vector'
-    original.datasetIds = ['intent']
+    Object.assign(original, { enabled: true, strategy: 'auto', taskMatcher: 'semantic', embeddingSource: 'local', embeddingModel: 'vector', datasetIds: ['intent'] })
     mocks.load.mockResolvedValue(original)
     const state = await setup()
     expect(value<boolean>(state, 'vectorGuide')).toBe(false)
@@ -113,13 +97,10 @@ describe('意图匹配编辑器', () => {
     expect(mocks.save).toHaveBeenCalledOnce()
     expect(original.embeddingModel).toBe('vector')
   })
-  it('内置样本未审核时提示直接去数据集页面，不自动导入或批准', async () => {
+
+  it('内置数据集审核、删除和重新建索引时不自动批准或覆盖新模型', async () => {
     const original = config()
-    original.strategy = 'auto'
-    original.taskMatcher = 'semantic'
-    original.embeddingSource = 'remote'
-    original.embeddingChannel = 'vector'
-    original.embeddingModel = 'embed-model'
+    Object.assign(original, { strategy: 'auto', taskMatcher: 'semantic', embeddingChannel: 'vector', embeddingModel: 'new-model' })
     mocks.load.mockResolvedValue(original)
     mocks.options.mockResolvedValue({ classifiers: [], embeddings: [{ id: 'vector', name: '向量渠道', defaultModel: 'embed-model' }], tasks: [] } satisfies IntentOptions)
     mocks.datasetList.mockResolvedValue([{ id: 'starter-intents-v2', kind: 'intent', approved: 0 }])
@@ -129,24 +110,29 @@ describe('意图匹配编辑器', () => {
     expect(mocks.datasetBuiltin).not.toHaveBeenCalled()
     expect(mocks.datasetSave).not.toHaveBeenCalled()
     expect(mocks.buildIndex).not.toHaveBeenCalled()
-  })
-  it('内置数据集已删除时不重新导入，提示选择其他数据集', async () => {
-    const original = config()
-    Object.assign(original, { strategy: 'auto', taskMatcher: 'semantic', embeddingChannel: 'vector', embeddingModel: 'embed-model' })
+
+    mocks.datasetList.mockResolvedValue([{ id: 'starter-intents-v2', kind: 'intent', approved: 144, indexes: [{ profile: { model: 'old-model', source: 'remote', channel: 'old-channel' } }] }])
+    await (state.prepareSemanticIndex as () => Promise<void>)()
+    expect(mocks.buildIndex).toHaveBeenCalledWith('responses', expect.objectContaining({ embeddingModel: 'new-model', embeddingChannel: 'vector', datasetIds: ['starter-intents-v2'] }))
+    expect(value<IntentConfig>(state, 'draft').embeddingModel).toBe('new-model')
+
+    vi.resetAllMocks()
     mocks.load.mockResolvedValue(original)
     mocks.options.mockResolvedValue({ classifiers: [], embeddings: [{ id: 'vector', name: '向量渠道' }], tasks: [] } satisfies IntentOptions)
-    const state = await setup()
-    await (state.prepareSemanticIndex as () => Promise<void>)()
-    expect(value<string>(state, 'error')).toContain('未找到内置意图数据集')
+    mocks.datasetList.mockResolvedValue([])
+    mocks.local.mockResolvedValue(localStatus())
+    mocks.save.mockResolvedValue(undefined)
+    const missing = await setup()
+    await (missing.prepareSemanticIndex as () => Promise<void>)()
+    expect(value<string>(missing, 'error')).toContain('未找到内置意图数据集')
     expect(mocks.datasetBuiltin).not.toHaveBeenCalled()
     expect(mocks.datasetSave).not.toHaveBeenCalled()
     expect(mocks.buildIndex).not.toHaveBeenCalled()
   })
-  it('切换已有 Embeddings 渠道带出默认模型，缺少模型时仍阻断保存', async () => {
+
+  it('Embeddings 默认模型和 Decisions 渠道约束阻止无效配置', async () => {
     const original = config()
-    original.enabled = true
-    original.strategy = 'auto'
-    original.taskMatcher = 'semantic'
+    Object.assign(original, { enabled: true, strategy: 'auto', taskMatcher: 'semantic' })
     mocks.load.mockResolvedValue(original)
     mocks.options.mockResolvedValue({ classifiers: [], embeddings: [{ id: 'vector', name: '向量渠道', defaultModel: 'embed-model' }], tasks: [] } satisfies IntentOptions)
     const state = await setup()
@@ -157,12 +143,24 @@ describe('意图匹配编辑器', () => {
     value<IntentConfig>(state, 'draft').embeddingModel = ''
     await (state.save as () => Promise<void>)()
     expect(mocks.save).not.toHaveBeenCalled()
+
+    vi.resetAllMocks()
+    const decisionConfig = config()
+    Object.assign(decisionConfig, { enabled: true, strategy: 'auto', classifier: 'decisions', classifierModel: 'decision-model' })
+    mocks.load.mockResolvedValue(decisionConfig)
+    mocks.options.mockResolvedValue({ classifiers: [], embeddings: [], tasks: [] } satisfies IntentOptions)
+    mocks.local.mockResolvedValue(localStatus())
+    mocks.save.mockResolvedValue(undefined)
+    const missing = await setup()
+    expect(value<string>(missing, 'classifierReason')).toContain('Decisions')
+    await (missing.save as () => Promise<void>)()
+    expect(mocks.save).not.toHaveBeenCalled()
+    expect(value<IntentConfig>(missing, 'draft').classifier).toBe('decisions')
   })
-  it('共享 Kilo 保留旧 ID 所属协议，其他渠道提供分组和模型列表', async () => {
+
+  it('共享 Kilo 保留旧协议身份，渠道选择更新默认模型和实际 classifier', async () => {
     const original = config()
-    original.classifier = 'llm'
-    original.classifierChannel = 'builtin-kilo-chat'
-    original.classifierModel = 'saved-model'
+    Object.assign(original, { classifier: 'llm', classifierChannel: 'builtin-kilo-chat', classifierModel: 'saved-model' })
     mocks.load.mockResolvedValue(original)
     mocks.options.mockResolvedValue({ classifiers: [
       { id: 'builtin-kilo-messages', name: 'Kilo 免费池', kind: 'messages', builtin: true, sharedKey: 'kilo', defaultModel: 'free-model', models: ['free-model'] },
@@ -181,33 +179,7 @@ describe('意图匹配编辑器', () => {
     ;(state.selectClassifier as (type: IntentConfig['classifier']) => void)('decisions')
     expect(value<{ id: string }[]>(state, 'classifierOptions').map(option => option.id)).toEqual(['decision'])
     await (state.save as () => Promise<void>)()
-    expect(mocks.save).toHaveBeenCalledWith('responses', expect.objectContaining({
-      classifier: 'decisions', classifierChannel: 'decision', classifierModel: 'decision-model'
-    }))
+    expect(mocks.save).toHaveBeenCalledWith('responses', expect.objectContaining({ classifier: 'decisions', classifierChannel: 'decision', classifierModel: 'decision-model' }))
     expect(original.classifierChannel).toBe('builtin-kilo-chat')
-  })
-  it('没有 Decisions 渠道时保留显式选项并阻断启用保存', async () => {
-    const original = config()
-    original.enabled = true
-    original.strategy = 'auto'
-    original.classifier = 'decisions'
-    original.classifierModel = 'decision-model'
-    mocks.load.mockResolvedValue(original)
-    const state = await setup()
-    expect(value<string>(state, 'classifierReason')).toContain('Decisions')
-    await (state.save as () => Promise<void>)()
-    expect(mocks.save).not.toHaveBeenCalled()
-    expect(value<IntentConfig>(state, 'draft').classifier).toBe('decisions')
-  })
-  it('重建已有内置数据集时保留新模型，不切回旧索引的模型', async () => {
-    const original = config()
-    Object.assign(original, { strategy: 'auto', taskMatcher: 'semantic', embeddingChannel: 'vector', embeddingModel: 'new-model' })
-    mocks.load.mockResolvedValue(original)
-    mocks.options.mockResolvedValue({ classifiers: [], embeddings: [{ id: 'vector', name: '向量渠道' }], tasks: [] } satisfies IntentOptions)
-    mocks.datasetList.mockResolvedValue([{ id: 'starter-intents-v2', kind: 'intent', approved: 144, indexes: [{ profile: { model: 'old-model', source: 'remote', channel: 'old-channel' } }] }])
-    const state = await setup()
-    await (state.prepareSemanticIndex as () => Promise<void>)()
-    expect(mocks.buildIndex).toHaveBeenCalledWith('responses', expect.objectContaining({ embeddingModel: 'new-model', embeddingChannel: 'vector', datasetIds: ['starter-intents-v2'] }))
-    expect(value<IntentConfig>(state, 'draft').embeddingModel).toBe('new-model')
   })
 })

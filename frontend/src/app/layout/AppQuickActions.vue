@@ -12,6 +12,7 @@
       ref="trigger"
       type="button"
       class="quick-actions-trigger"
+      :data-quick-appearance="quickAppearance"
       aria-label="快捷操作"
       :aria-expanded="expanded"
       :aria-controls="expanded ? actionsId : undefined"
@@ -20,7 +21,8 @@
       @keydown.up.prevent="focusFirstAction"
       @keydown.down.prevent="focusFirstAction"
     >
-      <UiIcon :icon="expanded ? 'mdi-close' : 'mdi-dots-horizontal'" :size="24" />
+      <UiIcon :icon="quickActionIcons[quickAppearance]" :size="24" class="quick-actions-mark" />
+      <UiIcon icon="mdi-close" :size="20" class="quick-actions-close" />
     </button>
     <Transition name="quick-actions-reveal">
       <div v-if="expanded" :id="actionsId" class="quick-actions-list" role="group" aria-label="快捷操作">
@@ -42,16 +44,32 @@
 </template>
 
 <script setup lang="ts">
-import { defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, useId, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, useId, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { API_TABS } from '@/features/channels'
 import { useDialogStore } from '@/features/channels/stores/dialog'
+import { useTheme, type ThemeSettings } from '@/shared/theme'
 import UiIcon from '@/shared/ui/icon/Icon.vue'
 
 const ChannelEditorDialog = defineAsyncComponent(() => import('@/features/channels/components/form/ChannelEditorDialog.vue'))
 const ChannelSearchDialog = defineAsyncComponent(() => import('@/features/channels/components/dashboard/ChannelSearchDialog.vue'))
 const route = useRoute()
 const dialogStore = useDialogStore()
+const theme = useTheme()
+const quickActionIcons: Record<ThemeSettings['palette'] | 'glass', string> = {
+  pop: 'mdi-shape',
+  breeze: 'mdi-weather-windy',
+  ink: 'mdi-compass-outline',
+  ocean: 'mdi-waves',
+  forest: 'mdi-leaf',
+  sunset: 'mdi-weather-sunset',
+  glass: 'mdi-layers-triple-outline',
+  rose: 'mdi-view-grid-outline'
+}
+const quickAppearance = computed(() => {
+  const { palette, surface } = theme.settings
+  return palette === 'ink' && surface === 'glass' ? 'glass' : palette
+})
 const canScrollToTop = ref(false)
 const expanded = ref(false)
 const searchOpen = ref(false)
@@ -158,8 +176,48 @@ watch(() => route.fullPath, collapseActions)
 }
 
 .above-sticky-actions { --quick-actions-offset: 4.5rem; }
-.quick-actions-trigger { @apply order-last flex size-12 items-center justify-center rounded-control border border-primary/20 bg-primary text-primary-foreground shadow-popover transition-[transform,box-shadow] duration-200 hover:shadow-dialog; }
-.quick-actions-trigger[aria-expanded='true'] { transform: rotate(90deg); }
+.quick-actions-trigger {
+  @apply order-last grid size-12 place-items-center rounded-control border text-primary;
+  background: var(--quick-fill, color-mix(in srgb, var(--primary) 8%, var(--popover)));
+  border-color: color-mix(in srgb, var(--primary) 28%, var(--border));
+  box-shadow: var(--quick-shadow, var(--shadow-card));
+  transition: background 180ms ease, border-color 180ms ease, transform 220ms var(--ease-out);
+}
+.quick-actions-trigger:hover, .quick-actions-trigger[aria-expanded='true'] {
+  border-color: color-mix(in srgb, var(--primary) 55%, var(--border));
+}
+.quick-actions-trigger:hover { transform: translateY(-2px); }
+.quick-actions-trigger:active { transform: translateY(0); }
+.quick-actions-trigger[data-quick-appearance='pop'] {
+  --quick-fill: color-mix(in srgb, var(--primary) 16%, var(--popover));
+  --quick-shadow: 2px 2px 0 var(--accent);
+}
+.quick-actions-trigger[data-quick-appearance='breeze'] {
+  --quick-fill: color-mix(in srgb, var(--primary) 4%, var(--popover));
+}
+.quick-actions-trigger[data-quick-appearance='ocean'] {
+  --quick-fill: linear-gradient(180deg, var(--popover) 20%, color-mix(in srgb, var(--primary) 18%, var(--popover)));
+}
+.quick-actions-trigger[data-quick-appearance='forest'] {
+  --quick-fill: radial-gradient(circle at 30% 24%, color-mix(in srgb, var(--primary) 15%, var(--popover)), var(--popover) 85%);
+}
+.quick-actions-trigger[data-quick-appearance='sunset'] {
+  --quick-fill: linear-gradient(150deg, color-mix(in srgb, var(--primary) 20%, var(--popover)), var(--popover) 75%);
+}
+.quick-actions-trigger[data-quick-appearance='glass'] {
+  --quick-fill: var(--menu-surface);
+  backdrop-filter: blur(min(var(--surface-blur), 10px));
+}
+.quick-actions-trigger[data-quick-appearance='rose'] {
+  border-width: var(--surface-border-width);
+}
+.quick-actions-mark, .quick-actions-close {
+  grid-area: 1 / 1;
+  transition: opacity 160ms ease, transform 220ms var(--ease-out);
+}
+.quick-actions-close { opacity: 0; transform: rotate(-30deg) scale(.8); }
+.quick-actions-trigger[aria-expanded='true'] .quick-actions-mark { opacity: 0; transform: rotate(20deg) scale(.8); }
+.quick-actions-trigger[aria-expanded='true'] .quick-actions-close { opacity: 1; transform: none; }
 .quick-actions-list { @apply grid justify-items-end gap-2 pb-3; transform-origin: bottom right; }
 .quick-action { @apply flex min-h-11 items-center gap-3 rounded-control border border-border bg-popover py-1.5 pr-1.5 pl-4 text-sm font-medium text-popover-foreground shadow-popover transition-colors hover:border-primary/40 hover:text-primary; }
 .quick-action-icon { @apply flex size-8 shrink-0 items-center justify-center rounded-control bg-muted/60 text-primary; }
@@ -169,7 +227,7 @@ watch(() => route.fullPath, collapseActions)
 .quick-actions-reveal-enter-active .quick-action { animation: quick-action-in 300ms var(--ease-out) var(--action-delay) both; }
 @keyframes quick-action-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 @media (prefers-reduced-motion: reduce) {
-  .quick-actions-trigger[aria-expanded='true'] { transform: none; }
+  .quick-actions-trigger, .quick-actions-trigger .quick-actions-mark, .quick-actions-trigger .quick-actions-close { transform: none !important; }
   .quick-actions-reveal-enter-active .quick-action { animation: none; }
 }
 </style>
