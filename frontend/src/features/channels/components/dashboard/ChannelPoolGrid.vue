@@ -121,7 +121,7 @@
     </div>
   </section>
 
-  <section class="vision-pool-section">
+  <section v-if="isConversationProtocol(channelType)" class="vision-pool-section">
     <header class="vision-pool-header">
       <div class="flex items-center gap-2">
         <UiIcon size="small" color="primary">mdi-image-search-outline</UiIcon>
@@ -206,7 +206,7 @@ import { deletionImpactWarning } from '@/features/channels/utils/deletionImpact'
 import ChannelStatusBadge from '@/features/channels/components/dashboard/ChannelStatusBadge.vue'
 import ChannelWebsiteLink from '@/features/channels/components/dashboard/ChannelWebsiteLink.vue'
 import { channelServiceLabel } from '@/features/channels/utils/imagesChannelProtocol'
-import { API_TAB_LABELS, type ApiTab } from '@/features/channels/services/channel-api'
+import { API_TAB_LABELS, isConversationProtocol, type ApiTab } from '@/features/channels/services/channel-api'
 import { useChannelStore } from '@/features/channels/stores/channel'
 import { FREE_POOL_ID } from '@/features/channels/services/free-channels'
 import { channelAnchorId } from '@/features/channels/utils/channelSearch'

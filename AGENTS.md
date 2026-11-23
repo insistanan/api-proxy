@@ -47,4 +47,4 @@ Windows 无 make 时的构建命令见开发说明。
 4. 发布：version-bump 升版本并提交 → 推送 `v*` tag → workflow 生成 draft release → github-release 从 CHANGELOG 生成公告。普通重构提交不自动升版本。
 5. `.config/`、`.ccb_config/` 含运行数据或密钥，绝不能提交或写入文档。
 
-最后核对：v3.3.18。升级版本时核对目录与协议口径；门禁会检查目录登记。
+最后核对：v3.3.19。升级版本时核对目录与协议口径；门禁会检查目录登记。
