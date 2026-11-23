@@ -5,18 +5,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/infra/httpclient"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"github.com/insistanan/api-proxy/internal/orchestration/availability"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
 	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"github.com/insistanan/api-proxy/internal/protocol/providers"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/insistanan/api-proxy/internal/safety/sensitive"
@@ -57,6 +58,7 @@ func (c *Caller) requestLogStore() *metrics.RequestLogStore {
 // CallResult 是一次内部调用的结果。
 type CallResult struct {
 	Text        string
+	StopReason  string
 	Usage       *types.Usage
 	RequestID   string
 	Model       string
@@ -144,7 +146,17 @@ func (c *Caller) Call(ctx context.Context, channelID string, prompt Prompt) (res
 
 	// channelID 显式指定代表用户意图：不换渠道，选不中即失败。
 	if channelID != "" {
-		selection, err := pickChannelForProtocol(callCtx, c.CfgManager, c.ChannelScheduler, channelID, prompt.Model, nil, prompt.Protocol)
+		var selection *SelectedChannel
+		var err error
+		if prompt.ChannelKind != "" {
+			kinds, kindErr := protocolKinds(prompt.Protocol)
+			if kindErr != nil || !slices.Contains(kinds, prompt.ChannelKind) {
+				return nil, fmt.Errorf("内部调用渠道类型 %q 与协议 %q 不兼容", prompt.ChannelKind, prompt.Protocol)
+			}
+			selection, err = pickByID(c.CfgManager, c.ChannelScheduler, channelID, prompt.Model, []scheduler.ChannelKind{prompt.ChannelKind})
+		} else {
+			selection, err = pickChannelForProtocol(callCtx, c.CfgManager, c.ChannelScheduler, channelID, prompt.Model, nil, prompt.Protocol)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -218,6 +230,8 @@ type Prompt struct {
 	MaxTokens int
 	// Protocol 为空/chat 时使用对话 API；decisions 使用原生决策格式，systemone 仅兼容旧配置。
 	Protocol string
+	// ChannelKind 限定显式渠道 ID 所属的渠道池。
+	ChannelKind scheduler.ChannelKind
 	// OverrideModel 允许审批配置显式覆盖渠道默认模型，不改变助手原有模型优先级。
 	OverrideModel bool
 	Decision      *DecisionQuestion
@@ -542,7 +556,7 @@ func (c *Caller) sendRequest(
 	c.ChannelScheduler.RecordRequestEnd(baseURL, apiKey, selection.ChannelIndex, selection.Kind)
 	c.ChannelScheduler.MarkURLSuccess(selection.Kind, selection.ChannelIndex, baseURL)
 	c.recordAttempt(selection, upstream, trace, attemptID, model, baseURL, apiKey, "completed", response.StatusCode, true, attemptStart, "", "", retried, claudeResponse.Usage)
-	return &CallResult{Text: result, Usage: claudeResponse.Usage, RequestID: trace.RequestID, Model: model, ChannelName: upstream.Name}, nil
+	return &CallResult{Text: result, StopReason: claudeResponse.StopReason, Usage: claudeResponse.Usage, RequestID: trace.RequestID, Model: model, ChannelName: upstream.Name}, nil
 }
 
 func (c *Caller) recordFinalizeFailure(baseURL, apiKey string, selection *SelectedChannel, metricsRequestID uint64) {

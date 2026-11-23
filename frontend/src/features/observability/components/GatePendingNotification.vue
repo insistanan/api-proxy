@@ -79,7 +79,7 @@
 import UiButton from '@/shared/ui/button/Button.vue'
 import UiProgress from '@/shared/ui/feedback/Progress.vue'
 import UiIcon from '@/shared/ui/icon/Icon.vue'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { api, type GatePending } from '@/api'
 import { useAuthStore } from '@/shared/stores/auth'
 import { useNotificationStore } from '@/shared/stores/notifications'
@@ -99,9 +99,6 @@ const decidingId = ref<number | null>(null)
 const now = ref(Date.now())
 const pollError = ref('')
 const decisionError = ref('')
-watch([pollError, decisionError], errors => {
-  errors.filter(Boolean).forEach(message => notifications.addMessage(message, 'error', { source: '命令审核', key: `gate-error:${message}` }))
-})
 let stopped = false
 let pollInFlight = false
 let pendingRevision = 0
@@ -134,7 +131,7 @@ const poll = async () => {
     const fresh = response.pending
     const arrivals = fresh.filter(item => !knownIds.has(item.id))
     for (const item of arrivals) {
-      notifications.addMessage(`${item.aiVerdict === 'allow' ? '危险命令已放行（可否决）' : '危险命令待确认'}\n${item.command}${item.aiReason ? `\nAI：${item.aiReason}` : ''}`, item.aiVerdict === 'allow' ? 'warning' : 'error', { source: '命令审核', key: `gate:${item.id}` })
+      notifications.addMessage(`${item.aiVerdict === 'allow' ? '危险命令已放行（可否决）' : '危险命令待确认'}\n${item.command}${item.aiReason ? `\nAI：${item.aiReason}` : ''}`, item.aiVerdict === 'allow' ? 'warning' : 'error', { level: 'warning', source: '命令审核', key: `gate:${item.id}` })
     }
     knownIds.clear()
     for (const item of fresh) knownIds.add(item.id)
@@ -177,7 +174,7 @@ const decide = async (item: GatePending, decision: 'allow' | 'block') => {
   try {
     await api.decideGatePending(item.id, decision, controller.signal)
     if (stopped) return
-    notifications.addMessage(`${decision === 'allow' ? '已放行' : '已拦截'}命令：${item.command}`, 'success', { source: '命令审核', key: `gate-decision:${item.id}:${decision}` })
+    notifications.addMessage(`${decision === 'allow' ? '已放行' : '已拦截'}命令：${item.command}`, 'success', { level: 'notice', source: '命令审核', key: `gate-decision:${item.id}:${decision}` })
     pendingItems.value = pendingItems.value.filter(pending => pending.id !== item.id)
     knownIds.delete(item.id)
   } catch (err) {

@@ -38,11 +38,14 @@ func SaveTranslationBackup(projectDir string, ref Item, original []byte, input B
 	if err := os.WriteFile(filepath.Join(backupDir, "original.md"), original, 0600); err != nil {
 		return "", fmt.Errorf("保存原文备份失败: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(backupDir, "translated.zh-CN.md"), []byte(input.Translated), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(backupDir, "translated.md"), []byte(input.Translated), 0600); err != nil {
 		return "", fmt.Errorf("保存译文备份失败: %w", err)
 	}
 	if err := os.WriteFile(filepath.Join(backupDir, "metadata.json"), append(metadata, '\n'), 0600); err != nil {
 		return "", fmt.Errorf("保存备份元数据失败: %w", err)
+	}
+	if ref.LocationKey == "project" {
+		return backupDir, nil
 	}
 	projectTarget := ProjectRootForName(projectDir, ref.Name)
 	if copyErr := CopyDir(ref.Path, projectTarget, true); copyErr != nil {
@@ -132,6 +135,14 @@ type Backup struct {
 	Metadata   BackupMetadata
 }
 
+func (b Backup) Presentation() (name, description, language string) {
+	content := []byte(b.Translated)
+	language = ContentLanguage(content)
+	name = displayName(content, language)
+	_, description, _ = ParseFrontmatter(content)
+	return
+}
+
 func LatestBackup(projectDir string, ref Item, original []byte) (Backup, bool, error) {
 	backupRoot, err := projectBackupRoot(projectDir, ref.Name)
 	if err != nil {
@@ -162,7 +173,10 @@ func LatestBackup(projectDir string, ref Item, original []byte) (Backup, bool, e
 		if metadata.SourceSHA256 != "" && metadata.SourceSHA256 != expectedHash {
 			continue
 		}
-		translated, err := os.ReadFile(filepath.Join(backupPath, "translated.zh-CN.md"))
+		translated, err := os.ReadFile(filepath.Join(backupPath, "translated.md"))
+		if errors.Is(err, fs.ErrNotExist) {
+			translated, err = os.ReadFile(filepath.Join(backupPath, "translated.zh-CN.md"))
+		}
 		if err != nil || strings.TrimSpace(string(translated)) == "" {
 			continue
 		}

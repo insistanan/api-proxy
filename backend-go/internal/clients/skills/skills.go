@@ -58,19 +58,24 @@ type Location struct {
 
 // Item 描述一个 Skill 条目。Valid 为 false 时 Issue 说明原因。
 type Item struct {
-	LocationKey    string `json:"locationKey"`
-	Agent          string `json:"agent"`
-	Name           string `json:"name"`
-	TranslatedName string `json:"translatedName,omitempty"`
-	Note           string `json:"note,omitempty"`
-	Description    string `json:"description"`
-	Path           string `json:"path"`
-	Size           int64  `json:"size"`
-	ModifiedAt     string `json:"modifiedAt"`
-	Valid          bool   `json:"valid"`
-	Issue          string `json:"issue,omitempty"`
-	SourceType     string `json:"sourceType"`
-	ReadOnly       bool   `json:"readOnly"`
+	LocationKey           string `json:"locationKey"`
+	Agent                 string `json:"agent"`
+	Name                  string `json:"name"`
+	DisplayName           string `json:"displayName,omitempty"`
+	Language              string `json:"language,omitempty"`
+	HasTranslation        bool   `json:"hasTranslation,omitempty"`
+	TranslatedName        string `json:"translatedName,omitempty"`
+	TranslatedDescription string `json:"translatedDescription,omitempty"`
+	TranslationLanguage   string `json:"translationLanguage,omitempty"`
+	Note                  string `json:"note,omitempty"`
+	Description           string `json:"description"`
+	Path                  string `json:"path"`
+	Size                  int64  `json:"size"`
+	ModifiedAt            string `json:"modifiedAt"`
+	Valid                 bool   `json:"valid"`
+	Issue                 string `json:"issue,omitempty"`
+	SourceType            string `json:"sourceType"`
+	ReadOnly              bool   `json:"readOnly"`
 }
 
 // BackupMetadata 是译文备份目录里 metadata.json 的结构。

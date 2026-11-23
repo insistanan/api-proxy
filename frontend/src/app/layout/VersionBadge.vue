@@ -81,7 +81,6 @@ const checkVersion = async () => {
     systemStore.setVersionInfo(await versionService.checkForUpdates())
   } catch (error) {
     console.warn('Version check failed:', error)
-    notifications.addMessage(`版本检查失败：${error instanceof Error ? error.message : String(error)}`, 'error', { source: '版本更新', key: 'version-check-error' })
     systemStore.setVersionInfo({ ...versionInfo.value, status: 'error' })
   }
 }
@@ -106,7 +105,7 @@ const maybeShowBubble = () => {
   if (Date.now() - lastShownAt < BUBBLE_REMIND_INTERVAL_MS) return
   lastShownAt = Date.now()
   bubbleVisible.value = true
-  notifications.addMessage(`发现新版本：${versionInfo.value.currentVersion} → ${versionInfo.value.latestVersion}`, 'info', { source: '版本更新', key: `version:${versionInfo.value.latestVersion}`, link: versionInfo.value.releaseUrl ?? undefined })
+  notifications.addMessage(`发现新版本：${versionInfo.value.currentVersion} → ${versionInfo.value.latestVersion}`, 'info', { level: 'notice', source: '版本更新', key: `version:${versionInfo.value.latestVersion}`, link: versionInfo.value.releaseUrl ?? undefined })
   clearTimeout(hideTimer)
   hideTimer = setTimeout(hideBubble, BUBBLE_VISIBLE_MS)
 }

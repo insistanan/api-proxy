@@ -1,6 +1,6 @@
 // 技能管理 API：复用统一 HTTP 基础层，保留端点与返回契约。
 import { apiRequest } from '@/shared/services/http'
-import type { RemoteSkillPreview, SkillBackup, SkillSearchResponse, SkillSyncReport, SkillsResponse } from '@/types'
+import type { RemoteSkillPreview, SkillBackup, SkillLanguage, SkillSearchResponse, SkillSyncReport, SkillTranslationTask, SkillsResponse } from '@/types'
 
 export const skillsApi = {
   // ============== 本机 Skills 管理 API ==============
@@ -8,7 +8,7 @@ export const skillsApi = {
     return apiRequest('/skills')
   },
 
-  async getSkillContent(locationKey: string, name: string): Promise<{ content: string; path: string }> {
+  async getSkillContent(locationKey: string, name: string): Promise<{ content: string; path: string; language: SkillLanguage }> {
     return apiRequest('/skills/content', { method: 'POST', body: JSON.stringify({ locationKey, name }) })
   },
 
@@ -77,6 +77,14 @@ export const skillsApi = {
     await apiRequest('/skills', { method: 'DELETE', body: JSON.stringify({ locationKey, name }) })
   },
 
+  async getSkillTranslation(): Promise<{ task: SkillTranslationTask | null }> {
+    return apiRequest('/skills/translation')
+  },
+
+  async startSkillTranslation(payload: { channelId: string; protocol: string; model: string }): Promise<{ task: SkillTranslationTask }> {
+    return apiRequest('/skills/translation', { method: 'POST', body: JSON.stringify(payload) })
+  },
+
   async backupSkill(payload: {
     locationKey: string
     name: string
@@ -84,7 +92,8 @@ export const skillsApi = {
     translated: string
     model?: string
     channelName?: string
-  }): Promise<{ success: boolean; path: string }> {
+    automatic?: boolean
+  }): Promise<{ success: boolean; path: string; translatedName: string; translatedDescription: string; translationLanguage: SkillLanguage }> {
     return apiRequest('/skills/backup', { method: 'POST', body: JSON.stringify(payload) })
   },
 }

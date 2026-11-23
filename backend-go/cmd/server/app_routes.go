@@ -133,6 +133,8 @@ func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
 	apiGroup.POST("/skills/sync", a.skillsAPI.Sync())
 	apiGroup.DELETE("/skills", a.skillsAPI.Delete())
 	apiGroup.POST("/skills/backup", a.skillsAPI.Backup())
+	apiGroup.GET("/skills/translation", a.skillsAPI.SkillTranslationStatus)
+	apiGroup.POST("/skills/translation", a.skillsAPI.StartSkillTranslation(a.skillTranslator))
 	// MCP 统一列表与智能体分发（沿用 apiGroup 的统一鉴权）
 	apiGroup.GET("/mcp", a.mcpAPI.List())
 	apiGroup.PUT("/mcp", a.mcpAPI.Save())

@@ -9,11 +9,18 @@ export interface SkillLocation {
   exists: boolean
 }
 
+export type SkillLanguage = 'zh' | 'en'
+
 export interface ManagedSkill {
   locationKey: string
   agent: string
   name: string
+  displayName?: string
+  language?: SkillLanguage
+  hasTranslation?: boolean
   translatedName?: string
+  translatedDescription?: string
+  translationLanguage?: SkillLanguage
   note?: string
   description: string
   path: string
@@ -23,6 +30,18 @@ export interface ManagedSkill {
   issue?: string
   sourceType: string
   readOnly: boolean
+}
+
+export interface SkillTranslationTask {
+  id: string
+  running: boolean
+  current: string
+  index: number
+  total: number
+  retry: boolean
+  succeeded: number
+  skipped: number
+  failures: Array<{ name: string; error: string }>
 }
 
 export interface SkillSyncReport {
@@ -42,6 +61,9 @@ export interface SkillsResponse {
 export interface SkillBackup {
   found: boolean
   translated?: string
+  translatedName?: string
+  translatedDescription?: string
+  translationLanguage?: SkillLanguage
   path?: string
   createdAt?: string
   model?: string

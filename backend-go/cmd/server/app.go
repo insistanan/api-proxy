@@ -54,6 +54,7 @@ type app struct {
 	profileManager        *metrics.ProfileManager
 	piAgentAPI            *clients.PiAgentAPI
 	skillsAPI             *clients.SkillsAPI
+	skillTranslator       clients.SkillTranslator
 	mcpAPI                *clients.MCPAPI
 	extensionsGitAPI      *adminextensions.ExtensionsGitAPI
 	disguiseSyncer        *adminsettings.DisguiseSyncer
@@ -321,6 +322,24 @@ func newApp() (_ *app, err error) {
 		return config.ResolveSkillsDir(a.cfgManager.GetSettings().Extensions.SkillsDir)
 	}
 	a.skillsAPI = clients.NewSkillsAPI(skillsDirFn)
+	a.registerCleanup("技能翻译任务", a.skillsAPI.CloseSkillTranslations)
+	translationCaller := *gateCaller
+	translationCaller.TimeoutSecs = int((10 * time.Minute).Seconds())
+	a.skillTranslator = func(ctx context.Context, protocol, channelID, model, instructions, original string) (string, string, error) {
+		result, err := translationCaller.Call(ctx, channelID, llmgate.Prompt{
+			Model: model, System: instructions, MaxTokens: 8192, OverrideModel: true,
+			ChannelKind: scheduler.ChannelKind(protocol),
+			Messages:    []llmgate.PromptMessage{{Role: "user", Content: original}},
+			Metadata:    llmgate.CallMetadata{APIType: "skill_translation"},
+		})
+		if err != nil {
+			return "", "", err
+		}
+		if result.StopReason == "max_tokens" {
+			return "", "", errors.New("译文达到模型输出上限，未保存不完整的译文")
+		}
+		return result.Text, result.ChannelName, nil
+	}
 
 	// MCP 统一列表与智能体分发（存放在项目 Skills 目录下 mcp.json，便于与 Skills 一起 Git 管理）
 	a.mcpAPI = clients.NewDynamicMCPAPI(func() (string, error) {

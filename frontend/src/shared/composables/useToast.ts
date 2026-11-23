@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { useNotificationStore } from '@/shared/stores/notifications'
+import { useNotificationStore, type NotificationLevel } from '@/shared/stores/notifications'
 
 export type ToastType = 'success' | 'error' | 'warning' | 'info'
 
@@ -23,9 +23,14 @@ let toastId = 0
 
 /** 全局单例消息队列：App.vue 负责渲染，任意页面和 composable 都可以推送。 */
 export function useToast() {
-  const showToast = (message: string, type: ToastType = 'info', options: { details?: string; source?: string } = {}) => {
-    const notifications = useNotificationStore()
-    notifications.addMessage(options.details ? `${message}\n${options.details}` : message, type, { source: options.source })
+  const showToast = (message: string, type: ToastType = 'info', options: { details?: string; source?: string; key?: string; level?: 'reminder' | NotificationLevel } = {}) => {
+    if (options.level && options.level !== 'reminder') {
+      useNotificationStore().addMessage(options.details ? `${message}\n${options.details}` : message, type, {
+        source: options.source,
+        key: options.key,
+        level: options.level
+      })
+    }
     const id = ++toastId
     toasts.value.push({ id, message, type, show: true })
     setTimeout(() => {

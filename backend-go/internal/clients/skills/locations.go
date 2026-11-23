@@ -138,6 +138,11 @@ func defaultPiSkillsDir(home string) string {
 	return filepath.Join(home, ".pi", "agent", "skills")
 }
 
+// ProjectDir 返回按技能目录规则解析的项目根目录。
+func ProjectDir(projectDir string) (string, error) {
+	return resolveProjectDir(projectDir)
+}
+
 func resolveProjectDir(projectDir string) (string, error) {
 	if trimmed := strings.TrimSpace(projectDir); trimmed != "" {
 		return absPath(trimmed), nil

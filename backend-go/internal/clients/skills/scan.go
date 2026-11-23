@@ -37,8 +37,11 @@ func Scan(location Location, projectDir string) ([]Item, error) {
 				item.Issue = "frontmatter 的 name 必须与目录名一致"
 			} else {
 				item.Valid = true
+				item.Language = ContentLanguage(content)
+				item.DisplayName = displayName(content, item.Language)
 				if backup, found, backupErr := LatestBackup(projectDir, item, content); backupErr == nil && found {
-					item.TranslatedName = translatedDisplayName([]byte(backup.Translated))
+					item.HasTranslation = true
+					item.TranslatedName, item.TranslatedDescription, item.TranslationLanguage = backup.Presentation()
 				}
 			}
 		}

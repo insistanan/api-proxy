@@ -143,10 +143,12 @@ import ThemeTrigger from '@/shared/theme/components/ThemeTrigger.vue'
 import ThemeBackground from '@/shared/theme/components/ThemeBackground.vue'
 import JsonViewerDrawer from '@/shared/components/data/JsonViewerDrawer.vue'
 import GatePendingNotification from '@/features/observability/components/GatePendingNotification.vue'
+import { useSkillTranslationMonitor } from '@/features/extensions/skills/composables/translationBatch'
 import { useAuthFlow } from '@/app/useAuthFlow'
 import { toastIcons, useToast } from '@/shared/composables/useToast'
 import { useAuthStore } from '@/shared/stores/auth'
 
+useSkillTranslationMonitor()
 const route = useRoute()
 const authStore = useAuthStore()
 const { toasts, showToast } = useToast()

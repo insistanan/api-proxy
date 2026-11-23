@@ -19,9 +19,10 @@ import (
 // SkillsAPI 聚合 skills 管理的互斥锁与项目目录解析，由 main.go 构造并注入路由，
 // 替代包级全局状态；互斥锁串行化对多个 agent 技能目录的读写操作。
 type SkillsAPI struct {
-	mu          sync.Mutex
-	remoteCache remoteSkillCache
-	skillsDirFn func() (string, error)
+	mu           sync.Mutex
+	remoteCache  remoteSkillCache
+	translations skillTranslations
+	skillsDirFn  func() (string, error)
 }
 
 // NewSkillsAPI 创建 skills 管理 API；skillsDirFn 返回当前配置的项目 Skills 目录路径。
@@ -97,6 +98,7 @@ type skillBackupRequest struct {
 	Translated  string `json:"translated"`
 	Model       string `json:"model"`
 	ChannelName string `json:"channelName"`
+	Automatic   bool   `json:"automatic"`
 }
 
 type skillNoteRequest struct {
@@ -186,7 +188,7 @@ func (s *SkillsAPI) GetContent() gin.HandlerFunc {
 			c.JSON(500, gin.H{"error": fmt.Sprintf("读取 Skill 失败: %v", err)})
 			return
 		}
-		c.JSON(200, gin.H{"content": string(content), "path": skills.ContentPath(ref)})
+		c.JSON(200, gin.H{"content": string(content), "path": skills.ContentPath(ref), "language": skills.ContentLanguage(content)})
 	}
 }
 
@@ -219,9 +221,11 @@ func (s *SkillsAPI) GetLatestBackup() gin.HandlerFunc {
 			c.JSON(200, gin.H{"found": false})
 			return
 		}
+		name, description, language := backup.Presentation()
 		c.JSON(200, gin.H{
 			"found": true, "translated": backup.Translated, "path": backup.Path,
 			"createdAt": backup.Metadata.CreatedAt, "model": backup.Metadata.Model, "channelName": backup.Metadata.ChannelName,
+			"translatedName": name, "translatedDescription": description, "translationLanguage": language,
 		})
 	}
 }
@@ -631,6 +635,12 @@ func (s *SkillsAPI) Backup() gin.HandlerFunc {
 			c.JSON(409, gin.H{"error": "原 Skill 已变更，请重新打开后再保存译文"})
 			return
 		}
+		if req.Automatic {
+			if err := skills.ValidateTranslation(ref.Name, original, req.Translated); err != nil {
+				c.JSON(422, gin.H{"error": err.Error()})
+				return
+			}
+		}
 		backupDir, err := skills.SaveTranslationBackup(opts.ProjectDir, ref, original, skills.BackupInput{
 			Translated: req.Translated, Model: req.Model, ChannelName: req.ChannelName,
 		})
@@ -638,7 +648,8 @@ func (s *SkillsAPI) Backup() gin.HandlerFunc {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(200, gin.H{"success": true, "path": backupDir})
+		name, description, language := (skills.Backup{Translated: req.Translated}).Presentation()
+		c.JSON(200, gin.H{"success": true, "path": backupDir, "translatedName": name, "translatedDescription": description, "translationLanguage": language})
 	}
 }
 

@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -122,27 +124,91 @@ func ParseFrontmatter(content []byte) (string, string, error) {
 	return name, description, nil
 }
 
-func translatedDisplayName(content []byte) string {
-	text := string(content)
-	if !strings.HasPrefix(text, "---\n") && !strings.HasPrefix(text, "---\r\n") {
-		return ""
+var nonProse = regexp.MustCompile("`[^`]*`|https?://[^\\s)]+")
+
+// ContentLanguage 根据可读正文判断原文语言。技能标识符和代码不参与判断。
+func ContentLanguage(content []byte) string {
+	text := strings.ReplaceAll(string(content), "\r\n", "\n")
+	_, description, _ := ParseFrontmatter(content)
+	if _, body, ok := strings.Cut(strings.TrimPrefix(text, "---\n"), "\n---\n"); ok {
+		text = body
 	}
-	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
-	end := -1
-	for index, line := range lines[1:] {
-		if strings.TrimSpace(line) == "---" {
-			end = index + 1
-			break
+	var fence byte
+	han, latin := 0, 0
+	count := func(line string) {
+		for _, char := range nonProse.ReplaceAllString(line, "") {
+			switch {
+			case unicode.Is(unicode.Han, char):
+				han++
+			case unicode.Is(unicode.Latin, char):
+				latin++
+			}
 		}
 	}
-	if end == -1 {
+	count(description)
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			if fence == 0 {
+				fence = trimmed[0]
+			} else if fence == trimmed[0] {
+				fence = 0
+			}
+			continue
+		}
+		if fence == 0 {
+			count(line)
+		}
+	}
+	// 英文单词包含多个字母，以汉字对英文词的近似数量比较。
+	if han > 0 && han*4 >= latin {
+		return "zh"
+	}
+	return "en"
+}
+
+func displayName(content []byte, language string) string {
+	text := strings.ReplaceAll(string(content), "\r\n", "\n")
+	if !strings.HasPrefix(text, "---\n") {
 		return ""
 	}
-	var frontmatter struct {
+	frontmatter, body, ok := strings.Cut(strings.TrimPrefix(text, "---\n"), "\n---")
+	if !ok {
+		return ""
+	}
+	var fields struct {
 		DisplayName string `yaml:"display_name"`
 	}
-	if err := yaml.Unmarshal([]byte(strings.Join(lines[1:end], "\n")), &frontmatter); err != nil {
-		return ""
+	if err := yaml.Unmarshal([]byte(frontmatter), &fields); err == nil && strings.TrimSpace(fields.DisplayName) != "" {
+		return strings.TrimSpace(fields.DisplayName)
 	}
-	return strings.TrimSpace(frontmatter.DisplayName)
+	title := strings.TrimSpace(body)
+	if strings.HasPrefix(title, "# ") {
+		title, _, _ = strings.Cut(title[2:], "\n")
+		hasHan := strings.ContainsFunc(title, func(r rune) bool { return unicode.Is(unicode.Han, r) })
+		if hasHan == (language == "zh") {
+			return strings.TrimSpace(title)
+		}
+	}
+	return ""
+}
+
+// ValidateTranslation 拒绝无法作为另一语言显示的自动译文。
+func ValidateTranslation(name string, original []byte, translated string) error {
+	content := []byte(translated)
+	translatedName, _, err := ParseFrontmatter(content)
+	if err != nil {
+		return fmt.Errorf("模型未返回完整的 Skill 译文: %w", err)
+	}
+	if translatedName != name {
+		return errors.New("译文改变了 Skill 标识")
+	}
+	language := ContentLanguage(content)
+	if language == ContentLanguage(original) {
+		return errors.New("模型未返回目标语言的译文")
+	}
+	if displayName(content, language) == "" {
+		return errors.New("译文缺少可显示的名称")
+	}
+	return nil
 }
