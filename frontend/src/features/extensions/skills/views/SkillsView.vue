@@ -4,45 +4,42 @@
       <PageHeader title="Skills" description="发现、安装并管理各客户端使用的技能。">
           <UiButton variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="loadSkills">刷新</UiButton>
           <UiButton variant="text" prepend-icon="mdi-sync" :loading="syncing" @click="syncManifest">同步到 Agent</UiButton>
-          <UiButton variant="text" prepend-icon="mdi-archive-outline" :loading="consolidating" @click="consolidateInstalledSkills">导入现有</UiButton>
+          <UiButton variant="text" prepend-icon="mdi-source-branch" :disabled="batchRunning || translationInProgress" @click="gitDialog = true">仓库同步</UiButton>
+          <UiButton variant="text" prepend-icon="mdi-archive-outline" :loading="consolidating" :disabled="batchRunning || translationInProgress" @click="consolidateInstalledSkills">导入现有</UiButton>
           <UiButton variant="text" prepend-icon="mdi-swap-horizontal" @click="showTranslatedNames = !showTranslatedNames">{{ showTranslatedNames ? '显示原名称' : '显示译名' }}</UiButton>
-          <UiButton variant="tonal" prepend-icon="mdi-magnify" @click="openDiscover">发现 Skill</UiButton>
-          <UiButton color="primary" prepend-icon="mdi-plus" @click="openImport">本地安装</UiButton>
+          <UiButton variant="text" prepend-icon="mdi-translate" :loading="batchRunning" :disabled="loading || translationInProgress || batchRunning || !skills.length" @click="openBatchTranslation">翻译全部</UiButton>
+          <UiButton variant="tonal" prepend-icon="mdi-magnify" :disabled="batchRunning || translationInProgress" @click="openDiscover">发现 Skill</UiButton>
+          <UiButton color="primary" prepend-icon="mdi-plus" :disabled="batchRunning || translationInProgress" @click="openImport">本地安装</UiButton>
       </PageHeader>
     </div>
 
     <UiAlert v-if="error" type="error" variant="tonal" class="mb-5" closable @click:close="error = ''">{{ error }}</UiAlert>
 
-    <DisclosureSection v-model="sourcesExpanded" title="来源与安装位置" description="查看各客户端的技能目录、读写状态和备份位置。" icon="mdi-folder-open" class="mb-5">
+    <ExtensionsGitDialog v-model="gitDialog" @updated="loadSkills" />
+    <DisclosureSection v-model="sourcesExpanded" title="来源与安装位置" :count="locations.length" icon="mdi-folder-open" class="mb-4">
       <div class="locations-strip">
         <div class="locations-heading">
           <div>
-            <div class="font-medium">已检查的本机目录</div>
-            <div class="text-xs text-muted-foreground mt-1">{{ locations.length }} 个位置 · {{ locations.filter(location => location.exists).length }} 个目录可用</div>
+            <div class="text-xs text-muted-foreground">{{ locations.filter(location => location.exists).length }} 个目录可用 · 点击卡片筛选来源</div>
           </div>
           <UiButton v-if="agentFilter" variant="text" size="small" prepend-icon="mdi-filter-remove-outline" @click="agentFilter = ''">清除来源筛选</UiButton>
         </div>
         <div class="location-grid">
           <div v-for="location in locations" :key="location.key" :class="['location-card', { 'location-card--active': agentFilter === location.key }]">
-            <div class="location-card-heading">
-              <button type="button" class="location-name" :aria-pressed="agentFilter === location.key" :title="`筛选 ${location.agent} 来源`" @click="filterByAgent(location.key)">
+              <button type="button" class="location-filter" :aria-pressed="agentFilter === location.key" :aria-label="`筛选 ${sourceName(location.agent)} 来源`" @click="filterByAgent(location.key)">
                 <UiIcon icon="mdi-folder-open" size="small" />
-                <span>{{ location.agent }}</span>
-              </button>
+                <span class="location-name">{{ sourceName(location.agent) }}</span>
               <UiBadge size="x-small" label :color="location.exists ? (location.readOnly ? 'info' : 'success') : 'secondary'">
                 {{ location.exists ? (location.readOnly ? '只读' : '可安装') : '目录不存在' }}
               </UiBadge>
-            </div>
-            <div class="location-path-row">
-              <code class="location-path" :title="location.path">{{ location.path || '未解析到目录路径' }}</code>
-              <UiTooltip text="复制目录路径" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-content-copy" variant="text" size="x-small" :disabled="!location.path" :aria-label="`复制 ${location.agent} 目录路径`" @click="copySkillPath(location.path)" /></template></UiTooltip>
-            </div>
+              </button>
+              <UiTooltip text="复制目录路径" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" class="location-path-button" icon="mdi-folder-marker-outline" variant="text" size="x-small" :disabled="!location.path" :aria-label="`复制 ${sourceName(location.agent)} 目录路径`" @click="copySkillPath(location.path)" /></template></UiTooltip>
           </div>
         </div>
       </div>
     </DisclosureSection>
 
-    <div class="grid grid-cols-12 gap-4 mb-4 rounded-card border border-border bg-card p-4">
+    <div class="panel-surface grid grid-cols-12 gap-4 mb-4 p-4">
       <div class="min-w-0 col-span-12 md:col-span-7"  >
         <UiInput v-model.trim="query" density="comfortable" variant="outlined" prepend-inner-icon="mdi-magnify" label="搜索名称、描述或来源" hide-details />
       </div>
@@ -74,7 +71,7 @@
               <div class="text-xs text-muted-foreground skill-description">{{ skill.description || '未读取到说明' }}</div>
             </td>
             <td>
-              <UiBadge size="small" label :color="skill.readOnly ? 'info' : undefined" :class="['source-chip', { 'source-chip--active': agentFilter === skill.locationKey }]" title="点击筛选此来源" @click="filterByAgent(skill.locationKey)">{{ skill.agent }}</UiBadge>
+              <UiBadge size="small" label :color="skill.readOnly ? 'info' : undefined" :class="['source-chip', { 'source-chip--active': agentFilter === skill.locationKey }]" title="点击筛选此来源" @click="filterByAgent(skill.locationKey)">{{ sourceName(skill.agent) }}</UiBadge>
               <div v-if="skill.readOnly" class="text-xs text-muted-foreground mt-1">只读来源</div>
             </td>
             <td class="status-cell"><UiBadge size="small" :color="skill.valid ? 'success' : 'warning'" label>{{ skill.valid ? '有效' : skill.issue || '需检查' }}</UiBadge></td>
@@ -98,12 +95,12 @@
               </div>
               <span v-else class="text-xs text-muted-foreground">—</span>
             </td>
-            <td><div class="skill-path-cell"><code class="skill-path" :title="skill.path">{{ skill.path }}</code><UiTooltip text="复制路径" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-content-copy" variant="text" size="small" :aria-label="`复制 ${skill.name} 的路径`" @click="copySkillPath(skill.path)" /></template></UiTooltip></div></td>
+            <td><UiTooltip text="复制路径" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-folder-marker-outline" variant="text" size="small" :aria-label="`复制 ${skill.name} 的路径`" @click="copySkillPath(skill.path)" /></template></UiTooltip></td>
             <td class="text-right whitespace-nowrap">
-              <UiTooltip text="查看与翻译" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-text-box-search-outline" variant="text" size="small" @click="openSkill(skill)" /></template></UiTooltip>
-              <UiTooltip text="一键翻译名称和内容" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-translate" color="primary" variant="text" size="small" :loading="translationStates[skillStateKey(skill)]?.translating" :disabled="loading || translationStates[skillStateKey(skill)]?.translating" :aria-label="`一键翻译 ${skill.name} 的名称和内容`" @click="translateSkillFromList(skill)" /></template></UiTooltip>
-              <UiTooltip :text="skill.readOnly ? '只读来源不可复制' : '复制到其他 Agent'" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-content-copy" :disabled="skill.readOnly" variant="text" size="small" @click="openCopy(skill)" /></template></UiTooltip>
-              <UiTooltip :text="skill.readOnly ? '只读来源不可删除' : '删除'" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-delete" :disabled="skill.readOnly" color="error" variant="text" size="small" @click="confirmDelete(skill)" /></template></UiTooltip>
+              <UiTooltip text="查看与翻译" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-text-box-search-outline" variant="text" size="small" :disabled="loading" @click="openSkill(skill)" /></template></UiTooltip>
+              <UiTooltip text="一键翻译名称和内容" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-translate" color="primary" variant="text" size="small" :loading="translationStates[skillStateKey(skill)]?.translating" :disabled="loading || translationInProgress || batchRunning" :aria-label="`一键翻译 ${skill.name} 的名称和内容`" @click="translateSkillFromList(skill)" /></template></UiTooltip>
+              <UiTooltip :text="skill.readOnly ? '只读来源不可复制' : '复制到其他 Agent'" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-content-copy" :disabled="skill.readOnly || batchRunning || translationInProgress" variant="text" size="small" @click="openCopy(skill)" /></template></UiTooltip>
+              <UiTooltip :text="skill.readOnly ? '只读来源不可删除' : '删除'" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-delete" :disabled="skill.readOnly || batchRunning || translationInProgress" color="error" variant="text" size="small" @click="confirmDelete(skill)" /></template></UiTooltip>
             </td>
           </tr>
         </tbody>
@@ -163,25 +160,42 @@
       </template>
     </AppDialog>
 
-    <AppDialog v-model="detailDialog" :title="selectedDisplayName" :description="selectedSkill?.path" size="xl">
+    <AppDialog v-model="batchDialog" title="翻译全部 Skills" size="md" :busy="batchRunning">
+      <p class="mb-4 text-sm text-muted-foreground">将翻译全部 {{ skills.length }} 项（包含其他来源）。一次只处理一项，首轮结束后重试失败项一次；译文保存为备份。</p>
+      <UiSelect v-model="batchChannel" :items="translationChannelOptions" item-title="title" item-value="value" label="翻译协议 / 渠道" :disabled="batchRunning" />
+      <UiSelect v-model="batchModel" searchable creatable :items="batchModelOptions" item-title="title" item-value="value" label="翻译模型" :disabled="batchRunning" :loading="batchConfigLoading" :error-messages="batchConfigError || undefined" />
+      <p v-if="batchRunning" role="status" class="mt-4 text-sm">{{ batchProgress }}</p>
+      <template #actions><UiButton variant="text" :disabled="batchRunning" @click="batchDialog = false">取消</UiButton><UiButton color="primary" :disabled="!batchChannel || !batchModel.trim() || batchConfigLoading || translationInProgress" :loading="batchRunning" @click="translateAllSkills">开始翻译</UiButton></template>
+    </AppDialog>
+    <AppDialog v-model="batchResultDialog" title="批量翻译完成" size="md">
+      <p class="text-sm">成功 {{ batchResult.succeeded }} 条，失败 {{ batchResult.failures.length }} 条。</p>
+      <p v-if="batchResult.failures.length" class="mt-2 text-xs text-muted-foreground">失败项最多重试一次，不再自动重试；已落盘的操作不会重复提交。</p>
+      <ul class="mt-3 space-y-2 text-sm"><li v-for="failure in batchResult.failures" :key="failure.key" class="[overflow-wrap:anywhere]">{{ failure.name }}：{{ failure.error }}</li></ul>
+      <template #actions><UiButton color="primary" @click="batchResultDialog = false">知道了</UiButton></template>
+    </AppDialog>
+
+    <AppDialog v-model="detailDialog" :title="selectedDisplayName" :description="selectedSkill ? sourceName(selectedSkill.agent) : undefined" size="xl">
       <UiAlert v-if="detailError" type="error" variant="tonal" class="mb-4">{{ detailError }}</UiAlert>
       <UiAlert v-else type="info" variant="tonal" density="compact" class="mb-4">{{ translationRecommendation }}</UiAlert>
+      <div class="mb-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+        <UiInput v-model="skillNote" label="全局备注" variant="outlined" clearable hide-details="auto" @keyup.enter="saveSkillNote"><template #append-inner><UiButton icon="mdi-content-save" title="保存备注" aria-label="保存备注" variant="text" size="small" :loading="savingNote" :disabled="savingNote" @click="saveSkillNote" /></template></UiInput>
+        <UiSelect v-model="translationChannel" :items="translationChannelOptions" item-title="title" item-value="value" label="翻译协议 / 渠道" variant="outlined" :disabled="translationInProgress || batchRunning" />
+        <UiSelect v-model="translationModel" searchable creatable :items="translationModelOptions" item-title="title" item-value="value" label="翻译模型" variant="outlined" clearable :disabled="translationInProgress || batchRunning" :loading="translationModelsLoading" :error-messages="translationModelsError || undefined" />
+      </div>
       <div class="grid grid-cols-12 gap-4">
         <div class="min-w-0 col-span-12 lg:col-span-6"  ><UiTextarea :model-value="originalContent" label="原 Skill（只读）" variant="outlined" rows="19" readonly no-resize class="skill-editor" /></div>
-        <div class="min-w-0 col-span-12 lg:col-span-6"  ><UiTextarea v-model="translatedContent" label="中文翻译" variant="outlined" rows="19" no-resize class="skill-editor" /></div>
+        <div class="min-w-0 col-span-12 lg:col-span-6"  ><UiTextarea v-model="translatedContent" label="中文翻译" variant="outlined" rows="19" no-resize class="skill-editor" :readonly="translating || batchRunning" /></div>
       </div>
       <template #actions>
-        <div  class="grid grid-cols-12 gap-4 detail-controls">
-          <div class="min-w-0 col-span-12 md:col-span-6 lg:col-span-3"   ><UiInput v-model="skillNote" label="全局备注" variant="outlined" clearable hide-details="auto" @keyup.enter="saveSkillNote"><template #append-inner><UiTooltip text="保存备注" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-content-save" variant="text" size="small" :loading="savingNote" :disabled="savingNote" @click="saveSkillNote" /></template></UiTooltip></template></UiInput></div>
-          <div class="min-w-0 col-span-12 md:col-span-6 lg:col-span-3"   ><UiSelect v-model="translationChannel" :items="translationChannelOptions" item-title="title" item-value="value" label="翻译协议 / 渠道" variant="outlined" /></div>
-          <div class="min-w-0 col-span-12 md:col-span-6 lg:col-span-4"   ><UiSelect v-model="translationModel" searchable creatable :items="translationModelOptions" item-title="title" item-value="value" label="翻译模型" variant="outlined" clearable :loading="translationModelsLoading" :error-messages="translationModelsError || undefined" /></div>
-          <div class="min-w-0 col-span-12 md:col-span-6 lg:col-span-2"   ><div class="detail-actions"><UiTooltip :text="selectedSkill?.readOnly ? '只读来源不可复制' : '复制到其他 Agent'" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-content-copy" :disabled="!selectedSkill || selectedSkill.readOnly" variant="tonal" @click="openSelectedCopy" /></template></UiTooltip><UiTooltip text="翻译并自动保存" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-translate" color="primary" :loading="translating" @click="translateSkill" /></template></UiTooltip><UiTooltip text="保存当前译文" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-content-save" :disabled="!translatedContent || savingBackup" :loading="savingBackup" @click="() => saveBackup()" /></template></UiTooltip></div></div>
-        </div>
+        <UiButton v-if="selectedSkill" icon="mdi-folder-marker-outline" title="复制路径" aria-label="复制 Skill 路径" variant="text" @click="copySkillPath(selectedSkill.path)" />
+        <UiButton prepend-icon="mdi-content-copy" :disabled="!selectedSkill || selectedSkill.readOnly || batchRunning || translationInProgress" variant="tonal" @click="openSelectedCopy">复制到 Agent</UiButton>
+        <UiButton prepend-icon="mdi-translate" color="primary" :loading="translating" :disabled="translationInProgress || batchRunning || !originalContent || translationModelsLoading" @click="translateSkill">翻译并保存</UiButton>
+        <UiButton prepend-icon="mdi-content-save" :disabled="!translatedContent || savingBackup || translating || batchRunning" :loading="savingBackup" @click="() => saveBackup()">保存译文</UiButton>
       </template>
     </AppDialog>
 
     <AppDialog v-model="copyDialog" title="复制 Skill 到其他 Agent" size="md" :busy="copying">
-      <div class="text-sm mb-4">来源：<strong>{{ selectedSkill?.name }}</strong>（{{ selectedSkill?.agent }}）</div>
+      <div class="text-sm mb-4">来源：<strong>{{ selectedSkill?.name }}</strong>（{{ selectedSkill ? sourceName(selectedSkill.agent) : '' }}）</div>
       <UiSelect v-model="copyTargets" :items="copyTargetLocations" item-title="agent" item-value="key" label="复制目标" variant="outlined" multiple chips :disabled="copying" />
       <UiAlert type="warning" density="compact" variant="tonal">将复制 SKILL.md 以及 references、scripts 等附属文件。同名 Skill 会覆盖目标用户目录；内置和插件来源不可作为复制源或目标。</UiAlert>
       <template #actions>
@@ -221,12 +235,14 @@ import AppDialog from '@/shared/components/overlay/AppDialog.vue'
 import ConfirmDialog from '@/shared/components/overlay/ConfirmDialog.vue'
 import EmptyState from '@/shared/components/feedback/EmptyState.vue'
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { api, fetchUpstreamModels, channelApiByType, type ApiTab, type AvailabilityCounts, type Channel, type ManagedSkill, type ModelAvailabilityRow, type RemoteSkillPreview, type SkillLocation, type SkillSearchResult } from '@/api'
+import { api, ApiError, fetchUpstreamModels, channelApiByType, type ApiTab, type AvailabilityCounts, type Channel, type ManagedSkill, type ModelAvailabilityRow, type RemoteSkillPreview, type SkillLocation, type SkillSearchResult } from '@/api'
 import { CONVERSATION_PROTOCOLS, getModelAvailability } from '@/features/channels'
 import { useAuthStore } from '@/shared/stores/auth'
 import { useToast } from '@/shared/composables/useToast'
 import { useClipboard } from '@/shared/composables/useClipboard'
+import ExtensionsGitDialog from '@/features/extensions/components/ExtensionsGitDialog.vue'
 import { readSSEStream } from '@/shared/utils/sse'
+import { batchRunning, runTranslationBatch, TranslationFailure, translationInProgress } from '@/features/extensions/skills/composables/translationBatch'
 
 const { showToast } = useToast()
 const { copyText } = useClipboard()
@@ -256,7 +272,15 @@ const remoteInspectingId = ref('')
 const deleting = ref(false)
 const error = ref('')
 const query = ref('')
-const agentFilter = ref('')
+const agentFilter = ref('project')
+const gitDialog = ref(false)
+const batchDialog = ref(false)
+const batchProgress = ref('')
+const batchChannel = ref<string | null>(null)
+const batchModel = ref('')
+const batchConfigSkill = ref<ManagedSkill | null>(null)
+const batchResultDialog = ref(false)
+const batchResult = ref<{ succeeded: number; failures: Array<{ key: string; name: string; error: string }> }>({ succeeded: 0, failures: [] })
 const locations = ref<SkillLocation[]>([])
 const skills = ref<ManagedSkill[]>([])
 const manifest = ref<Record<string, string[]>>({})
@@ -386,8 +410,9 @@ const translationModelOptions = computed(() => activeTranslationState.value.mode
 const translationModelsLoading = computed(() => activeTranslationState.value.modelsLoading)
 const translationModelsError = computed(() => activeTranslationState.value.modelsError)
 
-const agentOptions = computed(() => [{ title: '全部来源', value: '' }, ...locations.value.map(location => ({ title: location.agent, value: location.key }))])
-const writableLocations = computed(() => locations.value.filter(location => !location.readOnly))
+const sourceName = (name: string) => name.replace(/\s*用户目录$/, '').replace(/^项目 Skills 目录$/, '项目 Skills')
+const agentOptions = computed(() => [{ title: '全部来源', value: '' }, ...locations.value.map(location => ({ title: sourceName(location.agent), value: location.key }))])
+const writableLocations = computed(() => locations.value.filter(location => !location.readOnly).map(location => ({ ...location, agent: sourceName(location.agent) })))
 const copyTargetLocations = computed(() => writableLocations.value.filter(location => location.key !== selectedSkill.value?.locationKey))
 const filteredSkills = computed(() => {
   const keyword = query.value.toLowerCase()
@@ -659,6 +684,7 @@ const importSelected = async () => {
 const openSkill = async (skill: ManagedSkill, translateImmediately = false) => {
   selectedSkill.value = skill
   const state = ensureTranslationState(skill)
+  if (state.translating || batchRunning.value) { detailDialog.value = true; return }
   if (!state.channel || !translationChannelByKey(state.channel)) {
     const recommendation = recommendedTranslation.value
     const fallbackChannel = translationChannels.value.find(item => item.channel.defaultModel?.trim()) ?? translationChannels.value[0]
@@ -695,7 +721,7 @@ const openSkill = async (skill: ManagedSkill, translateImmediately = false) => {
     state.error = loadError instanceof Error ? loadError.message : '读取 Skill 失败'
     return
   }
-  if (translateImmediately) {
+  if (translateImmediately && !batchRunning.value && !translationInProgress.value) {
     if (!state.model) await modelLoad
     if (detailDialog.value && selectedSkillKey.value === skillStateKey(skill)) await translateSkill()
   }
@@ -749,15 +775,17 @@ const normalizeTranslationModel = (value: unknown): string => {
   return ''
 }
 
-const translateSkill = async () => {
-  const skill = selectedSkill.value
-  if (!skill) return
+const performTranslation = async (skill: ManagedSkill, notify = true): Promise<void> => {
   const state = ensureTranslationState(skill)
-  if (!state.original || state.translating) return
+  if (!state.original || state.translating || translationInProgress.value) {
+    state.error = !state.original ? 'Skill 内容为空，无法翻译' : '已有翻译任务正在执行'
+    throw new Error(state.error)
+  }
   const original = state.original
   const requestId = ++state.translationRequestId
   const accessKey = useAuthStore().apiKey
-  if (!accessKey) { state.error = '未找到管理界面访问密钥'; return }
+  if (!accessKey) { state.error = '未找到管理界面访问密钥'; throw new Error(state.error) }
+  translationInProgress.value = true
   state.translating = true
   state.error = ''
   try {
@@ -807,22 +835,102 @@ const translateSkill = async () => {
       }
       const translated = await readTranslationStream(response, value => { if (state.translationRequestId === requestId) state.translated = value }, protocol)
       if (!translated.trim()) throw new Error(`翻译渠道未返回可用文本内容，请检查所选 ${TRANSLATION_PROTOCOL_LABELS[protocol]} 模型是否支持文本生成`)
-      if (state.translationRequestId !== requestId) return
+      if (state.translationRequestId !== requestId) throw new Error('原 Skill 已变更，本次翻译未保存')
       state.translated = translated.trim()
     } finally {
       window.clearTimeout(timeout)
     }
-    await saveBackup({ automatic: true, notify: true, skill, state, original })
+    await saveBackup({ automatic: true, notify, skill, state, original })
   } catch (translationError) {
-    if (state.translationRequestId !== requestId) return
+    if (state.translationRequestId !== requestId) throw new Error('原 Skill 已变更，本次翻译未保存')
     state.error = translationError instanceof DOMException && translationError.name === 'AbortError'
       ? '翻译超过 10 分钟未完成，已停止请求；已接收的译文仍保留在右侧，可手动保存'
       : translationError instanceof Error ? translationError.message : '翻译失败'
+    if (notify) showToast(`${skill.name}：${state.error}`, 'error')
+    throw new TranslationFailure(state.error, translationError)
   }
-  finally { if (state.translationRequestId === requestId) state.translating = false }
+  finally {
+    translationInProgress.value = false
+    if (state.translationRequestId === requestId) state.translating = false
+  }
 }
 
-const translateSkillFromList = (skill: ManagedSkill) => openSkill(skill, true)
+const translateSkill = async () => {
+  const skill = selectedSkill.value
+  if (!skill || batchRunning.value || translationInProgress.value) return
+  try { await performTranslation(skill); return true }
+  catch (error) {
+    ensureTranslationState(skill).error = error instanceof Error ? error.message : String(error)
+    return false
+  }
+}
+const translateSkillFromList = (skill: ManagedSkill) => {
+  if (batchRunning.value || translationInProgress.value) return
+  return openSkill(skill, true)
+}
+
+const batchConfigState = computed(() => batchConfigSkill.value ? ensureTranslationState(batchConfigSkill.value) : inactiveTranslationState)
+const batchModelOptions = computed(() => batchConfigState.value.modelOptions)
+const batchConfigLoading = computed(() => batchConfigState.value.modelsLoading)
+const batchConfigError = computed(() => batchConfigState.value.modelsError)
+watch(batchChannel, async channel => {
+  const skill = batchConfigSkill.value
+  if (!skill || !channel || batchRunning.value) return
+  batchModel.value = ''
+  const state = ensureTranslationState(skill)
+  state.channel = channel
+  state.model = recommendedTranslation.value?.target.key === channel ? recommendedTranslation.value.row.model : ''
+  await loadTranslationModels(channel, skill)
+  if (batchChannel.value === channel) batchModel.value = state.model
+})
+
+const openBatchTranslation = () => {
+  if (translationInProgress.value || batchRunning.value || !skills.value.length) return
+  batchConfigSkill.value = skills.value[0]
+  const recommendation = recommendedTranslation.value
+  batchChannel.value = recommendation?.target.key ?? translationChannels.value.find(item => item.channel.defaultModel?.trim())?.key ?? translationChannels.value[0]?.key ?? null
+  batchDialog.value = true
+}
+
+const translateAllSkills = async () => {
+  if (batchRunning.value || translationInProgress.value || !batchChannel.value || !batchModel.value.trim()) return
+  const targets = [...skills.value]
+  const channel = batchChannel.value
+  const model = batchModel.value.trim()
+  batchRunning.value = true
+  const attempt = async (skill: ManagedSkill) => {
+    const state = ensureTranslationState(skill)
+    try {
+      const content = await api.getSkillContent(skill.locationKey, skill.name)
+      state.original = content.content
+      state.channel = channel
+      state.model = model
+      await performTranslation(skill, false)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      state.error = message
+      throw error
+    }
+  }
+  try {
+    const result = await runTranslationBatch(targets, attempt, (skill, index, total, retry) => {
+      batchProgress.value = `${retry ? '重试' : '首轮'} ${index}/${total}：${skill.name}`
+    }, error => {
+      // 配置已落盘的错误只报告结果，不能自动重试写入。
+      let cause: unknown = error
+      while (cause instanceof Error) {
+        if (cause instanceof ApiError && cause.committed) return false
+        cause = cause instanceof TranslationFailure ? cause.cause : undefined
+      }
+      return true
+    })
+    batchResult.value = { succeeded: result.succeeded, failures: result.failures.map(({ target: skill, error }) => ({ key: skillStateKey(skill), name: `${skill.name}（${sourceName(skill.agent)}）`, error: error instanceof Error ? error.message : String(error) })) }
+    batchDialog.value = false
+    batchResultDialog.value = true
+    const details = batchResult.value.failures.map(item => `${item.name}：${item.error}`).join('\n')
+    showToast(`批量翻译完成：成功 ${result.succeeded} 条，失败 ${result.failures.length} 条`, result.failures.length ? 'warning' : 'success', { details, source: '批量翻译' })
+  } finally { batchRunning.value = false }
+}
 
 const readTranslationStream = async (response: Response, onUpdate: (translated: string) => void, protocol: TranslationApiTab): Promise<string> => {
   if (!response.body) throw new Error('翻译渠道未建立可读取的流式响应')
@@ -911,7 +1019,7 @@ const saveBackup = async ({ automatic = false, notify = true, skill = selectedSk
     if (notify) showToast(automatic ? '翻译完成，已自动保存' : `翻译备份已保存到 ${result.path}`, 'success')
   } catch (saveError) {
     const message = saveError instanceof Error ? `译文已生成，但保存失败：${saveError.message}` : '译文已生成，但保存备份失败'
-    if (automatic) throw new Error(message)
+    if (automatic) throw new TranslationFailure(message, saveError)
     state.error = message
   } finally { state.saving = false }
 }
@@ -941,19 +1049,15 @@ onUnmounted(() => modelAvailabilityController?.abort())
 .skills-header-sticky {
   @apply sticky [top:var(--app-header-height,_0px)] [z-index:4] bg-background [box-shadow:0_-32px_0_0_var(--background)];
 }
-.locations-strip { @apply [border:1px_solid_color-mix(in_srgb,_var(--foreground)_12%,_transparent)] rounded-card [padding:14px_16px]; }
+.locations-strip { @apply min-w-0; }
 .locations-heading { @apply flex items-center justify-between gap-3 mb-3; }
-.location-grid { @apply grid gap-2 [grid-template-columns:repeat(auto-fill,_minmax(min(100%,_280px),_1fr))]; }
-.location-card { @apply min-w-0 rounded-control [border:1px_solid_color-mix(in_srgb,_var(--outline)_22%,_transparent)] [background:color-mix(in_srgb,_var(--foreground)_2.5%,_transparent)] [padding:10px_12px] transition-colors; }
+.location-grid { @apply grid gap-2 [grid-template-columns:repeat(auto-fill,_minmax(min(100%,_240px),_1fr))]; }
+.location-card { @apply relative min-w-0 min-h-12 rounded-control [border:1px_solid_color-mix(in_srgb,_var(--outline)_22%,_transparent)] [background:color-mix(in_srgb,_var(--foreground)_2.5%,_transparent)] transition-colors; }
 .location-card:hover { @apply [background:color-mix(in_srgb,_var(--primary)_5%,_transparent)]; }
 .location-card--active { @apply [border-color:var(--primary)] [background:color-mix(in_srgb,_var(--primary)_7%,_transparent)]; }
-.location-card-heading, .location-name, .location-path-row { @apply flex items-center min-w-0; }
-.location-card-heading { @apply justify-between gap-2 mb-2; }
-.location-name { @apply gap-2 [background:none] border-0 [color:inherit] cursor-pointer [font:inherit] font-medium p-0 text-left; }
-.location-name:hover { @apply text-primary; }
-.location-name span { @apply overflow-hidden text-ellipsis whitespace-nowrap; }
-.location-path-row { @apply gap-1; }
-.location-path { @apply min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-xs text-muted-foreground; }
+.location-filter { @apply absolute inset-0 flex items-center gap-2 rounded-control pl-3 pr-9 text-left text-xs; }
+.location-name { @apply min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-medium; }
+.location-path-button { @apply absolute right-1 top-1/2 z-1 -translate-y-1/2; }
 .location-chip, .source-chip { @apply cursor-pointer; }
 .location-chip:hover, .source-chip:hover { @apply [filter:brightness(0.96)]; }
 .location-chip--active, .source-chip--active { @apply [outline:2px_solid_var(--primary)] [outline-offset:1px]; }
@@ -961,12 +1065,12 @@ onUnmounted(() => modelAvailabilityController?.abort())
 .skills-table { @apply [max-height:min(72vh,_760px)] overflow-auto; }
 .skills-table :deep(table) { @apply min-w-285 [table-layout:fixed]; }
 .skills-table :deep(thead th) { @apply sticky top-0 [z-index:2] whitespace-nowrap [background:var(--surface)] [box-shadow:0_1px_0_color-mix(in_srgb,_var(--outline)_28%,_transparent)]; }
-.skill-column { width: 27%; }
+.skill-column { width: 30%; }
 .source-column { width: 13%; }
 .status-column { width: 9%; }
 .agents-column { width: 22%; }
-.path-column { width: 15%; }
-.actions-column { width: 14%; }
+.path-column { width: 5%; }
+.actions-column { width: 21%; }
 .status-cell { @apply whitespace-nowrap; }
 .skills-pagination { @apply flex items-center justify-between flex-wrap gap-3 [padding:12px_16px] [border-top:1px_solid_color-mix(in_srgb,_var(--outline)_20%,_transparent)]; }
 .skill-name-button { @apply [background:none] border-0 [color:inherit] cursor-pointer [font:inherit] p-0 text-left no-underline; }
@@ -974,26 +1078,15 @@ onUnmounted(() => modelAvailabilityController?.abort())
 .skill-description { @apply max-w-110 mt-1 line-clamp-2 whitespace-normal leading-5; }
 .agent-toggles-cell { @apply min-w-72; }
 .agent-toggle-chip { @apply min-h-8 cursor-pointer whitespace-nowrap; }
-.skill-path-cell { @apply items-center flex gap-0.5 min-w-0; }
-.skill-path { @apply block min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap [font-size:12px]; }
-.detail-card { @apply [height:min(900px,_calc(100vh_-_48px))] [max-height:calc(100vh_-_48px)] flex flex-col overflow-hidden; }
-.detail-header, .detail-footer { @apply [flex:0_0_auto]; }
-.detail-body { @apply [flex:1_1_auto] min-h-0 overflow-y-auto; }
-.detail-footer { @apply [background:var(--surface)]; }
-.detail-actions { @apply items-center flex gap-2 justify-end min-h-14; }
 .skill-editor :deep(textarea) { @apply overflow-y-auto; }
-.discover-card { @apply [max-height:calc(100vh_-_48px)] overflow-y-auto; }
 .remote-results-table { @apply [border:1px_solid_color-mix(in_srgb,_var(--foreground)_12%,_transparent)]; }
 .install-count-cell, .install-count { @apply min-w-21 whitespace-nowrap; }
 .source-link { @apply text-primary no-underline; }
 .source-link:hover { @apply underline; }
 .file-list { @apply max-h-55 overflow-y-auto [border:1px_solid_color-mix(in_srgb,_var(--foreground)_12%,_transparent)] rounded-badge p-3; }
 @media (max-width: 600px) {
-  .locations-strip { @apply [padding:12px]; }
   .locations-heading { @apply items-start; }
   .skill-description { @apply max-w-45; }
   .skills-table { @apply [max-height:70vh]; }
-  .detail-card { @apply [height:calc(100vh_-_24px)] [max-height:calc(100vh_-_24px)]; }
-  .detail-actions { @apply justify-start; }
 }
 </style>

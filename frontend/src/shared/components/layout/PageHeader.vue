@@ -15,7 +15,7 @@ defineProps<{ title: string; description?: string }>()
 <style scoped>
 @reference "@/styles/index.css";
 
-.page-header { @apply flex items-start justify-between gap-5 mb-6 min-w-0 py-1; }
+.page-header { @apply flex flex-wrap items-start justify-between gap-5 mb-6 min-w-0 py-1; }
 .page-header__copy { @apply min-w-0; }
 h1 { @apply m-0 text-foreground text-2xl leading-tight font-semibold tracking-tight; }
 p { @apply mt-2 max-w-[72ch] text-muted-foreground text-[13px] leading-6; }

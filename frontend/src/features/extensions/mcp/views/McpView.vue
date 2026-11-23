@@ -4,30 +4,32 @@
       <PageHeader title="MCP" description="集中管理工具服务器，按客户端启用与分发。开关自动保存，内容编辑后需点击保存。">
           <UiBadge v-if="dirty" color="warning" size="small" label>有未保存的修改</UiBadge>
           <UiButton variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="saving" @click="reloadList">刷新</UiButton>
+          <UiButton variant="text" prepend-icon="mdi-source-branch" :disabled="loading || saving || dirty || toggling !== ''" title="请先保存页面修改再同步仓库" @click="gitDialog = true">仓库同步</UiButton>
           <UiButton variant="tonal" prepend-icon="mdi-plus" :disabled="!editable" @click="openCreate">新增 MCP</UiButton>
           <UiButton color="primary" prepend-icon="mdi-content-save" :disabled="!editable || (!dirty && !needsSync)" :loading="saving" @click="saveList">{{ dirty ? '保存' : needsSync ? '重新分发' : '保存' }}</UiButton>
       </PageHeader>
     </div>
 
+    <ExtensionsGitDialog v-model="gitDialog" @updated="reloadList" />
     <UiAlert v-if="loadError" type="error" variant="tonal" class="mb-5" closable @click:close="loadError = ''">{{ loadError }}</UiAlert>
     <UiAlert v-if="saveError" type="error" variant="tonal" class="mb-5" closable @click:close="saveError = ''">{{ saveError }}</UiAlert>
     <UiAlert v-if="toggleNotice" type="success" variant="tonal" density="compact" class="mb-5" closable @click:close="toggleNotice = ''">{{ toggleNotice }}</UiAlert>
     <UiAlert v-if="saveResults" :type="saveResultsAllOk ? 'success' : 'warning'" variant="tonal" class="mb-5" closable @click:close="saveResults = null">
       <div class="font-medium mb-1">{{ saveResultsAllOk ? '列表已保存，各智能体配置已更新' : '列表已保存，但以下智能体配置文件未更新' }}</div>
-      <div v-for="result in saveResults" :key="result.key" class="text-sm">
+      <div v-for="result in saveResults" :key="result.key" class="flex flex-wrap items-center gap-1 text-sm">
         {{ result.name }}：{{ result.ok ? '已写入' : `未更新（${result.error || '后端未返回错误原因'}）` }}
-        <code v-if="result.path" class="ml-1">{{ result.path }}</code>
+        <UiTooltip v-if="result.path" :text="`复制 ${result.name} 配置路径`" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-folder-marker-outline" variant="text" size="x-small" :aria-label="`复制 ${result.name} 配置路径`" @click="copyText(result.path, '配置路径已复制')" /></template></UiTooltip>
       </div>
     </UiAlert>
 
-    <DisclosureSection v-if="agentStatuses.length" title="客户端配置位置" description="查看配置文件路径与读取状态；修改后客户端可能需要重新加载配置。" icon="mdi-folder-open" class="mb-5">
+    <DisclosureSection v-if="agentStatuses.length" title="客户端配置位置" description="查看读取状态，点击路径图标复制配置位置；修改后客户端可能需要重新加载配置。" icon="mdi-folder-open" class="mb-5">
       <div class="agent-grid">
         <div v-for="status in agentStatuses" :key="status.key">
-          <div class="flex items-center flex-wrap gap-2 mb-1">
+          <div class="flex items-center flex-wrap gap-2">
             <span class="font-medium">{{ status.name }}</span>
             <UiBadge size="x-small" label :color="status.error ? 'error' : status.exists ? 'success' : undefined">{{ agentStatusLabel(status) }}</UiBadge>
+            <UiTooltip :text="status.path ? `复制 ${status.name} 配置路径` : '未解析到配置路径'" location="top" theme="dark"><template #activator="{ props }"><UiButton v-bind="props" icon="mdi-folder-marker-outline" variant="text" size="x-small" :disabled="!status.path" :aria-label="`复制 ${status.name} 配置路径`" @click="copyText(status.path, '配置路径已复制')" /></template></UiTooltip>
           </div>
-          <code class="agent-path" :title="status.path">{{ status.path || '未解析到配置路径' }}</code>
           <div v-if="status.error" class="text-xs text-destructive mt-1">{{ status.error }}</div>
         </div>
       </div>
@@ -203,13 +205,16 @@ import DisclosureSection from '@/shared/components/layout/DisclosureSection.vue'
 import { computed, onMounted, reactive, ref } from 'vue'
 import ConfirmDialog from '@/shared/components/overlay/ConfirmDialog.vue'
 import AppDialog from '@/shared/components/overlay/AppDialog.vue'
+import ExtensionsGitDialog from '@/features/extensions/components/ExtensionsGitDialog.vue'
 import { useConfirm } from '@/shared/composables/useConfirm'
+import { useClipboard } from '@/shared/composables/useClipboard'
 import { api, ApiError } from '@/api'
 import { formatMcpCommand, parseMcpCommand } from '@/features/extensions/mcp/utils/mcpCommand'
 import type { AgentResult, AgentStatus, DetectedMcpServer, McpAdoption, McpAgentKey, McpConnection, McpServer, McpTransport } from '@/types'
 
 // 智能体顺序与展示名固定。保存时 agents 按此顺序输出，使草稿与服务端快照可直接比较。
 const { pending: pendingConfirm, askConfirm, acceptConfirm, cancelConfirm } = useConfirm()
+const { copyText } = useClipboard()
 const AGENT_OPTIONS: { key: McpAgentKey; label: string }[] = [
   { key: 'claude-code', label: 'Claude Code' },
   { key: 'codex', label: 'Codex' },
@@ -240,6 +245,7 @@ const emptyForm = (): McpFormState => ({
 })
 
 const loading = ref(false)
+const gitDialog = ref(false)
 const saving = ref(false)
 // 只有成功读取到 revision 后才允许编辑与保存；没有可信版本号时提交会绕过冲突检测。
 const loaded = ref(false)
@@ -845,8 +851,7 @@ onMounted(loadList)
 }
 .list-toolbar { @apply flex items-center flex-wrap gap-3 rounded-card border border-border bg-card p-4; }
 .mcp-search { @apply [flex:0_1_400px] min-w-55; }
-.agent-grid { @apply grid gap-4 [grid-template-columns:repeat(auto-fit,_minmax(min(100%,_260px),_1fr))]; }
-.agent-path { @apply block overflow-hidden text-ellipsis whitespace-nowrap; }
+.agent-grid { @apply grid gap-x-4 gap-y-2 [grid-template-columns:repeat(auto-fit,_minmax(min(100%,_220px),_1fr))]; }
 .mcp-list-card { @apply rounded-card overflow-hidden; }
 .server-column { @apply w-full; }
 .agent-column { @apply min-w-27 whitespace-nowrap; }

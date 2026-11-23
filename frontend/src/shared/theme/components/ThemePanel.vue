@@ -1,12 +1,8 @@
 <template>
   <section class="space-y-6" aria-label="外观设置">
-    <div
-      v-if="theme.error"
-      role="alert"
-      class="rounded-control border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
-    >
+    <UiAlert v-if="theme.error" type="error">
       {{ theme.error }}
-    </div>
+    </UiAlert>
     <div>
       <h3 class="mb-3 text-sm font-semibold">
         一键主题 <span v-if="theme.preset === 'custom'" class="text-muted-foreground">· 自定义</span>
@@ -76,6 +72,7 @@
   </section>
 </template>
 <script setup lang="ts">
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
 import { THEME_OPTIONS, THEME_PRESETS, useTheme, type ThemeSettings } from '@/shared/theme'
 import UiSwitch from '@/shared/ui/check/Switch.vue'
 import UiIcon from '@/shared/ui/icon/Icon.vue'

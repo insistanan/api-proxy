@@ -43,14 +43,13 @@
       </div>
     </section>
 
-    <div v-if="error" class="flex items-start gap-2.5 rounded-control border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive" role="alert">
-      <UiIcon icon="mdi-alert-circle-outline" :size="18" class="mt-0.5 shrink-0" />
+    <UiAlert v-if="error" type="error">
       <details v-if="error.length > 160" class="min-w-0 flex-1">
         <summary class="cursor-pointer break-words leading-6">{{ conciseError(error) }}</summary>
         <p class="mt-2 whitespace-pre-wrap break-words text-xs leading-6">{{ error }}</p>
       </details>
       <p v-else class="min-w-0 break-words leading-6">{{ error }}</p>
-    </div>
+    </UiAlert>
 
     <section v-if="analysis" class="space-y-3" aria-label="候选排名">
       <div class="flex flex-wrap items-center justify-between gap-2">
@@ -129,6 +128,7 @@ import { formatDateTime } from '@/shared/utils/datetime'
 import UiButton from '@/shared/ui/button/Button.vue'
 import UiSelect from '@/shared/ui/select/Select.vue'
 import UiIcon from '@/shared/ui/icon/Icon.vue'
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
 
 const props = defineProps<{ channel: Channel; model: string | null; effort: string }>()
 const emit = defineEmits<{ busy: [value: boolean]; background: []; target: [target: FingerprintTask['target']] }>()

@@ -10,16 +10,17 @@
 @custom-variant dark (&:where([data-theme-mode='dark'], [data-theme-mode='dark'] *));
 @utility panel-surface {
   @apply rounded-card border-(length:--surface-border-width) border-border bg-card text-card-foreground shadow-card backdrop-blur-(--surface-blur);
+  backdrop-filter: blur(var(--surface-blur)) saturate(var(--surface-saturation));
 }
 
 @utility dialog-surface {
   background-color: var(--dialog-surface);
-  backdrop-filter: blur(var(--frost-dialog-blur));
+  backdrop-filter: blur(var(--frost-dialog-blur)) saturate(var(--surface-saturation));
 }
 
 @utility menu-surface {
   background-color: var(--menu-surface);
-  backdrop-filter: blur(min(var(--frost-dialog-blur), 8px));
+  backdrop-filter: blur(min(var(--frost-dialog-blur), 12px)) saturate(var(--surface-saturation));
 }
 
 @utility field-surface {

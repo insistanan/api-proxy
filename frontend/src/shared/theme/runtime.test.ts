@@ -84,7 +84,7 @@ describe('主题偏好', () => {
       throw new Error('存储不可用')
     })
     theme.applyPreset('glass')
-    expect(document.documentElement.dataset).toMatchObject({ surface: 'glass', opacity: '92' })
+    expect(document.documentElement.dataset).toMatchObject({ surface: 'glass', opacity: '85' })
     expect(theme.error).toContain('存储不可用')
   })
 })

@@ -2,6 +2,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { createSSRApp, ref, type Ref, type SetupContext } from 'vue'
 import { renderToString } from '@vue/server-renderer'
+import { createPinia, setActivePinia } from 'pinia'
 import { api, ApiError, type ApiTab, type OpenCodeConfig, type PiAgentProvider, type PiAgentStatus } from '@/api'
 import { useToast } from '@/shared/composables/useToast'
 import OpenCodeView from '@/features/clients/views/OpenCodeView.vue'
@@ -35,6 +36,7 @@ const openConfig = (revision = 'r1', apiKeyPresent = false): OpenCodeConfig => (
   providers: [{ id: 'local', name: 'local', protocol: 'chat', npm: '@ai-sdk/openai-compatible', baseUrl: '', apiKeyMasked: apiKeyPresent ? 'masked' : '', apiKeyPresent, headers: {}, options: {}, models: [] }]
 })
 beforeEach(() => {
+  setActivePinia(createPinia())
   vi.spyOn(api, 'getPiAgentStatus').mockResolvedValue({ configDir: '/test', exists: true, writable: true, files: {} as PiAgentStatus['files'] })
   vi.spyOn(api, 'getPiAgentModelSettings').mockResolvedValue({ revision: 's1', settings: { defaultProvider: '', defaultModel: '', defaultThinkingLevel: '', enabledModels: [] } })
 })

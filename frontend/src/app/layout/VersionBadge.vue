@@ -45,8 +45,10 @@ import { storeToRefs } from 'pinia'
 import { fetchHealth } from '@/shared/services/health'
 import { versionService } from '@/shared/services/version'
 import { useSystemStore } from '@/shared/stores/system'
+import { useNotificationStore } from '@/shared/stores/notifications'
 
 const systemStore = useSystemStore()
+const notifications = useNotificationStore()
 const { versionInfo } = storeToRefs(systemStore)
 
 const statusIcon = computed(() => {
@@ -79,6 +81,7 @@ const checkVersion = async () => {
     systemStore.setVersionInfo(await versionService.checkForUpdates())
   } catch (error) {
     console.warn('Version check failed:', error)
+    notifications.addMessage(`版本检查失败：${error instanceof Error ? error.message : String(error)}`, 'error', { source: '版本更新', key: 'version-check-error' })
     systemStore.setVersionInfo({ ...versionInfo.value, status: 'error' })
   }
 }
@@ -103,6 +106,7 @@ const maybeShowBubble = () => {
   if (Date.now() - lastShownAt < BUBBLE_REMIND_INTERVAL_MS) return
   lastShownAt = Date.now()
   bubbleVisible.value = true
+  notifications.addMessage(`发现新版本：${versionInfo.value.currentVersion} → ${versionInfo.value.latestVersion}`, 'info', { source: '版本更新', key: `version:${versionInfo.value.latestVersion}`, link: versionInfo.value.releaseUrl ?? undefined })
   clearTimeout(hideTimer)
   hideTimer = setTimeout(hideBubble, BUBBLE_VISIBLE_MS)
 }
@@ -129,7 +133,7 @@ onBeforeUnmount(() => {
 .version-clickable:hover { @apply border-primary; }
 .version-update { @apply [border-color:color-mix(in_srgb,_var(--warning)_50%,_transparent)]; }
 .version-latest { @apply text-warning; }
-.update-bubble { @apply absolute [top:calc(100%_+_12px)] right-0 [z-index:1200] w-55 p-4 rounded-card [background:var(--surface)] [border:1px_solid_color-mix(in_srgb,_var(--outline)_30%,_transparent)] shadow-popover; }
+.update-bubble { @apply menu-surface fixed [top:calc(var(--app-header-height,_56px)_+_12px)] right-4 [z-index:1200] w-55 p-4 rounded-card [border:1px_solid_color-mix(in_srgb,_var(--outline)_30%,_transparent)] shadow-popover; }
 .update-bubble__close { @apply absolute top-1 right-1 p-1.5 rounded-badge; }
 .update-bubble__close:hover { @apply [background:color-mix(in_srgb,_var(--foreground)_6%,_transparent)]; }
 .update-bubble__row { @apply flex items-center gap-1.5 [font-size:0.8125rem] mb-2.5; }

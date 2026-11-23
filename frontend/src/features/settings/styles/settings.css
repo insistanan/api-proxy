@@ -10,7 +10,7 @@
 }
 
 .settings-nav {
-  @apply sticky [top:calc(var(--app-header-height)_+_24px)] rounded-card border border-border bg-card p-2;
+  @apply panel-surface sticky [top:calc(var(--app-header-height)_+_24px)] p-2;
 }
 
 .settings-content {

@@ -79,9 +79,10 @@
 import UiButton from '@/shared/ui/button/Button.vue'
 import UiProgress from '@/shared/ui/feedback/Progress.vue'
 import UiIcon from '@/shared/ui/icon/Icon.vue'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { api, type GatePending } from '@/api'
 import { useAuthStore } from '@/shared/stores/auth'
+import { useNotificationStore } from '@/shared/stores/notifications'
 
 // 危险命令 AI 闸门的全局通知：轮询待确认列表，新命中时声音 + 气泡 + 浏览器系统通知。
 // 缩短空闲轮询间隔，让短确认窗口尽早展示；每次只保留一个在途轮询。
@@ -92,11 +93,15 @@ const POLL_IDLE_MS = 1000
 const knownIds = new Set<number>()
 
 const authStore = useAuthStore()
+const notifications = useNotificationStore()
 const pendingItems = ref<GatePending[]>([])
 const decidingId = ref<number | null>(null)
 const now = ref(Date.now())
 const pollError = ref('')
 const decisionError = ref('')
+watch([pollError, decisionError], errors => {
+  errors.filter(Boolean).forEach(message => notifications.addMessage(message, 'error', { source: '命令审核', key: `gate-error:${message}` }))
+})
 let stopped = false
 let pollInFlight = false
 let pendingRevision = 0
@@ -128,6 +133,9 @@ const poll = async () => {
     if (!Array.isArray(response.pending)) throw new Error('命令审核通知返回格式无效')
     const fresh = response.pending
     const arrivals = fresh.filter(item => !knownIds.has(item.id))
+    for (const item of arrivals) {
+      notifications.addMessage(`${item.aiVerdict === 'allow' ? '危险命令已放行（可否决）' : '危险命令待确认'}\n${item.command}${item.aiReason ? `\nAI：${item.aiReason}` : ''}`, item.aiVerdict === 'allow' ? 'warning' : 'error', { source: '命令审核', key: `gate:${item.id}` })
+    }
     knownIds.clear()
     for (const item of fresh) knownIds.add(item.id)
     if (arrivals.length > 0) {
@@ -169,6 +177,7 @@ const decide = async (item: GatePending, decision: 'allow' | 'block') => {
   try {
     await api.decideGatePending(item.id, decision, controller.signal)
     if (stopped) return
+    notifications.addMessage(`${decision === 'allow' ? '已放行' : '已拦截'}命令：${item.command}`, 'success', { source: '命令审核', key: `gate-decision:${item.id}:${decision}` })
     pendingItems.value = pendingItems.value.filter(pending => pending.id !== item.id)
     knownIds.delete(item.id)
   } catch (err) {
@@ -276,11 +285,11 @@ onBeforeUnmount(() => {
 @reference "@/styles/index.css";
 
 .gate-notif-stack {
-  @apply fixed top-18 right-5 [z-index:2400] flex flex-col gap-3 [width:min(420px,_calc(100vw_-_40px))] pointer-events-none [max-height:calc(100vh_-_88px)] overflow-y-auto;
+  @apply fixed [top:calc(var(--app-header-height,_56px)_+_12px)] right-5 [z-index:2400] flex flex-col gap-3 [width:min(420px,_calc(100vw_-_40px))] pointer-events-none [max-height:calc(100dvh_-_var(--app-header-height,_56px)_-_24px)] overflow-y-auto;
 }
 
 .gate-notif {
-  @apply pointer-events-auto rounded-control [padding:14px_16px_12px] [border:1px_solid_var(--border)] [background:var(--surface)] shadow-popover;
+  @apply dialog-surface pointer-events-auto rounded-control [padding:14px_16px_12px] [border:1px_solid_var(--border)] shadow-popover;
 }
 
 /* AI 判危险（等待放行）用 error 色调；AI 判安全（已放行可否决）用 warning 色调 */
@@ -333,7 +342,7 @@ onBeforeUnmount(() => {
 
 @media (max-width: 600px) {
   .gate-notif-stack {
-    @apply top-16 right-2 left-2 w-auto;
+    @apply right-2 left-2 w-auto;
   }
 }
 </style>

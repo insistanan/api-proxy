@@ -95,7 +95,7 @@ watch(() => props.modelValue, async (open, _previous, onCleanup) => {
 
 .provider-layer { @apply absolute [inset:0] [z-index:5] overflow-hidden [border-radius:inherit]; }
 .provider-scrim { @apply absolute [inset:0] [background:rgba(0,_0,_0,_0.24)]; }
-.provider-panel { @apply absolute [inset:0_0_0_auto] [width:min(440px,_100%)] flex flex-col [background:var(--surface)] [border-left:1px_solid_color-mix(in_srgb,_var(--outline)_25%,_transparent)] shadow-popover [outline:none]; }
+.provider-panel { @apply dialog-surface absolute [inset:0_0_0_auto] [width:min(440px,_100%)] flex flex-col [border-left:1px_solid_color-mix(in_srgb,_var(--outline)_25%,_transparent)] shadow-popover [outline:none]; }
 .provider-heading { @apply flex items-center justify-between gap-3 [padding:22px_20px_16px]; }
 .provider-heading h3 { @apply [font-size:1rem]; }
 .provider-heading p, footer { @apply [font-size:0.75rem] [line-height:1.6] text-muted-foreground; }

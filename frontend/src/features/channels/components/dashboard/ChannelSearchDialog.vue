@@ -27,7 +27,7 @@
       <UiAlert v-if="loadErrors.length" type="warning" variant="tonal">
         <p v-for="failure in loadErrors" :key="failure.protocol" class="text-xs leading-6">{{ failure.protocol }}：{{ failure.message }}</p>
       </UiAlert>
-      <div v-if="navigationError" class="text-sm text-destructive" role="alert">{{ navigationError }}</div>
+      <UiAlert v-if="navigationError" type="error">{{ navigationError }}</UiAlert>
       <div :id="resultsId" ref="resultsRoot" class="search-results" role="listbox" aria-label="渠道搜索结果" :aria-busy="loading">
         <button
           v-for="(result, index) in visibleResults"

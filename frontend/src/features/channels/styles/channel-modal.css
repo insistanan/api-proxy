@@ -36,11 +36,11 @@
 }
 
 .dialog-card-shell {
-  @apply relative flex flex-col [max-height:calc(100dvh_-_48px)] overflow-hidden;
+  @apply relative flex min-h-0 flex-col [max-height:var(--dialog-max-height)] overflow-hidden;
 }
 
 .dialog-card-body {
-  @apply [flex:1_1_auto] min-h-0 p-6 overflow-y-auto;
+  @apply [flex:1_1_auto] min-h-0 p-6 overflow-y-auto overscroll-contain;
 }
 
 .dialog-card-actions {
@@ -52,8 +52,10 @@
 }
 
 .dialog-card-header {
-  @apply shrink-0 px-6 py-5 border-b border-border/70 whitespace-normal;
+  @apply shrink-0 flex-wrap px-6 py-5 border-b border-border/70 whitespace-normal;
 }
+.dialog-card-header > .grow { @apply min-w-0; }
+.header-actions { @apply ms-auto shrink-0 flex-wrap justify-end; }
 
 .dialog-card-subtitle { @apply mt-1 [line-height:1.5]; }
 
@@ -63,7 +65,7 @@
 .quick-form-note { @apply [margin:12px_0_0] text-muted-foreground [font-size:0.8125rem] [line-height:1.6]; }
 
 @media (max-width: 600px) {
-  .dialog-card-shell { @apply [max-height:calc(100dvh_-_32px)]; }
+  .dialog-card-shell { @apply [max-height:var(--dialog-max-height)]; }
   .dialog-card-header { @apply p-4 flex-wrap; }
   .dialog-header-avatar { @apply hidden; }
   .header-actions { @apply ms-auto; }

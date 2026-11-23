@@ -16,8 +16,8 @@
           cn(
             'ui-dialog dialog-surface fixed z-[200001] overflow-auto border border-border text-popover-foreground shadow-dialog outline-none [&>.ui-card]:border-0 [&>.ui-card]:bg-transparent [&>.ui-card]:shadow-none',
             drawer
-              ? 'inset-y-0 right-0 h-dvh w-[min(1360px,100vw)]'
-              : 'top-1/2 left-1/2 max-h-[90dvh] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 rounded-dialog',
+              ? 'ui-dialog--drawer inset-y-0 right-0 h-dvh w-[min(1360px,100vw)]'
+              : 'top-1/2 left-1/2 max-h-(--dialog-max-height) w-[calc(100%_-_2rem)] -translate-x-1/2 -translate-y-1/2 rounded-dialog',
             $attrs.class as string
           )
         "
@@ -69,3 +69,12 @@ function restoreFocus(event: Event) {
   previousFocus = null
 }
 </script>
+
+<style>
+.ui-dialog {
+  --dialog-max-height: min(90dvh, calc(100dvh - 2rem - env(safe-area-inset-top) - env(safe-area-inset-bottom)));
+}
+.ui-dialog:has(> .app-dialog, > .dialog-card-shell) { overflow: hidden; }
+.ui-dialog--drawer { --dialog-max-height: 100dvh; }
+.ui-dialog > .ui-card { max-height: var(--dialog-max-height); }
+</style>

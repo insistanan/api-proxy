@@ -56,11 +56,10 @@
         />
       </div>
 
-      <div v-if="modelLoadError" class="flex items-start gap-2 rounded-control border border-warning/20 bg-warning/5 px-3 py-2 text-xs text-warning" role="alert">
-        <UiIcon icon="mdi-alert-circle-outline" :size="16" class="mt-0.5 shrink-0" />
+      <UiAlert v-if="modelLoadError" type="warning">
         <span class="min-w-0 flex-1 break-words leading-6">{{ modelLoadError }}</span>
         <UiButton size="x-small" variant="text" color="warning" :loading="isLoadingModels" :disabled="isSending || fingerprintBusy" @click="loadModels">重新获取</UiButton>
-      </div>
+      </UiAlert>
 
       <ModelFingerprintPanel
         v-if="isOpen && testMode === 'fingerprint' && channel"
@@ -75,19 +74,15 @@
 
       <template v-else>
         <UiTextarea v-model="testMessage" label="测试消息" rows="3" :disabled="isSending" placeholder="输入测试消息…" />
-        <div class="flex justify-end">
-          <UiButton color="primary" prepend-icon="mdi-send" :disabled="!canSend" :loading="isSending" @click="sendTest">发送测试</UiButton>
-        </div>
         <section v-if="responseText || responseError || isSending" class="overflow-hidden rounded-card border border-border" aria-label="响应结果">
           <header class="flex items-center justify-between gap-3 border-b border-border bg-muted/40 px-4 py-3">
             <span class="flex items-center gap-2 text-sm font-medium"><UiIcon icon="mdi-message-reply-text" :size="17" />响应结果</span>
             <span class="text-xs" :class="responseError ? 'text-destructive' : isSending ? 'text-primary' : 'text-success'" role="status">{{ responseError ? '请求失败' : isSending ? '正在接收…' : '已完成' }}</span>
           </header>
           <div class="max-h-80 overflow-y-auto p-4">
-            <div v-if="responseError" class="flex items-start gap-2 rounded-control bg-destructive/5 p-3 text-sm text-destructive" role="alert">
-              <UiIcon icon="mdi-alert-circle-outline" :size="18" class="mt-0.5 shrink-0" />
+            <UiAlert v-if="responseError" type="error">
               <span class="min-w-0 whitespace-pre-wrap break-words">{{ responseError }}</span>
-            </div>
+            </UiAlert>
             <div v-else-if="isSending && !responseText" class="flex items-center justify-center gap-3 py-6 text-sm text-muted-foreground">
               <UiSpinner indeterminate size="20" />等待模型回答…
             </div>
@@ -96,11 +91,13 @@
         </section>
       </template>
     </div>
+    <template v-if="testMode === 'message'" #actions><UiButton color="primary" prepend-icon="mdi-send" :disabled="!canSend" :loading="isSending" @click="sendTest">发送测试</UiButton></template>
   </AppDialog>
 </template>
 <script setup lang="ts">
 import UiButton from '@/shared/ui/button/Button.vue'
 import UiSpinner from '@/shared/ui/feedback/Spinner.vue'
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
 import UiTextarea from '@/shared/ui/field/Textarea.vue'
 import UiIcon from '@/shared/ui/icon/Icon.vue'
 import UiSelect from '@/shared/ui/select/Select.vue'

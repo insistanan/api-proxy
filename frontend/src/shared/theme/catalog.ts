@@ -54,7 +54,7 @@ export const THEME_PRESETS: ThemePreset[] = [
   {
     id: 'glass',
     name: '流光玻璃',
-    settings: { palette: 'ink', surface: 'glass', radius: 'rounded', decoration: 'glow', opacity: 92 }
+    settings: { palette: 'ink', surface: 'glass', radius: 'rounded', decoration: 'glow', opacity: 85 }
   },
   {
     id: 'studio',

@@ -10,13 +10,13 @@
         <UiButton size="small" variant="text" prepend-icon="mdi-content-copy" :disabled="!!prepared.error" @click="copyDocument">复制 JSON / 原文</UiButton>
         <UiButton v-if="focusNode" size="small" variant="text" @click="resetRoot">返回根节点</UiButton>
       </div>
-      <div v-if="prepared.error" class="drawer-notice" role="alert">{{ prepared.error }}</div>
+      <UiAlert v-if="prepared.error" type="error" class="drawer-notice">{{ prepared.error }}</UiAlert>
       <div v-else-if="needsConsent" class="drawer-notice">
         <p>JSON 超过 64 KB，已暂停自动解析以避免卡顿。原文分段展示，复制仍包含完整内容。</p>
         <UiButton v-if="prepared.bytes <= JSON_MAX_PARSE_BYTES" variant="tonal" size="small" class="mt-2" @click="consented = true">按需解析 JSON</UiButton>
         <p v-else>超过 2 MB 的内容仅提供原文与复制；请使用本地工具处理。</p>
       </div>
-      <div v-if="parseResult.notice" class="drawer-notice" role="status">{{ parseResult.notice }}</div>
+      <UiAlert v-if="parseResult.notice" type="warning" class="drawer-notice">{{ parseResult.notice }}</UiAlert>
       <template v-if="parseResult.valid && mode === 'tree'">
         <div class="drawer-search"><UiInput v-model="searchInput" label="搜索键名或值" prepend-inner-icon="mdi-magnify" density="compact" variant="outlined" hide-details clearable /></div>
         <div class="drawer-toolbar">
@@ -41,6 +41,7 @@
 
 <script setup lang="ts">
 import UiButton from '@/shared/ui/button/Button.vue'
+import UiAlert from '@/shared/ui/feedback/Alert.vue'
 import UiToggleGroup from '@/shared/ui/button/ToggleGroup.vue'
 import UiInput from '@/shared/ui/field/Input.vue'
 import UiOverlay from '@/shared/ui/overlay/Overlay.vue'
@@ -131,7 +132,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown, true); 
 <style scoped>
 @reference "@/styles/index.css";
 
-.json-viewer-drawer { @apply h-full flex flex-col min-w-0 text-foreground [background:var(--surface)] [border-left:1px_solid_color-mix(in_srgb,_var(--foreground)_20%,_transparent)] shadow-popover; }
+.json-viewer-drawer { @apply dialog-surface h-full flex flex-col min-w-0 text-foreground [border-left:1px_solid_color-mix(in_srgb,_var(--foreground)_20%,_transparent)] shadow-popover; }
 .drawer-header { @apply flex items-start gap-1.5 [padding:18px_12px_12px_20px] [border-bottom:1px_solid_color-mix(in_srgb,_var(--foreground)_12%,_transparent)]; }
 .drawer-heading { @apply [flex:1] min-w-0; }
 h2 { @apply [font-size:16px] [overflow-wrap:anywhere]; }

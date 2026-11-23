@@ -24,6 +24,8 @@ import (
 
 const gitCommandTimeout = 90 * time.Second
 
+var errOriginRemoteMismatch = errors.New("仓库 origin 地址与设置中的仓库地址不一致，已停止操作且未修改 origin；请将设置改为当前仓库地址，或确认换仓库后手动修改 origin")
+
 // ExtensionsGitAPI 为项目 Skills / MCP 目录提供显式的 Git 状态查询、初始化、克隆、拉取与推送接口。
 // 与 PUT /api/settings 解耦：配置保存在离线时始终可用，Git 网络同步由用户显式触发。
 type ExtensionsGitAPI struct {
@@ -121,19 +123,23 @@ func (api *ExtensionsGitAPI) Init() gin.HandlerFunc {
 					return fmt.Errorf("初始化 Git 仓库失败: %w", err)
 				}
 			}
-			if err := ensureGitignore(skillsDir); err != nil {
-				return err
-			}
 			if repoURL != "" {
 				if err := ensureOriginRemote(ctx, skillsDir, repoURL); err != nil {
 					return err
 				}
 			}
+			if err := ensureGitignore(skillsDir); err != nil {
+				return err
+			}
 			status, err = api.inspectStatus(ctx)
 			return err
 		})
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			httpCode := http.StatusInternalServerError
+			if errors.Is(err, errOriginRemoteMismatch) {
+				httpCode = http.StatusConflict
+			}
+			c.JSON(httpCode, gin.H{"error": err.Error()})
 			return
 		}
 		c.JSON(http.StatusOK, extensionsGitSyncResponse{Status: status, Message: "Git 仓库已就绪"})
@@ -196,6 +202,7 @@ func (api *ExtensionsGitAPI) Clone() gin.HandlerFunc {
 			}
 			ctx, cancel := context.WithTimeout(c.Request.Context(), gitCommandTimeout)
 			defer cancel()
+			// 明确指定目标根目录，等价于在空目录内 clone 到 .，不追加远程仓库名。
 			if _, err := runGit(ctx, filepath.Dir(skillsDir), "clone", "--", repoURL, skillsDir); err != nil {
 				return fmt.Errorf("克隆远程仓库失败: %w", err)
 			}
@@ -242,6 +249,9 @@ func (api *ExtensionsGitAPI) Pull() gin.HandlerFunc {
 			}
 			if settings.SkillsRepoURL != "" {
 				if err := ensureOriginRemote(ctx, skillsDir, settings.SkillsRepoURL); err != nil {
+					if errors.Is(err, errOriginRemoteMismatch) {
+						httpCode = http.StatusConflict
+					}
 					return err
 				}
 			}
@@ -251,10 +261,10 @@ func (api *ExtensionsGitAPI) Pull() gin.HandlerFunc {
 			}
 			if strings.TrimSpace(porcelain) != "" {
 				httpCode = http.StatusConflict
-				return errors.New("Skills 目录存在未提交的本地变更，请先推送或提交后再拉取")
+				return errors.New("Skills 目录存在未提交的本地变更，请先在本地提交；若远程也有更新，合并历史后再推送")
 			}
 			if _, err := runGit(ctx, skillsDir, "pull", "--ff-only"); err != nil {
-				return fmt.Errorf("Git 拉取失败: %w", err)
+				return fmt.Errorf("Git 快进拉取失败，请检查上游分支；若历史已分叉，在仓库目录手动合并并解决冲突后再推送: %w", err)
 			}
 			status, err = api.inspectStatus(ctx)
 			return err
@@ -308,11 +318,11 @@ func (api *ExtensionsGitAPI) Push() gin.HandlerFunc {
 				httpCode = http.StatusBadRequest
 				return errors.New("当前 Skills 目录尚未初始化 Git 仓库")
 			}
-			if err := ensureGitignore(skillsDir); err != nil {
-				return err
-			}
 			if settings.SkillsRepoURL != "" {
 				if err := ensureOriginRemote(ctx, skillsDir, settings.SkillsRepoURL); err != nil {
+					if errors.Is(err, errOriginRemoteMismatch) {
+						httpCode = http.StatusConflict
+					}
 					return err
 				}
 			}
@@ -320,7 +330,46 @@ func (api *ExtensionsGitAPI) Push() gin.HandlerFunc {
 				httpCode = http.StatusBadRequest
 				return errors.New("未配置 Git 远程仓库地址，请先在设置中填写仓库地址")
 			}
+			unmerged, err := runGit(ctx, skillsDir, "diff", "--name-only", "--diff-filter=U")
+			if err != nil {
+				return fmt.Errorf("检查 Git 合并冲突失败: %w", err)
+			}
+			if strings.TrimSpace(unmerged) != "" {
+				httpCode = http.StatusConflict
+				return errors.New("仓库仍有未解决的合并冲突，请编辑冲突文件、移除冲突标记并逐个暂存，完成合并提交后再推送")
+			}
+			// 推送前获取真实远程状态，避免旧引用把远程领先误判为“无需推送”。
+			// 在自动暂存、提交之前拒绝远程领先，保留用户的工作区与提交边界。
+			if _, err := runGit(ctx, skillsDir, "fetch", "origin"); err != nil {
+				return fmt.Errorf("获取远程仓库状态失败: %w", err)
+			}
+			branch, err := currentGitBranch(ctx, skillsDir)
+			if err != nil {
+				return err
+			}
+			remoteRef := "refs/remotes/origin/" + branch
+			remoteBranch, err := runGit(ctx, skillsDir, "for-each-ref", "--format=%(refname)", remoteRef)
+			if err != nil {
+				return fmt.Errorf("检查远程分支失败: %w", err)
+			}
+			if strings.TrimSpace(remoteBranch) == remoteRef {
+				if _, err := runGit(ctx, skillsDir, "rev-parse", "--verify", "HEAD"); err != nil {
+					httpCode = http.StatusConflict
+					return errors.New("远程分支已有提交，本地尚无提交；请从远程克隆到空目录后导入本地 Skills")
+				}
+				behind, err := runGit(ctx, skillsDir, "rev-list", "--count", "HEAD.."+remoteRef)
+				if err != nil {
+					return fmt.Errorf("检查远程领先提交失败: %w", err)
+				}
+				if strings.TrimSpace(behind) != "0" {
+					httpCode = http.StatusConflict
+					return errors.New("远程分支有本地未包含的提交，本次未自动提交或推送。若本地无修改且历史未分叉，请先拉取；否则先本地提交，再手动合并远程分支、解决冲突后推送")
+				}
+			}
 
+			if err := ensureGitignore(skillsDir); err != nil {
+				return err
+			}
 			if _, err := runGit(ctx, skillsDir, "add", "-A"); err != nil {
 				return fmt.Errorf("暂存变更失败: %w", err)
 			}
@@ -339,13 +388,9 @@ func (api *ExtensionsGitAPI) Push() gin.HandlerFunc {
 				return errors.New("当前 Skills 目录为空，没有可推送的提交")
 			}
 
-			branch, err := currentGitBranch(ctx, skillsDir)
-			if err != nil {
-				return err
-			}
 			if _, upstreamErr := runGit(ctx, skillsDir, "rev-parse", "--abbrev-ref", "@{upstream}"); upstreamErr != nil {
 				if _, err := runGit(ctx, skillsDir, "push", "-u", "origin", branch); err != nil {
-					return fmt.Errorf("推送到远程仓库失败: %w", err)
+					return fmt.Errorf("推送到远程仓库失败，本地提交已保留；若远程刚有更新，请重新获取并合并后再推送: %w", err)
 				}
 			} else {
 				aheadStr, err := runGit(ctx, skillsDir, "rev-list", "--count", "@{upstream}..HEAD")
@@ -355,7 +400,7 @@ func (api *ExtensionsGitAPI) Push() gin.HandlerFunc {
 				if strings.TrimSpace(aheadStr) == "0" {
 					message = "已是最新，无需推送"
 				} else if _, err := runGit(ctx, skillsDir, "push"); err != nil {
-					return fmt.Errorf("推送到远程仓库失败: %w", err)
+					return fmt.Errorf("推送到远程仓库失败，本地提交已保留；若远程刚有更新，请重新获取并合并后再推送: %w", err)
 				}
 			}
 			status, err = api.inspectStatus(ctx)
@@ -477,6 +522,7 @@ func ensureGitignore(skillsDir string) error {
 }
 
 func ensureOriginRemote(ctx context.Context, skillsDir, repoURL string) error {
+	repoURL = strings.TrimSpace(repoURL)
 	existing, err := runGit(ctx, skillsDir, "remote", "get-url", "origin")
 	if err != nil {
 		if _, addErr := runGit(ctx, skillsDir, "remote", "add", "origin", "--", repoURL); addErr != nil {
@@ -485,9 +531,7 @@ func ensureOriginRemote(ctx context.Context, skillsDir, repoURL string) error {
 		return nil
 	}
 	if strings.TrimSpace(existing) != repoURL {
-		if _, setErr := runGit(ctx, skillsDir, "remote", "set-url", "origin", "--", repoURL); setErr != nil {
-			return fmt.Errorf("更新 origin 远程仓库失败: %w", setErr)
-		}
+		return errOriginRemoteMismatch
 	}
 	return nil
 }

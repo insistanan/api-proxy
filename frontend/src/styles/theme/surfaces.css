@@ -1,19 +1,20 @@
 :root, .theme-preview {
-  --frost-card-opacity: 94%;
-  --frost-card-blur: 8px;
-  --frost-dialog-opacity: 93%;
-  --frost-dialog-blur: 14px;
+  --frost-card-opacity: 90%;
+  --frost-card-blur: 12px;
+  --frost-dialog-opacity: 88%;
+  --frost-dialog-blur: 18px;
+  --surface-saturation: 1.08;
 }
-[data-palette='pop'] { --frost-card-opacity: 94%; --frost-card-blur: 6px; --frost-dialog-opacity: 94%; --frost-dialog-blur: 12px; }
-[data-palette='breeze'] { --frost-card-opacity: 96%; --frost-card-blur: 6px; --frost-dialog-opacity: 95%; --frost-dialog-blur: 12px; }
-[data-palette='ocean'] { --frost-card-opacity: 92%; --frost-card-blur: 10px; --frost-dialog-opacity: 92%; --frost-dialog-blur: 16px; }
-[data-palette='forest'] { --frost-card-opacity: 94%; --frost-card-blur: 8px; --frost-dialog-opacity: 94%; --frost-dialog-blur: 14px; }
-[data-palette='sunset'] { --frost-card-opacity: 93%; --frost-card-blur: 10px; --frost-dialog-opacity: 93%; --frost-dialog-blur: 16px; }
-[data-palette='rose'] { --frost-card-opacity: 96%; --frost-card-blur: 5px; --frost-dialog-opacity: 96%; --frost-dialog-blur: 10px; }
+[data-palette='pop'] { --frost-card-opacity: 90%; --frost-card-blur: 10px; --frost-dialog-opacity: 88%; --frost-dialog-blur: 18px; }
+[data-palette='breeze'] { --frost-card-opacity: 93%; --frost-card-blur: 10px; --frost-dialog-opacity: 92%; --frost-dialog-blur: 16px; }
+[data-palette='ocean'] { --frost-card-opacity: 88%; --frost-card-blur: 14px; --frost-dialog-opacity: 86%; --frost-dialog-blur: 20px; }
+[data-palette='forest'] { --frost-card-opacity: 90%; --frost-card-blur: 12px; --frost-dialog-opacity: 88%; --frost-dialog-blur: 18px; }
+[data-palette='sunset'] { --frost-card-opacity: 89%; --frost-card-blur: 14px; --frost-dialog-opacity: 87%; --frost-dialog-blur: 20px; }
+[data-palette='rose'] { --frost-card-opacity: 93%; --frost-card-blur: 8px; --frost-dialog-opacity: 92%; --frost-dialog-blur: 14px; }
 :root, .theme-preview, [data-surface='soft'] {
   --card: color-mix(in srgb, var(--surface) var(--frost-card-opacity), transparent);
   --dialog-surface: color-mix(in srgb, var(--popover) var(--frost-dialog-opacity), transparent);
-  --menu-surface: color-mix(in srgb, var(--popover) 97%, transparent);
+  --menu-surface: color-mix(in srgb, var(--popover) 94%, transparent);
   --surface-blur: var(--frost-card-blur);
   --surface-border-width: 1px;
   --shadow-card: 0 1px 2px color-mix(in srgb, var(--foreground) 3%, transparent), 0 4px 14px color-mix(in srgb, var(--foreground) 2%, transparent);
@@ -29,11 +30,13 @@
 }
 [data-surface='glass'] {
   --card: color-mix(in srgb, var(--surface) var(--surface-opacity), transparent);
-  --surface-blur: 18px;
-  --dialog-surface: color-mix(in srgb, var(--popover) 90%, transparent);
-  --frost-dialog-blur: 20px;
+  --surface-blur: 24px;
+  --surface-saturation: 1.2;
+  --dialog-surface: color-mix(in srgb, var(--popover) 82%, transparent);
+  --menu-surface: color-mix(in srgb, var(--popover) 90%, transparent);
+  --frost-dialog-blur: 28px;
   --surface-border-width: 1px;
-  --shadow-card: 0 6px 24px #0001;
+  --shadow-card: inset 0 1px 0 color-mix(in srgb, var(--surface-bright) 45%, transparent), 0 6px 24px #0001;
 }
 [data-surface='bold'] {
   --surface-border-width: 2px;

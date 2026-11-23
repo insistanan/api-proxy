@@ -176,7 +176,7 @@ func TestExtensionsGitLifecycleInitPushClonePull(t *testing.T) {
 	ctx := context.Background()
 
 	// 创建裸远程仓库
-	bareRepo := filepath.Join(root, "remote.git")
+	bareRepo := filepath.Join(root, "skills.git")
 	_, err := runGit(ctx, root, "init", "--bare", bareRepo)
 	require.NoError(t, err)
 	repoURL := fileGitURL(bareRepo)
@@ -223,6 +223,9 @@ func TestExtensionsGitLifecycleInitPushClonePull(t *testing.T) {
 	var cloneResp extensionsGitSyncResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &cloneResp))
 	require.True(t, cloneResp.Status.IsGitRepo)
+	require.DirExists(t, filepath.Join(cloneTarget, ".git"))
+	require.FileExists(t, filepath.Join(cloneTarget, "demo-skill", "SKILL.md"))
+	require.NoDirExists(t, filepath.Join(cloneTarget, "skills"), "克隆不应追加仓库名形成嵌套目录")
 	require.NotNil(t, cloneResp.SkillsReport)
 	require.Equal(t, 1, cloneResp.SkillsReport.Synced)
 
@@ -232,6 +235,34 @@ func TestExtensionsGitLifecycleInitPushClonePull(t *testing.T) {
 	claudeMCP, err := os.ReadFile(filepath.Join(homeDir, ".claude", ".claude.json"))
 	require.NoError(t, err)
 	require.Contains(t, string(claudeMCP), "demo-mcp")
+
+	// 保存地址与实际 origin 不一致时，初始化、拉取和推送均应拒绝，保留仓库配置和文件。
+	settings.Extensions.SkillsRepoURL = fileGitURL(filepath.Join(root, "other.git"))
+	require.NoError(t, cfgManager.UpdateSettings(settings))
+	originBefore, err := runGit(ctx, cloneTarget, "remote", "get-url", "origin")
+	require.NoError(t, err)
+	configBefore, err := os.ReadFile(filepath.Join(cloneTarget, ".git", "config"))
+	require.NoError(t, err)
+	statusBefore, err := runGit(ctx, cloneTarget, "status", "--porcelain=v1")
+	require.NoError(t, err)
+	for _, action := range []string{"init", "pull", "push"} {
+		t.Run("origin不一致拒绝_"+action, func(t *testing.T) {
+			rec := doJSONRequest(t, router, http.MethodPost, "/extensions/git/"+action, nil)
+			require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+			require.Contains(t, rec.Body.String(), "未修改 origin")
+			originAfter, err := runGit(ctx, cloneTarget, "remote", "get-url", "origin")
+			require.NoError(t, err)
+			require.Equal(t, originBefore, originAfter)
+			configAfter, err := os.ReadFile(filepath.Join(cloneTarget, ".git", "config"))
+			require.NoError(t, err)
+			require.Equal(t, configBefore, configAfter)
+			statusAfter, err := runGit(ctx, cloneTarget, "status", "--porcelain=v1")
+			require.NoError(t, err)
+			require.Equal(t, statusBefore, statusAfter)
+		})
+	}
+	settings.Extensions.SkillsRepoURL = repoURL
+	require.NoError(t, cfgManager.UpdateSettings(settings))
 
 	// 4. 原目录更新后再 Push，cloned-skills 执行 Pull 后验证同步 v2；若存在脏工作区则拒绝拉取
 	require.NoError(t, os.WriteFile(filepath.Join(childSkills, "demo-skill", "SKILL.md"), []byte("---\nname: demo-skill\ndescription: v2\n---\n\nv2\n"), 0600))
@@ -243,8 +274,26 @@ func TestExtensionsGitLifecycleInitPushClonePull(t *testing.T) {
 	_, err = runGit(ctx, childSkills, "push")
 	require.NoError(t, err)
 
+	// 即使本地远程引用尚未更新，推送也必须发现远程领先，不能误报最新。
+	rec = doJSONRequest(t, router, http.MethodPost, "/extensions/git/push", nil)
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "远程分支有本地未包含的提交")
+	localBeforePull, err := os.ReadFile(filepath.Join(cloneTarget, "demo-skill", "SKILL.md"))
+	require.NoError(t, err)
+	require.Contains(t, string(localBeforePull), "v1")
+
 	dirtyFile := filepath.Join(cloneTarget, "dirty.txt")
 	require.NoError(t, os.WriteFile(dirtyFile, []byte("uncommitted"), 0600))
+	headBefore, err := runGit(ctx, cloneTarget, "rev-parse", "HEAD")
+	require.NoError(t, err)
+	rec = doJSONRequest(t, router, http.MethodPost, "/extensions/git/push", nil)
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	headAfter, err := runGit(ctx, cloneTarget, "rev-parse", "HEAD")
+	require.NoError(t, err)
+	require.Equal(t, headBefore, headAfter, "远程领先时不得自动提交本地变更")
+	dirtyContent, err := os.ReadFile(dirtyFile)
+	require.NoError(t, err)
+	require.Equal(t, "uncommitted", string(dirtyContent))
 	rec = doJSONRequest(t, router, http.MethodPost, "/extensions/git/pull", nil)
 	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
 	require.NoError(t, os.Remove(dirtyFile))

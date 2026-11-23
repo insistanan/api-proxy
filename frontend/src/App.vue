@@ -82,6 +82,7 @@
             </template>
           </UiTooltip>
           <ThemeTrigger />
+          <NotificationCenter v-if="isAuthenticated" />
           <UiButton v-if="isAuthenticated" class="header-tool header-logout" data-header-hit icon="mdi-logout" variant="text" size="small" title="注销" aria-label="注销" @click="handleLogout" />
         </div>
       </div>
@@ -102,20 +103,13 @@
       </div>
     </main>
 
-    <UiSnackbar
-      v-for="(toast, index) in toasts"
-      :key="toast.id"
-      v-model="toast.show"
-      :color="toast.type"
-      :position="index"
-      location="top right"
-      variant="elevated"
-    >
-      <div class="flex items-center">
-        <UiIcon class="mr-3">{{ toastIcons[toast.type] }}</UiIcon>
-        {{ toast.message }}
+    <Teleport to="body">
+      <div class="pointer-events-none fixed right-4 z-[200030] flex max-h-[calc(100dvh_-_var(--app-header-height,_56px)_-_24px)] w-[min(420px,calc(100vw_-_2rem))] flex-col gap-2 overflow-y-auto [top:calc(var(--app-header-height,_56px)_+_12px)]">
+        <UiSnackbar v-for="toast in toasts" :key="toast.id" v-model="toast.show" :color="toast.type" stacked>
+          <div class="flex items-start"><UiIcon class="mr-3 shrink-0">{{ toastIcons[toast.type] }}</UiIcon><span class="min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere]">{{ toast.message }}</span></div>
+        </UiSnackbar>
       </div>
-    </UiSnackbar>
+    </Teleport>
 
     <!-- 危险命令 AI 闸门：全局待确认通知（轮询 + 声音 + 浏览器系统通知） -->
     <GatePendingNotification v-if="isAuthenticated" />
@@ -137,12 +131,13 @@ import UiDialog from '@/shared/ui/overlay/Dialog.vue'
 import UiOverlay from '@/shared/ui/overlay/Overlay.vue'
 import UiTooltip from '@/shared/ui/overlay/Tooltip.vue'
 // 应用壳：认证、顶栏导航、主题与全局反馈。业务页面的内容与数据刷新由各自的视图负责。
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import AppHeader from '@/app/layout/AppHeader.vue'
 import AppBrand from '@/app/layout/AppBrand.vue'
 import AppNavigation from '@/app/layout/AppNavigation.vue'
 import AppQuickActions from '@/app/layout/AppQuickActions.vue'
+import NotificationCenter from '@/shared/components/feedback/NotificationCenter.vue'
 import VersionBadge from '@/app/layout/VersionBadge.vue'
 import ThemeTrigger from '@/shared/theme/components/ThemeTrigger.vue'
 import ThemeBackground from '@/shared/theme/components/ThemeBackground.vue'
@@ -160,6 +155,8 @@ const { toasts, showToast } = useToast()
 const navigationQuery = window.matchMedia('(width < 1520px)')
 const navigationBelow = ref(navigationQuery.matches)
 const headerHeight = ref(56)
+// 浮层传送到 body 后仍使用实际顶栏高度，避免气泡遮住账户按钮。
+watch(headerHeight, height => document.documentElement.style.setProperty('--app-header-height', `${height}px`), { immediate: true })
 const updateNavigation = () => { navigationBelow.value = navigationQuery.matches }
 
 // 认证流程由 useAuthFlow 编排（R5，方案 8.1），状态本体在 authStore。

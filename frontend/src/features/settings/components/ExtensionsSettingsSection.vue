@@ -115,7 +115,7 @@
         当前生效路径：<code>{{ gitStatus.skillsDir }}</code>
       </div>
       <div v-if="gitStatus.remoteUrl" class="text-sm text-muted-foreground mt-1">
-        Remote (origin)：<code>{{ gitStatus.remoteUrl }}</code>
+        远程仓库（origin）：<code>{{ gitStatus.remoteUrl }}</code>
       </div>
 
       <div v-if="gitStatus.dirty && gitStatus.changedFiles?.length" class="text-xs text-muted-foreground mt-2">
@@ -187,6 +187,11 @@
     <UiAlert v-if="gitNotice" :type="gitNotice.type" variant="tonal" density="compact" class="mt-4">
       {{ gitNotice.message }}
     </UiAlert>
+    <p class="mt-4 text-xs leading-6 text-muted-foreground">
+      远程领先时先拉取。本地有修改时先本地提交；历史分叉时在仓库目录执行 <code>git fetch origin</code> 和 <code>git merge '@{upstream}'</code>。
+      有冲突就编辑冲突文件、移除冲突标记并检查格式，再 <code>git add &lt;文件&gt;</code>、<code>git commit</code> 后推送。
+      界面只支持快进拉取与普通推送；推送前会重新获取远程状态，远程领先时本次不会自动提交本地修改。
+    </p>
   </section>
 </template>
 

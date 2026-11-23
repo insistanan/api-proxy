@@ -140,7 +140,7 @@ export function useExtensionsSettings(saving: Ref<boolean>, activeSection: Ref<S
         commitMessage.value = ''
       }
       gitNotice.value = {
-        type: 'success',
+        type: resp.skillsReport?.errors?.length || resp.mcpAgents?.some(item => !item.ok) ? 'warning' : 'success',
         message: formatSyncSummary(resp) || 'Git 操作完成'
       }
     } catch (error) {
