@@ -21,7 +21,7 @@ export function useHeaderFeedback(header: Ref<HTMLElement | undefined>) {
   let lastTone = -Infinity
   let soundErrorReported = false
   let disposed = false
-  const baseNotes: Record<ThemeSettings['palette'], number> = { pop: 587.33, breeze: 440, ink: 493.88, ocean: 523.25, forest: 392, sunset: 466.16, rose: 415.3 }
+  const baseNotes: Record<ThemeSettings['palette'], number> = { pop: 587.33, breeze: 440, ink: 493.88, ocean: 523.25, forest: 392, sunset: 466.16, rose: 415.3, sultan: 329.63 }
 
   function hitTarget(event: Event): HTMLElement | null {
     const target = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-header-hit]') : null

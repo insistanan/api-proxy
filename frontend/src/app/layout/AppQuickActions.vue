@@ -64,7 +64,8 @@ const quickActionIcons: Record<ThemeSettings['palette'] | 'glass', string> = {
   forest: 'mdi-leaf',
   sunset: 'mdi-weather-sunset',
   glass: 'mdi-layers-triple-outline',
-  rose: 'mdi-view-grid-outline'
+  rose: 'mdi-view-grid-outline',
+  sultan: 'mdi-compass-outline'
 }
 const quickAppearance = computed(() => {
   const { palette, surface } = theme.settings

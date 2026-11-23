@@ -26,8 +26,9 @@
             :data-opacity="preset.settings.opacity"
             class="theme-preview relative isolate h-28 overflow-hidden bg-background p-3 text-foreground sm:h-32"
           >
+            <ArabesquePattern v-if="preset.settings.decoration === 'arabesque'" class="pointer-events-none absolute inset-0 -z-10 size-full" />
             <span
-              v-if="preset.settings.decoration !== 'none'"
+              v-else-if="preset.settings.decoration !== 'none'"
               class="pointer-events-none absolute inset-0 -z-10 bg-primary/15"
               :class="preset.settings.decoration === 'waves' ? 'translate-y-14 -rotate-12 rounded-[50%]' : preset.settings.decoration === 'confetti' ? 'translate-x-14 -translate-y-14 rotate-12 rounded-full bg-accent/30' : 'blur-lg'"
             ></span>
@@ -60,7 +61,7 @@
       <UiSwitch v-model="preferences.headerSoundEnabled" label="播放交互音效" />
     </div>
     <p class="text-xs leading-6 text-muted-foreground">
-      主题即时应用并保存在当前浏览器。各主题自带轻量磨砂，透明度选项调整玻璃卡片；明暗模式可独立跟随系统。
+      主题即时应用并保存在当前浏览器。透明度选项调整玻璃卡片；鎏金文书使用纸张和金属质感。明暗模式可独立跟随系统。
     </p>
     <button
       type="button"
@@ -76,6 +77,7 @@ import UiAlert from '@/shared/ui/feedback/Alert.vue'
 import { THEME_OPTIONS, THEME_PRESETS, useTheme, type ThemeSettings } from '@/shared/theme'
 import UiSwitch from '@/shared/ui/check/Switch.vue'
 import UiIcon from '@/shared/ui/icon/Icon.vue'
+import ArabesquePattern from './ArabesquePattern.vue'
 import { usePreferencesStore } from '@/shared/stores/preferences'
 const theme = useTheme()
 const preferences = usePreferencesStore()
@@ -98,4 +100,6 @@ function change(key: keyof typeof THEME_OPTIONS, value: string) {
 .theme-preview[data-palette='breeze'] .theme-preview-activity > span,
 .theme-preview[data-palette='ocean'] .theme-preview-activity > span { border-radius: 3px; }
 .theme-preview[data-radius='square'] .theme-preview-activity > span { border-radius: 0; }
+.theme-preview .panel-surface { background-image: none; border-color: var(--border); }
+.theme-preview[data-surface='antique'] .panel-surface { background-image: var(--antique-card-background); border-color: var(--gold); background-size: 12px 12px, 12px 12px, 12px 12px, 12px 12px, 160px 160px, auto; }
 </style>

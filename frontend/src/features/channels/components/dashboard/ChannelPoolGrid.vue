@@ -500,7 +500,11 @@ const deletePool = async () => {
 .pool-column { @apply flex flex-col gap-4.5 min-w-0; }
 .pool-card {
   @apply min-w-0 overflow-hidden [container-type:inline-size] [transition:border-color_0.2s_ease];
+  /* 分组只留轻染色，防止外壳与渠道卡片叠成近乎不透明，并允许卡片采样页面背景。 */
+  background-color: var(--group-card);
+  backdrop-filter: none;
 }
+.pool-card :deep(.channel-row) { background-color: var(--card); backdrop-filter: blur(var(--surface-blur)) saturate(var(--surface-saturation)); }
 .pool-card:hover {
   @apply [border-color:color-mix(in_srgb,_var(--primary)_40%,_transparent)];
 }

@@ -1,0 +1,191 @@
+/* 色板与材质分开注册，旧偏好不变，传送到 body 的浮层也继承这些变量。 */
+[data-palette='sultan'] {
+  --bg-deep: #120d0b;
+  --bg-panel: #1f1512;
+  --indigo: #1b2238;
+  --gold: #c9a25a;
+  --gold-bright: #e8c77a;
+  --blood: #8e1b1b;
+  --parchment: #e6d3ad;
+  --ink: #2a1c14;
+  --ornament-ink: #795725;
+  --font-body: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'SimSun', Georgia, serif;
+  --font-heading: Cinzel, 'Noto Serif SC', 'Songti SC', 'SimSun', Georgia, serif;
+  --canvas-neutral: #eadbbb;
+  --panel-neutral: #f0e2c6;
+  --background: var(--canvas-neutral);
+  --surface: var(--panel-neutral);
+  --surface-bright: #f6ead0;
+  --surface-variant: #deca9f;
+  --foreground: var(--ink);
+  --muted: #deca9f;
+  --muted-foreground: #66503d;
+  --primary: #795725;
+  --primary-foreground: #fff0cd;
+  --secondary: #705538;
+  --secondary-foreground: #fff0cd;
+  --accent: #765028;
+  --border: #ab8951;
+  --input: #94723c;
+  --outline: #795725;
+  --popover: #efdfbe;
+  --success: #276243;
+  --success-foreground: #f2e7ce;
+  --warning: #815713;
+  --warning-foreground: #fff0cd;
+  --destructive: var(--blood);
+  --destructive-foreground: #fff0cd;
+  --info: #35516d;
+  --info-foreground: #f2e7ce;
+  --chart-1: #87652c;
+  --chart-2: #9b633f;
+  --chart-3: #3d795e;
+  --chart-4: #755573;
+  --chart-5: #934148;
+  --chart-6: #877035;
+  --chart-7: #3c7077;
+  --chart-8: #a45b49;
+  --chart-9: #646d3e;
+  --chart-10: #4c5c83;
+  --chart-success: #3d795e;
+  --chart-failure: #934148;
+  --chart-warning: #9b633f;
+  --chart-info: #4c5c83;
+  --ease-spring: var(--ease-out);
+}
+[data-theme-mode='dark'][data-palette='sultan'], [data-theme-mode='dark'] [data-palette='sultan'] {
+  --canvas-neutral: var(--bg-deep);
+  --panel-neutral: var(--bg-panel);
+  --background: var(--bg-deep);
+  --surface: var(--bg-panel);
+  --surface-bright: #38261b;
+  --surface-variant: var(--indigo);
+  --foreground: #e8d8b8;
+  --muted: #30221c;
+  --muted-foreground: #bca88a;
+  --primary: var(--gold-bright);
+  --primary-foreground: var(--ink);
+  --secondary: #bca88a;
+  --secondary-foreground: var(--ink);
+  --accent: #b89467;
+  --ornament-ink: var(--gold-bright);
+  --border: #806438;
+  --input: #967747;
+  --outline: var(--gold);
+  --popover: #241a15;
+  --success: #8cb697;
+  --success-foreground: #14281b;
+  --warning: #d5ae6a;
+  --warning-foreground: #2a1c14;
+  --destructive: #df9184;
+  --destructive-foreground: #361411;
+  --info: #9daece;
+  --info-foreground: #1b2238;
+  --chart-1: #c9a25a;
+  --chart-2: #b89467;
+  --chart-3: #8cb697;
+  --chart-4: #b491b3;
+  --chart-5: #cf857d;
+  --chart-6: #bba76c;
+  --chart-7: #8bb3ae;
+  --chart-8: #c1936f;
+  --chart-9: #a1b080;
+  --chart-10: #9daece;
+  --chart-success: #8cb697;
+  --chart-failure: #cf857d;
+  --chart-warning: #d5ae6a;
+  --chart-info: #9daece;
+}
+
+/* 用静态 SVG 纹理模拟纸张和金属角花，不为每个卡片叠加背景滤镜。 */
+[data-surface='antique'] {
+  --card: var(--surface);
+  --dialog-surface: var(--parchment, #e6d3ad);
+  --menu-surface: var(--popover);
+  --field-surface: var(--popover);
+  --nested-card: var(--surface);
+  --group-card: var(--surface);
+  --surface-blur: 0px;
+  --frost-dialog-blur: 0px;
+  --surface-border-width: 2px;
+  --shadow-card: inset 0 0 0 3px var(--surface), inset 0 0 0 4px color-mix(in srgb, var(--gold, #c9a25a) 45%, transparent), inset 0 0 20px #0001, 0 6px 20px #0002;
+  --shadow-dialog: 0 12px 40px #0004, 0 32px 90px #0005;
+  --shadow-popover: 0 6px 24px #0004;
+  --paper-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' opacity='.045' filter='url(%23n)'/%3E%3C/svg%3E");
+  --corner-flourish: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath fill='none' stroke='%23c9a25a' stroke-opacity='.65' stroke-width='1' d='M16 2 20 10 28 8 22 16 28 24 20 22 16 30 12 22 4 24 10 16 4 8 12 10Z M16 9l7 7-7 7-7-7Z'/%3E%3C/svg%3E");
+  --antique-card-background: var(--corner-flourish), var(--corner-flourish), var(--corner-flourish), var(--corner-flourish), var(--paper-grain), linear-gradient(115deg, color-mix(in srgb, var(--gold, #c9a25a) 6%, transparent), transparent 36%);
+}
+[data-surface='antique'] .panel-surface, .theme-preview[data-surface='antique'] .panel-surface {
+  border-color: var(--gold, #c9a25a);
+  background-image: var(--antique-card-background);
+  background-position: 4px 4px, right 4px top 4px, right 4px bottom 4px, left 4px bottom 4px, 0 0, 0 0;
+  background-size: 18px 18px, 18px 18px, 18px 18px, 18px 18px, 160px 160px, auto;
+  background-repeat: no-repeat, no-repeat, no-repeat, no-repeat, repeat, no-repeat;
+  backdrop-filter: none;
+}
+
+/* 文书浮层使用本地语义色，避免从暗色桌面继承浅色文字或状态色。 */
+[data-surface='antique'] .ui-dialog {
+  --foreground: var(--ink, #2a1c14);
+  --card-foreground: var(--foreground);
+  --popover-foreground: var(--foreground);
+  --ornament-ink: #765028;
+  --surface: var(--parchment, #e6d3ad);
+  --background: var(--surface);
+  --card: var(--surface);
+  --dialog-surface: var(--surface);
+  --menu-surface: var(--popover);
+  --field-surface: var(--popover);
+  --nested-card: var(--surface);
+  --group-card: var(--surface);
+  --surface-bright: #f6ead0;
+  --muted: #d9c49c;
+  --muted-foreground: #66503d;
+  --popover: #efdfbe;
+  --primary: #8e1b1b;
+  --ring: var(--primary);
+  --primary-foreground: #fff0cd;
+  --border: #9c773d;
+  --input: #94723c;
+  --outline: #795725;
+  --secondary: #705538;
+  --secondary-foreground: #fff0cd;
+  --accent: #765028;
+  --success: #276243;
+  --success-foreground: #f2e7ce;
+  --warning: #815713;
+  --warning-foreground: #fff0cd;
+  --destructive: #8e1b1b;
+  --destructive-foreground: #fff0cd;
+  --info: #35516d;
+  --info-foreground: #f2e7ce;
+  color-scheme: light;
+  background-image: var(--paper-grain), linear-gradient(105deg, #8c59250d, transparent 28%, #fff2cf24 55%, #8c592519);
+  box-shadow: inset 0 0 0 4px #e6d3ad, inset 0 0 0 5px #9c773d80, inset 0 0 30px #70461930, var(--shadow-dialog);
+}
+[data-surface='antique'] :where(.ui-button, .quick-action) {
+  border-radius: min(var(--radius-control), 4px);
+}
+[data-surface='antique'] .ui-button[data-color='primary']:is([data-variant='solid'], [data-variant='flat'], [data-variant='elevated']) {
+  background-color: var(--blood, #8e1b1b);
+  color: #fff0cd;
+  border-color: var(--gold, #c9a25a);
+  box-shadow: inset 0 0 0 2px #8e1b1b, inset 0 0 0 3px #c9a25a59;
+}
+:is(html[data-palette='sultan'], .theme-preview[data-palette='sultan']) :is(h1, h2, h3) {
+  color: var(--ornament-ink);
+  font-family: var(--font-heading);
+  letter-spacing: .055em;
+}
+[data-surface='antique'] :where(.app-dialog__head, .app-dialog__actions, .page-header) {
+  background-image: linear-gradient(var(--gold, #c9a25a), var(--gold, #c9a25a));
+  background-position: center bottom;
+  background-size: 56px 1px;
+  background-repeat: no-repeat;
+}
+[data-palette='sultan'] { --page-motion: theme-page-calm; --page-duration: 300ms; }
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  [data-surface='antique'] .ui-card:hover {
+    box-shadow: var(--shadow-card), 0 0 16px color-mix(in srgb, var(--gold, #c9a25a) 13%, transparent);
+  }
+}

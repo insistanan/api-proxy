@@ -11,11 +11,11 @@ export const DEFAULT_THEME: ThemeSettings = {
 }
 export const THEME_OPTIONS = {
   mode: { light: '亮色', dark: '暗色', system: '跟随系统' },
-  palette: { ink: '砚墨', ocean: '海蓝', forest: '森林', sunset: '暖橙', rose: '玫瑰', pop: '跃色撞色', breeze: '清岚青蓝' },
-  surface: { flat: '扁平', soft: '柔和', raised: '厚重', glass: '玻璃', bold: '描边撞色' },
+  palette: { ink: '砚墨', ocean: '海蓝', forest: '森林', sunset: '暖橙', rose: '玫瑰', pop: '跃色撞色', breeze: '清岚青蓝', sultan: '苏丹暗金' },
+  surface: { flat: '扁平', soft: '柔和', raised: '厚重', glass: '玻璃', bold: '描边撞色', antique: '鎏金文书' },
   radius: { square: '方角', standard: '标准', rounded: '圆润' },
-  decoration: { none: '纯色', waves: '波浪', glow: '光晕', confetti: '几何彩点' },
-  opacity: { 85: '85%', 92: '92%', 100: '100%' }
+  decoration: { none: '纯色', waves: '波浪', glow: '光晕', confetti: '几何彩点', arabesque: '八角星暗纹' },
+  opacity: { 60: '60%', 70: '70%', 85: '85%', 92: '92%', 100: '100%' }
 } as const
 
 export const THEME_PRESETS: ThemePreset[] = [
@@ -54,11 +54,17 @@ export const THEME_PRESETS: ThemePreset[] = [
   {
     id: 'glass',
     name: '流光玻璃',
-    settings: { palette: 'ink', surface: 'glass', radius: 'rounded', decoration: 'glow', opacity: 85 }
+    settings: { palette: 'ink', surface: 'glass', radius: 'rounded', decoration: 'glow', opacity: 70 }
   },
   {
     id: 'studio',
     name: '方正工作台',
     settings: { palette: 'rose', surface: 'raised', radius: 'square', decoration: 'none', opacity: 100 }
+  },
+  {
+    id: 'sultan',
+    name: '苏丹秘卷',
+    description: '暗金 × 血红，羊皮纸与八角星暗纹',
+    settings: { palette: 'sultan', surface: 'antique', radius: 'square', decoration: 'arabesque', opacity: 100 }
   }
 ]

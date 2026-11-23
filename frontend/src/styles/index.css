@@ -5,6 +5,7 @@
 @import './theme/surfaces.css';
 @import './theme/radius.css';
 @import './theme/decorations.css';
+@import './theme/sultan.css';
 @import './base.css';
 
 @custom-variant dark (&:where([data-theme-mode='dark'], [data-theme-mode='dark'] *));
@@ -24,7 +25,8 @@
 }
 
 @utility field-surface {
-  @apply rounded-control border bg-popover transition-[border-color,box-shadow,background-color] duration-150;
+  @apply rounded-control border transition-[border-color,box-shadow,background-color] duration-150;
+  background-color: var(--field-surface);
   &:hover:not([data-disabled]) { border-color: var(--outline); }
   &:focus-within {
     border-color: var(--ring);

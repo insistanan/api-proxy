@@ -1,20 +1,23 @@
 :root, .theme-preview {
-  --frost-card-opacity: 90%;
-  --frost-card-blur: 12px;
-  --frost-dialog-opacity: 88%;
-  --frost-dialog-blur: 18px;
-  --surface-saturation: 1.08;
+  --frost-card-opacity: 76%;
+  --frost-card-blur: 20px;
+  --frost-dialog-opacity: 68%;
+  --frost-dialog-blur: 28px;
+  --surface-saturation: 1.12;
 }
-[data-palette='pop'] { --frost-card-opacity: 90%; --frost-card-blur: 10px; --frost-dialog-opacity: 88%; --frost-dialog-blur: 18px; }
-[data-palette='breeze'] { --frost-card-opacity: 93%; --frost-card-blur: 10px; --frost-dialog-opacity: 92%; --frost-dialog-blur: 16px; }
-[data-palette='ocean'] { --frost-card-opacity: 88%; --frost-card-blur: 14px; --frost-dialog-opacity: 86%; --frost-dialog-blur: 20px; }
-[data-palette='forest'] { --frost-card-opacity: 90%; --frost-card-blur: 12px; --frost-dialog-opacity: 88%; --frost-dialog-blur: 18px; }
-[data-palette='sunset'] { --frost-card-opacity: 89%; --frost-card-blur: 14px; --frost-dialog-opacity: 87%; --frost-dialog-blur: 20px; }
-[data-palette='rose'] { --frost-card-opacity: 93%; --frost-card-blur: 8px; --frost-dialog-opacity: 92%; --frost-dialog-blur: 14px; }
+[data-palette='pop'] { --frost-card-opacity: 72%; --frost-card-blur: 22px; --frost-dialog-opacity: 66%; --frost-dialog-blur: 28px; }
+[data-palette='breeze'] { --frost-card-opacity: 82%; --frost-card-blur: 20px; --frost-dialog-opacity: 76%; --frost-dialog-blur: 26px; }
+[data-palette='ocean'] { --frost-card-opacity: 70%; --frost-card-blur: 24px; --frost-dialog-opacity: 64%; --frost-dialog-blur: 30px; }
+[data-palette='forest'] { --frost-card-opacity: 76%; --frost-card-blur: 22px; --frost-dialog-opacity: 68%; --frost-dialog-blur: 28px; }
+[data-palette='sunset'] { --frost-card-opacity: 72%; --frost-card-blur: 24px; --frost-dialog-opacity: 66%; --frost-dialog-blur: 30px; }
+[data-palette='rose'] { --frost-card-opacity: 82%; --frost-card-blur: 20px; --frost-dialog-opacity: 76%; --frost-dialog-blur: 26px; }
 :root, .theme-preview, [data-surface='soft'] {
   --card: color-mix(in srgb, var(--surface) var(--frost-card-opacity), transparent);
   --dialog-surface: color-mix(in srgb, var(--popover) var(--frost-dialog-opacity), transparent);
-  --menu-surface: color-mix(in srgb, var(--popover) 94%, transparent);
+  --menu-surface: color-mix(in srgb, var(--popover) 86%, transparent);
+  --field-surface: color-mix(in srgb, var(--popover) 54%, transparent);
+  --nested-card: color-mix(in srgb, var(--surface) 18%, transparent);
+  --group-card: color-mix(in srgb, var(--surface) 20%, transparent);
   --surface-blur: var(--frost-card-blur);
   --surface-border-width: 1px;
   --shadow-card: 0 1px 2px color-mix(in srgb, var(--foreground) 3%, transparent), 0 4px 14px color-mix(in srgb, var(--foreground) 2%, transparent);
@@ -30,11 +33,12 @@
 }
 [data-surface='glass'] {
   --card: color-mix(in srgb, var(--surface) var(--surface-opacity), transparent);
-  --surface-blur: 24px;
+  --surface-blur: 30px;
   --surface-saturation: 1.2;
-  --dialog-surface: color-mix(in srgb, var(--popover) 82%, transparent);
-  --menu-surface: color-mix(in srgb, var(--popover) 90%, transparent);
-  --frost-dialog-blur: 28px;
+  --dialog-surface: color-mix(in srgb, var(--popover) 60%, transparent);
+  --menu-surface: color-mix(in srgb, var(--popover) 80%, transparent);
+  --field-surface: color-mix(in srgb, var(--popover) 46%, transparent);
+  --frost-dialog-blur: 34px;
   --surface-border-width: 1px;
   --shadow-card: inset 0 1px 0 color-mix(in srgb, var(--surface-bright) 45%, transparent), 0 6px 24px #0001;
 }
@@ -47,27 +51,39 @@
 :root, [data-opacity='100'] { --surface-opacity: 100%; }
 [data-opacity='92'] { --surface-opacity: 92%; }
 [data-opacity='85'] { --surface-opacity: 85%; }
+[data-opacity='70'] { --surface-opacity: 70%; }
+[data-opacity='60'] { --surface-opacity: 60%; }
 @supports not (backdrop-filter: blur(1px)) {
   :root, .theme-preview, [data-surface] {
     --card: var(--surface);
     --dialog-surface: var(--popover);
     --menu-surface: var(--popover);
+    --field-surface: var(--popover);
+    --nested-card: var(--surface);
+    --group-card: var(--surface);
   }
 }
 
 /* 大容器负责透光；内部卡片与表单不重复采样背景，避免滚动时叠加滤镜。 */
-:where(.panel-surface .panel-surface, .ui-dialog .panel-surface) {
+.panel-surface .panel-surface {
+  background-color: var(--nested-card);
+  backdrop-filter: none;
+}
+.ui-dialog .panel-surface {
   backdrop-filter: none;
 }
 .theme-preview .panel-surface { backdrop-filter: none; }
 @media (max-width: 640px), (prefers-reduced-motion: reduce) {
-  :root, .theme-preview, [data-surface] { --surface-blur: 4px; --frost-dialog-blur: 8px; }
+  :root, .theme-preview, [data-surface] { --surface-blur: 14px; --frost-dialog-blur: 20px; }
 }
 @media (prefers-reduced-transparency: reduce) {
   :root, .theme-preview, [data-surface] {
     --card: var(--surface);
     --dialog-surface: var(--popover);
     --menu-surface: var(--popover);
+    --field-surface: var(--popover);
+    --nested-card: var(--surface);
+    --group-card: var(--surface);
     --surface-blur: 0px;
     --frost-dialog-blur: 0px;
   }

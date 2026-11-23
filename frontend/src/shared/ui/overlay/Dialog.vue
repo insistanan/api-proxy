@@ -9,7 +9,7 @@
   >
     <DialogTrigger v-if="$slots.activator" as-child><slot name="activator" :props="{}"></slot></DialogTrigger>
     <DialogPortal>
-      <DialogOverlay class="fixed inset-0 z-[200000] bg-black/45" />
+      <DialogOverlay class="fixed inset-0 z-[200000] bg-black/28" />
       <DialogContent
         :aria-describedby="undefined"
         :class="
@@ -76,5 +76,5 @@ function restoreFocus(event: Event) {
 }
 .ui-dialog:has(> .app-dialog, > .dialog-card-shell) { overflow: hidden; }
 .ui-dialog--drawer { --dialog-max-height: 100dvh; }
-.ui-dialog > .ui-card { max-height: var(--dialog-max-height); }
+.ui-dialog > .ui-card { max-height: var(--dialog-max-height); background-color: transparent; background-image: none; backdrop-filter: none; box-shadow: none; border: 0; }
 </style>

@@ -8,23 +8,14 @@
 .channel-row:hover { @apply border-primary/40; }
 .channel-row.is-suspended { @apply [border-inline-start-color:color-mix(in_srgb,_var(--warning)_60%,_transparent)]; }
 
-/* 纹理留在卡片边缘，正文与健康状态仍使用原来的语义色。 */
-[data-palette='pop'] .channel-row {
-  background-image: radial-gradient(circle at 100% 0, color-mix(in srgb, var(--accent) 12%, transparent), transparent 38%);
-}
+/* 卡片直接采样背景形成磨砂，不用渐变覆盖玻璃表面。 */
 [data-palette='pop'] .channel-activity {
   border-bottom: 2px dashed color-mix(in srgb, var(--primary) 20%, transparent);
   background-image: radial-gradient(circle, color-mix(in srgb, var(--primary) 12%, transparent) .7px, transparent 1px);
   background-size: 12px 12px;
 }
-[data-palette='breeze'] .channel-row {
-  background-image: linear-gradient(110deg, transparent 60%, color-mix(in srgb, var(--primary) 3%, transparent));
-}
 [data-palette='ocean'] .channel-activity {
   background-image: repeating-linear-gradient(0deg, transparent 0 12px, color-mix(in srgb, var(--primary) 7%, transparent) 12px 13px);
-}
-[data-palette='forest'] .channel-row {
-  background-image: radial-gradient(ellipse at 100% 100%, color-mix(in srgb, var(--primary) 5%, transparent), transparent 55%);
 }
 [data-palette='sunset'] .channel-activity {
   background-image: linear-gradient(0deg, color-mix(in srgb, var(--accent) 12%, transparent), transparent 60%);

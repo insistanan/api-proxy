@@ -34,7 +34,7 @@ function setupTheme() {
 }
 
 describe('主题偏好', () => {
-  it.each(['pop', 'breeze'])('新增主题 %s 支持保存、恢复及独立的明暗切换', preset => {
+  it.each(['pop', 'breeze', 'sultan'])('新增主题 %s 支持保存、恢复及独立的明暗切换', preset => {
     const { theme, system } = setupTheme()
     theme.applyPreset(preset)
     expect(theme.preset).toBe(preset)
@@ -84,7 +84,7 @@ describe('主题偏好', () => {
       throw new Error('存储不可用')
     })
     theme.applyPreset('glass')
-    expect(document.documentElement.dataset).toMatchObject({ surface: 'glass', opacity: '85' })
+    expect(document.documentElement.dataset).toMatchObject({ surface: 'glass', opacity: '70' })
     expect(theme.error).toContain('存储不可用')
   })
 })

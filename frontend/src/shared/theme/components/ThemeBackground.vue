@@ -5,7 +5,11 @@
     class="pointer-events-none fixed inset-0 z-0 overflow-hidden"
   >
     <div
-      v-if="theme.settings.decoration === 'glow'"
+      v-if="theme.settings.decoration === 'arabesque'"
+      class="theme-candlelight absolute inset-0"
+    ><ArabesquePattern class="absolute inset-0 size-full" /></div>
+    <div
+      v-else-if="theme.settings.decoration === 'glow'"
       class="theme-glow absolute -top-40 -right-32 h-[36rem] w-[48rem] rounded-full bg-[radial-gradient(ellipse_at_center,var(--primary),transparent_70%)] opacity-(--glow-opacity)"
     ></div>
     <div
@@ -20,10 +24,14 @@
 </template>
 <script setup lang="ts">
 import { useTheme } from '@/shared/theme'
+import ArabesquePattern from './ArabesquePattern.vue'
 const theme = useTheme()
 </script>
 
 <style scoped>
+.theme-candlelight {
+  background-image: radial-gradient(ellipse at 50% 0, color-mix(in srgb, var(--gold, var(--primary)) 10%, transparent), transparent 60%), radial-gradient(ellipse at center, transparent 45%, #0002 100%);
+}
 .theme-confetti {
   background-image:
     radial-gradient(circle at 8% 14%, color-mix(in srgb, var(--accent) 28%, transparent) 0 46px, transparent 47px),

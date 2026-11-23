@@ -12,6 +12,8 @@
       )
     "
     :aria-disabled="blocked || undefined"
+    :data-color="color"
+    :data-variant="variant || 'solid'"
     :aria-busy="loading || undefined"
     :aria-pressed="group && $attrs.role !== 'tab' ? selected : undefined"
     :aria-selected="$attrs.role === 'tab' ? selected : undefined"
