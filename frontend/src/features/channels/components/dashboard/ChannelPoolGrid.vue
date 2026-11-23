@@ -528,6 +528,48 @@ const deletePool = async () => {
   @apply p-2.5 flex flex-col gap-2 min-h-12;
 }
 .pool-drag-item { @apply min-w-0; }
+
+/* 分组是凹下去的卡槽，酒红标题压在卡槽上沿。 */
+[data-surface='antique'] .pool-card {
+  border-color: color-mix(in srgb, var(--border) 74%, var(--group-card));
+  border-radius: 15px 15px 8px 8px;
+  corner-shape: scoop scoop bevel bevel;
+  box-shadow: inset 0 2px 8px #17110d50, 0 5px 12px #15100e35;
+}
+[data-surface='antique'] .pool-card:hover { border-color: var(--border); }
+[data-surface='antique'] .pool-card .pool-card-header {
+  --foreground: #f3e7d2;
+  --muted-foreground: #dfcbb0;
+  --primary: #ebca96;
+  --primary-foreground: #38252c;
+  --ring: var(--primary);
+  --destructive: #f1a199;
+  --muted: #ffffff19;
+  color: var(--foreground);
+  padding-inline: 16px;
+  border-bottom-color: #b48f5680;
+  background-color: var(--antique-band, #49373a);
+  background-image: var(--paper-grain);
+}
+[data-surface='antique'] .pool-name { color: var(--primary); letter-spacing: .035em; }
+[data-surface='antique'] .pool-card-toggle:focus-visible { outline-offset: -2px; }
+[data-surface='antique'] .pool-channel-list { padding: 12px; gap: 10px; }
+[data-surface='antique'] .vision-channel-list { background-color: var(--group-card); }
+[data-surface='antique'] .pool-card :deep(.channel-row) { backdrop-filter: none; }
+[data-surface='antique'] :is(.pool-channel-row, .vision-channel-row) {
+  background-color: var(--card);
+  border-radius: 6px;
+  corner-shape: bevel;
+}
+[data-surface='antique'] :is(.pool-channel-row, .vision-channel-row):hover {
+  border-color: var(--primary);
+}
+[data-surface='antique'] .pool-index {
+  border-radius: 5px;
+  corner-shape: bevel;
+  background-color: var(--antique-band, #49373a);
+  color: #f3dfbc;
+}
 /* 拖拽三态：拖起 / 落位占位 / 跟随指针。只改颜色与透明度，避免拖拽过程触发重排。 */
 .pool-drag-item.pool-chosen { @apply cursor-grabbing; }
 .pool-drag-item.pool-chosen :deep(.channel-row),

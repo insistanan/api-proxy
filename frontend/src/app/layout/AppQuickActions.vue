@@ -2,6 +2,7 @@
   <div
     ref="actionsRoot"
     class="quick-actions"
+    :data-quick-appearance="quickAppearance"
     :class="{ 'above-sticky-actions': route.name === 'settings' || route.name === 'pi-agent' }"
     @pointerenter="hoverOpen"
     @pointerleave="scheduleClose"
@@ -12,7 +13,6 @@
       ref="trigger"
       type="button"
       class="quick-actions-trigger"
-      :data-quick-appearance="quickAppearance"
       aria-label="快捷操作"
       :aria-expanded="expanded"
       :aria-controls="expanded ? actionsId : undefined"
@@ -65,7 +65,7 @@ const quickActionIcons: Record<ThemeSettings['palette'] | 'glass', string> = {
   sunset: 'mdi-weather-sunset',
   glass: 'mdi-layers-triple-outline',
   rose: 'mdi-view-grid-outline',
-  sultan: 'mdi-compass-outline'
+  sultan: 'mdi-seal-variant'
 }
 const quickAppearance = computed(() => {
   const { palette, surface } = theme.settings
@@ -189,28 +189,52 @@ watch(() => route.fullPath, collapseActions)
 }
 .quick-actions-trigger:hover { transform: translateY(-2px); }
 .quick-actions-trigger:active { transform: translateY(0); }
-.quick-actions-trigger[data-quick-appearance='pop'] {
+[data-quick-appearance='pop'] .quick-actions-trigger {
   --quick-fill: color-mix(in srgb, var(--primary) 16%, var(--popover));
   --quick-shadow: 2px 2px 0 var(--accent);
 }
-.quick-actions-trigger[data-quick-appearance='breeze'] {
+[data-quick-appearance='breeze'] .quick-actions-trigger {
   --quick-fill: color-mix(in srgb, var(--primary) 4%, var(--popover));
 }
-.quick-actions-trigger[data-quick-appearance='ocean'] {
+[data-quick-appearance='ocean'] .quick-actions-trigger {
   --quick-fill: linear-gradient(180deg, var(--popover) 20%, color-mix(in srgb, var(--primary) 18%, var(--popover)));
 }
-.quick-actions-trigger[data-quick-appearance='forest'] {
+[data-quick-appearance='forest'] .quick-actions-trigger {
   --quick-fill: radial-gradient(circle at 30% 24%, color-mix(in srgb, var(--primary) 15%, var(--popover)), var(--popover) 85%);
 }
-.quick-actions-trigger[data-quick-appearance='sunset'] {
+[data-quick-appearance='sunset'] .quick-actions-trigger {
   --quick-fill: linear-gradient(150deg, color-mix(in srgb, var(--primary) 20%, var(--popover)), var(--popover) 75%);
 }
-.quick-actions-trigger[data-quick-appearance='glass'] {
+[data-quick-appearance='glass'] .quick-actions-trigger {
   --quick-fill: var(--menu-surface);
   backdrop-filter: blur(min(var(--surface-blur), 10px));
 }
-.quick-actions-trigger[data-quick-appearance='rose'] {
+[data-quick-appearance='rose'] .quick-actions-trigger {
   border-width: var(--surface-border-width);
+}
+[data-quick-appearance='sultan'] .quick-actions-trigger {
+  --quick-fill: #642d38;
+  --quick-shadow: inset 0 0 0 3px #47202a, inset 0 0 0 4px #b48f5670, 0 4px 12px #160e0d65;
+  border-color: #b48f56;
+  border-radius: 12px;
+  corner-shape: bevel;
+  color: #f2d7a7;
+}
+[data-quick-appearance='sultan'] .quick-actions-trigger:is(:hover, [aria-expanded='true']) {
+  --quick-fill: #783744;
+  border-color: #e6c58f;
+}
+[data-quick-appearance='sultan'] .quick-action {
+  border-radius: 7px;
+  corner-shape: bevel;
+  border-color: var(--border);
+  background-color: var(--surface);
+}
+[data-quick-appearance='sultan'] .quick-action-icon {
+  border-radius: 5px;
+  corner-shape: bevel;
+  background-color: #642d38;
+  color: #f2d7a7;
 }
 .quick-actions-mark, .quick-actions-close {
   grid-area: 1 / 1;

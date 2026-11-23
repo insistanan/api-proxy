@@ -4,7 +4,7 @@ export interface ThemeSettings {
   palette: 'ink' | 'ocean' | 'forest' | 'sunset' | 'rose' | 'pop' | 'breeze' | 'sultan'
   surface: 'flat' | 'soft' | 'raised' | 'glass' | 'bold' | 'antique'
   radius: 'square' | 'standard' | 'rounded'
-  decoration: 'none' | 'waves' | 'glow' | 'confetti' | 'arabesque'
+  decoration: 'none' | 'plain' | 'waves' | 'glow' | 'confetti' | 'arabesque'
   opacity: 60 | 70 | 85 | 92 | 100
 }
 

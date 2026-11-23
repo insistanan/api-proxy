@@ -16,8 +16,9 @@
   --dialog-surface: color-mix(in srgb, var(--popover) var(--frost-dialog-opacity), transparent);
   --menu-surface: color-mix(in srgb, var(--popover) 86%, transparent);
   --field-surface: color-mix(in srgb, var(--popover) 54%, transparent);
-  --nested-card: color-mix(in srgb, var(--surface) 18%, transparent);
-  --group-card: color-mix(in srgb, var(--surface) 20%, transparent);
+  --nested-card: color-mix(in srgb, var(--surface-variant) 40%, transparent);
+  --group-card: color-mix(in srgb, var(--surface-variant) 36%, transparent);
+  --group-card-solid: color-mix(in srgb, var(--surface-variant) 62%, var(--background));
   --surface-blur: var(--frost-card-blur);
   --surface-border-width: 1px;
   --shadow-card: 0 1px 2px color-mix(in srgb, var(--foreground) 3%, transparent), 0 4px 14px color-mix(in srgb, var(--foreground) 2%, transparent);
@@ -44,9 +45,13 @@
 }
 [data-surface='bold'] {
   --surface-border-width: 2px;
-  --shadow-card: 3px 3px 0 color-mix(in srgb, var(--accent) 65%, var(--foreground));
-  --shadow-popover: 4px 4px 0 color-mix(in srgb, var(--accent) 65%, var(--foreground));
-  --shadow-dialog: 7px 7px 0 color-mix(in srgb, var(--accent) 65%, var(--foreground)), 0 24px 80px #0003;
+  --bold-shadow-color: color-mix(in srgb, var(--accent) 65%, var(--foreground));
+  --shadow-card: 3px 3px 0 var(--bold-shadow-color);
+  --shadow-popover: 3px 3px 0 var(--bold-shadow-color);
+  --shadow-dialog: 5px 5px 0 var(--bold-shadow-color), 0 24px 80px #0003;
+}
+[data-theme-mode='dark'][data-surface='bold'] {
+  --bold-shadow-color: color-mix(in srgb, var(--accent) 39%, var(--surface));
 }
 :root, [data-opacity='100'] { --surface-opacity: 100%; }
 [data-opacity='92'] { --surface-opacity: 92%; }
@@ -59,8 +64,8 @@
     --dialog-surface: var(--popover);
     --menu-surface: var(--popover);
     --field-surface: var(--popover);
-    --nested-card: var(--surface);
-    --group-card: var(--surface);
+    --nested-card: var(--surface-variant);
+    --group-card: var(--group-card-solid);
   }
 }
 
@@ -82,8 +87,8 @@
     --dialog-surface: var(--popover);
     --menu-surface: var(--popover);
     --field-surface: var(--popover);
-    --nested-card: var(--surface);
-    --group-card: var(--surface);
+    --nested-card: var(--surface-variant);
+    --group-card: var(--group-card-solid);
     --surface-blur: 0px;
     --frost-dialog-blur: 0px;
   }

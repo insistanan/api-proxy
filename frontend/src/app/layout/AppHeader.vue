@@ -52,7 +52,12 @@ onUnmounted(() => sizeObserver?.disconnect())
 [data-palette='pop'] .header-shell { --header-tilt: 8deg; --header-twist: 1.8deg; }
 [data-palette='breeze'] .header-shell { --header-tilt: 2deg; --header-twist: .25deg; }
 [data-palette='forest'] .header-shell { --header-tilt: 3deg; --header-twist: .4deg; }
-[data-palette='sultan'] .header-shell { background: var(--surface); border-bottom-color: var(--gold); backdrop-filter: none; }
+[data-palette='sultan'][data-surface='antique'] .header-shell {
+  background: var(--surface);
+  border-bottom-color: var(--border);
+  box-shadow: inset 0 -2px color-mix(in srgb, var(--antique-band) 75%, transparent), 0 3px 8px #100c0933;
+  backdrop-filter: none;
+}
 [data-radius='square'] .header-shell { --header-tilt: 1deg; --header-twist: 0deg; }
 .header-shell :deep(.header-tools) { @apply flex shrink-0 items-center gap-2; }
 .header-shell :deep(.header-utility-group) {

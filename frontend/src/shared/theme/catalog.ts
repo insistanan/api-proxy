@@ -14,7 +14,7 @@ export const THEME_OPTIONS = {
   palette: { ink: '砚墨', ocean: '海蓝', forest: '森林', sunset: '暖橙', rose: '玫瑰', pop: '跃色撞色', breeze: '清岚青蓝', sultan: '苏丹暗金' },
   surface: { flat: '扁平', soft: '柔和', raised: '厚重', glass: '玻璃', bold: '描边撞色', antique: '鎏金文书' },
   radius: { square: '方角', standard: '标准', rounded: '圆润' },
-  decoration: { none: '纯色', waves: '波浪', glow: '光晕', confetti: '几何彩点', arabesque: '八角星暗纹' },
+  decoration: { none: '主题底纹', plain: '纯色', waves: '波浪', glow: '光晕', confetti: '几何彩点', arabesque: '八角星暗纹' },
   opacity: { 60: '60%', 70: '70%', 85: '85%', 92: '92%', 100: '100%' }
 } as const
 
@@ -64,7 +64,7 @@ export const THEME_PRESETS: ThemePreset[] = [
   {
     id: 'sultan',
     name: '苏丹秘卷',
-    description: '暗金 × 血红，羊皮纸与八角星暗纹',
+    description: '青墨桌面、酒红卡槽与黄铜压边的旧纸文书',
     settings: { palette: 'sultan', surface: 'antique', radius: 'square', decoration: 'arabesque', opacity: 100 }
   }
 ]

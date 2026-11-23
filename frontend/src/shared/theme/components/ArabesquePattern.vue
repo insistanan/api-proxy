@@ -3,9 +3,8 @@
     <defs>
       <pattern :id="patternId" width="96" height="96" patternUnits="userSpaceOnUse">
         <g fill="none" stroke="currentColor" stroke-width="1">
-          <path d="M48 8 60 24 80 16 72 36 88 48 72 60 80 80 60 72 48 88 36 72 16 80 24 60 8 48 24 36 16 16 36 24Z" />
-          <path d="m48 24 24 24-24 24-24-24Zm0-24v8m48 40h-8M48 96v-8M0 48h8" />
-          <rect x="33" y="33" width="30" height="30" />
+          <path d="M48 10 59 23 73 23 73 37 86 48 73 59 73 73 59 73 48 86 37 73 23 73 23 59 10 48 23 37 23 23 37 23Z" />
+          <path d="m48 29 19 19-19 19-19-19Zm0-29v10m48 38H86M48 96V86M0 48h10M0 22l22-22m52 0 22 22M0 74l22 22m52 0 22-22" />
         </g>
       </pattern>
     </defs>
@@ -19,5 +18,9 @@ const patternId = useId()
 </script>
 
 <style scoped>
-.theme-arabesque { color: var(--gold, var(--primary)); opacity: .05; }
+.theme-arabesque {
+  color: var(--gold, var(--primary));
+  opacity: .095;
+  mask-image: linear-gradient(125deg, #000, #0005 60%, #000a);
+}
 </style>

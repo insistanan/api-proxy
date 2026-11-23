@@ -1,34 +1,34 @@
 /* 色板与材质分开注册，旧偏好不变，传送到 body 的浮层也继承这些变量。 */
 [data-palette='sultan'] {
-  --bg-deep: #120d0b;
-  --bg-panel: #1f1512;
-  --indigo: #1b2238;
-  --gold: #c9a25a;
-  --gold-bright: #e8c77a;
-  --blood: #8e1b1b;
-  --parchment: #e6d3ad;
-  --ink: #2a1c14;
-  --ornament-ink: #795725;
+  --bg-deep: #101b1a;
+  --bg-panel: #29322e;
+  --indigo: #202631;
+  --gold: #b48f56;
+  --gold-bright: #e6c58f;
+  --blood: #762c32;
+  --parchment: #ded0b7;
+  --ink: #2c241e;
+  --ornament-ink: #68491f;
   --font-body: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'SimSun', Georgia, serif;
   --font-heading: Cinzel, 'Noto Serif SC', 'Songti SC', 'SimSun', Georgia, serif;
-  --canvas-neutral: #eadbbb;
-  --panel-neutral: #f0e2c6;
+  --canvas-neutral: #bfc3b6;
+  --panel-neutral: #e8dfcd;
   --background: var(--canvas-neutral);
   --surface: var(--panel-neutral);
-  --surface-bright: #f6ead0;
-  --surface-variant: #deca9f;
+  --surface-bright: #f4ebd9;
+  --surface-variant: #d7c9b6;
   --foreground: var(--ink);
-  --muted: #deca9f;
-  --muted-foreground: #66503d;
-  --primary: #795725;
+  --muted: #d7c9b6;
+  --muted-foreground: #584a3c;
+  --primary: #68491f;
   --primary-foreground: #fff0cd;
   --secondary: #705538;
   --secondary-foreground: #fff0cd;
   --accent: #765028;
-  --border: #ab8951;
-  --input: #94723c;
-  --outline: #795725;
-  --popover: #efdfbe;
+  --border: #90744e;
+  --input: #8a7355;
+  --outline: #68491f;
+  --popover: #eee2ce;
   --success: #276243;
   --success-foreground: #f2e7ce;
   --warning: #815713;
@@ -51,6 +51,10 @@
   --chart-failure: #934148;
   --chart-warning: #9b633f;
   --chart-info: #4c5c83;
+  --antique-well: #c2b4a0;
+  --antique-band: #57383e;
+  --antique-desk-light: #f3ead87a;
+  --antique-desk-shade: #313f395e;
   --ease-spring: var(--ease-out);
 }
 [data-theme-mode='dark'][data-palette='sultan'], [data-theme-mode='dark'] [data-palette='sultan'] {
@@ -58,30 +62,30 @@
   --panel-neutral: var(--bg-panel);
   --background: var(--bg-deep);
   --surface: var(--bg-panel);
-  --surface-bright: #38261b;
+  --surface-bright: #353e37;
   --surface-variant: var(--indigo);
-  --foreground: #e8d8b8;
-  --muted: #30221c;
-  --muted-foreground: #bca88a;
+  --foreground: #eee2cc;
+  --muted: #313a33;
+  --muted-foreground: #c5b69e;
   --primary: var(--gold-bright);
   --primary-foreground: var(--ink);
-  --secondary: #bca88a;
+  --secondary: #c5b69e;
   --secondary-foreground: var(--ink);
   --accent: #b89467;
   --ornament-ink: var(--gold-bright);
-  --border: #806438;
-  --input: #967747;
+  --border: #827052;
+  --input: #98835f;
   --outline: var(--gold);
-  --popover: #241a15;
+  --popover: #2d3732;
   --success: #8cb697;
   --success-foreground: #14281b;
   --warning: #d5ae6a;
-  --warning-foreground: #2a1c14;
+  --warning-foreground: #2c241e;
   --destructive: #df9184;
   --destructive-foreground: #361411;
   --info: #9daece;
-  --info-foreground: #1b2238;
-  --chart-1: #c9a25a;
+  --info-foreground: #202631;
+  --chart-1: #b48f56;
   --chart-2: #b89467;
   --chart-3: #8cb697;
   --chart-4: #b491b3;
@@ -95,97 +99,134 @@
   --chart-failure: #cf857d;
   --chart-warning: #d5ae6a;
   --chart-info: #9daece;
+  --antique-well: #1d2120;
+  --antique-band: #3a262c;
+  --antique-desk-light: #89684438;
+  --antique-desk-shade: #03090ab3;
 }
 
-/* 用静态 SVG 纹理模拟纸张和金属角花，不为每个卡片叠加背景滤镜。 */
+/* 卡面、卡槽和文书分别取色。纹理只出现在纸面和背景布上。 */
 [data-surface='antique'] {
   --card: var(--surface);
-  --dialog-surface: var(--parchment, #e6d3ad);
-  --menu-surface: var(--popover);
-  --field-surface: var(--popover);
-  --nested-card: var(--surface);
-  --group-card: var(--surface);
+  --nested-card: var(--surface-variant);
+  --group-card: var(--antique-well, var(--surface-variant));
   --surface-blur: 0px;
   --frost-dialog-blur: 0px;
-  --surface-border-width: 2px;
-  --shadow-card: inset 0 0 0 3px var(--surface), inset 0 0 0 4px color-mix(in srgb, var(--gold, #c9a25a) 45%, transparent), inset 0 0 20px #0001, 0 6px 20px #0002;
-  --shadow-dialog: 0 12px 40px #0004, 0 32px 90px #0005;
-  --shadow-popover: 0 6px 24px #0004;
-  --paper-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' opacity='.045' filter='url(%23n)'/%3E%3C/svg%3E");
-  --corner-flourish: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath fill='none' stroke='%23c9a25a' stroke-opacity='.65' stroke-width='1' d='M16 2 20 10 28 8 22 16 28 24 20 22 16 30 12 22 4 24 10 16 4 8 12 10Z M16 9l7 7-7 7-7-7Z'/%3E%3C/svg%3E");
-  --antique-card-background: var(--corner-flourish), var(--corner-flourish), var(--corner-flourish), var(--corner-flourish), var(--paper-grain), linear-gradient(115deg, color-mix(in srgb, var(--gold, #c9a25a) 6%, transparent), transparent 36%);
+  --surface-border-width: 1px;
+  --shadow-card: inset 0 1px color-mix(in srgb, var(--surface-bright) 42%, transparent), 0 2px 4px #0c09072e;
+  --shadow-popover: 0 8px 24px #100d0b47;
+  --shadow-dialog: 0 0 0 1px #1b100b, 0 2px 5px #150a09a0, 0 24px 64px #0d0a09a0;
+  --paper-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.63' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' opacity='.12' filter='url(%23n)'/%3E%3C/svg%3E");
+  --antique-stamp: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 18'%3E%3Cpath fill='none' stroke='%23c2a371' d='M1 9h6l3-3 3 3-3 3-3-3m6 0 3-6 3 6-3 6-3-6m6 0 3-3 3 3-3 3-3-3m6 0h6'/%3E%3C/svg%3E");
 }
-[data-surface='antique'] .panel-surface, .theme-preview[data-surface='antique'] .panel-surface {
-  border-color: var(--gold, #c9a25a);
-  background-image: var(--antique-card-background);
-  background-position: 4px 4px, right 4px top 4px, right 4px bottom 4px, left 4px bottom 4px, 0 0, 0 0;
-  background-size: 18px 18px, 18px 18px, 18px 18px, 18px 18px, 160px 160px, auto;
-  background-repeat: no-repeat, no-repeat, no-repeat, no-repeat, repeat, no-repeat;
+:where(html[data-surface='antique']) .panel-surface:not(:where(.theme-preview *)),
+:where(.theme-preview[data-surface='antique']) .panel-surface {
+  border-radius: max(7px, var(--radius-card));
+  corner-shape: bevel;
   backdrop-filter: none;
 }
+[data-surface='antique'] .page-header {
+  background-image: var(--antique-stamp);
+  background-position: left bottom;
+  background-size: 32px 11px;
+  background-repeat: no-repeat;
+  padding-bottom: 13px;
+}
 
-/* 文书浮层使用本地语义色，避免从暗色桌面继承浅色文字或状态色。 */
-[data-surface='antique'] .ui-dialog {
-  --foreground: var(--ink, #2a1c14);
+/* 文书及传送到 body 的下拉菜单共用浅纸本地色，暗色模式时也保持一致。 */
+[data-surface='antique'] :is(.ui-dialog, .menu-surface) {
+  --foreground: #2c241e;
   --card-foreground: var(--foreground);
   --popover-foreground: var(--foreground);
-  --ornament-ink: #765028;
-  --surface: var(--parchment, #e6d3ad);
+  --ornament-ink: #623d28;
+  --surface: var(--parchment, #ded0b7);
   --background: var(--surface);
   --card: var(--surface);
   --dialog-surface: var(--surface);
-  --menu-surface: var(--popover);
-  --field-surface: var(--popover);
-  --nested-card: var(--surface);
-  --group-card: var(--surface);
-  --surface-bright: #f6ead0;
-  --muted: #d9c49c;
-  --muted-foreground: #66503d;
-  --popover: #efdfbe;
-  --primary: #8e1b1b;
+  --menu-surface: #e9ddc7;
+  --field-surface: #efe4d0;
+  --nested-card: #e6d9c0;
+  --group-card: var(--nested-card);
+  --surface-bright: #f4ebd9;
+  --surface-variant: #dbccb2;
+  --muted: var(--surface-variant);
+  --muted-foreground: #584a3c;
+  --popover: var(--menu-surface);
+  --primary: #762c32;
   --ring: var(--primary);
-  --primary-foreground: #fff0cd;
-  --border: #9c773d;
-  --input: #94723c;
-  --outline: #795725;
-  --secondary: #705538;
-  --secondary-foreground: #fff0cd;
+  --primary-foreground: #fff2da;
+  --border: #9b805e;
+  --input: #8a7355;
+  --outline: #68491f;
+  --secondary: #674a39;
+  --secondary-foreground: #fff2da;
   --accent: #765028;
   --success: #276243;
   --success-foreground: #f2e7ce;
   --warning: #815713;
   --warning-foreground: #fff0cd;
-  --destructive: #8e1b1b;
+  --destructive: #762c32;
   --destructive-foreground: #fff0cd;
   --info: #35516d;
   --info-foreground: #f2e7ce;
   color-scheme: light;
-  background-image: var(--paper-grain), linear-gradient(105deg, #8c59250d, transparent 28%, #fff2cf24 55%, #8c592519);
-  box-shadow: inset 0 0 0 4px #e6d3ad, inset 0 0 0 5px #9c773d80, inset 0 0 30px #70461930, var(--shadow-dialog);
 }
-[data-surface='antique'] :where(.ui-button, .quick-action) {
-  border-radius: min(var(--radius-control), 4px);
+[data-surface='antique'] .ui-dialog {
+  border-color: #9b7b50;
+  background-image: var(--paper-grain);
+  box-shadow: inset 0 0 24px #52331c35, var(--shadow-dialog);
+  backdrop-filter: none;
+}
+[data-surface='antique'] .ui-dialog:not(.ui-dialog--drawer) {
+  border-radius: 15px 15px 10px 10px;
+  corner-shape: bevel;
+}
+[data-surface='antique'] .ui-dialog--drawer {
+  border-width: 0 0 0 2px;
+  box-shadow: inset 4px 0 12px #52331c38, -16px 0 52px #0e090955;
+}
+[data-surface='antique'] .menu-surface {
+  border-radius: 6px;
+  corner-shape: bevel;
+  backdrop-filter: none;
+}
+[data-surface='antique'] :is(.app-dialog__head, .dialog-card-header, .ui-dialog--drawer > aside > header) {
+  background-color: #433038;
+  background-image: var(--antique-stamp), var(--paper-grain);
+  background-position: center bottom 1px, 0 0;
+  background-size: 32px 12px, auto;
+  background-repeat: no-repeat, repeat;
+  color: #f2e8d5;
+  box-shadow: inset 0 -1px #b48f568c;
+  --foreground: #f2e8d5;
+  --muted-foreground: #d9c7ae;
+  --ornament-ink: #ebca96;
+  --primary: #ebca96;
+  --primary-foreground: #38252c;
+  --secondary: #f2ddba;
+  --secondary-foreground: #38252c;
+  --popover: #503a42;
+  --muted: #604750;
+  --input: #c2a371;
+  --ring: var(--primary);
+  --border: #b48f568c;
+}
+[data-surface='antique'] :is(.app-dialog__actions, .dialog-card-actions) {
+  background-color: #d1c0a5;
+  background-image: var(--paper-grain);
+  box-shadow: inset 0 1px #a68b64;
 }
 [data-surface='antique'] .ui-button[data-color='primary']:is([data-variant='solid'], [data-variant='flat'], [data-variant='elevated']) {
-  background-color: var(--blood, #8e1b1b);
-  color: #fff0cd;
-  border-color: var(--gold, #c9a25a);
-  box-shadow: inset 0 0 0 2px #8e1b1b, inset 0 0 0 3px #c9a25a59;
+  border: 1px solid var(--gold, #b48f56);
+  border-radius: 6px;
+  corner-shape: bevel;
+  background-color: var(--blood, #762c32);
+  color: #fff2da;
+  box-shadow: inset 0 1px #e6c58f45;
 }
 :is(html[data-palette='sultan'], .theme-preview[data-palette='sultan']) :is(h1, h2, h3) {
   color: var(--ornament-ink);
   font-family: var(--font-heading);
-  letter-spacing: .055em;
-}
-[data-surface='antique'] :where(.app-dialog__head, .app-dialog__actions, .page-header) {
-  background-image: linear-gradient(var(--gold, #c9a25a), var(--gold, #c9a25a));
-  background-position: center bottom;
-  background-size: 56px 1px;
-  background-repeat: no-repeat;
+  letter-spacing: .04em;
 }
 [data-palette='sultan'] { --page-motion: theme-page-calm; --page-duration: 300ms; }
-@media (hover: hover) and (prefers-reduced-motion: no-preference) {
-  [data-surface='antique'] .ui-card:hover {
-    box-shadow: var(--shadow-card), 0 0 16px color-mix(in srgb, var(--gold, #c9a25a) 13%, transparent);
-  }
-}

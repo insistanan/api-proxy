@@ -26,9 +26,15 @@
             :data-opacity="preset.settings.opacity"
             class="theme-preview relative isolate h-28 overflow-hidden bg-background p-3 text-foreground sm:h-32"
           >
+            <span
+              v-if="preset.settings.decoration !== 'plain' && preset.settings.decoration !== 'arabesque'"
+              :data-texture="preset.settings.surface === 'glass' ? 'glass' : preset.settings.palette"
+              aria-hidden="true"
+              class="theme-texture pointer-events-none absolute inset-0 -z-10"
+            ></span>
             <ArabesquePattern v-if="preset.settings.decoration === 'arabesque'" class="pointer-events-none absolute inset-0 -z-10 size-full" />
             <span
-              v-else-if="preset.settings.decoration !== 'none'"
+              v-else-if="preset.settings.decoration !== 'none' && preset.settings.decoration !== 'plain'"
               class="pointer-events-none absolute inset-0 -z-10 bg-primary/15"
               :class="preset.settings.decoration === 'waves' ? 'translate-y-14 -rotate-12 rounded-[50%]' : preset.settings.decoration === 'confetti' ? 'translate-x-14 -translate-y-14 rotate-12 rounded-full bg-accent/30' : 'blur-lg'"
             ></span>
@@ -101,5 +107,10 @@ function change(key: keyof typeof THEME_OPTIONS, value: string) {
 .theme-preview[data-palette='ocean'] .theme-preview-activity > span { border-radius: 3px; }
 .theme-preview[data-radius='square'] .theme-preview-activity > span { border-radius: 0; }
 .theme-preview .panel-surface { background-image: none; border-color: var(--border); }
-.theme-preview[data-surface='antique'] .panel-surface { background-image: var(--antique-card-background); border-color: var(--gold); background-size: 12px 12px, 12px 12px, 12px 12px, 12px 12px, 160px 160px, auto; }
+.theme-preview[data-surface='antique'] .panel-surface {
+  border-color: var(--border);
+  background: var(--card);
+  box-shadow: inset 0 2px var(--antique-band), var(--shadow-card);
+}
+.theme-preview[data-surface='antique'] .panel-surface > span:first-child { border-color: var(--border); }
 </style>

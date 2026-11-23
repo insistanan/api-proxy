@@ -5,6 +5,63 @@
   --page-duration: 160ms;
 }
 
+/* 页面与预览共用同一层静态底纹，上层波浪、彩点和光晕仍可单独选择。 */
+.theme-texture {
+  --texture-line: color-mix(in srgb, var(--primary) 16%, transparent);
+  --texture-faint: color-mix(in srgb, var(--primary) 8%, transparent);
+  --texture-wash: color-mix(in srgb, var(--primary) 14%, transparent);
+  background-image: radial-gradient(ellipse at 20% 0%, var(--texture-wash), transparent 67%), var(--texture-pattern);
+  background-size: auto, var(--texture-repeat);
+  mask-image: radial-gradient(ellipse at 47% 42%, #0007, #000 86%);
+}
+[data-theme-mode='dark'] .theme-texture {
+  --texture-line: color-mix(in srgb, var(--primary) 12%, transparent);
+  --texture-faint: color-mix(in srgb, var(--primary) 6%, transparent);
+  --texture-wash: color-mix(in srgb, var(--primary) 10%, transparent);
+}
+.theme-texture[data-texture='ink'] {
+  --texture-pattern: radial-gradient(circle, var(--texture-line) .75px, transparent 1.25px);
+  --texture-repeat: 20px 20px;
+}
+.theme-texture[data-texture='breeze'] {
+  --texture-pattern: repeating-linear-gradient(162deg, transparent 0 14px, var(--texture-line) 15px, transparent 16px 29px);
+  --texture-repeat: auto;
+}
+.theme-texture[data-texture='pop'] {
+  --texture-pattern: radial-gradient(circle at 8px 8px, var(--texture-line) 1px, transparent 1.6px),
+    radial-gradient(circle at 24px 24px, color-mix(in srgb, var(--accent) 20%, transparent) 1.5px, transparent 2px);
+  --texture-repeat: 32px 32px, 32px 32px;
+}
+.theme-texture[data-texture='ocean'] {
+  --texture-pattern: repeating-radial-gradient(ellipse 140% 110% at 72% 108%, transparent 0 15px, var(--texture-line) 16px, transparent 17px 29px);
+  --texture-repeat: auto;
+}
+.theme-texture[data-texture='forest'] {
+  --texture-pattern: linear-gradient(34deg, transparent 47%, var(--texture-line) 50%, transparent 53%),
+    linear-gradient(146deg, transparent 47%, var(--texture-line) 50%, transparent 53%);
+  --texture-repeat: 24px 34px, 24px 34px;
+}
+.theme-texture[data-texture='sunset'] {
+  --texture-pattern: repeating-linear-gradient(0deg, transparent 0 9px, var(--texture-line) 10px, transparent 11px 32px);
+  --texture-repeat: auto;
+}
+.theme-texture[data-texture='rose'] {
+  --texture-pattern: linear-gradient(var(--texture-faint) 1px, transparent 1px),
+    linear-gradient(90deg, var(--texture-faint) 1px, transparent 1px),
+    linear-gradient(var(--texture-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--texture-line) 1px, transparent 1px);
+  --texture-repeat: 12px 12px, 12px 12px, 60px 60px, 60px 60px;
+}
+.theme-texture[data-texture='sultan'] {
+  --texture-pattern: repeating-linear-gradient(135deg, transparent 0 4px, var(--texture-line) 4px 5px);
+  --texture-repeat: auto;
+}
+.theme-texture[data-texture='glass'] {
+  --texture-pattern: radial-gradient(circle, var(--texture-line) .6px, transparent 1.2px),
+    repeating-linear-gradient(130deg, transparent 0 26px, var(--texture-faint) 27px, transparent 28px 50px);
+  --texture-repeat: 8px 8px, auto;
+}
+
 [data-palette='pop'] { --page-motion: theme-page-pop; --page-duration: 260ms; }
 [data-palette='breeze'] { --page-motion: theme-page-calm; --page-duration: 200ms; }
 [data-palette='ocean'], [data-palette='sunset'] { --page-motion: theme-page-tide; --page-duration: 260ms; }
