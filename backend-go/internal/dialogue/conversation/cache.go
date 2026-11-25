@@ -130,6 +130,9 @@ func (r *Registry) cacheRecordLocked(rec *Record) {
 }
 
 func (r *Registry) loadRecordLocked(ctx context.Context, id string) (*Record, error) {
+	if r.stopped {
+		return nil, fmt.Errorf("对话注册表已停止")
+	}
 	if rec := r.records[id]; rec != nil {
 		return rec, nil
 	}

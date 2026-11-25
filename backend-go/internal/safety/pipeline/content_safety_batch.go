@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 
-	"github.com/insistanan/api-proxy/internal/safety/sensitive"
+	"insistanan/api-proxy/internal/safety/sensitive"
 )
 
 type blockedLogBatchRecorder interface {

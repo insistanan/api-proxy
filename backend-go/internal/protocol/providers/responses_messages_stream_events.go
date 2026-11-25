@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/protocol/contract"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
+	"insistanan/api-proxy/internal/protocol/contract"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 func (s *responsesToClaudeStreamState) captureUpstreamResponseID(root gjson.Result) {

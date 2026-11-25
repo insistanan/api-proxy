@@ -2,7 +2,7 @@ package responses
 
 import (
 	"context"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,14 +13,14 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/dialogue/session"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
-	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
-	"github.com/insistanan/api-proxy/internal/storage/metrics"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
+	"insistanan/api-proxy/internal/dialogue/session"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/orchestration/scheduler"
+	"insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/storage/metrics"
 )
 
 func TestCompactMissingHistoryReturnsClientError(t *testing.T) {

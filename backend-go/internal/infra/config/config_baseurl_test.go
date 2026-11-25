@@ -2,8 +2,6 @@ package config
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -45,25 +43,44 @@ func TestUpstreamUseFullURLUpdatesAndSerialization(t *testing.T) {
 	}
 }
 
-func TestFullURLDeduplicationPreservesTrailingSlash(t *testing.T) {
-	urls := []string{"https://images.example/render/", "https://images.example/render", "https://images.example/render/"}
-	got := deduplicateBaseURLs(urls, true)
-	if len(got) != 2 || got[0] != urls[0] || got[1] != urls[1] {
-		t.Fatalf("完整地址的末尾路径差异被丢弃: %v", got)
-	}
+// 去重只合并语义相同的地址；完整地址模式下末尾路径差异必须保留。
+func TestBaseURLDeduplication(t *testing.T) {
+	t.Run("full url keeps trailing slash difference", func(t *testing.T) {
+		urls := []string{"https://images.example/render/", "https://images.example/render", "https://images.example/render/"}
+		got := deduplicateBaseURLs(urls, true)
+		if len(got) != 2 || got[0] != urls[0] || got[1] != urls[1] {
+			t.Fatalf("完整地址的末尾路径差异被丢弃: %v", got)
+		}
+	})
+
+	t.Run("add upstream dedupes extra base urls", func(t *testing.T) {
+		cm := writeTestConfig(t, `{"upstream": [], "loadBalance": "failover"}`)
+		err := cm.AddUpstream(UpstreamConfig{
+			Name:        "dedup-test",
+			BaseURL:     "https://main.example.com",
+			BaseURLs:    []string{"https://a.com", "https://b.com", "https://a.com/", "https://c.com"},
+			APIKeys:     []string{"key1"},
+			ServiceType: "claude",
+		})
+		if err != nil {
+			t.Fatalf("AddUpstream 失败: %v", err)
+		}
+		got := cm.GetConfig().Upstream[0].BaseURLs
+		want := []string{"https://a.com", "https://b.com", "https://c.com"}
+		if len(got) != len(want) {
+			t.Fatalf("BaseURLs length = %d, want %d: %v", len(got), len(want), got)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("BaseURLs[%d] = %q, want %q", i, got[i], want[i])
+			}
+		}
+	})
 }
 
-// TestUpdateUpstream_BaseURLConsistency 测试更新 baseUrl 时的一致性
-// 覆盖场景：
-// 1. 只更新 baseUrl 时，baseUrls 应被清空
-// 2. 只更新 baseUrls 时，baseUrl 应保持不变
-// 3. 同时更新 baseUrl 和 baseUrls 时，两者应独立更新
-// 4. 都不更新时，两者应保持原值
-func TestUpdateUpstream_BaseURLConsistency(t *testing.T) {
-	// 创建临时配置文件
-	tempDir := t.TempDir()
-	configPath := filepath.Join(tempDir, "config.json")
-	initialConfig := `{
+// 更新 baseUrl 与 baseUrls 时两者独立：只改 baseUrl 会清空 baseUrls，其余字段保持原值。
+func TestUpdateUpstreamBaseURLConsistency(t *testing.T) {
+	cm := writeTestConfig(t, `{
 		"upstream": [{
 			"name": "test-channel",
 			"baseUrl": "https://old.example.com",
@@ -72,39 +89,25 @@ func TestUpdateUpstream_BaseURLConsistency(t *testing.T) {
 			"serviceType": "claude"
 		}],
 		"loadBalance": "failover"
-	}`
-	if err := os.WriteFile(configPath, []byte(initialConfig), 0644); err != nil {
-		t.Fatalf("写入初始配置失败: %v", err)
-	}
-
-	// 初始化配置管理器
-	cm, err := NewConfigManager(configPath)
-	if err != nil {
-		t.Fatalf("初始化配置管理器失败: %v", err)
-	}
-	defer cm.Close()
+	}`)
 
 	tests := []struct {
 		name            string
 		updates         UpstreamUpdate
 		wantBaseURL     string
 		wantBaseURLs    []string
-		wantBaseURLsNil bool // 期望 baseUrls 为 nil（而非空切片）
+		wantBaseURLsNil bool
 	}{
 		{
-			name: "只更新 baseUrl 时 baseUrls 应被清空",
-			updates: UpstreamUpdate{
-				BaseURL: strPtr("https://new.example.com"),
-			},
+			name:            "只更新 baseUrl 时 baseUrls 应被清空",
+			updates:         UpstreamUpdate{BaseURL: strPtr("https://new.example.com")},
 			wantBaseURL:     "https://new.example.com",
 			wantBaseURLsNil: true,
 		},
 		{
-			name: "只更新 baseUrls 时 baseUrl 应保持不变",
-			updates: UpstreamUpdate{
-				BaseURLs: []string{"https://urls-1.example.com", "https://urls-2.example.com"},
-			},
-			wantBaseURL:  "https://new.example.com", // 保持上个测试的值
+			name:         "只更新 baseUrls 时 baseUrl 应保持不变",
+			updates:      UpstreamUpdate{BaseURLs: []string{"https://urls-1.example.com", "https://urls-2.example.com"}},
+			wantBaseURL:  "https://new.example.com",
 			wantBaseURLs: []string{"https://urls-1.example.com", "https://urls-2.example.com"},
 		},
 		{
@@ -126,80 +129,31 @@ func TestUpdateUpstream_BaseURLConsistency(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := cm.UpdateUpstream(0, tt.updates)
-			if err != nil {
+			if _, err := cm.UpdateUpstream(0, tt.updates); err != nil {
 				t.Fatalf("UpdateUpstream 失败: %v", err)
 			}
-
-			cfg := cm.GetConfig()
-			upstream := cfg.Upstream[0]
-
+			upstream := cm.GetConfig().Upstream[0]
 			if upstream.BaseURL != tt.wantBaseURL {
 				t.Errorf("BaseURL = %q, want %q", upstream.BaseURL, tt.wantBaseURL)
 			}
-
 			if tt.wantBaseURLsNil {
 				if upstream.BaseURLs != nil {
 					t.Errorf("BaseURLs = %v, want nil", upstream.BaseURLs)
 				}
-			} else {
-				if len(upstream.BaseURLs) != len(tt.wantBaseURLs) {
-					t.Errorf("BaseURLs length = %d, want %d", len(upstream.BaseURLs), len(tt.wantBaseURLs))
-				} else {
-					for i, url := range upstream.BaseURLs {
-						if url != tt.wantBaseURLs[i] {
-							t.Errorf("BaseURLs[%d] = %q, want %q", i, url, tt.wantBaseURLs[i])
-						}
-					}
+				return
+			}
+			if len(upstream.BaseURLs) != len(tt.wantBaseURLs) {
+				t.Fatalf("BaseURLs length = %d, want %d", len(upstream.BaseURLs), len(tt.wantBaseURLs))
+			}
+			for i, url := range upstream.BaseURLs {
+				if url != tt.wantBaseURLs[i] {
+					t.Errorf("BaseURLs[%d] = %q, want %q", i, url, tt.wantBaseURLs[i])
 				}
 			}
 		})
 	}
 }
 
-// TestAddUpstream_BaseURLDeduplication 测试添加渠道时的 BaseURLs 去重
-func TestAddUpstream_BaseURLDeduplication(t *testing.T) {
-	tempDir := t.TempDir()
-	configPath := filepath.Join(tempDir, "config.json")
-	initialConfig := `{"upstream": [], "loadBalance": "failover"}`
-	if err := os.WriteFile(configPath, []byte(initialConfig), 0644); err != nil {
-		t.Fatalf("写入初始配置失败: %v", err)
-	}
-
-	cm, err := NewConfigManager(configPath)
-	if err != nil {
-		t.Fatalf("初始化配置管理器失败: %v", err)
-	}
-	defer cm.Close()
-
-	// 添加包含重复 URL 的渠道
-	err = cm.AddUpstream(UpstreamConfig{
-		Name:        "dedup-test",
-		BaseURL:     "https://main.example.com",
-		BaseURLs:    []string{"https://a.com", "https://b.com", "https://a.com/", "https://c.com"},
-		APIKeys:     []string{"key1"},
-		ServiceType: "claude",
-	})
-	if err != nil {
-		t.Fatalf("AddUpstream 失败: %v", err)
-	}
-
-	cfg := cm.GetConfig()
-	upstream := cfg.Upstream[0]
-
-	// 期望去重后只有 3 个 URL
-	expectedURLs := []string{"https://a.com", "https://b.com", "https://c.com"}
-	if len(upstream.BaseURLs) != len(expectedURLs) {
-		t.Errorf("BaseURLs length = %d, want %d", len(upstream.BaseURLs), len(expectedURLs))
-	}
-	for i, url := range upstream.BaseURLs {
-		if url != expectedURLs[i] {
-			t.Errorf("BaseURLs[%d] = %q, want %q", i, url, expectedURLs[i])
-		}
-	}
-}
-
-// strPtr 辅助函数：返回字符串指针
 func strPtr(s string) *string {
 	return &s
 }

@@ -6,19 +6,18 @@ import (
 	"log"
 	"sort"
 
-	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/storage/metrics"
+	"insistanan/api-proxy/internal/dialogue/conversation"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/storage/metrics"
 )
 
-// SelectionResult 渠道选择结果
 type SelectionResult struct {
 	Upstream     *config.UpstreamConfig
 	ChannelIndex int
 	Reason       string // 选择原因（用于日志）
 	// Kind 记录选择时的协议类型，便于调用方正确释放/转移在途预留。
 	Kind ChannelKind
-	// Permit 是本次选择取得的许可句柄（R2-b）：持有 in-flight 预留和
+	// Permit 是本次选择取得的许可句柄：持有 in-flight 预留和
 	// 可能取得的半开探测名额。调用方在请求结束时先提交健康结果，
 	// 再 Release 释放；重复调用无副作用。
 	Permit *ChannelPermit

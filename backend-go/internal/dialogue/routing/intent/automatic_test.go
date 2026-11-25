@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/orchestration/scheduler"
 )
 
 func automaticConfig() config.IntentRoutingConfig {

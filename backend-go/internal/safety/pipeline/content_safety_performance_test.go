@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/safety/sensitive"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/safety/sensitive"
 )
 
 type batchAuditRecorder struct {

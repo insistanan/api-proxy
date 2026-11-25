@@ -2,7 +2,7 @@ package proxycore
 
 import (
 	"encoding/json"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
 	"log"
 	"strings"
 )
@@ -78,7 +78,7 @@ func shouldRetryWithNextKeyFuzzy(statusCode int, bodyBytes []byte, apiType strin
 	return true, false
 }
 
-// shouldRetryWithNextKeyNormal 原有的精确错误分类逻辑
+// shouldRetryWithNextKeyNormal 非 fuzzy 模式下的精确错误分类
 func shouldRetryWithNextKeyNormal(statusCode int, bodyBytes []byte, apiType string) (bool, bool) {
 	// 先检查是否为不可重试错误（内容审核等），这类错误无论状态码如何都不应重试
 	if len(bodyBytes) > 0 && upstreamreq.IsNonRetryableUpstreamErrorBody(bodyBytes) {
@@ -111,7 +111,6 @@ func shouldRetryWithNextKeyNormal(statusCode int, bodyBytes []byte, apiType stri
 	return classifyByErrorMessage(bodyBytes, apiType)
 }
 
-// classifyByErrorMessage 基于错误消息内容分类
 func classifyByErrorMessage(bodyBytes []byte, apiType string) (bool, bool) {
 	var errResp map[string]interface{}
 	if err := json.Unmarshal(bodyBytes, &errResp); err != nil {
@@ -167,7 +166,6 @@ func classifyByErrorMessage(bodyBytes []byte, apiType string) (bool, bool) {
 	return false, false
 }
 
-// classifyMessage 基于错误消息内容分类
 func classifyMessage(msg string) (bool, bool) {
 	msgLower := strings.ToLower(msg)
 
@@ -214,7 +212,6 @@ func classifyMessage(msg string) (bool, bool) {
 	return false, false
 }
 
-// classifyErrorType 基于错误类型分类
 func classifyErrorType(errType string) (bool, bool) {
 	typeLower := strings.ToLower(errType)
 
@@ -254,7 +251,6 @@ func classifyErrorType(errType string) (bool, bool) {
 	return false, false
 }
 
-// getMapKeys 获取 map 的所有 key（用于调试日志）
 func getMapKeys(m map[string]interface{}) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {

@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/storage/logger"
-	"github.com/insistanan/api-proxy/internal/storage/metrics"
+	"insistanan/api-proxy/internal/storage/logger"
+	"insistanan/api-proxy/internal/storage/metrics"
 )
 
 func GetRequestLogs(store *metrics.RequestLogStore) gin.HandlerFunc {

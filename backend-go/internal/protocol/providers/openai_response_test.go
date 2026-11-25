@@ -3,7 +3,7 @@ package providers
 import (
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 func TestOpenAIProviderConvertToClaudeResponse_HidesReasoningContent(t *testing.T) {

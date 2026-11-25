@@ -10,11 +10,11 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/insistanan/api-proxy/internal/api/streams"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
+	"insistanan/api-proxy/internal/api/streams"
+	"insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/tokenusage"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 const nativeMetadataLimit = 64 << 10

@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
-	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
-	"github.com/insistanan/api-proxy/internal/storage/logger"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
+	"insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"insistanan/api-proxy/internal/storage/logger"
 )
 
 // SendOptions 描述一次上游发送的传输选项（由调用方解析后传入）。

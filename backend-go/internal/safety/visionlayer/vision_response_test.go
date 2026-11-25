@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/protocol/providers"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/providers"
 )
 
 func TestVisionResponse_ContentEncodingErrorsRemainVisible(t *testing.T) {

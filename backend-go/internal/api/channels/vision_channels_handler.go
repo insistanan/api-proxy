@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 // GetChannelDeletionImpact 返回删除确认所需的跨协议图片理解引用。

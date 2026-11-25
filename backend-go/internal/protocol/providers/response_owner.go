@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/protocol/items"
+	"insistanan/api-proxy/internal/protocol/items"
 
-	"github.com/insistanan/api-proxy/internal/dialogue/session"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/dialogue/session"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 type ResponseHistoryError struct{ Message string }

@@ -42,7 +42,7 @@ type KeyMetrics struct {
 	pendingHistoryIdx map[uint64]int
 }
 
-// ChannelMetrics 渠道聚合指标（用于 API 返回，兼容旧结构）
+// ChannelMetrics 渠道聚合指标，供 API 返回。
 type ChannelMetrics struct {
 	ChannelIndex        int        `json:"channelIndex"`
 	RequestCount        int64      `json:"requestCount"`
@@ -52,7 +52,7 @@ type ChannelMetrics struct {
 	LastSuccessAt       *time.Time `json:"lastSuccessAt,omitempty"`
 	LastFailureAt       *time.Time `json:"lastFailureAt,omitempty"`
 	CircuitBrokenAt     *time.Time `json:"circuitBrokenAt,omitempty"`
-	// 滑动窗口记录（兼容旧代码）
+	// 滑动窗口成功/失败结果，供健康判定使用
 	recentResults []bool
 	// 带时间戳的请求记录
 	requestHistory []RequestRecord

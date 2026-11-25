@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/codec"
 )
 
 func buildVisionRequest(model string, profile visionAnalysisProfile, images []visionImage) ([]byte, error) {

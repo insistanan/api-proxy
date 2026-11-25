@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/codec"
 )
 
 const (

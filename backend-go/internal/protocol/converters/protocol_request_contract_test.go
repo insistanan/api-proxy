@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/protocol/converters/togemini"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/protocol/converters/togemini"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 func dispatchRequest(t *testing.T, target, body string, upstream *config.UpstreamConfig) ([]byte, error) {

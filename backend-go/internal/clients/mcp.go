@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/clients/mcpsync"
-	"github.com/insistanan/api-proxy/internal/clients/piagent"
+	"insistanan/api-proxy/internal/clients/mcpsync"
+	"insistanan/api-proxy/internal/clients/piagent"
 )
 
 // MCPAPI 提供 MCP 统一列表的读写接口，保存时把启用条目分发到各智能体的配置文件。

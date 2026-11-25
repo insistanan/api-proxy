@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/storage/logger"
+	"insistanan/api-proxy/internal/storage/logger"
 )
 
 var statsIntervals = []time.Duration{

@@ -4,7 +4,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // RecordSuccess 记录成功请求（新方法，使用 baseURL + apiKey + channelIndex）

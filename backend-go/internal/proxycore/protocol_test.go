@@ -16,13 +16,13 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
-	"github.com/insistanan/api-proxy/internal/safety/pipeline"
-	"github.com/insistanan/api-proxy/internal/safety/sensitive"
-	"github.com/insistanan/api-proxy/internal/storage/metrics"
+	"insistanan/api-proxy/internal/dialogue/conversation"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/orchestration/scheduler"
+	"insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/safety/pipeline"
+	"insistanan/api-proxy/internal/safety/sensitive"
+	"insistanan/api-proxy/internal/storage/metrics"
 )
 
 // runProxyTestEnv 提供 RunProxyRequest 特征测试所需的最小运行环境。

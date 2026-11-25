@@ -1,8 +1,8 @@
 package togemini
 
 import (
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 func (s *Stream) feedClaude(root gjson.Result, payload []byte) ([]types.GeminiStreamChunk, error) {

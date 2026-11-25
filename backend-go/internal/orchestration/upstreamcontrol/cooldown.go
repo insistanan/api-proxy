@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
 )
 
 // Record429 是共享凭据冷却的唯一写入策略；无有效 Retry-After 时采用有界指数退避。

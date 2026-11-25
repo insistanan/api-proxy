@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/infra/utils"
-	"github.com/insistanan/api-proxy/internal/protocol/converters/toimages"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
+	"insistanan/api-proxy/internal/infra/utils"
+	"insistanan/api-proxy/internal/protocol/converters/toimages"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // responsesImageEvent 只保留转换所需的字段视图，不构建包含全部 base64 的对象树。

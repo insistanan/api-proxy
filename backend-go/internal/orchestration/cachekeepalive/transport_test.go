@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/protocol/tokenusage"
 )
 
 func senderFixture(t *testing.T, protocol string, handler http.HandlerFunc) (*config.ConfigManager, *snapshot) {

@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 type commandRule struct {

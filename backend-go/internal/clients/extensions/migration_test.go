@@ -20,8 +20,6 @@ func TestMigrateSkillsDirMovesAllFilesAndSupportsRollback(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(oldDir, "mcp.json"), []byte(`{"version":1}`), 0600))
 	require.NoError(t, os.MkdirAll(filepath.Join(oldDir, "demo-skill", ".backups"), 0700))
 	require.NoError(t, os.WriteFile(filepath.Join(oldDir, "demo-skill", "SKILL.md"), []byte("demo"), 0600))
-
-	// 测试空目标目录场景
 	require.NoError(t, os.MkdirAll(newDir, 0700))
 
 	migrated, rollback, err := MigrateSkillsDir(oldDir, newDir)
@@ -40,7 +38,6 @@ func TestMigrateSkillsDirMovesAllFilesAndSupportsRollback(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "pack", string(packContent))
 
-	// 验证回滚
 	require.NoError(t, rollback())
 	_, err = os.Stat(newDir)
 	require.True(t, os.IsNotExist(err))
@@ -49,61 +46,68 @@ func TestMigrateSkillsDirMovesAllFilesAndSupportsRollback(t *testing.T) {
 	require.Equal(t, "demo", string(restored))
 }
 
-func TestMigrateSkillsDirRejectsNestedAndNonEmptyTarget(t *testing.T) {
-	root := t.TempDir()
-	oldDir := filepath.Join(root, "skills")
-	require.NoError(t, os.MkdirAll(oldDir, 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(oldDir, "skills-manifest.json"), []byte("{}"), 0600))
-
-	// 嵌套目录拒绝
-	_, _, err := MigrateSkillsDir(oldDir, filepath.Join(oldDir, "sub"))
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "包含")
-
-	// 非空目标拒绝
-	nonEmpty := filepath.Join(root, "occupied")
-	require.NoError(t, os.MkdirAll(nonEmpty, 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(nonEmpty, "keep.txt"), []byte("keep"), 0600))
-	_, _, err = MigrateSkillsDir(oldDir, nonEmpty)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "非空")
-}
-
-func TestCopyAndRemoveAllForceHandlesReadOnlyPackFiles(t *testing.T) {
-	root := t.TempDir()
-	src := filepath.Join(root, "src")
-	dst := filepath.Join(root, "dst")
-	roFile := filepath.Join(src, ".git", "objects", "pack", "pack-123.pack")
-	require.NoError(t, os.MkdirAll(filepath.Dir(roFile), 0700))
-	require.NoError(t, os.WriteFile(roFile, []byte("readonly"), 0444))
-
-	require.NoError(t, copyDirRecursive(src, dst))
-	require.NoError(t, removeAllForce(src))
-
-	_, err := os.Stat(src)
-	require.True(t, os.IsNotExist(err))
-	got, err := os.ReadFile(filepath.Join(dst, ".git", "objects", "pack", "pack-123.pack"))
-	require.NoError(t, err)
-	require.Equal(t, "readonly", string(got))
-	require.NoError(t, removeAllForce(dst))
-}
-
-func TestCrossDeviceMigration_PreservesCompleteCopyAfterPartialSourceDeletion(t *testing.T) {
-	root := t.TempDir()
-	src, dst := filepath.Join(root, "source"), filepath.Join(root, "target")
-	require.NoError(t, os.MkdirAll(src, 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(src, "first"), []byte("one"), 0600))
-	require.NoError(t, os.WriteFile(filepath.Join(src, "second"), []byte("two"), 0600))
-	cause := errors.New("源文件被占用")
-	err := copyThenRemove(src, dst, func(path string) error {
-		require.NoError(t, os.Remove(filepath.Join(path, "first")))
-		return cause
+func TestMigrateSkillsDirRejectsUnsafeTarget(t *testing.T) {
+	t.Run("拒绝嵌套目标", func(t *testing.T) {
+		root := t.TempDir()
+		oldDir := filepath.Join(root, "skills")
+		require.NoError(t, os.MkdirAll(oldDir, 0700))
+		require.NoError(t, os.WriteFile(filepath.Join(oldDir, "skills-manifest.json"), []byte("{}"), 0600))
+		_, _, err := MigrateSkillsDir(oldDir, filepath.Join(oldDir, "sub"))
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "包含")
 	})
-	require.ErrorIs(t, err, cause)
-	require.ErrorContains(t, err, dst)
-	for name, expected := range map[string]string{"first": "one", "second": "two"} {
-		data, err := os.ReadFile(filepath.Join(dst, name))
+
+	t.Run("拒绝非空目标", func(t *testing.T) {
+		root := t.TempDir()
+		oldDir := filepath.Join(root, "skills")
+		require.NoError(t, os.MkdirAll(oldDir, 0700))
+		require.NoError(t, os.WriteFile(filepath.Join(oldDir, "skills-manifest.json"), []byte("{}"), 0600))
+		nonEmpty := filepath.Join(root, "occupied")
+		require.NoError(t, os.MkdirAll(nonEmpty, 0700))
+		require.NoError(t, os.WriteFile(filepath.Join(nonEmpty, "keep.txt"), []byte("keep"), 0600))
+		_, _, err := MigrateSkillsDir(oldDir, nonEmpty)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "非空")
+	})
+}
+
+func TestCopyThenRemoveKeepsCompleteCopy(t *testing.T) {
+	t.Run("只读 pack 文件可被复制并强制删除", func(t *testing.T) {
+		root := t.TempDir()
+		src := filepath.Join(root, "src")
+		dst := filepath.Join(root, "dst")
+		roFile := filepath.Join(src, ".git", "objects", "pack", "pack-123.pack")
+		require.NoError(t, os.MkdirAll(filepath.Dir(roFile), 0700))
+		require.NoError(t, os.WriteFile(roFile, []byte("readonly"), 0444))
+
+		require.NoError(t, copyDirRecursive(src, dst))
+		require.NoError(t, removeAllForce(src))
+
+		_, err := os.Stat(src)
+		require.True(t, os.IsNotExist(err))
+		got, err := os.ReadFile(filepath.Join(dst, ".git", "objects", "pack", "pack-123.pack"))
 		require.NoError(t, err)
-		require.Equal(t, expected, string(data))
-	}
+		require.Equal(t, "readonly", string(got))
+		require.NoError(t, removeAllForce(dst))
+	})
+
+	t.Run("源目录部分删除后目标仍是完整副本", func(t *testing.T) {
+		root := t.TempDir()
+		src, dst := filepath.Join(root, "source"), filepath.Join(root, "target")
+		require.NoError(t, os.MkdirAll(src, 0700))
+		require.NoError(t, os.WriteFile(filepath.Join(src, "first"), []byte("one"), 0600))
+		require.NoError(t, os.WriteFile(filepath.Join(src, "second"), []byte("two"), 0600))
+		cause := errors.New("源文件被占用")
+		err := copyThenRemove(src, dst, func(path string) error {
+			require.NoError(t, os.Remove(filepath.Join(path, "first")))
+			return cause
+		})
+		require.ErrorIs(t, err, cause)
+		require.ErrorContains(t, err, dst)
+		for name, expected := range map[string]string{"first": "one", "second": "two"} {
+			data, err := os.ReadFile(filepath.Join(dst, name))
+			require.NoError(t, err)
+			require.Equal(t, expected, string(data))
+		}
+	})
 }

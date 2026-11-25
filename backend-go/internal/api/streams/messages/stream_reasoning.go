@@ -8,8 +8,8 @@ import (
 	"encoding/json"
 	"sort"
 
-	"github.com/insistanan/api-proxy/internal/protocol/providers"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/protocol/providers"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 func (ctx *Context) captureReasoningContext(data map[string]interface{}) {

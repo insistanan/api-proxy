@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/api/common"
+	"insistanan/api-proxy/internal/api/common"
 	"io"
 	"net/http"
 	"net/url"
@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/clients/skills"
+	"insistanan/api-proxy/internal/clients/skills"
 )
 
 const (

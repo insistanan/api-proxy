@@ -6,17 +6,17 @@ package proxycore
 
 import (
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/codec"
 	"math"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
-	"github.com/insistanan/api-proxy/internal/storage/metrics"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/orchestration/scheduler"
+	"insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/storage/metrics"
 )
 
 var attemptLogCounter uint64

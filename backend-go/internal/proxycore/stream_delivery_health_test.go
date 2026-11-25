@@ -9,10 +9,10 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/api/common"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/api/common"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 type failedDeliveryWriter struct {

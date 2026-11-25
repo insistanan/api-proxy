@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 const sampleBody = `{"model":"claude-test","max_tokens":1024,"tools":[{"name":"read","input_schema":{"type":"object"}}],"system":[{"type":"text","text":"固定前缀","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"user","content":[{"type":"text","text":"真实请求","cache_control":{"type":"ephemeral"}}]}]}`

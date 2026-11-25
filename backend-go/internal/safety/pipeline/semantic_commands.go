@@ -7,9 +7,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/dialogue/routing/semantic"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/safety/sensitive"
+	"insistanan/api-proxy/internal/dialogue/routing/semantic"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/safety/sensitive"
 )
 
 // reviewSemanticCommands 不将“相似安全样本”作为放行授权。确定性规则独立执行，

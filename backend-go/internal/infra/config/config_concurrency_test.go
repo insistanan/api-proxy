@@ -8,8 +8,8 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/orchestration/upstreamcontrol"
 )
 
 func TestConcurrencyDefaultsAndInvalidExplicitValue(t *testing.T) {

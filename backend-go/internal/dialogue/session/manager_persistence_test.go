@@ -6,7 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 func TestPersistentCommitCompactionPreservesCompleteWindow(t *testing.T) {
@@ -87,34 +88,38 @@ func TestPersistentSessionManagerRestoresPreviousResponseChain(t *testing.T) {
 	}
 }
 
-func TestPersistentSessionManagerDeletesConversationChain(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "conversations.db")
-	manager, err := NewPersistentSessionManager(dbPath, 7*24*time.Hour, 100, 100000)
-	if err != nil {
-		t.Fatalf("NewPersistentSessionManager() error = %v", err)
+func TestPersistentSessionManagerDeletesResponseMappingsAcrossRestart(t *testing.T) {
+	tests := []struct {
+		name            string
+		deleteID        string
+		conversationIDs []string
+	}{
+		{name: "single conversation", deleteID: "conv_delete", conversationIDs: []string{"conv_delete"}},
+		{name: "all conversations", deleteID: "", conversationIDs: []string{"conv_a", "conv_b"}},
 	}
-	sess, err := manager.GetOrCreateSessionForConversation(context.Background(), "", "conv_delete")
-	if err != nil {
-		t.Fatalf("GetOrCreateSessionForConversation(context.Background(), ) error = %v", err)
-	}
-	if err := commitFixtureTurn(manager, sess, nil, 0, false, "resp_delete"); err != nil {
-		t.Fatalf("RecordResponseMapping() error = %v", err)
-	}
-	if err := manager.DeleteConversation("conv_delete"); err != nil {
-		t.Fatalf("DeleteConversation() error = %v", err)
-	}
-	if _, err := manager.GetOrCreateSessionForConversation(context.Background(), "resp_delete", ""); err == nil {
-		t.Fatal("deleted response mapping is still available")
-	}
-	manager.Stop()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dbPath := filepath.Join(t.TempDir(), "conversations.db")
+			manager, err := NewPersistentSessionManager(dbPath, 7*24*time.Hour, 100, 100000)
+			require.NoError(t, err)
+			for _, conversationID := range tt.conversationIDs {
+				sess, err := manager.GetOrCreateSessionForConversation(context.Background(), "", conversationID)
+				require.NoError(t, err)
+				require.NoError(t, commitFixtureTurn(manager, sess, nil, 0, false, "resp_"+conversationID))
+			}
+			require.NoError(t, manager.DeleteWithRecords(context.Background(), tt.deleteID, nil, nil))
+			require.Empty(t, manager.sessions)
+			require.Empty(t, manager.responseMapping)
+			manager.Stop()
 
-	restored, err := NewPersistentSessionManager(dbPath, 7*24*time.Hour, 100, 100000)
-	if err != nil {
-		t.Fatalf("restore NewPersistentSessionManager() error = %v", err)
-	}
-	defer restored.Stop()
-	if _, err := restored.GetOrCreateSessionForConversation(context.Background(), "resp_delete", ""); err == nil {
-		t.Fatal("deleted response mapping was restored")
+			restored, err := NewPersistentSessionManager(dbPath, 7*24*time.Hour, 100, 100000)
+			require.NoError(t, err)
+			defer restored.Stop()
+			for _, conversationID := range tt.conversationIDs {
+				_, err := restored.GetOrCreateSessionForConversation(context.Background(), "resp_"+conversationID, "")
+				require.Error(t, err, "deleted response mapping was restored")
+			}
+		})
 	}
 }
 
@@ -138,13 +143,13 @@ func TestPersistentSessionManagerDeleteAll(t *testing.T) {
 	for _, conversationID := range []string{"conv_a", "conv_b"} {
 		sess, err := manager.GetOrCreateSessionForConversation(context.Background(), "", conversationID)
 		if err != nil {
-			t.Fatalf("GetOrCreateSessionForConversation(context.Background(), ) error = %v", err)
+			t.Fatalf("GetOrCreateSessionForConversation() error = %v", err)
 		}
 		if err := commitFixtureTurn(manager, sess, nil, 0, false, "resp_"+conversationID); err != nil {
 			t.Fatalf("RecordResponseMapping() error = %v", err)
 		}
 	}
-	if err := manager.DeleteAll(); err != nil {
+	if err := manager.DeleteWithRecords(context.Background(), "", nil, nil); err != nil {
 		t.Fatalf("DeleteAll() error = %v", err)
 	}
 	if len(manager.sessions) != 0 || len(manager.responseMapping) != 0 {

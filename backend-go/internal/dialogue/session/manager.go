@@ -7,16 +7,16 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/dialogue/internal/syncstate"
 	"log"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
-	respitems "github.com/insistanan/api-proxy/internal/protocol/items"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
-	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
+	"insistanan/api-proxy/internal/dialogue/conversation"
+	"insistanan/api-proxy/internal/dialogue/internal/syncstate"
+	respitems "insistanan/api-proxy/internal/protocol/items"
+	"insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/protocol/visionmedia"
 )
 
 // Session 会话数据结构。
@@ -267,18 +267,14 @@ func (sm *SessionManager) commitSnapshot(ctx context.Context, current *Session, 
 	if current == nil {
 		return fmt.Errorf("会话快照不能为空")
 	}
-	copied, err := cloneResponsesItems(items)
-	if err != nil {
-		return err
-	}
 	next := *current
-	replace = replace || respitems.ResponsesItemsContainCompaction(copied)
+	replace = replace || respitems.ResponsesItemsContainCompaction(items)
 	if replace {
-		next.Messages = copied
+		next.Messages = items
 		next.TotalTokens = 0
 		next.HasVisionContent = false
 	} else {
-		next.Messages = respitems.MergeResponsesItemsDedup(current.Messages, copied)
+		next.Messages = respitems.MergeResponsesItemsDedup(current.Messages, items)
 		next.TotalTokens += tokens
 		next.HasVisionContent = next.HasVisionContent || vision
 	}
@@ -296,6 +292,11 @@ func (sm *SessionManager) commitSnapshot(ctx context.Context, current *Session, 
 	messages, err := json.Marshal(next.Messages)
 	if err != nil {
 		return err
+	}
+	// 发布的历史必须同时脱离新输入和请求开始快照，不能保留调用方的嵌套引用。
+	next.Messages = nil
+	if err := json.Unmarshal(messages, &next.Messages); err != nil {
+		return fmt.Errorf("复制已提交会话历史失败: %w", err)
 	}
 	return sm.withConversation(ctx, next.ConversationID, func() error {
 		if err := sm.mu.LockContext(ctx); err != nil {
@@ -338,11 +339,6 @@ func (sm *SessionManager) commitSnapshot(ctx context.Context, current *Session, 
 		return nil
 	})
 }
-
-func (sm *SessionManager) DeleteConversation(id string) error {
-	return sm.deleteWith(context.Background(), id, nil, nil)
-}
-func (sm *SessionManager) DeleteAll() error { return sm.deleteWith(context.Background(), "", nil, nil) }
 
 func (sm *SessionManager) cleanupLoop() {
 	defer close(sm.doneCh)

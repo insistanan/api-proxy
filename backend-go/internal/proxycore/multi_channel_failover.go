@@ -6,8 +6,8 @@ import (
 	"log"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/orchestration/scheduler"
 )
 
 // TrySelectedChannelFunc 尝试一次选中的渠道，返回该渠道的尝试结果。
@@ -82,8 +82,8 @@ func HandleMultiChannelFailover(
 
 		upstream := selection.Upstream
 		channelIndex := selection.ChannelIndex
-		// releaseReservation 仅释放 in-flight 预留（探测名额由
-		// recordChannelHealth 记账释放，R2-b 分离语义）。
+		// releaseReservation 仅释放 in-flight 预留，探测名额
+		// 由 recordChannelHealth 记账释放。
 		releaseReservation := func() {
 			if selection != nil && selection.Permit != nil {
 				selection.Permit.ReleaseReservation()
@@ -101,7 +101,7 @@ func HandleMultiChannelFailover(
 			// 请求已完成（成功或已写回非 failover 错误），释放选渠预留。
 			// 注意：上游实际 ActiveRequests 仍由 ProfileManager 独立维护。
 			releaseReservation()
-			// 渠道级熔断记账（R2-a）：只消费显式 Health 结果，不再从
+			// 渠道级熔断记账只消费显式 Health 结果，不从
 			// SuccessKey / LastError 推断；Unset 视为契约缺陷，跳过记账并可见。
 			recordChannelHealth(channelScheduler, kind, channelIndex, result.Health, result.Attempted, apiType, selection.Permit)
 			if selection.Permit != nil {
@@ -152,7 +152,7 @@ func HandleMultiChannelFailover(
 		// 当前渠道失败，释放预留后再尝试下一渠道，避免”失败渠道”继续占负载。
 		releaseReservation()
 		failedChannels[channelIndex] = true
-		// 渠道级熔断记账（R2-a）：只消费显式 Health 结果。
+		// 渠道级熔断记账只消费显式 Health 结果。
 		recordChannelHealth(channelScheduler, kind, channelIndex, result.Health, result.Attempted, apiType, selection.Permit)
 		if selection.Permit != nil {
 			selection.Permit.Release()
@@ -187,8 +187,8 @@ func HandleMultiChannelFailover(
 	handleAllFailed(c, lastFailoverError, lastError)
 }
 
-// recordChannelHealth 按显式健康结果做渠道级熔断记账（R2-a 唯一出口，
-// R2-b 经许可句柄带代次记账）。Unset 且确有尝试（Attempted）说明调用方
+// recordChannelHealth 是渠道级熔断记账的唯一出口，
+// 经许可句柄带代次记账。Unset 且确有尝试（Attempted）说明调用方
 // 没有给出渠道结束结论——跳过记账并记录警告，让契约缺陷可见而不是补成
 // 默认成功/失败。
 func recordChannelHealth(channelScheduler *scheduler.ChannelScheduler, kind scheduler.ChannelKind, channelIndex int, health channelHealthResult, attempted bool, apiType string, permit *scheduler.ChannelPermit) {

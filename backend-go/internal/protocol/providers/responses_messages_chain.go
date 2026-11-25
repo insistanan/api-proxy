@@ -5,15 +5,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
+	"insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/visionmedia"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/dialogue/session"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
+	"insistanan/api-proxy/internal/dialogue/session"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // applyPreviousResponseIDChain 在渠道开启 EnablePreviousResponseID 时，

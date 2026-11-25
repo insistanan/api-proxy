@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 func TestResponsesSearchCapabilityToolConstraints(t *testing.T) {

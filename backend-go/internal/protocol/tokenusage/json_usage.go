@@ -3,7 +3,7 @@ package tokenusage
 import (
 	"encoding/json"
 
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // ExtractJSONUsage 从原样透传响应体中提取 usage 字段，并统一 Prompt/Completion 与 Input/Output 命名。

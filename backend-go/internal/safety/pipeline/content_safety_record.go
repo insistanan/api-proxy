@@ -8,8 +8,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/safety/sensitive"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/safety/sensitive"
 )
 
 // recordRestoreMiss 使用当前请求的真实协议与关联信息，审计失败显式返回。

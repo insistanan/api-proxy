@@ -12,7 +12,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 // MigrateSkillsDir 将旧目录内容（含 .git、.metadata、.backups、skills-manifest.json、mcp.json）安全迁移到新目录。

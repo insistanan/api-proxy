@@ -4,7 +4,7 @@ package availability
 import (
 	"net/http"
 
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
 )
 
 const (

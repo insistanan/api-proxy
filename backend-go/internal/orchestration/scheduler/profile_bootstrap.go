@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/storage/metrics"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/storage/metrics"
 )
 
 // InitializeProfiles 在启动装配时校验所有渠道的指标依赖，并同步已有画像。

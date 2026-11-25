@@ -6,73 +6,39 @@ import (
 	"testing"
 )
 
-func TestPrepareBodyReplacesAnthropicImage(t *testing.T) {
-	payload := map[string]any{
-		"messages": []any{
-			map[string]any{
-				"role": "user",
-				"content": []any{
-					map[string]any{
-						"type": "image",
-						"source": map[string]any{
-							"type":       "base64",
-							"media_type": "image/png",
-							"data":       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1s=",
-						},
-					},
-				},
+func TestPrepareBodyReplacesMediaPayloads(t *testing.T) {
+	anthropic, _ := json.Marshal(map[string]any{
+		"messages": []any{map[string]any{"role": "user", "content": []any{map[string]any{
+			"type": "image",
+			"source": map[string]any{
+				"type":       "base64",
+				"media_type": "image/png",
+				"data":       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1s=",
 			},
-		},
-	}
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, originalBytes, truncated := PrepareBody(raw)
-	if originalBytes != len(raw) {
-		t.Fatalf("originalBytes=%d, want %d", originalBytes, len(raw))
-	}
-	if truncated {
-		t.Fatal("small payload should not truncate")
-	}
-	if strings.Contains(body, "iVBORw0KGgo") {
-		t.Fatalf("image payload still present: %s", body)
-	}
-	if !strings.Contains(body, "[omitted image; media_type=image/png;") {
-		t.Fatalf("placeholder missing: %s", body)
-	}
-}
-
-func TestPrepareBodyReplacesDataURL(t *testing.T) {
-	payload := map[string]any{
-		"image_url": map[string]any{
-			"url": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD",
-		},
-	}
-	raw, _ := json.Marshal(payload)
-	body, _, _ := PrepareBody(raw)
-	if strings.Contains(body, "/9j/") {
-		t.Fatalf("data url still present: %s", body)
-	}
-	if !strings.Contains(body, "media_type=image/jpeg") {
-		t.Fatalf("placeholder missing: %s", body)
-	}
-}
-
-func TestPrepareBodyReplacesGeminiInlineData(t *testing.T) {
-	payload := map[string]any{
-		"inlineData": map[string]any{
-			"mimeType": "image/webp",
-			"data":     "UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAwA0JaQAA3AA/vuUAAA=",
-		},
-	}
-	raw, _ := json.Marshal(payload)
-	body, _, _ := PrepareBody(raw)
-	if strings.Contains(body, "UklGRiQ") {
-		t.Fatalf("inline data still present: %s", body)
-	}
-	if !strings.Contains(body, "media_type=image/webp") {
-		t.Fatalf("placeholder missing: %s", body)
+		}}}},
+	})
+	for _, test := range []struct {
+		name     string
+		raw      []byte
+		leaked   string
+		wantMeta string
+	}{
+		{"anthropic image", anthropic, "iVBORw0KGgo", "[omitted image; media_type=image/png;"},
+		{"data url", []byte(`{"image_url":{"url":"data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD"}}`), "/9j/", "media_type=image/jpeg"},
+		{"gemini inline data", []byte(`{"inlineData":{"mimeType":"image/webp","data":"UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAwA0JaQAA3AA/vuUAAA="}}`), "UklGRiQ", "media_type=image/webp"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body, originalBytes, truncated := PrepareBody(test.raw)
+			if originalBytes != len(test.raw) || truncated {
+				t.Fatalf("originalBytes=%d truncated=%v, want %d false", originalBytes, truncated, len(test.raw))
+			}
+			if strings.Contains(body, test.leaked) {
+				t.Fatalf("media payload still present: %s", body)
+			}
+			if !strings.Contains(body, test.wantMeta) {
+				t.Fatalf("placeholder missing: %s", body)
+			}
+		})
 	}
 }
 
@@ -101,18 +67,14 @@ func TestPrepareBodyOmitsLargeMediaWithoutLeakingContent(t *testing.T) {
 	}
 }
 
-func TestPrepareBodyRemovesSensitivePlaceholderID(t *testing.T) {
-	placeholder := "MASKED_SECRET_7K4M2P7QAB2CD_PRESERVE_EXACTLY"
-	body, _, _ := PrepareBody([]byte(`{"text":"` + placeholder + `"}`))
-	if strings.Contains(body, placeholder) || !strings.Contains(body, "MASKED_SECRET_REDACTED") {
-		t.Fatalf("流量日志未移除占位符映射 ID: %s", body)
-	}
-}
-
-func TestPrepareBodyRemovesSemanticSensitivePlaceholderID(t *testing.T) {
-	marker := "MASKED_API_TOKEN_TM5A7UUJ4YMVY_PRESERVE_EXACTLY"
-	body, _, _ := PrepareBody([]byte(`{"text":"` + marker + `"}`))
-	if strings.Contains(body, marker) || !strings.Contains(body, "MASKED_API_TOKEN_REDACTED") {
-		t.Fatalf("流量日志未移除语义占位符映射 ID: %s", body)
+func TestPrepareBodyRemovesPlaceholderMappingIDs(t *testing.T) {
+	for _, test := range []struct{ marker, redacted string }{
+		{"MASKED_SECRET_7K4M2P7QAB2CD_PRESERVE_EXACTLY", "MASKED_SECRET_REDACTED"},
+		{"MASKED_API_TOKEN_TM5A7UUJ4YMVY_PRESERVE_EXACTLY", "MASKED_API_TOKEN_REDACTED"},
+	} {
+		body, _, _ := PrepareBody([]byte(`{"text":"` + test.marker + `"}`))
+		if strings.Contains(body, test.marker) || !strings.Contains(body, test.redacted) {
+			t.Fatalf("流量日志未移除占位符映射 ID: %s", body)
+		}
 	}
 }

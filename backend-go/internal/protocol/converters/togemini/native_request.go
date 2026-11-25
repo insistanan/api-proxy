@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // NativeRequest 只修改明确配置的签名字段，其他原生字段完整保留。

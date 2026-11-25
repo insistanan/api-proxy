@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/management/modelcatalog"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/management/modelcatalog"
 )
 
 // DiscoverUpstreamModels 通过服务端网络栈获取指定渠道的模型列表。

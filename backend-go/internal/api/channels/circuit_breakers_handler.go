@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
+	"insistanan/api-proxy/internal/orchestration/scheduler"
 )
 
 // GetCircuitBreakers 返回全部渠道熔断器快照。

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/storage/sqlitedb"
+	"insistanan/api-proxy/internal/storage/sqlitedb"
 )
 
 type SQLiteStore struct {
@@ -171,57 +171,9 @@ func upsertLineage(ctx context.Context, execer sqlExecer, conversationID string,
 	return err
 }
 
-func (s *SQLiteStore) Delete(id string) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err = tx.Exec("DELETE FROM conversation_lineages WHERE conversation_id = ?", id); err != nil {
-		return err
-	}
-	if _, err = tx.Exec("DELETE FROM conversation_image_understandings WHERE conversation_id = ?", id); err != nil {
-		return err
-	}
-	if _, err = tx.Exec("DELETE FROM conversation_aliases WHERE conversation_id = ?", id); err != nil {
-		return err
-	}
-	if _, err = tx.Exec("UPDATE conversation_lineages SET parent_conversation_id = '' WHERE parent_conversation_id = ?", id); err != nil {
-		return err
-	}
-	if _, err = tx.Exec("DELETE FROM conversations WHERE id = ?", id); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
-func (s *SQLiteStore) DeleteAll() error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	for _, table := range []string{
-		"conversation_lineages",
-		"conversation_image_understandings",
-		"conversation_aliases",
-		"conversations",
-	} {
-		if _, err = tx.Exec("DELETE FROM " + table); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
-func (s *SQLiteStore) UpsertAlias(alias string, conversationID string) error {
-	_, err := s.db.Exec(`INSERT INTO conversation_aliases (alias_key, conversation_id) VALUES (?, ?)
-		ON CONFLICT(alias_key) DO UPDATE SET conversation_id = excluded.conversation_id`, alias, conversationID)
-	return err
-}
-
-func (s *SQLiteStore) LoadConversationImageUnderstanding(conversationID string, cacheKey string) (string, bool, error) {
+func (s *SQLiteStore) LoadConversationImageUnderstanding(ctx context.Context, conversationID string, cacheKey string) (string, bool, error) {
 	var result string
-	err := s.db.QueryRow(`SELECT result FROM conversation_image_understandings
+	err := s.db.QueryRowContext(ctx, `SELECT result FROM conversation_image_understandings
 		WHERE conversation_id = ? AND cache_key = ?`, conversationID, cacheKey).Scan(&result)
 	if err == sql.ErrNoRows {
 		return "", false, nil
@@ -229,16 +181,16 @@ func (s *SQLiteStore) LoadConversationImageUnderstanding(conversationID string, 
 	if err != nil {
 		return "", false, err
 	}
-	if _, err := s.db.Exec(`UPDATE conversation_image_understandings SET last_used_at = ?
+	if _, err := s.db.ExecContext(ctx, `UPDATE conversation_image_understandings SET last_used_at = ?
 		WHERE conversation_id = ? AND cache_key = ?`, time.Now().Unix(), conversationID, cacheKey); err != nil {
 		return "", false, err
 	}
 	return result, true, nil
 }
 
-func (s *SQLiteStore) UpsertConversationImageUnderstanding(conversationID string, cacheKey string, result string) error {
+func (s *SQLiteStore) UpsertConversationImageUnderstanding(ctx context.Context, conversationID string, cacheKey string, result string) error {
 	now := time.Now().Unix()
-	resultSet, err := s.db.Exec(`INSERT INTO conversation_image_understandings (
+	resultSet, err := s.db.ExecContext(ctx, `INSERT INTO conversation_image_understandings (
 		conversation_id, cache_key, result, created_at, last_used_at
 	) SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM conversations WHERE id = ?)
 	ON CONFLICT(conversation_id, cache_key) DO UPDATE SET

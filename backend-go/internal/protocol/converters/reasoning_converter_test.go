@@ -3,8 +3,8 @@ package converters
 import (
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/stretchr/testify/assert"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 func TestDisabledThinkingRemainsExplicitAcrossProtocols(t *testing.T) {

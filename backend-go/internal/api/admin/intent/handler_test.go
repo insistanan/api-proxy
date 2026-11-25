@@ -10,10 +10,10 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/dialogue/routing/intent"
-	"github.com/insistanan/api-proxy/internal/dialogue/routing/semantic"
-	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/dialogue/routing/intent"
+	"insistanan/api-proxy/internal/dialogue/routing/semantic"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 func TestIntentAndDatasetEndpointsShareVectorReadinessError(t *testing.T) {

@@ -6,13 +6,13 @@ import (
 	"maps"
 	"sync"
 
-	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
-	"github.com/insistanan/api-proxy/internal/dialogue/session"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/orchestration/cachekeepalive"
-	"github.com/insistanan/api-proxy/internal/orchestration/circuit"
-	"github.com/insistanan/api-proxy/internal/orchestration/urlhealth"
-	"github.com/insistanan/api-proxy/internal/storage/metrics"
+	"insistanan/api-proxy/internal/dialogue/conversation"
+	"insistanan/api-proxy/internal/dialogue/session"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/orchestration/cachekeepalive"
+	"insistanan/api-proxy/internal/orchestration/circuit"
+	"insistanan/api-proxy/internal/orchestration/urlhealth"
+	"insistanan/api-proxy/internal/storage/metrics"
 )
 
 // ChannelScheduler 多渠道调度器
@@ -216,7 +216,6 @@ func (s *ChannelScheduler) CircuitManager() *circuit.Manager {
 	return s.circuitManager
 }
 
-// getMetricsManager 根据类型获取对应的指标管理器
 func (s *ChannelScheduler) getMetricsManager(kind ChannelKind) *metrics.MetricsManager {
 	return s.metricsManagers[kind]
 }
@@ -289,7 +288,6 @@ func (s *ChannelScheduler) GetConversationRegistry() *conversation.Registry {
 	return s.conversationRegistry
 }
 
-// SetProfileManager 设置性能画像管理器
 func (s *ChannelScheduler) SetProfileManager(pm *metrics.ProfileManager) {
 	if s == nil {
 		return
@@ -299,7 +297,6 @@ func (s *ChannelScheduler) SetProfileManager(pm *metrics.ProfileManager) {
 	s.profileManager = pm
 }
 
-// GetProfileManager 获取性能画像管理器
 func (s *ChannelScheduler) GetProfileManager() *metrics.ProfileManager {
 	if s == nil {
 		return nil
@@ -315,7 +312,6 @@ func (s *ChannelScheduler) MetricsManager(kind ChannelKind) *metrics.MetricsMana
 	return s.getMetricsManager(kind)
 }
 
-// GetTraceAffinityManager 获取 Trace 亲和性管理器
 func (s *ChannelScheduler) GetTraceAffinityManager() *session.TraceAffinityManager {
 	return s.traceAffinity
 }

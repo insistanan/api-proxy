@@ -4,7 +4,7 @@ package providers
 import (
 	"encoding/json"
 
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 type openAIUsageEnvelope struct {

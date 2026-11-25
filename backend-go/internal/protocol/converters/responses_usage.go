@@ -2,7 +2,7 @@
 package converters
 
 import (
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // getIntFromMap 从 map 中安全提取整数值

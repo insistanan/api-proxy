@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 const openAIChatToolSearchName = "tool_search"

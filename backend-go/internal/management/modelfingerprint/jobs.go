@@ -15,7 +15,7 @@ import (
 
 	lmfpd "github.com/Ikaleio/lm-detector/sdk/go"
 	"github.com/google/uuid"
-	"github.com/insistanan/api-proxy/internal/storage/atomicfile"
+	"insistanan/api-proxy/internal/storage/atomicfile"
 )
 
 var ErrTaskRunning = errors.New("该渠道已有指纹检测正在进行")
@@ -83,7 +83,7 @@ func taskSnapshot(task Task) *Task {
 	return &task
 }
 
-// 业务 ID 不限定为 UUID；摘要文件名避免旧 ID 中的路径字符影响存储位置。
+// 业务 ID 不限定为 UUID；使用摘要文件名，避免 ID 中的路径字符影响存储位置。
 func (j *Jobs) taskPath(channelID string) string {
 	return filepath.Join(j.dir, fmt.Sprintf("%x.json", sha256.Sum256([]byte(channelID))))
 }
@@ -110,7 +110,7 @@ func (j *Jobs) loadLocked(channelID string) (*taskRun, error) {
 		return current, nil
 	}
 	data, err := os.ReadFile(j.taskPath(channelID))
-	// 兼容旧版已经保存的 UUID 文件，仅在新文件不存在时读取安全的旧文件名。
+	// 仅当新文件名不存在时读取旧版 UUID 文件名的任务记录。
 	if errors.Is(err, os.ErrNotExist) && !strings.ContainsAny(channelID, `/\:`) {
 		if _, parseErr := uuid.Parse(channelID); parseErr == nil {
 			data, err = os.ReadFile(filepath.Join(j.dir, channelID+".json"))

@@ -5,9 +5,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
-	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/orchestration/scheduler"
+	"insistanan/api-proxy/internal/orchestration/upstreamcontrol"
 )
 
 // NewUpstreamAttempt 初始化共享依赖、请求预算与日志上下文。

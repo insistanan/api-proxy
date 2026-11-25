@@ -2,7 +2,7 @@ package proxycore
 
 import (
 	"bytes"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 func TestFreeRequestUsesAnonymousChannelAndNeverPaidFallback(t *testing.T) {

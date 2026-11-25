@@ -3,7 +3,7 @@ package logger
 import (
 	"encoding/json"
 
-	"github.com/insistanan/api-proxy/internal/orchestration/availability"
+	"insistanan/api-proxy/internal/orchestration/availability"
 )
 
 const (

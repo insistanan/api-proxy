@@ -4,17 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
+	"insistanan/api-proxy/internal/protocol/codec"
 	"io"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/dialogue/prompt/cacheinject"
-	"github.com/insistanan/api-proxy/internal/dialogue/prompt/copilotopt"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/dialogue/prompt/cacheinject"
+	"insistanan/api-proxy/internal/dialogue/prompt/copilotopt"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // ClaudeProvider Claude 提供商（直接透传）

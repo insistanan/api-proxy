@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"insistanan/api-proxy/internal/orchestration/upstreamcontrol"
 )
 
 // 不启动 watcher 或后台维护，确保失败后观察到的状态仅来自被测写操作。
@@ -37,9 +37,19 @@ func newTransactionTestManager(t *testing.T, kind string) *ConfigManager {
 	return cm
 }
 
-func TestGetChannelConfigReturnsIsolatedSnapshot(t *testing.T) {
-	for _, kind := range []string{"messages", "responses", "gemini", "chat", "images", "embeddings", "decisions"} {
-		t.Run(kind, func(t *testing.T) {
+func blockTransactionBackup(t *testing.T, cm *ConfigManager) {
+	t.Helper()
+	// 首次写入没有旧文件，无备份目录；用普通文件占位使下一次提交前备份失败。
+	if err := os.WriteFile(filepath.Join(filepath.Dir(cm.configFile), "backups"), []byte("blocked"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+var allChannelKinds = []string{"messages", "responses", "gemini", "chat", "images", "embeddings", "decisions"}
+
+func TestConfigSnapshotsAreIsolatedFromCallers(t *testing.T) {
+	for _, kind := range allChannelKinds {
+		t.Run("channels/"+kind, func(t *testing.T) {
 			cm := newTransactionTestManager(t, kind)
 			list, strategy, err := cm.GetChannelConfig(kind)
 			if err != nil {
@@ -57,21 +67,46 @@ func TestGetChannelConfigReturnsIsolatedSnapshot(t *testing.T) {
 			if again[0].Name != "first" || again[0].APIKeys[0] != "k1" {
 				t.Fatalf("返回值修改污染了配置快照: %+v", again[0])
 			}
-			if _, _, err := cm.GetChannelConfig("invalid"); err == nil {
-				t.Fatal("未知协议必须报错，不能退回 Messages")
-			}
 		})
 	}
+
+	t.Run("unknown kind does not fall back to messages", func(t *testing.T) {
+		cm := newTransactionTestManager(t, "messages")
+		before := cm.GetConfig()
+		if _, _, err := cm.GetChannelConfig("invalid"); err == nil {
+			t.Fatal("未知协议必须报错，不能退回 Messages")
+		}
+		if err := cm.DuplicateChannel("messeges", 0); err == nil {
+			t.Fatal("未知渠道类型必须报错")
+		}
+		if !reflect.DeepEqual(before, cm.GetConfig()) {
+			t.Fatal("未知类型误写 Messages 配置")
+		}
+	})
+
+	t.Run("settings slices", func(t *testing.T) {
+		cm := newTransactionTestManager(t, "messages")
+		cm.config.Settings.ContentSafety.Allowlist.Entries = []string{"original"}
+		cm.config.Settings.ContentSafety.CustomRules.Rules = []CustomRuleItem{{Name: "original"}}
+		cm.config.Settings.ContentSafety.DangerousCmd.Semantic = &SemanticSafetyConfig{DatasetIDs: []string{"original"}}
+		cm.config.Settings.Prompts.Entries = []PromptEntry{{Version: "original"}}
+		before := cm.GetConfig()
+		snapshot := cm.GetConfig()
+		snapshot.Settings.ContentSafety.Allowlist.Entries[0] = "changed"
+		snapshot.Settings.ContentSafety.CustomRules.Rules[0].Name = "changed"
+		snapshot.Settings.Prompts.Entries[0].Version = "changed"
+		snapshot.Upstream[0].APIKeys[0] = "changed"
+		safety := cm.GetContentSafetyConfig()
+		safety.Allowlist.Entries[0] = "changed"
+		safety.CustomRules.Rules[0].Name = "changed"
+		safety.DangerousCmd.Semantic.DatasetIDs[0] = "changed"
+		if !reflect.DeepEqual(before, cm.GetConfig()) {
+			t.Fatal("修改读取快照污染运行配置")
+		}
+	})
 }
 
-func blockTransactionBackup(t *testing.T, cm *ConfigManager) {
-	t.Helper()
-	// 首次写入没有旧文件，无备份目录；用普通文件占位使下一次提交前备份失败。
-	if err := os.WriteFile(filepath.Join(filepath.Dir(cm.configFile), "backups"), []byte("blocked"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
-
+// 所有写操作在备份阶段失败时，内存配置、失败密钥缓存与磁盘文件都必须保持原样。
 func TestChannelTransactionsKeepSnapshotOnSaveFailure(t *testing.T) {
 	name := "changed"
 	ops := []struct {
@@ -114,7 +149,10 @@ func TestChannelTransactionsKeepSnapshotOnSaveFailure(t *testing.T) {
 		{name: "update-pool", mutate: func(cm *ConfigManager, kind string) error {
 			return cm.UpdateChannelPool(kind, "empty", ChannelPoolUpdate{Name: &name})
 		}},
-		{name: "delete-pool", mutate: func(cm *ConfigManager, kind string) error { return cm.DeleteChannelPool(kind, "empty") }},
+		{name: "delete-nonempty-pool", prepare: func(cm *ConfigManager, kind string) {
+			cs, _ := cm.config.channelSetFor(kind)
+			(*cs.upstreams)[0].PoolID = "empty"
+		}, mutate: func(cm *ConfigManager, kind string) error { return cm.DeleteChannelPool(kind, "empty") }},
 		{name: "pool-layout", mutate: func(cm *ConfigManager, kind string) error {
 			return cm.SaveChannelPoolLayout(kind, []ChannelPoolLayout{{PoolID: DefaultChannelPoolID, ChannelIDs: []string{"second"}}, {PoolID: "empty", ChannelIDs: []string{"first"}}})
 		}},
@@ -125,7 +163,7 @@ func TestChannelTransactionsKeepSnapshotOnSaveFailure(t *testing.T) {
 			(*cs.upstreams)[0].TemporaryUntil = &expired
 		}, mutate: func(cm *ConfigManager, _ string) error { return cm.runChannelLifecycle(time.Now(), true) }},
 	}
-	for _, kind := range []string{"messages", "responses", "gemini", "chat", "images", "embeddings", "decisions"} {
+	for _, kind := range allChannelKinds {
 		for _, op := range ops {
 			t.Run(kind+"/"+op.name, func(t *testing.T) {
 				cm := newTransactionTestManager(t, kind)
@@ -175,6 +213,7 @@ func TestSettingsTransactionsKeepSnapshotOnSaveFailure(t *testing.T) {
 		mutate func(*ConfigManager) error
 	}{
 		{"fuzzy", func(cm *ConfigManager) error { return cm.SetFuzzyModeEnabled(true) }},
+		{"fuzzy-protocol", func(cm *ConfigManager) error { return cm.SetFuzzyModeForProtocol("responses", true) }},
 		{"claude-disguise", func(cm *ConfigManager) error { return cm.SetClientDisguiseEnabled("messages", true) }},
 		{"codex-disguise", func(cm *ConfigManager) error { return cm.SetClientDisguiseEnabled("responses", true) }},
 		{"network", func(cm *ConfigManager) error {
@@ -184,6 +223,12 @@ func TestSettingsTransactionsKeepSnapshotOnSaveFailure(t *testing.T) {
 			settings := cm.GetSettings()
 			settings.Network.UpstreamProxyEnabled = true
 			return cm.UpdateSettings(settings)
+		}},
+		{"intent", func(cm *ConfigManager) error {
+			value := DefaultIntentRouting()
+			value.Enabled = true
+			value.Routes = []IntentRoute{{ID: "task", PoolID: "default", Patterns: []string{"task"}}}
+			return cm.UpdateIntentRouting("messages", value)
 		}},
 	}
 	for _, op := range ops {
@@ -201,31 +246,10 @@ func TestSettingsTransactionsKeepSnapshotOnSaveFailure(t *testing.T) {
 	}
 }
 
-func TestConfigSnapshotIsolatesSettingsSlices(t *testing.T) {
-	cm := newTransactionTestManager(t, "messages")
-	cm.config.Settings.ContentSafety.Allowlist.Entries = []string{"original"}
-	cm.config.Settings.ContentSafety.CustomRules.Rules = []CustomRuleItem{{Name: "original"}}
-	cm.config.Settings.ContentSafety.DangerousCmd.Semantic = &SemanticSafetyConfig{DatasetIDs: []string{"original"}}
-	cm.config.Settings.Prompts.Entries = []PromptEntry{{Version: "original"}}
-	before := cm.GetConfig()
-	snapshot := cm.GetConfig()
-	snapshot.Settings.ContentSafety.Allowlist.Entries[0] = "changed"
-	snapshot.Settings.ContentSafety.CustomRules.Rules[0].Name = "changed"
-	snapshot.Settings.Prompts.Entries[0].Version = "changed"
-	snapshot.Upstream[0].APIKeys[0] = "changed"
-	safety := cm.GetContentSafetyConfig()
-	safety.Allowlist.Entries[0] = "changed"
-	safety.CustomRules.Rules[0].Name = "changed"
-	safety.DangerousCmd.Semantic.DatasetIDs[0] = "changed"
-	if !reflect.DeepEqual(before, cm.GetConfig()) {
-		t.Fatal("修改读取快照污染运行配置")
-	}
-}
-
 func TestInvalidPoolReloadKeepsPublishedSnapshot(t *testing.T) {
 	cm := newTransactionTestManager(t, "messages")
 	before := cm.GetConfig()
-	for _, kind := range []string{"messages", "responses", "gemini", "chat", "images", "embeddings", "decisions"} {
+	for _, kind := range allChannelKinds {
 		t.Run(kind, func(t *testing.T) {
 			candidate := cm.GetConfig()
 			set, err := candidate.channelSetFor(kind)
@@ -254,7 +278,6 @@ func TestInvalidPoolReloadKeepsPublishedSnapshot(t *testing.T) {
 // 删除占位只落盘身份字段，图片能力迁移必须跳过它们，否则每次启动都会
 // 判定待迁移、写回、再被墓碑序列化剥离，形成启动日志与磁盘写入的循环。
 func TestVisionMigrationSkipsDeletedTombstones(t *testing.T) {
-	// 构造一份旧格式配置（未带 visionCapable / visionLayerEnabled 键）
 	rawOld := []byte(`{
 		"fuzzyModeEnabled": true,
 		"settings": {"contentSafety": {}},
@@ -314,73 +337,8 @@ func TestPromotionConsumptionKeepsCountOnSaveFailure(t *testing.T) {
 	}
 }
 
-func TestUnknownChannelKindDoesNotMutateMessages(t *testing.T) {
-	cm := newTransactionTestManager(t, "messages")
-	before := cm.GetConfig()
-	if err := cm.DuplicateChannel("messeges", 0); err == nil {
-		t.Fatal("未知渠道类型必须报错")
-	}
-	if !reflect.DeepEqual(before, cm.GetConfig()) {
-		t.Fatal("未知类型误写 Messages 配置")
-	}
-}
-
-func TestChannelRemovalPersistsMinimalTombstone(t *testing.T) {
-	cm := newTransactionTestManager(t, "messages")
-	if _, err := cm.RemoveChannel("messages", 0); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(cm.configFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var doc map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatal(err)
-	}
-	var upstreams []map[string]json.RawMessage
-	if err := json.Unmarshal(doc["upstream"], &upstreams); err != nil {
-		t.Fatal(err)
-	}
-	var tombstone map[string]json.RawMessage
-	for _, entry := range upstreams {
-		var status string
-		if err := json.Unmarshal(entry["status"], &status); err == nil && status == ChannelStatusDeleted {
-			tombstone = entry
-			break
-		}
-	}
-	if tombstone == nil {
-		t.Fatal("删除占位未落盘")
-	}
-	// 墓碑只保留身份字段：索引稳定性要求条目存在，但运行配置和密钥不应随墓碑长期留存。
-	if len(tombstone) != 4 {
-		t.Fatalf("墓碑字段应为 id/name/priority/status，实际 %d 个: %v", len(tombstone), tombstone)
-	}
-	for _, key := range []string{"id", "name", "priority", "status"} {
-		if _, ok := tombstone[key]; !ok {
-			t.Fatalf("墓碑缺少字段 %s", key)
-		}
-	}
-}
-
-func TestMigrationSaveFailureKeepsPublishedSnapshot(t *testing.T) {
-	cm := newTransactionTestManager(t, "messages")
-	before := cm.GetConfig()
-	blockTransactionBackup(t, cm)
-	// 旧格式必须补全默认设置并回写；失败时不应提前发布迁移候选。
-	if err := os.WriteFile(cm.configFile, []byte(`{"upstream":[]}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := cm.reloadFromDisk(); err == nil {
-		t.Fatal("迁移回写应失败")
-	}
-	if !reflect.DeepEqual(before, cm.GetConfig()) {
-		t.Fatal("迁移回写失败提前发布候选")
-	}
-}
-
-func TestChannelRemovalCommitsBeforeCleanup(t *testing.T) {
+// 删除渠道先落盘墓碑再清理失败密钥；墓碑只保留身份字段，索引稳定。
+func TestChannelRemovalCommitsTombstoneBeforeCleanup(t *testing.T) {
 	for _, kind := range []string{"messages", "responses", "gemini", "chat", "images"} {
 		t.Run(kind, func(t *testing.T) {
 			cm := newTransactionTestManager(t, kind)
@@ -403,6 +361,52 @@ func TestChannelRemovalCommitsBeforeCleanup(t *testing.T) {
 			if err != nil || (*cs.upstreams)[0].Status != ChannelStatusDeleted {
 				t.Fatalf("删除结果未落盘: %v", err)
 			}
+			if kind != "messages" {
+				return
+			}
+			var doc map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &doc); err != nil {
+				t.Fatal(err)
+			}
+			var upstreams []map[string]json.RawMessage
+			if err := json.Unmarshal(doc["upstream"], &upstreams); err != nil {
+				t.Fatal(err)
+			}
+			var tombstone map[string]json.RawMessage
+			for _, entry := range upstreams {
+				var status string
+				if err := json.Unmarshal(entry["status"], &status); err == nil && status == ChannelStatusDeleted {
+					tombstone = entry
+					break
+				}
+			}
+			if tombstone == nil {
+				t.Fatal("删除占位未落盘")
+			}
+			if len(tombstone) != 4 {
+				t.Fatalf("墓碑字段应为 id/name/priority/status，实际 %d 个: %v", len(tombstone), tombstone)
+			}
+			for _, key := range []string{"id", "name", "priority", "status"} {
+				if _, ok := tombstone[key]; !ok {
+					t.Fatalf("墓碑缺少字段 %s", key)
+				}
+			}
 		})
+	}
+}
+
+func TestMigrationSaveFailureKeepsPublishedSnapshot(t *testing.T) {
+	cm := newTransactionTestManager(t, "messages")
+	before := cm.GetConfig()
+	blockTransactionBackup(t, cm)
+	// 旧格式必须补全默认设置并回写；失败时不应提前发布迁移候选。
+	if err := os.WriteFile(cm.configFile, []byte(`{"upstream":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := cm.reloadFromDisk(); err == nil {
+		t.Fatal("迁移回写应失败")
+	}
+	if !reflect.DeepEqual(before, cm.GetConfig()) {
+		t.Fatal("迁移回写失败提前发布候选")
 	}
 }

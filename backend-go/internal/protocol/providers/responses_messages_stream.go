@@ -7,11 +7,11 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/protocol/contract"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
+	"insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/contract"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 type responsesToClaudeStreamState struct {

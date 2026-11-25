@@ -1,13 +1,10 @@
 package respitems
 
 import (
-	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/protocol/contract"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // ResponsesOutputCollector 只归并协议事件，不负责读取、交付或持久化。
@@ -51,19 +48,18 @@ func (c *ResponsesOutputCollector) consume(data map[string]interface{}) error {
 			if !ok {
 				return fmt.Errorf("Responses 终态 output 必须是数组")
 			}
-			{
-				items := make([]types.ResponsesItem, 0, len(output))
-				for _, raw := range output {
-					item, err := types.ParseResponsesItem(raw)
-					if err != nil {
-						return err
-					}
-					if err = validateCollectedItem(item); err != nil {
-						return err
-					}
-					items = append(items, item)
+			items := make([]types.ResponsesItem, 0, len(output))
+			for _, raw := range output {
+				item, err := types.ParseResponsesItem(raw)
+				if err != nil {
+					return err
 				}
-				c.output = items
+				items = append(items, item)
+			}
+			var err error
+			c.output, err = ResponsesHistoryOutput(items, kind == "response.incomplete")
+			if err != nil {
+				return err
 			}
 		}
 		c.terminal = true
@@ -191,193 +187,4 @@ func (c *ResponsesOutputCollector) consume(data map[string]interface{}) error {
 	}
 	part[field] = value
 	return nil
-}
-
-func (c *ResponsesOutputCollector) entry(data, item map[string]interface{}, kind string) (*responseOutputEntry, error) {
-	keys := []string{}
-	for _, pair := range []struct {
-		prefix string
-		value  interface{}
-	}{
-		{"index", data["output_index"]}, {"id", data["item_id"]}, {"id", item["id"]}, {"call", data["call_id"]}, {"call", item["call_id"]},
-	} {
-		if pair.value != nil && pair.value != "" {
-			keys = append(keys, fmt.Sprintf("%s:%v", pair.prefix, pair.value))
-		}
-	}
-	var entry *responseOutputEntry
-	for _, key := range keys {
-		if found := c.aliases[key]; found != nil {
-			if entry != nil && entry != found {
-				return nil, fmt.Errorf("Responses item 身份指向不同条目")
-			}
-			entry = found
-		}
-	}
-	if entry == nil && len(keys) == 0 {
-		for _, candidate := range c.entries {
-			if candidate.raw["type"] == kind {
-				if entry != nil {
-					return nil, fmt.Errorf("Responses 增量缺少唯一 item 身份")
-				}
-				entry = candidate
-			}
-		}
-	}
-	if entry == nil {
-		entry = &responseOutputEntry{raw: map[string]interface{}{"type": kind}, parts: make(map[string]map[int]map[string]interface{})}
-		if kind == "message" {
-			entry.raw["role"] = "assistant"
-		}
-		c.entries = append(c.entries, entry)
-	}
-	if value, exists := data["output_index"]; exists {
-		index, err := responsePartIndex(value, "output_index")
-		if err != nil {
-			return nil, err
-		}
-		if entry.hasIndex && entry.index != index {
-			return nil, fmt.Errorf("Responses item 的 output_index 发生变化")
-		}
-		entry.index, entry.hasIndex = index, true
-	}
-	for _, key := range keys {
-		c.aliases[key] = entry
-	}
-	for _, field := range []string{"call_id", "name"} {
-		if value, ok := data[field].(string); ok && value != "" {
-			entry.raw[field] = value
-		}
-	}
-	if id, ok := data["item_id"].(string); ok && id != "" {
-		entry.raw["id"] = id
-	}
-	return entry, nil
-}
-
-func (e *responseOutputEntry) item() (types.ResponsesItem, error) {
-	raw := make(map[string]interface{}, len(e.raw)+2)
-	for key, value := range e.raw {
-		raw[key] = value
-	}
-	for section, parts := range e.parts {
-		if snapshot, exists := raw[section]; exists {
-			if list, ok := snapshot.([]interface{}); !ok || len(list) > 0 {
-				continue
-			}
-		}
-		indices := make([]int, 0, len(parts))
-		for index := range parts {
-			indices = append(indices, index)
-		}
-		sort.Ints(indices)
-		values := make([]interface{}, 0, len(parts))
-		for _, index := range indices {
-			values = append(values, parts[index])
-		}
-		raw[section] = values
-	}
-	return types.ParseResponsesItem(raw)
-}
-
-func validateCollectedItem(item types.ResponsesItem) error {
-	switch item.Type {
-	case "function_call":
-		return contract.RequestToolCall(item.CallID, item.Name, item.Arguments)
-	case "custom_tool_call":
-		if item.CallID == "" || item.Name == "" {
-			return fmt.Errorf("完整 custom_tool_call 缺少调用身份")
-		}
-		if _, ok := item.Content.(string); !ok {
-			return fmt.Errorf("完整 custom_tool_call 的 input 必须是字符串")
-		}
-	}
-	return nil
-}
-
-// Items 未终止时仅返回连续完成的前缀，不能因某个工具完成而带上其他半截条目。
-func (c *ResponsesOutputCollector) Items() ([]types.ResponsesItem, error) {
-	if c.err != nil {
-		return nil, c.err
-	}
-	if c.output != nil {
-		return append([]types.ResponsesItem(nil), c.output...), nil
-	}
-	entries := append([]*responseOutputEntry(nil), c.entries...)
-	sort.SliceStable(entries, func(i, j int) bool {
-		return entries[i].hasIndex && entries[j].hasIndex && entries[i].index < entries[j].index
-	})
-	result := make([]types.ResponsesItem, 0, len(entries))
-	for index, entry := range entries {
-		if !c.terminal && entry.hasIndex && entry.index != index {
-			break
-		}
-		if !c.terminal && !entry.done {
-			break
-		}
-		item, err := entry.item()
-		if err != nil {
-			return nil, err
-		}
-		if err = validateCollectedItem(item); err != nil {
-			return nil, err
-		}
-		result = append(result, item)
-	}
-	return result, nil
-}
-
-// Snapshot 只供用量估计，未完成条目不得经此入口进入持久化。
-func (c *ResponsesOutputCollector) Snapshot() ([]types.ResponsesItem, error) {
-	if c.err != nil {
-		return nil, c.err
-	}
-	result := make([]types.ResponsesItem, 0, len(c.entries))
-	for _, entry := range c.entries {
-		item, err := entry.item()
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, item)
-	}
-	return result, nil
-}
-
-// HasCompletedTool 只报告经过完整参数校验的 done 条目，调用者负责先确认交付成功。
-func (c *ResponsesOutputCollector) HasCompletedTool() bool {
-	if c.err != nil {
-		return false
-	}
-	for _, entry := range c.entries {
-		if entry.done && (entry.raw["type"] == "function_call" || entry.raw["type"] == "custom_tool_call") {
-			return true
-		}
-	}
-	return false
-}
-
-func responsePartIndex(value interface{}, field string) (int, error) {
-	if value == nil {
-		return 0, nil
-	}
-	var integer int64
-	switch number := value.(type) {
-	case json.Number:
-		parsed, err := number.Int64()
-		if err != nil {
-			return 0, fmt.Errorf("Responses %s 必须是非负整数: %w", field, err)
-		}
-		integer = parsed
-	case float64:
-		integer = int64(number)
-		if number != float64(integer) {
-			return 0, fmt.Errorf("Responses %s 必须是非负整数", field)
-		}
-	default:
-		return 0, fmt.Errorf("Responses %s 必须是非负整数", field)
-	}
-	if integer < 0 || int64(int(integer)) != integer {
-		return 0, fmt.Errorf("Responses %s 超出有效范围", field)
-	}
-	return int(integer), nil
 }

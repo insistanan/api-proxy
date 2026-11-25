@@ -6,10 +6,10 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/orchestration/circuit"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/dialogue/conversation"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/orchestration/circuit"
 )
 
 func TestSelection_FallsBackOnlyWhenMatchedPoolCannotAdmit(t *testing.T) {

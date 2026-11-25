@@ -6,7 +6,7 @@ import (
 	"log"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 // SelectVisionChannel 跨四个会话协议按稳定渠道 ID 解析图片理解层指定的渠道，

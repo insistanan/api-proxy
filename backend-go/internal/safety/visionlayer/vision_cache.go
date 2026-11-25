@@ -1,6 +1,7 @@
 package visionlayer
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -8,13 +9,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 // visionCacheStore 只要求对话内图片结果的读写，不依赖渠道调度。
 type visionCacheStore interface {
-	LoadConversationImageUnderstanding(conversationID, cacheKey string) (string, bool, error)
-	SaveConversationImageUnderstanding(conversationID, cacheKey, result string) error
+	LoadConversationImageUnderstanding(ctx context.Context, conversationID, cacheKey string) (string, bool, error)
+	SaveConversationImageUnderstanding(ctx context.Context, conversationID, cacheKey, result string) error
 }
 
 func buildImageCacheKey(fingerprint string, upstream *config.UpstreamConfig, resolvedModel string, profile visionAnalysisProfile, images []visionImage) string {
@@ -39,11 +40,11 @@ func memoryCacheKey(conversationID string, key string) string {
 }
 
 // loadCache 由占位持有者读取持久层；占位必须先于 I/O 建立，才能识别清理前的回填。
-func loadCache(store visionCacheStore, conversationID string, image visionImage) (string, bool, error) {
+func loadCache(ctx context.Context, store visionCacheStore, conversationID string, image visionImage) (string, bool, error) {
 	if store == nil {
 		return "", false, nil
 	}
-	result, ok, err := store.LoadConversationImageUnderstanding(conversationID, image.cacheKey)
+	result, ok, err := store.LoadConversationImageUnderstanding(ctx, conversationID, image.cacheKey)
 	if err != nil || !ok {
 		return result, ok, err
 	}
@@ -90,9 +91,9 @@ func failPendingAnalyses(images []visionImage, result visionAnalysisResult) {
 	}
 }
 
-func storeCache(store visionCacheStore, conversationID string, image visionImage, result string) error {
+func storeCache(ctx context.Context, store visionCacheStore, conversationID string, image visionImage, result string) error {
 	if store != nil {
-		if err := store.SaveConversationImageUnderstanding(conversationID, image.cacheKey, result); err != nil {
+		if err := store.SaveConversationImageUnderstanding(ctx, conversationID, image.cacheKey, result); err != nil {
 			return err
 		}
 	}

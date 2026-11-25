@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/protocol/converters/togemini"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/protocol/converters/togemini"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // TestClaudeResponseToGemini_WithThoughtSignature 测试 Claude 响应转换时 thought_signature 的处理

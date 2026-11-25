@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 func TestListVisionChannelsSeparatesPublicAndOwnerPoolsInConfigOrder(t *testing.T) {

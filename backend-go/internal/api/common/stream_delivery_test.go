@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 type failingStreamWriter struct{ err error }

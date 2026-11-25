@@ -3,8 +3,8 @@ package logger
 import (
 	"context"
 	"encoding/json"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/storage/logbody"
+	"insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/storage/logbody"
 	"io"
 	"net/http"
 	"sync"

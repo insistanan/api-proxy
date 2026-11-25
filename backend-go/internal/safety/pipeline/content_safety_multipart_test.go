@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/codec"
 	"io"
 	"mime/multipart"
 	"net/http/httptest"
@@ -13,7 +13,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 // buildImagesEditForm 构造 /v1/images/edits 形态的表单：prompt 文本字段 + 图片文件部件。

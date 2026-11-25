@@ -8,12 +8,12 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
-	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
-	"github.com/insistanan/api-proxy/internal/safety/pipeline"
-	"github.com/insistanan/api-proxy/internal/safety/visionlayer"
-	"github.com/insistanan/api-proxy/internal/storage/logger"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/orchestration/scheduler"
+	"insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"insistanan/api-proxy/internal/safety/pipeline"
+	"insistanan/api-proxy/internal/safety/visionlayer"
+	"insistanan/api-proxy/internal/storage/logger"
 )
 
 type upstreamAttemptPreflight struct {

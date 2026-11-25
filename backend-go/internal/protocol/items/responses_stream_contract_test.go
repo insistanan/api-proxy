@@ -2,8 +2,9 @@ package respitems
 
 import (
 	"encoding/json"
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func feedOutput(t *testing.T, c *ResponsesOutputCollector, events ...string) {
@@ -59,4 +60,44 @@ func TestResponsesCollectorSnapshotReportsInvalidFields(t *testing.T) {
 	feedOutput(t, c, `{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","name":123}}`)
 	_, err := c.Snapshot()
 	require.Error(t, err)
+}
+
+func TestResponsesCollectorRejectsConflictingIdentities(t *testing.T) {
+	for _, event := range []string{
+		`{"type":"response.output_text.delta","output_index":0,"item_id":123,"delta":"wrong"}`,
+		`{"type":"response.output_text.delta","output_index":null,"item_id":"m","delta":"wrong"}`,
+		`{"type":"response.output_text.delta","output_index":0,"item_id":"other","delta":"wrong"}`,
+		`{"type":"response.output_item.done","output_index":0,"item_id":"m","item":{"id":"other","type":"message"}}`,
+		`{"type":"response.function_call_arguments.delta","output_index":0,"delta":"{}"}`,
+	} {
+		t.Run(event, func(t *testing.T) {
+			c := NewResponsesOutputCollector()
+			feedOutput(t, c, `{"type":"response.output_item.added","output_index":0,"item":{"id":"m","type":"message"}}`)
+			var data map[string]interface{}
+			require.NoError(t, json.Unmarshal([]byte(event), &data))
+			require.Error(t, c.Consume(data))
+			_, err := c.Items()
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestResponsesTerminalCannotCompleteAnUnfinishedTool(t *testing.T) {
+	for _, snapshot := range []bool{false, true} {
+		t.Run(map[bool]string{false: "仅终态标志", true: "完整终态快照"}[snapshot], func(t *testing.T) {
+			c := NewResponsesOutputCollector()
+			feedOutput(t, c,
+				`{"type":"response.output_item.done","output_index":0,"item":{"type":"message","status":"completed","content":"before"}}`,
+				`{"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","status":"in_progress","call_id":"partial","name":"exec","arguments":"{"}}`)
+			event := `{"type":"response.incomplete","response":{}}`
+			if snapshot {
+				event = `{"type":"response.incomplete","response":{"output":[{"type":"message","status":"incomplete","content":"before"},{"type":"function_call","status":"incomplete","call_id":"partial","name":"exec","arguments":"{"},{"type":"message","content":"after"}]}}`
+			}
+			feedOutput(t, c, event)
+			items, err := c.Items()
+			require.NoError(t, err)
+			require.Len(t, items, 1)
+			require.Equal(t, "before", items[0].Content)
+		})
+	}
 }

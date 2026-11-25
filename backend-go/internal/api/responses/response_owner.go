@@ -3,7 +3,7 @@ package responses
 import (
 	"net/http"
 
-	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"insistanan/api-proxy/internal/orchestration/upstreamcontrol"
 )
 
 func responseUpstreamOwner(resp *http.Response) string {

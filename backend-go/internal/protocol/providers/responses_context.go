@@ -2,8 +2,8 @@ package providers
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/protocol/converters"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/protocol/converters"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 const responseToolContextKey = "responses_conversion_tools"

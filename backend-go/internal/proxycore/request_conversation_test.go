@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
+	"insistanan/api-proxy/internal/dialogue/conversation"
 )
 
 func TestConversationBranchesUseStableClientIdentity(t *testing.T) {

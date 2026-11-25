@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // Gemini 的 candidatesTokenCount 不含 thoughtsTokenCount，而 Anthropic 的 output_tokens

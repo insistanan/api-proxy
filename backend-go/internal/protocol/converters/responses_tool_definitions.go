@@ -5,9 +5,9 @@ import (
 	"maps"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/protocol/contract"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/contract"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // collectResponsesToolDefinitions 只读取工具声明和顶层 tool_search_output，

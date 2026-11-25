@@ -14,14 +14,14 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/orchestration/circuit"
-	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
-	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
-	"github.com/insistanan/api-proxy/internal/orchestration/urlhealth"
-	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
-	"github.com/insistanan/api-proxy/internal/storage/metrics"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/orchestration/circuit"
+	"insistanan/api-proxy/internal/orchestration/scheduler"
+	"insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"insistanan/api-proxy/internal/orchestration/urlhealth"
+	"insistanan/api-proxy/internal/protocol/visionmedia"
+	"insistanan/api-proxy/internal/storage/metrics"
 )
 
 const visionSuccessBody = `{"id":"vision-test","type":"message","role":"assistant","model":"test","stop_reason":"end_turn","content":[{"type":"text","text":"图片中有一只猫"}],"usage":{"input_tokens":1,"output_tokens":1}}`

@@ -457,62 +457,65 @@ func TestLogWriteRecoversAndRetriesAcceptedEntry(t *testing.T) {
 	}
 }
 
-func TestQueueRejectsCongestionWithinBudgetAndKeepsAcceptedEntry(t *testing.T) {
-	store := &Store{queue: make(chan queuedWrite, 1), spaceReady: make(chan struct{}), flushWaiters: make(map[chan error]struct{})}
-	first := queuedWrite{kind: writeApp, app: AppLog{Message: "已接收"}}
-	if err := store.enqueue(first); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer cancel()
-	if err := store.enqueueContext(ctx, queuedWrite{kind: writeApp, app: AppLog{Message: "未接收"}}); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("拥堵必须明确返回超时，实际 %v", err)
-	}
-	if store.queueStatus.AcceptedWrites != 1 || store.queueStatus.RejectedWrites != 1 || store.queueStatus.PendingEntries != 1 || store.queueStatus.LastRejectedError == "" {
-		t.Fatalf("队列状态错误: %+v", store.queueStatus)
-	}
-	accepted := <-store.queue
-	if accepted.app.Message != "已接收" {
-		t.Fatal("拥堵不能替换已接收记录")
-	}
-	store.completeBatch([]queuedWrite{accepted}, nil)
-	if store.queueBytes != 0 || store.queueStatus.PendingEntries != 0 {
-		t.Fatal("完成写入后必须释放队列配额")
-	}
-}
+// 写入队列的准入以条数和字节为配额，且处理中的批次同样占用配额。
+func TestWriteQueueAdmissionAndFlushCancellation(t *testing.T) {
+	t.Run("拥堵明确超时且保留已接收记录", func(t *testing.T) {
+		store := &Store{queue: make(chan queuedWrite, 1), spaceReady: make(chan struct{}), flushWaiters: make(map[chan error]struct{})}
+		first := queuedWrite{kind: writeApp, app: AppLog{Message: "已接收"}}
+		if err := store.enqueue(first); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+		defer cancel()
+		if err := store.enqueueContext(ctx, queuedWrite{kind: writeApp, app: AppLog{Message: "未接收"}}); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("拥堵必须明确返回超时，实际 %v", err)
+		}
+		if store.queueStatus.AcceptedWrites != 1 || store.queueStatus.RejectedWrites != 1 || store.queueStatus.PendingEntries != 1 || store.queueStatus.LastRejectedError == "" {
+			t.Fatalf("队列状态错误: %+v", store.queueStatus)
+		}
+		accepted := <-store.queue
+		if accepted.app.Message != "已接收" {
+			t.Fatal("拥堵不能替换已接收记录")
+		}
+		store.completeBatch([]queuedWrite{accepted}, nil)
+		if store.queueBytes != 0 || store.queueStatus.PendingEntries != 0 {
+			t.Fatal("完成写入后必须释放队列配额")
+		}
+	})
 
-func TestQueueEntryLimitIncludesInFlightBatch(t *testing.T) {
-	store := &Store{queue: make(chan queuedWrite, 1), spaceReady: make(chan struct{}), flushWaiters: make(map[chan error]struct{})}
-	if err := store.enqueue(queuedWrite{kind: writeApp, app: AppLog{Message: "处理中"}}); err != nil {
-		t.Fatal(err)
-	}
-	processing := <-store.queue
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer cancel()
-	if err := store.enqueueContext(ctx, queuedWrite{kind: writeApp}); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("处理中记录也应占用条数配额: %v", err)
-	}
-	store.completeBatch([]queuedWrite{processing}, nil)
-	if err := store.enqueue(queuedWrite{kind: writeApp}); err != nil {
-		t.Fatal(err)
-	}
-}
+	t.Run("处理中记录占用条数配额", func(t *testing.T) {
+		store := &Store{queue: make(chan queuedWrite, 1), spaceReady: make(chan struct{}), flushWaiters: make(map[chan error]struct{})}
+		if err := store.enqueue(queuedWrite{kind: writeApp, app: AppLog{Message: "处理中"}}); err != nil {
+			t.Fatal(err)
+		}
+		processing := <-store.queue
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+		defer cancel()
+		if err := store.enqueueContext(ctx, queuedWrite{kind: writeApp}); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("处理中记录也应占用条数配额: %v", err)
+		}
+		store.completeBatch([]queuedWrite{processing}, nil)
+		if err := store.enqueue(queuedWrite{kind: writeApp}); err != nil {
+			t.Fatal(err)
+		}
+	})
 
-func TestFlushContextCancellationDoesNotLeaveWaiterOrWithdrawBarrier(t *testing.T) {
-	store := &Store{queue: make(chan queuedWrite, 1), spaceReady: make(chan struct{}), flushWaiters: make(map[chan error]struct{})}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer cancel()
-	if err := store.FlushContext(ctx); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Flush 应支持取消等待: %v", err)
-	}
-	if len(store.flushWaiters) != 0 {
-		t.Fatal("取消后的 Flush 不应泄漏等待者")
-	}
-	barrier := <-store.queue
-	store.completeBatch([]queuedWrite{barrier}, nil)
-	if store.queueBytes != 0 || store.queueStatus.RejectedWrites != 0 {
-		t.Fatal("取消 Flush 只中止等待，不应计为拒收日志")
-	}
+	t.Run("取消 Flush 不泄漏等待者也不计为拒收", func(t *testing.T) {
+		store := &Store{queue: make(chan queuedWrite, 1), spaceReady: make(chan struct{}), flushWaiters: make(map[chan error]struct{})}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+		defer cancel()
+		if err := store.FlushContext(ctx); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Flush 应支持取消等待: %v", err)
+		}
+		if len(store.flushWaiters) != 0 {
+			t.Fatal("取消后的 Flush 不应泄漏等待者")
+		}
+		barrier := <-store.queue
+		store.completeBatch([]queuedWrite{barrier}, nil)
+		if store.queueBytes != 0 || store.queueStatus.RejectedWrites != 0 {
+			t.Fatal("取消 Flush 只中止等待，不应计为拒收日志")
+		}
+	})
 }
 
 type countedLogReadCloser struct {

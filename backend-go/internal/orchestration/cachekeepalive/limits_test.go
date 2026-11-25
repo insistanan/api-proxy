@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 func TestKeepalive_RejectsUnboundedPolicyBeforeRetainingBody(t *testing.T) {

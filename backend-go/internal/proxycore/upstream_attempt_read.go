@@ -4,7 +4,7 @@ package proxycore
 import (
 	"bytes"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/codec"
 	"io"
 	"net/http"
 	"strings"

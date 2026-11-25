@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
-	"github.com/insistanan/api-proxy/internal/safety/pipeline"
+	"insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/safety/pipeline"
 )
 
 // FailoverError 封装故障转移错误信息

@@ -13,12 +13,12 @@ import (
 	"testing/synctest"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
-	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
-	"github.com/insistanan/api-proxy/internal/storage/sqlitedb"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/dialogue/conversation"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/orchestration/scheduler"
+	"insistanan/api-proxy/internal/protocol/visionmedia"
+	"insistanan/api-proxy/internal/storage/sqlitedb"
 )
 
 func TestVisionCache_ResolvedModelAndQuestionControlReuse(t *testing.T) {
@@ -107,7 +107,7 @@ func TestVisionCache_PartialHitPreservesFullComparisonContext(t *testing.T) {
 	first.memoryKey = memoryCacheKey(conversationID, first.cacheKey)
 	_, _, first.call, _ = claimAnalysis(first.memoryKey)
 	defer finishAnalysis(first.memoryKey, first.call, visionAnalysisResult{result: "已有比较结果"})
-	require.NoError(t, storeCache(nil, conversationID, first, "已有比较结果"))
+	require.NoError(t, storeCache(context.Background(), nil, conversationID, first, "已有比较结果"))
 	finishAnalysis(first.memoryKey, first.call, visionAnalysisResult{result: "已有比较结果"})
 	call := func(batch []visionImage) map[string]string {
 		t.Helper()
@@ -231,7 +231,7 @@ func TestVisionCache_ReadFailureReleasesEarlierClaims(t *testing.T) {
 	images = append(images, second)
 	secondKey := buildImageCacheKey(second.fingerprint, selection.Upstream, "test", profile, images)
 	// 第一张缓存未命中并取得占位；第二张刷新持久化缓存访问时间时显式报错。
-	require.NoError(t, registry.SaveConversationImageUnderstanding(record.ID, secondKey, "已有描述"))
+	require.NoError(t, registry.SaveConversationImageUnderstanding(context.Background(), record.ID, secondKey, "已有描述"))
 	_, err = db.Exec(`CREATE TRIGGER reject_vision_cache_touch BEFORE UPDATE OF last_used_at ON conversation_image_understandings BEGIN SELECT RAISE(ABORT, 'cache unavailable'); END`)
 	require.NoError(t, err)
 	result := describeImagesOnChannel(ctx, config.DefaultEnvConfig(), cfg, sch, selection, "test", record.ID, profile, images, 2)
@@ -422,11 +422,11 @@ type visionCacheStoreStub struct {
 	save func(string, string, string) error
 }
 
-func (s visionCacheStoreStub) LoadConversationImageUnderstanding(conversationID, key string) (string, bool, error) {
+func (s visionCacheStoreStub) LoadConversationImageUnderstanding(ctx context.Context, conversationID, key string) (string, bool, error) {
 	return s.load(conversationID, key)
 }
 
-func (s visionCacheStoreStub) SaveConversationImageUnderstanding(conversationID, key, result string) error {
+func (s visionCacheStoreStub) SaveConversationImageUnderstanding(ctx context.Context, conversationID, key, result string) error {
 	return s.save(conversationID, key, result)
 }
 
@@ -475,12 +475,12 @@ func TestVisionCache_ClearPreventsInflightRefill(t *testing.T) {
 						},
 					}
 					if operation == "load" {
-						text, ok, err := loadCache(store, conversationID, image)
+						text, ok, err := loadCache(context.Background(), store, conversationID, image)
 						require.NoError(t, err)
 						require.True(t, ok)
 						require.Equal(t, "旧描述", text, "清理前已开始的读取仍可正常收尾")
 					} else {
-						require.NoError(t, storeCache(store, conversationID, image, "旧描述"))
+						require.NoError(t, storeCache(context.Background(), store, conversationID, image, "旧描述"))
 					}
 					finishAnalysis(key, oldCall, visionAnalysisResult{result: "旧描述"})
 					<-oldCall.done

@@ -3,8 +3,8 @@ package logbody
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
+	"insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/visionmedia"
 	"regexp"
 	"strings"
 )
@@ -42,7 +42,7 @@ func PrepareBody(raw []byte) (body string, originalBytes int, truncated bool) {
 }
 
 func PrepareBodyWithLimit(raw []byte, limit int) (body string, originalBytes int, truncated bool) {
-	// 0 仅供旧调用方使用历史上限；持久化设置中的范围由配置层校验。
+	// 非正或超过上限的 limit 回落到 MaxBodyBytes。
 	if limit <= 0 || limit > MaxBodyBytes {
 		limit = MaxBodyBytes
 	}

@@ -4,8 +4,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/orchestration/cachekeepalive"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/orchestration/cachekeepalive"
 )
 
 func GetCacheKeepalive(cfg *config.ConfigManager, manager *cachekeepalive.Manager) gin.HandlerFunc {

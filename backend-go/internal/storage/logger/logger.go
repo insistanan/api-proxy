@@ -13,7 +13,7 @@ import (
 
 var defaultStore atomic.Pointer[Store]
 
-// Config 日志系统配置。正文与运行日志一律进 sqlite，不再写 logs/ 文件。
+// Config 日志系统配置。正文与运行日志统一保存在 sqlite 中。
 type Config struct {
 	DBPath         string
 	Console        bool

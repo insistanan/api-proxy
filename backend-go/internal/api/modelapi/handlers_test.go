@@ -10,10 +10,10 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/middleware"
-	"github.com/insistanan/api-proxy/internal/management/modelcatalog"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/middleware"
+	"insistanan/api-proxy/internal/management/modelcatalog"
 )
 
 func newCatalogRouter(t *testing.T) *gin.Engine {

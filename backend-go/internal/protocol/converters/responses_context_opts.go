@@ -1,10 +1,10 @@
 package converters
 
 import (
-	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
+	"insistanan/api-proxy/internal/protocol/visionmedia"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // ExtractResponsesReasoningText 从 Responses reasoning item 的 summary/content 抽出文本。

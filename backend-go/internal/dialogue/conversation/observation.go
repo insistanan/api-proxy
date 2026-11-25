@@ -21,18 +21,18 @@ func (r *Registry) ObserveRequestWithError(ctx context.Context, obs Observation)
 	if err := r.prepareObservationLocked(ctx, obs); err != nil {
 		return nil, err
 	}
-	// 已失败的观测写入有界保留；磁盘长期故障时停止接纳新观测，避免无限驻留。
+	rec, identityKey, parentID, resolution := r.resolveObservationLocked(obs)
+	// 只限制新增待保存记录；同一在途会话继续请求不会扩大待保存记录集合。
 	pendingCount := 0
 	for _, record := range r.records {
 		if record.dirty || record.ActiveRequests > 0 {
 			pendingCount++
 		}
 	}
-	if pendingCount >= defaultCachedRecords {
+	if pendingCount >= defaultCachedRecords && (rec == nil || !rec.dirty && rec.ActiveRequests == 0) {
 		return nil, fmt.Errorf("会话观测待保存或在途数量已达上限，请等待请求完成或数据库恢复")
 	}
 
-	rec, identityKey, parentID, resolution := r.resolveObservationLocked(obs)
 	previous := cloneRecord(rec)
 	if rec == nil {
 		id, err := generateID("conv")

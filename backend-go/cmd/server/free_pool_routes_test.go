@@ -13,14 +13,14 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/dialogue/session"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/httpclient"
-	"github.com/insistanan/api-proxy/internal/orchestration/availability"
-	"github.com/insistanan/api-proxy/internal/safety/pipeline"
-	"github.com/insistanan/api-proxy/internal/storage/logger"
-	"github.com/insistanan/api-proxy/internal/storage/metrics"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/dialogue/session"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/httpclient"
+	"insistanan/api-proxy/internal/orchestration/availability"
+	"insistanan/api-proxy/internal/safety/pipeline"
+	"insistanan/api-proxy/internal/storage/logger"
+	"insistanan/api-proxy/internal/storage/metrics"
 )
 
 type freePoolTransport func(*http.Request) (*http.Response, error)

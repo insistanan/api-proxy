@@ -2,16 +2,16 @@ package settings
 
 import (
 	"context"
-	"github.com/insistanan/api-proxy/internal/api/common"
-	"github.com/insistanan/api-proxy/internal/clients"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	"insistanan/api-proxy/internal/api/common"
+	"insistanan/api-proxy/internal/clients"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
 	"log"
 	"net/http"
 	"sync"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/httpclient"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/httpclient"
 )
 
 // DisguiseSyncStatus 区分设置保存和远程查询，保留各客户端最后成功时间及错误。

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/infra/utils"
-	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"insistanan/api-proxy/internal/infra/utils"
+	"insistanan/api-proxy/internal/orchestration/upstreamcontrol"
 )
 
 // AddedUpstream 记录新增渠道的稳定标识和当前位置。

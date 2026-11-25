@@ -7,11 +7,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
-	"github.com/insistanan/api-proxy/internal/orchestration/urlhealth"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
-	"github.com/insistanan/api-proxy/internal/storage/metrics"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/orchestration/scheduler"
+	"insistanan/api-proxy/internal/orchestration/urlhealth"
+	"insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/storage/metrics"
 )
 
 // NextAPIKeyFunc 返回下一个可用 API key（按 failover 策略）
@@ -51,7 +51,7 @@ type UpstreamAttempt struct {
 	MarkURLSuccess     func(url string)
 	HandleSuccess      HandleSuccessFunc
 	LogContext         AttemptLogContext
-	// Permit 是本次渠道选择的许可句柄（R2-b）。多渠道分派时由外壳传入，
+	// Permit 是本次渠道选择的许可句柄。多渠道分派时由外壳传入，
 	// 供发送层的"未发出即失败"路径中性归还探测名额；渠道健康结果记账
 	// 仍由外壳在渠道结束时统一执行。单渠道路径为 nil。
 	Permit *scheduler.ChannelPermit
@@ -60,7 +60,7 @@ type UpstreamAttempt struct {
 	SkipVisionLayer bool
 }
 
-// channelHealthResult 渠道级健康结果（R2-a）。它回答"本次渠道尝试对渠道
+// channelHealthResult 渠道级健康结果。它回答"本次渠道尝试对渠道
 // 健康度意味着什么"，与"客户端响应是否已写回"（Handled）和"接下来如何
 // 重试"（FailoverError 是否存在）正交，不能由 SuccessKey 是否为空或
 // LastError 是否为 nil 推断。
@@ -96,7 +96,7 @@ type UpstreamAttemptResult struct {
 	Usage *types.Usage
 	// LastError 是最后一次底层错误，用于日志与上层判断。
 	LastError error
-	// Health 是本渠道的最终健康结果（R2-a）。渠道级熔断记账只消费该字段，
+	// Health 是本渠道的最终健康结果。渠道级熔断记账只消费该字段，
 	// 不得从 SuccessKey / LastError 推断。
 	Health channelHealthResult
 	// AbortFailover 表示本次失败不允许转入正常调度的下一渠道，外壳应立即按
@@ -122,9 +122,8 @@ func newUpstreamAttemptResult(
 	}
 }
 
-// withHealth 返回带渠道健康结果的副本（R2-a 构造辅助）。
-// 各出口在明确本渠道结束原因时调用；调用方按需保留原有 newUpstreamAttemptResult
-// 构造（Health 留 Unset），语义为"该结果不携带渠道健康结论"。
+// withHealth 返回带渠道健康结果的副本。
+// 各出口在明确本渠道结束原因时调用；未调用时 Health 保持 Unset，即不携带渠道健康结论。
 func (r UpstreamAttemptResult) withHealth(h channelHealthResult) UpstreamAttemptResult {
 	r.Health = h
 	return r

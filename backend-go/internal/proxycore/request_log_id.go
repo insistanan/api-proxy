@@ -2,11 +2,11 @@ package proxycore
 
 import (
 	"context"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/storage/logger"
+	"insistanan/api-proxy/internal/storage/logger"
 )
 
 func BindRequestLogID(c *gin.Context) string {

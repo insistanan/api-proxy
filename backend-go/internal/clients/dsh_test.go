@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -27,22 +28,14 @@ func performDSHSettingsRequest(t *testing.T, method, body string) *httptest.Resp
 	router := gin.New()
 	router.GET("/settings/dsh", GetDSHSettings())
 	router.PUT("/settings/dsh", SaveDSHSettings())
-	var reader *os.File
+	var request *http.Request
 	if body == "" {
-		reader = nil
+		request = httptest.NewRequest(method, "/settings/dsh", nil)
 	} else {
-		tmp := filepath.Join(t.TempDir(), "body.json")
-		require.NoError(t, os.WriteFile(tmp, []byte(body), 0600))
-		f, err := os.Open(tmp)
-		require.NoError(t, err)
-		reader = f
-	}
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(method, "/settings/dsh", reader)
-	if reader != nil {
-		defer reader.Close()
+		request = httptest.NewRequest(method, "/settings/dsh", strings.NewReader(body))
 		request.Header.Set("Content-Type", "application/json")
 	}
+	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
 	return recorder
 }
@@ -54,7 +47,7 @@ func decodeDSHSettingsResponse(t *testing.T, recorder *httptest.ResponseRecorder
 	return response
 }
 
-func TestGetDSHSettingsOrderedProviderKeys(t *testing.T) {
+func TestDSHSettings(t *testing.T) {
 	t.Run("按文件顺序返回 providerKeys 并保留未知字段", func(t *testing.T) {
 		home := setupDSHHome(t)
 		yamlContent := `ui-onboarding:
@@ -121,32 +114,7 @@ ui-theme:
 		assert.Equal(t, 220000, *providers["local"].Models[0].ContextWindow)
 	})
 
-	t.Run("providerKeys 保持文件顺序", func(t *testing.T) {
-		home := setupDSHHome(t)
-		// 顺序为 zeta、alpha，验证不会按字母序重排。
-		yamlContent := `llm-pi-ai:
-  providers:
-    zeta:
-      apiKeyEnv: ZETA_KEY
-      api: anthropic-messages
-    alpha:
-      apiKeyEnv: ALPHA_KEY
-      api: anthropic-messages
-`
-		require.NoError(t, os.WriteFile(filepath.Join(home, "settings.yaml"), []byte(yamlContent), 0600))
-
-		recorder := performDSHSettingsRequest(t, http.MethodGet, "")
-		require.Equal(t, http.StatusOK, recorder.Code)
-		response := decodeDSHSettingsResponse(t, recorder)
-
-		var keys []string
-		require.NoError(t, json.Unmarshal(response["providerKeys"], &keys))
-		assert.Equal(t, []string{"zeta", "alpha"}, keys, "providerKeys 必须保持文件顺序")
-	})
-}
-
-func TestSaveDSHSettingsEmptyProviderKeysRoundTrip(t *testing.T) {
-	t.Run("保存空配置后再读取仍返回 []，且文件被创建", func(t *testing.T) {
+	t.Run("保存空配置后读取仍返回空对象与空数组，并创建文件", func(t *testing.T) {
 		home := setupDSHHome(t)
 		path := filepath.Join(home, "settings.yaml")
 
@@ -168,7 +136,7 @@ func TestSaveDSHSettingsEmptyProviderKeysRoundTrip(t *testing.T) {
 		assert.True(t, response["exists"] != nil && string(response["exists"]) == "true")
 	})
 
-	t.Run("providerKeys 未传时按稳定顺序生成", func(t *testing.T) {
+	t.Run("未传 providerKeys 时按字母序稳定输出", func(t *testing.T) {
 		home := setupDSHHome(t)
 		path := filepath.Join(home, "settings.yaml")
 
@@ -182,23 +150,12 @@ func TestSaveDSHSettingsEmptyProviderKeysRoundTrip(t *testing.T) {
 		recorder := performDSHSettingsRequest(t, http.MethodPut, payload)
 		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 
-		// 读回文件，确认 provider 顺序稳定（不依赖 Go map 迭代）。
 		content, err := os.ReadFile(path)
 		require.NoError(t, err)
 		require.Contains(t, string(content), "alpha:", string(content))
 		require.Contains(t, string(content), "zeta:", string(content))
-		// alpha 必须排在 zeta 之前。
 		require.Less(t,
-			indexOf(string(content), "alpha:"), indexOf(string(content), "zeta:"),
+			strings.Index(string(content), "alpha:"), strings.Index(string(content), "zeta:"),
 			"缺省 providerKeys 应按字母序稳定输出")
 	})
-}
-
-func indexOf(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
-		}
-	}
-	return -1
 }

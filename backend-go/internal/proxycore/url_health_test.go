@@ -6,10 +6,10 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/protocol/providers"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/protocol/providers"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 func TestUpstreamAttempt_KeyFailoverOnlyPenalizesEndpointFailures(t *testing.T) {

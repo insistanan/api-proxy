@@ -9,13 +9,29 @@ import (
 
 // PruneWithRecords 由 Registry 在持有对话锁时调用，始终保持对话锁→历史锁顺序。
 func (sm *SessionManager) PruneWithRecords(ctx context.Context, db *sql.DB, remove func(*sql.Tx) ([]string, error)) ([]string, error) {
-	if sm.store == nil || sm.store.db != db {
-		return nil, fmt.Errorf("会话历史和注册表必须共享同一持久化数据库")
+	if (sm.store == nil) != (db == nil) || sm.store != nil && sm.store.db != db {
+		return nil, fmt.Errorf("会话历史和注册表必须共享同一持久化数据库或同时使用内存")
 	}
 	if err := sm.mu.LockContext(ctx); err != nil {
 		return nil, err
 	}
 	defer sm.mu.Unlock()
+	if db == nil {
+		records, err := remove(nil)
+		if err != nil {
+			return nil, err
+		}
+		expired := make(map[string]bool, len(records))
+		for _, id := range records {
+			expired[id] = true
+		}
+		for id, current := range sm.sessions {
+			if expired[current.ConversationID] {
+				sm.removeCachedSessionLocked(id)
+			}
+		}
+		return records, nil
+	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err

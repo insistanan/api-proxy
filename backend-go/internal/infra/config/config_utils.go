@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/storage/atomicfile"
+	"insistanan/api-proxy/internal/storage/atomicfile"
 )
 
 // ============== 工具函数 ==============

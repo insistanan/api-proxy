@@ -2,10 +2,11 @@ package conversation
 
 import (
 	"context"
-	"github.com/stretchr/testify/require"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestControlWritesRollbackAndObservationRetries(t *testing.T) {
@@ -97,14 +98,18 @@ func TestConversationReadsCancelWhileWaitingForConnectionAndLock(t *testing.T) {
 func TestObservationBacklogIsBoundedAndAdmissionRecovers(t *testing.T) {
 	r := NewRegistry()
 	defer r.Stop()
-	for i := 0; i < defaultCachedRecords; i++ {
+	active := mustObserve(t, r, Observation{APIKind: "messages", ConversationID: "active"})
+	for i := 1; i < defaultCachedRecords; i++ {
 		rec := mustObserve(t, r, Observation{APIKind: "messages"})
 		r.mu.Lock()
 		r.records[rec.ID].dirty = true
 		r.mu.Unlock()
 		r.MarkComplete(rec.ID, "messages")
 	}
-	_, err := r.ObserveRequestWithError(context.Background(), Observation{APIKind: "messages"})
+	repeated, err := r.ObserveRequestWithError(context.Background(), Observation{APIKind: "messages", ConversationID: "active"})
+	require.NoError(t, err)
+	require.Equal(t, active.ID, repeated.ID)
+	_, err = r.ObserveRequestWithError(context.Background(), Observation{APIKind: "messages"})
 	require.Error(t, err)
 	require.Len(t, r.records, defaultCachedRecords)
 	r.mu.Lock()
@@ -133,4 +138,31 @@ func TestExpiredConversationInvalidatesLeaseAndCache(t *testing.T) {
 	require.NoError(t, r.cleanup())
 	require.True(t, cleared)
 	require.False(t, lease.Store(func() { t.Fatal("过期会话不能回填") }))
+}
+
+func TestImageCacheIOCanCancelAndCannotWriteAfterStop(t *testing.T) {
+	r, err := NewPersistentRegistry(filepath.Join(t.TempDir(), "dialogue.db"))
+	require.NoError(t, err)
+	defer r.Stop()
+	rec := mustObserve(t, r, Observation{APIKind: "messages"})
+	require.NoError(t, r.SaveConversationImageUnderstanding(context.Background(), rec.ID, "key", "original"))
+	conn, err := r.store.db.Conn(context.Background())
+	require.NoError(t, err)
+	for _, write := range []bool{false, true} {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		if write {
+			err = r.SaveConversationImageUnderstanding(ctx, rec.ID, "key", "canceled")
+		} else {
+			_, _, err = r.LoadConversationImageUnderstanding(ctx, rec.ID, "key")
+		}
+		cancel()
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+	}
+	require.NoError(t, conn.Close())
+	result, ok, err := r.LoadConversationImageUnderstanding(context.Background(), rec.ID, "key")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, "original", result)
+	require.NoError(t, r.Stop())
+	require.Error(t, r.SaveConversationImageUnderstanding(context.Background(), rec.ID, "key", "late"))
 }

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/orchestration/availability"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/orchestration/availability"
 )
 
 func TestAvailabilityPersistsAggregatesAndFollowsLogDeletion(t *testing.T) {

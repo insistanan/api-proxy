@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/storage/sqlitedb"
+	"insistanan/api-proxy/internal/storage/sqlitedb"
 )
 
 // 危险命令 AI 闸门的待确认与白/黑名单持久化。

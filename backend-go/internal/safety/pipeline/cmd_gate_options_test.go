@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/safety/llmgate"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/safety/llmgate"
 )
 
 func TestGateSharedOptionRetainsSavedKiloAliasWithoutDuplicates(t *testing.T) {

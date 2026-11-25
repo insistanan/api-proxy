@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/protocol/items"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/protocol/items"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // ResponsesToClaudeMessagesWithOptions converts Responses history+input to Claude messages.

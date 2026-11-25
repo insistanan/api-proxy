@@ -13,13 +13,13 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/orchestration/availability"
-	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
-	"github.com/insistanan/api-proxy/internal/storage/logger"
-	"github.com/insistanan/api-proxy/internal/storage/metrics"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/orchestration/availability"
+	"insistanan/api-proxy/internal/orchestration/scheduler"
+	"insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/storage/logger"
+	"insistanan/api-proxy/internal/storage/metrics"
 )
 
 func TestAvailabilityRecordsEachRetryBeforeFinalSuccess(t *testing.T) {

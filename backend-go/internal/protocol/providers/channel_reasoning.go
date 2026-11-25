@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/protocol/converters"
 	"github.com/tidwall/gjson"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/protocol/converters"
 )
 
 type requestBuildFunc func(RequestInput, *config.UpstreamConfig, string) (*RequestOutcome, error)

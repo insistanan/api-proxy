@@ -3,11 +3,11 @@ package proxycore
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
+	"insistanan/api-proxy/internal/protocol/visionmedia"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/dialogue/conversation"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 func ExtractPromptsFromClaude(messages []types.ClaudeMessage) []string {

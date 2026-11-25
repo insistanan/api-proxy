@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/safety/sensitive"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/safety/sensitive"
 )
 
 const defaultStreamToolArgumentKey = "default"

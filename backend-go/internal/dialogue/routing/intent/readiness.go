@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/dialogue/routing/semantic"
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/dialogue/routing/semantic"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 func (s *Service) ValidateVector(p config.SemanticEmbeddingConfig) error {

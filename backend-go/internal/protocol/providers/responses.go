@@ -10,14 +10,14 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/dialogue/session"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
-	"github.com/insistanan/api-proxy/internal/protocol/converters"
-	"github.com/insistanan/api-proxy/internal/protocol/items"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
+	"insistanan/api-proxy/internal/dialogue/session"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
+	"insistanan/api-proxy/internal/protocol/converters"
+	"insistanan/api-proxy/internal/protocol/items"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // ResponsesProvider Responses API 提供商

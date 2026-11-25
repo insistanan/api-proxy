@@ -1,6 +1,6 @@
 // Package circuit 实现渠道级三态熔断器（Closed / Open / HalfOpen）。
 //
-// 设计参照 cc-switch 的 circuit_breaker.rs：
+// 状态转换规则：
 //   - Closed：正常放行；连续失败达到阈值，或累计请求达到最小样本后错误率达到阈值，转 Open。
 //   - Open：拒绝所有请求；冷却时间到期后惰性转 HalfOpen（无后台定时器，在被查询时转换）。
 //   - HalfOpen：限量放行探测请求（默认同时 1 个）；探测连续成功达到阈值转 Closed，
@@ -8,7 +8,7 @@
 //
 // 与 Key 级滑动窗口熔断（metrics.MetricsManager.ShouldSuspendKey）正交：
 // 本包按 (kind, channelIndex) 组织，粒度是"渠道"；Key 级判断的是渠道内单个密钥。
-// 状态仅存内存，进程重启即清零（与 cc-switch 一致——持久层只存展示用的健康度镜像）。
+// 状态仅存内存，进程重启即清零；持久层只存展示用的健康度镜像。
 package circuit
 
 import (
@@ -36,7 +36,7 @@ type Config struct {
 	SuccessThreshold   int           // HalfOpen 连续成功多少次转 Closed
 }
 
-// DefaultConfig 返回与 cc-switch 默认值一致的配置。
+// DefaultConfig 返回默认配置。
 func DefaultConfig() Config {
 	return Config{
 		FailureThreshold:   4,
@@ -83,7 +83,7 @@ type Breaker struct {
 
 	// generation 状态代次：Reset / 重新 Open→HalfOpen 时递增。
 	// Allow 占用探测名额时返回当时的代次；记账携带代次且不匹配时忽略，
-	// 防止迟到结果释放新许可的探测名额（R2-b）。
+	// 防止迟到结果释放新许可的探测名额。
 	generation uint64
 }
 
@@ -161,7 +161,7 @@ func (b *Breaker) RecordSuccess() {
 }
 
 // RecordSuccessGeneration 带状态代次的成功记账：代次不匹配时忽略
-// （迟到结果不得释放新许可的探测名额，R2-b）。
+// （迟到结果不得释放新许可的探测名额）。
 func (b *Breaker) RecordSuccessGeneration(generation uint64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -262,7 +262,7 @@ func (b *Breaker) Snapshot() Snapshot {
 }
 
 // lazyTransitionLocked 在被查询时惰性推进 Open → HalfOpen。
-// 注意与 cc-switch 的幂等守卫一致：已经是 HalfOpen 时不重置在途计数，
+// 已经是 HalfOpen 时不重置在途计数，
 // 避免并发查询把探测名额误清空。
 func (b *Breaker) lazyTransitionLocked(now time.Time) {
 	if b.state != StateOpen {

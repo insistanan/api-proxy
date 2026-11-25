@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/storage/atomicfile"
+	"insistanan/api-proxy/internal/storage/atomicfile"
 )
 
 // HistoricalKeyStore 按协议与渠道稳定 ID 保存历史 API Key。

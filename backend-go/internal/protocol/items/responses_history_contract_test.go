@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 func TestHistoryDedupPreservesBusinessDifferences(t *testing.T) {

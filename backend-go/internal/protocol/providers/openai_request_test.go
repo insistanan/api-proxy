@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 func TestOpenAIProviderConvertToProviderRequest_UsesSingleTokenField(t *testing.T) {

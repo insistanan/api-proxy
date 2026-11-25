@@ -8,13 +8,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
-	"github.com/insistanan/api-proxy/internal/dialogue/session"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
-	"github.com/insistanan/api-proxy/internal/orchestration/urlhealth"
-	"github.com/insistanan/api-proxy/internal/storage/metrics"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/dialogue/conversation"
+	"insistanan/api-proxy/internal/dialogue/session"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"insistanan/api-proxy/internal/orchestration/urlhealth"
+	"insistanan/api-proxy/internal/storage/metrics"
 )
 
 func TestInitializeProfiles_RejectsMissingProtocolMetrics(t *testing.T) {

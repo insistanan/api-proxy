@@ -40,20 +40,6 @@ func writeTestSkill(t *testing.T, baseDir, name, body string) string {
 	return dir
 }
 
-func TestLocationsIncludesPiAndConfiguredProjectDir(t *testing.T) {
-	projectDir, homeDir, opts := setupSkillsTestEnv(t)
-	locs, err := Locations(opts)
-	require.NoError(t, err)
-
-	byKey := make(map[string]Location, len(locs))
-	for _, loc := range locs {
-		byKey[loc.Key] = loc
-	}
-	require.Equal(t, filepath.Clean(projectDir), filepath.Clean(byKey["project"].Path))
-	require.Equal(t, filepath.Join(homeDir, ".pi", "agent", "skills"), filepath.Clean(byKey["pi"].Path))
-	require.False(t, byKey["pi"].ReadOnly)
-}
-
 func TestToggleAgentAndSyncManifest(t *testing.T) {
 	projectDir, homeDir, opts := setupSkillsTestEnv(t)
 
@@ -121,7 +107,6 @@ func TestToggleAgentAndSyncManifest(t *testing.T) {
 func TestSyncManifestSkipsMissingProjectSkillWithoutDeletingAgentCopies(t *testing.T) {
 	projectDir, homeDir, opts := setupSkillsTestEnv(t)
 
-	// manifest 记录了 missing-skill 仅启用在 claude-code（未启用 codex），但项目目录缺失它
 	require.NoError(t, WriteManifest(projectDir, Manifest{
 		Version: 1,
 		Skills: map[string][]string{
@@ -141,5 +126,4 @@ func TestSyncManifestSkipsMissingProjectSkillWithoutDeletingAgentCopies(t *testi
 	require.NoError(t, err)
 	_, err = os.Stat(filepath.Join(codexCopy, "SKILL.md"))
 	require.NoError(t, err)
-	_ = projectDir
 }

@@ -1,6 +1,6 @@
 package visionmedia
 
-import "github.com/insistanan/api-proxy/internal/protocol/types"
+import "insistanan/api-proxy/internal/protocol/types"
 
 // ToGeminiImagePart 与请求校验共用媒体提取规则，避免校验通过后转换时丢图。
 func ToGeminiImagePart(block map[string]interface{}, allowFileURI bool) (types.GeminiPart, bool) {

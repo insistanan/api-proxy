@@ -13,12 +13,12 @@ import (
 
 	lmfpd "github.com/Ikaleio/lm-detector/sdk/go"
 	"github.com/google/uuid"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/httpclient"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
-	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/protocol/converters"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/httpclient"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
+	"insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/converters"
 )
 
 const sampleTimeout = 180 * time.Second

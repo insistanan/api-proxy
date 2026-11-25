@@ -1,4 +1,4 @@
-module github.com/insistanan/api-proxy
+module insistanan/api-proxy
 
 go 1.26.0
 

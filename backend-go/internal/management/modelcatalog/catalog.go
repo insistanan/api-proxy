@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 const (
@@ -133,7 +133,7 @@ func looksLikeChatRouteAlias(modelID string) bool {
 }
 
 // publicModelEntries 只根据已配置分组生成目录：普通分组使用匹配词，免费分组统一使用 free。
-// 不再暴露渠道级上游模型或 Chat 路由别名（如 model__c0__kxxxxxxxx）。
+// 不暴露渠道级上游模型或 Chat 路由别名（如 model__c0__kxxxxxxxx）。
 func publicModelEntries(cfgManager *config.ConfigManager) []ModelEntry {
 	return publicModelEntriesForKind(cfgManager, "")
 }
@@ -297,7 +297,7 @@ func discoverChatModels(ctx context.Context, cfgManager *config.ConfigManager) (
 	var errors []string
 
 	for channelIndex, upstream := range cfg.ChatUpstream {
-		// 免费清单只由专用同步入口维护，不参与旧的逐 Key 模型发现或路由别名生成。
+		// 免费清单只由专用同步入口维护，不参与逐 Key 模型发现或路由别名生成。
 		if upstream.BuiltinProvider != "" {
 			continue
 		}

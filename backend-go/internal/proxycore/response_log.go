@@ -6,8 +6,8 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/storage/logger"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/storage/logger"
 )
 
 func LogResponseDetails(resp *http.Response, body []byte, envCfg *config.EnvConfig, apiType string) {

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/infra/utils"
+	"insistanan/api-proxy/internal/infra/utils"
 )
 
 // parseModelsFlexible extracts model IDs from a wide range of real-world list-models

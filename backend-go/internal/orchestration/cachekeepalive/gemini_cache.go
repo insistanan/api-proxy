@@ -11,9 +11,9 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/httpclient"
-	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/httpclient"
+	"insistanan/api-proxy/internal/orchestration/upstreamcontrol"
 )
 
 type geminiCacheResource struct {

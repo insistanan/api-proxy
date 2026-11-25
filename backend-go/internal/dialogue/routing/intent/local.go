@@ -21,7 +21,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/insistanan/api-proxy/internal/storage/atomicfile"
+	"insistanan/api-proxy/internal/storage/atomicfile"
 )
 
 // LocalManifest 由管理员提供已核对的 CPU 运行时及小型 GGUF 向量模型。

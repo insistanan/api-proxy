@@ -2,10 +2,10 @@ package channels
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/management/channelcrud"
-	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
-	"github.com/insistanan/api-proxy/internal/storage/metrics"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/management/channelcrud"
+	"insistanan/api-proxy/internal/orchestration/scheduler"
+	"insistanan/api-proxy/internal/storage/metrics"
 )
 
 // ChannelRouteDeps 渠道管理路由注册所需的共享依赖。

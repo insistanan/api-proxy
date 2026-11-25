@@ -66,38 +66,40 @@ func TestToggleDiscoveredEntryRestoresCompleteConfig(t *testing.T) {
 	}
 }
 
-func TestToggleSameNameVariantsAreIndependent(t *testing.T) {
-	dir := t.TempDir()
-	claudePath := filepath.Join(dir, "claude.json")
-	codexPath := filepath.Join(dir, "codex.toml")
-	claudeRaw := []byte(`{"mcpServers":{"demo":{"command":"claude-command"}}}`)
-	codexRaw := []byte("[mcp_servers.demo]\ncommand = 'codex-command'\n")
-	require.NoError(t, os.WriteFile(claudePath, claudeRaw, 0600))
-	require.NoError(t, os.WriteFile(codexPath, codexRaw, 0600))
-	service := NewService(NewStore(filepath.Join(dir, "mcp.json")), NewClaudeCodeAdapter(func() (string, error) { return claudePath, nil }), NewCodexAdapter(func() (string, error) { return codexPath, nil }))
-	server := Server{Name: "demo", Transport: TransportStdio, Command: "claude-command", Agents: []AgentKey{}}
-	_, err := service.Toggle(ToggleRequest{Agent: AgentCodex, AgentRevision: Revision(codexRaw), Server: server, Enabled: true})
-	require.ErrorIs(t, err, ErrAgentConflict)
-	result, err := service.Toggle(ToggleRequest{Agent: AgentClaudeCode, AgentRevision: Revision(claudeRaw), Server: server, Enabled: false})
-	require.NoError(t, err)
-	require.True(t, result.Agents[0].OK)
-	actual, err := os.ReadFile(codexPath)
-	require.NoError(t, err)
-	require.Equal(t, codexRaw, actual)
-}
+func TestToggleConflicts(t *testing.T) {
+	t.Run("同名不同应用的条目彼此独立", func(t *testing.T) {
+		dir := t.TempDir()
+		claudePath := filepath.Join(dir, "claude.json")
+		codexPath := filepath.Join(dir, "codex.toml")
+		claudeRaw := []byte(`{"mcpServers":{"demo":{"command":"claude-command"}}}`)
+		codexRaw := []byte("[mcp_servers.demo]\ncommand = 'codex-command'\n")
+		require.NoError(t, os.WriteFile(claudePath, claudeRaw, 0600))
+		require.NoError(t, os.WriteFile(codexPath, codexRaw, 0600))
+		service := NewService(NewStore(filepath.Join(dir, "mcp.json")), NewClaudeCodeAdapter(func() (string, error) { return claudePath, nil }), NewCodexAdapter(func() (string, error) { return codexPath, nil }))
+		server := Server{Name: "demo", Transport: TransportStdio, Command: "claude-command", Agents: []AgentKey{}}
+		_, err := service.Toggle(ToggleRequest{Agent: AgentCodex, AgentRevision: Revision(codexRaw), Server: server, Enabled: true})
+		require.ErrorIs(t, err, ErrAgentConflict)
+		result, err := service.Toggle(ToggleRequest{Agent: AgentClaudeCode, AgentRevision: Revision(claudeRaw), Server: server, Enabled: false})
+		require.NoError(t, err)
+		require.True(t, result.Agents[0].OK)
+		actual, err := os.ReadFile(codexPath)
+		require.NoError(t, err)
+		require.Equal(t, codexRaw, actual)
+	})
 
-func TestToggleRejectsStaleApplicationRevision(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
-	listPath := filepath.Join(dir, "mcp.json")
-	raw := []byte("[mcp_servers.demo]\ncommand = 'npx'\n")
-	require.NoError(t, os.WriteFile(path, raw, 0600))
-	service := NewService(NewStore(listPath), NewCodexAdapter(func() (string, error) { return path, nil }))
-	_, err := service.Toggle(ToggleRequest{Agent: AgentCodex, AgentRevision: "stale", Server: Server{Name: "demo", Transport: TransportStdio, Command: "npx"}, Enabled: false})
-	require.ErrorIs(t, err, ErrRevisionConflict)
-	_, err = os.Stat(listPath)
-	require.True(t, os.IsNotExist(err))
-	actual, err := os.ReadFile(path)
-	require.NoError(t, err)
-	require.Equal(t, raw, actual)
+	t.Run("应用配置版本过期时拒绝切换", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "config.toml")
+		listPath := filepath.Join(dir, "mcp.json")
+		raw := []byte("[mcp_servers.demo]\ncommand = 'npx'\n")
+		require.NoError(t, os.WriteFile(path, raw, 0600))
+		service := NewService(NewStore(listPath), NewCodexAdapter(func() (string, error) { return path, nil }))
+		_, err := service.Toggle(ToggleRequest{Agent: AgentCodex, AgentRevision: "stale", Server: Server{Name: "demo", Transport: TransportStdio, Command: "npx"}, Enabled: false})
+		require.ErrorIs(t, err, ErrRevisionConflict)
+		_, err = os.Stat(listPath)
+		require.True(t, os.IsNotExist(err))
+		actual, err := os.ReadFile(path)
+		require.NoError(t, err)
+		require.Equal(t, raw, actual)
+	})
 }

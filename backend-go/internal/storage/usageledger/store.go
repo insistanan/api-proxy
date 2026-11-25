@@ -13,9 +13,9 @@ import (
 	"time"
 	_ "time/tzdata"
 
-	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
-	"github.com/insistanan/api-proxy/internal/storage/atomicfile"
-	"github.com/insistanan/api-proxy/internal/storage/sqlitedb"
+	"insistanan/api-proxy/internal/protocol/tokenusage"
+	"insistanan/api-proxy/internal/storage/atomicfile"
+	"insistanan/api-proxy/internal/storage/sqlitedb"
 )
 
 const schema = `

@@ -85,7 +85,7 @@ func (a UpstreamAttempt) tryMappedChannelTarget(targetModel string, channelID st
 
 // mappingSourceHealth 计算源渠道在映射循环中的健康结论。
 // 源渠道只对自身发生过的真实故障负责：
-//   - 没有任何候选转交目标渠道时，保持原有语义（记失败）；
+//   - 没有任何候选转交目标渠道时，记失败；
 //   - 转交过目标渠道且源渠道自身有真实失败时，记失败；
 //   - 仅有目标渠道参与（目标渠道已各自记账）时，记中性，不改变源渠道熔断状态。
 func mappingSourceHealth(localFailure bool, mappedRouted bool) channelHealthResult {

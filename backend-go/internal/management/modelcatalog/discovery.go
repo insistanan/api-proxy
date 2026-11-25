@@ -3,17 +3,17 @@ package modelcatalog
 import (
 	"context"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
+	"insistanan/api-proxy/internal/protocol/codec"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/httpclient"
-	"github.com/insistanan/api-proxy/internal/infra/utils"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/httpclient"
+	"insistanan/api-proxy/internal/infra/utils"
 )
 
 const (

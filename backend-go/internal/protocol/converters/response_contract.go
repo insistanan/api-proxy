@@ -3,8 +3,8 @@ package converters
 import (
 	"fmt"
 
-	"github.com/insistanan/api-proxy/internal/protocol/contract"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/protocol/contract"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 func restoreResponseToolItem(item types.ResponsesItem, tools map[string]responseToolSpec) (types.ResponsesItem, error) {

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 type testEmbedder struct {

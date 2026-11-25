@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // 思考等级档位的统一内部表示：none/auto/minimal/low/medium/high/xhigh/max。

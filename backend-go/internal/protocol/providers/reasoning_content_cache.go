@@ -6,13 +6,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
+	"insistanan/api-proxy/internal/dialogue/conversation"
 	"log"
 	"strings"
 	"sync"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // reasoningContentCache 保存 "assistant 消息指纹 → reasoning_content" 的进程内缓存。

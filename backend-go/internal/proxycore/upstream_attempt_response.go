@@ -8,17 +8,17 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/dialogue/routing/intent"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
-	"github.com/insistanan/api-proxy/internal/orchestration/availability"
-	"github.com/insistanan/api-proxy/internal/orchestration/proxy"
-	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/protocol/providers"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
-	"github.com/insistanan/api-proxy/internal/safety/pipeline"
-	"github.com/insistanan/api-proxy/internal/storage/logger"
+	"insistanan/api-proxy/internal/dialogue/routing/intent"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
+	"insistanan/api-proxy/internal/orchestration/availability"
+	"insistanan/api-proxy/internal/orchestration/proxy"
+	"insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/providers"
+	"insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/safety/pipeline"
+	"insistanan/api-proxy/internal/storage/logger"
 )
 
 // finishAttempt 把同一份上游尝试结果交给用量账本和运行日志。
@@ -191,7 +191,7 @@ func (step candidateAttempt) deliverResponse(resp *http.Response) (UpstreamAttem
 		failoverState.lastError = err
 		decision := classifyResponseProcessingError(err, c.Writer.Written())
 		// 本渠道最终健康结果：除"响应已提交后的真实上游中断"按失败
-		// 记账外，取消/内容安全/本地检查错误均为中性（R2-a 表）。
+		// 记账外，取消/内容安全/本地检查错误均为中性。
 		health := channelHealthNeutral
 		switch decision.action {
 		case responseProcessingLocalFailure:

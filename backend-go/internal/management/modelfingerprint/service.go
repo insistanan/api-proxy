@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	lmfpd "github.com/Ikaleio/lm-detector/sdk/go"
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 // Request 只接受明确的检测目标，不继承渠道的模型映射或生成参数。

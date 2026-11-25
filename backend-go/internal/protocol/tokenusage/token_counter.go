@@ -6,7 +6,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 const (

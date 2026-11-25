@@ -21,10 +21,10 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/protocol/contract"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
+	"insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/contract"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // parseGeminiSSEDataLine 提取一行 SSE 的 data JSON 载荷；非 data 行返回 false。

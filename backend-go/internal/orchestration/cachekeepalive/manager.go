@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/protocol/tokenusage"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 const (

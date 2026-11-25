@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/protocol/converters/togemini"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
+	"insistanan/api-proxy/internal/protocol/converters/togemini"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 func TestCrossProtocolResponsesRejectUnrepresentedContent(t *testing.T) {

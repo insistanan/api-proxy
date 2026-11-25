@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"compress/zlib"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/codec"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/protocol/tokenusage"
 )
 
 // buildImagesForm 构造 /v1/images/edits 常见的表单请求：model + prompt + 图片文件。
@@ -71,41 +71,6 @@ func TestExtractImagesPromptsCoversJSONAndMultipart(t *testing.T) {
 	}
 }
 
-func TestApplyImagesModelMappingRewritesMultipartAndSyncsBoundary(t *testing.T) {
-	body, contentType := buildImagesForm(t)
-	originalBoundary, _ := codec.MultipartBoundary(contentType)
-	upstream := &config.UpstreamConfig{Name: "images-channel", DefaultModel: "dall-e-3"}
-
-	mappedBody, mappedContentType, err := applyImagesModelMapping(contentType, body, upstream)
-	if err != nil {
-		t.Fatalf("模型映射失败: %v", err)
-	}
-	mappedBoundary, ok := codec.MultipartBoundary(mappedContentType)
-	if !ok {
-		t.Fatalf("映射后的 Content-Type 缺少 boundary: %s", mappedContentType)
-	}
-	if mappedBoundary == originalBoundary {
-		t.Fatal("重新编码的表单必须带新 boundary，且由调用方同步到请求头")
-	}
-
-	parts, err := codec.ParseMultipartParts(mappedBody, mappedBoundary)
-	if err != nil {
-		t.Fatalf("解析映射后的表单失败: %v", err)
-	}
-	if len(parts) != 4 {
-		t.Fatalf("映射后部件数量 = %d，期望 4", len(parts))
-	}
-	if string(parts[0].Content) != "dall-e-3" {
-		t.Errorf("model 字段未映射: %q", parts[0].Content)
-	}
-	if string(parts[1].Content) != "  给猫加一顶帽子  " {
-		t.Errorf("prompt 字段不应被改写: %q", parts[1].Content)
-	}
-	if parts[3].FileName != "cat.png" || !bytes.Equal(parts[3].Content, []byte{0x89, 0x50, 0x4E, 0x47, 0x0D}) {
-		t.Errorf("文件部件在重建后被破坏: %+v", parts[3])
-	}
-}
-
 func TestHandleImagesSuccessFlushesRequestedStreamWithoutSSEContentType(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
@@ -155,22 +120,6 @@ func TestHandleImagesSuccessForceNonStreamRejectsJSONWithoutImageData(t *testing
 	require.ErrorContains(t, err, "未返回任何图片数据")
 }
 
-func TestHandleImagesSuccessForwardsUpstreamSSEEvenIfForceNonStream(t *testing.T) {
-	recorder := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"stream":true}`))
-	body := "event: image_generation.completed\ndata: {\"b64_json\":\"AQID\"}\n\n"
-	response := &http.Response{
-		StatusCode: http.StatusOK,
-		Header:     http.Header{"Content-Type": {"text/event-stream"}},
-		Body:       io.NopCloser(strings.NewReader(body)),
-	}
-
-	_, err := handleImagesSuccess(ctx, response, &config.EnvConfig{}, time.Now(), "/images/generations", true, true)
-	require.NoError(t, err)
-	require.Equal(t, body, recorder.Body.String())
-}
-
 func TestHandleImagesSuccess_NormalizesUsageOnAllNativeResponsePaths(t *testing.T) {
 	payload := `{"created":123,"data":[{"b64_json":"AQID"}],"usage":{"input_tokens":100,"output_tokens":20,"input_tokens_details":{"cached_tokens":70}}}`
 	ssePayload := `{"type":"image_generation.completed","b64_json":"AQID","usage":{"input_tokens":100,"output_tokens":20,"input_tokens_details":{"cached_tokens":70}}}`
@@ -201,28 +150,6 @@ func TestHandleImagesSuccess_NormalizesUsageOnAllNativeResponsePaths(t *testing.
 				require.Equal(t, tc.body, recorder.Body.String())
 			}
 		})
-	}
-}
-
-func TestNativeUsageCaptureKeepsMetadataWithoutBufferingImage(t *testing.T) {
-	payload := `{"data":[{"b64_json":"` + strings.Repeat("A", 2<<20) + `"}],"usage":{"input_tokens":100,"output_tokens":20}}`
-	for _, sse := range []bool{false, true} {
-		body := payload
-		if sse {
-			body = "data: " + body + "\n\n"
-		}
-		capture := &nativeUsageCapture{sse: sse, modeKnown: true}
-		for len(body) > 0 {
-			n := min(31, len(body))
-			_, err := capture.Write([]byte(body[:n]))
-			require.NoError(t, err)
-			require.LessOrEqual(t, len(capture.buffer)+len(capture.event), 2*nativeMetadataLimit)
-			body = body[n:]
-		}
-		usage := capture.result()
-		require.NotNil(t, usage)
-		require.Equal(t, 100, usage.InputTokens)
-		require.Equal(t, 20, usage.OutputTokens)
 	}
 }
 

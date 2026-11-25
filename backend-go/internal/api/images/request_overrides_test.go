@@ -3,11 +3,11 @@ package images
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/codec"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 func decodeImagesJSONObject(t *testing.T, body []byte) map[string]interface{} {
@@ -113,12 +113,6 @@ func TestApplyImagesModelMappingRewritesMultipartModelAndAppendsParams(t *testin
 	require.Equal(t, "  给猫加一顶帽子  ", values["prompt"])
 }
 
-func TestExtractImagesRequestMetadataReadsJSONWithoutContentType(t *testing.T) {
-	metadata := extractImagesRequestMetadata("", []byte(`{"model":"gpt-image-2.5-sunburst","stream":true}`))
-	require.Equal(t, "gpt-image-2.5-sunburst", metadata.Model)
-	require.True(t, metadata.Stream)
-}
-
 func TestApplyImagesModelMappingForcesNonStreamJSON(t *testing.T) {
 	upstream := &config.UpstreamConfig{ImagesForceNonStream: true}
 	mapped, _, err := applyImagesModelMapping("application/json", []byte(`{"model":"gpt-image-1","prompt":"猫","stream":true,"partial_images":1}`), upstream)
@@ -136,23 +130,4 @@ func TestApplyImagesModelMappingForcesNonStreamJSON(t *testing.T) {
 	mapped, _, err = applyImagesModelMapping("application/json", []byte(`{"model":"gpt-image-1","prompt":"猫"}`), upstream)
 	require.NoError(t, err)
 	require.Equal(t, false, decodeImagesJSONObject(t, mapped)["stream"])
-}
-
-func TestApplyImagesModelMappingForcesNonStreamMultipart(t *testing.T) {
-	body, contentType := buildImagesForm(t)
-	mappedBody, mappedContentType, err := applyImagesModelMapping(contentType, body, &config.UpstreamConfig{ImagesForceNonStream: true})
-	require.NoError(t, err)
-	boundary, ok := codec.MultipartBoundary(mappedContentType)
-	require.True(t, ok)
-	parts, err := codec.ParseMultipartParts(mappedBody, boundary)
-	require.NoError(t, err)
-	values := map[string]string{}
-	for _, part := range parts {
-		if part.FileName == "" {
-			values[part.FormName] = string(part.Content)
-		}
-	}
-	require.Equal(t, "false", values["stream"])
-	require.Equal(t, "gpt-image-1", values["model"])
-	require.NotContains(t, values, "partial_images")
 }

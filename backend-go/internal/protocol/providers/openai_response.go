@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/protocol/contract"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/protocol/contract"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // ConvertToClaudeResponse 转换为 Claude 响应

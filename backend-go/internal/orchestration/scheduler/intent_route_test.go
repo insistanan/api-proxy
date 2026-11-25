@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 func TestIntentPoolOverridesModelMatcherWithoutChangingModel(t *testing.T) {

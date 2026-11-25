@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // 反证切片 5：stop_sequences / top_p 直传 Chat 上游。

@@ -82,24 +82,6 @@ func TestParseModelsFlexibleFormats(t *testing.T) {
 	}
 }
 
-func TestParseGeminiFiltersNonGenerationModels(t *testing.T) {
-	t.Parallel()
-
-	body := []byte(`{
-		"models": [
-			{"name":"models/gemini-2.0-flash","supportedGenerationMethods":["generateContent"]},
-			{"name":"models/embedding-001","supportedGenerationMethods":["embedContent"]}
-		]
-	}`)
-	got, err := parseGeminiModels(body)
-	if err != nil {
-		t.Fatalf("parseGeminiModels() error = %v", err)
-	}
-	if len(got) != 1 || got[0] != "gemini-2.0-flash" {
-		t.Fatalf("got=%v, want [gemini-2.0-flash]", got)
-	}
-}
-
 func TestBuildModelsURLs(t *testing.T) {
 	t.Parallel()
 
@@ -131,10 +113,6 @@ func TestBuildModelsURLs(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestBuildAzureAndGeminiURLs(t *testing.T) {
-	t.Parallel()
 
 	azureURL := buildAzureModelsURL("https://my-resource.openai.azure.com")
 	if !strings.HasPrefix(azureURL, "https://my-resource.openai.azure.com/openai/models?") {
@@ -173,7 +151,7 @@ func TestParseAnthropicAndGeminiPages(t *testing.T) {
 	}
 
 	geminiBody := []byte(`{
-		"models":[{"name":"models/gemini-2.5-pro","supportedGenerationMethods":["generateContent"]}],
+		"models":[{"name":"models/gemini-2.5-pro","supportedGenerationMethods":["generateContent"]},{"name":"models/embedding-001","supportedGenerationMethods":["embedContent"]}],
 		"nextPageToken":"page-2"
 	}`)
 	gModels, gMeta, gErr := parseGeminiPage(geminiBody)

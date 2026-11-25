@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/dialogue/conversation"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // Turn 在上游调用前固定历史版本。租约保护在途历史，Close 由请求入口负责。
@@ -19,12 +19,14 @@ type Turn struct {
 }
 
 func (sm *SessionManager) BindRegistry(registry *conversation.Registry) error {
+	if registry != nil {
+		if err := registry.BindHistory(sm); err != nil {
+			return err
+		}
+	}
 	sm.mu.Lock()
 	sm.registry = registry
 	sm.mu.Unlock()
-	if registry != nil {
-		return registry.BindHistory(sm)
-	}
 	return nil
 }
 

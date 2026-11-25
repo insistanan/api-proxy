@@ -2,7 +2,7 @@ package providers
 
 import (
 	"context"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/codec"
 	"io"
 )
 

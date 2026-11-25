@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/protocol/contract"
-	"github.com/insistanan/api-proxy/internal/protocol/converters"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
-	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
+	"insistanan/api-proxy/internal/protocol/contract"
+	"insistanan/api-proxy/internal/protocol/converters"
+	"insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/protocol/visionmedia"
 )
 
 func responsesResponseToClaude(resp *types.ResponsesResponse) (*types.ClaudeResponse, error) {

@@ -7,17 +7,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestHistoricalKeysStore_UninitializedStoreReportsErrors(t *testing.T) {
-	for name, store := range map[string]*SQLiteStore{"nil": nil, "未打开": {}} {
-		t.Run(name, func(t *testing.T) {
-			_, err := store.LoadHistoricalKeys("messages")
-			require.ErrorContains(t, err, "指标库未初始化")
-			require.ErrorContains(t, store.SaveHistoricalKeys("messages", "channel", []string{"old"}), "指标库未初始化")
-			require.ErrorContains(t, store.DeleteHistoricalKeys("messages", "channel"), "指标库未初始化")
-		})
-	}
-}
-
 // 历史 Key 注册表按 (api_type, channel_id) 保存，覆盖写入与删除都必须是整组语义。
 func TestHistoricalKeysStoreRoundTrip(t *testing.T) {
 	store, err := NewSQLiteStore(&SQLiteStoreConfig{

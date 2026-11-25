@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
-	"github.com/insistanan/api-proxy/internal/storage/logger"
-	"github.com/insistanan/api-proxy/internal/storage/sqlitedb"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/dialogue/conversation"
+	"insistanan/api-proxy/internal/storage/logger"
+	"insistanan/api-proxy/internal/storage/sqlitedb"
 )
 
 func recordConversationLog(t *testing.T, store *logger.Store, id, kind, conversationID, preview string, stamp int64) {

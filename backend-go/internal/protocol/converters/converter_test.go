@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 func TestConvertResponsesPassthroughRequest_ModelMappingPreservesBody(t *testing.T) {

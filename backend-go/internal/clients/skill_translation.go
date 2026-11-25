@@ -13,10 +13,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/insistanan/api-proxy/internal/clients/skills"
-	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
-	"github.com/insistanan/api-proxy/internal/safety/llmgate"
-	"github.com/insistanan/api-proxy/internal/safety/sensitive"
+	"insistanan/api-proxy/internal/clients/skills"
+	"insistanan/api-proxy/internal/orchestration/scheduler"
+	"insistanan/api-proxy/internal/safety/llmgate"
+	"insistanan/api-proxy/internal/safety/sensitive"
 )
 
 // SkillTranslator 通过用户指定的渠道翻译一份文档。

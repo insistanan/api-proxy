@@ -12,45 +12,47 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCapturePolicyDoesNotRetainDisabledContent(t *testing.T) {
-	for _, test := range []struct {
-		name         string
-		policy       CapturePolicy
-		phase, state string
-	}{
-		{"metadata", CapturePolicy{Request: true, Response: true, Mode: "metadata", BodyLimit: 16384}, PhaseClientRequest, "metadata"},
-		{"disabled_request", CapturePolicy{Response: true, Mode: "bounded", BodyLimit: 16384}, PhaseUpstreamRequest, "disabled"},
-		{"disabled_response", CapturePolicy{Request: true, Mode: "bounded", BodyLimit: 16384}, PhaseStreamSynth, "disabled"},
-		{"budget", CapturePolicy{Request: true, Response: true, Mode: "bounded", BodyLimit: 16384, Paused: true}, PhaseUpstreamResponse, "budget"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			entry := applyCapture(TrafficLog{Phase: test.phase, Body: "private content", HeadersJSON: `{"x":"private"}`, OriginalBytes: 15}.WithCapturePolicy(test.policy))
-			require.Empty(t, entry.Body)
-			require.Empty(t, entry.HeadersJSON)
-			require.Equal(t, test.state, entry.BodyState)
-			require.Equal(t, 15, entry.OriginalBytes)
-			require.Empty(t, extractToolObservations(entry))
-		})
-	}
-}
+func TestCapturePolicyRedactsDisabledAndOversizedBodies(t *testing.T) {
+	t.Run("关闭或预算暂停时不保留正文与头部", func(t *testing.T) {
+		for _, test := range []struct {
+			name         string
+			policy       CapturePolicy
+			phase, state string
+		}{
+			{"metadata", CapturePolicy{Request: true, Response: true, Mode: "metadata", BodyLimit: 16384}, PhaseClientRequest, "metadata"},
+			{"disabled_request", CapturePolicy{Response: true, Mode: "bounded", BodyLimit: 16384}, PhaseUpstreamRequest, "disabled"},
+			{"disabled_response", CapturePolicy{Request: true, Mode: "bounded", BodyLimit: 16384}, PhaseStreamSynth, "disabled"},
+			{"budget", CapturePolicy{Request: true, Response: true, Mode: "bounded", BodyLimit: 16384, Paused: true}, PhaseUpstreamResponse, "budget"},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				entry := applyCapture(TrafficLog{Phase: test.phase, Body: "private content", HeadersJSON: `{"x":"private"}`, OriginalBytes: 15}.WithCapturePolicy(test.policy))
+				require.Empty(t, entry.Body)
+				require.Empty(t, entry.HeadersJSON)
+				require.Equal(t, test.state, entry.BodyState)
+				require.Equal(t, 15, entry.OriginalBytes)
+				require.Empty(t, extractToolObservations(entry))
+			})
+		}
+	})
 
-func TestCapturePolicyLimitsAndSanitizesWithoutChangingSource(t *testing.T) {
-	raw := `{"messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"SECRET_IMAGE"}}]}]}`
-	policy := CapturePolicy{Request: true, Response: true, Mode: "bounded", BodyLimit: 16384}
-	entry := applyCapture(TrafficLog{Phase: PhaseClientRequest, Body: raw}.WithCapturePolicy(policy))
-	require.NotContains(t, entry.Body, "SECRET_IMAGE")
-	require.Contains(t, raw, "SECRET_IMAGE")
-	large := strings.Repeat("secret", 4000)
-	entry = applyCapture(TrafficLog{Phase: PhaseClientRequest, Body: large}.WithCapturePolicy(policy))
-	require.True(t, entry.Truncated)
-	require.Equal(t, "truncated", entry.BodyState)
-	require.Less(t, len(entry.Body), policy.BodyLimit)
-	require.Equal(t, len(large), entry.OriginalBytes)
-	require.NotContains(t, entry.Body, "secret")
-	// 已读取的响应前缀不能把完整原始长度和截断标记覆盖成“完整”。
-	entry = applyCapture(TrafficLog{Phase: PhaseUpstreamResponse, Body: "prefix", OriginalBytes: 99999, Truncated: true}.WithCapturePolicy(policy))
-	require.Equal(t, 99999, entry.OriginalBytes)
-	require.True(t, entry.Truncated)
+	t.Run("脱敏与截断不改变原始输入", func(t *testing.T) {
+		raw := `{"messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"SECRET_IMAGE"}}]}]}`
+		policy := CapturePolicy{Request: true, Response: true, Mode: "bounded", BodyLimit: 16384}
+		entry := applyCapture(TrafficLog{Phase: PhaseClientRequest, Body: raw}.WithCapturePolicy(policy))
+		require.NotContains(t, entry.Body, "SECRET_IMAGE")
+		require.Contains(t, raw, "SECRET_IMAGE")
+		large := strings.Repeat("secret", 4000)
+		entry = applyCapture(TrafficLog{Phase: PhaseClientRequest, Body: large}.WithCapturePolicy(policy))
+		require.True(t, entry.Truncated)
+		require.Equal(t, "truncated", entry.BodyState)
+		require.Less(t, len(entry.Body), policy.BodyLimit)
+		require.Equal(t, len(large), entry.OriginalBytes)
+		require.NotContains(t, entry.Body, "secret")
+		// 已读取的响应前缀不能把完整原始长度和截断标记覆盖成“完整”。
+		entry = applyCapture(TrafficLog{Phase: PhaseUpstreamResponse, Body: "prefix", OriginalBytes: 99999, Truncated: true}.WithCapturePolicy(policy))
+		require.Equal(t, 99999, entry.OriginalBytes)
+		require.True(t, entry.Truncated)
+	})
 }
 
 func TestResponseCapturePreservesTransportAndBoundsBuffer(t *testing.T) {
@@ -119,24 +121,26 @@ func TestExpireBodiesPreservesSharedBodySummaryAndToolIndex(t *testing.T) {
 	require.Zero(t, count)
 }
 
-func TestRetentionPolicyUsesCalendarDays(t *testing.T) {
-	now := time.Date(2026, 11, 13, 17, 30, 0, 0, time.Local)
-	require.Equal(t, RetentionCutoff(now), retentionCutoffDays(now, 2))
-	require.Equal(t, time.Date(2026, 11, 13, 0, 0, 0, 0, time.Local), retentionCutoffDays(now, 1))
-	require.Equal(t, time.Date(2026, 11, 7, 0, 0, 0, 0, time.Local), retentionCutoffDays(now, 7))
-}
+func TestRetentionCutoffAndBudgetThresholds(t *testing.T) {
+	t.Run("保留期按自然日计算", func(t *testing.T) {
+		now := time.Date(2026, 11, 13, 17, 30, 0, 0, time.Local)
+		require.Equal(t, RetentionCutoff(now), retentionCutoffDays(now, 2))
+		require.Equal(t, time.Date(2026, 11, 13, 0, 0, 0, 0, time.Local), retentionCutoffDays(now, 1))
+		require.Equal(t, time.Date(2026, 11, 7, 0, 0, 0, 0, time.Local), retentionCutoffDays(now, 7))
+	})
 
-func TestBudgetPauseAndRecoveryThresholds(t *testing.T) {
-	for _, test := range []struct {
-		used, budget int64
-		paused, want bool
-	}{
-		{64, 64, false, true}, {63, 64, false, false},
-		{91, 100, true, true}, {90, 100, true, false},
-		{1000, 0, true, false}, {1000, 0, false, false},
-	} {
-		require.Equal(t, test.want, budgetShouldPause(test.used<<20, test.budget<<20, test.paused))
-	}
+	t.Run("预算暂停与恢复的阈值", func(t *testing.T) {
+		for _, test := range []struct {
+			used, budget int64
+			paused, want bool
+		}{
+			{64, 64, false, true}, {63, 64, false, false},
+			{91, 100, true, true}, {90, 100, true, false},
+			{1000, 0, true, false}, {1000, 0, false, false},
+		} {
+			require.Equal(t, test.want, budgetShouldPause(test.used<<20, test.budget<<20, test.paused))
+		}
+	})
 }
 
 func TestExpireBodyFailureRollsBackBodyStateAndReference(t *testing.T) {

@@ -76,7 +76,7 @@ func prepareChatBody(s *snapshot, body []byte, root gjson.Result) ([]byte, strin
 	s.mode = "implicit"
 	limit := "max_completion_tokens"
 	remove := []string{"max_tokens"}
-	// 已成功的旧协议继续使用其原有上限字段；不同时发送两个互斥字段。
+	// 请求只带 max_tokens 时沿用该字段；两个互斥字段不同时发送。
 	if root.Get("max_tokens").Exists() && !root.Get("max_completion_tokens").Exists() {
 		limit, remove = "max_tokens", []string{"max_completion_tokens"}
 	}

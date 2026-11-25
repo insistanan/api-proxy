@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 // 使用标准双栈拨号，交给系统解析器和 Happy Eyeballs 选择 IPv4 / IPv6。

@@ -14,11 +14,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
-	"github.com/insistanan/api-proxy/internal/safety/llmgate"
-	"github.com/insistanan/api-proxy/internal/safety/sensitive"
-	"github.com/insistanan/api-proxy/internal/storage/metrics"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/orchestration/scheduler"
+	"insistanan/api-proxy/internal/safety/llmgate"
+	"insistanan/api-proxy/internal/safety/sensitive"
+	"insistanan/api-proxy/internal/storage/metrics"
 )
 
 // gateTestHarness 组装一个可运行的闸门：临时配置 + 闸门存储 + 可编程的 AI 上游。

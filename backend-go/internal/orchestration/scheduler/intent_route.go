@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 type intentRouteKey struct{}

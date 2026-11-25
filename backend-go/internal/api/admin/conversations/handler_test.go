@@ -7,9 +7,9 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
-	"github.com/insistanan/api-proxy/internal/storage/sqlitedb"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/dialogue/conversation"
+	"insistanan/api-proxy/internal/storage/sqlitedb"
 )
 
 func TestDeleteConversationReadFailureIsNotNotFound(t *testing.T) {

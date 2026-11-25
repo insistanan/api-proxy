@@ -13,7 +13,7 @@ import (
 	"slices"
 	"sort"
 
-	"github.com/insistanan/api-proxy/internal/storage/atomicfile"
+	"insistanan/api-proxy/internal/storage/atomicfile"
 )
 
 const (

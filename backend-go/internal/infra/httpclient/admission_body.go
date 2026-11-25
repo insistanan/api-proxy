@@ -5,7 +5,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"insistanan/api-proxy/internal/orchestration/upstreamcontrol"
 )
 
 // admissionBody 持有名额直到 EOF、Close 或取消后的网络收尾，恰好释放一次。

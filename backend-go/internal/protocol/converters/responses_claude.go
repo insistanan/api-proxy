@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 func ResponsesToolsToClaudeTools(raw interface{}) (_ []types.ClaudeTool, err error) {

@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/orchestration/availability"
-	"github.com/insistanan/api-proxy/internal/storage/logger"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/orchestration/availability"
+	"insistanan/api-proxy/internal/storage/logger"
 )
 
 // GetModelAvailability 使用配置快照过滤已移除的 Key/URL，旧日志不会按渠道序号重新归属。

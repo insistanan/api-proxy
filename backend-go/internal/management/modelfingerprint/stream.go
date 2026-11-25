@@ -8,7 +8,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/codec"
 )
 
 // readStream 只提取原生文本；缺少协议结束事件时不能把已收到的数字当成完整样本。

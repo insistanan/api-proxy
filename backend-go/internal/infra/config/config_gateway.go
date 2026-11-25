@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
 )
 
 // GatewaySettings 将有部署差异的策略从 env 迁移到持久化设置。

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 const maxCachedClients = 128

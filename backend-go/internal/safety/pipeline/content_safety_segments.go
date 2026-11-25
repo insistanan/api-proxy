@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/safety/sensitive"
+	"insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/safety/sensitive"
 )
 
 const (

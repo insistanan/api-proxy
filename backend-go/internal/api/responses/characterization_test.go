@@ -2,11 +2,11 @@
 package responses
 
 import (
-	"github.com/insistanan/api-proxy/internal/protocol/items"
+	"insistanan/api-proxy/internal/protocol/items"
 	"strings"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 func TestResponsesStreamSearchActionPreserved(t *testing.T) {

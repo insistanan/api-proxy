@@ -4,12 +4,12 @@ package converters
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
+	"insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/visionmedia"
 	"strings"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 func collapseSystemMessagesToHead(messages []map[string]interface{}) []map[string]interface{} {

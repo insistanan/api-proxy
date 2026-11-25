@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/dialogue/internal/syncstate"
 	"strings"
 	"sync"
 	"time"
+
+	"insistanan/api-proxy/internal/dialogue/internal/syncstate"
 )
 
 const (
@@ -152,46 +153,6 @@ func (r *Registry) Stop() error {
 		}
 	})
 	return r.stopErr
-}
-
-func (r *Registry) Delete(recordID string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	defer r.trimCacheLocked()
-	rec, err := r.loadRecordLocked(context.Background(), recordID)
-	if err != nil {
-		return err
-	}
-	if rec == nil {
-		return fmt.Errorf("conversation not found")
-	}
-	if r.store != nil {
-		if err := r.store.Delete(recordID); err != nil {
-			return err
-		}
-	}
-	r.clearParentReferencesLocked(recordID)
-	delete(r.records, recordID)
-	r.unindexLineageLocked(rec)
-	r.removeIdentityKeysLocked(recordID)
-	r.invalidateCachesLocked(recordID)
-	return nil
-}
-
-// DeleteAll 删除全部持久化对话及其专属图片理解结果。
-func (r *Registry) DeleteAll() error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.store != nil {
-		if err := r.store.DeleteAll(); err != nil {
-			return err
-		}
-	}
-	r.records = make(map[string]*Record)
-	r.identityIndex = make(map[string]string)
-	r.frontierIndex = make(map[string]map[string]struct{})
-	r.invalidateCachesLocked("")
-	return nil
 }
 
 func (r *Registry) clearParentReferencesLocked(parentID string) {

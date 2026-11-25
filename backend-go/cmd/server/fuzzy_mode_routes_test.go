@@ -4,11 +4,11 @@ import (
 	"net/http"
 	"testing"
 
-	adminsettings "github.com/insistanan/api-proxy/internal/api/admin/settings"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/middleware"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
+	adminsettings "insistanan/api-proxy/internal/api/admin/settings"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/middleware"
 )
 
 func TestFuzzyModeAdminProtocolIsolation(t *testing.T) {

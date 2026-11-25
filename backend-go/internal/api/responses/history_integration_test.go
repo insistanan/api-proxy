@@ -15,14 +15,14 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
-	"github.com/insistanan/api-proxy/internal/dialogue/session"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
-	"github.com/insistanan/api-proxy/internal/storage/metrics"
-	"github.com/insistanan/api-proxy/internal/storage/sqlitedb"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
+	"insistanan/api-proxy/internal/dialogue/conversation"
+	"insistanan/api-proxy/internal/dialogue/session"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/orchestration/scheduler"
+	"insistanan/api-proxy/internal/storage/metrics"
+	"insistanan/api-proxy/internal/storage/sqlitedb"
 )
 
 type historyRouteFixture struct {
@@ -107,7 +107,7 @@ func TestImageToolHistoryRestoresAfterRestartAndCredentialChange(t *testing.T) {
 				defer server.Close()
 				path := filepath.Join(t.TempDir(), "dialogue.db")
 				first := newHistoryRouteFixture(t, path, server.URL, "first-key")
-				response := sendHistoryRequest(first.router, fmt.Sprintf(`{"model":"m","input":"画图","stream":%t,"tools":[{"type":"image_generation"}]}`, stream))
+				response := sendHistoryRequest(first.router, fmt.Sprintf(`{"model":"m","input":[{"role":"user","content":"画图","future_input":9007199254740993}],"stream":%t,"tools":[{"type":"image_generation"}]}`, stream))
 				require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 				require.Contains(t, response.Body.String(), "response-1")
 				if image {
@@ -120,6 +120,7 @@ func TestImageToolHistoryRestoresAfterRestartAndCredentialChange(t *testing.T) {
 				require.Equal(t, int64(2), calls.Load())
 				require.False(t, gjson.GetBytes(secondBody, "previous_response_id").Exists())
 				require.Contains(t, string(secondBody), "画图")
+				require.Equal(t, "9007199254740993", gjson.GetBytes(secondBody, "input.0.future_input").Raw)
 				require.Contains(t, string(secondBody), "继续")
 				if image {
 					require.Contains(t, string(secondBody), "AQID")
@@ -171,4 +172,51 @@ func TestResponsesLocalCommitFailureDoesNotRetryOrPublishTerminal(t *testing.T) 
 			}
 		})
 	}
+}
+
+func TestIncompleteResponsesDoNotPersistPartialTools(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprint(stream), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				response := `{"id":"incomplete","model":"m","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[{"type":"message","status":"incomplete","role":"assistant","content":[{"type":"output_text","text":"已交付文字"}]},{"type":"function_call","status":"incomplete","call_id":"partial","name":"exec","arguments":"{"}],"usage":{"input_tokens":11,"output_tokens":7}}`
+				if stream {
+					w.Header().Set("Content-Type", "text/event-stream")
+					fmt.Fprintf(w, "data: {\"type\":\"response.incomplete\",\"response\":%s}\n\n", response)
+				} else {
+					w.Header().Set("Content-Type", "application/json")
+					io.WriteString(w, response)
+				}
+			}))
+			defer server.Close()
+			fixture := newHistoryRouteFixture(t, filepath.Join(t.TempDir(), "dialogue.db"), server.URL, "first-key")
+			response := sendHistoryRequest(fixture.router, fmt.Sprintf(`{"model":"m","input":"hello","stream":%t}`, stream))
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			require.Contains(t, response.Body.String(), "partial", "客户端保留上游实际截断结果")
+			history, err := fixture.manager.GetOrCreateSessionForConversation(context.Background(), "incomplete", "")
+			require.NoError(t, err, response.Body.String())
+			require.Len(t, history.Messages, 2)
+			require.Equal(t, "message", history.Messages[1].Type)
+		})
+	}
+}
+
+func TestHTTPTruncationDoesNotPublishRecoverableHistory(t *testing.T) {
+	var calls atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		body := "data: {\"type\":\"response.created\",\"response\":{\"id\":\"truncated\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"item_id\":\"message\",\"content_index\":0,\"delta\":\"已交付\"}\n\n"
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Content-Length", fmt.Sprint(len(body)+100))
+		io.WriteString(w, body)
+		w.(http.Flusher).Flush()
+	}))
+	defer server.Close()
+	fixture := newHistoryRouteFixture(t, filepath.Join(t.TempDir(), "dialogue.db"), server.URL, "first-key")
+	response := sendHistoryRequest(fixture.router, `{"model":"m","input":"hello","stream":true}`)
+	require.Contains(t, response.Body.String(), "已交付")
+	require.NotContains(t, response.Body.String(), `"type":"response.completed"`)
+	require.Equal(t, int64(1), calls.Load())
+	_, known, err := fixture.manager.ResponseOwner(context.Background(), "truncated")
+	require.NoError(t, err)
+	require.False(t, known)
 }

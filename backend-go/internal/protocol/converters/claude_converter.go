@@ -1,8 +1,8 @@
 package converters
 
 import (
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // ============== Claude Messages API 转换器 ==============

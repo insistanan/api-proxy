@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/clients/piagent"
-	"github.com/insistanan/api-proxy/internal/clients/skills"
+	"insistanan/api-proxy/internal/clients/piagent"
+	"insistanan/api-proxy/internal/clients/skills"
 )
 
 // SkillsAPI 聚合 skills 管理的互斥锁与项目目录解析，由 main.go 构造并注入路由，

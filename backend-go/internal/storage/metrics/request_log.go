@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/orchestration/availability"
-	"github.com/insistanan/api-proxy/internal/storage/logger"
+	"insistanan/api-proxy/internal/orchestration/availability"
+	"insistanan/api-proxy/internal/storage/logger"
 )
 
 const defaultRequestLogLimit = 50

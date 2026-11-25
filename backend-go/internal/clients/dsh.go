@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/storage/atomicfile"
 	"gopkg.in/yaml.v3"
+	"insistanan/api-proxy/internal/storage/atomicfile"
 )
 
 var dshSettingsMu sync.Mutex

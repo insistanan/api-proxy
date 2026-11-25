@@ -1,6 +1,6 @@
 package converters
 
-import "github.com/insistanan/api-proxy/internal/protocol/types"
+import "insistanan/api-proxy/internal/protocol/types"
 
 // ResponseToolContext 是一个候选请求实际使用的工具映射，只读且不跨请求共享。
 // 回程必须使用它，才能还原从本地会话恢复的动态工具。

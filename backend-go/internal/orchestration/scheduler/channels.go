@@ -5,10 +5,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
-// ChannelInfo 渠道信息（用于排序）
 type ChannelInfo struct {
 	Index    int
 	Name     string
@@ -117,8 +116,7 @@ func (s *ChannelScheduler) getChannelPools(kind ChannelKind) []config.ChannelPoo
 	return s.configManager.GetChannelPools(string(kind))
 }
 
-// getUpstreamByIndex 根据索引获取上游配置
-// 注意：返回的是副本，避免指向 slice 元素的指针在 slice 重分配后失效
+// getUpstreamByIndex 返回副本，避免指向 slice 元素的指针在 slice 重分配后失效
 func (s *ChannelScheduler) getUpstreamByIndex(index int, kind ChannelKind) *config.UpstreamConfig {
 	upstreams, _, err := s.configManager.GetChannelConfig(string(kind))
 	if err != nil {
@@ -134,7 +132,6 @@ func (s *ChannelScheduler) getUpstreamByIndex(index int, kind ChannelKind) *conf
 	return nil
 }
 
-// GetActiveChannelCount 获取活跃渠道数量
 func (s *ChannelScheduler) GetActiveChannelCount(kind ChannelKind) int {
 	return len(s.getActiveChannels(kind))
 }

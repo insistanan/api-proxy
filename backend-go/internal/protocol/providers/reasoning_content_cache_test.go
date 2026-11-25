@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 func TestReasoningContentCache_EvictsOldest(t *testing.T) {

@@ -6,13 +6,13 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/api/common"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/protocol/providers"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
-	"github.com/insistanan/api-proxy/internal/proxycore"
-	"github.com/insistanan/api-proxy/internal/safety/pipeline"
+	"insistanan/api-proxy/internal/api/common"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/providers"
+	"insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/proxycore"
+	"insistanan/api-proxy/internal/safety/pipeline"
 )
 
 func (ctx *Context) writeEvent(c *gin.Context, w gin.ResponseWriter, flusher http.Flusher, event string) error {

@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/api/common"
-	"github.com/insistanan/api-proxy/internal/dialogue/routing/intent"
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/api/common"
+	"insistanan/api-proxy/internal/dialogue/routing/intent"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 // RegisterIntentAPI 必须在绑定 AdminAuthMiddleware 的管理路由组上调用。

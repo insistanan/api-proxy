@@ -3,9 +3,9 @@ package scheduler
 import (
 	"log"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/orchestration/urlhealth"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/orchestration/urlhealth"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // RecordSuccess 记录渠道成功（使用 baseURL + apiKey + channelIndex）
@@ -23,12 +23,10 @@ func (s *ChannelScheduler) RecordFailure(baseURL, apiKey string, channelIndex in
 	s.getMetricsManager(kind).RecordFailure(baseURL, apiKey, channelIndex)
 }
 
-// RecordRequestStart 记录请求开始
 func (s *ChannelScheduler) RecordRequestStart(baseURL, apiKey string, channelIndex int, kind ChannelKind) {
 	s.getMetricsManager(kind).RecordRequestStart(baseURL, apiKey, channelIndex)
 }
 
-// RecordRequestEnd 记录请求结束
 func (s *ChannelScheduler) RecordRequestEnd(baseURL, apiKey string, channelIndex int, kind ChannelKind) {
 	s.getMetricsManager(kind).RecordRequestEnd(baseURL, apiKey, channelIndex)
 }
@@ -102,7 +100,6 @@ func (s *ChannelScheduler) GetSortedURLsForChannel(
 	return s.urlManager.GetSortedURLs(urlManagerChannelKey(kind, channelIndex), urls)
 }
 
-// MarkURLSuccess 标记 URL 成功
 func (s *ChannelScheduler) MarkURLSuccess(kind ChannelKind, channelIndex int, url string) {
 	if s.urlManager != nil {
 		s.urlManager.MarkSuccess(urlManagerChannelKey(kind, channelIndex), url)

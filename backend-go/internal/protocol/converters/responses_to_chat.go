@@ -3,12 +3,12 @@ package converters
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
+	"insistanan/api-proxy/internal/protocol/visionmedia"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // ValidateResponsesToOpenAIChatRequest 对 raw JSON 快路径做协议兼容校验。

@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/clients/mcpsync"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/clients/mcpsync"
 )
 
 func TestMCPSyncOnStartup_ReportsEachAgentFailure(t *testing.T) {

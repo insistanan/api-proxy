@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/httpclient"
-	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/httpclient"
+	"insistanan/api-proxy/internal/orchestration/scheduler"
 )
 
 type channelConfig interface {
@@ -53,12 +53,9 @@ func (h *Handlers) resetMetrics(index int) {
 	h.sch.ResetChannelMetrics(index, h.kind)
 }
 
-// respondConfigError 统一响应配置写操作失败（R3-c）：
-//   - 配置校验/操作错误（ConfigError）返回 400；
-//   - 其余（持久化失败等）返回 500；
-//   - 已过提交点的错误（文件已原子替换、内存与磁盘一致）额外携带
-//     code=CONFIG_COMMITTED 与 committed=true：前端不得把该失败按"未提交"
-//     自动重试——一次新增会被重试成两次；应提示用户刷新查看实际状态。
+// respondConfigError 响应配置写操作失败：配置错误返回 400，其余返回 500。
+// 已过提交点的错误额外携带 code=CONFIG_COMMITTED 与 committed=true，
+// 前端不得将其当作未提交而自动重试。
 func respondConfigError(c *gin.Context, err error) {
 	status := http.StatusInternalServerError
 	if config.IsConfigError(err) {

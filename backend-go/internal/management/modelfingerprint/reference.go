@@ -46,7 +46,7 @@ func loadReference(ctx context.Context) (analyzer, error) {
 	return &cachedReference{Detector: detector, digest: digest}, nil
 }
 
-// referenceDigest 对应 SDK v0.2.0 的缓存布局：长度、bundle.json、解压后的评分数据。
+// referenceDigest 解析 SDK 缓存：4 字节小端长度 + manifest JSON + 评分数据，校验 shared_detector.bin 的 SHA-256 后返回摘要。
 func referenceDigest(data []byte, builtAt string) (string, error) {
 	if len(data) < 4 {
 		return "", fmt.Errorf("指纹参考库缓存头不完整")

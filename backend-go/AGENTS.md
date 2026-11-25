@@ -1,6 +1,6 @@
 # 后端约定
 
-单 Go module：`github.com/insistanan/api-proxy`，Go 1.26，工具链 1.26.10。编码规则见 [规范与不变量](../docs/规范与不变量.md)，请求流程见 [架构说明](../docs/架构说明.md)。
+单 Go module：`insistanan/api-proxy`，Go 1.26，工具链 1.26.10。编码规则见 [规范与不变量](../docs/规范与不变量.md)，请求流程见 [架构说明](../docs/架构说明.md)。
 
 ## 入口
 
@@ -21,7 +21,7 @@
 | `orchestration/` | scheduler、circuit、upstreamcontrol、availability、cachekeepalive（会话缓存保活）、proxy、ratelimit、urlhealth |
 | `protocol/` | converters、providers、contract、schema、codec、items、tokenusage、visionmedia、types |
 | `safety/` | sensitive、llmgate、pipeline、bodyfilter、mediasanitizer、visionlayer |
-| `dialogue/` | session、conversation、prompt、routing（intent / semantic） |
+| `dialogue/` | session、conversation、prompt、routing（intent / semantic）、internal/syncstate（仅会话内部的可取消状态锁） |
 | `storage/` | logger、logbody、metrics、sqlitedb、atomicfile、usageledger |
 | `infra/` | config、httpclient、upstreamreq、middleware、cli、utils |
 
@@ -48,7 +48,21 @@
 | `protocol/converters` | 请求/普通响应/流式转换分发；Responses 工具身份与会话映射 |
 | `protocol/converters/togemini` | Gemini 原生请求字段处理、普通响应映射、Claude/Chat 流式状态与工具累积 |
 | `protocol/converters/toimages` | Images 与 Responses 之间的图片请求、响应、参数和最终元数据映射 |
+| `protocol/codec` | 完整 SSE 事件读取、多 data 合并、JSON 编解码；保留读取错误 |
+| `protocol/items` | Responses 历史边界与去重、逐 item/part 收集、完整输出的统一判定 |
+| `protocol/types` | 协议数据体及原生扩展字段的序列化契约 |
 | `protocol/visionmedia` | 跨协议图片引用转换与能力校验 |
+
+`dialogue/` 生命周期边界：
+
+| 位置 | 职责 |
+|---|---|
+| `dialogue/session/turn.go`、`prune.go` | 请求版本快照与租约、共同事务删除及过期历史回收 |
+| `dialogue/conversation/observation.go`、`persistence.go` | 请求观测、保存失败恢复、dirty 有限重试和停机收尾 |
+| `dialogue/conversation/controls.go`、`query.go`、`active.go` | 人工修改、分页查询、轻量活跃 ID 查询 |
+| `dialogue/conversation/lifecycle.go`、`retention.go`、`request_lease.go` | 跨存储提交与删除边界、TTL、缓存失效及晚到回填保护 |
+| `dialogue/conversation/image_store.go` | 带请求 Context 的对话内图片理解结果存取 |
+| `dialogue/internal/syncstate` | 可取消状态锁，保持 Registry → Session 锁序 |
 
 `clients/` 子包：`clients/piagent` 处理 pi-agent 配置，`clients/mcpsync` 同步 MCP，`clients/skills` 管理 Skill 文件，`clients/extensions` 负责 Skills / MCP 统一目录迁移。
 

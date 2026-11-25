@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 // ActivePoolChannels 只核对静态可执行条件；实时熔断与请求模型兼容性仍由调度器判断。

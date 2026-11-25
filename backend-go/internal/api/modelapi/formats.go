@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/management/modelcatalog"
+	"insistanan/api-proxy/internal/management/modelcatalog"
 )
 
 type anthropicModel struct {

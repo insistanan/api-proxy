@@ -15,11 +15,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	adminshared "github.com/insistanan/api-proxy/internal/api/admin/shared"
-	"github.com/insistanan/api-proxy/internal/clients"
-	"github.com/insistanan/api-proxy/internal/clients/mcpsync"
-	"github.com/insistanan/api-proxy/internal/clients/skills"
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	adminshared "insistanan/api-proxy/internal/api/admin/shared"
+	"insistanan/api-proxy/internal/clients"
+	"insistanan/api-proxy/internal/clients/mcpsync"
+	"insistanan/api-proxy/internal/clients/skills"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 const gitCommandTimeout = 90 * time.Second

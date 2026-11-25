@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/orchestration/circuit"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/orchestration/circuit"
 )
 
 // newPermitTestEnv 构造启用熔断的单渠道测试环境。

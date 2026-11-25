@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
-	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/dialogue/conversation"
+	"insistanan/api-proxy/internal/orchestration/scheduler"
 )
 
 func TestRunProxyRequest_BranchCapacitySkipsFullChannels(t *testing.T) {

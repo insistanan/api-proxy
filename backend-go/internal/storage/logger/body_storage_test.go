@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/storage/logbody"
+	"insistanan/api-proxy/internal/storage/logbody"
 	"math"
 	"path/filepath"
 	"strings"
@@ -158,24 +158,25 @@ func TestLifecycleSummaryUsesFinalOutcome(t *testing.T) {
 	require.Equal(t, detail.Summary, list[0])
 }
 
-func TestWebDetailRejectsOversizedBodiesButCLIQueryStillWorks(t *testing.T) {
-	store, err := Open(filepath.Join(t.TempDir(), "logs.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, store.Close()) })
-	for range 5 {
-		require.NoError(t, store.RecordTraffic(TrafficLog{RequestID: "large", Phase: PhaseUpstreamResponse, Body: strings.Repeat("x", logbody.MaxBodyBytes)}))
-	}
-	require.NoError(t, store.Flush())
-	_, err = store.GetSystemLogDetail(context.Background(), "large")
-	require.ErrorIs(t, err, ErrLogDetailTooLarge)
-	rows, err := store.QueryTrafficByRequestID(context.Background(), "large")
-	require.NoError(t, err)
-	require.Len(t, rows, 5)
-}
+// Web 详情超过正文或行数上限时拒绝返回，但 CLI 查询仍可读取全部原始行。
+func TestWebDetailRejectsOversizedBodiesAndRowCounts(t *testing.T) {
+	t.Run("超大正文", func(t *testing.T) {
+		store, err := Open(filepath.Join(t.TempDir(), "logs.db"))
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, store.Close()) })
+		for range 5 {
+			require.NoError(t, store.RecordTraffic(TrafficLog{RequestID: "large", Phase: PhaseUpstreamResponse, Body: strings.Repeat("x", logbody.MaxBodyBytes)}))
+		}
+		require.NoError(t, store.Flush())
+		_, err = store.GetSystemLogDetail(context.Background(), "large")
+		require.ErrorIs(t, err, ErrLogDetailTooLarge)
+		rows, err := store.QueryTrafficByRequestID(context.Background(), "large")
+		require.NoError(t, err)
+		require.Len(t, rows, 5)
+	})
 
-func TestWebDetailRejectsTooManyTrafficOrAttemptRows(t *testing.T) {
 	for _, attempts := range []bool{false, true} {
-		t.Run(fmt.Sprint(attempts), func(t *testing.T) {
+		t.Run(fmt.Sprintf("行数超限 attempts=%v", attempts), func(t *testing.T) {
 			store, err := Open(filepath.Join(t.TempDir(), "logs.db"))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, store.Close()) })

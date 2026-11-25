@@ -8,9 +8,9 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/protocol/converters"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/protocol/converters"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // RequestInput 保存一次协议转换所需的请求参数。

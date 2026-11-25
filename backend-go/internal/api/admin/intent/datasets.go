@@ -5,8 +5,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/dialogue/routing/semantic"
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/dialogue/routing/semantic"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 // RegisterDatasetAPI 仅挂在已鉴权的管理路由组；不会自动调用远程模型或导入请求日志。

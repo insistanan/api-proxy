@@ -8,8 +8,8 @@ import (
 	"slices"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/dialogue/routing/semantic"
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/dialogue/routing/semantic"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 // Preparation 属于服务生命周期；关闭浏览器不取消任务，停机先取消并等待再关闭存储。

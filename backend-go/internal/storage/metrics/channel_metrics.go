@@ -4,7 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/codec"
 	"log"
 	"time"
 )
@@ -174,7 +174,7 @@ func (m *MetricsManager) getOrCreateKeyLocked(baseURL, metricsKey, keyMask strin
 func generateMetricsKey(baseURL, apiKey string, channelIndex int) string {
 	h := sha256.New()
 	if channelIndex == 0 {
-		// 索引 0 沿用旧键格式，保留升级前 SQLite 中的历史指标；其他索引仍独立隔离。
+		// 索引 0 保持不含渠道索引的键格式，与已落盘的指标键一致；其他索引必须隔离。
 		h.Write([]byte(baseURL + "|" + apiKey))
 	} else {
 		h.Write([]byte(fmt.Sprintf("%s|%s|%d", baseURL, apiKey, channelIndex)))

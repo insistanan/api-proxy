@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"insistanan/api-proxy/internal/orchestration/upstreamcontrol"
 )
 
 // ResponseChainState 记录 Messages→Responses 链式上下文状态。

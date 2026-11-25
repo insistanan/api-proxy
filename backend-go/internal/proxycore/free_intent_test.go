@@ -5,10 +5,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/dialogue/routing/intent"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/dialogue/routing/intent"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/orchestration/scheduler"
 )
 
 func TestIntentSelectedFreePoolReusesFreeModelCandidates(t *testing.T) {

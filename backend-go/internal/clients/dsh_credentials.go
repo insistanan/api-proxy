@@ -9,15 +9,15 @@ package clients
 import (
 	"bytes"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/codec"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/storage/atomicfile"
 	"gopkg.in/yaml.v3"
+	"insistanan/api-proxy/internal/storage/atomicfile"
 )
 
 const (

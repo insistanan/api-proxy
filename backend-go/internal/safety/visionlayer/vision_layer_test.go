@@ -11,10 +11,10 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
-	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/orchestration/scheduler"
+	"insistanan/api-proxy/internal/protocol/visionmedia"
 )
 
 func TestPrepareRequestSkipsImagesProtocolImageToImage(t *testing.T) {

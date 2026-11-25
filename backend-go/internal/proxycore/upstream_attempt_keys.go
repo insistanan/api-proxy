@@ -6,23 +6,23 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
+	"insistanan/api-proxy/internal/protocol/codec"
 	"io"
 	"log"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/orchestration/availability"
-	"github.com/insistanan/api-proxy/internal/orchestration/proxy"
-	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
-	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
-	"github.com/insistanan/api-proxy/internal/safety/pipeline"
-	"github.com/insistanan/api-proxy/internal/safety/visionlayer"
-	"github.com/insistanan/api-proxy/internal/storage/logger"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/orchestration/availability"
+	"insistanan/api-proxy/internal/orchestration/proxy"
+	"insistanan/api-proxy/internal/orchestration/scheduler"
+	"insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/safety/pipeline"
+	"insistanan/api-proxy/internal/safety/visionlayer"
+	"insistanan/api-proxy/internal/storage/logger"
 )
 
 func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
@@ -383,12 +383,12 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 				}
 			}
 
-			// 2xx 错误信封检测（参照 cc-switch forwarder 的 buffer 校验）：部分
+			// 2xx 错误信封检测：部分
 			// OpenAI 兼容网关用 HTTP 200 包错误 body 返回。非流式 JSON 响应先
 			// 缓冲校验，命中错误信封按 Key 失败处理继续 failover，不再把错误
-			// 当成功交给 HandleSuccess。流式响应交给 HandleSuccess（流式防御
-			// 在 streams 层 prime-then-commit）。全量读取与 HandleSuccess 非流式
-			// 路径的 io.ReadAll 开销相同；上限外的超大响应按读失败处理。
+			// 当成功交给 HandleSuccess。流式响应直接交给 HandleSuccess（防御
+			// 在 streams 层 prime-then-commit）。
+			// 超过读取上限的响应按读失败处理。
 			if !isStream && looksLikeJSONResponse(resp) {
 				var sniff []byte
 				var readErr error
@@ -457,7 +457,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 	if upstreamcontrol.IsLocalError(failoverState.lastError) {
 		return localAdmissionResult(c, failoverState.lastError, cfgManager.GetFuzzyModeEnabledForProtocol(string(kind)) && channelScheduler.GetActiveChannelCountForModel(kind, logCtx.Model) > 1)
 	}
-	// 候选耗尽的最终健康结果（R2-a）：发生过明确中性结束原因（容量、审核
+	// 候选耗尽的最终健康结果：发生过明确中性结束原因（容量、审核
 	// 兼容重试失败）时按中性记账；否则为可重试真实故障耗尽候选。
 	if failoverState.neutralTermination {
 		return newUpstreamAttemptResult(false, "", 0, failoverState.lastFailoverError, nil, failoverState.lastError).withHealth(channelHealthNeutral)

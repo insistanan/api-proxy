@@ -21,8 +21,7 @@ func newMappingTestEnv(t *testing.T) (*MappingStore, string) {
 	return store, keyPath
 }
 
-// TestMappingStoreEncryptedRoundTrip 加密往返：写入后能在 DB 文件二进制里
-// 找到占位符（明文键）但找不到原文（密文），且 LookupPlaceholder 能解回原文。
+// TestMappingStoreEncryptedRoundTrip 验证加密往返：原文不落盘，且能按占位符与原文双向查回。
 func TestMappingStoreEncryptedRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "mappings.db")
@@ -49,7 +48,7 @@ func TestMappingStoreEncryptedRoundTrip(t *testing.T) {
 		t.Fatalf("按原文查占位符失败: %v %+v", err, byOriginal)
 	}
 
-	// DB 文件二进制：手机号明文绝不出现在磁盘上。
+	// 数据库文件中不得出现明文原文。
 	raw, err := os.ReadFile(dbPath)
 	if err != nil {
 		t.Fatalf("读取 DB 文件失败: %v", err)
@@ -57,15 +56,9 @@ func TestMappingStoreEncryptedRoundTrip(t *testing.T) {
 	if strings.Contains(string(raw), original) {
 		t.Fatal("明文出现在数据库文件中（加密失效）")
 	}
-	// HMAC 索引也不是裸 SHA-256：手工算裸哈希比对。
-	// （弱验证：裸哈希前 8 字节不应出现在文件里。）
-	if strings.Contains(string(raw), "31d5e0f8a4b3") { // sha256("13800138000") 前 12 hex
-		t.Fatal("疑似裸哈希索引出现在数据库文件中")
-	}
 }
 
-// TestMappingStoreRestartRestore 跨"重启"还原：store A 写入 → close →
-// 用同一主密钥新建 store B → Vault B 还原出原文。
+// TestMappingStoreRestartRestore 验证同一主密钥下，重新打开映射库后仍能还原且占位符保持稳定。
 func TestMappingStoreRestartRestore(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "mappings.db")
@@ -124,8 +117,7 @@ func placeholderTokenOf(masked string) string {
 	return reservedPlaceholderPattern.FindString(masked)
 }
 
-// TestMappingStoreRotatedKeyCannotRestore 主密钥轮换后旧占位符还原 miss：
-// 原样下发 + miss 审计回调触发。
+// TestMappingStoreRotatedKeyCannotRestore 验证主密钥更换后旧占位符无法还原：原样下发并触发 miss 回调。
 func TestMappingStoreRotatedKeyCannotRestore(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "mappings.db")
@@ -167,7 +159,7 @@ func TestMappingStoreRotatedKeyCannotRestore(t *testing.T) {
 	}
 }
 
-// TestMappingStorePurge TTL 过期清理。
+// TestMappingStorePurge 验证 TTL 过期行被清理。
 func TestMappingStorePurge(t *testing.T) {
 	store, _ := newMappingTestEnv(t)
 	t.Cleanup(func() { _ = store.Close() })

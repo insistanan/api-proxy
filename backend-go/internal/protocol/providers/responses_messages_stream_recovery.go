@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // 同一条目可以先出现 item_id 或 output_index；得到对应关系后归并为同一个键。

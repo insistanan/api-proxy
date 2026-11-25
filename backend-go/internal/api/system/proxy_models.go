@@ -2,8 +2,8 @@ package system
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/api/modelapi"
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/api/modelapi"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 // ProxyModelsHandler 返回本代理自身暴露的模型列表（即 /v1/models 的内容），

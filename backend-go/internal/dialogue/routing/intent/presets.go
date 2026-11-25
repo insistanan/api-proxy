@@ -17,8 +17,8 @@ import (
 	"sync"
 	"time"
 
-	apiproxy "github.com/insistanan/api-proxy"
-	"github.com/insistanan/api-proxy/internal/storage/atomicfile"
+	apiproxy "insistanan/api-proxy"
+	"insistanan/api-proxy/internal/storage/atomicfile"
 )
 
 // 空地址明确选择随二进制附带的推荐清单；自定义 HTTPS 地址失败仍显式报错。

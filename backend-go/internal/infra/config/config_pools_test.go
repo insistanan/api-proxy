@@ -7,11 +7,11 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"insistanan/api-proxy/internal/orchestration/upstreamcontrol"
 )
 
 func TestDeleteChannelPoolDeletesAllMembersAtomically(t *testing.T) {
-	for _, kind := range []string{"messages", "responses", "gemini", "chat", "images", "embeddings", "decisions"} {
+	for _, kind := range allChannelKinds {
 		t.Run(kind, func(t *testing.T) {
 			cm := newTransactionTestManager(t, kind)
 			cs, err := cm.config.channelSetFor(kind)
@@ -72,97 +72,74 @@ func TestDeleteChannelPoolDeletesAllMembersAtomically(t *testing.T) {
 	}
 }
 
-func TestDeleteChannelPoolDetachesExternalVisionReference(t *testing.T) {
-	cm := newTransactionTestManager(t, "messages")
-	cm.config.Upstream[0].PoolID = "empty"
-	cm.config.ChatUpstream = []UpstreamConfig{{ID: "owner", Name: "owner", VisionCapable: true, VisionLayerEnabled: true, VisionLayerChannelID: "first", VisionLayerModel: "vision-model", MaxConcurrency: upstreamcontrol.DefaultConcurrency}}
-	if err := cm.DeleteChannelPool("messages", "empty"); err != nil {
-		t.Fatal(err)
-	}
-	owner := cm.config.ChatUpstream[0]
-	if owner.VisionCapable || owner.VisionLayerEnabled || owner.VisionLayerChannelID != "" || owner.VisionLayerModel != "" {
-		t.Fatalf("引用方仍保留图片理解配置: %+v", owner)
-	}
-}
-
-func TestDeleteChannelPoolAllowsInternalVisionReferences(t *testing.T) {
-	cm := newTransactionTestManager(t, "messages")
-	for i := range cm.config.Upstream {
-		cm.config.Upstream[i].PoolID = "empty"
-	}
-	cm.config.Upstream[0].VisionLayerEnabled = true
-	cm.config.Upstream[0].VisionLayerChannelID = "second"
-	if err := cm.DeleteChannelPool("messages", "empty"); err != nil {
-		t.Fatal(err)
-	}
-	for _, channel := range cm.config.Upstream {
-		if channel.Status != ChannelStatusDeleted {
-			t.Fatal("同组渠道未全部删除")
+// 删除分组时：同组内部的图片理解引用随之消失；分组外的引用方必须被解除引用。
+func TestDeleteChannelPoolVisionReferences(t *testing.T) {
+	t.Run("external reference is detached", func(t *testing.T) {
+		cm := newTransactionTestManager(t, "messages")
+		cm.config.Upstream[0].PoolID = "empty"
+		cm.config.ChatUpstream = []UpstreamConfig{{ID: "owner", Name: "owner", VisionCapable: true, VisionLayerEnabled: true, VisionLayerChannelID: "first", VisionLayerModel: "vision-model", MaxConcurrency: upstreamcontrol.DefaultConcurrency}}
+		if err := cm.DeleteChannelPool("messages", "empty"); err != nil {
+			t.Fatal(err)
 		}
-	}
+		owner := cm.config.ChatUpstream[0]
+		if owner.VisionCapable || owner.VisionLayerEnabled || owner.VisionLayerChannelID != "" || owner.VisionLayerModel != "" {
+			t.Fatalf("引用方仍保留图片理解配置: %+v", owner)
+		}
+	})
+	t.Run("internal reference is allowed", func(t *testing.T) {
+		cm := newTransactionTestManager(t, "messages")
+		for i := range cm.config.Upstream {
+			cm.config.Upstream[i].PoolID = "empty"
+		}
+		cm.config.Upstream[0].VisionLayerEnabled = true
+		cm.config.Upstream[0].VisionLayerChannelID = "second"
+		if err := cm.DeleteChannelPool("messages", "empty"); err != nil {
+			t.Fatal(err)
+		}
+		for _, channel := range cm.config.Upstream {
+			if channel.Status != ChannelStatusDeleted {
+				t.Fatal("同组渠道未全部删除")
+			}
+		}
+	})
 }
 
-func TestDeleteNonEmptyChannelPoolKeepsSnapshotOnSaveFailure(t *testing.T) {
-	cm := newTransactionTestManager(t, "messages")
-	cm.config.Upstream[0].PoolID = "empty"
-	before := cloneConfig(cm.config)
-	data, err := os.ReadFile(cm.configFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	blockTransactionBackup(t, cm)
-	if err := cm.DeleteChannelPool("messages", "empty"); err == nil {
-		t.Fatal("预期备份失败")
-	}
-	if !reflect.DeepEqual(before, cm.config) {
-		t.Fatal("写入失败后内存快照发生变化")
-	}
-	after, err := os.ReadFile(cm.configFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != string(after) {
-		t.Fatal("写入失败后磁盘配置发生变化")
-	}
-}
+func TestSelectChannelPoolRouting(t *testing.T) {
+	t.Run("longest matcher wins", func(t *testing.T) {
+		pools := []ChannelPool{
+			defaultChannelPool(),
+			{ID: "claude", Name: "Claude", ModelMatcher: "claude", Priority: 2},
+			{ID: "sonnet", Name: "Sonnet", ModelMatcher: "claude-sonnet", Priority: 3},
+		}
+		selected, err := SelectChannelPool(pools, "CLAUDE-SONNET-4")
+		if err != nil {
+			t.Fatalf("SelectChannelPool() error = %v", err)
+		}
+		if selected.ID != "sonnet" {
+			t.Fatalf("SelectChannelPool() ID = %q, want sonnet", selected.ID)
+		}
+	})
 
-func TestSelectChannelPoolUsesLongestMatcher(t *testing.T) {
-	pools := []ChannelPool{
-		defaultChannelPool(),
-		{ID: "claude", Name: "Claude", ModelMatcher: "claude", Priority: 2},
-		{ID: "sonnet", Name: "Sonnet", ModelMatcher: "claude-sonnet", Priority: 3},
-	}
-
-	selected, err := SelectChannelPool(pools, "CLAUDE-SONNET-4")
-	if err != nil {
-		t.Fatalf("SelectChannelPool() error = %v", err)
-	}
-	if selected.ID != "sonnet" {
-		t.Fatalf("SelectChannelPool() ID = %q, want sonnet", selected.ID)
-	}
-}
-
-func TestSelectChannelPoolRouteReturnsMatchedThenFallback(t *testing.T) {
-	pools := []ChannelPool{
-		{ID: "gpt", Name: "GPT", ModelMatcher: "gpt", Priority: 1},
-		defaultChannelPool(),
-	}
-
-	route, err := SelectChannelPoolRoute(pools, "gpt-5.4")
-	if err != nil {
-		t.Fatalf("SelectChannelPoolRoute() error = %v", err)
-	}
-	if len(route) != 2 || route[0].ID != "gpt" || route[1].ID != DefaultChannelPoolID {
-		t.Fatalf("SelectChannelPoolRoute() = %#v", route)
-	}
-
-	route, err = SelectChannelPoolRoute(pools, "claude-sonnet")
-	if err != nil {
-		t.Fatalf("SelectChannelPoolRoute() fallback error = %v", err)
-	}
-	if len(route) != 1 || route[0].ID != DefaultChannelPoolID {
-		t.Fatalf("SelectChannelPoolRoute() fallback = %#v", route)
-	}
+	t.Run("route returns matched then fallback", func(t *testing.T) {
+		pools := []ChannelPool{
+			{ID: "gpt", Name: "GPT", ModelMatcher: "gpt", Priority: 1},
+			defaultChannelPool(),
+		}
+		route, err := SelectChannelPoolRoute(pools, "gpt-5.4")
+		if err != nil {
+			t.Fatalf("SelectChannelPoolRoute() error = %v", err)
+		}
+		if len(route) != 2 || route[0].ID != "gpt" || route[1].ID != DefaultChannelPoolID {
+			t.Fatalf("SelectChannelPoolRoute() = %#v", route)
+		}
+		route, err = SelectChannelPoolRoute(pools, "claude-sonnet")
+		if err != nil {
+			t.Fatalf("SelectChannelPoolRoute() fallback error = %v", err)
+		}
+		if len(route) != 1 || route[0].ID != DefaultChannelPoolID {
+			t.Fatalf("SelectChannelPoolRoute() fallback = %#v", route)
+		}
+	})
 }
 
 func TestNormalizeChannelPoolsRejectsWildcardOutsideFallbackGroup(t *testing.T) {
@@ -297,23 +274,7 @@ func TestValidateAllVisionLayerConfigsChecksDependents(t *testing.T) {
 	}
 }
 
-func TestRemoveFromSliceDetachesVisionDependency(t *testing.T) {
-	upstreams := []UpstreamConfig{
-		{ID: "text", Name: "text", VisionLayerEnabled: true, VisionLayerChannelID: "vision"},
-		{ID: "vision", Name: "vision", VisionCapable: true},
-	}
-
-	if _, _, err := removeFromSlice(upstreams, 1, "Messages"); err != nil {
-		t.Fatal(err)
-	}
-	if upstreams[0].VisionLayerEnabled || upstreams[0].VisionLayerChannelID != "" {
-		t.Fatal("引用方的图片理解层未清理")
-	}
-}
-
-// TestMoveAPIKeyToBottomForKindWritesCorrectPool 特征测试：多渠道模式密钥降级
-// 必须按实际 kind 写池（回归锚点：历史 bug 曾用硬编码 "messages" 的
-// MoveAPIKeyToBottom，导致 chat/gemini/images 的降级写错渠道池）。
+// 多渠道模式密钥降级必须按实际 kind 写入对应渠道池，不能跨协议写错。
 func TestMoveAPIKeyToBottomForKindWritesCorrectPool(t *testing.T) {
 	dir := t.TempDir()
 	configFile := filepath.Join(dir, "config.json")

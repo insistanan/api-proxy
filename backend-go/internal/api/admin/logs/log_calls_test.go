@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/storage/logger"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/storage/logger"
 )
 
 func TestLogCallsRejectInvalidFiltersAndMissingRequests(t *testing.T) {

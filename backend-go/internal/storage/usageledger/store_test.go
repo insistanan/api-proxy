@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
+	"insistanan/api-proxy/internal/protocol/tokenusage"
 )
 
 func TestGrowthUsage_OnlyPositiveUpstreamFactsSetActivityTime(t *testing.T) {

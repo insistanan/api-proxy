@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/dialogue/routing/semantic"
-	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/dialogue/routing/semantic"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 func TestPreparationOwnsCancellationAndRejectsOverlap(t *testing.T) {

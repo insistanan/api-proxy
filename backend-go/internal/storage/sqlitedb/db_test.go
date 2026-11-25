@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
-	"github.com/insistanan/api-proxy/internal/dialogue/session"
-	"github.com/insistanan/api-proxy/internal/safety/sensitive"
-	"github.com/insistanan/api-proxy/internal/storage/sqlitedb"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/dialogue/conversation"
+	"insistanan/api-proxy/internal/dialogue/session"
+	"insistanan/api-proxy/internal/safety/sensitive"
+	"insistanan/api-proxy/internal/storage/sqlitedb"
 )
 
 func TestConversationStoresBorrowOneConnection(t *testing.T) {

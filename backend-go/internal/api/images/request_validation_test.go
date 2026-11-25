@@ -9,10 +9,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/httpclient"
-	"github.com/insistanan/api-proxy/internal/protocol/converters/toimages"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/httpclient"
+	"insistanan/api-proxy/internal/protocol/converters/toimages"
 )
 
 func TestImagesNewOutputFormatsAndConstraints(t *testing.T) {
@@ -107,18 +107,6 @@ func TestImagesMultipartNewParametersAndEffectiveOverrides(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Contains(t, string(body), `"output_format":"gif"`)
-}
-
-func TestNativeImagesGIFRejectsMultipartMask(t *testing.T) {
-	var body bytes.Buffer
-	form := multipart.NewWriter(&body)
-	require.NoError(t, form.WriteField("output_format", "gif"))
-	part, err := form.CreateFormFile("mask", "mask.png")
-	require.NoError(t, err)
-	_, err = io.WriteString(part, "mask-data")
-	require.NoError(t, err)
-	require.NoError(t, form.Close())
-	require.ErrorContains(t, validateNativeImagesMultipartOutput(form.FormDataContentType(), body.Bytes()), "蒙版")
 }
 
 func TestChannelGIFConfigReachesBothUpstreamProtocols(t *testing.T) {

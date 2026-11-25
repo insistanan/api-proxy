@@ -14,10 +14,17 @@ type HistoryPruner interface {
 }
 
 func (r *Registry) BindHistory(history HistoryPruner) error {
-	r.mu.Lock()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := r.mu.LockContext(ctx); err != nil {
+		return err
+	}
+	defer r.mu.Unlock()
+	if err := r.cleanupLocked(ctx, history); err != nil {
+		return err
+	}
 	r.history = history
-	r.mu.Unlock()
-	return r.cleanup()
+	return nil
 }
 
 func (s *SQLiteStore) purgeExpired(ctx context.Context, cutoff time.Time, activeIDs []string, history HistoryPruner) ([]string, error) {
@@ -90,6 +97,10 @@ func (r *Registry) cleanup() error {
 		return err
 	}
 	defer r.mu.Unlock()
+	return r.cleanupLocked(ctx, r.history)
+}
+
+func (r *Registry) cleanupLocked(ctx context.Context, history HistoryPruner) error {
 	cutoff := time.Now().Add(-r.maxIdle)
 	active := []string{}
 	expired := map[string]bool{}
@@ -101,13 +112,25 @@ func (r *Registry) cleanup() error {
 		}
 	}
 	if r.store != nil {
-		ids, err := r.store.purgeExpired(ctx, cutoff, active, r.history)
+		ids, err := r.store.purgeExpired(ctx, cutoff, active, history)
 		if err != nil {
 			return err
 		}
 		expired = make(map[string]bool, len(ids))
 		for _, id := range ids {
 			expired[id] = true
+		}
+	}
+	if r.store == nil && history != nil {
+		_, err := history.PruneWithRecords(ctx, nil, func(*sql.Tx) ([]string, error) {
+			ids := make([]string, 0, len(expired))
+			for id := range expired {
+				ids = append(ids, id)
+			}
+			return ids, nil
+		})
+		if err != nil {
+			return err
 		}
 	}
 	for id := range expired {

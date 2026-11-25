@@ -3,8 +3,8 @@ package providers
 import (
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
-	"github.com/insistanan/api-proxy/internal/dialogue/session"
+	"insistanan/api-proxy/internal/dialogue/conversation"
+	"insistanan/api-proxy/internal/dialogue/session"
 )
 
 // BindConversationCaches 在装配时登记一次；HTTP 删除、TTL 及停机共享失效入口。

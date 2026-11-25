@@ -6,16 +6,16 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/codec"
 	"log"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/safety/llmgate"
-	"github.com/insistanan/api-proxy/internal/safety/sensitive"
-	"github.com/insistanan/api-proxy/internal/storage/logger"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/safety/llmgate"
+	"insistanan/api-proxy/internal/safety/sensitive"
+	"insistanan/api-proxy/internal/storage/logger"
 )
 
 // CmdGate 危险命令 AI 闸门：命中危险命令后不直接拦截，而是

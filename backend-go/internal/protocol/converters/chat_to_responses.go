@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/protocol/contract"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
+	"insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/contract"
 )
 
 // chatToResponsesState 流式转换状态

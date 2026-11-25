@@ -8,8 +8,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
-	"github.com/insistanan/api-proxy/internal/safety/pipeline"
+	"insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/safety/pipeline"
 )
 
 // WriteStream 将所有写回分支的错误标记为下游故障，包括短写。

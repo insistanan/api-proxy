@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 func TestUpdateKiloFreeChannel_BranchLimitAndEnabledAreIndependent(t *testing.T) {

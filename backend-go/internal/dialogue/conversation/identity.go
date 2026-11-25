@@ -111,7 +111,7 @@ func (r *Registry) resolveObservationLocked(obs Observation) (*Record, string, s
 			}
 			return rec, explicitKey, parentID, explicitResolution
 		}
-		// AssociateExternalID 保存的是不带 AgentID 的基础 alias，而主请求
+		// 历史提交保存的是不带 AgentID 的基础 alias，而主请求
 		// 解析时会把 AgentID 纳入显式 key。previous_response 只允许在这里
 		// 回退到基础 alias，避免普通 conversation ID 的不同 Cursor lane 被
 		// 错误合并。

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
+	"insistanan/api-proxy/internal/protocol/tokenusage"
 )
 
 func (s *Store) Credits(ctx context.Context, after int64) ([]tokenusage.Credit, error) {

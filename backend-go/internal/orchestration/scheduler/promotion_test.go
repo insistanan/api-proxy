@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/orchestration/circuit"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/orchestration/circuit"
 )
 
 // 健康度、熔断和到期都不能因促销被绕过；恢复探测保持配置顺序。

@@ -10,7 +10,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/insistanan/api-proxy/internal/storage/atomicfile"
+	"insistanan/api-proxy/internal/storage/atomicfile"
 )
 
 // storeVersion 是统一列表文件的格式版本。读取版本不匹配的文件时直接报错，不尝试猜测结构。

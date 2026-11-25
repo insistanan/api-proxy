@@ -5,8 +5,8 @@ package messages
 
 import (
 	"encoding/json"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
+	"insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/tokenusage"
 	"log"
 	"strings"
 )

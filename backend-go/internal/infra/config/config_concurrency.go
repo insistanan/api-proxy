@@ -6,8 +6,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
-	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
+	"insistanan/api-proxy/internal/orchestration/upstreamcontrol"
 )
 
 // EffectiveConcurrencyLimit 以 Key 下标展示组合，不额外暴露凭据或其摘要。

@@ -143,39 +143,6 @@ func (r *Registry) SetName(ctx context.Context, recordID string, name string) (*
 	return cloneRecord(rec), nil
 }
 
-// AssociateExternalID 将客户端后续会携带的外部响应 ID 关联到已有对话。
-// 目前主要用于 Responses API 的 previous_response_id 链。
-func (r *Registry) AssociateExternalID(recordID string, apiKind string, externalID string) error {
-	if strings.TrimSpace(recordID) == "" || strings.TrimSpace(externalID) == "" {
-		return nil
-	}
-	alias := explicitIdentityKey(apiKind, externalID)
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	defer r.trimCacheLocked()
-	if err := r.prepareObservationLocked(context.Background(), Observation{APIKind: apiKind, ConversationID: externalID}); err != nil {
-		return err
-	}
-	rec, err := r.loadRecordLocked(context.Background(), recordID)
-	if err != nil {
-		return err
-	}
-	if rec == nil {
-		return fmt.Errorf("conversation not found")
-	}
-	if existingID, ok := r.identityIndex[alias]; ok && existingID != recordID {
-		return fmt.Errorf("external conversation ID is already associated with another conversation")
-	}
-	if r.store != nil {
-		if err := r.store.UpsertAlias(alias, recordID); err != nil {
-			return err
-		}
-	}
-	r.identityIndex[alias] = recordID
-	return nil
-}
-
 func (r *Registry) LookupRouteOverride(ctx context.Context, recordID string) (*RouteOverride, error) {
 	if err := r.mu.LockContext(ctx); err != nil {
 		return nil, err

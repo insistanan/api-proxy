@@ -7,8 +7,8 @@ import (
 	"math"
 	"reflect"
 
-	"github.com/insistanan/api-proxy/internal/dialogue/routing/semantic"
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/dialogue/routing/semantic"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 func embeddingProfile(cfg config.IntentRoutingConfig) config.SemanticEmbeddingConfig {

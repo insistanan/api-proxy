@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 func (s *Service) Build(ctx context.Context, id string, revision int64, profile config.SemanticEmbeddingConfig) (IndexStatus, error) {

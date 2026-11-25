@@ -4,24 +4,24 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
+	"insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/visionmedia"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/middleware"
-	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
-	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
-	"github.com/insistanan/api-proxy/internal/orchestration/urlhealth"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
-	"github.com/insistanan/api-proxy/internal/safety/bodyfilter"
-	"github.com/insistanan/api-proxy/internal/safety/pipeline"
-	"github.com/insistanan/api-proxy/internal/storage/logger"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/middleware"
+	"insistanan/api-proxy/internal/orchestration/scheduler"
+	"insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"insistanan/api-proxy/internal/orchestration/urlhealth"
+	"insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/safety/bodyfilter"
+	"insistanan/api-proxy/internal/safety/pipeline"
+	"insistanan/api-proxy/internal/storage/logger"
 )
 
 // ProtocolSpec 描述一种代理协议的差异点。
@@ -37,7 +37,7 @@ type ProtocolSpec struct {
 	HookPipeline *pipeline.Pipeline
 
 	// AllowContentPolicyChannelFailover 仅多渠道分派生效：内容审核错误时
-	// 跨渠道转移（不计入渠道故障）。单渠道保持按 Key 分类的既有语义。
+	// 跨渠道转移（不计入渠道故障）。单渠道保持按 Key 分类。
 	AllowContentPolicyChannelFailover bool
 
 	// PreRoute 可选：协议特有的前置路由（如 chat 的 modelcatalog 路由）。
@@ -74,14 +74,6 @@ type ProtocolSpec struct {
 //	认证 → 读 body → 解析 → 脱敏 → 会话观测 → 日志 → 指定渠道分支 → PreRoute → 多渠道/单渠道分派
 //
 // 协议特有的逻辑（解析、构建请求、处理响应、前置路由）通过 ProtocolSpec 注入。
-// 调用方通常这样使用：
-//
-//	func Handler(envCfg, cfgManager, channelScheduler) gin.HandlerFunc {
-//	    spec := ProtocolSpec{...}
-//	    return func(c *gin.Context) {
-//	        RunProxyRequest(c, envCfg, cfgManager, channelScheduler, spec)
-//	    }
-//	}
 func RunProxyRequest(
 	c *gin.Context,
 	envCfg *config.EnvConfig,
@@ -298,8 +290,7 @@ func RunProxyRequest(
 // 五个协议级闭包（NextAPIKey/BuildRequest/DeprioritizeKey/HandleSuccess/
 // LogContext）只写一份，调用方只补差异点。差异经参数表达：
 //   - urlResults：单渠道为配置序（BuildDefaultURLResults），多渠道按 URL 健康排序
-//   - deprioritizeKind：密钥降级目标池，多渠道修复为按实际 kind 写池
-//     （历史 bug：曾硬编码 "messages"，跨池降级写错渠道池）
+//   - deprioritizeKind：密钥降级目标池，按实际 kind 写池
 //   - markURL：多渠道需回写 URL 健康状态（MarkURLFailure/Success），
 //     单渠道不参与 URL 健康统计，传 nil 即省略
 //   - allowContentPolicyChannelFailover：内容审核错误跨渠道转移开关；
@@ -406,7 +397,7 @@ func handleSingleChannelProxy(
 
 	// 渠道级熔断检查（internal/orchestration/circuit）：非快捷测试且已熔断（Open）时直接拦截并返回 503 CIRCUIT_OPEN。
 	// 快捷测试跳过熔断拦截，允许管理端手动探测或快速测试已熔断的渠道——
-	// 也不占用半开探测名额（R2-b：不挤占其他请求的探测许可）。
+	// 也不占用半开探测名额，不挤占其他请求的探测许可。
 	// 非快捷测试经 CircuitAllow 正式占用：可能取得探测名额（封装为许可句柄，
 	// 绑定取得时状态代次），渠道结束时统一记账释放。
 	var singlePermit *scheduler.ChannelPermit
@@ -492,7 +483,7 @@ func handleSingleChannelProxy(
 		} else if result.LastError != nil && !errors.Is(result.LastError, context.Canceled) {
 			MarkConversationFailure(channelScheduler, conversationID, spec.Kind, result.LastError)
 		}
-		// 渠道级熔断记账（R2-a/R2-b）：经许可句柄带代次记账。
+		// 渠道级熔断记账：经许可句柄带代次记账。
 		recordChannelHealth(channelScheduler, spec.Kind, channelIndex, result.Health, true, spec.LogName, singlePermit)
 		return
 	}
@@ -552,8 +543,7 @@ func handleMultiChannelProxy(
 			baseURLs := upstream.GetAllBaseURLs()
 			sortedURLResults := channelScheduler.GetSortedURLsForChannel(spec.Kind, channelIndex, baseURLs)
 
-			// 多渠道：URL 按健康状态排序并回写结果；密钥降级按实际
-			// kind 写池（修复历史 bug：曾硬编码 messages 池，跨池降级写错渠道）。
+			// 多渠道：URL 按健康状态排序并回写结果；密钥降级按实际 kind 写池。
 			// 内容审核跨渠道转移按 spec 开关生效；选渠许可传入 attempt，
 			// 供发送层"未发出即失败"路径中性归还探测名额。
 			attempt := buildProtocolAttempt(c, envCfg, cfgManager, channelScheduler, spec, bodyBytes, model, stream, conversationID, upstream, channelIndex, startTime, sortedURLResults, spec.Kind,

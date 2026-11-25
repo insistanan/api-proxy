@@ -13,10 +13,10 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	adminsettings "github.com/insistanan/api-proxy/internal/api/admin/settings"
-	"github.com/insistanan/api-proxy/internal/clients"
-	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/stretchr/testify/require"
+	adminsettings "insistanan/api-proxy/internal/api/admin/settings"
+	"insistanan/api-proxy/internal/clients"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 func setupExtensionsAdminTest(t *testing.T) (

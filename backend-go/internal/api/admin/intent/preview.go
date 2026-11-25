@@ -5,8 +5,8 @@ import (
 	"slices"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/dialogue/routing/intent"
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/dialogue/routing/intent"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 // 只展示配置候选，不取得调度许可或实际调用任务模型。

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/insistanan/api-proxy/internal/protocol/schema"
+	"insistanan/api-proxy/internal/protocol/schema"
 )
 
 func (r *GeminiRequest) UnmarshalJSON(data []byte) error {

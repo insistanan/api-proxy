@@ -2,17 +2,17 @@ package streams
 
 import (
 	"errors"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
 	"io"
 	"mime"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/api/common"
-	"github.com/insistanan/api-proxy/internal/infra/utils"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/proxycore"
+	"insistanan/api-proxy/internal/api/common"
+	"insistanan/api-proxy/internal/infra/utils"
+	"insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/proxycore"
 )
 
 // IsEventStreamResponse 判断上游是否返回 SSE。

@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 // CustomMatch 描述一次自定义规则命中。Original 只用于当前请求内完成替换，

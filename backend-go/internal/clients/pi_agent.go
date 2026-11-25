@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/clients/piagent"
+	"insistanan/api-proxy/internal/clients/piagent"
 )
 
 // PiAgentAPI 聚合 pi-agent 配置管理的互斥锁与配置存储，

@@ -3,9 +3,9 @@ package converters
 import (
 	"math"
 
-	"github.com/insistanan/api-proxy/internal/protocol/contract"
-	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 	"github.com/tidwall/gjson"
+	"insistanan/api-proxy/internal/protocol/contract"
+	"insistanan/api-proxy/internal/protocol/visionmedia"
 )
 
 // ValidateClaudeConversion 在降为目标消息之前拒绝不可表达的内容，避免白名单转换悄悄丢字段。

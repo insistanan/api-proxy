@@ -3,8 +3,8 @@ package converters
 import (
 	"math"
 
-	"github.com/insistanan/api-proxy/internal/protocol/contract"
 	"github.com/tidwall/gjson"
+	"insistanan/api-proxy/internal/protocol/contract"
 )
 
 func validateSamplingAndBudget(body []byte, target string) error {

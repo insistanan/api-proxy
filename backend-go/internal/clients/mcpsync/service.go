@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/storage/atomicfile"
+	"insistanan/api-proxy/internal/storage/atomicfile"
 )
 
 // 调用方可通过 errors.Is 区分失败类别，以映射到不同的 HTTP 状态码。

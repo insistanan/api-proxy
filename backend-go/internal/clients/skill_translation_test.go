@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/clients/skills"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/clients/skills"
 )
 
 func TestSkillTranslationRetriesAfterFirstPassAndSkipsSavedTranslation(t *testing.T) {

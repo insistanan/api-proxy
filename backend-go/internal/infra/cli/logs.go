@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/storage/logger"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/storage/logger"
 )
 
 const logsUsage = `用法:

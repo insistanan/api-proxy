@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/storage/usageledger"
+	"insistanan/api-proxy/internal/storage/usageledger"
 )
 
 func Register(parent *gin.RouterGroup, store *usageledger.Store) {

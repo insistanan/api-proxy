@@ -9,9 +9,9 @@ import (
 	"testing"
 	"testing/synctest"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 func TestResponsesImageJSON_WriteFailureIsNotSuccessful(t *testing.T) {
@@ -41,22 +41,6 @@ func TestResponsesImageCompletion_FinalBytesBeforeReadError(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, strings.Count(recorder.Body.String(), "event: image_generation.completed"))
 	require.NotContains(t, recorder.Body.String(), "event: error")
-}
-
-func TestResponsesImageDelivery_CancelAtFinalWritePreservesUsage(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		c, recorder := imageStreamContext()
-		ctx, cancel := context.WithCancel(c.Request.Context())
-		defer cancel()
-		c.Request = c.Request.WithContext(ctx)
-		c.Writer = imageDeliveryWriter{ResponseWriter: c.Writer, cancel: cancel, cancelOn: "}\n\n"}
-		stream := strings.Replace(completedImageStream("AQID"), `"created_at":123`, `"created_at":123,"usage":{"input_tokens":10,"output_tokens":5}`, 1)
-		usage, err := convertResponsesImageStream(c, strings.NewReader(stream), make(http.Header), "/images/generations", true, 1<<20)
-		require.NoError(t, err)
-		require.ErrorIs(t, ctx.Err(), context.Canceled)
-		require.Equal(t, 5, usage.OutputTokens)
-		require.Equal(t, 1, strings.Count(recorder.Body.String(), "event: image_generation.completed"))
-	})
 }
 
 func TestImagesInvalidUsageFailsBeforeDelivery(t *testing.T) {

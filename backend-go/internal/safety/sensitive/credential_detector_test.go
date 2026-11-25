@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 func TestCredentialDetectorDetectsSupportedCredentialShapes(t *testing.T) {
@@ -31,6 +31,8 @@ func TestCredentialDetectorDetectsSupportedCredentialShapes(t *testing.T) {
 		{name: "Bearer Token", rule: config.CredentialRuleAPIKey, text: "Authorization: Bearer AbCdEf0123456789._-token"},
 		{name: "命名密码", rule: config.CredentialRuleNamedSecret, text: "PASSWORD=correct-horse-battery-staple"},
 		{name: "连接串", rule: config.CredentialRuleConnectionString, text: "postgresql://admin:s3cret-pass@db.internal/app"},
+		{name: "Redis 连接串密码", rule: config.CredentialRuleConnectionString, text: "DATABASE_URL=redis://:s3cret-pass@localhost:6379/0"},
+		{name: "ADO 连接串密码", rule: config.CredentialRuleConnectionString, text: "CONNECTION_STRING=Server=db.internal;Database=app;User ID=admin;Password=s3cret-pass"},
 		{name: "私钥", rule: config.CredentialRulePrivateKey, text: "-----BEGIN PRIVATE KEY-----\nabc123\n-----END PRIVATE KEY-----"},
 		{name: "高熵值", rule: config.CredentialRuleHighEntropy, text: "API_KEY=AbCdEf1234567890GhIjKlMnOpQrStUv"},
 	}
@@ -50,23 +52,11 @@ func TestCredentialDetectorDetectsSupportedCredentialShapes(t *testing.T) {
 	}
 }
 
-func TestCredentialDetectorIgnoresShortBearerValue(t *testing.T) {
-	detector, err := NewCredentialDetector(config.CredentialConfig{
-		Enabled:      true,
-		EnabledRules: []string{config.CredentialRuleAPIKey},
-	})
-	if err != nil {
-		t.Fatalf("创建凭据检测器失败: %v", err)
-	}
-	if matches := detector.FindAll("Authorization: Bearer example"); len(matches) != 0 {
-		t.Fatalf("短示例值不应被识别为 Bearer Token: %+v", matches)
-	}
-}
-
 func TestCredentialDetectorIgnoresPlaceholdersAndNormalConfiguration(t *testing.T) {
 	detector, err := NewCredentialDetector(config.CredentialConfig{
 		Enabled: true,
 		EnabledRules: []string{
+			config.CredentialRuleAPIKey,
 			config.CredentialRuleNamedSecret,
 			config.CredentialRuleHighEntropy,
 		},
@@ -75,6 +65,7 @@ func TestCredentialDetectorIgnoresPlaceholdersAndNormalConfiguration(t *testing.
 		t.Fatalf("创建凭据检测器失败: %v", err)
 	}
 	text := strings.Join([]string{
+		"Authorization: Bearer example",
 		"PASSWORD=${APP_PASSWORD}",
 		"TOKEN=$APP_TOKEN",
 		"SECRET=%APP_SECRET%",
@@ -99,24 +90,6 @@ func TestCredentialDetectorIgnoresPlaceholdersAndNormalConfiguration(t *testing.
 		matches := detector.FindAll("API_KEY=" + value)
 		if len(matches) != 1 || matches[0].Original != value {
 			t.Fatalf("与示例值相似的实际凭据应被识别: %+v", matches)
-		}
-	}
-}
-
-func TestCredentialDetectorDetectsConnectionAssignmentsWithPasswords(t *testing.T) {
-	detector, err := NewCredentialDetector(config.CredentialConfig{
-		Enabled:      true,
-		EnabledRules: []string{config.CredentialRuleConnectionString},
-	})
-	if err != nil {
-		t.Fatalf("创建连接串检测器失败: %v", err)
-	}
-	for _, text := range []string{
-		"DATABASE_URL=redis://:s3cret-pass@localhost:6379/0",
-		"CONNECTION_STRING=Server=db.internal;Database=app;User ID=admin;Password=s3cret-pass",
-	} {
-		if matches := detector.FindAll(text); len(matches) == 0 || matches[0].Rule != config.CredentialRuleConnectionString {
-			t.Fatalf("未识别含密码的连接配置 %q: %+v", text, matches)
 		}
 	}
 }
@@ -154,18 +127,5 @@ func TestCredentialDetectorKeepsBusinessIDsOutOfSecretRules(t *testing.T) {
 	}, "\n")
 	if matches := detector.FindAll(text); len(matches) != 0 {
 		t.Fatalf("业务 ID 不应被掩码: %+v", matches)
-	}
-}
-
-func TestCredentialDetectorStillMasksExplicitSecretFields(t *testing.T) {
-	detector, err := NewCredentialDetector(config.CredentialConfig{
-		Enabled:      true,
-		EnabledRules: []string{config.CredentialRuleHighEntropy},
-	})
-	if err != nil {
-		t.Fatalf("创建凭据检测器失败: %v", err)
-	}
-	if matches := detector.FindAll("API_KEY=AbCdEf1234567890GhIjKlMnOpQrStUv"); len(matches) != 1 {
-		t.Fatalf("明确密钥字段应被识别: %+v", matches)
 	}
 }

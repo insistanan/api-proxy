@@ -5,8 +5,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/orchestration/scheduler"
 )
 
 // describeImagesOnChannel 接管许可，以同一渠道快照完成模型解析、缓存和发送。
@@ -82,7 +82,7 @@ func describeImagesOnChannel(
 			}
 			// 先登记占位再读持久层，读失败也能由 defer 通知全部等待者。
 			pendingImages = append(pendingImages, image)
-			cached, cachedOK, err := loadCache(cacheStore, conversationID, image)
+			cached, cachedOK, err := loadCache(ctx, cacheStore, conversationID, image)
 			if err != nil {
 				result.err = wrapRequestError(http.StatusInternalServerError, "VISION_LAYER_CACHE_ERROR", fmt.Errorf("读取图片理解缓存失败: %w", err))
 				return result
@@ -109,7 +109,7 @@ func describeImagesOnChannel(
 					result.health = visionHealthFailure
 					return result
 				}
-				if err := storeCache(cacheStore, conversationID, image, description); err != nil {
+				if err := storeCache(ctx, cacheStore, conversationID, image, description); err != nil {
 					result.err = wrapRequestError(http.StatusInternalServerError, "VISION_LAYER_CACHE_ERROR", fmt.Errorf("保存图片理解缓存失败: %w", err))
 					return result
 				}

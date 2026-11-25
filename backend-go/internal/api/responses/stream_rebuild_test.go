@@ -2,13 +2,13 @@ package responses
 
 import (
 	"encoding/json"
-	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
+	"insistanan/api-proxy/internal/protocol/tokenusage"
 	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // 上游正值与全缓存输入不能因本地估算被覆盖。

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 // InfoMatch 描述一次敏感信息命中及其掩码结果。

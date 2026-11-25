@@ -3,8 +3,8 @@ package togemini
 import (
 	"fmt"
 
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 func (s *Stream) feedChat(root gjson.Result, payload []byte) ([]types.GeminiStreamChunk, error) {

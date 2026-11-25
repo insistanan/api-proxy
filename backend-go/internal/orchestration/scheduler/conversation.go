@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/insistanan/api-proxy/internal/orchestration/urlhealth"
+	"insistanan/api-proxy/internal/orchestration/urlhealth"
 )
 
 func (s *ChannelScheduler) SetTraceAffinityForKind(kind ChannelKind, conversationID string, channelIndex int) {

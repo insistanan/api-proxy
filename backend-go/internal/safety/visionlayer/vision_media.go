@@ -5,7 +5,7 @@ import (
 	"maps"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
+	"insistanan/api-proxy/internal/protocol/visionmedia"
 )
 
 type upstreamImageAdapter struct {

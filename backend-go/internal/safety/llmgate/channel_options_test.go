@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 func TestChannelOptionsDeduplicateKiloAndPreserveExplicitIDs(t *testing.T) {

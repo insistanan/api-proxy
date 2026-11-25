@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	lmfpd "github.com/Ikaleio/lm-detector/sdk/go"
-	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 func TestBackgroundTaskPersistsResultWithoutCredentials(t *testing.T) {
@@ -125,7 +125,7 @@ func TestTaskStorage_ChannelIDsStayInsideTaskDirectory(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
-func TestTaskStorage_ReadsLegacyUUIDAndPrefersNewRecord(t *testing.T) {
+func TestTaskStorage_LegacyRecordRules(t *testing.T) {
 	dir := t.TempDir()
 	channelID := "d37fdd4b-e928-4410-9dba-796ba0613e72"
 	legacy := Task{ID: "legacy-task", Status: "completed", Target: &Target{ChannelID: channelID}}
@@ -144,17 +144,14 @@ func TestTaskStorage_ReadsLegacyUUIDAndPrefersNewRecord(t *testing.T) {
 	require.NoError(t, os.WriteFile(jobs.taskPath(channelID), []byte("broken"), 0600))
 	_, err = NewJobs(&Service{}, dir).Latest(channelID)
 	require.ErrorContains(t, err, "解析指纹检测任务失败", "新记录损坏时不能静默回退到旧结果")
-}
 
-func TestTaskStorage_DoesNotReadLegacyPathsOutsideDirectory(t *testing.T) {
-	dir := t.TempDir()
-	channelID := "../outside"
-	data, err := json.Marshal(Task{ID: "outside-task", Status: "completed", Target: &Target{ChannelID: channelID}})
+	outside := "../outside"
+	data, err = json.Marshal(Task{ID: "outside-task", Status: "completed", Target: &Target{ChannelID: outside}})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "outside.json"), data, 0600))
-	saved, err := NewJobs(&Service{}, filepath.Join(dir, "tasks")).Latest(channelID)
+	saved, err = NewJobs(&Service{}, filepath.Join(dir, "tasks")).Latest(outside)
 	require.NoError(t, err)
-	require.Nil(t, saved)
+	require.Nil(t, saved, "任务目录之外的旧文件不能被读取")
 }
 
 func TestShutdownCancelsTaskAndPreservesCompletedSamples(t *testing.T) {

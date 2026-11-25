@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/storage/metrics"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/storage/metrics"
 )
 
 // 覆盖报告迁移前的完整 JSON 契约，避免直接序列化画像泄露密钥。

@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 // logStartupInfo 输出紧凑的启动摘要：地址与构建信息一次展示。

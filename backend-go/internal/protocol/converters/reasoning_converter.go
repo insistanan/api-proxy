@@ -3,8 +3,8 @@ package converters
 import (
 	"math"
 
-	"github.com/insistanan/api-proxy/internal/protocol/contract"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/protocol/contract"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // ReasoningConfig 统一内部思考配置模型

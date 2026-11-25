@@ -12,9 +12,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/api/system"
-	"github.com/insistanan/api-proxy/internal/infra/cli"
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/api/system"
+	"insistanan/api-proxy/internal/infra/cli"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 func main() {

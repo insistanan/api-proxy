@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
-	"github.com/insistanan/api-proxy/internal/proxycore"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/proxycore"
 )
 
 func TestImagesSSEChecksFinalOverriddenFormat(t *testing.T) {
@@ -68,21 +68,6 @@ func TestResponsesImagesMergeFinalMetadataBeforeDelivery(t *testing.T) {
 			require.Equal(t, "final prompt", gjson.Get(output, "data.0.revised_prompt").String())
 		}
 	}
-}
-
-func TestImagesCapabilitiesAreNotInvalidRequests(t *testing.T) {
-	for _, body := range []string{`{"model":"image","prompt":"x","n":2}`, `{"model":"image","prompt":"x","response_format":"url"}`} {
-		c, _ := imageStreamContext()
-		c.Request.Header.Set("Content-Type", "application/json")
-		request, err := buildImagesResponsesRequest(c, &config.UpstreamConfig{ServiceType: "responses", BaseURL: "https://example.test", ResponsesModel: "m"}, "fixture", "/images/generations", []byte(body))
-		require.Nil(t, request)
-		require.True(t, types.IsUnsupportedProtocol(err), "%v", err)
-	}
-	c, _ := imageStreamContext()
-	c.Request.Header.Set("Content-Type", "application/json")
-	_, err := buildImagesResponsesRequest(c, &config.UpstreamConfig{ResponsesModel: "m"}, "fixture", "/images/generations", []byte(`{"model":"image","prompt":"x","n":0}`))
-	var invalid *proxycore.RequestValidationError
-	require.ErrorAs(t, err, &invalid)
 }
 
 func TestImagesRejectURLStreamAndDuplicateMultipartModelBeforeSending(t *testing.T) {

@@ -9,12 +9,12 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	adminshared "github.com/insistanan/api-proxy/internal/api/admin/shared"
-	"github.com/insistanan/api-proxy/internal/api/common"
-	"github.com/insistanan/api-proxy/internal/clients"
-	"github.com/insistanan/api-proxy/internal/clients/extensions"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	adminshared "insistanan/api-proxy/internal/api/admin/shared"
+	"insistanan/api-proxy/internal/api/common"
+	"insistanan/api-proxy/internal/clients"
+	"insistanan/api-proxy/internal/clients/extensions"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
 )
 
 // GetSettings 获取可由管理界面维护的全局设置。

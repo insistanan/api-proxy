@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/insistanan/api-proxy/internal/storage/atomicfile"
+	"insistanan/api-proxy/internal/storage/atomicfile"
 )
 
 const (

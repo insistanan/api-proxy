@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
+	"insistanan/api-proxy/internal/protocol/tokenusage"
 )
 
 func seedEcology(t *testing.T, store *Store, count int, now time.Time) {
@@ -225,134 +225,134 @@ func TestAbsence_NoHitAndFailedWriteDoNotReroll(t *testing.T) {
 	}
 }
 
-func TestActivity_UsesFactTimeAndSkipsZeroOrLateUsage(t *testing.T) {
-	ctx := context.Background()
-	start := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
-	usage := &testUsage{credits: []tokenusage.Credit{{Cursor: 1, Tokens: 1, At: start.UnixMilli()}}}
-	store := openTestForest(t, filepath.Join(t.TempDir(), "forest.db"), usage)
-	seedEcology(t, store, 20, start)
-	if err := store.advance(ctx, start); err != nil {
-		t.Fatal(err)
-	}
-	later := start.AddDate(0, 0, 30)
-	usage.credits = append(usage.credits, tokenusage.Credit{Cursor: 2, Tokens: 0, At: later.UnixMilli()}, tokenusage.Credit{Cursor: 3, Tokens: 1, At: start.Add(-time.Hour).UnixMilli()})
-	if err := store.advance(ctx, later); err != nil {
-		t.Fatal(err)
-	}
-	var active int64
-	if err := store.db.QueryRowContext(ctx, `SELECT last_usage FROM forest_activity`).Scan(&active); err != nil {
-		t.Fatal(err)
-	}
-	if active != start.UnixMilli() {
-		t.Fatal("零用量或迟到补记重置了活跃时间")
-	}
-	before := ecologyWorld(t, store, later)
-	usage.activityErr = errors.New("账本不可读")
-	if err := store.Visit(ctx, later); !errors.Is(err, usage.activityErr) {
-		t.Fatalf("账本失败未显式返回: %v", err)
-	}
-	after := ecologyWorld(t, store, later)
-	if before.Resources != after.Resources || before.Ecology != after.Ecology {
-		t.Fatal("未知用量状态不应造成损失")
-	}
-}
-
-func TestActivity_ContinuousBacklogDoesNotCauseAbsence(t *testing.T) {
-	ctx := context.Background()
-	start := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
-	for _, mode := range []string{"多批连续用量", "批内乱序用量", "分页乱序用量"} {
-		t.Run(mode, func(t *testing.T) {
-			usage := &testUsage{credits: []tokenusage.Credit{{Cursor: 1, Tokens: 1, At: start.UnixMilli()}}}
-			store := openTestForest(t, filepath.Join(t.TempDir(), "forest.db"), usage)
-			seedEcology(t, store, 20, start)
-			if err := store.advance(ctx, start); err != nil {
-				t.Fatal(err)
-			}
-			chooseAbsenceRoll(t, store, start.UnixMilli(), func(chance, _ int) bool { return chance < 5 })
-			if mode == "多批连续用量" {
-				for hour := 1; hour <= 520; hour++ {
-					usage.credits = append(usage.credits, tokenusage.Credit{Cursor: int64(hour + 1), Tokens: 1, At: start.Add(time.Duration(hour) * time.Hour).UnixMilli()})
-				}
-			} else if mode == "分页乱序用量" {
-				for i := 0; i < 256; i++ {
-					usage.credits = append(usage.credits, tokenusage.Credit{Cursor: int64(i + 2), Tokens: 1, At: start.AddDate(0, 0, 9).UnixMilli()})
-				}
-				for day := 1; day < 9; day++ {
-					usage.credits = append(usage.credits, tokenusage.Credit{Cursor: int64(len(usage.credits) + 1), Tokens: 1, At: start.AddDate(0, 0, day).UnixMilli()})
-				}
-			} else {
-				for _, day := range []int{9, 3, 6, 1, 8, 4, 7, 2, 5} {
-					usage.credits = append(usage.credits, tokenusage.Credit{Cursor: int64(len(usage.credits) + 1), Tokens: 1, At: start.AddDate(0, 0, day).UnixMilli()})
-				}
-			}
-			latest, err := usage.LatestGrowthUsage(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
-			now := time.UnixMilli(latest)
-			before := ecologyWorld(t, store, now)
-			if err := store.Visit(ctx, now); err != nil {
-				t.Fatal(err)
-			}
-			var last, checked int64
-			if err := store.db.QueryRowContext(ctx, `SELECT last_usage,checked_usage FROM forest_activity`).Scan(&last, &checked); err != nil {
-				t.Fatal(err)
-			}
-			if last != start.UnixMilli() || checked != 0 {
-				t.Fatal("回访不应跳过尚未消费的实际用量")
-			}
-			for range 3 {
-				if err := store.advance(ctx, now); err != nil {
+func TestActivityFollowsRealUsageFacts(t *testing.T) {
+	t.Run("用量事实时间与零值迟到补记", func(t *testing.T) {
+		ctx := context.Background()
+		start := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+		usage := &testUsage{credits: []tokenusage.Credit{{Cursor: 1, Tokens: 1, At: start.UnixMilli()}}}
+		store := openTestForest(t, filepath.Join(t.TempDir(), "forest.db"), usage)
+		seedEcology(t, store, 20, start)
+		if err := store.advance(ctx, start); err != nil {
+			t.Fatal(err)
+		}
+		later := start.AddDate(0, 0, 30)
+		usage.credits = append(usage.credits, tokenusage.Credit{Cursor: 2, Tokens: 0, At: later.UnixMilli()}, tokenusage.Credit{Cursor: 3, Tokens: 1, At: start.Add(-time.Hour).UnixMilli()})
+		if err := store.advance(ctx, later); err != nil {
+			t.Fatal(err)
+		}
+		var active int64
+		if err := store.db.QueryRowContext(ctx, `SELECT last_usage FROM forest_activity`).Scan(&active); err != nil {
+			t.Fatal(err)
+		}
+		if active != start.UnixMilli() {
+			t.Fatal("零用量或迟到补记重置了活跃时间")
+		}
+		before := ecologyWorld(t, store, later)
+		usage.activityErr = errors.New("账本不可读")
+		if err := store.Visit(ctx, later); !errors.Is(err, usage.activityErr) {
+			t.Fatalf("账本失败未显式返回: %v", err)
+		}
+		after := ecologyWorld(t, store, later)
+		if before.Resources != after.Resources || before.Ecology != after.Ecology {
+			t.Fatal("未知用量状态不应造成损失")
+		}
+	})
+	t.Run("持续积压批次不被判为离开", func(t *testing.T) {
+		ctx := context.Background()
+		start := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+		for _, mode := range []string{"多批连续用量", "批内乱序用量", "分页乱序用量"} {
+			t.Run(mode, func(t *testing.T) {
+				usage := &testUsage{credits: []tokenusage.Credit{{Cursor: 1, Tokens: 1, At: start.UnixMilli()}}}
+				store := openTestForest(t, filepath.Join(t.TempDir(), "forest.db"), usage)
+				seedEcology(t, store, 20, start)
+				if err := store.advance(ctx, start); err != nil {
 					t.Fatal(err)
 				}
-			}
-			after := ecologyWorld(t, store, now)
-			if before.Resources != after.Resources || before.Ecology != after.Ecology {
-				t.Fatal("持续使用的积压批次被误判为离开")
-			}
-			if err := store.db.QueryRowContext(ctx, `SELECT last_usage,checked_usage FROM forest_activity`).Scan(&last, &checked); err != nil {
-				t.Fatal(err)
-			}
-			if last != latest || checked != 0 {
-				t.Fatal("活跃时间未按事实推进或产生了误判")
-			}
-		})
-	}
-}
-
-func TestActivity_VisitBeforeConsumptionPreservesRealGap(t *testing.T) {
-	ctx := context.Background()
-	start := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
-	usage := &testUsage{credits: []tokenusage.Credit{{Cursor: 1, Tokens: 1, At: start.UnixMilli()}}}
-	store := openTestForest(t, filepath.Join(t.TempDir(), "forest.db"), usage)
-	seedEcology(t, store, 20, start)
-	if err := store.advance(ctx, start); err != nil {
-		t.Fatal(err)
-	}
-	chooseAbsenceRoll(t, store, start.UnixMilli(), func(chance, _ int) bool { return chance < 25 })
-	returned := start.AddDate(0, 0, 8)
-	usage.credits = append(usage.credits, tokenusage.Credit{Cursor: 2, Tokens: 1, At: returned.UnixMilli()})
-	if err := store.Visit(ctx, returned); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.advance(ctx, returned); err != nil {
-		t.Fatal(err)
-	}
-	e, err := store.Event(ctx, fmt.Sprintf("absence:%d", start.UnixMilli()))
-	if err != nil || e.Effects.AwayDays != 8 || e.Effects.Damaged != 2 {
-		t.Fatalf("回访丢失了真实断档: %+v, %v", e, err)
-	}
-	before := ecologyWorld(t, store, returned)
-	if err := store.Visit(ctx, returned); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.advance(ctx, returned); err != nil {
-		t.Fatal(err)
-	}
-	after := ecologyWorld(t, store, returned)
-	if before.Resources != after.Resources || before.Ecology != after.Ecology {
-		t.Fatal("恢复使用与回访重复结算了同一段闲置")
-	}
+				chooseAbsenceRoll(t, store, start.UnixMilli(), func(chance, _ int) bool { return chance < 5 })
+				if mode == "多批连续用量" {
+					for hour := 1; hour <= 520; hour++ {
+						usage.credits = append(usage.credits, tokenusage.Credit{Cursor: int64(hour + 1), Tokens: 1, At: start.Add(time.Duration(hour) * time.Hour).UnixMilli()})
+					}
+				} else if mode == "分页乱序用量" {
+					for i := 0; i < 256; i++ {
+						usage.credits = append(usage.credits, tokenusage.Credit{Cursor: int64(i + 2), Tokens: 1, At: start.AddDate(0, 0, 9).UnixMilli()})
+					}
+					for day := 1; day < 9; day++ {
+						usage.credits = append(usage.credits, tokenusage.Credit{Cursor: int64(len(usage.credits) + 1), Tokens: 1, At: start.AddDate(0, 0, day).UnixMilli()})
+					}
+				} else {
+					for _, day := range []int{9, 3, 6, 1, 8, 4, 7, 2, 5} {
+						usage.credits = append(usage.credits, tokenusage.Credit{Cursor: int64(len(usage.credits) + 1), Tokens: 1, At: start.AddDate(0, 0, day).UnixMilli()})
+					}
+				}
+				latest, err := usage.LatestGrowthUsage(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				now := time.UnixMilli(latest)
+				before := ecologyWorld(t, store, now)
+				if err := store.Visit(ctx, now); err != nil {
+					t.Fatal(err)
+				}
+				var last, checked int64
+				if err := store.db.QueryRowContext(ctx, `SELECT last_usage,checked_usage FROM forest_activity`).Scan(&last, &checked); err != nil {
+					t.Fatal(err)
+				}
+				if last != start.UnixMilli() || checked != 0 {
+					t.Fatal("回访不应跳过尚未消费的实际用量")
+				}
+				for range 3 {
+					if err := store.advance(ctx, now); err != nil {
+						t.Fatal(err)
+					}
+				}
+				after := ecologyWorld(t, store, now)
+				if before.Resources != after.Resources || before.Ecology != after.Ecology {
+					t.Fatal("持续使用的积压批次被误判为离开")
+				}
+				if err := store.db.QueryRowContext(ctx, `SELECT last_usage,checked_usage FROM forest_activity`).Scan(&last, &checked); err != nil {
+					t.Fatal(err)
+				}
+				if last != latest || checked != 0 {
+					t.Fatal("活跃时间未按事实推进或产生了误判")
+				}
+			})
+		}
+	})
+	t.Run("回访早于消费时保留真实断档", func(t *testing.T) {
+		ctx := context.Background()
+		start := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+		usage := &testUsage{credits: []tokenusage.Credit{{Cursor: 1, Tokens: 1, At: start.UnixMilli()}}}
+		store := openTestForest(t, filepath.Join(t.TempDir(), "forest.db"), usage)
+		seedEcology(t, store, 20, start)
+		if err := store.advance(ctx, start); err != nil {
+			t.Fatal(err)
+		}
+		chooseAbsenceRoll(t, store, start.UnixMilli(), func(chance, _ int) bool { return chance < 25 })
+		returned := start.AddDate(0, 0, 8)
+		usage.credits = append(usage.credits, tokenusage.Credit{Cursor: 2, Tokens: 1, At: returned.UnixMilli()})
+		if err := store.Visit(ctx, returned); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.advance(ctx, returned); err != nil {
+			t.Fatal(err)
+		}
+		e, err := store.Event(ctx, fmt.Sprintf("absence:%d", start.UnixMilli()))
+		if err != nil || e.Effects.AwayDays != 8 || e.Effects.Damaged != 2 {
+			t.Fatalf("回访丢失了真实断档: %+v, %v", e, err)
+		}
+		before := ecologyWorld(t, store, returned)
+		if err := store.Visit(ctx, returned); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.advance(ctx, returned); err != nil {
+			t.Fatal(err)
+		}
+		after := ecologyWorld(t, store, returned)
+		if before.Resources != after.Resources || before.Ecology != after.Ecology {
+			t.Fatal("恢复使用与回访重复结算了同一段闲置")
+		}
+	})
 }
 
 func TestRecovery_IsAtomicIdempotentAndKeepsIdentity(t *testing.T) {

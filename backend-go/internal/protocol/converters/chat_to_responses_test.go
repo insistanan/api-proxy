@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 func TestConvertResponsesToOpenAIChatRequest(t *testing.T) {

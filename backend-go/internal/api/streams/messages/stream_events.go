@@ -8,7 +8,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/codec"
 	"log"
 	"net/http"
 	"sort"
@@ -16,7 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/insistanan/api-proxy/internal/api/common"
+	"insistanan/api-proxy/internal/api/common"
 )
 
 // 还原器可能一次释放多个 SSE 事件，只记录成功写给客户端的文本与思考块。

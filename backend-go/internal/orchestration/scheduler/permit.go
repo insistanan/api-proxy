@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/insistanan/api-proxy/internal/orchestration/circuit"
+	"insistanan/api-proxy/internal/orchestration/circuit"
 )
 
 // ChannelPermit 持有一次选渠的资源。预留释放和健康记账分别通过
@@ -138,7 +138,6 @@ func (s *ChannelScheduler) ReserveChannel(kind ChannelKind, channelIndex int) {
 	byChannel[channelIndex]++
 }
 
-// ReleaseChannelReservation 释放选渠预留
 func (s *ChannelScheduler) ReleaseChannelReservation(kind ChannelKind, channelIndex int) {
 	if s == nil || channelIndex < 0 {
 		return

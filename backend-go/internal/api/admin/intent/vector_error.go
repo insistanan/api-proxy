@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/dialogue/routing/semantic"
+	"insistanan/api-proxy/internal/dialogue/routing/semantic"
 )
 
 func respondVectorRequired(c *gin.Context, err error) bool {

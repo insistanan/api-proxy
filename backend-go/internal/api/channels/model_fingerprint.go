@@ -7,8 +7,8 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/management/modelfingerprint"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/management/modelfingerprint"
 )
 
 // RegisterModelFingerprintRoutes 注册后台检测及查询、停止接口，返回进程停机清理函数。

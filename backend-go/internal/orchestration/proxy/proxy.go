@@ -1,4 +1,4 @@
-// Package proxy 管理候选重试状态和错误分类，这些逻辑不依赖 HTTP 框架（R4-b，方案 7.1）。
+// Package proxy 管理候选重试状态和错误分类，这些逻辑不依赖 HTTP 框架。
 //
 // proxycore 调用本包记录 BaseURL 和 API Key 候选的失败情况、同一候选的重试次数，
 // 并判断请求是否由客户端取消。HTTP 请求、渠道许可和结果记录仍由 proxycore 负责。
@@ -9,8 +9,8 @@ package proxy
 import (
 	"context"
 	"errors"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // CandidateRetryState 保存一个 BaseURL 下的失败 Key 和同候选重试次数。
@@ -113,7 +113,7 @@ func IsRetrySameCandidateError(err error) bool {
 }
 
 // IsUpstreamModelCapacityErrorBody 判断上游响应体是否为已知模型容量错误。
-// 判据唯一出处 utils（R4-a 收敛）。
+// 判据位于 internal/infra/upstreamreq。
 func IsUpstreamModelCapacityErrorBody(body []byte) bool {
 	return upstreamreq.IsUpstreamModelCapacityErrorBody(body)
 }

@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 func TestToResponseMultiURL_TimeWindowsIncludesCacheStats(t *testing.T) {

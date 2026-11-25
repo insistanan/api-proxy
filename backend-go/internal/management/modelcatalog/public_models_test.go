@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 func TestFreeCatalogUsesSharedListWithoutDiscovery(t *testing.T) {
@@ -33,57 +33,17 @@ func TestFreeCatalogUsesSharedListWithoutDiscovery(t *testing.T) {
 	require.Empty(t, OpenAIModels(context.Background(), cm).Data)
 }
 
-func TestOpenAIModelsIncludesPoolMatchers(t *testing.T) {
-	t.Parallel()
-
-	cfgManager := newTestConfigManager(t, config.Config{
-		MessagePools: []config.ChannelPool{
-			{ID: "deepseek", Name: "DeepSeek", ModelMatcher: "deepseek", Priority: 1},
-			{ID: config.DefaultChannelPoolID, Name: "默认子池", ModelMatcher: "*", Priority: 2},
-		},
-		ResponsesPools: []config.ChannelPool{
-			{ID: "grok", Name: "Grok", ModelMatcher: "grok", Priority: 1},
-			{ID: config.DefaultChannelPoolID, Name: "默认子池", ModelMatcher: "*", Priority: 2},
-		},
-		ChatPools: []config.ChannelPool{
-			// same matcher as messages should still appear once
-			{ID: "deepseek-chat", Name: "DeepSeek Chat", ModelMatcher: "deepseek", Priority: 1},
-			{ID: config.DefaultChannelPoolID, Name: "默认子池", ModelMatcher: "*", Priority: 2},
-		},
-	})
-
-	response := OpenAIModels(context.Background(), cfgManager)
-	ids := modelIDs(response.Data)
-
-	require.Equal(t, []string{"deepseek", "grok"}, ids)
-
-	// no channel-style aliases
-	for _, id := range ids {
-		if looksLikeChatRouteAlias(id) {
-			t.Fatalf("public list should not include chat route alias %q", id)
-		}
-	}
-
-	deepseek, ok := ModelDetail(context.Background(), cfgManager, "deepseek")
-	if !ok {
-		t.Fatal("ModelDetail(deepseek) missing")
-	}
-	if deepseek.OwnedBy != "pool:chat,messages" {
-		t.Fatalf("deepseek owned_by = %q, want pool:chat,messages", deepseek.OwnedBy)
-	}
-}
-
 func TestOpenAIModelsPreservesConfiguredPoolKinds(t *testing.T) {
 	t.Parallel()
 
-	// 名为 opus、sonnet 等的分组仍正常暴露，同名规则去重时保留所有协议归属。
+	// 名为 opus、sonnet 等的分组仍正常暴露，同名规则去重时保留所有协议归属；通配默认子池不进入公开列表。
 	matchers := []string{"opus", "sonnet", "gpt", "gemini", "chat", "claude", "deepseek", "glm", "grok", "kimi"}
 	pools := make([]config.ChannelPool, 0, len(matchers))
 	for index, matcher := range matchers {
 		pools = append(pools, config.ChannelPool{ID: matcher, Name: matcher, ModelMatcher: matcher, Priority: index + 1})
 	}
 	cfgManager := newTestConfigManager(t, config.Config{
-		MessagePools:   pools,
+		MessagePools:   append(pools, config.ChannelPool{ID: config.DefaultChannelPoolID, Name: "默认子池", ModelMatcher: "*", Priority: 99}),
 		ResponsesPools: []config.ChannelPool{{ID: "gpt", Name: "GPT", ModelMatcher: "gpt"}},
 		ChatPools:      []config.ChannelPool{{ID: "sonnet", Name: "Sonnet", ModelMatcher: " SONNET "}},
 		GeminiPools:    []config.ChannelPool{{ID: "gemini", Name: "Gemini", ModelMatcher: "gemini"}},
@@ -112,6 +72,9 @@ func TestOpenAIModelsPreservesConfiguredPoolKinds(t *testing.T) {
 			t.Fatalf("duplicate model %q", model.ID)
 		}
 		seen[model.ID] = true
+		if looksLikeChatRouteAlias(model.ID) {
+			t.Fatalf("公开列表不应包含渠道别名 %q", model.ID)
+		}
 		if want, ok := wantKinds[model.ID]; !ok || model.OwnedBy != want {
 			t.Fatalf("model %q owned_by = %q, want %q", model.ID, model.OwnedBy, want)
 		}

@@ -5,10 +5,10 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/management/modelcatalog"
-	"github.com/insistanan/api-proxy/internal/orchestration/circuit"
-	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/management/modelcatalog"
+	"insistanan/api-proxy/internal/orchestration/circuit"
+	"insistanan/api-proxy/internal/orchestration/scheduler"
 )
 
 // MappingTargetChannelDTO 模型映射"目标渠道"下拉的候选项。

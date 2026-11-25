@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // MergeResponsesItemsDedup 仅裁剪可证明的历史重放。无法匹配的内容作为增量保留；

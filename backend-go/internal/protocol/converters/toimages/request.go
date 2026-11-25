@@ -5,7 +5,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/insistanan/api-proxy/internal/protocol/contract"
+	"insistanan/api-proxy/internal/protocol/contract"
 )
 
 // ResponsesRequestOptions 由渠道编排解析模型与输出策略，转换器不依赖渠道配置。

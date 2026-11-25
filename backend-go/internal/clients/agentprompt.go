@@ -22,8 +22,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/clients/piagent"
-	"github.com/insistanan/api-proxy/internal/storage/atomicfile"
+	"insistanan/api-proxy/internal/clients/piagent"
+	"insistanan/api-proxy/internal/storage/atomicfile"
 )
 
 // agentPromptContentMaxBytes 单次提交的提示词内容上限（1 MiB），

@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/dialogue/routing/semantic"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/dialogue/routing/semantic"
 )
 
 func TestRoutingEvaluationUsesIndependentCasesAndRealClassification(t *testing.T) {

@@ -14,12 +14,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/insistanan/api-proxy/internal/dialogue/routing/intent"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
-	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
-	"github.com/insistanan/api-proxy/internal/orchestration/urlhealth"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/dialogue/routing/intent"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/orchestration/scheduler"
+	"insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"insistanan/api-proxy/internal/orchestration/urlhealth"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // TryWithModelMappingFailover 按模型映射执行上游故障转移。
@@ -76,7 +76,7 @@ func (a UpstreamAttempt) tryWithModelMappingFailover() UpstreamAttemptResult {
 		targetChannelIDs = targetChannelIDs[:1]
 	}
 
-	// 只有一个本地目标：直接调用原有逻辑
+	// 只有一个本地目标：直接执行单目标路径
 	if len(targetModels) == 1 && targetChannelIDs[0] == "" {
 		if intent.TurnFrom(a.Context.Request.Context()) != nil {
 			a.Upstream = a.Upstream.Clone()

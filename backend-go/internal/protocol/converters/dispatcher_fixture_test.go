@@ -2,7 +2,7 @@ package converters
 
 import (
 	"encoding/json"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // 将原有行为用例接到生产分发入口，避免测试旧实现而遗漏真实请求链。

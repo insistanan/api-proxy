@@ -14,8 +14,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/insistanan/api-proxy/internal/storage/atomicfile"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/storage/atomicfile"
 )
 
 func TestLocalImportValidatesBeforeReplacingCache(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/storage/sqlitedb"
+	"insistanan/api-proxy/internal/storage/sqlitedb"
 )
 
 type sqliteStore struct {

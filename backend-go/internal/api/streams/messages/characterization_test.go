@@ -4,7 +4,7 @@ package messages
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
+	"insistanan/api-proxy/internal/protocol/tokenusage"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -13,7 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 func TestProcessStreamEventCorrectsNestedMessageStartUsageWithoutChangingMetrics(t *testing.T) {

@@ -1,9 +1,4 @@
-// R3-b 验收测试：配置事务提交与热重载一起落地。
-// 覆盖方案 6.4：
-//   - 连续原子替换 / 编辑器保存 / 短暂删建 → watcher 持续工作，最终加载有效版本；
-//   - 无效 JSON → 保留有效配置，不自动生成默认文件；
-//   - 自身提交与 watcher 重载交错 → 不重复提交（摘要去重）；
-//   - 保存失败 → 内存与磁盘一致（提交点语义）。
+// 配置文件热重载：watcher 在原子替换、短暂删建、无效 JSON 与自身提交交错时的行为。
 package config
 
 import (
@@ -14,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
-	"github.com/insistanan/api-proxy/internal/storage/atomicfile"
+	"insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"insistanan/api-proxy/internal/storage/atomicfile"
 )
 
 // waitForConfig 等待配置文件达到期望状态（重载是异步防抖的）。
@@ -233,9 +228,7 @@ func TestInvalidJSONKeepsLastValidSnapshot(t *testing.T) {
 	waitForConfig(t, cm, func(c Config) bool { return len(c.Upstream) == 1 }, "恢复有效文件后重载")
 }
 
-// 自身提交与 watcher 重载交错：不重复提交、无循环保存。
-// 通过比较磁盘内容稳定性（提交次数）间接验证：API 保存后等充足时间，
-// 磁盘文件 mtime/内容不应被再次改写。
+// 自身提交不能被 watcher 重载后再次保存，否则形成无限循环。
 func TestSelfCommitDoesNotTriggerReloadLoop(t *testing.T) {
 	dir := t.TempDir()
 	configFile := filepath.Join(dir, "config.json")
@@ -280,9 +273,7 @@ func TestSelfCommitDoesNotTriggerReloadLoop(t *testing.T) {
 	}
 }
 
-// 保存失败语义：内存与磁盘不分离。
-// 把目标路径变成不可写状态（用同名目录占位目标文件），提交必然失败：
-// 内存快照应保持原样（未发布）。
+// 提交点前的写入失败不得发布候选：用同名目录占位配置文件使原子替换失败，内存快照保持原样。
 func TestFailedCommitKeepsSnapshotConsistent(t *testing.T) {
 	dir := t.TempDir()
 	blocked := filepath.Join(dir, "blocked")

@@ -8,8 +8,8 @@ import (
 	"mime/multipart"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/protocol/converters/toimages"
+	"insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/converters/toimages"
 )
 
 // validateNativeImagesMultipartOutput 只读取小参数；跳过图片文件而不再次复制上传内容。

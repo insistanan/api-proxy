@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/safety/sensitive"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/safety/sensitive"
 )
 
 // 放行字面量（字符串级白名单）与自定义规则命中在 hooks 层的辅助实现。

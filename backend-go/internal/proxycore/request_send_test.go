@@ -2,13 +2,13 @@ package proxycore
 
 import (
 	"errors"
-	"github.com/insistanan/api-proxy/internal/storage/logbody"
+	"insistanan/api-proxy/internal/storage/logbody"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 func TestLogRequestDetailsPreservesBodyAndClose(t *testing.T) {

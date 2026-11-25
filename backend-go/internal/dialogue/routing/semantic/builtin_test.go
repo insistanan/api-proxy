@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/storage/sqlitedb"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/storage/sqlitedb"
 )
 
 func TestBuiltinDatasetsAvailableWithoutImportAndDeletionPersists(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 // 内容安全属于业务层，不能反向依赖 HTTP 接入层或代理编排。
@@ -30,7 +30,7 @@ func TestPipelineDoesNotImportAdapters(t *testing.T) {
 		}
 		for _, dependency := range file.Imports {
 			path := strings.Trim(dependency.Path.Value, `"`)
-			for _, forbidden := range []string{"github.com/insistanan/api-proxy/internal/api", "github.com/insistanan/api-proxy/internal/proxycore"} {
+			for _, forbidden := range []string{"insistanan/api-proxy/internal/api", "insistanan/api-proxy/internal/proxycore"} {
 				if path == forbidden || strings.HasPrefix(path, forbidden+"/") {
 					t.Errorf("%s 不应导入 %s", name, path)
 				}

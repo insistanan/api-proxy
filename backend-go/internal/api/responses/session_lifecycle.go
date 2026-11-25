@@ -6,13 +6,13 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/dialogue/session"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
-	respitems "github.com/insistanan/api-proxy/internal/protocol/items"
-	"github.com/insistanan/api-proxy/internal/protocol/providers"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
-	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 	"github.com/tidwall/gjson"
+	"insistanan/api-proxy/internal/dialogue/session"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
+	respitems "insistanan/api-proxy/internal/protocol/items"
+	"insistanan/api-proxy/internal/protocol/providers"
+	"insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/protocol/visionmedia"
 )
 
 const responsesTurnKey = "__responses_session_turn"

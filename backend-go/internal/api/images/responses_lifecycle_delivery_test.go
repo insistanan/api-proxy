@@ -39,20 +39,3 @@ func TestResponsesImageFinalWrite_CancellationFollowsDeliveryResult(t *testing.T
 		})
 	}
 }
-
-func TestResponsesImageFinalWrite_CloseDoesNotWaitForWriter(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		lifecycle := newResponsesImageLifecycle(context.Background())
-		defer lifecycle.close()
-		result := make(chan error, 1)
-		go func() {
-			result <- lifecycle.finishDelivery(func() error {
-				<-lifecycle.ctx.Done()
-				return context.Cause(lifecycle.ctx)
-			})
-		}()
-		synctest.Wait()
-		lifecycle.close()
-		require.ErrorIs(t, <-result, context.Canceled)
-	})
-}

@@ -33,7 +33,7 @@ func NewIdentity(targetURL, protocol, key string) Identity {
 }
 
 // Fingerprint 用于持久化 response ID 的归属，不记录明文凭据。
-// 新域标记使旧版按原始 BaseURL 计算的归属不能被误认为已经核实了实际服务地址。
+// 域标记 upstream-service-v2 使指纹只绑定实际服务地址，不与其他算法版本的指纹相撞。
 func (id Identity) Fingerprint() string {
 	payload := append([]byte("upstream-service-v2\x00"+id.URL+"\x00"+id.Protocol+"\x00"), id.Credential[:]...)
 	sum := sha256.Sum256(payload)

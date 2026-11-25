@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/storage/sqlitedb"
+	"insistanan/api-proxy/internal/storage/sqlitedb"
 )
 
 var ErrNotFound = errors.New("数据集不存在")

@@ -3,11 +3,11 @@ package config
 
 import (
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/codec"
 	"log"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/infra/utils"
+	"insistanan/api-proxy/internal/infra/utils"
 )
 
 // applyAPIKeysUpdate 处理 API Keys 更新逻辑（历史记录、自动激活）

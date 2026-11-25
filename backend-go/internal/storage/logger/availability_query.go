@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/orchestration/availability"
+	"insistanan/api-proxy/internal/orchestration/availability"
 )
 
 // QueryAvailability 在数据库聚合最近 24 个小时桶，不读取请求正文或截断最近 N 次请求。

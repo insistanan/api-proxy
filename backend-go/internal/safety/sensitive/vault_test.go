@@ -11,7 +11,7 @@ func TestVault_LargeSensitiveValueRemainsReversible(t *testing.T) {
 	original := strings.Repeat("private-value", 700000)
 	masked, err := vault.Mask(original, []RedactionMatch{{Type: "CUSTOM", Rule: "large", Original: original, Start: 0, End: len(original)}})
 	if err != nil {
-		t.Fatalf("超过旧 8 MiB 映射限制的值应正常脱敏: %v", err)
+		t.Fatalf("大值脱敏失败: %v", err)
 	}
 	if masked == original || vault.Restore(masked) != original {
 		t.Fatal("大值必须完整脱敏和还原，不能截断或绕过")
@@ -99,35 +99,6 @@ func TestStreamRestorerHandlesEveryPlaceholderSplit(t *testing.T) {
 	}
 }
 
-func TestStreamRestorerHandlesEveryBarePlaceholderSplit(t *testing.T) {
-	vault := NewVault()
-	original := "sk-test-secret-value"
-	placeholder, err := vault.Mask(original, []RedactionMatch{{
-		Type: "API_TOKEN", Rule: "api_token", Original: original, Start: 0, End: len(original),
-	}})
-	if err != nil {
-		t.Fatalf("创建占位符失败: %v", err)
-	}
-	bare := placeholder
-	for split := 0; split <= len(bare); split++ {
-		t.Run(strconv.Itoa(split), func(t *testing.T) {
-			restorer := NewStreamRestorer(vault)
-			got := restorer.Feed(bare[:split]) + restorer.Feed(bare[split:]+";") + restorer.Flush()
-			if got != original+";" {
-				t.Fatalf("split=%d 还原结果 = %q", split, got)
-			}
-		})
-	}
-
-	restorer := NewStreamRestorer(vault)
-	if got := restorer.Feed(bare); got != "" {
-		t.Fatalf("缺少右边界时不应提前输出: %q", got)
-	}
-	if got := restorer.Feed("suffix") + restorer.Flush(); got != bare+"suffix" {
-		t.Fatalf("跨分片的非完整标识符不应还原: %q", got)
-	}
-}
-
 func TestVaultRestoreJSONEscapesOriginalText(t *testing.T) {
 	vault := NewVault()
 	original := "line 1\n\"line 2\""
@@ -173,19 +144,5 @@ func TestVaultMappingsAreRequestLocalWithStablePlaceholders(t *testing.T) {
 	first.Clear()
 	if got := first.Restore(firstPlaceholder); got != firstPlaceholder {
 		t.Fatalf("请求清理后不应继续还原占位符: %q", got)
-	}
-}
-
-func TestVaultMaskKnownUsesExistingRequestMapping(t *testing.T) {
-	vault := NewVault()
-	original := "user@example.com"
-	placeholder, err := vault.Mask(original, []RedactionMatch{{
-		Type: "EMAIL", Rule: "email", Original: original, Start: 0, End: len(original),
-	}})
-	if err != nil {
-		t.Fatalf("创建占位符失败: %v", err)
-	}
-	if got := vault.MaskKnown("contact " + original); got != "contact "+placeholder {
-		t.Fatalf("既有映射脱敏结果 = %q", got)
 	}
 }

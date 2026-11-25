@@ -1,7 +1,7 @@
 package providers
 
 import (
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/codec"
 )
 
 // restoreGeminiShadowMetadata 仅在当前可见内容和调用 ID 完整匹配时恢复原始

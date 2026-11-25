@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
+	"insistanan/api-proxy/internal/protocol/tokenusage"
 )
 
 const conditionSchemaColumn = `COALESCE((SELECT state FROM tree_condition WHERE tree_id=trees.id),'healthy')`

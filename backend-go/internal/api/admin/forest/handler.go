@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	domain "github.com/insistanan/api-proxy/internal/management/forest"
+	domain "insistanan/api-proxy/internal/management/forest"
 )
 
 func Register(parent *gin.RouterGroup, store *domain.Store) {

@@ -13,12 +13,18 @@ func TestBreakerOpensOnConsecutiveFailures(t *testing.T) {
 		}
 		b.RecordFailure()
 	}
+	// 成功清零连续失败计数，之后的 3 次失败不足阈值。
+	b.Allow()
+	b.RecordSuccess()
+	for i := 0; i < 3; i++ {
+		b.Allow()
+		b.RecordFailure()
+	}
 	if got := b.Allow(); !got.Allowed {
-		t.Fatalf("连续失败 3 次（阈值 4）不应熔断: %+v", got)
+		t.Fatalf("成功清零连续失败后不应熔断: %+v", got)
 	}
 	b.RecordFailure()
 
-	// 连续失败 4 次 → Open，拒绝后续请求。
 	if got := b.Allow(); got.Allowed {
 		t.Fatalf("连续失败 4 次后应熔断拒绝: %+v", got)
 	}
@@ -31,25 +37,8 @@ func TestBreakerOpensOnConsecutiveFailures(t *testing.T) {
 	}
 }
 
-func TestBreakerSuccessResetsConsecutiveFailures(t *testing.T) {
-	b := NewBreaker(Config{FailureThreshold: 4})
-	for i := 0; i < 3; i++ {
-		b.Allow()
-		b.RecordFailure()
-	}
-	b.Allow()
-	b.RecordSuccess()
-	for i := 0; i < 3; i++ {
-		b.Allow()
-		b.RecordFailure()
-	}
-	if got := b.Allow(); !got.Allowed {
-		t.Fatalf("成功清零连续失败后不应熔断: %+v", got)
-	}
-}
-
 func TestBreakerOpensOnErrorRate(t *testing.T) {
-	// 错误率 0.6 需 ≥10 请求；交替成功失败 9 次（失败率 0.5）不触发，第 10 次失败触发。
+	// 错误率阈值 0.6 且需至少 10 次请求：9 次请求 5 失败不触发，第 10 次请求失败后 6/10 触发。
 	b := NewBreaker(DefaultConfig())
 	for i := 0; i < 4; i++ {
 		b.Allow()
@@ -57,15 +46,12 @@ func TestBreakerOpensOnErrorRate(t *testing.T) {
 		b.Allow()
 		b.RecordFailure()
 	}
-	// 8 次请求，4 失败，率 0.5；不足 10 次。
 	if got := b.Allow(); !got.Allowed {
 		t.Fatalf("样本不足 10 不应按错误率熔断: %+v", got)
 	}
 	b.RecordFailure()
-	// 9 次请求 5 失败（0.56）；仍不足 10。
 	b.Allow()
 	b.RecordFailure()
-	// 10 次请求 6 失败 = 0.6 → Open。
 	if got := b.Allow(); got.Allowed {
 		t.Fatalf("错误率 0.6（10 请求）应熔断: %+v", got)
 	}
@@ -87,17 +73,16 @@ func TestBreakerHalfOpenProbeSuccessCloses(t *testing.T) {
 	}
 	b.Allow()
 	b.RecordSuccess()
-	if snap := b.Snapshot(); snap.State != StateClosed {
+	snap := b.Snapshot()
+	if snap.State != StateClosed {
 		t.Fatalf("连续成功达到阈值应转 Closed: %+v", snap)
 	}
-	// 恢复后计数清零。
-	snap := b.Snapshot()
 	if snap.ConsecutiveFailures != 0 || snap.TotalRequests != 0 || snap.FailedRequests != 0 {
 		t.Fatalf("恢复后应清零计数: %+v", snap)
 	}
 }
 
-func TestBreakerHalfOpenProbeFailureReopens(t *testing.T) {
+func TestBreakerHalfOpenProbeFailureReopensAndIgnoresStrayResults(t *testing.T) {
 	b := NewBreaker(Config{FailureThreshold: 1, Cooldown: 50 * time.Millisecond})
 	b.Allow()
 	b.RecordFailure()
@@ -108,18 +93,10 @@ func TestBreakerHalfOpenProbeFailureReopens(t *testing.T) {
 	if snap := b.Snapshot(); snap.State != StateOpen {
 		t.Fatalf("探测失败应回 Open: %+v", snap)
 	}
-
-	// 冷却重新计时：50ms 未到仍拒绝。
+	// 冷却重新计时：未到期前拒绝，冷却期内的迟到成功/失败不改变状态。
 	if got := b.Allow(); got.Allowed {
 		t.Fatalf("重新熔断后冷却未到应拒绝: %+v", got)
 	}
-}
-
-func TestBreakerOpenIgnoresStrayResults(t *testing.T) {
-	b := NewBreaker(Config{FailureThreshold: 1, Cooldown: time.Hour})
-	b.Allow()
-	b.RecordFailure()
-	// 冷却期内到达的迟到成功/失败不改变状态。
 	b.RecordSuccess()
 	b.RecordFailure()
 	if snap := b.Snapshot(); snap.State != StateOpen {
@@ -127,28 +104,8 @@ func TestBreakerOpenIgnoresStrayResults(t *testing.T) {
 	}
 }
 
-func TestBreakerReset(t *testing.T) {
-	b := NewBreaker(Config{FailureThreshold: 1})
-	b.Allow()
-	b.RecordFailure()
-	if b.Snapshot().State != StateOpen {
-		t.Fatalf("期望 Open")
-	}
-	b.Reset()
-	snap := b.Snapshot()
-	if snap.State != StateClosed || snap.ConsecutiveFailures != 0 {
-		t.Fatalf("重置后应回到 Closed 并清零: %+v", snap)
-	}
-	if got := b.Allow(); !got.Allowed {
-		t.Fatalf("重置后应放行: %+v", got)
-	}
-}
-
 func TestManagerDisabledBypassesAll(t *testing.T) {
 	m := NewManager(DefaultConfig(), false)
-	if got := m.Allow("messages", 0); !got.Allowed {
-		t.Fatalf("禁用时应放行: %+v", got)
-	}
 	m.RecordFailure("messages", 0)
 	m.RecordFailure("messages", 0)
 	if got := m.Allow("messages", 0); !got.Allowed {
@@ -159,23 +116,7 @@ func TestManagerDisabledBypassesAll(t *testing.T) {
 	}
 }
 
-func TestManagerPerKindChannelIsolation(t *testing.T) {
-	m := NewManager(Config{FailureThreshold: 1}, true)
-	m.Allow("messages", 0)
-	m.RecordFailure("messages", 0)
-
-	if got := m.Allow("messages", 0); got.Allowed {
-		t.Fatalf("messages:0 应已熔断: %+v", got)
-	}
-	if got := m.Allow("messages", 1); !got.Allowed {
-		t.Fatalf("messages:1 不应受影响: %+v", got)
-	}
-	if got := m.Allow("chat", 0); !got.Allowed {
-		t.Fatalf("chat:0 不应受影响: %+v", got)
-	}
-}
-
-func TestManagerResetAndSnapshot(t *testing.T) {
+func TestManagerIsolatesChannelsAndReset(t *testing.T) {
 	m := NewManager(Config{FailureThreshold: 1}, true)
 	m.SetChannelName("messages", 0, "商汤")
 	m.Allow("messages", 0)
@@ -191,10 +132,19 @@ func TestManagerResetAndSnapshot(t *testing.T) {
 	if len(entries) != 1 {
 		t.Fatalf("期望 1 条快照: %+v", entries)
 	}
-	if entries[0].ChannelName != "商汤" || entries[0].Kind != "messages" || entries[0].ChannelIndex != 0 {
-		t.Fatalf("快照字段不正确: %+v", entries[0])
+	if entries[0].ChannelName != "商汤" || entries[0].Kind != "messages" || entries[0].ChannelIndex != 0 || entries[0].Snapshot.State != StateClosed {
+		t.Fatalf("重置后快照不正确: %+v", entries[0])
 	}
-	if entries[0].Snapshot.State != StateClosed {
-		t.Fatalf("重置后快照应为 Closed: %+v", entries[0])
+
+	m.Allow("messages", 0)
+	m.RecordFailure("messages", 0)
+	if got := m.Allow("messages", 0); got.Allowed {
+		t.Fatalf("messages:0 应已熔断: %+v", got)
+	}
+	if got := m.Allow("messages", 1); !got.Allowed {
+		t.Fatalf("messages:1 不应受影响: %+v", got)
+	}
+	if got := m.Allow("chat", 0); !got.Allowed {
+		t.Fatalf("chat:0 不应受影响: %+v", got)
 	}
 }

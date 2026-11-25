@@ -72,6 +72,9 @@ func (r *Registry) DeleteWithHistory(ctx context.Context, id string, history His
 		return err
 	}
 	defer r.mu.Unlock()
+	if r.stopped {
+		return fmt.Errorf("对话注册表已停止")
+	}
 	if history == nil {
 		return fmt.Errorf("会话历史管理器未初始化")
 	}

@@ -11,18 +11,18 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/dialogue/session"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
-	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/protocol/converters"
-	"github.com/insistanan/api-proxy/internal/protocol/items"
-	"github.com/insistanan/api-proxy/internal/protocol/providers"
-	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
-	"github.com/insistanan/api-proxy/internal/proxycore"
-	"github.com/insistanan/api-proxy/internal/safety/pipeline"
+	"insistanan/api-proxy/internal/dialogue/session"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
+	"insistanan/api-proxy/internal/orchestration/scheduler"
+	"insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/converters"
+	"insistanan/api-proxy/internal/protocol/items"
+	"insistanan/api-proxy/internal/protocol/providers"
+	"insistanan/api-proxy/internal/protocol/tokenusage"
+	"insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/proxycore"
+	"insistanan/api-proxy/internal/safety/pipeline"
 )
 
 // ErrEmptyStreamResponse 表示上游返回 HTTP 200，但没有产出任何 output。
@@ -222,7 +222,11 @@ func handleSuccess(
 		return &metricsUsage, fmt.Errorf("解析已还原 Responses 响应失败: %w", err)
 	}
 	if originalReq != nil {
-		if err := commitResponsesTurn(c, sessionManager, originalReq, originalRequestJSON, responsesResp.Output, sessionTokens, responsesResp.ID, responseUpstreamOwner(resp), false, false); err != nil {
+		historyOutput, err := respitems.ResponsesHistoryOutput(responsesResp.Output, responsesResp.Status == "incomplete")
+		if err != nil {
+			return &metricsUsage, err
+		}
+		if err := commitResponsesTurn(c, sessionManager, originalReq, originalRequestJSON, historyOutput, sessionTokens, responsesResp.ID, responseUpstreamOwner(resp), false, false); err != nil {
 			return &metricsUsage, err
 		}
 		if snapshot := providers.ResponseSessionForRequest(c); snapshot != nil && snapshot.LastResponseID != "" && !c.GetBool(upstreamreq.ContextKeyResponsesPreviousIDDropped) {

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // closeReasoningBlock 关闭 reasoning block

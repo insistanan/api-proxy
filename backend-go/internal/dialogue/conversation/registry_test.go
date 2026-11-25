@@ -157,12 +157,12 @@ func TestPersistentRegistryRestoresNameImageFingerprintsAndResponseAlias(t *test
 		t.Fatal("ObserveRequest() returned nil")
 	}
 	if _, err := registry.SetName(context.Background(), created.ID, "图片分析"); err != nil {
-		t.Fatalf("SetName(context.Background(), ) error = %v", err)
+		t.Fatalf("SetName() error = %v", err)
 	}
 	if err := registry.AssociateExternalID(created.ID, "responses", "resp_123"); err != nil {
 		t.Fatalf("AssociateExternalID() error = %v", err)
 	}
-	if err := registry.SaveConversationImageUnderstanding(created.ID, "image-cache-key", "第一张图片的描述"); err != nil {
+	if err := registry.SaveConversationImageUnderstanding(context.Background(), created.ID, "image-cache-key", "第一张图片的描述"); err != nil {
 		t.Fatalf("SaveConversationImageUnderstanding() error = %v", err)
 	}
 	registry.Stop()
@@ -205,16 +205,16 @@ func TestPersistentRegistryRestoresNameImageFingerprintsAndResponseAlias(t *test
 	if len(continued.ImageFingerprints) != 1 || continued.ImageFingerprints[0] != "sha256:image-a" {
 		t.Fatalf("image fingerprints = %#v", continued.ImageFingerprints)
 	}
-	if result, ok, err := restored.LoadConversationImageUnderstanding(created.ID, "image-cache-key"); err != nil || !ok || result != "第一张图片的描述" {
+	if result, ok, err := restored.LoadConversationImageUnderstanding(context.Background(), created.ID, "image-cache-key"); err != nil || !ok || result != "第一张图片的描述" {
 		t.Fatalf("LoadConversationImageUnderstanding() = (%q, %v, %v)", result, ok, err)
 	}
-	if err := restored.Delete(created.ID); err != nil {
+	if err := restored.DeleteWithHistory(context.Background(), created.ID, recordOnlyHistory{}); err != nil {
 		t.Fatalf("Delete() error = %v", err)
 	}
 	if _, ok := restored.Get(created.ID); ok {
 		t.Fatal("deleted conversation is still available")
 	}
-	if err := restored.SaveConversationImageUnderstanding(created.ID, "image-cache-key", "不应写回"); err == nil {
+	if err := restored.SaveConversationImageUnderstanding(context.Background(), created.ID, "image-cache-key", "不应写回"); err == nil {
 		t.Fatal("saving image result after delete should fail")
 	}
 	var imageRows int
@@ -241,12 +241,12 @@ func TestPersistentRegistryDeleteAllClearsRecordsAliasesAndImageResults(t *testi
 		if err := registry.AssociateExternalID(record.ID, "responses", externalID+"_alias"); err != nil {
 			t.Fatalf("AssociateExternalID() error = %v", err)
 		}
-		if err := registry.SaveConversationImageUnderstanding(record.ID, "cache", "result"); err != nil {
+		if err := registry.SaveConversationImageUnderstanding(context.Background(), record.ID, "cache", "result"); err != nil {
 			t.Fatalf("SaveConversationImageUnderstanding() error = %v", err)
 		}
 	}
 
-	if err := registry.DeleteAll(); err != nil {
+	if err := registry.DeleteWithHistory(context.Background(), "", recordOnlyHistory{}); err != nil {
 		t.Fatalf("DeleteAll() error = %v", err)
 	}
 	if got := len(mustList(t, registry)); got != 0 {

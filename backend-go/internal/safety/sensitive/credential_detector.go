@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 // CredentialMatch 描述一次凭据命中。Original 只用于当前请求内完成替换，

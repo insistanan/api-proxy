@@ -2,11 +2,10 @@ package proxycore
 
 import (
 	"context"
-	"log"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
-	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
+	"insistanan/api-proxy/internal/dialogue/conversation"
+	"insistanan/api-proxy/internal/orchestration/scheduler"
 )
 
 // ExtractConversationID 从请求中提取明确的对话标识。
@@ -92,17 +91,4 @@ func MarkConversationFailure(channelScheduler *scheduler.ChannelScheduler, conve
 		return
 	}
 	channelScheduler.MarkConversationFailure(conversationID, kind, err.Error())
-}
-
-func AssociateConversationExternalID(channelScheduler *scheduler.ChannelScheduler, conversationID string, kind scheduler.ChannelKind, externalID string) {
-	if channelScheduler == nil || conversationID == "" || externalID == "" {
-		return
-	}
-	registry := channelScheduler.GetConversationRegistry()
-	if registry == nil {
-		return
-	}
-	if err := registry.AssociateExternalID(conversationID, string(kind), externalID); err != nil {
-		log.Printf("[Conversation] 关联外部对话 ID 失败: %v", err)
-	}
 }

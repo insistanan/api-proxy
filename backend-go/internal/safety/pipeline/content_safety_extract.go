@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/codec"
 )
 
 func extractMessagesSafetySegments(root map[string]interface{}) []SafetySegment {

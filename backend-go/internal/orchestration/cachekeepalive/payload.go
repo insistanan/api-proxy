@@ -6,9 +6,9 @@ import (
 	"io"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 var errNoCacheControl = errors.New("请求没有显式缓存控制")

@@ -3,7 +3,7 @@ package cacheinject
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/codec"
 )
 
 // MaxCacheBreakpoints 是 Anthropic / Bedrock Prompt Caching 允许的最大断点数。

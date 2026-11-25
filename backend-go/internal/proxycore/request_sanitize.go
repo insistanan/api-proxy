@@ -3,7 +3,7 @@ package proxycore
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/codec"
 	"log"
 )
 

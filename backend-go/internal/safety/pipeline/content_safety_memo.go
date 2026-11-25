@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/safety/sensitive"
+	"insistanan/api-proxy/internal/safety/sensitive"
 )
 
 // 缓存只保存摘要、规则名和区间，不持有历史正文或原值。

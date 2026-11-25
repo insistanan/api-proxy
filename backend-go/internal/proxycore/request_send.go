@@ -4,25 +4,25 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/storage/logbody"
+	"insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/storage/logbody"
 	"io"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/httpclient"
-	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
-	"github.com/insistanan/api-proxy/internal/safety/pipeline"
-	"github.com/insistanan/api-proxy/internal/storage/logger"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/httpclient"
+	"insistanan/api-proxy/internal/orchestration/scheduler"
+	"insistanan/api-proxy/internal/safety/pipeline"
+	"insistanan/api-proxy/internal/storage/logger"
 )
 
-// SendRequest 将请求交给 internal/infra/httpclient.Send 发送，并记录业务日志和请求流量（R4-a）。
+// SendRequest 将请求交给 internal/infra/httpclient.Send 发送，并记录业务日志和请求流量。
 // 流式请求使用不设整体超时的客户端，通过 context 处理取消，通过 body reader 检查空闲超时。
 // apiType 用于标记入口协议的日志；共享准入则使用请求上下文中绑定的实际上游协议。
-// permit: 可选的选渠许可句柄（R2-b）。仅在"客户端创建失败、请求从未发出"
+// permit: 可选的选渠许可句柄。仅在"客户端创建失败、请求从未发出"
 // 这类本地错误时由本函数中性归还；请求已发出的健康结果由调用方收尾。
 func SendRequest(req *http.Request, upstream *config.UpstreamConfig, envCfg *config.EnvConfig, isStream bool, apiType string, proxyURL string, permit *scheduler.ChannelPermit, requestTimeout time.Duration) (*http.Response, error) {
 	httpclient.PrepareInferenceHeaders(req, isStream)

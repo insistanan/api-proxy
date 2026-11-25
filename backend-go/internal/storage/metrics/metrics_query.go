@@ -1,7 +1,7 @@
 package metrics
 
 import (
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/codec"
 	"sort"
 	"time"
 )

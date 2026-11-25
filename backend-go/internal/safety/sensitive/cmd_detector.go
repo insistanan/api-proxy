@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 // CommandMatch 描述一次可执行上下文中的危险命令命中。

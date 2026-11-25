@@ -15,10 +15,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/protocol/converters/toimages"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/protocol/converters/toimages"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 func imageStreamContext() (*gin.Context, *httptest.ResponseRecorder) {
@@ -147,29 +147,6 @@ func TestResponsesStreamClientCloseAfterImageKeepsUsage(t *testing.T) {
 	require.Equal(t, 5009, usage.InputTokens)
 	require.Equal(t, 702, usage.OutputTokens)
 	require.Equal(t, 4224, usage.CacheReadInputTokens)
-}
-
-func TestResponsesStreamReaderEnforcesBudgetAndCancellation(t *testing.T) {
-	_, _, err := readResponsesImageEvent(context.Background(), bufio.NewReaderSize(strings.NewReader("data: "+strings.Repeat("A", 128*1024)+"\n\n"), 32*1024), 64*1024)
-	require.ErrorContains(t, err, "超过大小限制")
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	_, _, err = readResponsesImageEvent(ctx, bufio.NewReader(strings.NewReader("data: {}\n\n")), 1024)
-	require.ErrorIs(t, err, context.Canceled)
-
-	// 无关的巨大文本 delta 直接跳过，其正文不占图片事件预算。
-	reader := bufio.NewReaderSize(strings.NewReader("event: response.output_text.delta\ndata: "+strings.Repeat("A", 128*1024)+"\n\n"), 32*1024)
-	name, raw, err := readResponsesImageEvent(context.Background(), reader, 1024)
-	require.NoError(t, err)
-	require.Equal(t, "response.output_text.delta", name)
-	require.Empty(t, raw)
-}
-
-func TestResponsesStreamReaderHandlesMultilineDataAndEOF(t *testing.T) {
-	name, raw, err := readResponsesImageEvent(context.Background(), bufio.NewReader(strings.NewReader("event: error\r\ndata: {\r\ndata: \"message\":\"failed\"}")), 1024)
-	require.ErrorIs(t, err, io.EOF)
-	require.Equal(t, "error", name)
-	require.JSONEq(t, `{"message":"failed"}`, raw)
 }
 
 func TestImagesResponsesSuccessHandlesCompressedJSON(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 func commitFixtureTurn(manager *SessionManager, snapshot *Session, items []types.ResponsesItem, tokens int, vision bool, responseID string, owners ...string) error {

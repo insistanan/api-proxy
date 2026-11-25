@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/storage/metrics"
+	"insistanan/api-proxy/internal/storage/metrics"
 )
 
 // channelPerformanceReport 是性能观测接口的展示数据，不参与渠道调度。

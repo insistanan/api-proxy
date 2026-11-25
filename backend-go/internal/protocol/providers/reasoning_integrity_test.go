@@ -3,14 +3,14 @@ package providers
 import (
 	"context"
 	"encoding/json"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
 	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 var reasoningTestScope = ReasoningCacheScope("reasoning-test", &config.UpstreamConfig{

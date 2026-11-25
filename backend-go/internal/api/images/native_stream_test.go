@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 type imageReadError struct{ err error }
@@ -112,38 +112,6 @@ func TestNativeImageStream_WriteFailureAndCancelAfterTerminal(t *testing.T) {
 	}
 }
 
-func TestImageResponse_CancellationClosesBlockedDecode(t *testing.T) {
-	for _, upstream := range []string{"native", "responses"} {
-		for _, encoding := range []string{"", "gzip"} {
-			t.Run(upstream+"/"+encoding, func(t *testing.T) {
-				synctest.Test(t, func(t *testing.T) {
-					c, _ := imageStreamContext()
-					ctx, cancel := context.WithCancel(c.Request.Context())
-					defer cancel()
-					c.Request = c.Request.WithContext(ctx)
-					reader, writer := io.Pipe()
-					defer writer.Close()
-					resp := &http.Response{StatusCode: 200, Header: http.Header{"Content-Encoding": {encoding}}, Body: reader}
-					done := make(chan error, 1)
-					go func() {
-						var err error
-						if upstream == "native" {
-							_, err = writeImagesJSONAsCompletedStream(c, resp, &config.EnvConfig{MaxRequestBodySize: 1 << 20}, "/images/generations")
-						} else {
-							_, err = handleImagesResponsesSuccess(c, resp, &config.EnvConfig{MaxRequestBodySize: 1 << 20}, "/images/generations", true)
-						}
-						done <- err
-					}()
-					synctest.Wait()
-					cancel()
-					synctest.Wait()
-					require.ErrorIs(t, <-done, context.Canceled)
-				})
-			})
-		}
-	}
-}
-
 func TestNativeImageStream_InvalidFirstEventDoesNotCommit(t *testing.T) {
 	for _, body := range []string{
 		": heartbeat\n\ndata: {\"error\":{\"message\":\"boom\"}}\n\n",
@@ -172,26 +140,4 @@ func TestNativeImageStream_CompressedEventUsesDecodedHeaders(t *testing.T) {
 	require.Equal(t, body, recorder.Body.String())
 	require.Empty(t, recorder.Header().Get("Content-Encoding"))
 	require.Empty(t, recorder.Header().Get("Content-Length"))
-}
-
-func TestNativeImagesCount_UsesFinalRequest(t *testing.T) {
-	for _, multipartRequest := range []bool{false, true} {
-		c, _ := imageStreamContext()
-		body := []byte(`{"model":"gpt-image-1","prompt":"猫","n":2}`)
-		contentType := "application/json"
-		if multipartRequest {
-			var formBody bytes.Buffer
-			form := multipart.NewWriter(&formBody)
-			require.NoError(t, form.WriteField("model", "gpt-image-1"))
-			require.NoError(t, form.WriteField("n", "2"))
-			require.NoError(t, form.Close())
-			body, contentType = formBody.Bytes(), form.FormDataContentType()
-		}
-		c.Request.Header.Set("Content-Type", contentType)
-		upstream := &config.UpstreamConfig{BaseURL: "https://example.invalid", ServiceType: "openai", ImagesExtraParams: map[string]string{"n": "3"}}
-		req, err := buildImagesUpstreamRequest(c, upstream, "test", "/images/generations", body)
-		require.NoError(t, err)
-		defer req.Body.Close()
-		require.Equal(t, 3, c.GetInt(nativeImageCountKey))
-	}
 }

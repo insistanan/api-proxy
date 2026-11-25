@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/safety/sensitive"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/safety/sensitive"
 )
 
 // Replacer 可并发复用，避免每个 SSE 字段都重建替换表。

@@ -5,14 +5,16 @@ import (
 	"fmt"
 )
 
-func (r *Registry) LoadConversationImageUnderstanding(conversationID string, cacheKey string) (string, bool, error) {
+func (r *Registry) LoadConversationImageUnderstanding(ctx context.Context, conversationID string, cacheKey string) (string, bool, error) {
 	if r == nil {
 		return "", false, nil
 	}
-	r.mu.Lock()
+	if err := r.mu.LockContext(ctx); err != nil {
+		return "", false, err
+	}
 	defer r.mu.Unlock()
 	defer r.trimCacheLocked()
-	rec, err := r.loadRecordLocked(context.Background(), conversationID)
+	rec, err := r.loadRecordLocked(ctx, conversationID)
 	if err != nil {
 		return "", false, err
 	}
@@ -22,17 +24,19 @@ func (r *Registry) LoadConversationImageUnderstanding(conversationID string, cac
 	if r.store == nil {
 		return "", false, nil
 	}
-	return r.store.LoadConversationImageUnderstanding(conversationID, cacheKey)
+	return r.store.LoadConversationImageUnderstanding(ctx, conversationID, cacheKey)
 }
 
-func (r *Registry) SaveConversationImageUnderstanding(conversationID string, cacheKey string, result string) error {
+func (r *Registry) SaveConversationImageUnderstanding(ctx context.Context, conversationID string, cacheKey string, result string) error {
 	if r == nil {
 		return nil
 	}
-	r.mu.Lock()
+	if err := r.mu.LockContext(ctx); err != nil {
+		return err
+	}
 	defer r.mu.Unlock()
 	defer r.trimCacheLocked()
-	rec, err := r.loadRecordLocked(context.Background(), conversationID)
+	rec, err := r.loadRecordLocked(ctx, conversationID)
 	if err != nil {
 		return err
 	}
@@ -42,5 +46,5 @@ func (r *Registry) SaveConversationImageUnderstanding(conversationID string, cac
 	if r.store == nil {
 		return nil
 	}
-	return r.store.UpsertConversationImageUnderstanding(conversationID, cacheKey, result)
+	return r.store.UpsertConversationImageUnderstanding(ctx, conversationID, cacheKey, result)
 }

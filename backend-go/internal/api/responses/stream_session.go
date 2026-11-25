@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	respitems "github.com/insistanan/api-proxy/internal/protocol/items"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/protocol/codec"
+	respitems "insistanan/api-proxy/internal/protocol/items"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 // 交付层仅解码完整 SSE；条目和分片归并由协议层公共收集器负责。

@@ -1,9 +1,9 @@
 package images
 
 import (
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/protocol/contract"
 	"github.com/tidwall/gjson"
+	"insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/contract"
 )
 
 func validateImagesStreamFormat(contentType string, body []byte) error {

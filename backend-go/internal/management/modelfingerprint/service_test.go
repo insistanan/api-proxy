@@ -13,9 +13,9 @@ import (
 	"testing"
 
 	lmfpd "github.com/Ikaleio/lm-detector/sdk/go"
-	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 type referenceFixture struct {
@@ -213,16 +213,26 @@ func TestRetryOnlyRequestsFailedSampleAndScoresWithSavedReplies(t *testing.T) {
 }
 
 func TestRetryRejectsChangedReferenceBeforeSendingRequest(t *testing.T) {
-	service, id := newFixtureService(t, config.UpstreamConfig{ServiceType: "openai", BaseURL: "https://example.invalid", APIKeys: []string{"key"}})
-	target, err := service.Prepare(id, Request{Model: "requested"})
-	require.NoError(t, err)
-	previous := Task{Target: target, DataBuilt: "different-version", Samples: []Sample{{Index: 0, State: "failed", Prompt: "原挑战", ExpectedCount: 302}}}
-	var events []Event
-	service.Retry(context.Background(), target, previous, 0, func(event Event) { events = append(events, event) })
-	require.Len(t, events, 1)
-	require.Equal(t, "error", events[0].Type)
-	require.Contains(t, events[0].Error, "参考库版本已变化")
-	require.Empty(t, service.detector.(*referenceFixture).outputs)
+	for _, test := range []struct {
+		name, builtAt, digest, message string
+	}{
+		{"参考库版本变化", "different-version", "", "参考库版本已变化"},
+		{"数据摘要变化", "fixture-version", "old-data-digest", "数据摘要已变化"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service, id := newFixtureService(t, config.UpstreamConfig{ServiceType: "openai", BaseURL: "https://example.invalid", APIKeys: []string{"key"}})
+			target, err := service.Prepare(id, Request{Model: "requested"})
+			require.NoError(t, err)
+			previous := Task{Target: target, DataBuilt: test.builtAt, DataSHA256: test.digest,
+				Samples: []Sample{{Index: 0, State: "failed", Prompt: "原挑战", ExpectedCount: 302}}}
+			var events []Event
+			service.Retry(context.Background(), target, previous, 0, func(event Event) { events = append(events, event) })
+			require.Len(t, events, 1)
+			require.Equal(t, "error", events[0].Type)
+			require.Contains(t, events[0].Error, test.message)
+			require.Empty(t, service.detector.(*referenceFixture).outputs)
+		})
+	}
 }
 
 func TestRetrySamples_ContinuesAfterFailureAndKeepsSuccessfulReply(t *testing.T) {
@@ -285,18 +295,4 @@ func TestRestoreRetryTargetRequiresUnchangedURLAndCredentials(t *testing.T) {
 	saved.ConfigDigest = "old-target-digest"
 	_, err = service.restoreTarget(&saved)
 	require.ErrorContains(t, err, "无法确认原采样配置未变")
-}
-
-func TestRetryRejectsChangedDataEvenWithSameBuildDate(t *testing.T) {
-	service, id := newFixtureService(t, config.UpstreamConfig{ServiceType: "openai", BaseURL: "https://example.invalid", APIKeys: []string{"key"}})
-	target, err := service.Prepare(id, Request{Model: "requested"})
-	require.NoError(t, err)
-	previous := Task{Target: target, DataBuilt: "fixture-version", DataSHA256: "old-data-digest",
-		Samples: []Sample{{Index: 0, State: "failed", Prompt: "原挑战", ExpectedCount: 302}}}
-	var events []Event
-	service.Retry(context.Background(), target, previous, 0, func(event Event) { events = append(events, event) })
-	require.Len(t, events, 1)
-	require.Equal(t, "error", events[0].Type)
-	require.Contains(t, events[0].Error, "数据摘要已变化")
-	require.Empty(t, service.detector.(*referenceFixture).outputs)
 }

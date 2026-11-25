@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/protocol/contract"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
+	"insistanan/api-proxy/internal/protocol/contract"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 func classifyChatToolCall(name string, callID string, arguments string, toolContext map[string]customToolSpec) (string, string, string, string, string, interface{}) {

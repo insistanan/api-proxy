@@ -6,15 +6,14 @@ package proxycore
 import (
 	"net/http"
 
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/orchestration/proxy"
-	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
-	"github.com/insistanan/api-proxy/internal/storage/metrics"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/orchestration/proxy"
+	"insistanan/api-proxy/internal/orchestration/scheduler"
+	"insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/storage/metrics"
 )
 
-// candidateRetryState 委托 internal/orchestration/proxy（R4-b：与 HTTP 框架无关的候选
-// 重试状态提取到独立包，proxycore 只保留薄别名供既有调用方使用）。
+// candidateRetryState 实现位于 internal/orchestration/proxy，此处为类型别名。
 type candidateRetryState = proxy.CandidateRetryState
 
 func newCandidateRetryState(apiKeyCount int) *candidateRetryState {
@@ -73,8 +72,8 @@ type upstreamFailoverState struct {
 	lastFailoverError      *FailoverError
 	deprioritizeCandidates map[string]bool
 	// neutralTermination 标记本渠道最终结束原因为中性（容量耗尽、审核
-	// 兼容重试失败等）：后续 Key 失败不能把它改回"真实渠道故障"（R2-a：
-	// 最终取消或中性结束不能因为曾出现一次失败而重新算成渠道故障）。
+	// 兼容重试失败等）：后续 Key 失败不能把它改回"真实渠道故障"：
+	// 中性结束不能因为曾出现过一次失败而重新算成渠道故障。
 	neutralTermination bool
 }
 

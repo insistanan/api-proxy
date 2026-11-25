@@ -4,20 +4,20 @@ package proxycore
 import (
 	"encoding/json"
 	"errors"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
 	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/dialogue/prompt/rectifier"
-	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
-	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
-	"github.com/insistanan/api-proxy/internal/protocol/converters"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
-	"github.com/insistanan/api-proxy/internal/safety/mediasanitizer"
+	"insistanan/api-proxy/internal/dialogue/prompt/rectifier"
+	"insistanan/api-proxy/internal/orchestration/scheduler"
+	"insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"insistanan/api-proxy/internal/protocol/converters"
+	"insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/safety/mediasanitizer"
 )
 
-// retryCompatibility 按既有顺序尝试协议自愈；中止时把错误交回主循环决定候选转移。
+// retryCompatibility 按固定顺序尝试协议自愈；中止时把错误交回主循环决定候选转移。
 func (step candidateAttempt) retryCompatibility(
 	resp *http.Response,
 	respBodyBytes []byte,
@@ -161,7 +161,7 @@ func (step candidateAttempt) retryCompatibility(
 		}
 	}
 
-	// 模态拒绝与纯文本降级自愈（参照 cc-switch media_sanitizer）：
+	// 模态拒绝与纯文本降级自愈：
 	// 当上游返回 400/415/422/501 且明确表示不支持图片/多模态输入时，
 	// 将请求体内的图片块替换为 "[Unsupported Image]" 纯文本占位符，并在同一渠道就地重试一次。
 	if !retrySucceeded && mediasanitizer.IsUnsupportedImageError(resp.StatusCode, respBodyBytes) {
@@ -189,7 +189,6 @@ func (step candidateAttempt) retryCompatibility(
 }
 
 // compatRetryLogs 描述同候选兼容性重试各失败阶段的日志文案，
-// 保证收敛后日志逐字与原实现一致。
 type compatRetryLogs struct {
 	component     string // 日志组件名，如 "ChannelCapability"
 	buildAction   string // build_request 阶段失败文案

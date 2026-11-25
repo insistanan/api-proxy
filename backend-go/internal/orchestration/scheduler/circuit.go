@@ -3,7 +3,7 @@ package scheduler
 import (
 	"log"
 
-	"github.com/insistanan/api-proxy/internal/orchestration/circuit"
+	"insistanan/api-proxy/internal/orchestration/circuit"
 )
 
 // allowByCircuitPeek 渠道级熔断预判（选渠候选过滤用）：只读不占探测名额。

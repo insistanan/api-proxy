@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/httpclient"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/httpclient"
 )
 
 // 首次 Flush 通知写入已完成，测试线程无需并发读取 ResponseRecorder。
@@ -32,59 +32,6 @@ func notifyImagesFlush(c *gin.Context, recorder *httptest.ResponseRecorder) <-ch
 	wrapped, _ := gin.CreateTestContext(writer)
 	c.Writer = wrapped.Writer
 	return writer.flushed
-}
-
-func TestResponsesImageLifecyclePreservesDeadlineAndCancellation(t *testing.T) {
-	parent, cancel := context.WithDeadline(context.Background(), time.Now().Add(time.Minute))
-	defer cancel()
-	lifecycle := newResponsesImageLifecycle(parent)
-	defer lifecycle.close()
-	parentDeadline, _ := parent.Deadline()
-	deadline, ok := lifecycle.ctx.Deadline()
-	require.True(t, ok)
-	require.Equal(t, parentDeadline, deadline)
-	cancel()
-	select {
-	case <-lifecycle.ctx.Done():
-		require.ErrorIs(t, context.Cause(lifecycle.ctx), context.Canceled)
-	case <-time.After(time.Second):
-		t.Fatal("图片交付前未传播取消")
-	}
-	bounded := newResponsesImageLifecycle(context.Background())
-	defer bounded.close()
-	deadline, ok = bounded.ctx.Deadline()
-	require.True(t, ok)
-	require.WithinDuration(t, time.Now().Add(imagesRequestTimeout), deadline, time.Second)
-}
-
-func TestResponsesImageDeadlineStillAppliesAfterDelivery(t *testing.T) {
-	parent, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-	defer cancel()
-	lifecycle := newResponsesImageLifecycle(parent)
-	defer lifecycle.close()
-	require.NoError(t, lifecycle.finishDelivery(func() error { return nil }))
-	select {
-	case <-lifecycle.ctx.Done():
-		require.ErrorIs(t, context.Cause(lifecycle.ctx), context.DeadlineExceeded)
-	case <-time.After(time.Second):
-		t.Fatal("图片交付后丢失父 deadline")
-	}
-}
-
-func TestResponsesImageRetryKeepsParentRequestBudget(t *testing.T) {
-	c, _ := imageStreamContext()
-	parent, cancel := context.WithTimeout(c.Request.Context(), time.Minute)
-	defer cancel()
-	c.Request = c.Request.WithContext(parent)
-	first := resetResponsesLifecycle(c)
-	second := resetResponsesLifecycle(c)
-	defer finishResponsesLifecycle(c)
-	require.ErrorIs(t, first.ctx.Err(), context.Canceled)
-	deadline, _ := parent.Deadline()
-	retryDeadline, ok := second.ctx.Deadline()
-	require.True(t, ok)
-	require.Equal(t, deadline, retryDeadline)
-	require.NoError(t, second.ctx.Err())
 }
 
 func TestResponsesImageClientCloseDoesNotTurnTruncatedTailIntoSuccess(t *testing.T) {

@@ -2,12 +2,13 @@ package providers
 
 import (
 	"context"
-	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
-	"github.com/insistanan/api-proxy/internal/dialogue/session"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/dialogue/conversation"
+	"insistanan/api-proxy/internal/dialogue/session"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/protocol/types"
 )
 
 func TestProtocolCachesFollowDeletionAndRejectLateWrites(t *testing.T) {
@@ -29,9 +30,9 @@ func TestProtocolCachesFollowDeletionAndRejectLateWrites(t *testing.T) {
 			require.True(t, lease.Store(write))
 			require.NotEmpty(t, defaultGeminiShadowStore.Get("provider", record.ID).Turns)
 			if all {
-				require.NoError(t, registry.DeleteAll())
+				require.NoError(t, registry.DeleteWithHistory(ctx, "", &session.SessionManager{}))
 			} else {
-				require.NoError(t, registry.Delete(record.ID))
+				require.NoError(t, registry.DeleteWithHistory(ctx, record.ID, &session.SessionManager{}))
 			}
 			require.False(t, lease.Store(write))
 			require.NoError(t, CacheClaudeResponseReasoning(ctx, &types.ClaudeResponse{Role: "assistant", Content: []types.ClaudeContent{{Type: "thinking", Thinking: "late"}, {Type: "text", Text: "answer"}}}, scope))

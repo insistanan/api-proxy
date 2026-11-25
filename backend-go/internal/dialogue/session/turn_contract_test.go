@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
-	"github.com/insistanan/api-proxy/internal/storage/sqlitedb"
 	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/dialogue/conversation"
+	"insistanan/api-proxy/internal/protocol/types"
+	"insistanan/api-proxy/internal/storage/sqlitedb"
 )
 
 func newTurnFixture(t *testing.T) (*SessionManager, *conversation.Registry, *sql.DB, string) {
@@ -24,7 +24,7 @@ func newTurnFixture(t *testing.T) (*SessionManager, *conversation.Registry, *sql
 	m, err := NewPersistentSessionManagerWithDB(db, time.Hour, 0, 0)
 	require.NoError(t, err)
 	t.Cleanup(func() { m.Stop() })
-	m.BindRegistry(r)
+	require.NoError(t, m.BindRegistry(r))
 	rec, err := r.ObserveRequestWithError(context.Background(), conversation.Observation{APIKind: "responses", ConversationID: "test"})
 	require.NoError(t, err)
 	return m, r, db, rec.ID
@@ -189,4 +189,16 @@ func TestHistoryReadAndCommitCancelWhileQueued(t *testing.T) {
 	defer cancel()
 	err = turn.Commit(ctx, []types.ResponsesItem{{Type: "message", Content: "cancel"}}, 0, false, "cancel", "owner", false)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestFailedRegistryBindingKeepsWorkingLifecycle(t *testing.T) {
+	m, original, _, id := newTurnFixture(t)
+	incompatible := conversation.NewRegistry()
+	defer incompatible.Stop()
+	require.Error(t, m.BindRegistry(incompatible))
+	require.Same(t, original, m.registry)
+	turn, err := m.BeginTurn(context.Background(), "", id)
+	require.NoError(t, err)
+	defer turn.Close()
+	require.NoError(t, turn.Commit(context.Background(), []types.ResponsesItem{{Type: "message", Content: "still works"}}, 0, false, "after-failed-bind", "owner", false))
 }

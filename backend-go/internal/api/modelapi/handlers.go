@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/middleware"
-	"github.com/insistanan/api-proxy/internal/management/modelcatalog"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/middleware"
+	"insistanan/api-proxy/internal/management/modelcatalog"
 )
 
 // RegisterRoutes 集中注册目录端点，详情使用通配路径以保留 free/vendor/model 等完整名称。
