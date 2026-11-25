@@ -6,7 +6,7 @@ import tsPlugin from '@typescript-eslint/eslint-plugin'
 import prettierConfig from 'eslint-config-prettier'
 
 const featureModules = [
-  'channels', 'clients', 'settings', 'observability',
+  'channels', 'clients', 'settings', 'observability', 'usage-journal',
   'extensions/datasets', 'extensions/mcp', 'extensions/skills'
 ]
 
@@ -75,6 +75,9 @@ export default [
         MouseEvent: 'readonly',
         // DOM API（按 lint 实际使用补全，R6 环境声明修正）
         HTMLElement: 'readonly',
+        HTMLCanvasElement: 'readonly',
+        HTMLDivElement: 'readonly',
+        HTMLImageElement: 'readonly',
         HTMLInputElement: 'readonly',
         HTMLTextAreaElement: 'readonly',
         HTMLSelectElement: 'readonly',
@@ -84,6 +87,9 @@ export default [
         Element: 'readonly',
         ResizeObserver: 'readonly',
         PointerEvent: 'readonly',
+        WheelEvent: 'readonly',
+        MediaQueryListEvent: 'readonly',
+        CanvasRenderingContext2D: 'readonly',
         CustomEvent: 'readonly',
         FileReader: 'readonly',
         DOMException: 'readonly',

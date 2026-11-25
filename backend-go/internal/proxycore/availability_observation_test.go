@@ -95,8 +95,8 @@ func TestUnsentAttemptRecordsExplicitStateAndDuplicateCannotChangeLifecycle(t *t
 	logs := AttemptLogContext{Model: "model", RequestLogStore: metrics.NewRequestLogStore(store)}
 	a := UpstreamAttempt{Context: c, Kind: scheduler.ChannelKindMessages, LogContext: logs}
 	a.beginAvailabilityObservation(upstream, "key")
-	recordAttemptLog(c, logs, upstream, "Messages", id, upstream.BaseURL, "key", "failed", 503, false, time.Now(), "local_admission", "队列已满", false, false, nil)
-	recordAttemptLog(c, logs, upstream, "Messages", id, upstream.BaseURL, "key", "completed", 200, true, time.Now(), "", "", false, false, nil)
+	finishAttempt(c, logs, upstream, "Messages", id, upstream.BaseURL, "key", "failed", 503, false, time.Now(), "local_admission", "队列已满", false, false, nil)
+	finishAttempt(c, logs, upstream, "Messages", id, upstream.BaseURL, "key", "completed", 200, true, time.Now(), "", "", false, false, nil)
 	require.Equal(t, "failed", state.Status)
 	require.NoError(t, store.Flush())
 	chain, err := store.GetLogCallAttempts(context.Background(), id)

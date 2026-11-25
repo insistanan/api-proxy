@@ -16,7 +16,6 @@ import (
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
-	"github.com/insistanan/api-proxy/internal/storage/logger"
 	"github.com/insistanan/api-proxy/internal/storage/metrics"
 )
 
@@ -84,36 +83,14 @@ func recordAttemptLog(
 	c *gin.Context,
 	logCtx AttemptLogContext,
 	upstream *config.UpstreamConfig,
-	apiType string,
-	requestID string,
-	baseURL string,
-	apiKey string,
-	status string,
+	apiType, requestID, baseURL, apiKey, attemptID, status string,
 	statusCode int,
 	success bool,
-	start time.Time,
-	errorType string,
-	errorMessage string,
-	retried bool,
-	isStream bool,
+	start, finishedAt time.Time,
+	errorType, errorMessage string,
+	retried, isStream bool,
 	usage *types.Usage,
 ) {
-	if observation := currentAvailabilityObservation(c); observation != nil {
-		if observation.recorded {
-			return
-		}
-		observation.recorded = true
-		start = observation.startedAt
-	}
-	if state := requestLifecycle(c); state != nil {
-		state.Status = status
-		state.StatusCode = statusCode
-		state.ErrorType = errorType
-		state.ErrorMessage = truncateLogMessage(errorMessage, 500)
-	}
-	if logCtx.LogStore == nil && logCtx.RequestLogStore == nil {
-		return
-	}
 	channelName := ""
 	resolvedModel := logCtx.Model
 	if upstream != nil {
@@ -124,14 +101,7 @@ func recordAttemptLog(
 	if strings.TrimSpace(logCtx.Model) != "" && strings.TrimSpace(resolvedModel) != "" && logCtx.Model != resolvedModel {
 		transform = logCtx.Model + " -> " + resolvedModel
 	}
-	timestamp := time.Now().Format(time.RFC3339Nano)
-	attemptID := ""
-	if c != nil && c.Request != nil {
-		attemptID = logger.AttemptIDFromContext(c.Request.Context())
-	}
-	if attemptID == "" {
-		attemptID = nextAttemptLogID("attempt")
-	}
+	timestamp := finishedAt.Format(time.RFC3339Nano)
 	durationMs := time.Since(start).Milliseconds()
 	firstTokenMs := requestLogFirstTokenMs(c, start)
 	var sent *bool

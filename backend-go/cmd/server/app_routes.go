@@ -5,10 +5,12 @@ package main
 import (
 	"github.com/gin-gonic/gin"
 	adminconversations "github.com/insistanan/api-proxy/internal/api/admin/conversations"
+	adminforest "github.com/insistanan/api-proxy/internal/api/admin/forest"
 	adminintent "github.com/insistanan/api-proxy/internal/api/admin/intent"
 	adminlogs "github.com/insistanan/api-proxy/internal/api/admin/logs"
 	admingate "github.com/insistanan/api-proxy/internal/api/admin/security"
 	adminsettings "github.com/insistanan/api-proxy/internal/api/admin/settings"
+	adminusage "github.com/insistanan/api-proxy/internal/api/admin/usage"
 	"github.com/insistanan/api-proxy/internal/api/channels"
 	"github.com/insistanan/api-proxy/internal/api/chat"
 	"github.com/insistanan/api-proxy/internal/api/decisions"
@@ -21,11 +23,14 @@ import (
 	"github.com/insistanan/api-proxy/internal/api/system"
 	"github.com/insistanan/api-proxy/internal/clients"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
+	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
 	"github.com/insistanan/api-proxy/internal/storage/metrics"
 )
 
 // setupAdminAPI 注册 Web 管理界面 API 路由（/api 组）。
 func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
+	adminusage.Register(apiGroup, a.usageLedger)
+	adminforest.Register(apiGroup, a.forest)
 	adminintent.RegisterIntentAPI(apiGroup, a.intentService)
 	adminintent.RegisterDatasetAPI(apiGroup, a.intentService.Datasets)
 	apiGroup.GET("/free-channels", channels.GetFreeChannels(a.cfgManager))
@@ -184,31 +189,41 @@ func (a *app) setupChannelAdminAPI(apiGroup *gin.RouterGroup) {
 
 // setupProxyEndpoints 注册各协议代理端点。
 func (a *app) setupProxyEndpoints(r *gin.Engine) {
+	// 仅代理端点注入用量采集，管理操作不会形成用量记录。
+	proxy := r.Group("")
+	if a.usageLedger != nil {
+		proxy.Use(func(c *gin.Context) {
+			if a.usageLedger.Enabled() {
+				c.Request = c.Request.WithContext(tokenusage.WithRecorder(c.Request.Context(), a.usageLedger.Record))
+			}
+			c.Next()
+		})
+	}
 	// 代理端点 - Messages API
-	r.POST("/v1/messages", messages.Handler(a.envCfg, a.cfgManager, a.channelScheduler, a.contentSafetyPipeline))
+	proxy.POST("/v1/messages", messages.Handler(a.envCfg, a.cfgManager, a.channelScheduler, a.contentSafetyPipeline))
 	r.POST("/v1/messages/count_tokens", messages.CountTokensHandler(a.envCfg, a.cfgManager, a.channelScheduler))
 
 	// 模型目录只读取本地分组配置，按入口协议筛选并输出客户端所需格式。
 	modelapi.RegisterRoutes(r, a.envCfg, a.cfgManager)
 
 	// 代理端点 - Responses API
-	r.POST("/v1/responses", responses.Handler(a.envCfg, a.cfgManager, a.sessionManager, a.channelScheduler, a.contentSafetyPipeline))
-	r.POST("/v1/responses/compact", responses.CompactHandler(a.envCfg, a.cfgManager, a.sessionManager, a.channelScheduler, a.contentSafetyPipeline))
+	proxy.POST("/v1/responses", responses.Handler(a.envCfg, a.cfgManager, a.sessionManager, a.channelScheduler, a.contentSafetyPipeline))
+	proxy.POST("/v1/responses/compact", responses.CompactHandler(a.envCfg, a.cfgManager, a.sessionManager, a.channelScheduler, a.contentSafetyPipeline))
 
 	// 代理端点 - Chat Completions API (OpenAI-compatible 原生协议)
-	r.POST("/v1/chat/completions", chat.Handler(a.envCfg, a.cfgManager, a.channelScheduler, a.contentSafetyPipeline))
+	proxy.POST("/v1/chat/completions", chat.Handler(a.envCfg, a.cfgManager, a.channelScheduler, a.contentSafetyPipeline))
 	// 代理端点 - Images API (OpenAI-compatible 独立协议)
-	r.POST("/v1/images/generations", images.Handler(a.envCfg, a.cfgManager, a.channelScheduler, "/images/generations", a.contentSafetyPipeline))
-	r.POST("/v1/images/edits", images.Handler(a.envCfg, a.cfgManager, a.channelScheduler, "/images/edits", a.contentSafetyPipeline))
-	r.POST("/v1/images/variations", images.Handler(a.envCfg, a.cfgManager, a.channelScheduler, "/images/variations", a.contentSafetyPipeline))
+	proxy.POST("/v1/images/generations", images.Handler(a.envCfg, a.cfgManager, a.channelScheduler, "/images/generations", a.contentSafetyPipeline))
+	proxy.POST("/v1/images/edits", images.Handler(a.envCfg, a.cfgManager, a.channelScheduler, "/images/edits", a.contentSafetyPipeline))
+	proxy.POST("/v1/images/variations", images.Handler(a.envCfg, a.cfgManager, a.channelScheduler, "/images/variations", a.contentSafetyPipeline))
 
 	// 代理端点 - Embeddings API (OpenAI-compatible 独立协议)
-	r.POST("/v1/embeddings", embeddings.Handler(a.envCfg, a.cfgManager, a.channelScheduler))
+	proxy.POST("/v1/embeddings", embeddings.Handler(a.envCfg, a.cfgManager, a.channelScheduler))
 	// 代理端点 - Decisions API (独立协议)
-	r.POST("/v1/decisions", decisions.Handler(a.envCfg, a.cfgManager, a.channelScheduler))
+	proxy.POST("/v1/decisions", decisions.Handler(a.envCfg, a.cfgManager, a.channelScheduler))
 
 	// 代理端点 - Gemini API (原生协议)
 	// 使用通配符捕获 model:action 格式，如 gemini-pro:generateContent
 	// 路径格式：/v1beta/models/{model}:generateContent (Gemini 原生格式)
-	r.POST("/v1beta/models/*modelAction", gemini.Handler(a.envCfg, a.cfgManager, a.channelScheduler, a.contentSafetyPipeline))
+	proxy.POST("/v1beta/models/*modelAction", gemini.Handler(a.envCfg, a.cfgManager, a.channelScheduler, a.contentSafetyPipeline))
 }

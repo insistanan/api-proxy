@@ -137,7 +137,7 @@ func (a UpstreamAttempt) retrySameCandidateRequest(
 		} else if a.Context.Request.Context().Err() != nil {
 			errorType = "client_cancelled"
 		}
-		recordAttemptLog(a.Context, a.LogContext, upstreamCopy, a.APIType, BindRequestLogID(a.Context), upstreamCopy.BaseURL, apiKey,
+		finishAttempt(a.Context, a.LogContext, upstreamCopy, a.APIType, BindRequestLogID(a.Context), upstreamCopy.BaseURL, apiKey,
 			"failed", 0, false, time.Now(), errorType, err.Error(), true, a.IsStream, nil)
 		return compatibilityRetryResult{PreparationStage: "send_request", Err: err}
 	}
@@ -151,7 +151,7 @@ func (a UpstreamAttempt) retrySameCandidateRequest(
 		if a.Context.Request.Context().Err() != nil {
 			errorType = "client_cancelled"
 		}
-		recordAttemptLog(a.Context, a.LogContext, upstreamCopy, a.APIType, BindRequestLogID(a.Context), upstreamCopy.BaseURL, apiKey,
+		finishAttempt(a.Context, a.LogContext, upstreamCopy, a.APIType, BindRequestLogID(a.Context), upstreamCopy.BaseURL, apiKey,
 			"failed", resp.StatusCode, false, time.Now(), errorType, readErr.Error(), true, a.IsStream, nil)
 		// 读取中断：响应不完整，按网络故障处理，不返回截断 body。
 		return compatibilityRetryResult{PreparationStage: "read_body", Err: fmt.Errorf("读取重试响应体失败: %w", readErr)}

@@ -22,6 +22,7 @@ import (
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
 	"github.com/insistanan/api-proxy/internal/protocol/converters"
+	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/insistanan/api-proxy/internal/proxycore"
 	"github.com/insistanan/api-proxy/internal/safety/pipeline"
@@ -139,7 +140,7 @@ func handleStreamSuccess(
 	usageRequestJSON []byte,
 	channelScheduler *scheduler.ChannelScheduler,
 	conversationID string,
-) (*types.Usage, error) {
+) (usage *types.Usage, resultErr error) {
 	envCfg = proxycore.RequestLogEnv(c, envCfg)
 	if envCfg.Current().EnableResponseLogs {
 		responseTime := time.Since(startTime).Milliseconds()
@@ -196,7 +197,21 @@ func handleStreamSuccess(
 	sessionCollector := newResponsesStreamSessionCollector()
 	var collectedUsage responsesStreamUsage
 	var upstreamUsage responsesStreamUsage
+	var openAIUsage *types.Usage
+	readOpenAIUsage := upstreamType == converters.ResponsesUpstreamOpenAI && tokenusage.RecorderFrom(c.Request.Context()) != nil
 	hasUsage := false
+	defer func() {
+		if resultErr != nil && hasUsage {
+			usage = upstreamUsage.snapshot(false)
+		}
+		if openAIUsage != nil {
+			if usage == nil || !hasUsage {
+				usage = openAIUsage
+			} else {
+				usage.UnattributedCacheInput = openAIUsage.UnattributedCacheInput
+			}
+		}
+	}()
 	needTokenPatch := false
 	clientGone := false
 	toolCallDelivered := false
@@ -263,6 +278,13 @@ func handleStreamSuccess(
 			return nil, err
 		}
 		line := strings.TrimSuffix(strings.TrimSuffix(string(rawLine), "\n"), "\r")
+		if readOpenAIUsage {
+			if payload, ok := codec.ParseSSEDataLineBytes(rawLine); ok && bytes.Contains(payload, []byte(`"usage"`)) {
+				if snapshot := tokenusage.ExtractJSONUsage(payload); snapshot != nil {
+					openAIUsage = snapshot
+				}
+			}
+		}
 		finalizing := len(rawLine) == 0 && readErr != nil
 		if payload, isData := codec.ParseSSEDataLine(line); isData && payload == codec.SSEDoneMarker && upstreamType == converters.ResponsesUpstreamGemini {
 			finalizing = true
@@ -297,9 +319,6 @@ func handleStreamSuccess(
 			return nil, fmt.Errorf("转换上游流式响应失败: %w", err)
 		}
 		for _, event := range events {
-			if eventErr := responsesStreamEventError(event); eventErr != nil {
-				return nil, eventErr
-			}
 			// 检测并收集 usage
 			detected, needPatch, usageData := checkResponsesEventUsage(event, envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug"))
 			if detected {
@@ -312,6 +331,9 @@ func handleStreamSuccess(
 				}
 				updateResponsesStreamUsage(&collectedUsage, usageData)
 				updateResponsesStreamUsage(&upstreamUsage, usageData)
+			}
+			if eventErr := responsesStreamEventError(event); eventErr != nil {
+				return nil, eventErr
 			}
 
 			// 在 response.completed 事件前注入/修补 usage
@@ -563,20 +585,24 @@ func handleStreamSuccess(
 	proxycore.AssociateConversationExternalID(channelScheduler, conversationID, scheduler.ChannelKindResponses, streamResponseID)
 
 	// 返回上游 usage 快照；仅在上游完全没有 usage 时返回受限的本地补全值。
-	metricsUsage := upstreamUsage
-	if !hasUsage {
-		metricsUsage = collectedUsage
+	if hasUsage {
+		return upstreamUsage.snapshot(false), nil
 	}
-	// 返回收集到的 usage 数据
+	return collectedUsage.snapshot(true), nil
+}
+
+func (u responsesStreamUsage) snapshot(estimated bool) *types.Usage {
 	return &types.Usage{
-		InputTokens:                metricsUsage.InputTokens,
-		OutputTokens:               metricsUsage.OutputTokens,
-		CacheCreationInputTokens:   metricsUsage.CacheCreationInputTokens,
-		CacheReadInputTokens:       metricsUsage.CacheReadInputTokens,
-		CacheCreation5mInputTokens: metricsUsage.CacheCreation5mInputTokens,
-		CacheCreation1hInputTokens: metricsUsage.CacheCreation1hInputTokens,
-		CacheTTL:                   metricsUsage.CacheTTL,
-	}, nil
+		Estimated:                  estimated,
+		UnattributedCacheInput:     u.UnattributedCacheInput,
+		InputTokens:                u.InputTokens,
+		OutputTokens:               u.OutputTokens,
+		CacheCreationInputTokens:   u.CacheCreationInputTokens,
+		CacheReadInputTokens:       u.CacheReadInputTokens,
+		CacheCreation5mInputTokens: u.CacheCreation5mInputTokens,
+		CacheCreation1hInputTokens: u.CacheCreation1hInputTokens,
+		CacheTTL:                   u.CacheTTL,
+	}
 }
 
 // responsesStreamUsage 流式响应 usage 收集结构
@@ -586,6 +612,7 @@ type responsesStreamUsage struct {
 	TotalTokens                int // 用于检测 total_tokens 是否需要补全
 	CacheCreationInputTokens   int
 	CacheReadInputTokens       int
+	UnattributedCacheInput     *int
 	CacheCreation5mInputTokens int
 	CacheCreation1hInputTokens int
 	CacheTTL                   string

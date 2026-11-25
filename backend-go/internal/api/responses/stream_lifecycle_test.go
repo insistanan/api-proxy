@@ -99,10 +99,11 @@ type responsesLifecycleWriter struct {
 	cancel       context.CancelFunc
 	cancelOnType string
 	fail         error
+	failOnType   string
 }
 
 func (w *responsesLifecycleWriter) Write(data []byte) (int, error) {
-	if w.fail != nil {
+	if w.fail != nil && (w.failOnType == "" || strings.Contains(string(data), `"type":"`+w.failOnType+`"`)) {
 		return 0, w.fail
 	}
 	n, err := w.ResponseWriter.Write(data)
@@ -114,6 +115,23 @@ func (w *responsesLifecycleWriter) Write(data []byte) (int, error) {
 		w.cancel()
 	}
 	return n, err
+}
+
+func TestResponsesStream_TerminalWriteFailurePreservesReportedUsage(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	writeErr := errors.New("broken pipe")
+	c.Writer = &responsesLifecycleWriter{ResponseWriter: c.Writer, fail: writeErr, failOnType: "response.completed"}
+	sse := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n" +
+		"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"r1\",\"output\":[],\"usage\":{\"input_tokens\":100,\"output_tokens\":15,\"input_tokens_details\":{\"cached_tokens\":40}}}}\n\n"
+	usage, err := runResponsesLifecycleStream(t, c, converters.ResponsesUpstreamResponses, io.NopCloser(strings.NewReader(sse)))
+	require.ErrorIs(t, err, writeErr)
+	require.NotNil(t, usage)
+	require.False(t, usage.Estimated)
+	require.Equal(t, 60, usage.InputTokens)
+	require.Equal(t, 40, usage.CacheReadInputTokens)
+	require.Equal(t, 15, usage.OutputTokens)
 }
 
 func TestResponsesToolDeliveryCancellationAndWriteFailure(t *testing.T) {

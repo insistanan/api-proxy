@@ -2,6 +2,8 @@ package images
 
 import (
 	"bytes"
+	"compress/gzip"
+	"compress/zlib"
 	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"io"
 	"mime/multipart"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -166,4 +169,83 @@ func TestHandleImagesSuccessForwardsUpstreamSSEEvenIfForceNonStream(t *testing.T
 	_, err := handleImagesSuccess(ctx, response, &config.EnvConfig{}, time.Now(), "/images/generations", true, true)
 	require.NoError(t, err)
 	require.Equal(t, body, recorder.Body.String())
+}
+
+func TestHandleImagesSuccess_NormalizesUsageOnAllNativeResponsePaths(t *testing.T) {
+	payload := `{"created":123,"data":[{"b64_json":"AQID"}],"usage":{"input_tokens":100,"output_tokens":20,"input_tokens_details":{"cached_tokens":70}}}`
+	for _, tc := range []struct {
+		name, contentType, body string
+		stream, force           bool
+	}{
+		{"JSON", "application/json", payload, false, false},
+		{"强制非流式转 SSE", "application/json", payload, true, true},
+		{"SSE", "text/event-stream", "event: image_generation.completed\ndata: " + payload + "\n\n", true, false},
+		{"无 Content-Type 的 SSE", "", "data: " + payload + "\n\n", true, false},
+		{"多行 SSE", "text/event-stream", "data: {\n" + "data: " + payload[1:] + "\n\n", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+			c.Request = c.Request.WithContext(tokenusage.WithRecorder(c.Request.Context(), func(tokenusage.Fact) {}))
+			resp := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(tc.body))}
+			resp.Header.Set("Content-Type", tc.contentType)
+			usage, err := handleImagesSuccess(c, resp, &config.EnvConfig{MaxRequestBodySize: 1 << 20}, time.Now(), "/images/generations", tc.stream, tc.force)
+			require.NoError(t, err)
+			require.NotNil(t, usage)
+			require.Equal(t, 30, usage.InputTokens)
+			require.Equal(t, 70, usage.CacheReadInputTokens)
+			require.Equal(t, 20, usage.OutputTokens)
+			if !tc.force {
+				require.Equal(t, tc.body, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestNativeUsageCaptureKeepsMetadataWithoutBufferingImage(t *testing.T) {
+	payload := `{"data":[{"b64_json":"` + strings.Repeat("A", 2<<20) + `"}],"usage":{"input_tokens":100,"output_tokens":20}}`
+	for _, sse := range []bool{false, true} {
+		body := payload
+		if sse {
+			body = "data: " + body + "\n\n"
+		}
+		capture := &nativeUsageCapture{sse: sse, modeKnown: true}
+		for len(body) > 0 {
+			n := min(31, len(body))
+			_, err := capture.Write([]byte(body[:n]))
+			require.NoError(t, err)
+			require.LessOrEqual(t, len(capture.buffer)+len(capture.event), 2*nativeMetadataLimit)
+			body = body[n:]
+		}
+		usage := capture.result()
+		require.NotNil(t, usage)
+		require.Equal(t, 100, usage.InputTokens)
+		require.Equal(t, 20, usage.OutputTokens)
+	}
+}
+
+func TestNativeUsageCaptureCompressedPassthrough(t *testing.T) {
+	for _, encoding := range []string{"gzip", "deflate"} {
+		t.Run(encoding, func(t *testing.T) {
+			var compressed bytes.Buffer
+			var zip io.WriteCloser
+			if encoding == "deflate" {
+				zip = zlib.NewWriter(&compressed)
+			} else {
+				zip = gzip.NewWriter(&compressed)
+			}
+			_, err := io.WriteString(zip, `{"data":[{"b64_json":"`+strings.Repeat("A", 2<<20)+`"}],"usage":{"input_tokens":100,"output_tokens":20}}`)
+			require.NoError(t, err)
+			require.NoError(t, zip.Close())
+			resp := &http.Response{Header: http.Header{"Content-Encoding": {encoding}}, Body: io.NopCloser(bytes.NewReader(compressed.Bytes()))}
+			finish := captureNativeUsage(resp, 3<<20)
+			body, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			usage := finish()
+			require.NotNil(t, usage)
+			require.Equal(t, 100, usage.InputTokens)
+			require.Equal(t, compressed.Bytes(), body)
+		})
+	}
 }

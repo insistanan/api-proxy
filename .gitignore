@@ -216,6 +216,8 @@ vite.config.ts.timestamp-*
 !.claude/skills/codex-review/
 !.claude/skills/github-release/
 !.claude/skills/generate-image/
+# 生图本机配置含访问密钥。
+/.claude/skills/generate-image/config.json
 
 # 生图 skill 落盘目录
 /temp/
@@ -260,7 +262,6 @@ docs/claude-code-investigation-*.md
 .pi/
 .pi-web/
 /.codex/
-/.claude/
 /.idea/
 
 # 前端产物复制嵌套目录兜底（历史 bug：手工 cp 在错误 cwd 下产生）

@@ -15,7 +15,8 @@ func TestResponsesImageUsageMapsOpenAICachedTokens(t *testing.T) {
 		"cache_creation_input_tokens":5010
 	}`))
 	require.NoError(t, err)
-	require.Equal(t, 9233, usage.InputTokens)
+	require.Equal(t, 5009, usage.InputTokens)
+	require.Equal(t, 9233, usage.InputTokens+usage.CacheReadInputTokens)
 	require.Equal(t, 702, usage.OutputTokens)
 	require.Equal(t, 4224, usage.CacheReadInputTokens)
 	require.Equal(t, 5010, usage.CacheCreationInputTokens)

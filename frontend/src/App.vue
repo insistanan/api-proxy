@@ -113,6 +113,7 @@
 
     <!-- 危险命令 AI 闸门：全局待确认通知（轮询 + 声音 + 浏览器系统通知） -->
     <GatePendingNotification v-if="isAuthenticated" />
+    <ForestReminder v-if="isAuthenticated" />
     <JsonViewerDrawer v-if="isAuthenticated" />
     <AppQuickActions v-if="isAuthenticated" />
   </div>
@@ -143,6 +144,7 @@ import ThemeTrigger from '@/shared/theme/components/ThemeTrigger.vue'
 import ThemeBackground from '@/shared/theme/components/ThemeBackground.vue'
 import JsonViewerDrawer from '@/shared/components/data/JsonViewerDrawer.vue'
 import GatePendingNotification from '@/features/observability/components/GatePendingNotification.vue'
+import ForestReminder from '@/features/usage-journal/forest/ForestReminder.vue'
 import { useSkillTranslationMonitor } from '@/features/extensions/skills/composables/translationBatch'
 import { useAuthFlow } from '@/app/useAuthFlow'
 import { toastIcons, useToast } from '@/shared/composables/useToast'

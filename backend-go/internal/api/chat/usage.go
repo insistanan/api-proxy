@@ -2,8 +2,9 @@ package chat
 
 import (
 	"encoding/json"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
 
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
@@ -35,8 +36,9 @@ func extractChatUsage(bodyBytes []byte) *types.Usage {
 	if inputTokens <= 0 {
 		inputTokens = envelope.Usage.InputTokens
 	}
-	if cacheReadTokens > 0 && inputTokens > cacheReadTokens {
-		inputTokens -= cacheReadTokens
+	unattributed := tokenusage.UnattributedCacheInput(inputTokens, cacheReadTokens)
+	if cacheReadTokens > 0 {
+		inputTokens = max(0, inputTokens-cacheReadTokens)
 	}
 	outputTokens := envelope.Usage.CompletionTokens
 	if outputTokens <= 0 {
@@ -44,11 +46,12 @@ func extractChatUsage(bodyBytes []byte) *types.Usage {
 	}
 
 	return &types.Usage{
-		InputTokens:          inputTokens,
-		OutputTokens:         outputTokens,
-		CacheReadInputTokens: cacheReadTokens,
-		PromptTokens:         inputTokens,
-		CompletionTokens:     outputTokens,
+		UnattributedCacheInput: unattributed,
+		InputTokens:            inputTokens,
+		OutputTokens:           outputTokens,
+		CacheReadInputTokens:   cacheReadTokens,
+		PromptTokens:           inputTokens,
+		CompletionTokens:       outputTokens,
 	}
 }
 
@@ -75,6 +78,7 @@ func mergeChatUsage(current, next *types.Usage) *types.Usage {
 	}
 	if next.CacheReadInputTokens > 0 {
 		current.CacheReadInputTokens = next.CacheReadInputTokens
+		current.UnattributedCacheInput = next.UnattributedCacheInput
 	}
 	if next.PromptTokens > 0 {
 		current.PromptTokens = next.PromptTokens

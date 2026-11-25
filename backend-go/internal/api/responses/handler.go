@@ -21,6 +21,7 @@ import (
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
 	"github.com/insistanan/api-proxy/internal/protocol/converters"
 	"github.com/insistanan/api-proxy/internal/protocol/providers"
+	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/insistanan/api-proxy/internal/proxycore"
 	"github.com/insistanan/api-proxy/internal/safety/pipeline"
@@ -155,14 +156,6 @@ func handleSuccess(
 		return nil, err
 	}
 
-	// 容量错误有时会以 HTTP 200 的空结果返回。此时尚未写客户端，可安全地
-	// 使用同一候选重试；该信号不会被上层计入 Key 熔断。
-	if (len(responsesResp.Output) == 0 && responsesResp.Usage.OutputTokens == 0) ||
-		(proxycore.IsUpstreamModelCapacityError(bodyBytes) && responsesResp.Usage.OutputTokens == 0) {
-		log.Printf("[Responses] 检测到空响应 (非流式, output 为空), 尝试 failover")
-		return nil, proxycore.NewRetrySameCandidateError(ErrEmptyStreamResponse)
-	}
-
 	// 先把用于指标的 usage 固化成上游原值快照——后续客户端补全/剥离/校正不应影响
 	// 计费、熔断和性能画像使用的上游统计。
 	metricsUsage := types.Usage{
@@ -173,6 +166,18 @@ func handleSuccess(
 		CacheCreation5mInputTokens: responsesResp.Usage.CacheCreation5mInputTokens,
 		CacheCreation1hInputTokens: responsesResp.Usage.CacheCreation1hInputTokens,
 		CacheTTL:                   responsesResp.Usage.CacheTTL,
+	}
+	if tokenusage.RecorderFrom(c.Request.Context()) != nil &&
+		(upstreamType == converters.ResponsesUpstreamResponses || upstreamType == converters.ResponsesUpstreamOpenAI) {
+		if reported := tokenusage.ExtractJSONUsage(bodyBytes); reported != nil {
+			metricsUsage.UnattributedCacheInput = reported.UnattributedCacheInput
+		}
+	}
+	// 容量错误有时会以 HTTP 200 的空结果返回。重试时保留上游已经报告的用量。
+	if (len(responsesResp.Output) == 0 && responsesResp.Usage.OutputTokens == 0) ||
+		(proxycore.IsUpstreamModelCapacityError(bodyBytes) && responsesResp.Usage.OutputTokens == 0) {
+		log.Printf("[Responses] 检测到空响应 (非流式, output 为空), 尝试 failover")
+		return &metricsUsage, proxycore.NewRetrySameCandidateError(ErrEmptyStreamResponse)
 	}
 	// 会话清理只使用上游原始 total_tokens；如果上游没有提供 total_tokens，
 	// 在客户端副本补全后再采用 input+output 的有限回退。严重错报的校正值只
@@ -202,14 +207,14 @@ func handleSuccess(
 	}
 	responseBody, err := codec.MarshalJSONNoEscape(responsesResp)
 	if err != nil {
-		return nil, fmt.Errorf("序列化 Responses 响应失败: %w", err)
+		return &metricsUsage, fmt.Errorf("序列化 Responses 响应失败: %w", err)
 	}
 	responseBody, err = pipeline.RunAttachedPostResponseHooks(c.Request.Context(), c, responseBody, resp)
 	if err != nil {
-		return nil, err
+		return &metricsUsage, err
 	}
 	if err := json.Unmarshal(responseBody, responsesResp); err != nil {
-		return nil, fmt.Errorf("解析已还原 Responses 响应失败: %w", err)
+		return &metricsUsage, fmt.Errorf("解析已还原 Responses 响应失败: %w", err)
 	}
 	// 客户端的 store 只控制上游是否保存，不能关闭本代理自己的七天会话持久化。
 	if originalReq != nil {

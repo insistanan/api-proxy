@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/insistanan/api-proxy/internal/proxycore"
 	"github.com/insistanan/api-proxy/internal/safety/pipeline"
@@ -101,7 +102,7 @@ func streamGeminiToGemini(
 		// 危险命令 AI 闸门的事后否决：非阻塞检查，用户在否决窗口内加黑名单即终止当前流。
 		select {
 		case <-pipeline.AttachedStreamVetoDone(c):
-			return nil, pipeline.HandleAttachedStreamVeto(c)
+			return totalUsage, pipeline.HandleAttachedStreamVeto(c)
 		default:
 		}
 		line := scanner.Text()
@@ -117,7 +118,7 @@ func streamGeminiToGemini(
 			}
 			data, err := parseUpstreamStreamObject(jsonData)
 			if err != nil {
-				return nil, err
+				return totalUsage, err
 			}
 
 			// 定稿后保留 usage 尾包，禁止额外正文重新进入客户端。
@@ -126,7 +127,7 @@ func streamGeminiToGemini(
 					data["candidates"] = []interface{}{}
 					encoded, err := json.Marshal(data)
 					if err != nil {
-						return nil, fmt.Errorf("序列化 Gemini usage 尾包失败: %w", err)
+						return totalUsage, fmt.Errorf("序列化 Gemini usage 尾包失败: %w", err)
 					}
 					jsonData = string(encoded)
 					line = "data: " + jsonData
@@ -134,11 +135,8 @@ func streamGeminiToGemini(
 			}
 			var chunk types.GeminiStreamChunk
 			if err := json.Unmarshal([]byte(jsonData), &chunk); err != nil {
-				return nil, fmt.Errorf("解析 Gemini 流式数据失败: %w", err)
+				return totalUsage, fmt.Errorf("解析 Gemini 流式数据失败: %w", err)
 			} else {
-				if err := feedGeminiStreamChunk(c, &chunk); err != nil {
-					return nil, err
-				}
 				if chunk.UsageMetadata != nil {
 					// promptTokenCount 含 cachedContentTokenCount，扣除后才是新增输入。
 					// 与非流式路径（handler.go 的同名扣减）保持同一口径，含 <0 钳制：
@@ -152,13 +150,17 @@ func streamGeminiToGemini(
 					// types.ClaudeOutputTokensDetails）。透传给客户端的原生 SSE 不改。
 					thoughtsTokens := chunk.UsageMetadata.ThoughtsTokenCount
 					totalUsage = &types.Usage{
-						InputTokens:          actualInputTokens,
-						OutputTokens:         chunk.UsageMetadata.CandidatesTokenCount + thoughtsTokens,
-						CacheReadInputTokens: chunk.UsageMetadata.CachedContentTokenCount,
+						UnattributedCacheInput: tokenusage.UnattributedCacheInput(chunk.UsageMetadata.PromptTokenCount, chunk.UsageMetadata.CachedContentTokenCount),
+						InputTokens:            actualInputTokens,
+						OutputTokens:           chunk.UsageMetadata.CandidatesTokenCount + thoughtsTokens,
+						CacheReadInputTokens:   chunk.UsageMetadata.CachedContentTokenCount,
 					}
 					if thoughtsTokens > 0 {
 						totalUsage.OutputTokensDetails = &types.ClaudeOutputTokensDetails{ThinkingTokens: thoughtsTokens}
 					}
+				}
+				if err := feedGeminiStreamChunk(c, &chunk); err != nil {
+					return totalUsage, err
 				}
 				for i, candidate := range chunk.Candidates {
 					if candidate.Index != 0 {
@@ -174,24 +176,24 @@ func streamGeminiToGemini(
 
 			restoredLine, err := pipeline.RestoreAttachedSSEEvent(c, line)
 			if err != nil {
-				return nil, err
+				return totalUsage, err
 			}
 			if restoredLine == "" {
 				continue
 			}
 			proxycore.MarkRequestLogFirstToken(c)
 			if _, err := fmt.Fprintf(c.Writer, "%s\n", restoredLine); err != nil {
-				return nil, err
+				return totalUsage, err
 			}
 		} else if line != "" {
 			proxycore.MarkRequestLogFirstToken(c)
 			if _, err := fmt.Fprintf(c.Writer, "%s\n", line); err != nil {
-				return nil, err
+				return totalUsage, err
 			}
 		} else {
 			proxycore.MarkRequestLogFirstToken(c)
 			if _, err := fmt.Fprintf(c.Writer, "\n"); err != nil {
-				return nil, err
+				return totalUsage, err
 			}
 		}
 
@@ -200,24 +202,24 @@ func streamGeminiToGemini(
 		}
 	}
 	if err := pipeline.AttachedStreamVetoError(c); err != nil {
-		return nil, err
+		return totalUsage, err
 	}
 	if err := codec.CheckStreamCompletion(c.Request.Context(), completed, scanner.Err()); err != nil {
-		return nil, err
+		return totalUsage, err
 	}
 	if trailingEventOpen {
 		if _, err := fmt.Fprint(c.Writer, "\n"); err != nil {
-			return nil, err
+			return totalUsage, err
 		}
 		if flusher != nil {
 			flusher.Flush()
 		}
 	}
 	if err := flushGeminiRestoration(c, flusher); err != nil {
-		return nil, err
+		return totalUsage, err
 	}
 	if err := pipeline.FlushAttachedStreamHooks(c); err != nil {
-		return nil, err
+		return totalUsage, err
 	}
 	return totalUsage, nil
 }
@@ -241,7 +243,7 @@ func streamClaudeToGemini(
 		// 危险命令 AI 闸门的事后否决：非阻塞检查，用户在否决窗口内加黑名单即终止当前流。
 		select {
 		case <-pipeline.AttachedStreamVetoDone(c):
-			return nil, pipeline.HandleAttachedStreamVeto(c)
+			return totalUsage, pipeline.HandleAttachedStreamVeto(c)
 		default:
 		}
 		line := scanner.Text()
@@ -256,7 +258,7 @@ func streamClaudeToGemini(
 
 		event, err := parseUpstreamStreamObject(jsonData)
 		if err != nil {
-			return nil, err
+			return totalUsage, err
 		}
 
 		eventType, _ := event["type"].(string)
@@ -272,7 +274,7 @@ func streamClaudeToGemini(
 			if deltaType == "text_delta" {
 				text, _ := delta["text"].(string)
 				if err := pipeline.FeedAttachedStreamTextForKey(c, "gemini.candidate.0.", text); err != nil {
-					return nil, err
+					return totalUsage, err
 				}
 
 				// 转换为 Gemini 格式
@@ -292,7 +294,7 @@ func streamClaudeToGemini(
 				chunkBytes, _ := json.Marshal(geminiChunk)
 				proxycore.MarkRequestLogFirstToken(c)
 				if err := writeGeminiSSE(c, flusher, chunkBytes); err != nil {
-					return nil, err
+					return totalUsage, err
 				}
 			}
 
@@ -351,7 +353,7 @@ func streamClaudeToGemini(
 				chunkBytes, _ := json.Marshal(geminiChunk)
 				proxycore.MarkRequestLogFirstToken(c)
 				if err := writeGeminiSSE(c, flusher, chunkBytes); err != nil {
-					return nil, err
+					return totalUsage, err
 				}
 			}
 		case "message_stop":
@@ -362,23 +364,23 @@ func streamClaudeToGemini(
 		}
 	}
 	if err := pipeline.AttachedStreamVetoError(c); err != nil {
-		return nil, err
+		return totalUsage, err
 	}
 	if err := codec.CheckStreamCompletion(c.Request.Context(), completed, scanner.Err()); err != nil {
-		return nil, err
+		return totalUsage, err
 	}
 	if err := flushGeminiRestoration(c, flusher); err != nil {
-		return nil, err
+		return totalUsage, err
 	}
 	if err := pipeline.FlushAttachedStreamHooks(c); err != nil {
-		return nil, err
+		return totalUsage, err
 	}
 	final, err := json.Marshal(types.GeminiStreamChunk{Candidates: []types.GeminiCandidate{{FinishReason: stopReason}}})
 	if err != nil {
-		return nil, fmt.Errorf("序列化 Gemini 完成事件失败: %w", err)
+		return totalUsage, fmt.Errorf("序列化 Gemini 完成事件失败: %w", err)
 	}
 	if err := writeGeminiSSE(c, flusher, final); err != nil {
-		return nil, err
+		return totalUsage, err
 	}
 	return totalUsage, nil
 }
@@ -418,7 +420,7 @@ func streamOpenAIToGemini(
 		// 危险命令 AI 闸门的事后否决：非阻塞检查，用户在否决窗口内加黑名单即终止当前流。
 		select {
 		case <-pipeline.AttachedStreamVetoDone(c):
-			return nil, pipeline.HandleAttachedStreamVeto(c)
+			return totalUsage, pipeline.HandleAttachedStreamVeto(c)
 		default:
 		}
 		line := scanner.Text()
@@ -434,7 +436,7 @@ func streamOpenAIToGemini(
 
 		chunk, err := parseUpstreamStreamObject(jsonData)
 		if err != nil {
-			return nil, err
+			return totalUsage, err
 		}
 
 		// 定稿原因与 usage 独立抓取，兼容两者同包及纯 usage 尾包。
@@ -447,10 +449,7 @@ func streamOpenAIToGemini(
 			if v, ok := usage["completion_tokens"].(float64); ok {
 				completionTokens = int(v)
 			}
-			totalUsage = &types.Usage{
-				InputTokens:  promptTokens,
-				OutputTokens: completionTokens,
-			}
+			totalUsage = tokenusage.ExtractJSONUsage([]byte(jsonData))
 
 			// usage 不代表完成，完成块由 finish_reason / [DONE] 确认后发送。
 			geminiChunk := types.GeminiStreamChunk{
@@ -463,7 +462,7 @@ func streamOpenAIToGemini(
 			chunkBytes, _ := json.Marshal(geminiChunk)
 			proxycore.MarkRequestLogFirstToken(c)
 			if err := writeGeminiSSE(c, flusher, chunkBytes); err != nil {
-				return nil, err
+				return totalUsage, err
 			}
 		}
 		if stopReason != "" {
@@ -493,7 +492,7 @@ func streamOpenAIToGemini(
 		content, _ := delta["content"].(string)
 		if content != "" {
 			if err := pipeline.FeedAttachedStreamTextForKey(c, "gemini.candidate.0.", content); err != nil {
-				return nil, err
+				return totalUsage, err
 			}
 
 			geminiChunk := types.GeminiStreamChunk{
@@ -512,7 +511,7 @@ func streamOpenAIToGemini(
 			chunkBytes, _ := json.Marshal(geminiChunk)
 			proxycore.MarkRequestLogFirstToken(c)
 			if err := writeGeminiSSE(c, flusher, chunkBytes); err != nil {
-				return nil, err
+				return totalUsage, err
 			}
 		}
 
@@ -522,26 +521,26 @@ func streamOpenAIToGemini(
 		}
 	}
 	if err := pipeline.AttachedStreamVetoError(c); err != nil {
-		return nil, err
+		return totalUsage, err
 	}
 	if err := codec.CheckStreamCompletion(c.Request.Context(), stopReason != "" || (doneSeen && messageSeen), scanner.Err()); err != nil {
-		return nil, err
+		return totalUsage, err
 	}
 	if err := flushGeminiRestoration(c, flusher); err != nil {
-		return nil, err
+		return totalUsage, err
 	}
 	if err := pipeline.FlushAttachedStreamHooks(c); err != nil {
-		return nil, err
+		return totalUsage, err
 	}
 	if stopReason == "" {
 		stopReason = "STOP"
 	}
 	final, err := json.Marshal(types.GeminiStreamChunk{Candidates: []types.GeminiCandidate{{FinishReason: stopReason}}})
 	if err != nil {
-		return nil, fmt.Errorf("序列化 Gemini 完成事件失败: %w", err)
+		return totalUsage, fmt.Errorf("序列化 Gemini 完成事件失败: %w", err)
 	}
 	if err := writeGeminiSSE(c, flusher, final); err != nil {
-		return nil, err
+		return totalUsage, err
 	}
 	return totalUsage, nil
 }

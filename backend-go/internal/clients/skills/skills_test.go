@@ -34,39 +34,34 @@ func TestDiscoverClaudePluginSkillLocationsOnlyUsesInstalledPlugins(t *testing.T
 	}
 }
 
-func TestWriteSkillFilesPreservingReplacesPackageAndKeepsBackups(t *testing.T) {
-	destination := filepath.Join(t.TempDir(), "example-skill")
-	backup := filepath.Join(destination, backupsDirName, "20260801-120000.000000000", "translated.zh-CN.md")
-	stale := filepath.Join(destination, "scripts", "obsolete.sh")
-	if err := os.MkdirAll(filepath.Dir(backup), 0700); err != nil {
+func TestSaveTranslationBackup_PreservesExistingProjectSkill(t *testing.T) {
+	const name = "example-skill"
+	projectDir := t.TempDir()
+	destination := writeTestSkill(t, projectDir, name, "项目原文")
+	script := filepath.Join(destination, "scripts", "run.sh")
+	if err := os.MkdirAll(filepath.Dir(script), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Dir(stale), 0700); err != nil {
+	if err := os.WriteFile(script, []byte("echo project"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(backup, []byte("旧译文"), 0600); err != nil {
+	ref := Item{Name: name, LocationKey: "codex", Path: writeTestSkill(t, t.TempDir(), name, "来源原文")}
+	original, err := ReadContent(ref)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(stale, []byte("旧脚本"), 0600); err != nil {
+	backup, err := SaveTranslationBackup(projectDir, ref, original, BackupInput{Translated: "译文"})
+	if err != nil {
 		t.Fatal(err)
 	}
-
-	files := map[string][]byte{
-		"SKILL.md":              []byte("---\nname: example-skill\ndescription: 示例\n---\n"),
-		"references/current.md": []byte("当前资源"),
+	if content, err := os.ReadFile(filepath.Join(destination, "SKILL.md")); err != nil || !strings.HasSuffix(string(content), "项目原文") {
+		t.Fatalf("项目原文被替换，content=%q err=%v", content, err)
 	}
-	if err := WriteFilesPreserving(destination, files); err != nil {
-		t.Fatal(err)
+	if content, err := os.ReadFile(script); err != nil || string(content) != "echo project" {
+		t.Fatalf("项目脚本丢失或被替换，content=%q err=%v", content, err)
 	}
-
-	if _, err := os.Stat(stale); !os.IsNotExist(err) {
-		t.Fatalf("过期资源未清理，err=%v", err)
-	}
-	if content, err := os.ReadFile(backup); err != nil || string(content) != "旧译文" {
-		t.Fatalf("翻译备份未保留，content=%q err=%v", content, err)
-	}
-	if content, err := os.ReadFile(filepath.Join(destination, "references", "current.md")); err != nil || string(content) != "当前资源" {
-		t.Fatalf("当前资源未写入，content=%q err=%v", content, err)
+	if content, err := os.ReadFile(filepath.Join(backup, "translated.md")); err != nil || string(content) != "译文" {
+		t.Fatalf("译文未保存，content=%q err=%v", content, err)
 	}
 }
 
@@ -138,7 +133,7 @@ func TestCopySkillDirRejectsMissingSkillMD(t *testing.T) {
 // TestCopySkillDirRejectsOversizedFile 验证单文件超过上限时拒绝拷贝。
 func TestCopySkillDirRejectsOversizedFile(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "fat")
-	destination := filepath.Join(t.TempDir(), "fat")
+	destination := writeTestSkill(t, t.TempDir(), "fat", "目标原文")
 	if err := os.MkdirAll(source, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -152,6 +147,10 @@ func TestCopySkillDirRejectsOversizedFile(t *testing.T) {
 	if err := CopyDir(source, destination, false); err == nil || !strings.Contains(err.Error(), "Skill 文件过大") {
 		t.Fatalf("期望超大文件报错，得到: %v", err)
 	}
+	if content, err := os.ReadFile(filepath.Join(destination, "SKILL.md")); err != nil || !strings.HasSuffix(string(content), "目标原文") {
+		t.Fatalf("复制失败后未保留目标原文，content=%q err=%v", content, err)
+	}
+	assertNoSkillTempEntries(t, filepath.Dir(destination))
 }
 
 // TestInstallFilesReplacesAllTargetsAndKeepsBackups 验证多目标安装先暂存再替换，

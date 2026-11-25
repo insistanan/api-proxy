@@ -277,10 +277,14 @@ type OpenAIChoice struct {
 // Usage 使用情况统计
 // 完整支持 Claude API 的详细 usage 字段，包括缓存 TTL 细分
 type Usage struct {
-	InputTokens              int `json:"input_tokens,omitempty"`
-	OutputTokens             int `json:"output_tokens,omitempty"`
-	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
-	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
+	// Estimated 标记本地生成的整份指标用量，不改变客户端协议。
+	Estimated bool `json:"-"`
+	// UnattributedCacheInput 是缓存明细无法归属本次请求时，上游报告的原始输入。
+	UnattributedCacheInput   *int `json:"-"`
+	InputTokens              int  `json:"input_tokens,omitempty"`
+	OutputTokens             int  `json:"output_tokens,omitempty"`
+	CacheCreationInputTokens int  `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int  `json:"cache_read_input_tokens,omitempty"`
 	// 输出明细。与 input 侧的求和契约相反：output_tokens 已含 thinking_tokens，
 	// 这里只是拆分展示，客户端绝不能再加一次。
 	OutputTokensDetails *ClaudeOutputTokensDetails `json:"output_tokens_details,omitempty"`

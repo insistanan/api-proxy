@@ -3,7 +3,6 @@
 package common
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,7 +11,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
 // ConfigManager 促销期配置管理接口，渠道路由与设置类 handler 共用。
@@ -44,23 +42,4 @@ func ReadLimitedBody(reader io.Reader, maxBytes int64) ([]byte, error) {
 		return nil, fmt.Errorf("响应超过 %d MB", maxBytes/(1<<20))
 	}
 	return body, nil
-}
-
-// ExtractUsage 从原样透传响应体中提取 usage 字段，并统一 Prompt/Completion 与 Input/Output 命名。
-// 解析失败或缺少 usage 时返回 nil，由调用方决定兜底策略。
-func ExtractUsage(bodyBytes []byte) *types.Usage {
-	var envelope struct {
-		Usage *types.Usage `json:"usage"`
-	}
-	if err := json.Unmarshal(bodyBytes, &envelope); err != nil || envelope.Usage == nil {
-		return nil
-	}
-	usage := envelope.Usage
-	if usage.InputTokens == 0 && usage.PromptTokens > 0 {
-		usage.InputTokens = usage.PromptTokens
-	}
-	if usage.OutputTokens == 0 && usage.CompletionTokens > 0 {
-		usage.OutputTokens = usage.CompletionTokens
-	}
-	return usage
 }

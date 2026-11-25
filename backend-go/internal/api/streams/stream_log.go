@@ -41,6 +41,10 @@ func logStreamCompletion(c *gin.Context, ctx *Context, envCfg *config.EnvConfig,
 
 	// 指标使用上游原始快照。CollectedUsage 可能已经包含客户端补全或隐式缓存推断，
 	// 只能用于客户端事件处理，不能污染计费、熔断和性能画像。
+	return ctx.upstreamUsageSnapshot()
+}
+
+func (ctx *Context) upstreamUsageSnapshot() *types.Usage {
 	var usage *types.Usage
 	hasUsageData := ctx.UpstreamUsage.InputTokens > 0 ||
 		ctx.UpstreamUsage.OutputTokens > 0 ||

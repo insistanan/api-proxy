@@ -355,7 +355,7 @@ func handleSuccess(c *gin.Context, resp *http.Response, envCfg *config.EnvConfig
 		usage.OutputTokens = usage.CompletionTokens
 	}
 	if usage == nil {
-		usage = &types.Usage{InputTokens: tokenusage.EstimateTokens(string(originalBody))}
+		usage = &types.Usage{InputTokens: tokenusage.EstimateTokens(string(originalBody)), Estimated: true}
 	}
 	bodyBytes, err = pipeline.RunAttachedPostResponseHooks(c.Request.Context(), c, bodyBytes, resp)
 	if err != nil {

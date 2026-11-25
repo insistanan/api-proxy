@@ -22,6 +22,7 @@ export const navigationGroups: Array<{ key: string; label: string; items: Naviga
   {
     key: 'activity', label: '运行观测',
     items: [
+      { label: '用量手账', to: '/usage-journal', description: '查看年度 Token 热力图、每日票据和个人森林。' },
       { label: '对话', to: '/conversations', description: '查看对话、请求链路与模型输入。' },
       { label: '日志', to: '/logs', description: '按时间和入口筛选请求，查看正文及详细运行日志。' },
       { label: '拦截', to: '/blocked-logs', description: '查看内容安全检测与危险命令审批记录。' }

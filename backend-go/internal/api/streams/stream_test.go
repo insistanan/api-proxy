@@ -43,6 +43,26 @@ func TestProcessStreamEventsDoesNotLoseBufferedError(t *testing.T) {
 	}
 }
 
+func TestMessagesStreamFailurePreservesReportedUsage(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	envCfg := &config.EnvConfig{}
+	ctx := NewStreamContext(envCfg)
+	event := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"usage\":{\"input_tokens\":100,\"output_tokens\":0}}}\n\n"
+	require.NoError(t, ProcessStreamEvent(c, c.Writer, c.Writer, event, ctx, envCfg, nil))
+	events := make(chan string)
+	close(events)
+	failures := make(chan error, 1)
+	upstreamErr := fmt.Errorf("上游连接中断")
+	failures <- upstreamErr
+	close(failures)
+	usage, err := ProcessStreamEvents(c, c.Writer, c.Writer, events, failures, ctx, envCfg, time.Now(), nil)
+	require.ErrorIs(t, err, upstreamErr)
+	require.NotNil(t, usage)
+	require.Equal(t, 100, usage.InputTokens)
+	require.Zero(t, usage.OutputTokens)
+}
+
 func TestProcessStreamErrorClosesDeliveredReasoningAndText(t *testing.T) {
 	for _, blockType := range []string{"thinking", "text", "tool_use"} {
 		for _, alreadyClosed := range []bool{false, true} {

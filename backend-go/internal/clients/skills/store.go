@@ -26,8 +26,8 @@ func Remove(ref Item) error {
 	return os.RemoveAll(ref.Path)
 }
 
-// CopyDir 把源 Skill 目录流式拷贝到目标目录，不把文件内容收进内存。
-// preserveBackups 为 true 时（用于项目目录）保留翻译备份目录，清理其余旧文件后写入。
+// CopyDir 流式复制源 Skill 到临时目录，成功后再替换目标。
+// preserveBackups 为 true 时（用于项目目录）保留目标现有的翻译备份。
 // 拒绝符号链接、校验单文件大小、校验目标路径不逃逸，并要求源目录包含 SKILL.md。
 func CopyDir(source, destination string, preserveBackups bool) error {
 	sourceInfo, err := os.Stat(source)
@@ -38,21 +38,18 @@ func CopyDir(source, destination string, preserveBackups bool) error {
 		return errors.New("Skill 来源不是目录")
 	}
 
-	if err := os.MkdirAll(destination, 0700); err != nil {
+	parent := filepath.Dir(destination)
+	if err := os.MkdirAll(parent, 0700); err != nil {
 		return err
 	}
-	if preserveBackups {
-		if err := cleanDirPreservingBackups(destination); err != nil {
-			return err
-		}
-	} else if err := os.RemoveAll(destination); err != nil {
+	staging, err := os.MkdirTemp(parent, ".skill-stage-*")
+	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(destination, 0700); err != nil {
-		return err
-	}
+	staging = filepath.Clean(staging)
+	install := &stagedInstall{destination: destination, staging: staging}
+	defer install.abort()
 
-	cleanDest := filepath.Clean(destination)
 	sawSkillMD := false
 	err = filepath.WalkDir(source, func(current string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -82,8 +79,8 @@ func CopyDir(source, destination string, preserveBackups bool) error {
 		if fileInfo.Size() > maxCopyFileBytes {
 			return fmt.Errorf("Skill 文件过大: %s", relative)
 		}
-		target := filepath.Join(cleanDest, filepath.FromSlash(relative))
-		if !strings.HasPrefix(target, cleanDest+string(os.PathSeparator)) {
+		target := filepath.Join(staging, filepath.FromSlash(relative))
+		if !strings.HasPrefix(target, staging+string(os.PathSeparator)) {
 			return errors.New("Skill 文件路径无效")
 		}
 		if relative == "SKILL.md" {
@@ -97,6 +94,15 @@ func CopyDir(source, destination string, preserveBackups bool) error {
 	if !sawSkillMD {
 		return errors.New("Skill 缺少 SKILL.md")
 	}
+	if preserveBackups {
+		if err := copyPreservedBackups(destination, staging); err != nil {
+			return fmt.Errorf("保留翻译备份失败: %w", err)
+		}
+	}
+	if err := install.commit(); err != nil {
+		return err
+	}
+	install.cleanup()
 	return nil
 }
 
@@ -119,23 +125,6 @@ func copyFile(source, target string) error {
 		return err
 	}
 	return destinationFile.Close()
-}
-
-// cleanDirPreservingBackups 清理目录内的非备份条目，保留新旧格式的翻译备份目录。
-func cleanDirPreservingBackups(destination string) error {
-	entries, err := os.ReadDir(destination)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		if entry.Name() == backupsDirName || backupDirPattern.MatchString(entry.Name()) {
-			continue
-		}
-		if err := os.RemoveAll(filepath.Join(destination, entry.Name())); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // InstallFiles 把同一份 Skill 文件原子写入多个目标目录：先全部暂存，再逐个替换；
@@ -305,33 +294,6 @@ func writeFilesTo(directory string, files map[string][]byte) error {
 			return err
 		}
 	}
-	return nil
-}
-
-// WriteFilesPreserving 原子更新项目 Skill 的主体文件，并保留专用翻译备份目录。
-func WriteFilesPreserving(destination string, files map[string][]byte) error {
-	parent := filepath.Dir(destination)
-	if err := os.MkdirAll(parent, 0700); err != nil {
-		return err
-	}
-	staging, err := os.MkdirTemp(parent, ".skill-stage-*")
-	if err != nil {
-		return err
-	}
-	if err := writeFilesTo(staging, files); err != nil {
-		_ = os.RemoveAll(staging)
-		return err
-	}
-	if err := copyPreservedBackups(destination, staging); err != nil {
-		_ = os.RemoveAll(staging)
-		return err
-	}
-	install := &stagedInstall{destination: destination, staging: staging}
-	if err := install.commit(); err != nil {
-		install.abort()
-		return err
-	}
-	install.cleanup()
 	return nil
 }
 

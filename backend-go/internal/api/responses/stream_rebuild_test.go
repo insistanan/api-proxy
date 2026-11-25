@@ -195,6 +195,9 @@ func TestExtractResponsesUsageFromMapCacheSemantics(t *testing.T) {
 		if got.CacheReadInputTokens != 204800 {
 			t.Errorf("CacheReadInputTokens = %d, want 204800", got.CacheReadInputTokens)
 		}
+		if got.UnattributedCacheInput == nil || *got.UnattributedCacheInput != 271 {
+			t.Errorf("账本必须保留本次输入总量并排除累积缓存: %+v", got.UnattributedCacheInput)
+		}
 	})
 
 	t.Run("Anthropic 显式 cache_read 时 input_tokens 不再拆分", func(t *testing.T) {

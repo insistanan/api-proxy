@@ -40,7 +40,7 @@ func currentAvailabilityObservation(c *gin.Context) *availabilityObservation {
 
 func (a UpstreamAttempt) beginAvailabilityObservation(upstream *config.UpstreamConfig, apiKey string) {
 	if previous := currentAvailabilityObservation(a.Context); previous != nil && !previous.recorded && previous.status != 0 {
-		recordAttemptLog(a.Context, a.LogContext, previous.upstream, a.APIType, BindRequestLogID(a.Context),
+		finishAttempt(a.Context, a.LogContext, previous.upstream, a.APIType, BindRequestLogID(a.Context),
 			previous.upstream.BaseURL, previous.apiKey, "failed", previous.status, false, previous.startedAt,
 			"upstream", previous.body, true, a.IsStream, nil)
 	}

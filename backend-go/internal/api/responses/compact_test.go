@@ -146,7 +146,7 @@ func TestCompactMappedTargetUsesActualURLAndOwner(t *testing.T) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		_, _ = io.WriteString(w, `{"id":"compact-new","output":[{"type":"message","role":"user","content":"必须保留"},{"type":"compaction","encrypted_content":"opaque"}]}`)
+		_, _ = io.WriteString(w, `{"id":"compact-new","output":[{"type":"message","role":"user","content":"必须保留"},{"type":"compaction","encrypted_content":"opaque"}],"usage":{"input_tokens":100,"output_tokens":12,"input_tokens_details":{"cached_tokens":70}}}`)
 	}))
 	defer server.Close()
 	cfgManager, err := config.NewConfigManager(filepath.Join(t.TempDir(), "config.json"))
@@ -186,6 +186,10 @@ func TestCompactMappedTargetUsesActualURLAndOwner(t *testing.T) {
 	result := compactAttempt(c, &upstream, 0, nil, cfgManager, manager, sch, body, "compact-conv", &config.EnvConfig{RequestTimeout: 5000}).TryWithModelMappingFailover()
 	require.True(t, result.Handled)
 	require.Equal(t, "target-key", result.SuccessKey)
+	require.NotNil(t, result.Usage)
+	require.Equal(t, 30, result.Usage.InputTokens)
+	require.Equal(t, 70, result.Usage.CacheReadInputTokens)
+	require.Equal(t, 12, result.Usage.OutputTokens)
 	owner, found, err := manager.ResponseOwner("compact-new")
 	require.NoError(t, err)
 	require.True(t, found)

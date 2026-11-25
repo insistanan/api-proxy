@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/api/common"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
@@ -174,9 +173,9 @@ func handleSuccess(c *gin.Context, resp *http.Response, envCfg *config.EnvConfig
 		proxycore.LogResponseDetails(resp, bodyBytes, envCfg, "Decisions")
 	}
 
-	usage := common.ExtractUsage(bodyBytes)
+	usage := tokenusage.ExtractJSONUsage(bodyBytes)
 	if usage == nil {
-		usage = &types.Usage{InputTokens: tokenusage.EstimateTokens(string(originalBody))}
+		usage = &types.Usage{InputTokens: tokenusage.EstimateTokens(string(originalBody)), Estimated: true}
 	}
 	upstreamreq.ForwardResponseHeaders(resp.Header, c.Writer)
 	proxycore.MarkRequestLogFirstToken(c)

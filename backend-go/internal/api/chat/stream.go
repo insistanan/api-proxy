@@ -63,12 +63,12 @@ func handleStreamSuccess(c *gin.Context, resp *http.Response, envCfg *config.Env
 		// 危险命令 AI 闸门的事后否决：非阻塞检查，用户在否决窗口内加黑名单即终止当前流。
 		select {
 		case <-pipeline.AttachedStreamVetoDone(c):
-			return nil, pipeline.HandleAttachedStreamVeto(c)
+			return streamUsage, pipeline.HandleAttachedStreamVeto(c)
 		default:
 		}
 		rawLine, readErr := reader.ReadBytes('\n')
 		if err := pipeline.AttachedStreamVetoError(c); err != nil {
-			return nil, err
+			return streamUsage, err
 		}
 		if len(rawLine) == 0 && readErr != nil {
 			streamReadErr = readErr
@@ -78,26 +78,26 @@ func handleStreamSuccess(c *gin.Context, resp *http.Response, envCfg *config.Env
 		line := strings.TrimSuffix(strings.TrimSuffix(string(rawLine), "\n"), "\r")
 		trailingEventOpen = line != ""
 		trailingLineTerminated = strings.HasSuffix(string(rawLine), "\n")
-		if err := completion.consume(line); err != nil {
-			return nil, err
-		}
 		if usage := extractChatUsageFromSSELine(line); usage != nil {
 			streamUsage = mergeChatUsage(streamUsage, usage)
+		}
+		if err := completion.consume(line); err != nil {
+			return streamUsage, err
 		}
 		texts, toolArguments := extractChatStreamSafetyFragments(line)
 		for _, text := range texts {
 			if err := pipeline.FeedAttachedStreamTextForKey(c, text.key, text.fragment); err != nil {
-				return nil, err
+				return streamUsage, err
 			}
 		}
 		for _, toolArgument := range toolArguments {
 			if err := pipeline.FeedAttachedStreamToolArgumentsForKey(c, toolArgument.key, toolArgument.fragment, toolArgument.name); err != nil {
-				return nil, err
+				return streamUsage, err
 			}
 		}
 		restoredLine, err := pipeline.RestoreAttachedSSEEvent(c, string(rawLine))
 		if err != nil {
-			return nil, err
+			return streamUsage, err
 		}
 		if restoredLine == "" {
 			if readErr != nil {
@@ -108,7 +108,7 @@ func handleStreamSuccess(c *gin.Context, resp *http.Response, envCfg *config.Env
 		}
 		proxycore.MarkRequestLogFirstToken(c)
 		if _, err := c.Writer.Write([]byte(restoredLine)); err != nil {
-			return nil, err
+			return streamUsage, err
 		}
 		if flusher != nil {
 			flusher.Flush()
@@ -120,7 +120,7 @@ func handleStreamSuccess(c *gin.Context, resp *http.Response, envCfg *config.Env
 				separator = "\n\n"
 			}
 			if _, err := c.Writer.Write([]byte(separator)); err != nil {
-				return nil, err
+				return streamUsage, err
 			}
 			if flusher != nil {
 				flusher.Flush()
@@ -134,7 +134,7 @@ func handleStreamSuccess(c *gin.Context, resp *http.Response, envCfg *config.Env
 		}
 	}
 	if err := codec.CheckStreamCompletion(c.Request.Context(), completion.completed(), streamReadErr); err != nil {
-		return nil, err
+		return streamUsage, err
 	}
 	if trailingEventOpen && !completion.done {
 		separator := "\n"
@@ -142,7 +142,7 @@ func handleStreamSuccess(c *gin.Context, resp *http.Response, envCfg *config.Env
 			separator = "\n\n"
 		}
 		if _, err := c.Writer.Write([]byte(separator)); err != nil {
-			return nil, err
+			return streamUsage, err
 		}
 		if flusher != nil {
 			flusher.Flush()
@@ -150,15 +150,15 @@ func handleStreamSuccess(c *gin.Context, resp *http.Response, envCfg *config.Env
 	}
 	remaining, err := pipeline.DrainAttachedStreamRestoration(c)
 	if err != nil {
-		return nil, err
+		return streamUsage, err
 	}
 	for _, event := range remaining {
 		if _, err := c.Writer.Write([]byte(event)); err != nil {
-			return nil, err
+			return streamUsage, err
 		}
 	}
 	if err := pipeline.FlushAttachedStreamHooks(c); err != nil {
-		return nil, err
+		return streamUsage, err
 	}
 	return streamUsage, nil
 }

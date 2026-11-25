@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"log"
 	"net/http"
 	"strings"
@@ -16,7 +14,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/api/streams"
 	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/insistanan/api-proxy/internal/proxycore"
 	"github.com/insistanan/api-proxy/internal/safety/pipeline"
@@ -115,11 +116,11 @@ func handleImagesSuccess(c *gin.Context, resp *http.Response, envCfg *config.Env
 		if envCfg.Current().EnableResponseLogs {
 			log.Printf("[Images-Stream] Images 强制非流式结果转为 completed: %dms, 状态: %d", time.Since(startTime).Milliseconds(), resp.StatusCode)
 		}
-		err := writeImagesJSONAsCompletedStream(c, resp, envCfg, endpoint)
+		usage, err := writeImagesJSONAsCompletedStream(c, resp, envCfg, endpoint)
 		if envCfg.Current().EnableResponseLogs {
 			log.Printf("[Images-Stream] Images 强制非流式 completed 转发完成: %dms", time.Since(startTime).Milliseconds())
 		}
-		return nil, err
+		return usage, err
 	}
 
 	defer resp.Body.Close()
@@ -134,6 +135,10 @@ func handleImagesSuccess(c *gin.Context, resp *http.Response, envCfg *config.Env
 		}
 	}
 
+	var finishCapture func() *types.Usage
+	if tokenusage.RecorderFrom(c.Request.Context()) != nil {
+		finishCapture = captureNativeUsage(resp, envCfg.Current().MaxRequestBodySize)
+	}
 	err := streams.ForwardUpstreamResponseBody(c, resp, "application/json", isStream)
 	if envCfg.Current().EnableResponseLogs {
 		responseTime := time.Since(startTime).Milliseconds()
@@ -142,6 +147,9 @@ func handleImagesSuccess(c *gin.Context, resp *http.Response, envCfg *config.Env
 		} else {
 			log.Printf("[Images-Timing] Images 响应转发完成: %dms", responseTime)
 		}
+	}
+	if finishCapture != nil {
+		return finishCapture(), err
 	}
 	return nil, err
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/insistanan/api-proxy/internal/dialogue/session"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/infra/middleware"
+	"github.com/insistanan/api-proxy/internal/management/forest"
 	"github.com/insistanan/api-proxy/internal/orchestration/circuit"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
 	"github.com/insistanan/api-proxy/internal/orchestration/urlhealth"
@@ -29,6 +30,7 @@ import (
 	"github.com/insistanan/api-proxy/internal/storage/logger"
 	"github.com/insistanan/api-proxy/internal/storage/metrics"
 	"github.com/insistanan/api-proxy/internal/storage/sqlitedb"
+	"github.com/insistanan/api-proxy/internal/storage/usageledger"
 )
 
 // app 聚合一次进程运行的全部组件。
@@ -39,6 +41,8 @@ type app struct {
 	cfgManager            *config.ConfigManager
 	logStore              *logger.Store
 	requestLogStore       *metrics.RequestLogStore
+	usageLedger           *usageledger.Store
+	forest                *forest.Store
 	blockedStore          *sensitive.BlockedStore
 	gateStore             *sensitive.GateStore
 	mappingStore          *sensitive.MappingStore
@@ -103,6 +107,24 @@ func newApp() (_ *app, err error) {
 	}
 	a.registerCleanup("日志存储", a.logStore.Close)
 	a.requestLogStore = metrics.NewRequestLogStore(a.logStore)
+	const ledgerPath = ".config/usage-ledger.db"
+	ledger, ledgerErr := usageledger.Open(ledgerPath)
+	if ledgerErr != nil {
+		log.Printf("[UsageLedger-Open] 用量账本不可用: %v", ledgerErr)
+		if err := usageledger.MarkUnavailable(ledgerPath, time.Now()); err != nil {
+			log.Printf("[UsageLedger-Open] 保存用量停写标记失败: %v", err)
+		}
+	} else {
+		a.usageLedger = ledger
+		a.registerCleanup("用量账本", ledger.Close)
+		world, worldErr := forest.Open(".config/forest.db", ledger)
+		if worldErr != nil {
+			log.Printf("[Forest-Open] 个人森林不可用: %v", worldErr)
+		} else {
+			a.forest = world
+			a.registerCleanup("个人森林", world.Close)
+		}
+	}
 
 	a.registerCleanup("配置管理器", a.cfgManager.Close)
 

@@ -5,8 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -14,6 +13,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/api/streams"
 	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
@@ -102,16 +104,17 @@ func handleImagesResponsesSuccess(c *gin.Context, resp *http.Response, envCfg *c
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, fmt.Errorf("解析 Responses 图片响应失败: %w", err)
 	}
+	usage, usageErr := responsesImageUsage(response.Usage)
 	converted, err := convertResponsesImageResponse(response)
 	if err != nil {
-		return nil, err
+		return usage, err
 	}
 	if requestedStream {
 		writer := newImagesStreamWriter(c, resp.Header, endpoint)
 		for _, item := range response.Output {
 			if item.Type == "image_generation_call" {
 				if err := writer.completed(item, converted.Created); err != nil {
-					return nil, err
+					return usage, err
 				}
 			}
 		}
@@ -120,9 +123,8 @@ func handleImagesResponsesSuccess(c *gin.Context, resp *http.Response, envCfg *c
 		upstreamreq.StripEntityHeadersForRebuiltBody(c.Writer.Header())
 		c.JSON(http.StatusOK, converted)
 	}
-	usage, err := responsesImageUsage(response.Usage)
-	if err != nil {
-		return nil, fmt.Errorf("解析 Responses 图片用量失败: %w", err)
+	if usageErr != nil {
+		return nil, fmt.Errorf("解析 Responses 图片用量失败: %w", usageErr)
 	}
 	return usage, nil
 }
@@ -145,29 +147,33 @@ type nativeImagesJSONResponse struct {
 
 // writeImagesJSONAsCompletedStream 把上游完整 Images JSON 包成一条 completed SSE。
 // 不解码或再编码整段 base64，只把原始 JSON 字符串切片写进事件。
-func writeImagesJSONAsCompletedStream(c *gin.Context, resp *http.Response, envCfg *config.EnvConfig, endpoint string) error {
+func writeImagesJSONAsCompletedStream(c *gin.Context, resp *http.Response, envCfg *config.EnvConfig, endpoint string) (*types.Usage, error) {
 	reader, _, err := codec.WrapStreamReaderIfNeeded(resp)
 	if err != nil {
 		resp.Body.Close()
-		return fmt.Errorf("解压 Images 响应失败: %w", err)
+		return nil, fmt.Errorf("解压 Images 响应失败: %w", err)
 	}
 	defer reader.Close()
 	if envCfg == nil || envCfg.Current().MaxRequestBodySize <= 0 {
-		return fmt.Errorf("Images 响应大小限制必须为正数")
+		return nil, fmt.Errorf("Images 响应大小限制必须为正数")
 	}
 	body, err := codec.ReadWithOutputLimit(reader, envCfg.Current().MaxRequestBodySize)
 	if err != nil {
-		return fmt.Errorf("读取 Images 响应失败: %w", err)
+		return nil, fmt.Errorf("读取 Images 响应失败: %w", err)
 	}
 	var response nativeImagesJSONResponse
 	if err := json.Unmarshal(body, &response); err != nil {
-		return fmt.Errorf("解析 Images 响应失败: %w", err)
+		return nil, fmt.Errorf("解析 Images 响应失败: %w", err)
+	}
+	usage, err := tokenusage.ParseJSONUsage(response.Usage)
+	if err != nil {
+		log.Printf("[Images-Usage] 原生图片用量字段无效: %v", err)
 	}
 	if len(response.Error) > 0 && string(response.Error) != "null" {
-		return nativeImagesJSONError(response.Error)
+		return usage, nativeImagesJSONError(response.Error)
 	}
 	if len(response.Data) == 0 {
-		return fmt.Errorf("Images 接口未返回任何图片数据")
+		return usage, fmt.Errorf("Images 接口未返回任何图片数据")
 	}
 	created := response.Created
 	if created == 0 {
@@ -177,7 +183,7 @@ func writeImagesJSONAsCompletedStream(c *gin.Context, resp *http.Response, envCf
 	for _, item := range response.Data {
 		quoted, err := quotedImagesBase64JSON(item.Base64)
 		if err != nil {
-			return writer.failure(err)
+			return usage, writer.failure(err)
 		}
 		if err := writer.completed(responsesImageItem{
 			ResultJSON:    quoted,
@@ -188,10 +194,10 @@ func writeImagesJSONAsCompletedStream(c *gin.Context, resp *http.Response, envCf
 			Quality:       response.Quality,
 			Usage:         response.Usage,
 		}, created); err != nil {
-			return err
+			return usage, err
 		}
 	}
-	return nil
+	return usage, nil
 }
 
 func quotedImagesBase64JSON(raw json.RawMessage) (string, error) {

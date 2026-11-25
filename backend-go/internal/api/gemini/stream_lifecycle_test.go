@@ -152,6 +152,10 @@ func TestGeminiEntryPropagatesWriteFailure(t *testing.T) {
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/m:streamGenerateContent", nil)
 	c.Writer = &geminiFailWriter{ResponseWriter: c.Writer, err: writeErr}
-	_, err := handleStreamSuccess(c, &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`data: {"candidates":[{"content":{"parts":[{"text":"hello"}]}}]}`))}, "gemini", &config.EnvConfig{}, time.Now(), "m")
+	body := `data: {"candidates":[{"content":{"parts":[{"text":"hello"}]}}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5}}`
+	usage, err := handleStreamSuccess(c, &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, "gemini", &config.EnvConfig{}, time.Now(), "m")
 	require.ErrorIs(t, err, writeErr)
+	require.NotNil(t, usage)
+	require.Equal(t, 10, usage.InputTokens)
+	require.Equal(t, 5, usage.OutputTokens)
 }

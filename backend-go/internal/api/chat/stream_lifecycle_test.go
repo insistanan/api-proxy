@@ -29,6 +29,27 @@ func (b *chatResetBody) Read(p []byte) (int, error) {
 }
 func (b *chatResetBody) Close() error { return nil }
 
+type chatFailWriter struct {
+	gin.ResponseWriter
+	err error
+}
+
+func (w chatFailWriter) Write([]byte) (int, error) { return 0, w.err }
+
+func TestChatStreamWriteFailurePreservesUsage(t *testing.T) {
+	writeErr := errors.New("客户端连接已断开")
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	c.Writer = chatFailWriter{ResponseWriter: c.Writer, err: writeErr}
+	body := `data: {"choices":[{"index":0,"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5}}`
+	resp := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
+	usage, err := handleStreamSuccess(c, resp, &config.EnvConfig{}, time.Now())
+	require.ErrorIs(t, err, writeErr)
+	require.NotNil(t, usage)
+	require.Equal(t, 10, usage.InputTokens)
+	require.Equal(t, 5, usage.OutputTokens)
+}
+
 func TestChatStreamLifecycle(t *testing.T) {
 	resetErr := errors.New("read tcp: wsarecv: An existing connection was forcibly closed by the remote host.")
 	prefix := "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hello\"}}]}\n\n"

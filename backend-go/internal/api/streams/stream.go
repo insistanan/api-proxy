@@ -272,7 +272,7 @@ func HandleStreamResponse(
 			w.Write([]byte(BuildStreamErrorEvent(err)))
 			flusher.Flush()
 		}
-		return nil, err
+		return ctx.upstreamUsageSnapshot(), err
 	}
 
 	usage, processErr := ProcessStreamEvents(c, w, flusher, eventChan, errChan, ctx, envCfg, startTime, requestBody)
@@ -305,18 +305,18 @@ func ProcessStreamEvents(
 				log.Printf("[Messages-Stream] 客户端上下文已取消: %v", c.Request.Context().Err())
 			}
 			logPartialResponse(c, ctx, envCfg)
-			return nil, c.Request.Context().Err()
+			return ctx.upstreamUsageSnapshot(), c.Request.Context().Err()
 
 		case <-pipeline.AttachedStreamVetoDone(c):
 			// 危险命令 AI 闸门的事后否决：用户在否决窗口内加黑名单，
 			// 终止当前流，错误 SSE 和终止序列由协议上层统一写出。
 			logPartialResponse(c, ctx, envCfg)
-			return nil, pipeline.HandleAttachedStreamVeto(c)
+			return ctx.upstreamUsageSnapshot(), pipeline.HandleAttachedStreamVeto(c)
 
 		case event, ok := <-eventChan:
 			if err := pipeline.AttachedStreamVetoError(c); err != nil {
 				logPartialResponse(c, ctx, envCfg)
-				return nil, err
+				return ctx.upstreamUsageSnapshot(), err
 			}
 			if !ok {
 				eventChan = nil
@@ -325,24 +325,24 @@ func ProcessStreamEvents(
 			if err := ProcessStreamEvent(c, w, flusher, event, ctx, envCfg, requestBody); err != nil {
 				if !ctx.ClientGone {
 					if closeErr := ctx.closeDeliveredBlocks(w, flusher); closeErr != nil {
-						return nil, errors.Join(err, closeErr)
+						return ctx.upstreamUsageSnapshot(), errors.Join(err, closeErr)
 					}
 				}
 				// 内容安全错误由上层统一按入口协议编码，避免先写通用
 				// stream_error、随后再写 content_safety_error 的重复事件。
 				if !ctx.ClientGone && pipeline.ContentSafetyErrorFrom(err) == nil && pipeline.ContentSafetyHookErrorFrom(err) == nil {
 					if _, writeErr := w.Write([]byte(BuildStreamErrorEvent(err))); writeErr != nil {
-						return nil, errors.Join(err, writeErr)
+						return ctx.upstreamUsageSnapshot(), errors.Join(err, writeErr)
 					}
 					flusher.Flush()
 				}
-				return nil, err
+				return ctx.upstreamUsageSnapshot(), err
 			}
 
 		case err, ok := <-errChan:
 			if vetoErr := pipeline.AttachedStreamVetoError(c); vetoErr != nil {
 				logPartialResponse(c, ctx, envCfg)
-				return nil, vetoErr
+				return ctx.upstreamUsageSnapshot(), vetoErr
 			}
 			if !ok {
 				errChan = nil
@@ -353,32 +353,32 @@ func ProcessStreamEvents(
 				logPartialResponse(c, ctx, envCfg)
 				if !ctx.ClientGone {
 					if closeErr := ctx.closeDeliveredBlocks(w, flusher); closeErr != nil {
-						return nil, errors.Join(err, closeErr)
+						return ctx.upstreamUsageSnapshot(), errors.Join(err, closeErr)
 					}
 				}
 				if !ctx.ClientGone && pipeline.ContentSafetyErrorFrom(err) == nil && pipeline.ContentSafetyHookErrorFrom(err) == nil {
 					if _, writeErr := w.Write([]byte(BuildStreamErrorEvent(err))); writeErr != nil {
-						return nil, errors.Join(err, writeErr)
+						return ctx.upstreamUsageSnapshot(), errors.Join(err, writeErr)
 					}
 					flusher.Flush()
 				}
 
-				return nil, err
+				return ctx.upstreamUsageSnapshot(), err
 			}
 		}
 	}
 	remaining, err := pipeline.DrainAttachedStreamRestoration(c)
 	if err != nil {
-		return nil, err
+		return ctx.upstreamUsageSnapshot(), err
 	}
 	for _, pendingEvent := range remaining {
 		if _, err := w.Write([]byte(pendingEvent)); err != nil {
-			return nil, err
+			return ctx.upstreamUsageSnapshot(), err
 		}
 		flusher.Flush()
 	}
 	if err := pipeline.FlushAttachedStreamHooks(c); err != nil {
-		return nil, err
+		return ctx.upstreamUsageSnapshot(), err
 	}
 	return logStreamCompletion(c, ctx, envCfg, startTime), nil
 }

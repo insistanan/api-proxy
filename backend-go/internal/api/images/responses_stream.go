@@ -227,28 +227,28 @@ func convertResponsesImageStream(c *gin.Context, reader io.Reader, headers http.
 			case "response.completed":
 				created, usage, output, err := responsesImageStreamMetadata(event.Response)
 				if err != nil {
-					return nil, writer.failure(err)
+					return usage, writer.failure(err)
 				}
 				if created == 0 {
 					created = time.Now().Unix()
 				}
 				if output.Exists() && !output.IsArray() {
-					return nil, writer.failure(fmt.Errorf("Responses 完成事件的 output 必须是数组"))
+					return usage, writer.failure(fmt.Errorf("Responses 完成事件的 output 必须是数组"))
 				}
 				output.ForEach(func(_, value gjson.Result) bool {
 					err = collect(imageItemFromJSON(value), created)
 					return err == nil
 				})
 				if err != nil {
-					return nil, writer.failure(err)
+					return usage, writer.failure(err)
 				}
 				if len(seen) == 0 {
-					return nil, writer.failure(fmt.Errorf("Responses 接口未返回任何已完成的图片生成结果"))
+					return usage, writer.failure(fmt.Errorf("Responses 接口未返回任何已完成的图片生成结果"))
 				}
 				if !requestedStream {
 					result, err := convertResponsesImageResponse(responsesImageResponse{CreatedAt: created, Status: "completed", Output: pending})
 					if err != nil {
-						return nil, err
+						return usage, err
 					}
 					upstreamreq.ForwardResponseHeadersEx(headers, c.Writer, true)
 					upstreamreq.StripEntityHeadersForRebuiltBody(c.Writer.Header())

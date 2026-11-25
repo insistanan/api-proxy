@@ -18,6 +18,12 @@ const routes = [
     meta: { requiresAuth: true }
   },
   {
+    path: '/usage-journal',
+    name: 'usage-journal',
+    component: () => import('@/features/usage-journal/views/UsageJournalView.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
     path: '/logs',
     name: 'request-logs',
     component: () => import('@/features/observability/views/RequestLogsView.vue'),

@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"io"
 	"net/http"
 	"strings"
@@ -17,10 +15,13 @@ import (
 	"github.com/insistanan/api-proxy/internal/dialogue/session"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/infra/middleware"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
 	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"github.com/insistanan/api-proxy/internal/protocol/converters"
 	"github.com/insistanan/api-proxy/internal/protocol/providers"
+	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/insistanan/api-proxy/internal/proxycore"
 	"github.com/insistanan/api-proxy/internal/safety/pipeline"
@@ -220,7 +221,7 @@ func compactAttempt(
 			channelScheduler.MarkURLSuccess(scheduler.ChannelKindResponses, channelIndex, baseURL)
 		},
 		HandleSuccess: func(c *gin.Context, resp *http.Response, candidate *config.UpstreamConfig, apiKey string) (*types.Usage, error) {
-			return nil, finishCompactResponse(c, resp, bodyBytes, sessionManager, channelScheduler, conversationID)
+			return finishCompactResponse(c, resp, bodyBytes, sessionManager, channelScheduler, conversationID)
 		},
 	}
 }
@@ -344,7 +345,7 @@ func tryCompactWithKey(c *gin.Context, upstream *config.UpstreamConfig, apiKey s
 		shouldFailover, _ := proxycore.ShouldRetryWithNextKey(resp.StatusCode, respBody, cfgManager.GetFuzzyModeEnabledForProtocol("responses"), "Responses")
 		return false, &compactError{status: resp.StatusCode, body: respBody, shouldFailover: shouldFailover}
 	}
-	if err := finishCompactResponse(c, resp, bodyBytes, sessionManager, channelScheduler, conversationID); err != nil {
+	if _, err := finishCompactResponse(c, resp, bodyBytes, sessionManager, channelScheduler, conversationID); err != nil {
 		return false, &compactError{responseWritten: c.Writer.Written(), status: http.StatusInternalServerError, body: []byte(`{"error":"compact 响应处理失败"}`)}
 	}
 	return true, nil
@@ -354,21 +355,22 @@ func tryCompactWithKey(c *gin.Context, upstream *config.UpstreamConfig, apiKey s
 // 本地提交失败必须中性终止，不能重发已经成功的压缩操作。
 func finishCompactResponse(c *gin.Context, resp *http.Response, requestBody []byte,
 	sessionManager *session.SessionManager, channelScheduler *scheduler.ChannelScheduler,
-	conversationID string) error {
+	conversationID string) (*types.Usage, error) {
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("读取 compact 响应失败: %w", err)
-	}
-	if err := c.Request.Context().Err(); err != nil {
-		return err
+		return nil, fmt.Errorf("读取 compact 响应失败: %w", err)
 	}
 	respBody = codec.DecompressGzipIfNeeded(resp, respBody)
+	usage := tokenusage.ExtractJSONUsage(respBody)
+	if err := c.Request.Context().Err(); err != nil {
+		return usage, err
+	}
 	respBody, err = pipeline.RunAttachedPostResponseHooks(c.Request.Context(), c, respBody, resp)
 	if err != nil {
-		return err
+		return usage, err
 	}
 	if err := commitCompactSession(sessionManager, requestBody, respBody, conversationID, responseUpstreamOwner(resp)); err != nil {
-		return &compactCommitError{Err: fmt.Errorf("本地会话压缩状态保存失败: %w", err)}
+		return usage, &compactCommitError{Err: fmt.Errorf("本地会话压缩状态保存失败: %w", err)}
 	}
 	compactResponseID := extractCompactResponseID(respBody)
 	if compactResponseID != "" {
@@ -376,12 +378,12 @@ func finishCompactResponse(c *gin.Context, resp *http.Response, requestBody []by
 	}
 	respBody, err = clearCompactPreviousResponseIDs(respBody)
 	if err != nil {
-		return &compactCommitError{Err: fmt.Errorf("清理 compact 旧会话 ID 失败: %w", err)}
+		return usage, &compactCommitError{Err: fmt.Errorf("清理 compact 旧会话 ID 失败: %w", err)}
 	}
 	session.DefaultResponseChainManager().Clear(conversationID)
 	upstreamreq.ForwardResponseHeaders(resp.Header, c.Writer)
 	c.Data(resp.StatusCode, "application/json", respBody)
-	return nil
+	return usage, nil
 }
 
 type compactCommitError struct{ Err error }

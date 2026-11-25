@@ -143,7 +143,7 @@ func TestResponsesStreamClientCloseAfterImageKeepsUsage(t *testing.T) {
 		t.Fatal("客户端断开后没有完成上游读取")
 	}
 	require.NotNil(t, usage)
-	require.Equal(t, 9233, usage.InputTokens)
+	require.Equal(t, 5009, usage.InputTokens)
 	require.Equal(t, 702, usage.OutputTokens)
 	require.Equal(t, 4224, usage.CacheReadInputTokens)
 }

@@ -242,8 +242,8 @@ func checkResponsesEventUsage(event string, enableLog bool) (bool, bool, respons
 
 		eventType, _ := data["type"].(string)
 
-		// 完成与达到输出限制都携带最终 usage，不能把 incomplete 的真实值丢掉。
-		if eventType == "response.completed" || eventType == "response.incomplete" {
+		// 终止事件可能在失败或达到输出限制时也提供已消耗用量。
+		if eventType == "response.completed" || eventType == "response.incomplete" || eventType == "response.failed" {
 			if response, ok := data["response"].(map[string]interface{}); ok {
 				if usage, ok := response["usage"].(map[string]interface{}); ok {
 					usageData := extractResponsesUsageFromMap(usage)
@@ -318,6 +318,7 @@ func extractResponsesUsageFromMap(usage map[string]interface{}) responsesStreamU
 		// 仅当 CacheReadInputTokens 未被设置时才使用 OpenAI 的 cached_tokens
 		if data.CacheReadInputTokens == 0 {
 			data.CacheReadInputTokens = openAICachedTokens
+			data.UnattributedCacheInput = tokenusage.UnattributedCacheInput(data.InputTokens, openAICachedTokens)
 		}
 		// cache_read_input_tokens=0 只是零值占位，不能阻止 OpenAI
 		// cached_tokens 的子集拆分；只有明确的非零 Anthropic cache-read
@@ -409,6 +410,7 @@ func updateResponsesStreamUsage(collected *responsesStreamUsage, usageData respo
 	}
 	if usageData.CacheReadInputTokens > 0 {
 		collected.CacheReadInputTokens = usageData.CacheReadInputTokens
+		collected.UnattributedCacheInput = usageData.UnattributedCacheInput
 	}
 	if usageData.CacheCreation5mInputTokens > 0 {
 		collected.CacheCreation5mInputTokens = usageData.CacheCreation5mInputTokens
