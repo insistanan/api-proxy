@@ -58,6 +58,17 @@ describe('手动恢复渠道', () => {
     metrics[0] = { ...metric, activeConversations: 1 }
     expect(getMetrics(2)).not.toBe(original)
     expect(getMetrics(2)?.activeConversations).toBe(1)
+    const grouped = getMetrics(2)
+    metrics[0] = { ...metric, activeConversations: 1, activeBranches: 2, unidentifiedBranchConversations: 0 }
+    expect(getMetrics(2)).not.toBe(grouped)
+    expect(getMetrics(2)?.activeBranches).toBe(2)
+    const title = state.channelConcurrencyTitle as (index: number) => string
+    expect(title(2)).toContain('1 个会话，2 个活跃分支')
+    metrics[0] = { ...metric, activeConversations: 1, activeBranches: 1, unidentifiedBranchConversations: 1 }
+    expect(title(2)).toContain('缺少分支标识')
+    expect(title(2)).toContain('实际分支数可能更多')
+    metrics[0] = { ...metric, activeConversations: 1 }
+    expect(title(2)).toBe('当前服务尚未提供分支并发统计')
   })
 
   it.each(['open', 'half_open'] as const)('配置为 active、运行时为 %s 时点击徽章直接恢复', async circuitState => {

@@ -18,14 +18,16 @@ var errResponsesImageUsageDrainTimeout = errors.New("图片已交付，但等待
 // responsesImageLifecycle 只在图片完整写出后忽略客户端取消，并短暂补收用量。
 // 请求开始时仍传播取消；父 deadline 与生图总超时始终有效。
 type responsesImageLifecycle struct {
-	ctx         context.Context
-	cancel      context.CancelCauseFunc
-	cancelTimer context.CancelFunc
-	stopParent  func() bool
-	mu          sync.Mutex
-	delivered   bool
-	closed      bool
-	drainTimer  *time.Timer
+	ctx           context.Context
+	cancel        context.CancelCauseFunc
+	cancelTimer   context.CancelFunc
+	stopParent    func() bool
+	mu            sync.Mutex
+	delivered     bool
+	finishing     bool
+	pendingCancel error
+	closed        bool
+	drainTimer    *time.Timer
 }
 
 func newResponsesImageLifecycle(parent context.Context) *responsesImageLifecycle {
@@ -40,7 +42,11 @@ func newResponsesImageLifecycle(parent context.Context) *responsesImageLifecycle
 		lifecycle.mu.Lock()
 		defer lifecycle.mu.Unlock()
 		if !lifecycle.delivered {
-			lifecycle.cancel(context.Cause(parent))
+			if lifecycle.finishing {
+				lifecycle.pendingCancel = context.Cause(parent)
+			} else {
+				lifecycle.cancel(context.Cause(parent))
+			}
 		}
 	})
 	if err := parent.Err(); err != nil {
@@ -49,9 +55,32 @@ func newResponsesImageLifecycle(parent context.Context) *responsesImageLifecycle
 	return lifecycle
 }
 
-func (lifecycle *responsesImageLifecycle) markDelivered() {
+// finishDelivery 在最后一段写入期间暂存父取消，按实际交付结果决定是否传播。
+// 网络写入不持生命周期锁，清理和 deadline 仍可生效；下游仍使用原请求 Context。
+func (lifecycle *responsesImageLifecycle) finishDelivery(write func() error) error {
+	lifecycle.mu.Lock()
+	if cause := context.Cause(lifecycle.ctx); cause != nil {
+		lifecycle.mu.Unlock()
+		return cause
+	}
+	lifecycle.finishing = true
+	lifecycle.mu.Unlock()
+
+	err := write()
+
 	lifecycle.mu.Lock()
 	defer lifecycle.mu.Unlock()
+	lifecycle.finishing = false
+	if err == nil {
+		lifecycle.markDeliveredLocked()
+	} else if lifecycle.pendingCancel != nil {
+		lifecycle.cancel(lifecycle.pendingCancel)
+	}
+	lifecycle.pendingCancel = nil
+	return err
+}
+
+func (lifecycle *responsesImageLifecycle) markDeliveredLocked() {
 	if lifecycle.delivered || lifecycle.closed {
 		return
 	}

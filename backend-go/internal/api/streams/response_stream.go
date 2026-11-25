@@ -9,7 +9,9 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/api/common"
 	"github.com/insistanan/api-proxy/internal/infra/utils"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"github.com/insistanan/api-proxy/internal/proxycore"
 )
 
@@ -26,12 +28,13 @@ func IsEventStreamResponse(resp *http.Response) bool {
 }
 
 // ForwardUpstreamResponseBody 逐块转发上游响应体，避免为图片 Base64 或 SSE 事件设置固定行长上限。
-// 调用方负责关闭 resp.Body。
+// 本函数负责取消绑定和关闭 resp.Body；SSE 必须使用有完成判据的 ForwardEventStream。
 func ForwardUpstreamResponseBody(c *gin.Context, resp *http.Response, defaultContentType string, flush bool) error {
-	if c == nil || resp == nil || resp.Body == nil {
-		return nil
+	if c == nil || c.Request == nil || resp == nil || resp.Body == nil {
+		return errors.New("转发上游响应缺少请求或响应体")
 	}
 
+	defer codec.BindStreamBody(c.Request.Context(), resp.Body)()
 	// 透传模式未在本地解压响应体，保留 Content-Encoding 等实体头供客户端自行解压
 	upstreamreq.ForwardResponseHeadersEx(resp.Header, c.Writer, false)
 	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
@@ -50,23 +53,29 @@ func ForwardUpstreamResponseBody(c *gin.Context, resp *http.Response, defaultCon
 	}
 
 	c.Status(resp.StatusCode)
-	flusher, _ := c.Writer.(http.Flusher)
+	var flusher http.Flusher
+	if flush {
+		flusher = c.Writer
+	}
 	buffer := utils.GetChunkBuffer32KB()
 	defer utils.PutChunkBuffer32KB(buffer)
 	markedFirstChunk := false
 
 	for {
+		if err := c.Request.Context().Err(); err != nil {
+			return err
+		}
 		n, readErr := resp.Body.Read(buffer)
+		if err := c.Request.Context().Err(); err != nil {
+			return err
+		}
 		if n > 0 {
 			if !markedFirstChunk {
 				proxycore.MarkRequestLogFirstToken(c)
 				markedFirstChunk = true
 			}
-			if _, writeErr := c.Writer.Write(buffer[:n]); writeErr != nil {
+			if writeErr := common.WriteStream(c.Writer, flusher, buffer[:n]); writeErr != nil {
 				return writeErr
-			}
-			if flush && flusher != nil {
-				flusher.Flush()
 			}
 		}
 

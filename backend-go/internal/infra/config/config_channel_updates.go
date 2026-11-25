@@ -10,6 +10,12 @@ import (
 // applyCommonUpdates 应用通用的 UpstreamUpdate 字段到上游配置
 // 返回 shouldResetMetrics 标识是否需要重置指标
 func applyCommonUpdates(upstream *UpstreamConfig, index int, updates UpstreamUpdate, label string) (bool, error) {
+	if updates.MaxBranchConcurrency != nil {
+		if err := validateBranchConcurrency(*updates.MaxBranchConcurrency); err != nil {
+			return false, err
+		}
+		upstream.MaxBranchConcurrency = *updates.MaxBranchConcurrency
+	}
 	if updates.CacheKeepalive != nil {
 		upstream.CacheKeepalive = *updates.CacheKeepalive
 	}

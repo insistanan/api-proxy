@@ -135,7 +135,7 @@ func validateNativeImagesMultipartOutput(contentType string, body []byte) error 
 		}
 		name := part.FormName()
 		switch name {
-		case "output_format", "complexity", "frame_count", "frame_duration_ms", "svg", "output_compression", "partial_images", "stream", "prompt_rewriter", "mask", "n":
+		case "model", "response_format", "output_format", "complexity", "frame_count", "frame_duration_ms", "svg", "output_compression", "partial_images", "stream", "prompt_rewriter", "mask", "n":
 		default:
 			continue
 		}

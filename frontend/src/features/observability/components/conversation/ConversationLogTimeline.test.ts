@@ -28,6 +28,39 @@ beforeEach(() => setActivePinia(createPinia()))
 afterEach(() => vi.restoreAllMocks())
 
 describe('会话时间线按需加载', () => {
+  it('并发请求分别计时，结束后使用固定耗时，缺失时间不伪造耗时', async () => {
+    const requests = [
+      { ...summary('main'), status: 'processing', startedAt: 1000, promptPreview: '检查主线问题' },
+      { ...summary('side', 2), status: 'retrying', startedAt: 61000, promptPreview: '检查旁路问题' }
+    ]
+    vi.spyOn(api, 'getSystemLog').mockImplementation(id => Promise.resolve({ ...detail(id), summary: requests.find(item => item.requestId === id)! }))
+    const state = await mountSetup({ groupKey: 'conversation', requests })
+    await (state.loadOpened as () => Promise<void>)()
+    const duration = state.requestDuration as (item: SystemLogSummary) => string
+    ;(state.now as Ref<number>).value = 66000
+    expect(duration(requests[0]!)).toBe('已运行 1分5秒')
+    expect(duration(requests[1]!)).toBe('已运行 5秒')
+    expect(get<{ summary: SystemLogSummary }[]>(state, 'rows').map(row => row.summary.promptPreview)).toEqual(['检查主线问题', '检查旁路问题'])
+    ;(state.now as Ref<number>).value = 126000
+    expect(duration(requests[0]!)).toBe('已运行 2分5秒')
+    expect(duration({ ...requests[1]!, status: 'completed', endedAt: 66000, durationMs: 5000 })).toBe('耗时 5秒')
+    expect(duration({ ...requests[1]!, status: 'completed', endedAt: 61000, durationMs: 0 })).toBe('耗时 0秒')
+    expect(duration({ ...requests[1]!, status: 'cancelled', endedAt: 65000 })).toBe('耗时 4秒')
+    expect(duration({ ...requests[1]!, status: 'interrupted' })).toBe('耗时未知')
+    expect(duration({ ...requests[1]!, startedAt: undefined })).toBe('耗时未知')
+  })
+
+  it('折叠调用的旧详情不能覆盖最新终态和耗时', async () => {
+    const requests = [{ ...summary('done'), endedAt: 5001, durationMs: 5000 }, summary('latest', 2)]
+    vi.spyOn(api, 'getSystemLog').mockImplementation(id => Promise.resolve({ ...detail(id), summary: { ...summary(id), status: 'processing' } }))
+    const state = await mountSetup({ groupKey: 'conversation', requests })
+    await (state.loadOpened as () => Promise<void>)()
+    const row = get<{ active: boolean; summary: SystemLogSummary; status: { label: string } }[]>(state, 'rows')[0]!
+    expect(row.active).toBe(false)
+    expect(row.status.label).toBe('已完成')
+    expect((state.requestDuration as (item: SystemLogSummary) => string)(row.summary)).toBe('耗时 5秒')
+  })
+
   it('只加载展开轮次及前序，重复刷新复用正文', async () => {
     const requests = Array.from({ length: 6 }, (_, index) => summary(String(index + 1), index + 1))
     const fetch = vi.spyOn(api, 'getSystemLog').mockImplementation(id => Promise.resolve(detail(id, Number(id))))

@@ -18,7 +18,7 @@
 | `proxycore/` | 统一请求编排、上游尝试、故障转移与日志策略；入口 protocol.go |
 | `clients/` | 客户端配置接口与文件操作；协同服务在下方子包中 |
 | `management/` | 管理支撑：channelcrud、modelcatalog、modelfingerprint（指定上游采样、后台任务与指纹评分）、forest（成长、岛屿与计时） |
-| `orchestration/` | scheduler、circuit、upstreamcontrol、availability、proxy、ratelimit、urlhealth |
+| `orchestration/` | scheduler、circuit、upstreamcontrol、availability、cachekeepalive（会话缓存保活）、proxy、ratelimit、urlhealth |
 | `protocol/` | converters、providers、codec、items、tokenusage、visionmedia、types |
 | `safety/` | sensitive、llmgate、pipeline、bodyfilter、mediasanitizer、visionlayer |
 | `dialogue/` | session、conversation、prompt、routing（intent / semantic） |
@@ -35,7 +35,8 @@
 | `api/admin/{conversations,extensions,forest,intent,logs,security,settings,usage}` | 对应业务域的管理接口 |
 | `api/channels`、`api/modelapi` | 渠道与模型接口 |
 | `api/system` | 健康检查、前端资源与代理模型列表 |
-| `api/streams` | 流式写回与生命周期处理 |
+| `api/streams` | 跨协议响应体转发、SSE 交付与生命周期处理 |
+| `api/streams/messages` | Messages 专用事件、usage、推理累积与流式日志 |
 | `api/common` | HTTP 接入层共用契约与工具 |
 
 `clients/` 子包：`clients/piagent` 处理 pi-agent 配置，`clients/mcpsync` 同步 MCP，`clients/skills` 管理 Skill 文件，`clients/extensions` 负责 Skills / MCP 统一目录迁移。

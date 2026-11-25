@@ -15,6 +15,21 @@ import (
 	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 )
 
+const conversationBranchContextKey = "__conversation_branch_key"
+
+// conversationBranchKey 只使用稳定的执行身份，不使用轮次、请求、缓存键或父节点标识。
+// 分字段编码避免不同维度或包含分隔符的标识相撞；空键表示客户端未提供分支身份。
+func conversationBranchKey(identity conversation.Identity) string {
+	if identity.ThreadID == "" && identity.BranchID == "" && identity.AgentID == "" {
+		return ""
+	}
+	hash := sha256.New()
+	for _, field := range []string{identity.ThreadID, identity.BranchID, identity.AgentID} {
+		_, _ = hash.Write([]byte(strconv.Itoa(len(field)) + ":" + field))
+	}
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
 // RedactionScope 只接受已认证调用方和明确、稳定的会话身份。
 // previous_response_id 会逐轮改变，窗口/缓存键也不是会话授权依据。
 func RedactionScope(identity conversation.Identity, accessKey string) string {
@@ -37,8 +52,12 @@ func ResolveConversationIdentity(c *gin.Context, bodyBytes []byte) conversation.
 	metadata, _ := root["metadata"].(map[string]interface{})
 
 	if c != nil {
+		codexThreadID, codexSessionID := extractCodexTurnIdentity(c.GetHeader("X-Codex-Turn-Metadata"))
+		identity.ThreadID = firstConversationValue(firstHeader(c,
+			"X-Thread-Id", "Thread-Id", "Thread_id"), codexThreadID)
+		identity.BranchID = firstHeader(c, "X-Branch-Id", "Branch-Id", "Branch_id")
 		identity.AgentID = firstHeader(c,
-			"X-Cursor-Agent-Id", "X-Agent-Id", "Agent-Id")
+			"X-Cursor-Agent-Id", "X-Agent-Id", "Agent-Id", "Agent_id")
 		identity.ParentAgentID = firstHeader(c,
 			"X-Cursor-Parent-Agent-Id", "X-Parent-Agent-Id", "Parent-Agent-Id")
 		if value := firstHeader(c,
@@ -74,11 +93,11 @@ func ResolveConversationIdentity(c *gin.Context, bodyBytes []byte) conversation.
 			}
 		}
 		if identity.ExplicitID == "" {
-			if threadID, sessionID := extractCodexTurnIdentity(c.GetHeader("X-Codex-Turn-Metadata")); threadID != "" {
-				identity.ExplicitID = threadID
+			if codexThreadID != "" {
+				identity.ExplicitID = codexThreadID
 				identity.Source = "codex_thread"
-			} else if sessionID != "" {
-				identity.ScopeID = firstConversationValue(identity.ScopeID, sessionID)
+			} else if codexSessionID != "" {
+				identity.ScopeID = firstConversationValue(identity.ScopeID, codexSessionID)
 			}
 		}
 		identity.ScopeID = firstConversationValue(identity.ScopeID, firstHeader(c,
@@ -108,6 +127,12 @@ func ResolveConversationIdentity(c *gin.Context, bodyBytes []byte) conversation.
 		}
 	}
 
+	identity.ThreadID = firstConversationValue(identity.ThreadID,
+		firstMapString(root, "thread_id", "threadId"),
+		firstMapString(metadata, "thread_id", "threadId"))
+	identity.BranchID = firstConversationValue(identity.BranchID,
+		firstMapString(root, "branch_id", "branchId"),
+		firstMapString(metadata, "branch_id", "branchId"))
 	identity.AgentID = firstConversationValue(identity.AgentID,
 		firstMapString(root, "agent_id", "agentId"),
 		firstMapString(metadata, "agent_id", "agentId"))
@@ -131,11 +156,18 @@ func ResolveConversationIdentity(c *gin.Context, bodyBytes []byte) conversation.
 					}
 				}
 			}
+			identity.ThreadID = firstConversationValue(identity.ThreadID, firstMapString(embedded, "thread_id", "threadId"))
+			identity.BranchID = firstConversationValue(identity.BranchID, firstMapString(embedded, "branch_id", "branchId"))
 			identity.AgentID = firstConversationValue(identity.AgentID, firstMapString(embedded, "agent_id", "agentId"))
 			identity.ParentAgentID = firstConversationValue(identity.ParentAgentID, firstMapString(embedded, "parent_agent_id", "parentAgentId"))
 		} else if identity.ScopeID == "" {
 			identity.ScopeID = userID
 		}
+	}
+	// 仅提供通用线程请求头的客户端也具有稳定身份，避免并行请求走匿名历史猜测。
+	if identity.ExplicitID == "" && identity.ThreadID != "" {
+		identity.ExplicitID = identity.ThreadID
+		identity.Source = "thread_header"
 	}
 	identity.ScopeID = firstConversationValue(identity.ScopeID,
 		firstMapString(root, "prompt_cache_key", "promptCacheKey", "user"),

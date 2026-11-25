@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/contract"
+	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"mime"
 	"net/http"
 	"strings"
@@ -21,7 +23,7 @@ import (
 // 工具，Responses 顶层 model 单独取渠道配置，避免把图片模型当作对话主模型。
 func buildImagesResponsesRequest(c *gin.Context, upstream *config.UpstreamConfig, apiKey, endpoint string, body []byte) (*http.Request, error) {
 	if endpoint != "/images/generations" && endpoint != "/images/edits" {
-		return nil, &proxycore.RequestValidationError{Err: fmt.Errorf("Responses 图片渠道不支持 %s，请使用 Images API 渠道", endpoint)}
+		return nil, contract.Unsupported("Responses 图片渠道不支持 %s，请使用 Images API 渠道", endpoint)
 	}
 	payload, err := readImagesPayload(c.GetHeader("Content-Type"), body)
 	if err != nil {
@@ -29,6 +31,7 @@ func buildImagesResponsesRequest(c *gin.Context, upstream *config.UpstreamConfig
 	}
 	converted, err := convertImagesRequestToResponses(payload, upstream, endpoint == "/images/edits")
 	if err != nil {
+		if types.IsUnsupportedProtocol(err) { return nil, err }
 		return nil, &proxycore.RequestValidationError{Err: err}
 	}
 	encoded, err := codec.MarshalJSONNoEscape(converted)
@@ -147,7 +150,7 @@ func convertImagesRequestToResponses(payload map[string]interface{}, upstream *c
 		logImagesModelMapping(model, resolvedModel)
 	}
 	if format, exists := payload["response_format"]; exists && format != "b64_json" {
-		return nil, fmt.Errorf("Responses 图片渠道只能返回 b64_json，无法生成托管图片 URL")
+		return nil, contract.Unsupported("Responses 图片渠道只能返回 b64_json，无法生成托管图片 URL")
 	}
 	if stream, exists := payload["stream"]; exists {
 		if _, ok := stream.(bool); !ok {
@@ -160,7 +163,7 @@ func convertImagesRequestToResponses(payload map[string]interface{}, upstream *c
 			return nil, err
 		}
 		if count != 1 {
-			return nil, fmt.Errorf("Responses 图片渠道只支持 n=1；多图生成请使用 Images API 渠道")
+			return nil, contract.Unsupported("Responses 图片渠道只支持 n=1；多图生成请使用 Images API 渠道")
 		}
 	}
 	// 顶层 model 是 Responses 主模型。真正的生图模型只写进 image_generation 工具。
@@ -180,7 +183,7 @@ func convertImagesRequestToResponses(payload map[string]interface{}, upstream *c
 		case "model", "prompt", "stream", "response_format", "images", "image", "mask", "user", "metadata", "safety_identifier", "n":
 			// 通用字段在下方分别写入 Responses 请求。
 		default:
-			return nil, fmt.Errorf("Images 参数 %q 无法转换为 Responses 图片请求", key)
+			return nil, contract.Unsupported("Images 参数 %q 无法转换为 Responses 图片请求", key)
 		}
 	}
 	content := []interface{}{map[string]interface{}{"type": "input_text", "text": prompt}}

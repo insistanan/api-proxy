@@ -36,6 +36,9 @@ func validateConcurrency(candidate *Config) error {
 			if upstream.MaxConcurrency < 1 {
 				return fmt.Errorf("渠道 %q 的最大并发必须是正整数", upstream.Name)
 			}
+			if err := validateBranchConcurrency(upstream.BranchConcurrencyLimit()); err != nil {
+				return fmt.Errorf("渠道 %q: %w", upstream.Name, err)
+			}
 			if upstream.ClientIdentityMode != "" && upstream.ClientIdentityMode != "inherit" && upstream.ClientIdentityMode != "api" && upstream.ClientIdentityMode != "compatibility" {
 				return fmt.Errorf("渠道 %q 的客户端身份模式无效", upstream.Name)
 			}
@@ -54,6 +57,7 @@ func (cm *ConfigManager) publishConfigLocked(candidate Config) {
 		list := *set.upstreams
 		for i := range list {
 			upstream := &list[i]
+			upstream.MaxBranchConcurrency = upstream.BranchConcurrencyLimit()
 			upstream.upstreamProtocol = upstream.ServiceType
 			if upstream.ServiceType == "openai" {
 				switch set.kind {

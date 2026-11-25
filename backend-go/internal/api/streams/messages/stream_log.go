@@ -1,8 +1,8 @@
 // 本文件负责流式响应结束时的收尾：logStreamCompletion 输出完成/事件统计日志、
-// 触发隐式缓存推断，并把上游原始 usage 组装成 *types.Usage 返回；
+// 把上游原始 usage 组装成 *types.Usage 返回；
 // logPartialResponse 处理上游中断时的部分内容日志；logSynthesizedContent 保存
 // StreamSynthesizer 的合成文本（合成不可用时回退打印原始 LogBuffer）。
-package streams
+package messages
 
 import (
 	"context"
@@ -36,10 +36,7 @@ func logStreamCompletion(c *gin.Context, ctx *Context, envCfg *config.EnvConfig,
 		logSynthesizedContent(c, ctx, envCfg.ShouldLog("debug"))
 	}
 
-	// 推断隐式缓存读取
-	inferImplicitCacheRead(ctx, envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug"))
-
-	// 指标使用上游原始快照。CollectedUsage 可能已经包含客户端补全或隐式缓存推断，
+	// 指标使用上游原始快照。CollectedUsage 可能已经包含客户端补全，
 	// 只能用于客户端事件处理，不能污染计费、熔断和性能画像。
 	return ctx.upstreamUsageSnapshot()
 }

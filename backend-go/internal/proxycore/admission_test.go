@@ -55,6 +55,10 @@ func TestSingleChannelCapacityIsExplicitAndNeutral(t *testing.T) {
 	require.True(t, result.Handled)
 	require.Equal(t, channelHealthNeutral, result.Health)
 	require.Equal(t, http.StatusServiceUnavailable, ctx.Writer.Status())
+	branch := localAdmissionResult(newAttemptTestContext(context.Background()), scheduler.ErrBranchCapacity, true)
+	require.False(t, branch.Handled)
+	require.False(t, branch.AbortFailover)
+	require.Equal(t, channelHealthNeutral, branch.Health)
 }
 
 func TestMultiChannelCapacityCanTransferButBudgetCannot(t *testing.T) {

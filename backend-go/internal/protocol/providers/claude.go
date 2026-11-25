@@ -162,16 +162,8 @@ func (p *ClaudeProvider) ConvertToClaudeResponse(providerResp *types.ProviderRes
 	return &claudeResp, nil
 }
 
-// HandleStreamResponse 处理流式响应（直接透传）
-// 兼容旧签名：内部委托带 ctx 的版本，使用 context.Background()。
-func (p *ClaudeProvider) HandleStreamResponse(body io.ReadCloser) (<-chan string, <-chan error, error) {
-	return p.HandleStreamResponseCtx(context.Background(), body)
-}
-
 // HandleStreamResponseCtx 处理流式响应（直接透传，支持客户端断连中止）
-// 修复：生产 goroutine 向 eventChan 发送事件时 select ctx.Done()，
-// 客户端断连（消费者不再消费）时立即停止读取上游并退出，杜绝
-// "上游持续产出 > 缓冲容量(100) 后 goroutine 永久阻塞在 channel send"的泄漏。
+// 发送事件和读取正文都绑定 ctx，消费方退出后不会阻塞在 channel 或上游读取中。
 func (p *ClaudeProvider) HandleStreamResponseCtx(ctx context.Context, body io.ReadCloser) (<-chan string, <-chan error, error) {
 	pump := newStreamPump(ctx)
 	eventChan, errChan := pump.eventChan, pump.errChan
@@ -199,21 +191,33 @@ func (p *ClaudeProvider) HandleStreamResponseCtx(ctx context.Context, body io.Re
 				event += "\n"
 			}
 			terminal := false
-			if strings.Contains(event, "message_stop") {
-				for _, line := range strings.Split(event, "\n") {
-					payload, isData := codec.SSEDataJSON(line)
-					if !isData {
-						continue
-					}
-					var data struct {
-						Type string `json:"type"`
-					}
-					if json.Unmarshal([]byte(payload), &data) == nil && data.Type == "message_stop" {
-						terminal = true
-						break
-					}
+			errorEvent := false
+			for _, line := range strings.Split(event, "\n") {
+				if name, ok := strings.CutPrefix(line, "event:"); ok && strings.TrimSpace(name) == "error" {
+					errorEvent = true
 				}
+				payload, isData := codec.SSEDataJSON(line)
+				if !isData {
+					continue
+				}
+				var data struct {
+					Type  string          `json:"type"`
+					Error json.RawMessage `json:"error"`
+				}
+				if json.Unmarshal([]byte(payload), &data) != nil {
+					continue
+				}
+				if data.Type == "error" || (len(data.Error) > 0 && string(data.Error) != "null") {
+					pump.fail(NewUpstreamStreamFailedError(proxycoreIsModelCapacity(payload), payload))
+					return false
+				}
+				terminal = terminal || data.Type == "message_stop"
 			}
+			if errorEvent {
+				pump.fail(NewUpstreamStreamFailedError(proxycoreIsModelCapacity(event), event))
+				return false
+			}
+
 			// 收到完整终止事件即结束读取；随后上游关闭连接不属于流处理失败。
 			return trySend(event) && !terminal
 		}

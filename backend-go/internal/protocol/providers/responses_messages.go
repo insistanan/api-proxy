@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/converters"
 	"io"
 	"net/http"
 	"strings"
@@ -34,8 +35,8 @@ type claudeResponsesRequest struct {
 	Input                []interface{} `json:"input"`
 	Stream               bool          `json:"stream"`
 	MaxOutputTokens      int           `json:"max_output_tokens,omitempty"`
-	Temperature          float64       `json:"temperature,omitempty"`
-	TopP                 float64       `json:"top_p,omitempty"`
+	Temperature          *float64      `json:"temperature,omitempty"`
+	TopP                 *float64      `json:"top_p,omitempty"`
 	Stop                 []string      `json:"stop,omitempty"`
 	Tools                []interface{} `json:"tools,omitempty"`
 	ToolChoice           interface{}   `json:"tool_choice,omitempty"`
@@ -77,6 +78,9 @@ func (p *MessagesResponsesProvider) ConvertToProviderRequest(c *gin.Context, ups
 // BuildRequest 以显式输入构造 Responses 上游请求（R4-a 主实现，不依赖 gin）。
 func (p *MessagesResponsesProvider) buildRequest(input RequestInput, upstream *config.UpstreamConfig, apiKey string) (*RequestOutcome, error) {
 	originalBodyBytes := input.Body
+	if err := converters.ValidateClaudeConversion(input.Body, "responses"); err != nil {
+		return nil, err
+	}
 
 	var claudeReq types.ClaudeRequest
 	if err := json.Unmarshal(originalBodyBytes, &claudeReq); err != nil {
@@ -131,11 +135,7 @@ func (p *MessagesResponsesProvider) ConvertToClaudeResponse(providerResp *types.
 	if p != nil && p.enableChain && p.claudeReq != nil {
 		rememberResponsesChainFromBody(p.conversationID, p.claudeReq, p.upstream, p.resolvedModel, providerResp.Body, p.chainIdentity)
 	}
-	return responsesResponseToClaude(&responsesResp), nil
-}
-
-func (p *MessagesResponsesProvider) HandleStreamResponse(body io.ReadCloser) (<-chan string, <-chan error, error) {
-	return p.HandleStreamResponseCtx(context.Background(), body)
+	return responsesResponseToClaude(&responsesResp)
 }
 
 func (p *MessagesResponsesProvider) HandleStreamResponseCtx(ctx context.Context, body io.ReadCloser) (<-chan string, <-chan error, error) {

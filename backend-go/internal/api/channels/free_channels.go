@@ -27,14 +27,28 @@ func GetFreeChannels(cfg *config.ConfigManager) gin.HandlerFunc {
 
 func UpdateKiloFreeChannel(cfg *config.ConfigManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		var body json.RawMessage
 		var input struct {
 			Enabled *bool `json:"enabled"`
 		}
-		if err := c.ShouldBindJSON(&input); err != nil || input.Enabled == nil {
-			c.JSON(400, gin.H{"error": "必须提供 enabled 布尔值"})
+		if err := c.ShouldBindJSON(&body); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		if err := cfg.SetKiloEnabled(*input.Enabled); err != nil {
+		if err := json.Unmarshal(body, &input); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		var update config.UpstreamUpdate
+		if err := json.Unmarshal(body, &update); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		if input.Enabled == nil && update.MaxBranchConcurrency == nil {
+			c.JSON(400, gin.H{"error": "必须提供 enabled 或 maxBranchConcurrency"})
+			return
+		}
+		if err := cfg.UpdateKiloSettings(input.Enabled, update.MaxBranchConcurrency); err != nil {
 			writeFreeConfigError(c, err)
 			return
 		}

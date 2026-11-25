@@ -24,6 +24,7 @@ func ChannelToDTO(up *UpstreamConfig, index int) map[string]interface{} {
 	return map[string]interface{}{
 		"cacheKeepalive":              up.CacheKeepalive,
 		"maxConcurrency":              up.MaxConcurrency,
+		"maxBranchConcurrency":        up.BranchConcurrencyLimit(),
 		"effectiveConcurrency":        up.EffectiveConcurrency,
 		"clientIdentityMode":          up.ClientIdentityMode,
 		"id":                          up.ID,

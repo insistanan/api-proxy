@@ -1,8 +1,8 @@
 // 本文件是 Claude SSE 单个事件的判定、构造与文本提取：事件类型判定
 // （message_start / content_block_start / message_stop / message_delta）、
 // message_start 的构造与模型名改写、stream_error 事件构造、文本增量提取与日志截断。
-// data 行的解析/改写骨架复用 utils（ParseSSEDataLine / RewriteSSEDataLines）。
-package streams
+// data 行的解析/改写骨架复用 codec（ParseSSEDataLine / RewriteSSEDataLines）。
+package messages
 
 import (
 	"bytes"
@@ -16,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/insistanan/api-proxy/internal/api/common"
 )
 
 // 还原器可能一次释放多个 SSE 事件，只记录成功写给客户端的文本与思考块。
@@ -43,6 +44,8 @@ func (ctx *Context) trackDeliveredBlocks(events string) {
 				}
 				ctx.DeliveredBlocks[data.Index] = data.Block.Type
 			}
+		case "message_stop":
+			ctx.TerminalDelivered = true
 		case "content_block_stop":
 			delete(ctx.DeliveredBlocks, data.Index)
 		}
@@ -59,12 +62,11 @@ func (ctx *Context) closeDeliveredBlocks(w gin.ResponseWriter, flusher http.Flus
 	sort.Ints(indexes)
 	for _, index := range indexes {
 		event := fmt.Sprintf("event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":%d}\n\n", index)
-		if _, err := w.Write([]byte(event)); err != nil {
+		if err := common.WriteStream(w, flusher, []byte(event)); err != nil {
 			ctx.ClientGone = true
 			return fmt.Errorf("关闭中断的内容块失败: %w", err)
 		}
 		delete(ctx.DeliveredBlocks, index)
-		flusher.Flush()
 	}
 	return nil
 }
@@ -182,8 +184,10 @@ func IsMessageDeltaEvent(event string) bool {
 
 // IsStreamErrorEvent 判断 SSE 事件是否为上游错误事件。
 func IsStreamErrorEvent(event string) bool {
-	if strings.Contains(event, "event: error") {
-		return true
+	for _, line := range strings.Split(event, "\n") {
+		if name, ok := strings.CutPrefix(line, "event:"); ok && strings.TrimSpace(name) == "error" {
+			return true
+		}
 	}
 
 	data, hasData := ParseSSEEventData(event)
@@ -205,24 +209,6 @@ func IsStreamErrorEvent(event string) bool {
 	}
 
 	return false
-}
-
-// ExtractStreamErrorMessage 提取流错误事件中的错误详情。
-func ExtractStreamErrorMessage(event string) string {
-	data, hasData := ParseSSEEventData(event)
-	if hasData {
-		if errObj, ok := data["error"].(map[string]interface{}); ok {
-			if msg, ok := errObj["message"].(string); ok && msg != "" {
-				return msg
-			}
-		} else if errStr, ok := data["error"].(string); ok && errStr != "" {
-			return errStr
-		}
-		if msg, ok := data["message"].(string); ok && msg != "" {
-			return msg
-		}
-	}
-	return strings.TrimSpace(event)
 }
 
 // BuildMessageStartEvent 构造一个合成的 message_start 事件

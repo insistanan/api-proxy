@@ -59,8 +59,8 @@ func TestConvertToProviderRequest_UsesMaxCompletionTokensForReasoningModels(t *t
 	}
 }
 
-// 反证切片 5：工具 schema 缺根 type 时补最小 object schema。
-func TestConvertTools_FillsMissingRootObjectType(t *testing.T) {
+// schema 语义应原样保留，缺少 type 不代表必须改为 object。
+func TestConvertTools_PreservesSchemaWithoutInventingType(t *testing.T) {
 	tools := []types.ClaudeTool{{
 		Name:        "noop",
 		Description: "does nothing",
@@ -78,8 +78,8 @@ func TestConvertTools_FillsMissingRootObjectType(t *testing.T) {
 	if !ok {
 		t.Fatalf("parameters 应为对象: %T", converted[0].Function.Parameters)
 	}
-	if params["type"] != "object" {
-		t.Fatalf("根级 type 应补为 object，实际: %v", params["type"])
+	if _, exists := params["type"]; exists {
+		t.Fatalf("不能凭空增加根 type: %v", params)
 	}
 	if _, has := params["properties"]; !has {
 		t.Fatalf("根级应补空 properties: %v", params)
@@ -102,14 +102,14 @@ func TestConvertToProviderRequest_ResponsesUpstreamPassesTopPAndStop(t *testing.
 	claudeReq := &types.ClaudeRequest{
 		Model:         "gpt-5.2",
 		MaxTokens:     100,
-		TopP:          0.3,
+		TopP:          floatPointer(0.3),
 		StopSequences: []string{"DONE"},
 	}
 	req, err := claudeRequestToResponsesRequest(claudeReq, upstream, "conv-1")
 	if err != nil {
 		t.Fatalf("claudeRequestToResponsesRequest() err = %v", err)
 	}
-	if req.TopP != 0.3 {
+	if req.TopP == nil || *req.TopP != 0.3 {
 		t.Fatalf("TopP 应为 0.3，实际: %v", req.TopP)
 	}
 	if len(req.Stop) != 1 || req.Stop[0] != "DONE" {
@@ -122,7 +122,7 @@ func TestConvertToGeminiRequest_PassesTopPAndStop(t *testing.T) {
 	claudeReq := &types.ClaudeRequest{
 		Model:         "gemini-2.5-pro",
 		MaxTokens:     100,
-		TopP:          0.7,
+		TopP:          floatPointer(0.7),
 		StopSequences: []string{"STOP_1"},
 		Messages:      []types.ClaudeMessage{{Role: "user", Content: "hi"}},
 	}
@@ -167,3 +167,5 @@ func TestConvertToGeminiRequest_MapsThinkingToThinkingConfig(t *testing.T) {
 		t.Fatalf("thinkingBudget 应为正数（budget_tokens=16000 → xhigh 档），实际: %v", cfg.ThinkingBudget)
 	}
 }
+
+func floatPointer(value float64) *float64 { return &value }

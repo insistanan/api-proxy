@@ -11,6 +11,21 @@ const source: Channel = {
 }
 
 describe('渠道编辑器草稿与提交', () => {
+  it('分支并发默认 3，编辑和复制保留已配置上限', () => {
+    const form = defaultChannelForm('messages')
+    expect(form.maxBranchConcurrency).toBe(3)
+    expect(buildChannelPayload(form, 'messages', false).maxBranchConcurrency).toBe(3)
+    const editor = useChannelEditor('messages')
+    editor.loadChannelCopy({ ...source, maxBranchConcurrency: 7 }, 'messages')
+    expect(editor.form.maxBranchConcurrency).toBe(7)
+    editor.form.maxBranchConcurrency = '9'
+    expect(editor.buildPayload(false).maxBranchConcurrency).toBe(9)
+    for (const invalid of [0, -1, 1.5, '', null, NaN, Infinity]) {
+      editor.form.maxBranchConcurrency = invalid
+      expect(() => editor.buildPayload(false)).toThrow('大于零的整数')
+    }
+  })
+
   it('复制渠道时隔离原数据，并按目标协议清理专属引用', () => {
     const editor = useChannelEditor('messages')
     editor.loadChannelCopy(source, 'messages')

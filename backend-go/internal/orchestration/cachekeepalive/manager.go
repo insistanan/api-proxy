@@ -77,7 +77,6 @@ type snapshot struct {
 	policy      config.CacheKeepaliveConfig
 	baseline    int64
 	baselineHit float64
-	input       int64
 	read        int64
 	ttl         time.Duration
 	lastSent    time.Time
@@ -238,6 +237,11 @@ func (t *Turn) Capture(source Source) {
 		m.stopEntry(e, "实际目标未启用受支持的缓存保活")
 		return
 	}
+	// 在任务入口再次校验，配置来源即使绕过保存接口，也不能产生无上限任务。
+	if err := config.ValidateCacheKeepalive(source.Kind, u); err != nil {
+		m.stopEntry(e, err.Error())
+		return
+	}
 	if source.ConversationID == "" || source.AttemptID == "" {
 		m.stopEntry(e, "缺少可关联的会话或上游尝试标识")
 		return
@@ -294,8 +298,7 @@ func (t *Turn) Result(attemptID string, success bool, usage *types.Usage) {
 	}
 	e.success = true
 	e.snapshot.baseline = read + creation
-	e.snapshot.input = input + read + creation
-	e.snapshot.baselineHit = float64(read+creation) * 100 / float64(e.snapshot.input)
+	e.snapshot.baselineHit = float64(read+creation) * 100 / float64(input+read+creation)
 	e.status.BaselineCacheHit = e.snapshot.baselineHit
 	e.snapshot.read = read
 }
@@ -331,7 +334,7 @@ func (t *Turn) End() {
 		if p.MaxIdleMinutes > 0 {
 			e.deadline = e.updated.Add(time.Duration(p.MaxIdleMinutes) * time.Minute)
 		} else {
-			e.deadline = e.updated.Add(time.Duration(p.MaxAttempts+1) * time.Duration(p.IntervalSeconds) * time.Second)
+			e.deadline = time.Time{}
 		}
 		e.snapshot.deadline = e.deadline
 		e.status.State = "waiting"

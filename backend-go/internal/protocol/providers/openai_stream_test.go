@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -31,7 +32,7 @@ func TestOpenAIProviderReasoningOnlyCompletion(t *testing.T) {
 				body += fmt.Sprintf("data: {\"choices\":[{\"delta\":{},\"finish_reason\":%q}]}\n\n", tc.finish)
 			}
 			body += tc.tail
-			events, errors, err := (&OpenAIProvider{hideReasoning: tc.hide}).HandleStreamResponse(io.NopCloser(strings.NewReader(body)))
+			events, errors, err := (&OpenAIProvider{hideReasoning: tc.hide}).HandleStreamResponseCtx(context.Background(), io.NopCloser(strings.NewReader(body)))
 			require.NoError(t, err)
 			var output strings.Builder
 			for event := range events {
@@ -72,7 +73,7 @@ func TestOpenAIProviderHandleStreamResponse_EmitsSingleTerminalEvent(t *testing.
 				`data: {"model":"deepseek","choices":[{"delta":{"content":"正常回复"},"finish_reason":null}]}`,
 				`data: {"model":"deepseek","choices":[{"delta":{},"finish_reason":"stop"}]}`,
 			}, "\n\n") + "\n\n" + tt.tail
-			eventChan, errChan, err := (&OpenAIProvider{}).HandleStreamResponse(io.NopCloser(strings.NewReader(body)))
+			eventChan, errChan, err := (&OpenAIProvider{}).HandleStreamResponseCtx(context.Background(), io.NopCloser(strings.NewReader(body)))
 			if err != nil {
 				t.Fatalf("启动流处理失败: %v", err)
 			}
@@ -117,7 +118,7 @@ func TestOpenAIProviderHandleStreamResponse_EmptyToolCallsKeepsSingleTextBlock(t
 	}, "\n")
 
 	p := &OpenAIProvider{}
-	eventChan, errChan, err := p.HandleStreamResponse(io.NopCloser(strings.NewReader(body)))
+	eventChan, errChan, err := p.HandleStreamResponseCtx(context.Background(), io.NopCloser(strings.NewReader(body)))
 	if err != nil {
 		t.Fatalf("HandleStreamResponse() err = %v", err)
 	}
@@ -157,7 +158,7 @@ func TestOpenAIProviderHandleStreamResponse_HidesReasoningFromClientStream(t *te
 	}, "\n")
 
 	p := &OpenAIProvider{hideReasoning: true}
-	eventChan, errChan, err := p.HandleStreamResponse(io.NopCloser(strings.NewReader(body)))
+	eventChan, errChan, err := p.HandleStreamResponseCtx(context.Background(), io.NopCloser(strings.NewReader(body)))
 	if err != nil {
 		t.Fatalf("HandleStreamResponse() err = %v", err)
 	}
@@ -192,7 +193,7 @@ func TestOpenAIProviderHandleStreamResponse_HidesEmbeddedThinkingFromClientStrea
 		``,
 	}, "\n\n")
 
-	eventChan, _, err := (&OpenAIProvider{hideReasoning: true, parseEmbeddedReasoning: true}).HandleStreamResponse(io.NopCloser(strings.NewReader(body)))
+	eventChan, _, err := (&OpenAIProvider{hideReasoning: true, parseEmbeddedReasoning: true}).HandleStreamResponseCtx(context.Background(), io.NopCloser(strings.NewReader(body)))
 	if err != nil {
 		t.Fatalf("HandleStreamResponse() err = %v", err)
 	}
@@ -222,7 +223,7 @@ func TestOpenAIProviderHandleStreamResponse_MapsCachedUsage(t *testing.T) {
 	}, "\n")
 
 	p := &OpenAIProvider{}
-	eventChan, errChan, err := p.HandleStreamResponse(io.NopCloser(strings.NewReader(body)))
+	eventChan, errChan, err := p.HandleStreamResponseCtx(context.Background(), io.NopCloser(strings.NewReader(body)))
 	if err != nil {
 		t.Fatalf("HandleStreamResponse() err = %v", err)
 	}
@@ -270,7 +271,7 @@ func TestOpenAIProviderHandleStreamResponse_StreamsToolCallArguments(t *testing.
 	}, "\n")
 
 	p := &OpenAIProvider{}
-	eventChan, errChan, err := p.HandleStreamResponse(io.NopCloser(strings.NewReader(body)))
+	eventChan, errChan, err := p.HandleStreamResponseCtx(context.Background(), io.NopCloser(strings.NewReader(body)))
 	if err != nil {
 		t.Fatalf("HandleStreamResponse() err = %v", err)
 	}
@@ -315,7 +316,7 @@ func TestChatStream_ToolCallsFinishDoesNotDropTrailingUsage(t *testing.T) {
 	}, "\n")
 
 	p := &OpenAIProvider{}
-	eventChan, _, err := p.HandleStreamResponse(io.NopCloser(strings.NewReader(body)))
+	eventChan, _, err := p.HandleStreamResponseCtx(context.Background(), io.NopCloser(strings.NewReader(body)))
 	if err != nil {
 		t.Fatalf("HandleStreamResponse() err = %v", err)
 	}
@@ -343,7 +344,7 @@ func TestChatStream_UpstreamErrorDoesNotFakeMessageStop(t *testing.T) {
 	}, "\n")
 
 	p := &OpenAIProvider{}
-	eventChan, errChan, err := p.HandleStreamResponse(io.NopCloser(strings.NewReader(body)))
+	eventChan, errChan, err := p.HandleStreamResponseCtx(context.Background(), io.NopCloser(strings.NewReader(body)))
 	if err != nil {
 		t.Fatalf("HandleStreamResponse() err = %v", err)
 	}

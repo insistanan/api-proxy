@@ -1,7 +1,6 @@
 package chat
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -44,38 +43,25 @@ func sanitizeOpenAIChatPayloadForUpstream(payload map[string]interface{}) error 
 		}
 	}
 
-	sanitizeOpenAIChatModalities(payload)
-
-	return nil
+	return sanitizeOpenAIChatModalities(payload)
 }
 
-// sanitizeOpenAIChatModalities 归一化 modalities 字段：对象格式 → 数组格式。
-// OpenAI Chat Completions API 规范要求 modalities 为数组（["text", "audio"]），
-// 但部分客户端发送对象格式 { "text": true, "audio": true }，直接透传会导致上游 400。
-func sanitizeOpenAIChatModalities(payload map[string]interface{}) {
+// sanitizeOpenAIChatModalities 只校验协议形状，原生模态值由上游判断支持范围。
+func sanitizeOpenAIChatModalities(payload map[string]interface{}) error {
 	raw, exists := payload["modalities"]
-	if !exists || raw == nil {
-		return
+	if !exists {
+		return nil
 	}
-	if _, ok := raw.([]interface{}); ok {
-		return
-	}
-	obj, ok := raw.(map[string]interface{})
+	values, ok := raw.([]interface{})
 	if !ok {
-		return
+		return fmt.Errorf("Chat modalities 必须是字符串数组")
 	}
-	out := make([]interface{}, 0, 2)
-	if enabled, _ := obj["text"].(bool); enabled {
-		out = append(out, "text")
+	for _, value := range values {
+		if text, ok := value.(string); !ok || text == "" {
+			return fmt.Errorf("Chat modalities 必须是非空字符串数组")
+		}
 	}
-	if enabled, _ := obj["audio"].(bool); enabled {
-		out = append(out, "audio")
-	}
-	if len(out) > 0 {
-		payload["modalities"] = out
-	} else {
-		delete(payload, "modalities")
-	}
+	return nil
 }
 
 func sanitizeOpenAIChatMessagesForUpstream(payload map[string]interface{}) error {
@@ -95,20 +81,13 @@ func sanitizeOpenAIChatMessagesForUpstream(payload map[string]interface{}) error
 			return fmt.Errorf("Chat messages 第 %d 项必须是对象", i)
 		}
 		role, _ := message["role"].(string)
-		message["role"] = normalizeOpenAIChatRoleForUpstream(role)
+		switch role {
+		case "system", "developer", "user", "assistant", "tool":
+		default:
+			return fmt.Errorf("Chat messages 第 %d 项 role 无效: %q", i, role)
+		}
 	}
 	return nil
-}
-
-func normalizeOpenAIChatRoleForUpstream(role string) string {
-	switch strings.ToLower(strings.TrimSpace(role)) {
-	case "developer":
-		return "system"
-	case "system", "user", "assistant", "tool":
-		return strings.ToLower(strings.TrimSpace(role))
-	default:
-		return "user"
-	}
 }
 
 func sanitizeOpenAIChatTools(raw interface{}) ([]map[string]interface{}, error) {
@@ -164,19 +143,7 @@ func sanitizeOpenAIChatTool(tool map[string]interface{}, index int) (map[string]
 			"function": function,
 		}, nil
 	case "custom":
-		name, _ := tool["name"].(string)
-		name = strings.TrimSpace(name)
-		if name == "" {
-			return nil, fmt.Errorf("Chat tool 第 %d 项缺少 function.name", index)
-		}
-		return map[string]interface{}{
-			"type": "function",
-			"function": map[string]interface{}{
-				"name":        name,
-				"description": customChatToolDescription(tool),
-				"parameters":  customChatToolParameters(tool),
-			},
-		}, nil
+		return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("Chat 原生路径未实现 custom 工具的对称适配，请使用 Responses custom 工具")}
 	case "web_search", "web_search_preview":
 		return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("Chat 渠道无法等价执行内置 web_search，请使用原生 Responses 搜索；普通 function 工具仍由客户端执行")}
 	default:
@@ -208,7 +175,9 @@ func sanitizeOpenAIChatToolChoice(raw interface{}) (interface{}, bool, error) {
 		choiceType = "function"
 	}
 	switch choiceType {
-	case "function", "custom":
+	case "custom":
+		return nil, false, &types.UnsupportedProtocolError{Err: fmt.Errorf("Chat custom tool_choice 尚不支持对称适配")}
+	case "function":
 		name := extractNamedToolChoice(obj)
 		if name == "" {
 			return nil, false, fmt.Errorf("OpenAI Chat tool_choice 对象缺少 function.name 或 name")
@@ -257,41 +226,6 @@ func extractNamedToolChoice(raw map[string]interface{}) string {
 		}
 	}
 	return ""
-}
-
-func customChatToolParameters(tool map[string]interface{}) interface{} {
-	if parameters, ok := tool["parameters"]; ok && parameters != nil {
-		return parameters
-	}
-	if inputSchema, ok := tool["input_schema"]; ok && inputSchema != nil {
-		return inputSchema
-	}
-	return map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"input": map[string]interface{}{
-				"type": "string",
-			},
-		},
-		"required":             []string{"input"},
-		"additionalProperties": false,
-	}
-}
-
-func customChatToolDescription(tool map[string]interface{}) string {
-	description, _ := tool["description"].(string)
-	metadata, err := json.Marshal(tool)
-	if err != nil {
-		return description
-	}
-	metadataText := strings.TrimSpace(string(metadata))
-	if metadataText == "" || metadataText == "{}" {
-		return description
-	}
-	if strings.TrimSpace(description) == "" {
-		return "Original tool definition:\n" + metadataText
-	}
-	return description + "\n\nOriginal tool definition:\n" + metadataText
 }
 
 func emptyOpenAIChatToolParameters() map[string]interface{} {

@@ -56,6 +56,9 @@ func parseResponsesImageEvent(raw, name string) (responsesImageEvent, error) {
 		}
 		return true
 	})
+	if name != "" && event.Type != name {
+		return responsesImageEvent{}, fmt.Errorf("Responses SSE 事件名 %q 与 type %q 不一致", name, event.Type)
+	}
 	return event, nil
 }
 

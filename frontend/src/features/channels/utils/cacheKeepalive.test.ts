@@ -30,6 +30,14 @@ describe('缓存保活配置', () => {
     expect(() => buildCacheKeepalive({ ...draft, intervalSeconds: '' }, true)).toThrow('未完成的数字')
   })
 
+  it('旧配置的累计 Token 限制不参与校验或保存', () => {
+    const legacyDraft = { ...defaultCacheKeepalive(), enabled: true, maxAttempts: 100, maxIdleMinutes: 0, maxTotalTokens: 0 }
+    expect(validateCacheKeepalive(legacyDraft)).toBe('')
+    const saved = buildCacheKeepalive(legacyDraft, true)
+    expect(saved).not.toHaveProperty('maxTotalTokens')
+    expect(saved).toMatchObject({ enabled: true, maxAttempts: 100, maxIdleMinutes: 0 })
+  })
+
   it.each([
     ['messages', 'claude'], ['messages', 'responses'], ['messages', 'openai'], ['messages', 'gemini'],
     ['responses', 'claude'], ['responses', 'responses'], ['responses', 'openai'], ['responses', 'gemini'],

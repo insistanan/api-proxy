@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -172,7 +173,7 @@ func TestReasoningContentRoundTrip_StreamToolCall(t *testing.T) {
 		``,
 	}, "\n")
 
-	eventChan, errChan, err := newReasoningTestProvider().HandleStreamResponse(io.NopCloser(strings.NewReader(body)))
+	eventChan, errChan, err := newReasoningTestProvider().HandleStreamResponseCtx(context.Background(), io.NopCloser(strings.NewReader(body)))
 	if err != nil {
 		t.Fatalf("HandleStreamResponse() err = %v", err)
 	}

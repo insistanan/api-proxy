@@ -9,7 +9,7 @@
     </div>
     <div v-if="draft.enabled" class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
       <UiAlert type="info" class="md:col-span-2">
-        心跳是付费请求，长时间保活不一定省钱。真实请求会重置保活周期；配置修改或服务重启后，等待新的真实请求。
+        心跳是付费请求，长时间保活不一定省钱。同一渠道的不同会话独立计时、计数；真实请求只重置所属会话的保活周期。配置修改或服务重启后，等待新的真实请求。
       </UiAlert>
       <p class="text-xs leading-5 text-muted-foreground md:col-span-2">{{ protocolHint }}</p>
       <UiInput
@@ -17,7 +17,7 @@
         hint="最少 180 秒；默认 280 秒，即 4 分 40 秒。已知 5 分钟缓存窗口需小于 285 秒，更长间隔需要更长缓存窗口。" />
       <UiInput
         v-model="draft.maxAttempts" type="number" min="0" max="10000" step="1" label="最多发送次数"
-        hint="0 表示只按持续时间限制；与时间上限任一达到即停止。Gemini 显式缓存按检查及续期轮次计算。" />
+        hint="每个会话每轮独立计算。0 表示只按持续时间限制；与时间上限任一达到即停止。Gemini 显式缓存按检查及续期轮次计算。" />
       <UiInput
         v-model="draft.maxIdleMinutes" type="number" min="0" max="1440" step="1" label="最长持续时间（分钟）"
         hint="从真实请求结束开始计算，心跳不会延长此期限；0 表示只按次数限制。" />
@@ -27,9 +27,6 @@
       <UiInput
         v-model="draft.maxOutputTokens" type="number" min="1" max="4096" step="1" label="单次输出上限（Token）"
         hint="包含思考消耗。原请求的思考预算若不小于此值，将跳过本轮保活。" />
-      <UiInput
-        v-model="draft.maxTotalTokens" type="number" min="1" max="1000000000" step="1" label="本轮累计 Token 上限"
-        hint="包括缓存读取、缓存写入、新增输入和输出；发送前预留预算。Gemini 显式缓存的存储费用不计入 Token。" />
       <UiTextarea
         v-model="draft.prompt" label="心跳内容" :rows="2" class="md:col-span-2"
         hint="最多 2048 字节。回复仅用于检查用量，不进入真实对话；可改为“仅回复 OK。”减少输出。" />
@@ -93,7 +90,7 @@ const props = defineProps<{ channelId?: string; serviceType: string }>()
 const protocolHint = computed(() => {
   switch (props.serviceType) {
     case 'claude': return 'Claude 沿用原请求缓存断点和 TTL；兼容服务未给出缓存断点时，仅按已有命中反馈保活。思考参数保持不变，输出上限不足时停止。'
-    case 'gemini': return 'Gemini 隐式缓存按实际命中反馈继续，服务端不保证固定 TTL。显式 cachedContent 使用资源接口续期，不发送心跳文本；续期会产生存储费用，不能通过 Token 预算衡量。'
+    case 'gemini': return 'Gemini 隐式缓存按实际命中反馈继续，服务端不保证固定 TTL。显式 cachedContent 使用资源接口续期，不发送心跳文本；续期会产生存储费用。'
     case 'responses': return 'Responses 保留固定 previous_response_id 和缓存键，心跳不保存为新对话历史。使用可变 conversation 或服务端工具时停止。隐式缓存命中与保留期由上游决定。'
     default: return 'Chat 沿用真实请求的缓存键、推理参数和前缀。隐式缓存的命中及保留期由上游决定；观察到命中下降便停止。'
   }

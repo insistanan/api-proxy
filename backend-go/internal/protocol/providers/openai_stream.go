@@ -12,12 +12,6 @@ import (
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
-// HandleStreamResponse 处理流式响应
-// 兼容旧签名：内部委托带 ctx 的版本，使用 context.Background()。
-func (p *OpenAIProvider) HandleStreamResponse(body io.ReadCloser) (<-chan string, <-chan error, error) {
-	return p.HandleStreamResponseCtx(context.Background(), body)
-}
-
 // HandleStreamResponseCtx 处理流式响应（支持客户端断连中止）。
 // 协议转换逻辑在 chat_stream.go 的 chatToClaudeStreamState；本函数只负责
 // streamPump 脚手架（事件/错误双通道、断连中止、SSE scanner）与状态机驱动。

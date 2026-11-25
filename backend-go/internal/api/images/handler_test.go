@@ -113,13 +113,13 @@ func TestHandleImagesSuccessFlushesRequestedStreamWithoutSSEContentType(t *testi
 	response := &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     make(http.Header),
-		Body:       io.NopCloser(strings.NewReader(`{"type":"partial_image"}`)),
+		Body:       io.NopCloser(strings.NewReader("data: {\"type\":\"image_generation.completed\",\"b64_json\":\"AQID\"}\n\n")),
 	}
 
 	_, err := handleImagesSuccess(ctx, response, &config.EnvConfig{}, time.Now(), "/images/generations", true, false)
 	require.NoError(t, err)
 	require.True(t, recorder.Flushed, "请求 stream=true 时即使上游 Content-Type 不是 SSE 也必须 flush")
-	require.Equal(t, `{"type":"partial_image"}`, recorder.Body.String())
+	require.Contains(t, recorder.Body.String(), `"type":"image_generation.completed"`)
 }
 
 func TestHandleImagesSuccessWrapsJSONAsCompletedWhenForceNonStream(t *testing.T) {
@@ -173,15 +173,16 @@ func TestHandleImagesSuccessForwardsUpstreamSSEEvenIfForceNonStream(t *testing.T
 
 func TestHandleImagesSuccess_NormalizesUsageOnAllNativeResponsePaths(t *testing.T) {
 	payload := `{"created":123,"data":[{"b64_json":"AQID"}],"usage":{"input_tokens":100,"output_tokens":20,"input_tokens_details":{"cached_tokens":70}}}`
+	ssePayload := `{"type":"image_generation.completed","b64_json":"AQID","usage":{"input_tokens":100,"output_tokens":20,"input_tokens_details":{"cached_tokens":70}}}`
 	for _, tc := range []struct {
 		name, contentType, body string
 		stream, force           bool
 	}{
 		{"JSON", "application/json", payload, false, false},
 		{"强制非流式转 SSE", "application/json", payload, true, true},
-		{"SSE", "text/event-stream", "event: image_generation.completed\ndata: " + payload + "\n\n", true, false},
-		{"无 Content-Type 的 SSE", "", "data: " + payload + "\n\n", true, false},
-		{"多行 SSE", "text/event-stream", "data: {\n" + "data: " + payload[1:] + "\n\n", true, false},
+		{"SSE", "text/event-stream", "event: image_generation.completed\ndata: " + ssePayload + "\n\n", true, false},
+		{"无 Content-Type 的 SSE", "", "data: " + ssePayload + "\n\n", true, false},
+		{"多行 SSE", "text/event-stream", "event: image_generation.completed\ndata: {\n" + "data: " + ssePayload[1:] + "\n\n", true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()

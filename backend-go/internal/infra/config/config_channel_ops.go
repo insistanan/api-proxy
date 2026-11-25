@@ -95,6 +95,9 @@ func (cm *ConfigManager) MarkReasoningContentRequired(channelType, upstreamID st
 
 // prepareNewUpstream 准备新增渠道的公共字段
 func prepareNewUpstream(upstream *UpstreamConfig) {
+	if upstream.MaxBranchConcurrency == 0 {
+		upstream.MaxBranchConcurrency = DefaultBranchConcurrency
+	}
 	if upstream.MaxConcurrency == 0 {
 		upstream.MaxConcurrency = upstreamcontrol.DefaultConcurrency
 	}

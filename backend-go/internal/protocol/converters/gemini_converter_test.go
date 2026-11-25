@@ -146,7 +146,7 @@ func TestOpenAIResponseToGemini_WithThoughtSignature(t *testing.T) {
 }
 
 func TestGeminiThinkingHistory_DroppedAcrossProtocols(t *testing.T) {
-	input := &types.GeminiRequest{Contents: []types.GeminiContent{
+	input := &types.GeminiRequest{GenerationConfig: &types.GeminiGenerationConfig{MaxOutputTokens: 4096}, Contents: []types.GeminiContent{
 		{Role: "model", Parts: []types.GeminiPart{{Thought: true, Text: "private-thought", ThoughtSignature: "gemini-signature"}}},
 		{Role: "model", Parts: []types.GeminiPart{
 			{Thought: true, Text: "private-thought", ThoughtSignature: "gemini-signature"},

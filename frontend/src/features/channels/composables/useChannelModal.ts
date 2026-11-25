@@ -2,6 +2,7 @@
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted, toRaw } from 'vue'
 import type { Channel, ChannelPool, ChannelStatus } from '@/api'
 import { api, channelApiByType } from '@/api'
+import { DEFAULT_BRANCH_CONCURRENCY, isPositiveInteger } from '@/features/channels/utils/branchConcurrency'
 import { imagesModelOptions, imagesProtocolLabel, isImagesServiceType, validateImagesOutputSettings } from '@/features/channels/utils/imagesChannelProtocol'
 import { useChannelEditor, buildImagesOutputSettings, EMBEDDINGS_DIMENSIONS_DEFAULT, validateEmbeddingsDimensions, supportsChannelClientIdentity, type ChannelFormState } from '@/features/channels/composables/useChannelEditor'
 import { compileImagesExtraParams } from '@/features/channels/utils/imagesExtraParams'
@@ -127,6 +128,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
 
     const channelData = {
       maxConcurrency: 5,
+      maxBranchConcurrency: DEFAULT_BRANCH_CONCURRENCY,
       clientIdentityMode: form.clientIdentityMode,
       name: generatedChannelName.value,
       website: form.website,
@@ -594,6 +596,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
     return (
       !poolsLoading.value && !poolLoadError.value &&
       Number.isSafeInteger(Number(form.maxConcurrency)) && Number(form.maxConcurrency) > 0 &&
+      isPositiveInteger(form.maxBranchConcurrency) &&
       form.name.trim() && form.serviceType && form.baseUrl.trim() && isValidUrl(form.baseUrl) && form.apiKeys.length > 0 && isImagesProtocolValid.value &&
       (!form.visionLayerEnabled || form.visionLayerChannelId) &&
       (form.proxyMode !== 'custom' || rules.proxyUrl(form.proxyUrl) === true) &&

@@ -31,71 +31,10 @@ func TestChatHostedWebSearchDoesNotBecomeClientFunction(t *testing.T) {
 	}
 }
 
-func TestApplyChatModelMapping_DowngradesCustomTool(t *testing.T) {
-	input := []byte(`{
-		"model":"gpt-4o",
-		"stream":true,
-		"messages":[{"role":"user","content":"run code"}],
-		"tools":[{"type":"custom","name":"code_exec","description":"Execute raw code"}],
-		"tool_choice":{"type":"custom","name":"code_exec"}
-	}`)
-
-	out, err := applyChatModelMapping(input, &config.UpstreamConfig{})
-	if err != nil {
-		t.Fatalf("applyChatModelMapping 不应报错: %v", err)
-	}
-
-	var payload map[string]interface{}
-	if err := json.Unmarshal(out, &payload); err != nil {
-		t.Fatalf("解析结果失败: %v", err)
-	}
-
-	tools, ok := payload["tools"].([]interface{})
-	if !ok || len(tools) != 1 {
-		t.Fatalf("tools 结果异常: %#v", payload["tools"])
-	}
-	tool, ok := tools[0].(map[string]interface{})
-	if !ok {
-		t.Fatalf("tool 类型异常: %#v", tools[0])
-	}
-	if tool["type"] != "function" {
-		t.Fatalf("custom tool 应降级为 function，实际: %#v", tool["type"])
-	}
-	function, ok := tool["function"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("function 结构异常: %#v", tool["function"])
-	}
-	if function["name"] != "code_exec" {
-		t.Fatalf("function.name 不匹配: %#v", function["name"])
-	}
-	parameters, ok := function["parameters"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("parameters 结构异常: %#v", function["parameters"])
-	}
-	properties, ok := parameters["properties"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("properties 结构异常: %#v", parameters["properties"])
-	}
-	inputProp, ok := properties["input"].(map[string]interface{})
-	if !ok || inputProp["type"] != "string" {
-		t.Fatalf("custom tool 应补 input:string schema，实际: %#v", properties["input"])
-	}
-
-	toolChoice, ok := payload["tool_choice"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("tool_choice 类型异常: %#v", payload["tool_choice"])
-	}
-	if toolChoice["type"] != "function" {
-		t.Fatalf("tool_choice.type 应为 function，实际: %#v", toolChoice["type"])
-	}
-	tcFunction, ok := toolChoice["function"].(map[string]interface{})
-	if !ok || tcFunction["name"] != "code_exec" {
-		t.Fatalf("tool_choice.function.name 不匹配: %#v", toolChoice["function"])
-	}
-
-	streamOptions, ok := payload["stream_options"].(map[string]interface{})
-	if !ok || streamOptions["include_usage"] != true {
-		t.Fatalf("stream_options.include_usage 应自动补齐，实际: %#v", payload["stream_options"])
+func TestApplyChatModelMapping_RejectsAsymmetricCustomTool(t *testing.T) {
+	_, err := applyChatModelMapping([]byte(`{"model":"m","messages":[{"role":"developer","content":"hi"}],"tools":[{"type":"custom","name":"run"}]}`), &config.UpstreamConfig{})
+	if _, ok := err.(*types.UnsupportedProtocolError); !ok {
+		t.Fatalf("应明确拒绝单向工具适配: %v", err)
 	}
 }
 
@@ -148,26 +87,9 @@ func TestApplyChatModelMapping_RejectsInvalidReasoningEffort(t *testing.T) {
 	}
 }
 
-func TestApplyChatModelMapping_NormalizesModalitiesObjectToArray(t *testing.T) {
-	input := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"modalities":{"text":true,"audio":true}}`)
-	out, err := applyChatModelMapping(input, &config.UpstreamConfig{})
-	if err != nil {
-		t.Fatalf("applyChatModelMapping 不应报错: %v", err)
-	}
-
-	var payload map[string]interface{}
-	if err := json.Unmarshal(out, &payload); err != nil {
-		t.Fatalf("解析结果失败: %v", err)
-	}
-
-	modalities, ok := payload["modalities"].([]interface{})
-	if !ok {
-		t.Fatalf("modalities 应归一化为数组，实际: %#v", payload["modalities"])
-	}
-	if len(modalities) != 2 {
-		t.Fatalf("modalities 应有 2 个元素，实际: %d", len(modalities))
-	}
-	if modalities[0] != "text" || modalities[1] != "audio" {
-		t.Fatalf("modalities 应为 [text, audio]，实际: %v", modalities)
+func TestApplyChatModelMapping_RejectsInvalidModalities(t *testing.T) {
+	_, err := applyChatModelMapping([]byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],"modalities":{"text":true}}`), &config.UpstreamConfig{})
+	if err == nil {
+		t.Fatal("不能将非法 modalities 静默修改")
 	}
 }

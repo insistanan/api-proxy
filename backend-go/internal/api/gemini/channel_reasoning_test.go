@@ -21,7 +21,7 @@ func TestGeminiBuilderOverridesReasoningForEachTargetWithoutChangingInput(t *tes
 	temperature := 0.7
 	input := &types.GeminiRequest{
 		Contents: []types.GeminiContent{{Role: "user", Parts: []types.GeminiPart{{Text: "hello"}}}},
-		GenerationConfig: &types.GeminiGenerationConfig{
+		GenerationConfig: &types.GeminiGenerationConfig{MaxOutputTokens: 20000,
 			Temperature:    &temperature,
 			ThinkingConfig: &types.GeminiThinkingConfig{ThinkingLevel: "future", IncludeThoughts: true},
 		},

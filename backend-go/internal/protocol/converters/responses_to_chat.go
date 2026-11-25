@@ -204,6 +204,11 @@ func ConvertResponsesToOpenAIChatRequestWithOptions(modelName string, inputRawJS
 		out, _ = sjson.Set(out, "stream_options.include_usage", true)
 	}
 
+	for _, key := range []string{"prompt_cache_key", "prompt_cache_retention"} {
+		if value := root.Get(key); value.Exists() {
+			out, _ = sjson.Set(out, key, value.Value())
+		}
+	}
 	// 映射生成参数
 	if maxTokens := root.Get("max_output_tokens"); maxTokens.Exists() {
 		out, _ = sjson.Set(out, "max_tokens", maxTokens.Int())
@@ -445,7 +450,7 @@ func convertInputArrayToMessagesWithOptions(input gjson.Result, out string, _ bo
 		}
 
 		switch itemType {
-		case "message":
+		case "message", "text":
 			if normalizeResponsesMessageRole(item.Get("role").String()) == "assistant" {
 				if assistant != nil {
 					flushAssistant()
@@ -594,7 +599,7 @@ func stringifyResponsesArguments(arguments gjson.Result) string {
 }
 
 func buildCustomToolCallArguments(item gjson.Result) string {
-	input := extractCustomToolCallInput(item.Get("content"))
+	input := item.Get("input").String()
 	payload, err := json.Marshal(map[string]string{"input": input})
 	if err != nil {
 		return `{"input":""}`

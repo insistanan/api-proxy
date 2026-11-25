@@ -289,11 +289,23 @@ v-model="form.defaultModel" searchable
     <div class="min-w-0 col-span-12" >
       <DisclosureSection v-model="detailedSections.connection" title="连接与并发" :description="connectionSummary" icon="mdi-web" data-form-section="connection">
         <div class="grid grid-cols-12 gap-4 pt-3">
+          <div class="min-w-0 col-span-12 md:col-span-6">
+            <UiInput
+              v-model="form.maxBranchConcurrency"
+              label="渠道分支并发上限 *"
+              type="number"
+              min="1"
+              step="1"
+              hint="默认 3。同一分支的重复请求只计一次；额度用尽时尝试下一可用渠道。"
+              persistent-hint
+              :rules="[(value: unknown) => isPositiveInteger(value) || '请输入大于零的整数']"
+            />
+          </div>
           <!-- 并发按 URL、上游协议和 Key 共享最小上限，默认 5，FIFO 最多排队 3 个、等待 10 秒。 -->
           <div class="min-w-0 col-span-12 md:col-span-6"  >
             <UiInput
               v-model="form.maxConcurrency"
-              label="最大并发 *"
+              label="上游请求并发上限 *"
               type="number"
               min="1"
               step="1"
@@ -588,6 +600,7 @@ v-model="form.defaultModel" searchable
 </template>
 
 <script setup lang="ts">
+import { isPositiveInteger } from '@/features/channels/utils/branchConcurrency'
 import UiButton from '@/shared/ui/button/Button.vue'
 import UiCard from '@/shared/ui/card/Card.vue'
 import UiSwitch from '@/shared/ui/check/Switch.vue'
@@ -686,7 +699,7 @@ const connectionSummary = computed(() => {
   const identity = supportsClientIdentity.value
     ? clientIdentityModeItems.value.find(option => option.value === form.clientIdentityMode)?.title
     : undefined
-  return [`并发上限 ${form.maxConcurrency}`, proxy ? `代理：${proxy}` : undefined, identity].filter(Boolean).join(' · ')
+  return [`分支上限 ${form.maxBranchConcurrency}`, `请求上限 ${form.maxConcurrency}`, proxy ? `代理：${proxy}` : undefined, identity].filter(Boolean).join(' · ')
 })
 const compatibilitySummary = computed(() => {
   const items = [form.excludeFromConversation ? '仅用于图片理解' : '参与对话调度']

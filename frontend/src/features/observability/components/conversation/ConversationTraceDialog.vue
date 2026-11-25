@@ -18,7 +18,7 @@
 <script setup lang="ts">
 import UiButton from '@/shared/ui/button/Button.vue'
 import UiAlert from '@/shared/ui/feedback/Alert.vue'
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { ConversationEntry } from '@/types/conversation'
 import AppDialog from '@/shared/components/overlay/AppDialog.vue'
 import EmptyState from '@/shared/components/feedback/EmptyState.vue'
@@ -26,6 +26,8 @@ import ContextTrend from '@/features/observability/components/context/ContextTre
 import ConversationLogTimeline from '@/features/observability/components/conversation/ConversationLogTimeline.vue'
 import RequestLogDetail from '@/features/observability/components/log-panels/RequestLogDetail.vue'
 import { provideLogSession } from '@/features/observability/composables/useLogSession'
+import { summaryVersion } from '@/features/observability/stores/logs'
+import { useAutoRefresh } from '@/shared/composables/useAutoRefresh'
 
 const visible = defineModel<boolean>({ required: true })
 const props = defineProps<{ conversation: ConversationEntry }>()
@@ -41,6 +43,11 @@ async function refresh() {
   await logs.loadRounds({ latest: true })
   version.value++
 }
+const { start: startAutoRefresh } = useAutoRefresh(async () => {
+  // 定位历史时暂停刷新，普通刷新保留已加载的分页。
+  await logs.loadRounds()
+}, computed(() => !visible.value || logs.roundsLoading || logs.anchored), 3000)
+onMounted(startAutoRefresh)
 async function locate(requestId: string) {
   logs.selectedKey = groupKey.value
   if (!logs.requests.some(request => request.requestId === requestId)) await logs.loadRounds({ anchor: requestId })
@@ -53,6 +60,9 @@ function inspect(requestId: string) {
 watch(() => logs.requests, requests => {
   const latest = requests[requests.length - 1]
   logs.selectedConversation = latest ? { key: groupKey.value, latest, requestCount: requests.length } : null
+})
+watch(() => logs.requests.map(summary => `${summary.requestId}:${summaryVersion(summary)}`).join(','), () => {
+  version.value++
 })
 watch(groupKey, () => {
   logs.reset()

@@ -11,98 +11,6 @@ import (
 const openAIChatToolSearchName = "tool_search"
 const openAIChatWebSearchName = "web_search"
 
-// ============== OpenAI Chat Completions 转换器 ==============
-
-// OpenAIChatConverter 实现 Responses → OpenAI Chat Completions 转换
-type OpenAIChatConverter struct{}
-
-// ToProviderRequest 将 Responses 请求转换为 OpenAI Chat Completions 格式
-func (c *OpenAIChatConverter) ToProviderRequest(sess *types.Session, req *types.ResponsesRequest) (interface{}, error) {
-	// 转换 messages
-	messages, err := ResponsesToOpenAIChatMessages(sess, req.Input, req.Instructions)
-	if err != nil {
-		return nil, err
-	}
-
-	// 构建 OpenAI 请求
-	openaiReq := map[string]interface{}{
-		"model":    req.Model,
-		"messages": messages,
-		"stream":   req.Stream,
-	}
-
-	// 复制其他参数
-	if req.MaxOutputTokens > 0 {
-		openaiReq["max_tokens"] = req.MaxOutputTokens
-	} else if req.MaxTokens > 0 {
-		openaiReq["max_tokens"] = req.MaxTokens
-	}
-	if req.Temperature > 0 {
-		openaiReq["temperature"] = req.Temperature
-	}
-	if req.TopP > 0 {
-		openaiReq["top_p"] = req.TopP
-	}
-	if req.FrequencyPenalty != 0 {
-		openaiReq["frequency_penalty"] = req.FrequencyPenalty
-	}
-	if req.PresencePenalty != 0 {
-		openaiReq["presence_penalty"] = req.PresencePenalty
-	}
-	if req.Stop != nil {
-		openaiReq["stop"] = req.Stop
-	}
-	if req.User != "" {
-		openaiReq["user"] = req.User
-	}
-	if streamOptions := openAIChatStreamOptions(req); streamOptions != nil {
-		openaiReq["stream_options"] = streamOptions
-	}
-	toolDefinitions, err := collectResponsesToolDefinitions(req.Tools, req.Input, sessionResponseItems(sess))
-	if err != nil {
-		return nil, err
-	}
-	if tools, err := responsesToolDefinitionsToOpenAIChatTools(toolDefinitions); err != nil {
-		return nil, err
-	} else if len(tools) > 0 {
-		openaiReq["tools"] = tools
-	}
-	if toolChoice, err := responsesToolChoiceToOpenAIChat(req.ToolChoice); err != nil {
-		return nil, err
-	} else if toolChoice != nil {
-		openaiReq["tool_choice"] = toolChoice
-	}
-	if req.ParallelToolCalls != nil {
-		openaiReq["parallel_tool_calls"] = *req.ParallelToolCalls
-	}
-	if reasoningEffort, err := responsesReasoningEffortToOpenAIChat(req.Reasoning); err != nil {
-		return nil, err
-	} else if reasoningEffort != "" {
-		openaiReq["reasoning_effort"] = reasoningEffort
-	}
-	if _, hasTools := openaiReq["tools"]; !hasTools {
-		delete(openaiReq, "tool_choice")
-		delete(openaiReq, "parallel_tool_calls")
-	}
-	if req.PromptCacheKey != "" {
-		openaiReq["prompt_cache_key"] = req.PromptCacheKey
-	}
-	if req.PromptCacheRetention != "" {
-		openaiReq["prompt_cache_retention"] = req.PromptCacheRetention
-	}
-
-	return openaiReq, nil
-}
-
-// FromProviderResponse 将 OpenAI Chat 响应转换为 Responses 格式
-func (c *OpenAIChatConverter) FromProviderResponse(resp map[string]interface{}, sessionID string) (*types.ResponsesResponse, error) {
-	return OpenAIChatResponseToResponses(resp, sessionID)
-}
-
-// GetProviderName 获取上游服务名称
-func (c *OpenAIChatConverter) GetProviderName() string {
-	return "OpenAI Chat Completions"
-}
 func responsesToolsToOpenAIChatTools(raw interface{}) ([]map[string]interface{}, error) {
 	tools, err := collectResponsesToolDefinitions(raw)
 	if err != nil {
@@ -133,84 +41,6 @@ func sessionResponseItems(sess *types.Session) interface{} {
 		return nil
 	}
 	return sess.Messages
-}
-
-func collectResponsesToolDefinitions(toolsRaw interface{}, inputRaws ...interface{}) ([]map[string]interface{}, error) {
-	out := make([]map[string]interface{}, 0)
-	seen := make(map[string]struct{})
-
-	if err := appendResponsesToolDefinitions(&out, seen, toolsRaw); err != nil {
-		return nil, fmt.Errorf("Responses tools 必须是数组: %w", err)
-	}
-	for _, inputRaw := range inputRaws {
-		appendResponsesToolDefinitionsFromToolSearchOutputs(&out, seen, inputRaw)
-	}
-
-	if len(out) == 0 {
-		return nil, nil
-	}
-	return out, nil
-}
-
-func appendResponsesToolDefinitions(out *[]map[string]interface{}, seen map[string]struct{}, raw interface{}) error {
-	if raw == nil {
-		return nil
-	}
-
-	tools, err := normalizeMapSlice(raw)
-	if err != nil {
-		return err
-	}
-	for _, tool := range tools {
-		key := responseToolDefinitionKey(tool)
-		if _, exists := seen[key]; exists {
-			continue
-		}
-		seen[key] = struct{}{}
-		*out = append(*out, tool)
-	}
-	return nil
-}
-
-func appendResponsesToolDefinitionsFromToolSearchOutputs(out *[]map[string]interface{}, seen map[string]struct{}, raw interface{}) {
-	switch value := raw.(type) {
-	case []interface{}:
-		for _, item := range value {
-			appendResponsesToolDefinitionsFromToolSearchOutputs(out, seen, item)
-		}
-	case map[string]interface{}:
-		itemType, _ := value["type"].(string)
-		if itemType == "tool_search_output" {
-			_ = appendResponsesToolDefinitions(out, seen, value["tools"])
-		}
-		for _, nested := range value {
-			appendResponsesToolDefinitionsFromToolSearchOutputs(out, seen, nested)
-		}
-	case []types.ResponsesItem:
-		for _, item := range value {
-			appendResponsesToolDefinitionsFromToolSearchOutputs(out, seen, item)
-		}
-	case types.ResponsesItem:
-		if value.Type == "tool_search_output" {
-			_ = appendResponsesToolDefinitions(out, seen, value.Tools)
-		}
-	}
-}
-
-func responseToolDefinitionKey(tool map[string]interface{}) string {
-	spec := normalizeResponsesToolDefinition(tool)
-	switch spec.ToolType {
-	case "namespace":
-		return "namespace:" + strings.TrimSpace(spec.Name)
-	case "tool_search":
-		return "tool_search"
-	case "web_search", "web_search_preview":
-		return spec.ToolType
-	case "custom":
-		return "custom:" + strings.TrimSpace(spec.Name)
-	default:
-		return "function:" + strings.TrimSpace(spec.Name)
-	}
 }
 
 func responsesToolChoiceToOpenAIChat(raw interface{}) (interface{}, error) {
@@ -339,7 +169,7 @@ func buildOpenAIChatNamespaceTools(tool map[string]interface{}, index int) ([]ma
 	out := make([]map[string]interface{}, 0, len(children))
 	for childIndex, child := range children {
 		childSpec := normalizeResponsesToolDefinition(child)
-		if childSpec.ToolType != "" && childSpec.ToolType != "function" {
+		if childSpec.ToolType != "" && childSpec.ToolType != "function" && childSpec.ToolType != "custom" {
 			continue
 		}
 		if childSpec.Name == "" {
@@ -480,25 +310,4 @@ func normalizeMap(raw interface{}) (map[string]interface{}, error) {
 		return nil, err
 	}
 	return out, nil
-}
-
-func openAIChatStreamOptions(req *types.ResponsesRequest) interface{} {
-	if req == nil || !req.Stream {
-		return nil
-	}
-	if req.StreamOptions == nil {
-		return map[string]interface{}{"include_usage": true}
-	}
-	options, ok := req.StreamOptions.(map[string]interface{})
-	if !ok {
-		return req.StreamOptions
-	}
-	cloned := make(map[string]interface{}, len(options)+1)
-	for key, value := range options {
-		cloned[key] = value
-	}
-	if _, exists := cloned["include_usage"]; !exists {
-		cloned["include_usage"] = true
-	}
-	return cloned
 }

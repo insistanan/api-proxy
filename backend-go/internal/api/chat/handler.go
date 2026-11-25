@@ -330,7 +330,7 @@ func handleSuccess(c *gin.Context, resp *http.Response, envCfg *config.EnvConfig
 		return nil, err
 	}
 	decompressedBytes, wasDecoded, decompressErr := codec.DecompressResponseBodyIfNeeded(resp, bodyBytes, envCfg.Current().MaxRequestBodySize)
-	if decompressErr != nil && errors.Is(decompressErr, codec.ErrDecompressedBodyTooLarge) {
+	if decompressErr != nil {
 		log.Printf("[Chat-Response] 错误: 解压响应体超过大小限制: %v", decompressErr)
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Decompressed response body too large"})
 		return nil, decompressErr

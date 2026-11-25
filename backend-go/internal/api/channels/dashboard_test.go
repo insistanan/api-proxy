@@ -74,6 +74,17 @@ func TestGetDashboard_IncludesStripThoughtSignature(t *testing.T) {
 		scheduler.ChannelKindChat:      chatMetrics,
 		scheduler.ChannelKindImages:    imagesMetrics,
 	}, traceAffinity, urlManager)
+	t.Cleanup(sch.Stop)
+	upstreams, _, err := cfgManager.GetChannelConfig("gemini")
+	if err != nil || len(upstreams) != 1 {
+		t.Fatalf("读取渠道失败: %v", err)
+	}
+	finishMain := sch.TrackChannelConversation(scheduler.ChannelKindGemini, upstreams[0].ID, "one-conversation", "main")
+	defer finishMain()
+	finishSide := sch.TrackChannelConversation(scheduler.ChannelKindGemini, upstreams[0].ID, "one-conversation", "side")
+	defer finishSide()
+	finishRetry := sch.TrackChannelConversation(scheduler.ChannelKindGemini, upstreams[0].ID, "one-conversation", "side")
+	defer finishRetry()
 
 	r := gin.New()
 	r.GET("/gemini/channels/dashboard", GetChannelDashboard(cfgManager, sch, scheduler.ChannelKindGemini))
@@ -88,12 +99,23 @@ func TestGetDashboard_IncludesStripThoughtSignature(t *testing.T) {
 
 	var resp struct {
 		Channels []map[string]any `json:"channels"`
+		Metrics  []struct {
+			Conversations *int `json:"activeConversations"`
+			Branches      *int `json:"activeBranches"`
+			Unidentified  *int `json:"unidentifiedBranchConversations"`
+		} `json:"metrics"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("解析响应失败: %v", err)
 	}
 	if len(resp.Channels) != 1 {
 		t.Fatalf("channels len=%d, want=1", len(resp.Channels))
+	}
+	if len(resp.Metrics) != 1 || resp.Metrics[0].Conversations == nil || resp.Metrics[0].Branches == nil || resp.Metrics[0].Unidentified == nil {
+		t.Fatalf("响应未包含完整的并发快照: %+v", resp.Metrics)
+	}
+	if *resp.Metrics[0].Conversations != 1 || *resp.Metrics[0].Branches != 2 || *resp.Metrics[0].Unidentified != 0 {
+		t.Fatalf("同会话两分支的重复请求不应增加并发: %+v", resp.Metrics[0])
 	}
 
 	value, ok := resp.Channels[0]["stripThoughtSignature"]

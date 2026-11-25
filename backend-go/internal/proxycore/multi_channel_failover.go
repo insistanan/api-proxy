@@ -1,6 +1,7 @@
 package proxycore
 
 import (
+	"errors"
 	"fmt"
 	"log"
 
@@ -37,6 +38,7 @@ func HandleMultiChannelFailover(
 	trySelectedChannel TrySelectedChannelFunc,
 	onHandled OnMultiChannelHandledFunc,
 	handleAllFailed HandleAllFailedFunc,
+	capacitySkipped ...int,
 ) {
 	if c == nil || envCfg == nil || channelScheduler == nil || trySelectedChannel == nil {
 		return
@@ -50,12 +52,13 @@ func HandleMultiChannelFailover(
 	failedChannels := make(map[int]bool)
 	var lastError error
 	var lastFailoverError *FailoverError
-
-	maxChannelAttempts := channelScheduler.ActiveChannelCountForRequest(c.Request.Context(), kind, requestedModel)
-	// 只有 fuzzy 多渠道允许跨渠道；其他调用入口也不得绕过此边界。
-	if !fuzzyMode && maxChannelAttempts > 1 {
-		maxChannelAttempts = 1
+	for _, index := range capacitySkipped {
+		failedChannels[index] = true
+		lastError = scheduler.ErrBranchCapacity
 	}
+
+	maxChannelAttempts := channelScheduler.ActiveChannelCountForRequest(c.Request.Context(), kind, requestedModel) - len(failedChannels)
+	// 容量不足是选渠跳过条件；只有 fuzzy 模式允许真实失败后的跨渠道重试。
 
 	for channelAttempt := 0; channelAttempt < maxChannelAttempts; channelAttempt++ {
 		// 检查客户端是否已断开连接
@@ -171,6 +174,9 @@ func HandleMultiChannelFailover(
 			}
 		}
 		lastFailoverError, lastError = mergeFailoverFailure(lastFailoverError, lastError, result.FailoverError, currentError)
+		if !fuzzyMode && !errors.Is(currentError, scheduler.ErrBranchCapacity) {
+			break
+		}
 
 		if result.Attempted && upstream != nil {
 			log.Printf("[%s-Failover] 警告: 渠道 [%d] %s 所有密钥都失败，尝试下一个渠道", apiType, channelIndex, upstream.Name)

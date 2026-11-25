@@ -320,7 +320,7 @@ func responsesItemToClaudeToolMessage(item types.ResponsesItem) (*types.ClaudeMe
 				return nil, fmt.Errorf("function_call arguments 不是合法 JSON: %w", err)
 			}
 		}
-		return &types.ClaudeMessage{Role: "assistant", Content: []map[string]interface{}{{"type": "tool_use", "id": callID, "name": item.Name, "input": input}}}, nil
+		return &types.ClaudeMessage{Role: "assistant", Content: []map[string]interface{}{{"type": "tool_use", "id": callID, "name": flattenNamespaceToolName(item.Namespace, item.Name), "input": input}}}, nil
 	case "tool_call":
 		if item.ToolUse == nil {
 			return nil, nil

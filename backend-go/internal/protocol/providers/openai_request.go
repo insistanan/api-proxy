@@ -201,7 +201,7 @@ func (p *OpenAIProvider) convertTools(claudeTools []types.ClaudeTool) []types.Op
 	tools := []types.OpenAITool{}
 
 	for _, tool := range claudeTools {
-		if tool.Name == "" || tool.Name == "BatchTool" {
+		if tool.Name == "" {
 			continue
 		}
 		tools = append(tools, types.OpenAITool{
@@ -209,80 +209,12 @@ func (p *OpenAIProvider) convertTools(claudeTools []types.ClaudeTool) []types.Op
 			Function: types.OpenAIToolFunction{
 				Name:        tool.Name,
 				Description: tool.Description,
-				Parameters:  cleanJsonSchema(tool.InputSchema),
+				Parameters:  tool.InputSchema,
 			},
 		})
 	}
 
 	return tools
-}
-
-// cleanJsonSchema 清理 JSON Schema，移除某些上游不支持的字段
-func cleanJsonSchema(schema interface{}) interface{} {
-	cleaned := cleanJsonSchemaFields(schema)
-	// 根级缺 type/properties 时补最小 object schema（cc-switch clean_schema 同语义）：
-	// 部分严格 OpenAI 兼容网关对缺根 type 的 function parameters 直接 400。
-	if schemaMap, ok := cleaned.(map[string]interface{}); ok {
-		if _, hasType := schemaMap["type"]; !hasType {
-			schemaMap["type"] = "object"
-			if _, hasProps := schemaMap["properties"]; !hasProps {
-				schemaMap["properties"] = map[string]interface{}{}
-			}
-		}
-	}
-	return cleaned
-}
-
-func cleanJsonSchemaFields(schema interface{}) interface{} {
-	if schema == nil {
-		return schema
-	}
-
-	// 如果是 map，递归清理
-	if schemaMap, ok := schema.(map[string]interface{}); ok {
-		cleaned := make(map[string]interface{})
-
-		for key, value := range schemaMap {
-			// 移除不需要的字段
-			if key == "$schema" || key == "title" || key == "examples" || key == "additionalProperties" {
-				continue
-			}
-			// 移除 format 字段（当类型为 string 时）
-			if key == "format" {
-				if schemaType, hasType := schemaMap["type"]; hasType && schemaType == "string" {
-					continue
-				}
-			}
-			// 递归处理嵌套对象
-			if key == "properties" || key == "items" {
-				cleaned[key] = cleanJsonSchemaFields(value)
-			} else if valueMap, isMap := value.(map[string]interface{}); isMap {
-				cleaned[key] = cleanJsonSchemaFields(valueMap)
-			} else if valueSlice, isSlice := value.([]interface{}); isSlice {
-				cleanedSlice := make([]interface{}, len(valueSlice))
-				for i, item := range valueSlice {
-					cleanedSlice[i] = cleanJsonSchemaFields(item)
-				}
-				cleaned[key] = cleanedSlice
-			} else {
-				cleaned[key] = value
-			}
-		}
-
-		return cleaned
-	}
-
-	// 如果是数组，递归清理每个元素
-	if schemaSlice, ok := schema.([]interface{}); ok {
-		cleaned := make([]interface{}, len(schemaSlice))
-		for i, item := range schemaSlice {
-			cleaned[i] = cleanJsonSchemaFields(item)
-		}
-		return cleaned
-	}
-
-	// 其他类型直接返回
-	return schema
 }
 
 func (p *OpenAIProvider) applyTokenLimit(openaiReq *types.OpenAIRequest, claudeReq *types.ClaudeRequest, upstream *config.UpstreamConfig) {

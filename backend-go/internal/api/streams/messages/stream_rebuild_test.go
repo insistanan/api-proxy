@@ -1,4 +1,4 @@
-package streams
+package messages
 
 import (
 	"strings"
@@ -26,8 +26,8 @@ func TestEventRebuildPreservesLineStructure(t *testing.T) {
 
 	const usageEvent = "event: message_delta\ndata: {\"type\":\"message_delta\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0}}\n\n"
 
-	t.Run("PatchTokensInEventWithCache", func(t *testing.T) {
-		out := PatchTokensInEventWithCache(usageEvent, 111, 22, 0, false, false, false)
+	t.Run("PatchTokensInEvent", func(t *testing.T) {
+		out := PatchTokensInEvent(usageEvent, 111, 22, false)
 		assertSameLineStructure(t, usageEvent, out)
 		assertUsage(t, out, 111, 22)
 	})

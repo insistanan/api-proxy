@@ -16,5 +16,6 @@
 //     （身份/指纹解析）
 //
 // 本包依赖 safety/pipeline 提供的内容安全错误类型和钩子管线。
-// 流式处理位于 internal/api/streams，由各协议端点直接调用。
+// 公共流式交付位于 internal/api/streams，Messages 事件链位于其 messages 子包，
+// 由各协议端点调用，proxycore 只处理返回结果。
 package proxycore

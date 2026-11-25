@@ -1,4 +1,4 @@
-package streams
+package messages
 
 import (
 	"bytes"
@@ -58,7 +58,7 @@ func TestSSEDataLineToleranceInStreamHelpers(t *testing.T) {
 func TestPatchTokensInEventToleratesMissingSpace(t *testing.T) {
 	event := "event: message_delta\ndata:" + `{"type":"message_delta","usage":{"input_tokens":0,"output_tokens":0}}` + "\n\n"
 
-	patched := PatchTokensInEventWithCache(event, 123, 45, 0, false, false, false)
+	patched := PatchTokensInEvent(event, 123, 45, false)
 
 	data, ok := ParseSSEEventData(patched)
 	if !ok {

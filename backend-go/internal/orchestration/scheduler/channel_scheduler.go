@@ -1,6 +1,8 @@
 package scheduler
 
 import (
+	"errors"
+	"fmt"
 	"maps"
 	"sync"
 
@@ -30,8 +32,8 @@ type ChannelScheduler struct {
 	// inFlightByKind 记录选渠后、真正发出上游请求前的在途预留。
 	// 用于许可生命周期和在途观测，不参与渠道排序。
 	inFlightByKind map[ChannelKind]map[int]int64
-	// 按稳定渠道 ID 和对话 ID 记录在途请求，避免重试或并行请求重复计数。
-	activeConversations map[channelIdentity]map[string]int
+	// 按稳定渠道、对话和分支身份引用计数，同一分支的重试或并行请求只计一次。
+	activeConversations map[channelIdentity]map[channelConversation]int
 
 	// stopOnce 保证聚合停止只执行一次，下属组件也支持并发停止并等待任务退出。
 	stopOnce sync.Once
@@ -42,43 +44,108 @@ type channelIdentity struct {
 	id   string
 }
 
+type channelConversation struct {
+	conversationID string
+	branchKey      string
+}
+
+// ChannelActivity 是同一渠道当前会话、分支数量与识别完整性的原子快照。
+type ChannelActivity struct {
+	Conversations int
+	Branches      int
+	// UnidentifiedConversations 表示仍有请求未提供稳定分支标识的会话数。
+	UnidentifiedConversations int
+}
+
+var ErrBranchCapacity = errors.New("渠道分支并发额度已满")
+
+// AdmitChannelConversation 将容量检查与登记放在同一把锁内；已有分支可继续处理。
+func (s *ChannelScheduler) AdmitChannelConversation(kind ChannelKind, channelID, conversationID, branchKey string, limit int) (func(), error) {
+	if limit < 1 {
+		return nil, fmt.Errorf("渠道分支并发上限必须是正整数")
+	}
+	return s.trackChannelConversation(kind, channelID, conversationID, branchKey, limit)
+}
+
 // TrackChannelConversation 登记一次渠道处理，返回该处理结束时的释放函数。
-func (s *ChannelScheduler) TrackChannelConversation(kind ChannelKind, channelID, conversationID string) func() {
+func (s *ChannelScheduler) TrackChannelConversation(kind ChannelKind, channelID, conversationID, branchKey string) func() {
+	release, _ := s.trackChannelConversation(kind, channelID, conversationID, branchKey, 0)
+	return release
+}
+
+func (s *ChannelScheduler) trackChannelConversation(kind ChannelKind, channelID, conversationID, branchKey string, limit int) (func(), error) {
 	if s == nil || channelID == "" || conversationID == "" {
-		return func() {}
+		return func() {}, nil
 	}
 	key := channelIdentity{kind: kind, id: channelID}
+	activity := channelConversation{conversationID: conversationID, branchKey: branchKey}
 	s.mu.Lock()
 	if s.activeConversations == nil {
-		s.activeConversations = make(map[channelIdentity]map[string]int)
+		s.activeConversations = make(map[channelIdentity]map[channelConversation]int)
 	}
 	conversations := s.activeConversations[key]
 	if conversations == nil {
-		conversations = make(map[string]int)
+		conversations = make(map[channelConversation]int)
 		s.activeConversations[key] = conversations
 	}
-	conversations[conversationID]++
+	if limit > 0 && conversations[activity] == 0 {
+		before := channelActivity(conversations).Branches
+		conversations[activity] = 1
+		after := channelActivity(conversations).Branches
+		delete(conversations, activity)
+		if after > before && after > limit {
+			s.mu.Unlock()
+			return nil, fmt.Errorf("%w（当前 %d，上限 %d）", ErrBranchCapacity, before, limit)
+		}
+	}
+	conversations[activity]++
 	s.mu.Unlock()
 
 	return sync.OnceFunc(func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		if conversations[conversationID] == 1 {
-			delete(conversations, conversationID)
+		if conversations[activity] == 1 {
+			delete(conversations, activity)
 		} else {
-			conversations[conversationID]--
+			conversations[activity]--
 		}
 		if len(conversations) == 0 {
 			delete(s.activeConversations, key)
 		}
-	})
+	}), nil
 }
 
-// ActiveChannelConversations 返回该渠道正在处理的独立对话数。
-func (s *ChannelScheduler) ActiveChannelConversations(kind ChannelKind, channelID string) int {
+// ActiveChannelActivity 在同一个快照中统计独立会话与分支，避免并发释放导致口径不一致。
+func (s *ChannelScheduler) ActiveChannelActivity(kind ChannelKind, channelID string) ChannelActivity {
+	if s == nil {
+		return ChannelActivity{}
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return len(s.activeConversations[channelIdentity{kind: kind, id: channelID}])
+	return channelActivity(s.activeConversations[channelIdentity{kind: kind, id: channelID}])
+}
+
+func channelActivity(active map[channelConversation]int) ChannelActivity {
+	conversations := make(map[string]int)
+	unidentified := make(map[string]bool)
+	for activity := range active {
+		if activity.branchKey == "" {
+			unidentified[activity.conversationID] = true
+		} else {
+			conversations[activity.conversationID]++
+		}
+	}
+	// 无标识的请求不能被断言为额外分支；该会话已有明确分支时仅标记识别不完整。
+	for conversationID := range unidentified {
+		if conversations[conversationID] == 0 {
+			conversations[conversationID] = 1
+		}
+	}
+	result := ChannelActivity{Conversations: len(conversations), UnidentifiedConversations: len(unidentified)}
+	for _, count := range conversations {
+		result.Branches += count
+	}
+	return result
 }
 
 // ChannelKind 标识调度器所处理的渠道类型

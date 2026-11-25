@@ -122,10 +122,11 @@
               prepend-icon="mdi-loading"
               class="sending-chip"
             >
-              发送中 {{ formatDurationSince(item.lastRequestAt || item.lastSeenAt) }}
+              <template v-if="(item.activeRequests || 0) > 1">{{ item.activeRequests }} 个请求进行中</template>
+              <template v-else>请求进行中</template>
             </UiBadge>
-            <span v-if="(item.activeRequests || 0) > 1" class="text-xs text-muted-foreground">
-              {{ item.activeRequests }} 个并发请求
+            <span v-if="formatDurationSince(item.lastRequestAt)" class="text-xs text-muted-foreground">
+              最近发起于 {{ formatDurationSince(item.lastRequestAt) }}前
             </span>
           </div>
           <span v-else class="text-xs text-muted-foreground">
@@ -265,7 +266,8 @@
             <div class="flex items-center gap-2">
               <UiBadge size="small" color="primary" variant="tonal" class="uppercase">{{ selectedConversation?.apiKind }}</UiBadge>
               <UiBadge v-if="selectedConversation?.isSending" size="small" color="success" variant="tonal" prepend-icon="mdi-loading" class="sending-chip">
-                发送中<span v-if="(selectedConversation?.activeRequests || 0) > 1"> · {{ selectedConversation?.activeRequests }} 个请求</span>
+                <template v-if="(selectedConversation?.activeRequests || 0) > 1">{{ selectedConversation?.activeRequests }} 个请求进行中</template>
+                <template v-else>请求进行中</template>
               </UiBadge>
               <UiBadge v-else size="small" color="grey" variant="tonal">已完成/空闲</UiBadge>
             </div>

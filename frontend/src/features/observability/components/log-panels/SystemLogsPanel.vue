@@ -99,7 +99,7 @@ const dateItems = [{ title: '全部历史', value: 0 }, { title: '最近 24 小�
 const conversationTitle = (group: LogConversationSummary) => group.name || group.title || group.latest.promptPreview || `会话 ${group.key.slice(-12)}`
 const identityLabels: Record<string, string> = {
   conversation_header: '会话请求头', claude_code_session: 'Claude Code 会话', conversation_query: '会话查询参数',
-  session_header: '会话请求头', codex_thread: 'Codex 线程', request_conversation: '请求会话字段',
+  session_header: '会话请求头', thread_header: '线程请求头', codex_thread: 'Codex 线程', request_conversation: '请求会话字段',
   metadata_conversation: '元数据会话字段', previous_response: '前序响应引用', request_session: '请求会话字段',
   structured_user_session: '客户端用户会话字段'
 }

@@ -32,11 +32,11 @@ func claudeRequestToResponsesRequest(claudeReq *types.ClaudeRequest, upstream *c
 	} else if claudeReq.MaxTokens > 0 {
 		req.MaxOutputTokens = claudeReq.MaxTokens
 	}
-	if claudeReq.Temperature > 0 {
+	if claudeReq.Temperature != nil {
 		req.Temperature = claudeReq.Temperature
 	}
 	// top_p / stop_sequences 直传（cc-switch transform_responses.rs 同映射）。
-	if claudeReq.TopP > 0 {
+	if claudeReq.TopP != nil {
 		req.TopP = claudeReq.TopP
 	}
 	if len(claudeReq.StopSequences) > 0 {
@@ -111,13 +111,13 @@ func normalizeToolsForPromptCacheKey(tools []types.ClaudeTool) []map[string]inte
 	}
 	out := make([]map[string]interface{}, 0, len(tools))
 	for _, tool := range tools {
-		if tool.Name == "" || tool.Name == "BatchTool" {
+		if tool.Name == "" {
 			continue
 		}
 		out = append(out, map[string]interface{}{
 			"name":        tool.Name,
 			"description": tool.Description,
-			"parameters":  cleanJsonSchema(tool.InputSchema),
+			"parameters":  tool.InputSchema,
 		})
 	}
 	return out
@@ -272,14 +272,14 @@ func claudeToolMessageToResponsesItems(msg types.ClaudeMessage) []interface{} {
 func claudeToolsToResponsesTools(tools []types.ClaudeTool) []interface{} {
 	out := make([]interface{}, 0, len(tools))
 	for _, tool := range tools {
-		if tool.Name == "" || tool.Name == "BatchTool" {
+		if tool.Name == "" {
 			continue
 		}
 		out = append(out, map[string]interface{}{
 			"type":        "function",
 			"name":        tool.Name,
 			"description": tool.Description,
-			"parameters":  cleanJsonSchema(tool.InputSchema),
+			"parameters":  tool.InputSchema,
 		})
 	}
 	return out

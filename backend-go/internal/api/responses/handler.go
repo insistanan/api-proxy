@@ -313,7 +313,10 @@ func handleResponsesImagePassthrough(
 		}
 	}
 
-	err := streams.ForwardUpstreamResponseBody(c, resp, "application/json", isStream)
+	if isStream {
+		return forwardResponsesImageStream(c, resp)
+	}
+	err := streams.ForwardUpstreamResponseBody(c, resp, "application/json", false)
 	if envCfg.Current().EnableResponseLogs {
 		responseTime := time.Since(startTime).Milliseconds()
 		log.Printf("[Responses-Image] 原生生图响应转发完成: %dms", responseTime)

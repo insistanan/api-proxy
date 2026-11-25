@@ -4,7 +4,6 @@ package gemini
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"github.com/insistanan/api-proxy/internal/protocol/codec"
@@ -24,6 +23,7 @@ import (
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/insistanan/api-proxy/internal/proxycore"
 	"github.com/insistanan/api-proxy/internal/safety/pipeline"
+	"github.com/tidwall/gjson"
 )
 
 // Handler Gemini API 代理处理器
@@ -253,7 +253,7 @@ func buildProviderRequest(
 	action string,
 ) (*http.Request, error) {
 	if geminiReq.CachedContent != "" && upstream.ServiceType != "gemini" && upstream.ServiceType != "" {
-		return nil, &types.InvalidRequestError{Err: fmt.Errorf("Gemini cachedContent 引用不能转换到 %s；请提供完整上下文或选择 Gemini 上游", upstream.ServiceType)}
+		return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("Gemini cachedContent 引用不能转换到 %s；请提供完整上下文或选择 Gemini 上游", upstream.ServiceType)}
 	}
 	// 应用模型映射
 	mappedModel := config.ResolveUpstreamModel(model, upstream)
@@ -302,27 +302,10 @@ func buildProviderRequest(
 		url = upstreamreq.BuildUpstreamURL(baseURL, "/v1", "/chat/completions", upstream.UseFullURL)
 
 	default:
-		// Gemini 上游（含未显式声明 ServiceType 的渠道）：按配置处理 thought_signature 后透传。
-		reqToUse := geminiReq
-
-		// 优先处理 StripThoughtSignature（移除字段）
-		if upstream.StripThoughtSignature {
-			reqCopy := cloneGeminiRequest(geminiReq)
-			stripThoughtSignature(reqCopy)
-			reqToUse = reqCopy
-		} else if upstream.InjectDummyThoughtSignature {
-			// 给空签名注入 dummy 值（兼容 x666.me 等要求必须有该字段的 API）
-			reqCopy := cloneGeminiRequest(geminiReq)
-			ensureThoughtSignatures(reqCopy)
-			reqToUse = reqCopy
-		}
-		// else: 默认直接透传，不做任何修改
-
-		requestBody, err = json.Marshal(reqToUse)
+		requestBody, err = converters.GeminiNativeRequest(geminiReq, upstream.StripThoughtSignature, upstream.InjectDummyThoughtSignature)
 		if err != nil {
 			return nil, err
 		}
-
 		url = upstreamreq.BuildUpstreamURL(baseURL, "/v1beta", fmt.Sprintf("/models/%s:%s", mappedModel, action), upstream.UseFullURL)
 		if isStream && !upstream.UseFullURL {
 			url += "?alt=sse"
@@ -396,7 +379,7 @@ func handleSuccess(
 	}
 
 	decompressedBytes, wasDecoded, decompressErr := codec.DecompressResponseBodyIfNeeded(resp, bodyBytes, envCfg.Current().MaxRequestBodySize)
-	if decompressErr != nil && errors.Is(decompressErr, codec.ErrDecompressedBodyTooLarge) {
+	if decompressErr != nil {
 		log.Printf("[Gemini-Response] 错误: 解压响应体超过大小限制: %v", decompressErr)
 		c.JSON(http.StatusBadGateway, types.GeminiError{
 			Error: types.GeminiErrorDetail{
@@ -432,42 +415,53 @@ func handleSuccess(
 
 	switch upstreamType {
 	case "gemini":
+		root := gjson.ParseBytes(bodyBytes)
+		if !gjson.ValidBytes(bodyBytes) || !root.IsObject() || root.Get("error").Exists() {
+			return nil, fmt.Errorf("上游 Gemini 响应必须为成功 JSON 对象")
+		}
+		if !root.Get("candidates").IsArray() && !root.Get("promptFeedback").IsObject() {
+			return nil, fmt.Errorf("上游 Gemini 响应缺少 candidates 或 promptFeedback")
+		}
 		// 直接解析 Gemini 响应
 		if err := json.Unmarshal(bodyBytes, &geminiResp); err != nil {
-			return nil, writeResponse(bodyBytes)
+			return nil, fmt.Errorf("转换 %s 响应失败: %w", upstreamType, err)
 		}
 
 	case "claude":
 		// 转换 Claude 响应为 Gemini 格式
 		var claudeResp map[string]interface{}
 		if err := json.Unmarshal(bodyBytes, &claudeResp); err != nil {
-			return nil, writeResponse(bodyBytes)
+			return nil, fmt.Errorf("转换 %s 响应失败: %w", upstreamType, err)
 		}
 		geminiResp, err = converters.ClaudeResponseToGemini(claudeResp)
 		if err != nil {
-			return nil, writeResponse(bodyBytes)
+			return nil, fmt.Errorf("转换 %s 响应失败: %w", upstreamType, err)
 		}
 
 	case "openai":
 		// 转换 OpenAI 响应为 Gemini 格式
 		var openaiResp map[string]interface{}
 		if err := json.Unmarshal(bodyBytes, &openaiResp); err != nil {
-			return nil, writeResponse(bodyBytes)
+			return nil, fmt.Errorf("转换 %s 响应失败: %w", upstreamType, err)
 		}
 		geminiResp, err = converters.OpenAIResponseToGemini(openaiResp)
 		if err != nil {
-			return nil, writeResponse(bodyBytes)
+			return nil, fmt.Errorf("转换 %s 响应失败: %w", upstreamType, err)
 		}
 
 	default:
-		// 默认直接返回
-		return nil, writeResponse(bodyBytes)
+		return nil, fmt.Errorf("不支持的 Gemini 上游协议: %q", upstreamType)
 	}
 
-	// 返回 Gemini 格式响应
-	respBytes, err := json.Marshal(geminiResp)
-	if err != nil {
-		return nil, writeResponse(bodyBytes)
+	if geminiResp == nil {
+		return nil, fmt.Errorf("上游 Gemini 响应不能为 null")
+	}
+	respBytes := bodyBytes
+	if upstreamType != "gemini" {
+		respBytes, err = json.Marshal(geminiResp)
+		if err != nil {
+			return nil, fmt.Errorf("编码 Gemini 响应失败: %w", err)
+		}
 	}
 
 	if err := writeResponse(respBytes); err != nil {

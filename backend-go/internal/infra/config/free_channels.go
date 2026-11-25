@@ -20,9 +20,23 @@ type FreeChannelsConfig struct {
 }
 
 type KiloFreeConfig struct {
-	Enabled  bool     `json:"enabled"`
-	Models   []string `json:"models"`
-	SyncedAt string   `json:"syncedAt,omitempty"`
+	MaxBranchConcurrency int      `json:"maxBranchConcurrency,omitempty"`
+	Enabled              bool     `json:"enabled"`
+	Models               []string `json:"models"`
+	SyncedAt             string   `json:"syncedAt,omitempty"`
+}
+
+func (k *KiloFreeConfig) UnmarshalJSON(data []byte) error {
+	type plain KiloFreeConfig
+	decoded := plain{MaxBranchConcurrency: DefaultBranchConcurrency}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	if err := validateExplicitBranchConcurrency(data); err != nil {
+		return err
+	}
+	*k = KiloFreeConfig(decoded)
+	return nil
 }
 
 func SupportsFreeChannels(kind string) bool {
@@ -51,6 +65,7 @@ func (u UpstreamConfig) MarshalJSON() ([]byte, error) {
 		}{u.ID, u.Name, u.Priority, ChannelStatusDeleted})
 	}
 	type plain UpstreamConfig
+	u.MaxBranchConcurrency = u.BranchConcurrencyLimit()
 	return json.Marshal(plain(u))
 }
 
@@ -78,6 +93,23 @@ func (cm *ConfigManager) GetFreeChannels() (FreeChannelsConfig, error) {
 
 func (cm *ConfigManager) SetKiloEnabled(enabled bool) error {
 	return cm.updateKilo(func(kilo *KiloFreeConfig) { kilo.Enabled = enabled })
+}
+
+// UpdateKiloSettings 原子更新共享设置，四个协议入口使用相同的分支上限。
+func (cm *ConfigManager) UpdateKiloSettings(enabled *bool, limit *int) error {
+	if limit != nil {
+		if err := validateBranchConcurrency(*limit); err != nil {
+			return err
+		}
+	}
+	return cm.updateKilo(func(kilo *KiloFreeConfig) {
+		if enabled != nil {
+			kilo.Enabled = *enabled
+		}
+		if limit != nil {
+			kilo.MaxBranchConcurrency = *limit
+		}
+	})
 }
 
 func (cm *ConfigManager) SetKiloModels(models []string, syncedAt string) error {
@@ -113,7 +145,13 @@ func materializeFreeChannels(candidate *Config) error {
 	if candidate.FreeChannels == nil {
 		return nil
 	}
+	if candidate.FreeChannels.Kilo.MaxBranchConcurrency == 0 {
+		candidate.FreeChannels.Kilo.MaxBranchConcurrency = DefaultBranchConcurrency
+	}
 	kilo := candidate.FreeChannels.Kilo
+	if err := validateBranchConcurrency(kilo.MaxBranchConcurrency); err != nil {
+		return fmt.Errorf("免费渠道: %w", err)
+	}
 	if len(kilo.Models) == 0 {
 		return fmt.Errorf("Kilo 免费模型清单不能为空")
 	}
@@ -165,7 +203,7 @@ func materializeFreeChannels(candidate *Config) error {
 		// 空串是匿名凭据槽位，只参与并发、冷却和统计；不落盘、不发送认证头。
 		upstream := UpstreamConfig{ID: id, BuiltinProvider: "kilo", Name: "Kilo 免费池", PoolID: FreeChannelPoolID,
 			ServiceType: "openai", BaseURL: KiloChatURL, UseFullURL: true, APIKeys: []string{""},
-			MaxConcurrency: 1, Priority: 1, Status: status, ModelMapping: maps.Clone(mapping),
+			MaxConcurrency: 1, MaxBranchConcurrency: kilo.MaxBranchConcurrency, Priority: 1, Status: status, ModelMapping: maps.Clone(mapping),
 			DisablePromptCacheKey: true, Description: "免注册、免 Key；通过 Chat 协议共享给四个入口"}
 		if index < 0 {
 			*cs.upstreams = append(*cs.upstreams, upstream)

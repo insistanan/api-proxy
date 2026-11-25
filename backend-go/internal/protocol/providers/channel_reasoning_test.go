@@ -18,7 +18,7 @@ import (
 
 func TestChannelReasoningOverridesClientAcrossProviderProtocols(t *testing.T) {
 	messageBody := []byte(`{"model":"alias","max_tokens":20000,"thinking":{"type":"disabled"},"output_config":{"effort":"future"},"reasoning_effort":"future","reasoning":{"effort":"future"},"generationConfig":{"thinkingConfig":{"thinkingBudget":0}},"messages":[{"role":"user","content":"hello"}]}`)
-	responseBody := []byte(`{"model":"alias","input":"hello","reasoning":{"effort":"future","summary":"auto"},"thinking":{"type":"enabled","budget_tokens":999999},"reasoning_effort":"future"}`)
+	responseBody := []byte(`{"model":"alias","max_output_tokens":20000,"input":"hello","reasoning":{"effort":"future","summary":"auto"},"thinking":{"type":"enabled","budget_tokens":999999},"reasoning_effort":"future"}`)
 	manager, err := session.NewPersistentSessionManager(filepath.Join(t.TempDir(), "responses.db"), time.Hour, 0, 0)
 	require.NoError(t, err)
 	t.Cleanup(manager.Stop)

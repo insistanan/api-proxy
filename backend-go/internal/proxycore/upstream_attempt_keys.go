@@ -22,6 +22,7 @@ import (
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/insistanan/api-proxy/internal/safety/pipeline"
 	"github.com/insistanan/api-proxy/internal/safety/visionlayer"
+	"github.com/insistanan/api-proxy/internal/storage/logger"
 )
 
 func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
@@ -55,7 +56,22 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 	failoverState := newUpstreamFailoverState()
 	requestLogID := BindRequestLogID(c)
 	capabilities := newUpstreamCapabilityState(upstream)
-	trackingConversation := false
+	if err := c.Request.Context().Err(); err != nil {
+		return newUpstreamAttemptResult(true, "", 0, nil, nil, err).withHealth(channelHealthNeutral)
+	}
+	limit := upstream.BranchConcurrencyLimit()
+	if latest, ok := cfgManager.FindChannelByID(upstream.ID); ok {
+		limit = latest.Upstream.BranchConcurrencyLimit()
+	}
+	// 先原子占用分支额度，再做转换和视觉层等准备；重试共用同一份额度。
+	release, err := channelScheduler.AdmitChannelConversation(kind, upstream.ID, logCtx.ConversationID, c.GetString(conversationBranchContextKey), limit)
+	if err != nil {
+		a.beginAvailabilityObservation(upstream, "")
+		c.Request = c.Request.WithContext(logger.ContextWithAttemptID(c.Request.Context(), nextAttemptLogID("attempt")))
+		finishAttempt(c, logCtx, upstream, apiType, requestLogID, urlResults[0].URL, "", "failed", http.StatusServiceUnavailable, false, time.Now(), "channel_branch_capacity", err.Error(), true, isStream, nil)
+		return localAdmissionResult(c, err, true)
+	}
+	defer release()
 
 	// 强制探测模式：基于本次优先尝试的 BaseURL 判断（避免 BaseURL/BaseURLs 不一致导致误判）
 	forceProbeMode := AreAllKeysSuspended(metricsManager, urlResults[0].URL, upstream.APIKeys, logCtx.ChannelIndex)
@@ -180,11 +196,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 				c.JSON(status, payload)
 				return newUpstreamAttemptResult(true, "", 0, nil, nil, err).withHealth(channelHealthNeutral)
 			}
-			// 请求准备成功后再启动请求画像和活跃度观测。
-			if !trackingConversation {
-				defer channelScheduler.TrackChannelConversation(kind, upstream.ID, logCtx.ConversationID)()
-				trackingConversation = true
-			}
+			// 请求准备成功后再启动请求画像。
 			lifecycle := a.startAttemptLifecycle(currentBaseURL, apiKey)
 			candidateStep := candidateAttempt{
 				attempt:          a,

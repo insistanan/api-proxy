@@ -1,16 +1,17 @@
 package gemini
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/converters"
 	"log"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/api/common"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
@@ -26,7 +27,8 @@ func handleStreamSuccess(
 	envCfg *config.EnvConfig,
 	startTime time.Time,
 	model string,
-) (*types.Usage, error) {
+) (usage *types.Usage, resultErr error) {
+	defer func() { resultErr = common.ReportStreamFailure(c, "gemini", resultErr) }()
 	envCfg = proxycore.RequestLogEnv(c, envCfg)
 	// 设置 SSE 响应头
 	c.Header("Content-Type", "text/event-stream")
@@ -90,8 +92,7 @@ func streamGeminiToGemini(
 	flusher http.Flusher,
 	envCfg *config.EnvConfig,
 ) (*types.Usage, error) {
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB buffer
+	scanner := codec.NewSSELineReader(c.Request.Context(), resp.Body)
 
 	var totalUsage *types.Usage
 	finishedCandidates := make(map[int]bool)
@@ -121,16 +122,25 @@ func streamGeminiToGemini(
 				return totalUsage, err
 			}
 
-			// 定稿后保留 usage 尾包，禁止额外正文重新进入客户端。
-			if completed {
-				if _, exists := data["candidates"]; exists {
-					data["candidates"] = []interface{}{}
+			if candidates, ok := data["candidates"].([]interface{}); ok {
+				kept := make([]interface{}, 0, len(candidates))
+				for _, raw := range candidates {
+					candidate, ok := raw.(map[string]interface{})
+					if !ok {
+						return totalUsage, fmt.Errorf("Gemini candidate 必须是对象")
+					}
+					index, _ := candidate["index"].(float64)
+					if !finishedCandidates[int(index)] {
+						kept = append(kept, raw)
+					}
+				}
+				if len(kept) != len(candidates) {
+					data["candidates"] = kept
 					encoded, err := json.Marshal(data)
 					if err != nil {
-						return totalUsage, fmt.Errorf("序列化 Gemini usage 尾包失败: %w", err)
+						return totalUsage, err
 					}
-					jsonData = string(encoded)
-					line = "data: " + jsonData
+					jsonData, line = string(encoded), "data: "+string(encoded)
 				}
 			}
 			var chunk types.GeminiStreamChunk
@@ -162,10 +172,8 @@ func streamGeminiToGemini(
 				if err := feedGeminiStreamChunk(c, &chunk); err != nil {
 					return totalUsage, err
 				}
-				for i, candidate := range chunk.Candidates {
-					if candidate.Index != 0 {
-						i = candidate.Index
-					}
+				for _, candidate := range chunk.Candidates {
+					i := candidate.Index
 					finishedCandidates[i] = finishedCandidates[i] || candidate.FinishReason != ""
 				}
 				completed = len(finishedCandidates) > 0
@@ -182,24 +190,21 @@ func streamGeminiToGemini(
 				continue
 			}
 			proxycore.MarkRequestLogFirstToken(c)
-			if _, err := fmt.Fprintf(c.Writer, "%s\n", restoredLine); err != nil {
+			if err := common.WriteStream(c.Writer, flusher, []byte(restoredLine+"\n")); err != nil {
 				return totalUsage, err
 			}
 		} else if line != "" {
 			proxycore.MarkRequestLogFirstToken(c)
-			if _, err := fmt.Fprintf(c.Writer, "%s\n", line); err != nil {
+			if err := common.WriteStream(c.Writer, flusher, []byte(line+"\n")); err != nil {
 				return totalUsage, err
 			}
 		} else {
 			proxycore.MarkRequestLogFirstToken(c)
-			if _, err := fmt.Fprintf(c.Writer, "\n"); err != nil {
+			if err := common.WriteStream(c.Writer, flusher, []byte("\n")); err != nil {
 				return totalUsage, err
 			}
 		}
 
-		if flusher != nil {
-			flusher.Flush()
-		}
 	}
 	if err := pipeline.AttachedStreamVetoError(c); err != nil {
 		return totalUsage, err
@@ -208,11 +213,8 @@ func streamGeminiToGemini(
 		return totalUsage, err
 	}
 	if trailingEventOpen {
-		if _, err := fmt.Fprint(c.Writer, "\n"); err != nil {
+		if err := common.WriteStream(c.Writer, flusher, []byte("\n")); err != nil {
 			return totalUsage, err
-		}
-		if flusher != nil {
-			flusher.Flush()
 		}
 	}
 	if err := flushGeminiRestoration(c, flusher); err != nil {
@@ -232,9 +234,9 @@ func streamClaudeToGemini(
 	envCfg *config.EnvConfig,
 	model string,
 ) (*types.Usage, error) {
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+	scanner := codec.NewSSELineReader(c.Request.Context(), resp.Body)
 
+	var tools converters.GeminiStreamTools
 	var totalUsage *types.Usage
 	completed := false
 	stopReason := "STOP"
@@ -261,10 +263,36 @@ func streamClaudeToGemini(
 			return totalUsage, err
 		}
 
+		parts, err := tools.Feed("claude", []byte(jsonData))
+		if err != nil {
+			return totalUsage, err
+		}
+		if len(parts) > 0 {
+			converted := types.GeminiStreamChunk{Candidates: []types.GeminiCandidate{{Content: &types.GeminiContent{Role: "model", Parts: parts}}}}
+			if err := feedGeminiStreamChunk(c, &converted); err != nil {
+				return totalUsage, err
+			}
+			encoded, err := json.Marshal(converted)
+			if err != nil {
+				return totalUsage, err
+			}
+			if err := writeGeminiSSE(c, flusher, encoded); err != nil {
+				return totalUsage, err
+			}
+		}
+
 		eventType, _ := event["type"].(string)
 
 		switch eventType {
-		case "content_block_delta":
+		case "content_block_start", "content_block_delta":
+			// 初始文本也必须交付，工具初值由协议工具状态累积。
+			if eventType == "content_block_start" {
+				block, _ := event["content_block"].(map[string]interface{})
+				if block["type"] != "text" {
+					continue
+				}
+				event["delta"] = map[string]interface{}{"type": "text_delta", "text": block["text"]}
+			}
 			// 文本增量
 			delta, ok := event["delta"].(map[string]interface{})
 			if !ok {
@@ -300,8 +328,12 @@ func streamClaudeToGemini(
 
 		case "message_delta":
 			// 先登记 usage，真正完成只能由 message_stop 确认。
-			if delta, ok := event["delta"].(map[string]interface{}); ok && delta["stop_reason"] == "max_tokens" {
-				stopReason = "MAX_TOKENS"
+			if delta, ok := event["delta"].(map[string]interface{}); ok {
+				reason, _ := delta["stop_reason"].(string)
+				stopReason, err = converters.GeminiFinishReason("claude", reason)
+				if err != nil {
+					return totalUsage, err
+				}
 			}
 			if usage, ok := event["usage"].(map[string]interface{}); ok {
 				inputTokens := 0
@@ -369,6 +401,9 @@ func streamClaudeToGemini(
 	if err := codec.CheckStreamCompletion(c.Request.Context(), completed, scanner.Err()); err != nil {
 		return totalUsage, err
 	}
+	if err := tools.CheckComplete(); err != nil {
+		return totalUsage, err
+	}
 	if err := flushGeminiRestoration(c, flusher); err != nil {
 		return totalUsage, err
 	}
@@ -408,9 +443,9 @@ func streamOpenAIToGemini(
 	envCfg *config.EnvConfig,
 	model string,
 ) (*types.Usage, error) {
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+	scanner := codec.NewSSELineReader(c.Request.Context(), resp.Body)
 
+	var tools converters.GeminiStreamTools
 	var totalUsage *types.Usage
 	stopReason := ""
 	messageSeen := false
@@ -437,6 +472,24 @@ func streamOpenAIToGemini(
 		chunk, err := parseUpstreamStreamObject(jsonData)
 		if err != nil {
 			return totalUsage, err
+		}
+
+		parts, err := tools.Feed("openai", []byte(jsonData))
+		if err != nil {
+			return totalUsage, err
+		}
+		if len(parts) > 0 {
+			converted := types.GeminiStreamChunk{Candidates: []types.GeminiCandidate{{Content: &types.GeminiContent{Role: "model", Parts: parts}}}}
+			if err := feedGeminiStreamChunk(c, &converted); err != nil {
+				return totalUsage, err
+			}
+			encoded, err := json.Marshal(converted)
+			if err != nil {
+				return totalUsage, err
+			}
+			if err := writeGeminiSSE(c, flusher, encoded); err != nil {
+				return totalUsage, err
+			}
 		}
 
 		// 定稿原因与 usage 独立抓取，兼容两者同包及纯 usage 尾包。
@@ -517,13 +570,19 @@ func streamOpenAIToGemini(
 
 		// finish_reason 只登记；usage 与内容流全部处理完后再发送唯一完成块。
 		if hasFinish && finishReason != "" && finishReason != "none" && finishReason != "null" {
-			stopReason = openaiFinishReasonToGemini(finishReason)
+			stopReason, err = converters.GeminiFinishReason("openai", finishReason)
+			if err != nil {
+				return totalUsage, err
+			}
 		}
 	}
 	if err := pipeline.AttachedStreamVetoError(c); err != nil {
 		return totalUsage, err
 	}
 	if err := codec.CheckStreamCompletion(c.Request.Context(), stopReason != "" || (doneSeen && messageSeen), scanner.Err()); err != nil {
+		return totalUsage, err
+	}
+	if err := tools.CheckComplete(); err != nil {
 		return totalUsage, err
 	}
 	if err := flushGeminiRestoration(c, flusher); err != nil {
@@ -554,11 +613,8 @@ func writeGeminiSSE(c *gin.Context, flusher http.Flusher, payload []byte) error 
 		return nil
 	}
 	proxycore.MarkRequestLogFirstToken(c)
-	if _, err := fmt.Fprint(c.Writer, event); err != nil {
+	if err := common.WriteStream(c.Writer, flusher, []byte(event)); err != nil {
 		return err
-	}
-	if flusher != nil {
-		flusher.Flush()
 	}
 	return nil
 }
@@ -569,12 +625,9 @@ func flushGeminiRestoration(c *gin.Context, flusher http.Flusher) error {
 		return err
 	}
 	for _, event := range events {
-		if _, err := fmt.Fprint(c.Writer, event); err != nil {
+		if err := common.WriteStream(c.Writer, flusher, []byte(event)); err != nil {
 			return err
 		}
-	}
-	if len(events) > 0 && flusher != nil {
-		flusher.Flush()
 	}
 	return nil
 }
@@ -583,10 +636,8 @@ func feedGeminiStreamChunk(c *gin.Context, chunk *types.GeminiStreamChunk) error
 	if chunk == nil {
 		return nil
 	}
-	for candidateIndex, candidate := range chunk.Candidates {
-		if candidate.Index != 0 {
-			candidateIndex = candidate.Index
-		}
+	for _, candidate := range chunk.Candidates {
+		candidateIndex := candidate.Index
 		branch := fmt.Sprintf("gemini.candidate.%d.", candidateIndex)
 		if candidate.Content == nil {
 			continue
@@ -608,20 +659,4 @@ func feedGeminiStreamChunk(c *gin.Context, chunk *types.GeminiStreamChunk) error
 		}
 	}
 	return nil
-}
-
-// openaiFinishReasonToGemini 将 OpenAI 停止原因转换为 Gemini 格式
-func openaiFinishReasonToGemini(finishReason string) string {
-	switch finishReason {
-	case "stop":
-		return "STOP"
-	case "length":
-		return "MAX_TOKENS"
-	case "tool_calls":
-		return "STOP"
-	case "content_filter":
-		return "SAFETY"
-	default:
-		return "STOP"
-	}
 }

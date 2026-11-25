@@ -1,7 +1,7 @@
 // 本文件负责从上游 SSE 事件里"读出" usage：判定事件是否带 usage、是否需要修补，
 // 提取各类 token 字段并累积到 CollectedUsageData，以及隐式缓存读取的推断。
 // 修补（写回）侧在 stream_usage_patch.go。
-package streams
+package messages
 
 import (
 	"encoding/json"
@@ -33,41 +33,6 @@ func updateCollectedUsage(collected *CollectedUsageData, usageData CollectedUsag
 	}
 	if usageData.CacheTTL != "" {
 		collected.CacheTTL = usageData.CacheTTL
-	}
-}
-
-// inferImplicitCacheRead 推断隐式缓存读取
-//
-// 当 message_start 中的 input_tokens 与 message_delta 中的最终 input_tokens 存在显著差异时，
-// 差额可能是上游 prompt caching 命中但未明确返回 cache_read_input_tokens 的情况。
-// 触发条件：差额 > 10% 或差额 > 10000 tokens，且上游未返回 cache_read_input_tokens。
-func inferImplicitCacheRead(ctx *Context, enableLog bool) {
-	// 前置条件检查
-	if ctx.MessageStartInputTokens == 0 || ctx.CollectedUsage.InputTokens == 0 {
-		return
-	}
-
-	// 上游已明确返回 cache_read，无需推断
-	if ctx.CollectedUsage.CacheReadInputTokens > 0 {
-		return
-	}
-
-	// 计算差额
-	diff := ctx.MessageStartInputTokens - ctx.CollectedUsage.InputTokens
-	if diff <= 0 {
-		return
-	}
-
-	// 计算差额比例
-	ratio := float64(diff) / float64(ctx.MessageStartInputTokens)
-
-	// 触发条件：差额 > 10% 或差额 > 10000 tokens
-	if ratio > 0.10 || diff > 10000 {
-		ctx.CollectedUsage.CacheReadInputTokens = diff
-		if enableLog {
-			log.Printf("[Messages-Stream-Token] 推断隐式缓存: message_start=%d, final=%d, cache_read=%d (%.1f%%)",
-				ctx.MessageStartInputTokens, ctx.CollectedUsage.InputTokens, diff, ratio*100)
-		}
 	}
 }
 

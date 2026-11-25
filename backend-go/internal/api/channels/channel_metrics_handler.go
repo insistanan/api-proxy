@@ -352,20 +352,23 @@ func GetChannelDashboard(cfgManager *config.ConfigManager, sch *scheduler.Channe
 				continue
 			}
 			resp := metricsManager.ToResponseMultiURL(i, upstream.GetAllBaseURLs(), upstream.APIKeys, 0, upstream.HistoricalAPIKeys)
+			activity := sch.ActiveChannelActivity(kind, upstream.ID)
 
 			item := gin.H{
-				"channelIndex":        i,
-				"channelName":         upstream.Name,
-				"requestCount":        resp.RequestCount,
-				"successCount":        resp.SuccessCount,
-				"failureCount":        resp.FailureCount,
-				"successRate":         resp.SuccessRate,
-				"errorRate":           resp.ErrorRate,
-				"consecutiveFailures": resp.ConsecutiveFailures,
-				"latency":             resp.Latency,
-				"keyMetrics":          resp.KeyMetrics,
-				"timeWindows":         resp.TimeWindows,
-				"activeConversations": sch.ActiveChannelConversations(kind, upstream.ID),
+				"channelIndex":                    i,
+				"channelName":                     upstream.Name,
+				"requestCount":                    resp.RequestCount,
+				"successCount":                    resp.SuccessCount,
+				"failureCount":                    resp.FailureCount,
+				"successRate":                     resp.SuccessRate,
+				"errorRate":                       resp.ErrorRate,
+				"consecutiveFailures":             resp.ConsecutiveFailures,
+				"latency":                         resp.Latency,
+				"keyMetrics":                      resp.KeyMetrics,
+				"timeWindows":                     resp.TimeWindows,
+				"activeConversations":             activity.Conversations,
+				"activeBranches":                  activity.Branches,
+				"unidentifiedBranchConversations": activity.UnidentifiedConversations,
 			}
 
 			// 渠道级熔断状态（internal/orchestration/circuit 运行时态；无记录时为 closed 零值）

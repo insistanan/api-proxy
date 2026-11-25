@@ -2,7 +2,8 @@
 package providers
 
 import (
-	"encoding/json"
+	"fmt"
+	"github.com/insistanan/api-proxy/internal/protocol/contract"
 	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 	"strings"
 
@@ -10,7 +11,10 @@ import (
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
-func responsesResponseToClaude(resp *types.ResponsesResponse) *types.ClaudeResponse {
+func responsesResponseToClaude(resp *types.ResponsesResponse) (*types.ClaudeResponse, error) {
+	if resp == nil || (resp.Status != "completed" && resp.Status != "incomplete") {
+		return nil, fmt.Errorf("Responses 上游没有返回 completed 或 incomplete 响应")
+	}
 	claudeResp := &types.ClaudeResponse{
 		ID:      generateID(),
 		Type:    "message",
@@ -39,8 +43,12 @@ func responsesResponseToClaude(resp *types.ResponsesResponse) *types.ClaudeRespo
 			var input interface{} = map[string]interface{}{}
 			if item.Type == "custom_tool_call" {
 				input = map[string]interface{}{"input": responsesToolOutput(item.Content)}
-			} else if item.Arguments != "" {
-				_ = json.Unmarshal([]byte(item.Arguments), &input)
+			} else {
+				var err error
+				input, err = contract.Arguments(item.Arguments, item.CallID)
+				if err != nil {
+					return nil, err
+				}
 			}
 			callID := item.CallID
 			if callID == "" {
@@ -88,7 +96,7 @@ func responsesResponseToClaude(resp *types.ResponsesResponse) *types.ClaudeRespo
 		CacheReadInputTokens:       cacheReadTokens,
 		CacheTTL:                   resp.Usage.CacheTTL,
 	}
-	return claudeResp
+	return claudeResp, nil
 }
 
 func flushClaudeText(resp *types.ClaudeResponse, parts *[]string) {

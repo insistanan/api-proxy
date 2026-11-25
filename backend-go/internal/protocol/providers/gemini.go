@@ -2,8 +2,6 @@ package providers
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
@@ -40,11 +38,12 @@ func (p *GeminiProvider) ConvertToProviderRequest(c *gin.Context, upstream *conf
 	c.Request.Body = io.NopCloser(bytes.NewReader(originalBodyBytes))
 
 	outcome, err := p.BuildRequest(RequestInput{
-		Ctx:    c.Request.Context(),
-		Method: http.MethodPost,
-		Path:   "/v1beta/models",
-		Header: c.Request.Header,
-		Body:   originalBodyBytes,
+		Ctx:            c.Request.Context(),
+		Method:         http.MethodPost,
+		Path:           "/v1beta/models",
+		Header:         c.Request.Header,
+		Body:           originalBodyBytes,
+		ConversationID: c.GetString(upstreamreq.ContextKeyConversationUserID),
 	}, upstream, apiKey)
 	if err != nil {
 		return nil, originalBodyBytes, err
@@ -55,14 +54,23 @@ func (p *GeminiProvider) ConvertToProviderRequest(c *gin.Context, upstream *conf
 // BuildRequest 以显式输入构造 Gemini 请求（R4-a 主实现，不依赖 gin）。
 func (p *GeminiProvider) buildRequest(input RequestInput, upstream *config.UpstreamConfig, apiKey string) (*RequestOutcome, error) {
 	originalBodyBytes := input.Body
+	if err := converters.ValidateClaudeConversion(input.Body, "gemini"); err != nil {
+		return nil, err
+	}
 
 	var claudeReq types.ClaudeRequest
 	if err := json.Unmarshal(originalBodyBytes, &claudeReq); err != nil {
 		return nil, fmt.Errorf("解析Claude请求体失败: %w", err)
 	}
 
-	p.shadowProviderID = buildGeminiShadowProviderID(upstream)
-	p.shadowSessionID = buildGeminiShadowSessionID(input.Header, &claudeReq, originalBodyBytes)
+	p.shadowProviderID = ""
+	if upstream != nil {
+		p.shadowProviderID = upstream.RequestIdentity(apiKey).Fingerprint() + "|" + config.ResolveUpstreamModel(claudeReq.Model, upstream)
+	}
+	p.shadowSessionID = input.ConversationID
+	if p.shadowSessionID == "" {
+		p.shadowSessionID = buildGeminiShadowSessionID(input.Header, &claudeReq)
+	}
 	p.shadowSnapshot = defaultGeminiShadowStore.Get(p.shadowProviderID, p.shadowSessionID)
 	p.stripThoughtSignature = false
 	p.injectDummyThoughtSignature = false
@@ -133,21 +141,7 @@ func buildGeminiGenerateContentURL(baseURL string, model string, stream bool, us
 	return upstreamreq.BuildUpstreamURL(baseURL, "/v1beta", fmt.Sprintf("/%s:%s", modelPath, action), useFullURL...)
 }
 
-func buildGeminiShadowProviderID(upstream *config.UpstreamConfig) string {
-	if upstream == nil {
-		return "gemini"
-	}
-	parts := []string{"gemini"}
-	if upstream.Name != "" {
-		parts = append(parts, upstream.Name)
-	}
-	if baseURL := strings.TrimRight(upstream.GetEffectiveBaseURL(), "/#"); baseURL != "" {
-		parts = append(parts, baseURL)
-	}
-	return strings.Join(parts, "|")
-}
-
-func buildGeminiShadowSessionID(header http.Header, claudeReq *types.ClaudeRequest, originalBody []byte) string {
+func buildGeminiShadowSessionID(header http.Header, claudeReq *types.ClaudeRequest) string {
 	if claudeReq != nil && len(claudeReq.Metadata) > 0 {
 		if sessionID := extractGeminiSessionIDFromMetadata(claudeReq.Metadata); sessionID != "" {
 			return sessionID
@@ -158,8 +152,7 @@ func buildGeminiShadowSessionID(header http.Header, claudeReq *types.ClaudeReque
 			return sessionID
 		}
 	}
-	sum := sha256.Sum256(originalBody)
-	return "body_" + hex.EncodeToString(sum[:8])
+	return ""
 }
 
 func extractGeminiSessionIDFromMetadata(metadata map[string]interface{}) string {
@@ -213,11 +206,11 @@ func (p *GeminiProvider) convertToGeminiRequest(claudeReq *types.ClaudeRequest, 
 		genConfig["maxOutputTokens"] = claudeReq.MaxTokens
 	}
 
-	if claudeReq.Temperature > 0 {
-		genConfig["temperature"] = claudeReq.Temperature
+	if claudeReq.Temperature != nil {
+		genConfig["temperature"] = *claudeReq.Temperature
 	}
-	if claudeReq.TopP > 0 {
-		genConfig["topP"] = claudeReq.TopP
+	if claudeReq.TopP != nil {
+		genConfig["topP"] = *claudeReq.TopP
 	}
 	if len(claudeReq.StopSequences) > 0 {
 		genConfig["stopSequences"] = claudeReq.StopSequences
@@ -312,85 +305,21 @@ func extractClaudeMessageText(content interface{}) string {
 
 // convertMessages 转换消息
 func (p *GeminiProvider) convertMessages(claudeMessages []types.ClaudeMessage, snapshot GeminiShadowSnapshot) ([]map[string]interface{}, error) {
-	messages := []map[string]interface{}{}
-	shadowTurns := snapshot.Turns
-	toolNameByID := buildGeminiToolNameMapFromShadowTurns(shadowTurns)
-	thoughtSignatureByID := buildGeminiThoughtSignatureMapFromShadowTurns(shadowTurns)
-	for id, name := range buildClaudeToolNameMap(claudeMessages) {
-		if _, exists := toolNameByID[id]; !exists {
-			toolNameByID[id] = name
-		}
-	}
-
-	totalAssistantMessages := 0
-	for _, msg := range claudeMessages {
-		if strings.ToLower(msg.Role) == "assistant" {
-			totalAssistantMessages++
-		}
-	}
-
-	effectiveShadowTurns := shadowTurns
-	if len(effectiveShadowTurns) > totalAssistantMessages {
-		effectiveShadowTurns = effectiveShadowTurns[len(effectiveShadowTurns)-totalAssistantMessages:]
-	}
-	shadowStartIndex := totalAssistantMessages - len(effectiveShadowTurns)
-	assistantSeenIndex := 0
-	usedShadowIndices := map[int]bool{}
-
-	for _, msg := range claudeMessages {
-		role := strings.ToLower(msg.Role)
-		if role == "system" {
-			continue
-		}
-
-		var geminiMsg map[string]interface{}
-		var err error
-		if role == "assistant" {
-			positionalIndex := -1
-			if assistantSeenIndex >= shadowStartIndex {
-				candidate := assistantSeenIndex - shadowStartIndex
-				if candidate >= 0 && candidate < len(effectiveShadowTurns) && !usedShadowIndices[candidate] {
-					positionalIndex = candidate
-				}
-			}
-			matchIndex := findMatchingGeminiShadowTurnForAssistantMessage(msg.Content, effectiveShadowTurns, usedShadowIndices)
-			assistantSeenIndex++
-
-			shadowIndex := matchIndex
-			if shadowIndex < 0 {
-				shadowIndex = positionalIndex
-			}
-			if shadowIndex >= 0 {
-				usedShadowIndices[shadowIndex] = true
-				shadowTurn := effectiveShadowTurns[shadowIndex]
-				mergeGeminiToolNamesFromShadow(shadowTurn, toolNameByID)
-				mergeGeminiThoughtSignaturesFromShadow(shadowTurn, thoughtSignatureByID)
-				if parts := geminiShadowReplayParts(shadowTurn.AssistantContent, p.stripThoughtSignature, p.injectDummyThoughtSignature); len(parts) > 0 {
-					mergeGeminiToolNamesFromParts(parts, toolNameByID)
-					geminiMsg = map[string]interface{}{
-						"role":  "model",
-						"parts": parts,
-					}
-				}
-			}
-		}
-
-		if geminiMsg == nil {
-			geminiMsg, err = p.convertMessage(msg, toolNameByID, thoughtSignatureByID)
-		}
+	messages := make([]map[string]interface{}, 0, len(claudeMessages))
+	names := buildClaudeToolNameMap(claudeMessages)
+	for _, message := range claudeMessages {
+		converted, err := p.convertMessage(message, names, nil)
 		if err != nil {
 			return nil, err
 		}
-		if geminiMsg != nil {
-			if role == "assistant" {
-				if parts, ok := geminiMsg["parts"].([]interface{}); ok {
-					mergeGeminiToolNamesFromParts(parts, toolNameByID)
-				}
-			}
-			messages = append(messages, geminiMsg)
+		if converted == nil {
+			continue
 		}
+		if message.Role == "assistant" {
+			restoreGeminiShadowMetadata(converted, message.Content, snapshot, p.stripThoughtSignature, p.injectDummyThoughtSignature)
+		}
+		messages = append(messages, converted)
 	}
-
 	return messages, nil
 }
 
@@ -413,87 +342,6 @@ func buildClaudeToolNameMap(messages []types.ClaudeMessage) map[string]string {
 		}
 	}
 	return toolNameByID
-}
-
-func buildGeminiToolNameMapFromShadowTurns(turns []GeminiShadowTurn) map[string]string {
-	out := map[string]string{}
-	for _, turn := range turns {
-		mergeGeminiToolNamesFromShadow(turn, out)
-	}
-	return out
-}
-
-func buildGeminiThoughtSignatureMapFromShadowTurns(turns []GeminiShadowTurn) map[string]string {
-	out := map[string]string{}
-	for _, turn := range turns {
-		mergeGeminiThoughtSignaturesFromShadow(turn, out)
-	}
-	return out
-}
-
-func mergeGeminiToolNamesFromShadow(turn GeminiShadowTurn, toolNameByID map[string]string) {
-	for _, toolCall := range turn.ToolCalls {
-		if toolCall.ID != "" && toolCall.Name != "" {
-			toolNameByID[toolCall.ID] = toolCall.Name
-		}
-	}
-	mergeGeminiToolNamesFromParts(geminiShadowReplayParts(turn.AssistantContent, false, false), toolNameByID)
-}
-
-func mergeGeminiThoughtSignaturesFromShadow(turn GeminiShadowTurn, thoughtSignatureByID map[string]string) {
-	for _, toolCall := range turn.ToolCalls {
-		if toolCall.ID != "" && toolCall.ThoughtSignature != "" {
-			thoughtSignatureByID[toolCall.ID] = toolCall.ThoughtSignature
-		}
-	}
-}
-
-func mergeGeminiToolNamesFromParts(parts []interface{}, toolNameByID map[string]string) {
-	for _, rawPart := range parts {
-		part, ok := rawPart.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		fc, ok := part["functionCall"].(map[string]interface{})
-		if !ok {
-			continue
-		}
-		id, _ := fc["id"].(string)
-		name, _ := fc["name"].(string)
-		if id != "" && name != "" {
-			toolNameByID[id] = name
-		}
-	}
-}
-
-func findMatchingGeminiShadowTurnForAssistantMessage(content interface{}, shadowTurns []GeminiShadowTurn, used map[int]bool) int {
-	toolUseIDs, toolUseNames := extractAssistantToolUseKeys(content)
-	if len(toolUseIDs) == 0 && len(toolUseNames) == 0 {
-		return -1
-	}
-	if len(toolUseIDs) > 0 {
-		for i, turn := range shadowTurns {
-			if used[i] {
-				continue
-			}
-			for _, toolCall := range turn.ToolCalls {
-				if toolUseIDs[toolCall.ID] {
-					return i
-				}
-			}
-		}
-	}
-	for i, turn := range shadowTurns {
-		if used[i] {
-			continue
-		}
-		for _, toolCall := range turn.ToolCalls {
-			if toolUseNames[toolCall.Name] || toolUseNames[normalizeGeminiToolName(toolCall.Name)] {
-				return i
-			}
-		}
-	}
-	return -1
 }
 
 func extractAssistantToolUseKeys(content interface{}) (map[string]bool, map[string]bool) {
@@ -961,7 +809,7 @@ func (p *GeminiProvider) convertTools(claudeTools []types.ClaudeTool) []map[stri
 	tools := []map[string]interface{}{}
 
 	for _, tool := range claudeTools {
-		if tool.Name == "" || tool.Name == "BatchTool" {
+		if tool.Name == "" {
 			continue
 		}
 		tools = append(tools, buildGeminiFunctionDeclaration(tool.Name, tool.Description, tool.InputSchema))
@@ -976,12 +824,6 @@ func buildGeminiFunctionDeclaration(name string, description string, inputSchema
 		"description": description,
 	}
 
-	schema := normalizeGeminiJSONSchema(inputSchema)
-	if requiresGeminiParametersJSONSchema(schema) {
-		declaration["parametersJsonSchema"] = schema
-		return declaration
-	}
-
-	declaration["parameters"] = toGeminiFunctionParametersSchema(schema)
+	declaration["parametersJsonSchema"] = inputSchema
 	return declaration
 }

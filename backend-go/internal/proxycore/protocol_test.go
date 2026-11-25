@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
@@ -160,6 +161,103 @@ func TestRunProxyRequestRecordsRequestAndConversationIDs(t *testing.T) {
 	}
 	if len(requestIDs) != 2 {
 		t.Fatalf("两次 HTTP 请求应保留不同 requestId，实际: %+v", entries.Logs)
+	}
+}
+
+func TestRunProxyRequestLatestPromptPreviewRespectsCaptureAndMasking(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		mode string
+	}{
+		{name: "正文采集使用脱敏后的最新输入", mode: "bounded"},
+		{name: "仅元数据不生成输入摘要", mode: "metadata"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			env := newRunProxyTestEnv(t)
+			env.envCfg.EnableRequestLogs = true
+			env.envCfg.LogCaptureMode = test.mode
+			settings := env.cfgManager.GetSettings()
+			settings.ContentSafety.Enabled = true
+			settings.ContentSafety.SensitiveData.Mode = config.ContentSafetyModeMask
+			settings.ContentSafety.SensitiveInfo.Enabled = true
+			settings.ContentSafety.SensitiveInfo.EnabledRules = []string{config.SensitiveInfoRulePhone}
+			if err := env.cfgManager.UpdateSettings(settings); err != nil {
+				t.Fatal(err)
+			}
+			rec := &specRecorder{}
+			spec := rec.newSpec()
+			spec.HookPipeline = pipeline.NewContentSafetyPipeline(env.cfgManager)
+			var preview string
+			spec.PreRoute = func(c *gin.Context, _ []byte, _ string, _ string, _ time.Time) bool {
+				preview = requestLifecycle(c).PromptPreview
+				c.JSON(http.StatusOK, gin.H{"ok": true})
+				return true
+			}
+			response := performRunProxyRequest(t, env, spec, `{"model":"test-model","messages":[{"role":"user","content":"旧问题"},{"role":"user","content":"最新问题 13800138000"}]}`, "test-access-key")
+			if response.Code != http.StatusOK {
+				t.Fatalf("请求失败: %d %s", response.Code, response.Body.String())
+			}
+			if test.mode == "metadata" {
+				if preview != "" {
+					t.Fatalf("仅元数据模式不应记录摘要: %q", preview)
+				}
+			} else if !strings.HasPrefix(preview, "最新问题") || strings.Contains(preview, "13800138000") {
+				t.Fatalf("摘要未使用脱敏后的最新输入: %q", preview)
+			}
+		})
+	}
+}
+
+func TestRunProxyRequestTracksBranchesWithinOneConversation(t *testing.T) {
+	env := newRunProxyTestEnv(t)
+	registry := conversation.NewRegistry()
+	t.Cleanup(registry.Stop)
+	env.channelScheduler.SetConversationRegistry(registry)
+	server := newRecordingUpstreamServer(t, nil)
+	addTestUpstream(t, env, "branch-channel", server.URL(), "key-a")
+	upstreams, _, err := env.cfgManager.GetChannelConfig("messages")
+	if err != nil || len(upstreams) != 1 {
+		t.Fatalf("读取测试渠道失败: %v", err)
+	}
+	channelID := upstreams[0].ID
+	rec := &specRecorder{}
+	spec := rec.newSpec()
+	originalHandle := spec.HandleSuccess
+	var invoke func(string)
+	spec.HandleSuccess = func(c *gin.Context, response *http.Response, upstream *config.UpstreamConfig, key string, body []byte, started time.Time) (*types.Usage, error) {
+		wantBranches := 1
+		if c.GetHeader("Thread-Id") == "side" {
+			wantBranches = 2
+		}
+		activity := env.channelScheduler.ActiveChannelActivity(scheduler.ChannelKindMessages, channelID)
+		if activity.Conversations != 1 || activity.Branches != wantBranches || activity.UnidentifiedConversations != 0 {
+			t.Errorf("渠道并发观测错误: %+v，期望一个会话、%d 个分支", activity, wantBranches)
+		}
+		if wantBranches == 1 {
+			// 主线响应尚未结束时同步处理旁路，两个生命周期确定重叠，无需等待计时器。
+			invoke("side")
+			if got := env.channelScheduler.ActiveChannelActivity(scheduler.ChannelKindMessages, channelID); got.Branches != 1 {
+				t.Errorf("旁路结束后应仅保留主线: %+v", got)
+			}
+		}
+		return originalHandle(c, response, upstream, key, body, started)
+	}
+	invoke = func(thread string) {
+		response := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(response)
+		c.Request = httptest.NewRequest("POST", "/v1/messages", strings.NewReader(`{"model":"test-model","messages":[{"role":"user","content":"共同上下文"}]}`))
+		c.Request.Header.Set("Content-Type", "application/json")
+		c.Request.Header.Set("Authorization", "Bearer test-access-key")
+		c.Request.Header.Set("Session-Id", "shared-session")
+		c.Request.Header.Set("Thread-Id", thread)
+		RunProxyRequest(c, env.envCfg, env.cfgManager, env.channelScheduler, spec)
+		if response.Code != http.StatusOK {
+			t.Errorf("分支 %s 请求失败: %d %s", thread, response.Code, response.Body.String())
+		}
+	}
+	invoke("main")
+	if activity := env.channelScheduler.ActiveChannelActivity(scheduler.ChannelKindMessages, channelID); activity != (scheduler.ChannelActivity{}) {
+		t.Fatalf("请求结束后未清空并发: %+v", activity)
 	}
 }
 

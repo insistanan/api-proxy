@@ -1,14 +1,37 @@
 package config
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
 
+func TestCacheKeepaliveConfig_IgnoresRemovedTokenLimitInExistingSettings(t *testing.T) {
+	var upstream UpstreamConfig
+	err := json.Unmarshal([]byte(`{"serviceType":"claude","cacheKeepalive":{"enabled":true,"intervalSeconds":280,"maxAttempts":100,"maxIdleMinutes":0,"prompt":"继续","minCacheHitPercent":90,"maxOutputTokens":16,"maxTotalTokens":1}}`), &upstream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateCacheKeepalive("messages", &upstream); err != nil {
+		t.Fatalf("旧配置残留字段不应影响启用: %v", err)
+	}
+	data, err := json.Marshal(upstream.CacheKeepalive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved map[string]json.RawMessage
+	if err := json.Unmarshal(data, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := saved["maxTotalTokens"]; exists {
+		t.Fatal("保存时不应继续输出已移除的 Token 限制")
+	}
+}
+
 func TestCacheKeepaliveValidation_RejectsInvalidLimitsAndUnsupportedChannels(t *testing.T) {
 	valid := UpstreamConfig{ServiceType: "claude", CacheKeepalive: CacheKeepaliveConfig{
 		Enabled: true, IntervalSeconds: 180, MaxAttempts: 100, Prompt: "接下来应该怎么做？",
-		MinCacheHitPercent: 90, MaxOutputTokens: 16, MaxTotalTokens: 5000000,
+		MinCacheHitPercent: 90, MaxOutputTokens: 16,
 	}}
 	if err := ValidateCacheKeepalive("messages", &valid); err != nil {
 		t.Fatal(err)
@@ -19,7 +42,6 @@ func TestCacheKeepaliveValidation_RejectsInvalidLimitsAndUnsupportedChannels(t *
 	}{
 		{"不足三分钟", func(u *UpstreamConfig) { u.CacheKeepalive.IntervalSeconds = 179 }},
 		{"没有停止上限", func(u *UpstreamConfig) { u.CacheKeepalive.MaxAttempts = 0 }},
-		{"没有预算", func(u *UpstreamConfig) { u.CacheKeepalive.MaxTotalTokens = 0 }},
 		{"空心跳内容", func(u *UpstreamConfig) { u.CacheKeepalive.Prompt = " " }},
 		{"未知上游", func(u *UpstreamConfig) { u.ServiceType = "unknown" }},
 		{"估算用量", func(u *UpstreamConfig) { u.LowQuality = true }},
@@ -77,7 +99,7 @@ func TestCacheKeepalive_EnablementCoversEveryConversationPool(t *testing.T) {
 			t.Run(kind+"/"+protocol, func(t *testing.T) {
 				want := (kind == "messages" || kind == "responses") || kind == "chat" && protocol == "openai" || kind == "gemini" && protocol != "responses"
 				up := UpstreamConfig{ID: "channel", ServiceType: protocol, BaseURL: "https://example.test", APIKeys: []string{"fixture"}, MaxConcurrency: 5,
-					CacheKeepalive: CacheKeepaliveConfig{Enabled: true, IntervalSeconds: 280, MaxAttempts: 100, Prompt: "继续", MinCacheHitPercent: 90, MaxOutputTokens: 16, MaxTotalTokens: 5000000}}
+					CacheKeepalive: CacheKeepaliveConfig{Enabled: true, IntervalSeconds: 280, MaxAttempts: 100, Prompt: "继续", MinCacheHitPercent: 90, MaxOutputTokens: 16}}
 				if err := ValidateCacheKeepalive(kind, &up); (err == nil) != want {
 					t.Fatalf("协议支持判定与入口能力不符: %v", err)
 				}

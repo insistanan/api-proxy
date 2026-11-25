@@ -134,6 +134,7 @@ func RunProxyRequest(
 		c.Set(upstreamreq.ContextKeyCodexDisguise, cfgManager.GetCodexDisguiseEnabled())
 	}
 	identity := ResolveConversationIdentity(c, bodyBytes)
+	c.Set(conversationBranchContextKey, conversationBranchKey(identity))
 	keepaliveTurn := beginCacheKeepalive(c, channelScheduler, spec.Kind, identity, envCfg.Current().ProxyAccessKey, IsQuickTestRequest(c, bodyBytes))
 	defer keepaliveTurn.End()
 	requestState.ClientFamily = identity.ClientFamily
@@ -214,8 +215,20 @@ func RunProxyRequest(
 
 	// 5. 记录原始请求
 	requestState.ConversationID = conversationID
-	if len(prompts) > 0 && capturePolicy(c.Request.Context(), envCfg).BodyState(false) == "" {
-		requestState.PromptPreview = logger.LogPreview(prompts[0], 160)
+	if capturePolicy(c.Request.Context(), envCfg).BodyState(false) == "" {
+		var preview string
+		if spec.Kind == scheduler.ChannelKindImages {
+			// Images 可能使用 multipart，复用已经提取和脱敏的表单提示词。
+			if len(prompts) > 0 {
+				preview = prompts[0]
+			}
+		} else {
+			preview, err = extractLatestUserPrompt(string(spec.Kind), bodyBytes)
+			if err != nil {
+				log.Printf("[Request-Log] 提取调用输入摘要失败: %v", err)
+			}
+		}
+		requestState.PromptPreview = logger.LogPreview(codec.RedactSensitivePlaceholdersForLog(preview), 160)
 	}
 	recordRequestLifecycle(c, envCfg, spec.LogName, logger.PhaseRequestStart, requestState)
 	LogOriginalRequest(c, bodyBytes, envCfg, spec.LogName)
@@ -355,6 +368,7 @@ func handleSingleChannelProxy(
 	startTime time.Time,
 ) {
 	// 未指定渠道时，从配置获取
+	allowCapacityFailover := upstream == nil
 	if upstream == nil {
 		var err error
 		if scheduler.PoolConstraintFrom(c.Request.Context()).PoolID != "" {
@@ -453,7 +467,17 @@ func handleSingleChannelProxy(
 	attempt := buildProtocolAttempt(c, envCfg, cfgManager, channelScheduler, spec, bodyBytes, model, stream, conversationID, upstream, channelIndex, startTime, urlResults, spec.Kind, nil, nil, false)
 	attempt.Permit = singlePermit
 	result := attempt.TryWithModelMappingFailover()
-	if !result.Handled && upstreamcontrol.IsLocalError(result.LastError) {
+	if !result.Handled && !result.AbortFailover && errors.Is(result.LastError, scheduler.ErrBranchCapacity) && allowCapacityFailover &&
+		channelScheduler.ActiveChannelCountForRequest(c.Request.Context(), spec.Kind, model) > 1 {
+		// 自动选渠的额度不足可跳过；显式指定渠道和会话路由约束仍由各自入口守住。
+		recordChannelHealth(channelScheduler, spec.Kind, channelIndex, channelHealthNeutral, false, spec.LogName, singlePermit)
+		if singlePermit != nil {
+			singlePermit.Release()
+		}
+		handleMultiChannelProxy(c, envCfg, cfgManager, channelScheduler, spec, bodyBytes, model, stream, conversationID, startTime, channelIndex)
+		return
+	}
+	if !result.Handled && isLocalAdmissionError(result.LastError) {
 		result = localAdmissionResult(c, result.LastError, false)
 	}
 	if result.Handled {
@@ -497,6 +521,7 @@ func handleMultiChannelProxy(
 	stream bool,
 	conversationID string,
 	startTime time.Time,
+	capacitySkipped ...int,
 ) {
 	HandleMultiChannelFailover(
 		c,
@@ -534,7 +559,7 @@ func handleMultiChannelProxy(
 			attempt.Permit = selection.Permit
 			result := attempt.TryWithModelMappingFailover()
 
-			result.Attempted = true
+			result.Attempted = !errors.Is(result.LastError, scheduler.ErrBranchCapacity)
 			return result
 		},
 		func(selection *scheduler.SelectionResult, result UpstreamAttemptResult) {
@@ -550,7 +575,7 @@ func handleMultiChannelProxy(
 			}
 		},
 		func(ctx *gin.Context, failoverErr *FailoverError, lastError error) {
-			if upstreamcontrol.IsLocalError(lastError) {
+			if isLocalAdmissionError(lastError) {
 				localAdmissionResult(ctx, lastError, false)
 				return
 			}
@@ -561,5 +586,6 @@ func handleMultiChannelProxy(
 				HandleAllChannelsFailed(ctx, cfgManager.GetFuzzyModeEnabledForProtocol(string(spec.Kind)), failoverErr, lastError, spec.LogName)
 			}
 		},
+		capacitySkipped...,
 	)
 }

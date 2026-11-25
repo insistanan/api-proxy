@@ -1,7 +1,7 @@
 // 本文件负责流式响应内容的累积与推理内容缓存：
 // captureReasoningContext 从每个 SSE 事件里累积 thinking / text / tool_use 参数到 Context；
 // cacheClaudeReasoning 在流结束时把累积结果组装成助手响应，写入 providers 的推理缓存。
-package streams
+package messages
 
 import (
 	"encoding/json"

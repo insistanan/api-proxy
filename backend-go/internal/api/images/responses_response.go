@@ -5,12 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/api/common"
 	"github.com/insistanan/api-proxy/internal/api/streams"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
@@ -61,12 +61,15 @@ type imagesResponse struct {
 func handleImagesResponsesSuccess(c *gin.Context, resp *http.Response, envCfg *config.EnvConfig, endpoint string, requestedStream bool) (*types.Usage, error) {
 	lifecycle := responsesLifecycle(c)
 	defer lifecycle.close()
+	defer codec.BindStreamBody(lifecycle.ctx, resp.Body)()
 	reader, _, err := codec.WrapStreamReaderIfNeeded(resp)
 	if err != nil {
-		resp.Body.Close()
+		if cause := context.Cause(lifecycle.ctx); cause != nil {
+			return nil, cause
+		}
 		return nil, fmt.Errorf("解压 Responses 图片响应失败: %w", err)
 	}
-	defer codec.BindStreamBody(lifecycle.ctx, reader)()
+	defer reader.Close()
 	if envCfg.Current().MaxRequestBodySize <= 0 {
 		return nil, fmt.Errorf("Responses 图片响应大小限制必须为正数")
 	}
@@ -105,6 +108,9 @@ func handleImagesResponsesSuccess(c *gin.Context, resp *http.Response, envCfg *c
 		return nil, fmt.Errorf("解析 Responses 图片响应失败: %w", err)
 	}
 	usage, usageErr := responsesImageUsage(response.Usage)
+	if usageErr != nil {
+		return nil, fmt.Errorf("解析 Responses 图片用量失败: %w", usageErr)
+	}
 	converted, err := convertResponsesImageResponse(response)
 	if err != nil {
 		return usage, err
@@ -119,12 +125,9 @@ func handleImagesResponsesSuccess(c *gin.Context, resp *http.Response, envCfg *c
 			}
 		}
 	} else {
-		upstreamreq.ForwardResponseHeadersEx(resp.Header, c.Writer, true)
-		upstreamreq.StripEntityHeadersForRebuiltBody(c.Writer.Header())
-		c.JSON(http.StatusOK, converted)
-	}
-	if usageErr != nil {
-		return nil, fmt.Errorf("解析 Responses 图片用量失败: %w", usageErr)
+		if err := writeImagesJSON(c, resp.Header, converted); err != nil {
+			return usage, err
+		}
 	}
 	return usage, nil
 }
@@ -148,9 +151,12 @@ type nativeImagesJSONResponse struct {
 // writeImagesJSONAsCompletedStream 把上游完整 Images JSON 包成一条 completed SSE。
 // 不解码或再编码整段 base64，只把原始 JSON 字符串切片写进事件。
 func writeImagesJSONAsCompletedStream(c *gin.Context, resp *http.Response, envCfg *config.EnvConfig, endpoint string) (*types.Usage, error) {
+	defer codec.BindStreamBody(c.Request.Context(), resp.Body)()
 	reader, _, err := codec.WrapStreamReaderIfNeeded(resp)
 	if err != nil {
-		resp.Body.Close()
+		if cancelErr := c.Request.Context().Err(); cancelErr != nil {
+			return nil, cancelErr
+		}
 		return nil, fmt.Errorf("解压 Images 响应失败: %w", err)
 	}
 	defer reader.Close()
@@ -158,6 +164,9 @@ func writeImagesJSONAsCompletedStream(c *gin.Context, resp *http.Response, envCf
 		return nil, fmt.Errorf("Images 响应大小限制必须为正数")
 	}
 	body, err := codec.ReadWithOutputLimit(reader, envCfg.Current().MaxRequestBodySize)
+	if cancelErr := c.Request.Context().Err(); cancelErr != nil {
+		return nil, cancelErr
+	}
 	if err != nil {
 		return nil, fmt.Errorf("读取 Images 响应失败: %w", err)
 	}
@@ -167,7 +176,7 @@ func writeImagesJSONAsCompletedStream(c *gin.Context, resp *http.Response, envCf
 	}
 	usage, err := tokenusage.ParseJSONUsage(response.Usage)
 	if err != nil {
-		log.Printf("[Images-Usage] 原生图片用量字段无效: %v", err)
+		return nil, fmt.Errorf("解析 Images 图片用量失败: %w", err)
 	}
 	if len(response.Error) > 0 && string(response.Error) != "null" {
 		return usage, nativeImagesJSONError(response.Error)
@@ -198,6 +207,22 @@ func writeImagesJSONAsCompletedStream(c *gin.Context, resp *http.Response, envCf
 		}
 	}
 	return usage, nil
+}
+
+// writeImagesJSON 显式返回交付失败，避免 gin.JSON 将写错误留在 Context 后仍返回成功。
+func writeImagesJSON(c *gin.Context, headers http.Header, payload imagesResponse) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("编码 Images 响应失败: %w", err)
+	}
+	if err := c.Request.Context().Err(); err != nil {
+		return err
+	}
+	upstreamreq.ForwardResponseHeadersEx(headers, c.Writer, true)
+	upstreamreq.StripEntityHeadersForRebuiltBody(c.Writer.Header())
+	c.Header("Content-Type", "application/json; charset=utf-8")
+	c.Status(http.StatusOK)
+	return common.WriteStream(c.Writer, nil, body)
 }
 
 func quotedImagesBase64JSON(raw json.RawMessage) (string, error) {

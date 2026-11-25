@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/contract"
 	"github.com/insistanan/api-proxy/internal/protocol/items"
 	"strings"
 
@@ -35,10 +36,7 @@ func ConvertResponsesRequestToUpstream(serviceType string, model string, bodyByt
 		sess = nil
 	}
 	if serviceType != ResponsesUpstreamResponses && req != nil {
-		// 先固定历史边界，再为本次转换降级搜索能力，避免修改原生候选的请求。
-		var err error
-		bodyBytes, sess, req, err = downgradeResponsesHostedSearch(serviceType, bodyBytes, sess, req)
-		if err != nil {
+		if err := validateResponsesConversion(req, sess, bodyBytes, serviceType); err != nil {
 			return nil, err
 		}
 	}
@@ -48,7 +46,7 @@ func ConvertResponsesRequestToUpstream(serviceType string, model string, bodyByt
 	case ResponsesUpstreamOpenAI:
 		return convertResponsesRequestToOpenAIChat(model, bodyBytes, stream, sess, req, upstream)
 	case ResponsesUpstreamClaude:
-		return convertResponsesRequestWithStructConverter(serviceType, sess, req, upstream)
+		return convertResponsesRequestToClaude(sess, req, upstream)
 	case ResponsesUpstreamGemini:
 		if req == nil {
 			return nil, fmt.Errorf("Responses -> Gemini 请求转换缺少解析后的请求")
@@ -61,6 +59,9 @@ func ConvertResponsesRequestToUpstream(serviceType string, model string, bodyByt
 
 // ConvertUpstreamResponseToResponses 将上游非流式响应转换为 Responses 响应。
 func ConvertUpstreamResponseToResponses(serviceType string, originalRequestJSON []byte, upstreamResponseJSON []byte, sessionID string) (*types.ResponsesResponse, error) {
+	if err := validateUpstreamResponse(serviceType, upstreamResponseJSON); err != nil {
+		return nil, err
+	}
 	switch serviceType {
 	case ResponsesUpstreamResponses:
 		respMap, err := JSONToMap(upstreamResponseJSON)
@@ -75,14 +76,42 @@ func ConvertUpstreamResponseToResponses(serviceType string, originalRequestJSON 
 		if err := json.Unmarshal([]byte(converted), &resp); err != nil {
 			return nil, fmt.Errorf("转换 OpenAI Chat 响应失败: %w", err)
 		}
+		completion, err := contract.Finish("openai", gjson.GetBytes(upstreamResponseJSON, "choices.0.finish_reason").String())
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range resp.Output {
+			if item.Type == "function_call" {
+				if _, err := contract.Arguments(item.Arguments, item.CallID); err != nil {
+					return nil, err
+				}
+			}
+		}
+		applyResponseCompletion(&resp, completion)
 		return &resp, nil
 	case ResponsesUpstreamClaude:
 		respMap, err := JSONToMap(upstreamResponseJSON)
 		if err != nil {
 			return nil, fmt.Errorf("解析 Claude 响应失败: %w", err)
 		}
-		converter := &ClaudeConverter{}
-		return converter.FromProviderResponse(respMap, sessionID)
+		resp, err := ClaudeResponseToResponses(respMap, sessionID)
+		if err != nil {
+			return nil, err
+		}
+		context := buildResponseToolContextFromRawRequest(originalRequestJSON)
+		for i, item := range resp.Output {
+			restored, err := restoreResponseToolItem(item, context)
+			if err != nil {
+				return nil, err
+			}
+			resp.Output[i] = restored
+		}
+		completion, err := contract.Finish("claude", gjson.GetBytes(upstreamResponseJSON, "stop_reason").String())
+		if err != nil {
+			return nil, err
+		}
+		applyResponseCompletion(resp, completion)
+		return resp, nil
 	case ResponsesUpstreamGemini:
 		return ConvertGeminiResponseToResponses(originalRequestJSON, upstreamResponseJSON)
 	default:
@@ -108,7 +137,11 @@ func ConvertUpstreamStreamLineToResponses(ctx context.Context, serviceType strin
 	case ResponsesUpstreamResponses:
 		return []string{string(line) + "\n"}, nil
 	case ResponsesUpstreamOpenAI:
-		return ConvertOpenAIChatToResponses(ctx, model, originalRequestJSON, nil, line, state), nil
+		out := ConvertOpenAIChatToResponses(ctx, model, originalRequestJSON, nil, line, state)
+		if st, ok := (*state).(*chatToResponsesState); ok && st.Err != nil {
+			return nil, st.Err
+		}
+		return out, nil
 	case ResponsesUpstreamClaude:
 		return ConvertClaudeStreamToResponses(ctx, model, originalRequestJSON, line, state)
 	case ResponsesUpstreamGemini:
@@ -124,11 +157,14 @@ func FinishUpstreamStreamToResponses(serviceType string, originalRequestJSON []b
 	switch serviceType {
 	case ResponsesUpstreamOpenAI:
 		if st, ok := (*state).(*chatToResponsesState); ok && st.FinishPending {
-			return st.generateCompletedEvents(originalRequestJSON), nil
+			out := st.generateCompletedEvents(originalRequestJSON)
+			return out, st.Err
 		}
 	case ResponsesUpstreamGemini:
 		if st, ok := (*state).(*responsesStreamState); ok && st.FinishPending {
-			return st.completed(originalRequestJSON), nil
+			out := st.closeAllBlocks()
+			out = append(out, st.completed(originalRequestJSON)...)
+			return out, st.Err
 		}
 	case ResponsesUpstreamClaude, ResponsesUpstreamResponses:
 		// 这两种协议已经在显式终止事件处定稿。
@@ -547,15 +583,8 @@ func buildResponsesChatPromptCacheKey(model string, chatReq map[string]interface
 	return "resp-chat-" + hex.EncodeToString(sum[:])[:24]
 }
 
-func convertResponsesRequestWithStructConverter(serviceType string, sess *types.Session, req *types.ResponsesRequest, upstream *config.UpstreamConfig) ([]byte, error) {
-	converter, err := NewConverterStrict(serviceType)
-	if err != nil {
-		return nil, err
-	}
-	// Inject channel options for ClaudeConverter (and future converters that care).
-	if claudeConverter, ok := converter.(*ClaudeConverter); ok {
-		claudeConverter.Upstream = upstream
-	}
+func convertResponsesRequestToClaude(sess *types.Session, req *types.ResponsesRequest, upstream *config.UpstreamConfig) ([]byte, error) {
+	converter := &ClaudeConverter{Upstream: upstream}
 	convertedReq, err := converter.ToProviderRequest(sess, req)
 	if err != nil {
 		return nil, fmt.Errorf("转换请求失败: %w", err)

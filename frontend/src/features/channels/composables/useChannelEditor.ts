@@ -3,6 +3,7 @@
 // 职责边界：表单草稿持有独立状态；取消不修改 store；保存成功后由
 // 调用方以服务端结果刷新。本文件不发起任何网络请求。
 import { reactive, toValue, type MaybeRefOrGetter } from 'vue'
+import { DEFAULT_BRANCH_CONCURRENCY, isPositiveInteger } from '@/features/channels/utils/branchConcurrency'
 import type { Channel, ChannelStatus } from '@/api'
 import { rowsFromImagesExtraParams, type ImagesExtraParamRow } from '@/features/channels/utils/imagesExtraParams'
 import type { ApiTab, ImagesOutputFormat } from '@/types/channel'
@@ -14,6 +15,7 @@ import { buildCacheKeepalive, defaultCacheKeepalive, supportsCacheKeepalive, typ
 export type ChannelFormState = {
   cacheKeepalive: CacheKeepaliveDraft
   maxConcurrency: number | string | null
+  maxBranchConcurrency: number | string | null
   clientIdentityMode: 'inherit' | 'api' | 'compatibility'
   name: string
   serviceType: 'openai' | 'gemini' | 'claude' | 'responses' | 'chat' | ''
@@ -83,6 +85,7 @@ export function defaultChannelForm(channelType: string): ChannelFormState {
   return {
     cacheKeepalive: defaultCacheKeepalive(),
     maxConcurrency: 5,
+    maxBranchConcurrency: DEFAULT_BRANCH_CONCURRENCY,
     clientIdentityMode: 'inherit',
     name: '',
     serviceType: channelType === 'images' || channelType === 'embeddings' || channelType === 'decisions' ? 'openai' : '',
@@ -206,6 +209,7 @@ export function buildChannelPayload(
   isEditing: boolean,
   imagesExtraParams?: Record<string, string>
 ): Omit<Channel, 'id' | 'index' | 'latency'> {
+  if (!isPositiveInteger(form.maxBranchConcurrency)) throw new Error('渠道分支并发上限必须是大于零的整数')
   const isImages = channelType === 'images'
   const isChat = channelType === 'chat'
   // 只有事实上会注入伪装身份的组合才保留该配置，其余协议固定继承全局设置。
@@ -217,6 +221,7 @@ export function buildChannelPayload(
   const channel: Omit<Channel, 'id' | 'index' | 'latency'> = {
     cacheKeepalive: buildCacheKeepalive(form.cacheKeepalive, supportsCacheKeepalive(channelType, form.serviceType)),
     maxConcurrency: Number(form.maxConcurrency),
+    maxBranchConcurrency: Number(form.maxBranchConcurrency),
     clientIdentityMode: supportsClientIdentity ? form.clientIdentityMode : 'inherit',
     name: form.name.trim(),
     serviceType: form.serviceType as Channel['serviceType'],
@@ -281,6 +286,7 @@ export function useChannelEditor(channelType: MaybeRefOrGetter<string>) {
     form.cacheKeepalive = channel.cacheKeepalive?.intervalSeconds
       ? { ...channel.cacheKeepalive } : defaultCacheKeepalive()
     form.maxConcurrency = channel.maxConcurrency ?? 5
+    form.maxBranchConcurrency = channel.maxBranchConcurrency ?? DEFAULT_BRANCH_CONCURRENCY
     form.name = channel.name
     form.serviceType = channel.serviceType
     // 只对真正会注入伪装的入口 + 上游组合保留配置，避免误显示与回写。

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/api/common"
 	"github.com/insistanan/api-proxy/internal/dialogue/session"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
@@ -141,6 +142,7 @@ func handleStreamSuccess(
 	channelScheduler *scheduler.ChannelScheduler,
 	conversationID string,
 ) (usage *types.Usage, resultErr error) {
+	defer func() { resultErr = common.ReportStreamFailure(c, "responses", resultErr) }()
 	envCfg = proxycore.RequestLogEnv(c, envCfg)
 	if envCfg.Current().EnableResponseLogs {
 		responseTime := time.Since(startTime).Milliseconds()
@@ -238,16 +240,13 @@ func handleStreamSuccess(
 		}
 		startStream()
 		proxycore.MarkRequestLogFirstToken(c)
-		if _, err := c.Writer.Write([]byte(event)); err != nil {
+		if err := common.WriteStream(c.Writer, flusher, []byte(event)); err != nil {
 			clientGone = true
 			streamWriteErr = err
 			if !isClientDisconnectError(err) {
 				log.Printf("[Responses-Stream] 警告: 流式响应传输错误: %v", err)
 			}
 			return false
-		}
-		if flusher != nil {
-			flusher.Flush()
 		}
 		return true
 	}

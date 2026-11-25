@@ -1,10 +1,10 @@
 package converters
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
+	"github.com/insistanan/api-proxy/internal/protocol/contract"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
@@ -12,10 +12,22 @@ import (
 
 // GeminiToClaudeRequest 将 Gemini 请求转换为 Claude Messages API 格式
 func GeminiToClaudeRequest(geminiReq *types.GeminiRequest, model string) (map[string]interface{}, error) {
+	if err := validateGeminiConversion(geminiReq, "claude"); err != nil {
+		return nil, err
+	}
 	claudeReq := map[string]interface{}{
 		"model": model,
 	}
 
+	budget := 0
+	if geminiReq.GenerationConfig != nil {
+		budget = geminiReq.GenerationConfig.MaxOutputTokens
+	}
+	budget, err := claudeOutputBudget(model, budget)
+	if err != nil {
+		return nil, err
+	}
+	claudeReq["max_tokens"] = budget
 	// 1. 转换 systemInstruction -> system
 	if geminiReq.SystemInstruction != nil && len(geminiReq.SystemInstruction.Parts) > 0 {
 		systemText := extractTextFromGeminiParts(geminiReq.SystemInstruction.Parts)
@@ -25,15 +37,9 @@ func GeminiToClaudeRequest(geminiReq *types.GeminiRequest, model string) (map[st
 	}
 
 	// 2. 转换 contents -> messages
-	messages := []map[string]interface{}{}
-	for _, content := range geminiReq.Contents {
-		msg, err := geminiContentToClaudeMessage(&content)
-		if err != nil {
-			return nil, err
-		}
-		if msg != nil {
-			messages = append(messages, msg)
-		}
+	messages, err := convertGeminiHistory(geminiReq.Contents, "claude")
+	if err != nil {
+		return nil, err
 	}
 	claudeReq["messages"] = messages
 
@@ -74,8 +80,8 @@ func GeminiToClaudeRequest(geminiReq *types.GeminiRequest, model string) (map[st
 				if fn.Description != "" {
 					claudeTool["description"] = fn.Description
 				}
-				if fn.Parameters != nil {
-					claudeTool["input_schema"] = fn.Parameters
+				if fn.JSONSchema() != nil {
+					claudeTool["input_schema"] = fn.JSONSchema()
 				} else {
 					// Claude 需要 input_schema，提供空 schema
 					claudeTool["input_schema"] = map[string]interface{}{
@@ -91,11 +97,17 @@ func GeminiToClaudeRequest(geminiReq *types.GeminiRequest, model string) (map[st
 		}
 	}
 
+	if err := applyGeminiToolChoice(geminiReq, "claude", claudeReq); err != nil {
+		return nil, err
+	}
 	return claudeReq, nil
 }
 
 // GeminiToOpenAIRequest 将 Gemini 请求转换为 OpenAI Chat Completions 格式
 func GeminiToOpenAIRequest(geminiReq *types.GeminiRequest, model string) (map[string]interface{}, error) {
+	if err := validateGeminiConversion(geminiReq, "openai"); err != nil {
+		return nil, err
+	}
 	openaiReq := map[string]interface{}{
 		"model": model,
 	}
@@ -114,16 +126,11 @@ func GeminiToOpenAIRequest(geminiReq *types.GeminiRequest, model string) (map[st
 	}
 
 	// 2. 转换 contents -> messages
-	var pendingToolCallIDs []string
-	for _, content := range geminiReq.Contents {
-		msg, err := geminiContentToOpenAIMessage(&content, &pendingToolCallIDs)
-		if err != nil {
-			return nil, err
-		}
-		if msg != nil {
-			messages = append(messages, msg)
-		}
+	history, err := convertGeminiHistory(geminiReq.Contents, "openai")
+	if err != nil {
+		return nil, err
 	}
+	messages = append(messages, history...)
 	openaiReq["messages"] = messages
 
 	// 3. 转换 generationConfig
@@ -159,7 +166,7 @@ func GeminiToOpenAIRequest(geminiReq *types.GeminiRequest, model string) (map[st
 					"function": map[string]interface{}{
 						"name":        fn.Name,
 						"description": fn.Description,
-						"parameters":  fn.Parameters,
+						"parameters":  fn.JSONSchema(),
 					},
 				}
 				openaiTools = append(openaiTools, openaiTool)
@@ -170,6 +177,9 @@ func GeminiToOpenAIRequest(geminiReq *types.GeminiRequest, model string) (map[st
 		}
 	}
 
+	if err := applyGeminiToolChoice(geminiReq, "openai", openaiReq); err != nil {
+		return nil, err
+	}
 	return openaiReq, nil
 }
 
@@ -184,7 +194,7 @@ func ClaudeResponseToGemini(claudeResp map[string]interface{}) (*types.GeminiRes
 	// 1. 转换 content -> candidates[0].content.parts
 	content, ok := claudeResp["content"].([]interface{})
 	if !ok {
-		return geminiResp, nil
+		return nil, fmt.Errorf("上游响应缺少有效内容对象")
 	}
 
 	parts := []types.GeminiPart{}
@@ -203,10 +213,13 @@ func ClaudeResponseToGemini(claudeResp map[string]interface{}) (*types.GeminiRes
 			})
 		case "tool_use":
 			name, _ := contentBlock["name"].(string)
-			args, _ := contentBlock["input"].(map[string]interface{})
+			args, ok := contentBlock["input"].(map[string]interface{})
+			if !ok || args == nil {
+				return nil, fmt.Errorf("Claude 工具 %q 的 input 必须是对象", name)
+			}
 
 			functionCall := &types.GeminiFunctionCall{
-				Name: name,
+				ID: stringMapValue(contentBlock, "id"), Name: name,
 				Args: args,
 			}
 
@@ -219,9 +232,9 @@ func ClaudeResponseToGemini(claudeResp map[string]interface{}) (*types.GeminiRes
 	}
 
 	// 2. 转换 stop_reason -> finishReason
-	finishReason := "STOP"
-	if stopReason, ok := claudeResp["stop_reason"].(string); ok {
-		finishReason = claudeStopReasonToGemini(stopReason)
+	finishReason, err := GeminiFinishReason("claude", stringMapValue(claudeResp, "stop_reason"))
+	if err != nil {
+		return nil, err
 	}
 
 	candidate := types.GeminiCandidate{
@@ -259,19 +272,25 @@ func OpenAIResponseToGemini(openaiResp map[string]interface{}) (*types.GeminiRes
 
 	// 1. 转换 choices[0].message -> candidates[0].content
 	choices, ok := openaiResp["choices"].([]interface{})
-	if !ok || len(choices) == 0 {
-		return geminiResp, nil
+	if !ok || len(choices) != 1 {
+		return nil, fmt.Errorf("Chat → Gemini 需要恰好一个 choice")
 	}
 
 	choice, ok := choices[0].(map[string]interface{})
 	if !ok {
-		return geminiResp, nil
+		return nil, fmt.Errorf("上游响应缺少有效内容对象")
 	}
 
 	parts := []types.GeminiPart{}
-	finishReason := "STOP"
+	finishReason, err := GeminiFinishReason("openai", stringMapValue(choice, "finish_reason"))
+	if err != nil {
+		return nil, err
+	}
 
 	// 处理 message
+	if _, ok := choice["message"].(map[string]interface{}); !ok {
+		return nil, fmt.Errorf("Chat choice 缺少 message 对象")
+	}
 	if message, ok := choice["message"].(map[string]interface{}); ok {
 		// 文本内容
 		if content, ok := message["content"].(string); ok && content != "" {
@@ -293,25 +312,20 @@ func OpenAIResponseToGemini(openaiResp map[string]interface{}) (*types.GeminiRes
 				}
 				name, _ := function["name"].(string)
 				argsStr, _ := function["arguments"].(string)
-				var args map[string]interface{}
-				if argsStr != "" {
-					_ = jsonUnmarshal([]byte(argsStr), &args)
+				args, err := contract.Arguments(argsStr, name)
+				if err != nil {
+					return nil, err
 				}
 
 				// Chat 工具调用没有 Gemini 签名，转换时只保留工具内容。
 				parts = append(parts, types.GeminiPart{
 					FunctionCall: &types.GeminiFunctionCall{
-						Name: name,
+						ID: stringMapValue(toolCall, "id"), Name: name,
 						Args: args,
 					},
 				})
 			}
 		}
-	}
-
-	// 转换 finish_reason
-	if fr, ok := choice["finish_reason"].(string); ok {
-		finishReason = openaiFinishReasonToGemini(fr)
 	}
 
 	candidate := types.GeminiCandidate{
@@ -354,178 +368,6 @@ func OpenAIResponseToGemini(openaiResp map[string]interface{}) (*types.GeminiRes
 
 // ============== 辅助函数 ==============
 
-// geminiContentToClaudeMessage 将 Gemini Content 转换为 Claude Message
-func geminiContentToClaudeMessage(content *types.GeminiContent) (map[string]interface{}, error) {
-	if content == nil || len(content.Parts) == 0 {
-		return nil, nil
-	}
-
-	// 角色转换: model -> assistant, user -> user
-	role := content.Role
-	if role == "model" {
-		role = "assistant"
-	}
-	if role == "" {
-		role = "user"
-	}
-
-	claudeContent := []map[string]interface{}{}
-
-	for i, part := range content.Parts {
-		// Gemini 思考和签名没有可回放的 Claude 等价块，显式丢弃思考部分。
-		if part.Thought {
-			continue
-		}
-		if part.Text != "" {
-			claudeContent = append(claudeContent, map[string]interface{}{
-				"type": "text",
-				"text": part.Text,
-			})
-		}
-
-		if part.InlineData != nil {
-			// 图片转换
-			claudeContent = append(claudeContent, map[string]interface{}{
-				"type": "image",
-				"source": map[string]interface{}{
-					"type":       "base64",
-					"media_type": part.InlineData.MimeType,
-					"data":       part.InlineData.Data,
-				},
-			})
-		}
-
-		if part.FunctionCall != nil {
-			// 工具调用
-			claudeContent = append(claudeContent, map[string]interface{}{
-				"type":  "tool_use",
-				"id":    fmt.Sprintf("toolu_%d", i),
-				"name":  part.FunctionCall.Name,
-				"input": part.FunctionCall.Args,
-			})
-		}
-
-		if part.FunctionResponse != nil {
-			// 工具结果 - Claude 需要单独的 tool_result 消息
-			// 这里简化处理，将其作为 tool_result 内容块
-			claudeContent = append(claudeContent, map[string]interface{}{
-				"type":        "tool_result",
-				"tool_use_id": part.FunctionResponse.Name,
-				"content":     part.FunctionResponse.Response,
-			})
-		}
-	}
-
-	if len(claudeContent) == 0 {
-		return nil, nil
-	}
-
-	return map[string]interface{}{
-		"role":    role,
-		"content": claudeContent,
-	}, nil
-}
-
-// geminiContentToOpenAIMessage 将 Gemini Content 转换为 OpenAI Message
-func geminiContentToOpenAIMessage(content *types.GeminiContent, pendingToolCallIDs *[]string) (map[string]interface{}, error) {
-	if content == nil || len(content.Parts) == 0 {
-		return nil, nil
-	}
-
-	// 角色转换: model -> assistant, user -> user
-	role := content.Role
-	if role == "model" {
-		role = "assistant"
-	}
-	if role == "" {
-		role = "user"
-	}
-
-	// 检查是否有工具调用
-	var toolCalls []map[string]interface{}
-	var textParts []string
-	var hasToolResponse bool
-	var toolResponseName string
-	var toolResponseContent interface{}
-
-	for i, part := range content.Parts {
-		if part.Thought {
-			continue
-		}
-		if part.Text != "" {
-			textParts = append(textParts, part.Text)
-		}
-
-		if part.FunctionCall != nil {
-			callID := fmt.Sprintf("call_%d", i)
-			if pendingToolCallIDs != nil {
-				callID = fmt.Sprintf("call_%d", len(*pendingToolCallIDs))
-				*pendingToolCallIDs = append(*pendingToolCallIDs, callID)
-			}
-			argsJSON, _ := jsonMarshal(part.FunctionCall.Args)
-			toolCalls = append(toolCalls, map[string]interface{}{
-				"id":   callID,
-				"type": "function",
-				"function": map[string]interface{}{
-					"name":      part.FunctionCall.Name,
-					"arguments": string(argsJSON),
-				},
-			})
-		}
-
-		if part.FunctionResponse != nil {
-			hasToolResponse = true
-			if pendingToolCallIDs != nil && len(*pendingToolCallIDs) > 0 {
-				toolResponseName = (*pendingToolCallIDs)[0]
-				*pendingToolCallIDs = (*pendingToolCallIDs)[1:]
-			} else {
-				toolResponseName = part.FunctionResponse.Name
-			}
-			toolResponseContent = part.FunctionResponse.Response
-		}
-	}
-
-	if len(toolCalls) == 0 && len(textParts) == 0 && !hasToolResponse {
-		return nil, nil
-	}
-
-	// 如果是工具响应，返回 tool role 的消息
-	if hasToolResponse {
-		contentStr := ""
-		if str, ok := toolResponseContent.(string); ok {
-			contentStr = str
-		} else {
-			contentBytes, _ := jsonMarshal(toolResponseContent)
-			contentStr = string(contentBytes)
-		}
-		return map[string]interface{}{
-			"role":         "tool",
-			"tool_call_id": toolResponseName,
-			"content":      contentStr,
-		}, nil
-	}
-
-	msg := map[string]interface{}{
-		"role": role,
-	}
-
-	// 设置内容
-	if len(toolCalls) > 0 {
-		// 助手消息带工具调用
-		if len(textParts) > 0 {
-			msg["content"] = strings.Join(textParts, "")
-		} else {
-			msg["content"] = nil
-		}
-		msg["tool_calls"] = toolCalls
-	} else {
-		// 普通消息
-		msg["content"] = strings.Join(textParts, "")
-	}
-
-	return msg, nil
-}
-
 // extractTextFromGeminiParts 从 Gemini Parts 中提取文本
 func extractTextFromGeminiParts(parts []types.GeminiPart) string {
 	texts := []string{}
@@ -537,42 +379,22 @@ func extractTextFromGeminiParts(parts []types.GeminiPart) string {
 	return strings.Join(texts, "\n")
 }
 
-// claudeStopReasonToGemini 将 Claude 停止原因转换为 Gemini 格式
-func claudeStopReasonToGemini(stopReason string) string {
-	switch stopReason {
-	case "end_turn", "stop_sequence":
-		return "STOP"
-	case "max_tokens":
-		return "MAX_TOKENS"
-	case "tool_use":
-		return "STOP" // Gemini 使用相同的 STOP 表示工具调用
-	default:
-		return "STOP"
-	}
+func stringMapValue(value map[string]interface{}, key string) string {
+	result, _ := value[key].(string)
+	return result
 }
 
-// openaiFinishReasonToGemini 将 OpenAI 停止原因转换为 Gemini 格式
-func openaiFinishReasonToGemini(finishReason string) string {
-	switch finishReason {
-	case "stop":
-		return "STOP"
-	case "length":
-		return "MAX_TOKENS"
-	case "tool_calls":
-		return "STOP"
+// GeminiFinishReason 与 Responses 终态共用源协议判定，未知原因显式报错。
+func GeminiFinishReason(protocol, reason string) (string, error) {
+	completion, err := contract.Finish(protocol, reason)
+	if err != nil {
+		return "", err
+	}
+	switch completion.Reason {
+	case "max_output_tokens":
+		return "MAX_TOKENS", nil
 	case "content_filter":
-		return "SAFETY"
-	default:
-		return "STOP"
+		return "SAFETY", nil
 	}
-}
-
-// jsonMarshal JSON 序列化包装函数
-func jsonMarshal(v interface{}) ([]byte, error) {
-	return json.Marshal(v)
-}
-
-// jsonUnmarshal JSON 反序列化包装函数
-func jsonUnmarshal(data []byte, v interface{}) error {
-	return json.Unmarshal(data, v)
+	return "STOP", nil
 }

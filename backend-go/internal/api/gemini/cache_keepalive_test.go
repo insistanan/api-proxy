@@ -26,7 +26,7 @@ func TestGeminiCacheReference_PreservesNativeReferenceAndRejectsCrossProvider(t 
 			up := &config.UpstreamConfig{BaseURL: "https://example.test", ServiceType: target}
 			req, err := buildProviderRequest(c, up, up.BaseURL, "fixture", &input, "model", actionGenerateContent)
 			if target != "gemini" {
-				var invalid *types.InvalidRequestError
+				var invalid *types.UnsupportedProtocolError
 				require.ErrorAs(t, err, &invalid)
 				require.Nil(t, req)
 				return
@@ -44,7 +44,7 @@ func TestGeminiCacheReference_PreservesNativeReferenceAndRejectsCrossProvider(t 
 func TestGeminiCachePrefix_UsesConvertedTargetAndHonorsInjectionSetting(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/test", nil)
-	input := &types.GeminiRequest{Contents: []types.GeminiContent{{Role: "user", Parts: []types.GeminiPart{{Text: "question"}}}}}
+	input := &types.GeminiRequest{GenerationConfig: &types.GeminiGenerationConfig{MaxOutputTokens: 4096}, Contents: []types.GeminiContent{{Role: "user", Parts: []types.GeminiPart{{Text: "question"}}}}}
 	for _, target := range []string{"gemini", "claude", "openai"} {
 		for _, disabled := range []bool{false, true} {
 			up := &config.UpstreamConfig{BaseURL: "https://example.test", ServiceType: target, DefaultModel: "mapped-model", DisablePromptCacheInjection: disabled}

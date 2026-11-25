@@ -61,10 +61,16 @@ func TestKeepaliveSender_StreamsUsageIntoLedgerWithoutConversationWriteback(t *t
 	require.Error(t, result.err)
 	require.False(t, result.sent)
 	require.Len(t, facts, 1)
+	// 即使调用者没有传入截止 context，发送层也必须执行整轮时间上限。
+	s.deadline = time.Now().Add(-time.Second)
+	result = send(context.Background(), s)
+	require.Error(t, result.err)
+	require.False(t, result.sent)
+	require.Len(t, facts, 1)
 }
 
 func TestGeminiExplicitCache_ExtendsOnlyMatchingResourceAndVerifiesExpiry(t *testing.T) {
-	for _, scenario := range []string{"extend", "already-retained", "expired", "wrong-resource", "ignored-update"} {
+	for _, scenario := range []string{"extend", "count-only", "already-retained", "expired", "wrong-resource", "ignored-update"} {
 		t.Run(scenario, func(t *testing.T) {
 			patches := 0
 			expiry := time.Now().Add(2 * time.Minute)
@@ -107,6 +113,10 @@ func TestGeminiExplicitCache_ExtendsOnlyMatchingResourceAndVerifiesExpiry(t *tes
 				_ = json.NewEncoder(w).Encode(geminiCacheResource{Name: name, ExpireTime: expiry})
 			})
 			s.mode = "explicit"
+			if scenario == "count-only" {
+				s.deadline = time.Time{}
+				s.policy.MaxIdleMinutes = 0
+			}
 			s.cacheName = "cachedContents/test-cache"
 			s.cacheURL = strings.TrimSuffix(s.source.URL, "/v1/responses") + "/v1beta/" + s.cacheName
 			result := newSender(cfg)(context.Background(), s)
@@ -116,7 +126,7 @@ func TestGeminiExplicitCache_ExtendsOnlyMatchingResourceAndVerifiesExpiry(t *tes
 				require.NoError(t, result.err)
 				require.True(t, expiry.Equal(result.expiresAt))
 			}
-			if scenario == "extend" || scenario == "ignored-update" {
+			if scenario == "extend" || scenario == "count-only" || scenario == "ignored-update" {
 				require.Equal(t, 1, patches)
 			} else {
 				require.Zero(t, patches)

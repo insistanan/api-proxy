@@ -3,6 +3,7 @@ package gemini
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -29,6 +30,39 @@ func (b *geminiResetBody) Read(p []byte) (int, error) {
 	return n, err
 }
 func (b *geminiResetBody) Close() error { return nil }
+
+func TestGeminiEntry_LargeEventsAndMidstreamFailure(t *testing.T) {
+	large := strings.Repeat("x", 2*1024*1024)
+	for _, protocol := range []struct{ name, payload, terminal string }{
+		{"gemini", `{"candidates":[{"content":{"parts":[{"text":%q}]}}]}`, `{"candidates":[{"finishReason":"STOP"}]}`},
+		{"claude", `{"type":"content_block_delta","delta":{"type":"text_delta","text":%q}}`, `{"type":"message_stop"}`},
+		{"openai", `{"choices":[{"delta":{"content":%q}}]}`, `{"choices":[{"finish_reason":"stop"}]}`},
+	} {
+		for _, failure := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/失败=%v", protocol.name, failure), func(t *testing.T) {
+				recorder := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(recorder)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/m:streamGenerateContent", nil)
+				tail := "data: " + protocol.terminal + "\n\n"
+				if failure {
+					tail = "data: {\"error\":{\"message\":\"upstream boom\"}}\n\n" + tail
+				}
+				body := io.NopCloser(strings.NewReader("data: " + fmt.Sprintf(protocol.payload, large) + "\n\n" + tail))
+				_, err := handleStreamSuccess(c, &http.Response{StatusCode: 200, Header: make(http.Header), Body: body}, protocol.name, &config.EnvConfig{}, time.Now(), "m")
+				require.Contains(t, recorder.Body.String(), large)
+				if failure {
+					require.ErrorContains(t, err, "upstream boom")
+					require.Equal(t, 1, strings.Count(recorder.Body.String(), `"error":`))
+					require.Contains(t, recorder.Body.String(), "upstream boom")
+					require.NotContains(t, recorder.Body.String(), `"finishReason"`)
+				} else {
+					require.NoError(t, err)
+					require.Equal(t, 1, strings.Count(recorder.Body.String(), `"finishReason":"STOP"`))
+				}
+			})
+		}
+	}
+}
 
 func TestGeminiEntryStreamLifecycle(t *testing.T) {
 	resetErr := errors.New("read tcp: wsarecv: An existing connection was forcibly closed by the remote host.")

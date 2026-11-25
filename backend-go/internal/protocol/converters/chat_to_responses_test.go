@@ -667,7 +667,7 @@ func TestConvertResponsesToOpenAIChatRequest_FlattensNamespaceTool(t *testing.T)
 	}
 }
 
-func TestConvertResponsesToOpenAIChatRequest_DowngradesHostedWebSearchTool(t *testing.T) {
+func TestConvertResponsesToOpenAIChatRequest_RejectsHostedWebSearchTool(t *testing.T) {
 	input := `{
 		"model":"gpt-4o",
 		"tools":[{"type":"web_search","description":"Search the web"}],
@@ -678,13 +678,12 @@ func TestConvertResponsesToOpenAIChatRequest_DowngradesHostedWebSearchTool(t *te
 	if err := json.Unmarshal([]byte(input), &req); err != nil {
 		t.Fatal(err)
 	}
-	result, err := ConvertResponsesRequestToUpstream(ResponsesUpstreamOpenAI, "gpt-4o", []byte(input), false, nil, &req, nil)
-	if err != nil {
-		t.Fatalf("内置搜索应降级而非阻断请求: %v", err)
+	_, err := ConvertResponsesRequestToUpstream(ResponsesUpstreamOpenAI, "gpt-4o", []byte(input), false, nil, &req, nil)
+	if _, ok := err.(*types.UnsupportedProtocolError); !ok {
+		t.Fatalf("应保留渠道能力错误: %v", err)
 	}
-	root := gjson.ParseBytes(result)
-	if root.Get("tools").Exists() || root.Get("tool_choice").Exists() {
-		t.Fatalf("不能把内置搜索转换为客户端工具或保留强制搜索约束: %s", result)
+	if req.ToolChoice == nil || req.Tools == nil {
+		t.Fatal("不能修改原始搜索要求")
 	}
 }
 
@@ -693,7 +692,7 @@ func TestResponsesHostedSearchAndClientFunction(t *testing.T) {
 		for _, toolType := range []string{"web_search", "web_search_preview", "function"} {
 			t.Run(serviceType+"/"+toolType, func(t *testing.T) {
 				body, err := json.Marshal(map[string]interface{}{
-					"model": "test-model", "input": "搜索",
+					"model": "test-model", "input": "搜索", "max_output_tokens": 4096,
 					"tools": []map[string]interface{}{{"type": toolType, "name": "web_search", "parameters": map[string]interface{}{"type": "object"}}},
 				})
 				if err != nil {
@@ -704,14 +703,14 @@ func TestResponsesHostedSearchAndClientFunction(t *testing.T) {
 					t.Fatal(err)
 				}
 				result, err := ConvertResponsesRequestToUpstream(serviceType, req.Model, body, false, nil, &req, nil)
-				if err != nil {
-					t.Fatalf("搜索降级、原生搜索或客户端同名 function 均应正常转换: %v", err)
-				}
 				if toolType != "function" && serviceType != ResponsesUpstreamResponses {
-					if strings.Contains(string(result), "web_search") {
-						t.Fatalf("非原生渠道不应伪造内置搜索工具: %s", result)
+					if _, ok := err.(*types.UnsupportedProtocolError); !ok {
+						t.Fatalf("必须返回能力错误: %v", err)
 					}
 					return
+				}
+				if err != nil {
+					t.Fatal(err)
 				}
 				if !strings.Contains(string(result), "web_search") {
 					t.Fatalf("丢失搜索工具定义: %s", result)
@@ -737,7 +736,7 @@ func TestNativeResponsesSearchOutputPreservesAction(t *testing.T) {
 	}
 }
 
-func TestResponsesDynamicHostedSearchDowngrades(t *testing.T) {
+func TestResponsesDynamicHostedSearchRequiresNativeUpstream(t *testing.T) {
 	for _, serviceType := range []string{ResponsesUpstreamOpenAI, ResponsesUpstreamClaude, ResponsesUpstreamGemini} {
 		for _, body := range []string{
 			`{"model":"test-model","input":[{"type":"tool_search_call","call_id":"load-tools","arguments":"{}"},{"type":"tool_search_output","call_id":"load-tools","tools":[{"type":"web_search"}]},{"role":"user","content":"继续"}]}`,
@@ -747,12 +746,9 @@ func TestResponsesDynamicHostedSearchDowngrades(t *testing.T) {
 			if err := json.Unmarshal([]byte(body), &req); err != nil {
 				t.Fatal(err)
 			}
-			result, err := ConvertResponsesRequestToUpstream(serviceType, req.Model, []byte(body), false, nil, &req, nil)
-			if err != nil {
-				t.Fatalf("%s 应移除动态内置搜索并继续对话: %v", serviceType, err)
-			}
-			if strings.Contains(string(result), "web_search") || strings.Contains(string(result), "load-tools") {
-				t.Fatalf("%s 不能保留内置搜索或孤立的动态加载回合: %s", serviceType, result)
+			_, err := ConvertResponsesRequestToUpstream(serviceType, req.Model, []byte(body), false, nil, &req, nil)
+			if _, ok := err.(*types.UnsupportedProtocolError); !ok {
+				t.Fatalf("%s 必须明确拒绝动态内置搜索: %v", serviceType, err)
 			}
 		}
 	}

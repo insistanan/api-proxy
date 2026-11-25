@@ -62,7 +62,7 @@ func TestResponsesImageDeadlineStillAppliesAfterDelivery(t *testing.T) {
 	defer cancel()
 	lifecycle := newResponsesImageLifecycle(parent)
 	defer lifecycle.close()
-	lifecycle.markDelivered()
+	require.NoError(t, lifecycle.finishDelivery(func() error { return nil }))
 	select {
 	case <-lifecycle.ctx.Done():
 		require.ErrorIs(t, context.Cause(lifecycle.ctx), context.DeadlineExceeded)

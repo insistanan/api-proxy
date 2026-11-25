@@ -21,6 +21,8 @@ func TestFreeChannelsSharedConfigPersistsAndKeepsIndexes(t *testing.T) {
 	require.NoError(t, cm.EnsureFreeChannels())
 	require.Equal(t, before, cm.GetConfig().Upstream[0].ID)
 	require.NoError(t, cm.SetKiloEnabled(false))
+	branchLimit := 6
+	require.NoError(t, cm.UpdateKiloSettings(nil, &branchLimit))
 	require.NoError(t, cm.SetKiloModels([]string{"vendor/free-model"}, "2026-11-12T00:00:00Z"))
 
 	data, err := os.ReadFile(path)
@@ -28,6 +30,7 @@ func TestFreeChannelsSharedConfigPersistsAndKeepsIndexes(t *testing.T) {
 	var saved Config
 	require.NoError(t, json.Unmarshal(data, &saved))
 	require.Equal(t, []string{"vendor/free-model"}, saved.FreeChannels.Kilo.Models)
+	require.Equal(t, 6, saved.FreeChannels.Kilo.MaxBranchConcurrency)
 	for _, kind := range []string{"messages", "responses", "chat", "gemini"} {
 		cs, err := saved.channelSetFor(kind)
 		require.NoError(t, err)
@@ -42,6 +45,7 @@ func TestFreeChannelsSharedConfigPersistsAndKeepsIndexes(t *testing.T) {
 		require.NoError(t, err)
 		up := (*cs.upstreams)[len(*cs.upstreams)-1]
 		require.Equal(t, ChannelStatusDisabled, up.Status)
+		require.Equal(t, 6, up.MaxBranchConcurrency)
 		require.Equal(t, KiloChatURL, up.BaseURL)
 		require.True(t, up.UseFullURL)
 		require.Equal(t, []string{""}, up.APIKeys)
@@ -55,6 +59,7 @@ func TestFreeChannelsSharedConfigPersistsAndKeepsIndexes(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, reloaded.Close()) })
 	require.NoError(t, reloaded.EnsureFreeChannels())
 	require.Equal(t, ChannelStatusDisabled, reloaded.GetConfig().ChatUpstream[0].Status)
+	require.Equal(t, 6, reloaded.GetConfig().ChatUpstream[0].MaxBranchConcurrency)
 	require.Equal(t, before, reloaded.GetConfig().Upstream[0].ID)
 }
 

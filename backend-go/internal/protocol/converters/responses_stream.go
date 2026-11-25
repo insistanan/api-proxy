@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/contract"
 	"sort"
 	"strings"
 	"time"
@@ -14,6 +15,11 @@ import (
 )
 
 type responsesStreamState struct {
+	Output            map[int]interface{}
+	Tools             map[string]responseToolSpec
+	Completion        contract.Completion
+	Err               error
+	Candidate         *int
 	Seq               int
 	Started           bool
 	Completed         bool
@@ -27,17 +33,21 @@ type responsesStreamState struct {
 }
 
 type responsesStreamBlock struct {
-	ItemID    string
-	Type      string
-	Name      string
-	CallID    string
-	Signature string
-	Text      strings.Builder
-	Args      strings.Builder
+	InitialArgs string
+	ItemID      string
+	Type        string
+	Name        string
+	CallID      string
+	Signature   string
+	Text        strings.Builder
+	Args        strings.Builder
 }
 
 func ConvertClaudeStreamToResponses(_ context.Context, model string, originalRequestJSON []byte, line []byte, state *any) ([]string, error) {
 	st := ensureResponsesStreamState(state, model)
+	if st.Tools == nil {
+		st.Tools = buildResponseToolContextFromRawRequest(originalRequestJSON)
+	}
 	if st.Completed {
 		return nil, nil
 	}
@@ -75,8 +85,15 @@ func ConvertClaudeStreamToResponses(_ context.Context, model string, originalReq
 		out = append(out, st.deltaClaudeBlock(idx, delta)...)
 	case "content_block_stop":
 		idx := int(root.Get("index").Int())
-		out = append(out, st.stopBlock(idx)...)
+		if block := st.Blocks[idx]; block == nil || block.Type != "function_call" {
+			out = append(out, st.stopBlock(idx)...)
+		}
 	case "message_delta":
+		st.Completion, st.Err = contract.Finish("claude", root.Get("delta.stop_reason").String())
+		if st.Err != nil {
+			return nil, st.Err
+		}
+		out = append(out, st.closeAllBlocks()...)
 		if usage := root.Get("usage"); usage.Exists() {
 			st.captureUsage(usage)
 		}
@@ -84,11 +101,17 @@ func ConvertClaudeStreamToResponses(_ context.Context, model string, originalReq
 		out = append(out, st.closeAllBlocks()...)
 		out = append(out, st.completed(originalRequestJSON)...)
 	}
+	if st.Err != nil {
+		return nil, st.Err
+	}
 	return out, nil
 }
 
 func ConvertGeminiStreamToResponses(_ context.Context, model string, originalRequestJSON []byte, line []byte, state *any) ([]string, error) {
 	st := ensureResponsesStreamState(state, model)
+	if st.Tools == nil {
+		st.Tools = buildResponseToolContextFromRawRequest(originalRequestJSON)
+	}
 	if st.Completed {
 		return nil, nil
 	}
@@ -126,6 +149,16 @@ func ConvertGeminiStreamToResponses(_ context.Context, model string, originalReq
 			st.Usage.OutputTokensDetails = &types.OutputTokensDetails{ReasoningTokens: chunk.UsageMetadata.ThoughtsTokenCount}
 		}
 	}
+	if len(chunk.Candidates) > 1 {
+		return nil, fmt.Errorf("Gemini → Responses 不支持多个候选")
+	}
+	for _, candidate := range chunk.Candidates {
+		if st.Candidate != nil && *st.Candidate != candidate.Index {
+			return nil, fmt.Errorf("Gemini 流中出现第二个候选")
+		}
+		index := candidate.Index
+		st.Candidate = &index
+	}
 	if st.FinishPending {
 		return nil, nil
 	}
@@ -148,17 +181,24 @@ func ConvertGeminiStreamToResponses(_ context.Context, model string, originalReq
 			}
 		}
 		if candidate.FinishReason != "" {
+			st.Completion, st.Err = contract.Finish("gemini", candidate.FinishReason)
+			if st.Err != nil {
+				return nil, st.Err
+			}
 			out = append(out, st.closeAllBlocks()...)
 			st.FinishPending = true
 			break
 		}
+	}
+	if st.Err != nil {
+		return nil, st.Err
 	}
 	return out, nil
 }
 
 func ensureResponsesStreamState(state *any, model string) *responsesStreamState {
 	if *state == nil {
-		*state = &responsesStreamState{Model: model, Blocks: map[int]*responsesStreamBlock{}}
+		*state = &responsesStreamState{Model: model, Blocks: map[int]*responsesStreamBlock{}, Output: map[int]interface{}{}, Completion: contract.Completion{Status: "completed"}}
 	}
 	return (*state).(*responsesStreamState)
 }
@@ -204,13 +244,18 @@ func (s *responsesStreamState) startClaudeBlock(index int, block gjson.Result) [
 	blockType := block.Get("type").String()
 	switch blockType {
 	case "text":
-		return s.startTextBlock(index)
+		out := s.startTextBlock(index)
+		return append(out, s.emitIndexedTextDelta(index, block.Get("text").String())...)
 	case "thinking":
-		return s.startReasoningBlock(index)
+		out := s.startReasoningBlock(index)
+		s.captureReasoningSignature(index, block.Get("signature").String())
+		return append(out, s.emitIndexedReasoningDelta(index, block.Get("thinking").String())...)
 	case "tool_use":
 		callID := block.Get("id").String()
 		name := block.Get("name").String()
-		return s.startFunctionBlock(index, callID, name)
+		out := s.startFunctionBlock(index, callID, name)
+		s.Blocks[index].InitialArgs = block.Get("input").Raw
+		return out
 	default:
 		return nil
 	}
@@ -252,7 +297,13 @@ func (s *responsesStreamState) startFunctionBlock(index int, callID string, name
 	}
 	itemID := fmt.Sprintf("fc_%s", callID)
 	s.Blocks[index] = &responsesStreamBlock{ItemID: itemID, Type: "function_call", Name: name, CallID: callID}
-	item := map[string]interface{}{"id": itemID, "type": "function_call", "status": "in_progress", "arguments": "", "call_id": callID, "name": name}
+	item := buildChatToolCallOutputItem(callID, name, "{}", s.Tools)
+	item["id"], item["status"] = itemID, "in_progress"
+	if item["type"] == "custom_tool_call" {
+		item["input"] = ""
+	} else {
+		item["arguments"] = ""
+	}
 	return []string{emitMapEvent("response.output_item.added", map[string]interface{}{"type": "response.output_item.added", "sequence_number": s.nextSeq(), "output_index": index, "item": item})}
 }
 
@@ -314,7 +365,6 @@ func (s *responsesStreamState) emitFunctionCall(name string, args string) []stri
 	s.NextFunctionIndex++
 	out := s.startFunctionBlock(index, callID, name)
 	out = append(out, s.emitIndexedFunctionArgsDelta(index, args)...)
-	out = append(out, s.stopBlock(index)...)
 	return out
 }
 
@@ -327,6 +377,9 @@ func (s *responsesStreamState) emitIndexedFunctionArgsDelta(index int, delta str
 		return nil
 	}
 	block.Args.WriteString(delta)
+	if spec, ok := s.Tools[block.Name]; ok && spec.Kind != responseToolKindFunction {
+		return nil
+	}
 	payload := map[string]interface{}{"type": "response.function_call_arguments.delta", "sequence_number": s.nextSeq(), "item_id": block.ItemID, "output_index": index, "delta": delta}
 	return []string{emitMapEvent("response.function_call_arguments.delta", payload)}
 }
@@ -340,24 +393,40 @@ func (s *responsesStreamState) stopBlock(index int) []string {
 	switch block.Type {
 	case "text":
 		done := map[string]interface{}{"type": "response.output_text.done", "sequence_number": s.nextSeq(), "item_id": block.ItemID, "output_index": index, "content_index": 0, "text": block.Text.String()}
-		item := map[string]interface{}{"id": block.ItemID, "type": "message", "status": "completed", "role": "assistant", "content": []interface{}{map[string]interface{}{"type": "output_text", "text": block.Text.String()}}}
+		item := map[string]interface{}{"id": block.ItemID, "type": "message", "status": s.Completion.Status, "role": "assistant", "content": []interface{}{map[string]interface{}{"type": "output_text", "text": block.Text.String()}}}
+		s.Output[index] = item
 		return []string{emitMapEvent("response.output_text.done", done), emitMapEvent("response.output_item.done", map[string]interface{}{"type": "response.output_item.done", "sequence_number": s.nextSeq(), "output_index": index, "item": item})}
 	case "reasoning":
 		text := block.Text.String()
 		done := map[string]interface{}{"type": "response.reasoning_summary_text.done", "sequence_number": s.nextSeq(), "item_id": block.ItemID, "output_index": index, "summary_index": 0, "text": text}
-		item := map[string]interface{}{"id": block.ItemID, "type": "reasoning", "status": "completed", "summary": []interface{}{map[string]interface{}{"type": "summary_text", "text": block.Text.String()}}}
+		item := map[string]interface{}{"id": block.ItemID, "type": "reasoning", "status": s.Completion.Status, "summary": []interface{}{map[string]interface{}{"type": "summary_text", "text": block.Text.String()}}}
 		if block.Signature != "" {
 			item["encrypted_content"] = block.Signature
 		}
+		s.Output[index] = item
 		return []string{emitMapEvent("response.reasoning_summary_text.done", done), emitMapEvent("response.output_item.done", map[string]interface{}{"type": "response.output_item.done", "sequence_number": s.nextSeq(), "output_index": index, "item": item})}
 	case "function_call":
 		args := block.Args.String()
 		if args == "" {
-			args = "{}"
+			args = block.InitialArgs
 		}
-		argsDone := map[string]interface{}{"type": "response.function_call_arguments.done", "sequence_number": s.nextSeq(), "item_id": block.ItemID, "name": block.Name, "output_index": index, "arguments": args}
-		item := map[string]interface{}{"id": block.ItemID, "type": "function_call", "status": "completed", "arguments": args, "call_id": block.CallID, "name": block.Name}
-		return []string{emitMapEvent("response.function_call_arguments.done", argsDone), emitMapEvent("response.output_item.done", map[string]interface{}{"type": "response.output_item.done", "sequence_number": s.nextSeq(), "output_index": index, "item": item})}
+		item, err := restoreResponseToolItem(types.ResponsesItem{ID: block.ItemID, Type: "function_call", Status: s.Completion.Status, CallID: block.CallID, Name: block.Name, Arguments: args}, s.Tools)
+		if err != nil {
+			s.Err = err
+			return nil
+		}
+		s.Output[index] = item
+		event, field, value := "response.function_call_arguments.done", "arguments", interface{}(args)
+		var out []string
+		if item.Type == "custom_tool_call" {
+			event, field, value = "response.custom_tool_call_input.done", "input", item.Content
+			out = append(out, emitMapEvent("response.custom_tool_call_input.delta", map[string]interface{}{"type": "response.custom_tool_call_input.delta", "sequence_number": s.nextSeq(), "item_id": item.ID, "output_index": index, "delta": value}))
+		}
+		if item.Type != "tool_search_call" {
+			out = append(out, emitMapEvent(event, map[string]interface{}{"type": event, "sequence_number": s.nextSeq(), "item_id": item.ID, "output_index": index, field: value}))
+		}
+		out = append(out, emitMapEvent("response.output_item.done", map[string]interface{}{"type": "response.output_item.done", "sequence_number": s.nextSeq(), "output_index": index, "item": item}))
+		return out
 	}
 	return nil
 }
@@ -376,14 +445,25 @@ func (s *responsesStreamState) closeAllBlocks() []string {
 }
 
 func (s *responsesStreamState) completed(originalRequestJSON []byte) []string {
-	if s.Completed {
+	if s.Completed || s.Err != nil {
 		return nil
 	}
 	s.Completed = true
-	resp := s.responseEnvelope("completed", originalRequestJSON)
-	resp["usage"] = s.Usage
-	payload := map[string]interface{}{"type": "response.completed", "sequence_number": s.nextSeq(), "response": resp}
-	return []string{emitMapEvent("response.completed", payload)}
+	resp := s.responseEnvelope(s.Completion.Status, originalRequestJSON)
+	s.Completion.Apply(resp)
+	indices := make([]int, 0, len(s.Output))
+	for index := range s.Output {
+		indices = append(indices, index)
+	}
+	sort.Ints(indices)
+	output := make([]interface{}, 0, len(indices))
+	for _, index := range indices {
+		output = append(output, s.Output[index])
+	}
+	resp["output"], resp["usage"] = output, s.Usage
+	event := "response." + s.Completion.Status
+	payload := map[string]interface{}{"type": event, "sequence_number": s.nextSeq(), "response": resp}
+	return []string{emitMapEvent(event, payload)}
 }
 
 func (s *responsesStreamState) captureUsage(usage gjson.Result) {

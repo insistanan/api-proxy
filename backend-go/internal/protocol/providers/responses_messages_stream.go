@@ -2,7 +2,6 @@
 package providers
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
@@ -32,6 +31,8 @@ type responsesToClaudeStreamState struct {
 	reasoningBlockOpen  bool
 	reasoningEmittedLen int
 	assistantText       strings.Builder
+	deliveredParts      map[string]string
+	itemIndexes         map[string]int
 	completedOutput     []types.ResponsesItem
 	completed           bool
 	messageStopped      bool
@@ -62,6 +63,7 @@ func newResponsesToClaudeStreamState() *responsesToClaudeStreamState {
 		responseID:       fmt.Sprintf("msg_%s", uuid.New().String()),
 		toolCalls:        make(map[string]*responsesStreamToolCall),
 		emittedToolCalls: make(map[string]bool),
+		deliveredParts:   make(map[string]string), itemIndexes: make(map[string]int),
 	}
 }
 
@@ -108,23 +110,19 @@ func (s *responsesToClaudeStreamState) processLine(line string) []string {
 
 	s.captureUpstreamResponseID(root)
 	s.captureResponsesUsage(root)
+	s.rememberItemIndex(root)
 	out := s.ensureMessageStart(root)
 	switch {
 	case strings.Contains(eventType, "output_text.delta"):
-		out = append(out, s.emitTextDelta(root.Get("delta").String())...)
+		out = append(out, s.deliverPart(s.eventPartKey(root, "text"), root.Get("delta").String(), false, false)...)
 	case strings.Contains(eventType, "reasoning") && strings.Contains(eventType, "delta"):
 		if delta := root.Get("delta").String(); delta != "" {
 			s.reasoningDeltaSeen = true
-			s.reasoning.WriteString(delta)
-			out = append(out, s.emitReasoningDelta(delta)...)
+			out = append(out, s.deliverPart(s.eventPartKey(root, "reasoning"), delta, true, false)...)
 		}
 	case strings.Contains(eventType, "reasoning") && strings.Contains(eventType, "done"):
-		// reasoning_summary_text.done 常带完整 summary；已有 delta 时不能再拼一次。
-		if !s.reasoningDeltaSeen && s.reasoning.Len() == 0 {
-			if text := root.Get("text").String(); text != "" {
-				s.reasoning.WriteString(text)
-				out = append(out, s.emitReasoningDelta(text)...)
-			}
+		if value := root.Get("text"); value.Exists() {
+			out = append(out, s.deliverPart(s.eventPartKey(root, "reasoning"), value.String(), true, true)...)
 		}
 		out = append(out, s.closeReasoningBlock()...)
 	case strings.Contains(eventType, "function_call_arguments.delta") || strings.Contains(eventType, "custom_tool_call_input.delta"):
@@ -139,86 +137,30 @@ func (s *responsesToClaudeStreamState) processLine(line string) []string {
 		}
 	case strings.Contains(eventType, "function_call_arguments.done"):
 		s.captureToolCall(root)
-		out = append(out, s.emitToolUse(root)...)
 	case eventType == "response.completed" || eventType == "response.incomplete":
 		s.completed = true
 		out = append(out, s.emitCompletedOutput(root)...)
+		if s.failed {
+			return nil
+		}
 		if s.stopReason == "" {
 			s.stopReason = "end_turn"
 		}
 		if status := root.Get("response.status").String(); status == "incomplete" || eventType == "response.incomplete" {
 			s.stopReason = "max_tokens"
+			if root.Get("response.incomplete_details.reason").String() == "content_filter" {
+				s.stopReason = "refusal"
+			}
 		}
 		// Final usage is usually on response.completed; re-capture then emit message_delta with real tokens.
 		s.captureResponsesUsage(root)
+		out = append(out, s.closeReasoningBlock()...)
+		out = append(out, s.closeTextBlock()...)
 		out = append(out, s.emitMessageDelta()...)
 	default:
 		if text := root.Get("delta").String(); text != "" && strings.Contains(eventType, "text") {
 			out = append(out, s.emitTextDelta(text)...)
 		}
-	}
-	return out
-}
-
-// emitCompletedOutput 兼容只在 response.completed.response.output 返回完整结果的
-// 上游。标准增量流已经交付的正文不再重复发送，但未交付的工具调用仍会补发。
-func (s *responsesToClaudeStreamState) emitCompletedOutput(root gjson.Result) []string {
-	output := root.Get("response.output")
-	if !output.Exists() || !output.IsArray() {
-		return nil
-	}
-
-	var out []string
-	completedItems := make([]types.ResponsesItem, 0, len(output.Array()))
-	output.ForEach(func(_, item gjson.Result) bool {
-		itemType := item.Get("type").String()
-		if parsed, ok := responsesStreamOutputItem(item); ok {
-			completedItems = append(completedItems, parsed)
-		}
-		switch itemType {
-		case "message":
-			if s.assistantText.Len() > 0 {
-				return true
-			}
-			content := item.Get("content")
-			if content.Type == gjson.String {
-				out = append(out, s.emitTextDelta(content.String())...)
-				return true
-			}
-			if content.Exists() && content.IsArray() {
-				content.ForEach(func(_, block gjson.Result) bool {
-					blockType := block.Get("type").String()
-					if blockType == "text" || blockType == "input_text" || blockType == "output_text" {
-						out = append(out, s.emitTextDelta(block.Get("text").String())...)
-					}
-					return true
-				})
-			}
-		case "reasoning":
-			if s.reasoning.Len() == 0 {
-				item.Get("summary").ForEach(func(_, summary gjson.Result) bool {
-					s.reasoning.WriteString(summary.Get("text").String())
-					return true
-				})
-			}
-			if s.reasoningEmittedLen < s.reasoning.Len() {
-				pending := s.reasoning.String()[s.reasoningEmittedLen:]
-				out = append(out, s.emitReasoningDelta(pending)...)
-			}
-		case "function_call", "custom_tool_call":
-			payload := map[string]interface{}{"item": item.Value()}
-			payloadJSON, err := json.Marshal(payload)
-			if err != nil {
-				return true
-			}
-			itemRoot := gjson.ParseBytes(payloadJSON)
-			s.captureToolCall(itemRoot)
-			out = append(out, s.emitToolUse(itemRoot)...)
-		}
-		return true
-	})
-	if len(completedItems) > 0 {
-		s.completedOutput = completedItems
 	}
 	return out
 }

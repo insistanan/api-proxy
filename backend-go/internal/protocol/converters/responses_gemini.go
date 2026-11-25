@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/contract"
 	"github.com/insistanan/api-proxy/internal/protocol/items"
 	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 	"strings"
@@ -22,13 +23,17 @@ func ConvertResponsesToGeminiRequest(model string, sess *types.Session, req *typ
 	if respitems.ResponsesItemsContainCompaction(items) {
 		return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("Responses compaction item 只能由 Responses 原生上游处理，无法转换为 Gemini")}
 	}
+	items, instructions, err := extractResponsesSystem(items, req.Instructions)
+	if err != nil {
+		return nil, err
+	}
 	callNames := buildFunctionCallNameMap(items)
 
 	geminiReq := types.GeminiRequest{
 		Contents: make([]types.GeminiContent, 0, len(items)),
 	}
-	if req.Instructions != "" {
-		geminiReq.SystemInstruction = &types.GeminiContent{Parts: []types.GeminiPart{{Text: req.Instructions}}}
+	if instructions != "" {
+		geminiReq.SystemInstruction = &types.GeminiContent{Parts: []types.GeminiPart{{Text: instructions}}}
 	}
 	for _, item := range items {
 		content, ok, err := responsesItemToGeminiContent(item, callNames)
@@ -59,14 +64,8 @@ func ConvertResponsesToGeminiRequest(model string, sess *types.Session, req *typ
 	} else if req.MaxTokens > 0 {
 		genCfg.MaxOutputTokens = req.MaxTokens
 	}
-	if req.Temperature > 0 {
-		v := req.Temperature
-		genCfg.Temperature = &v
-	}
-	if req.TopP > 0 {
-		v := req.TopP
-		genCfg.TopP = &v
-	}
+	genCfg.Temperature = req.Temperature
+	genCfg.TopP = req.TopP
 	if req.Stop != nil {
 		if stops, err := stringSlice(req.Stop); err != nil {
 			return nil, err
@@ -90,6 +89,9 @@ func ConvertGeminiResponseToResponses(originalRequestJSON []byte, upstreamRespon
 	var geminiResp types.GeminiResponse
 	if err := json.Unmarshal(upstreamResponseJSON, &geminiResp); err != nil {
 		return nil, fmt.Errorf("解析 Gemini 响应失败: %w", err)
+	}
+	if len(geminiResp.Candidates) != 1 {
+		return nil, fmt.Errorf("Gemini → Responses 需要恰好一个 candidate")
 	}
 	customTools := extractCustomToolContextFromRawRequest(originalRequestJSON)
 
@@ -157,11 +159,14 @@ func ConvertGeminiResponseToResponses(originalRequestJSON []byte, upstreamRespon
 				resp.Output = append(resp.Output, item)
 			}
 		}
-		if candidate.FinishReason == "MAX_TOKENS" {
-			resp.Status = "incomplete"
-		}
+
 	}
 
+	completion, err := contract.Finish("gemini", geminiResp.Candidates[0].FinishReason)
+	if err != nil {
+		return nil, err
+	}
+	applyResponseCompletion(resp, completion)
 	if geminiResp.UsageMetadata != nil {
 		// thoughtsTokenCount 必须一起传进去：parseGeminiUsage 负责把它计入 output_tokens
 		// 并单列 output_tokens_details.reasoning_tokens，此处不再重复赋值，避免两处口径分叉。
@@ -201,9 +206,9 @@ func responsesToolsToGeminiTools(raw interface{}) (_ []types.GeminiTool, err err
 			return nil, fmt.Errorf("Responses function tool 缺少 name")
 		}
 		decls = append(decls, types.GeminiFunctionDeclaration{
-			Name:        spec.Name,
-			Description: spec.Description,
-			Parameters:  types.SanitizeGeminiToolSchema(spec.Parameters),
+			Name:                 spec.Name,
+			Description:          spec.Description,
+			ParametersJSONSchema: spec.Parameters,
 		})
 	}
 	return []types.GeminiTool{{FunctionDeclarations: decls}}, nil

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/insistanan/api-proxy/internal/protocol/contract"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
@@ -27,7 +28,7 @@ func (p *OpenAIProvider) ConvertToClaudeResponse(providerResp *types.ProviderRes
 		if err := json.Unmarshal(providerResp.Body, &responsesResp); err != nil {
 			return nil, err
 		}
-		return responsesResponseToClaude(&responsesResp), nil
+		return responsesResponseToClaude(&responsesResp)
 	}
 
 	var openaiResp types.OpenAIResponse
@@ -96,8 +97,10 @@ func (p *OpenAIProvider) ConvertToClaudeResponse(providerResp *types.ProviderRes
 
 		// 添加工具调用
 		for _, toolCall := range msg.ToolCalls {
-			var input interface{}
-			json.Unmarshal([]byte(toolCall.Function.Arguments), &input)
+			input, err := contract.Arguments(toolCall.Function.Arguments, toolCall.ID)
+			if err != nil {
+				return nil, err
+			}
 
 			claudeResp.Content = append(claudeResp.Content, types.ClaudeContent{
 				Type:  "tool_use",
@@ -108,10 +111,12 @@ func (p *OpenAIProvider) ConvertToClaudeResponse(providerResp *types.ProviderRes
 		}
 
 		// 设置停止原因
-		if len(msg.ToolCalls) > 0 {
-			claudeResp.StopReason = "tool_use"
-		} else if choice.FinishReason == "length" {
+		if choice.FinishReason == "length" {
 			claudeResp.StopReason = "max_tokens"
+		} else if choice.FinishReason == "content_filter" {
+			claudeResp.StopReason = "refusal"
+		} else if len(msg.ToolCalls) > 0 {
+			claudeResp.StopReason = "tool_use"
 		} else {
 			claudeResp.StopReason = "end_turn"
 		}

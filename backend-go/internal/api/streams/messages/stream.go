@@ -4,13 +4,12 @@
 // 同包其余职责：事件判定与构造 stream_events.go，usage 检测/修补
 // stream_usage_detect.go / stream_usage_patch.go，thinking 与工具调用累积
 // stream_reasoning.go，结束收尾与日志 stream_log.go。
-package streams
+package messages
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"github.com/insistanan/api-proxy/internal/protocol/codec"
@@ -22,6 +21,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/api/streams"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/protocol/providers"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
@@ -31,16 +31,17 @@ import (
 
 // Context 流处理上下文
 type Context struct {
-	LogBuffer        bytes.Buffer
-	OutputTextBuffer bytes.Buffer
-	ResponseText     bytes.Buffer
-	Reasoning        bytes.Buffer
-	Synthesizer      *codec.StreamSynthesizer
-	LoggingEnabled   bool
-	LogBufferFull    bool // LogBuffer 达到上限后标记，避免重复检查
-	ClientGone       bool
-	HasUsage         bool
-	NeedTokenPatch   bool
+	LogBuffer         bytes.Buffer
+	OutputTextBuffer  bytes.Buffer
+	ResponseText      bytes.Buffer
+	Reasoning         bytes.Buffer
+	Synthesizer       *codec.StreamSynthesizer
+	LoggingEnabled    bool
+	LogBufferFull     bool // LogBuffer 达到上限后标记，避免重复检查
+	ClientGone        bool
+	TerminalDelivered bool
+	HasUsage          bool
+	NeedTokenPatch    bool
 	// 客户端出口使用的 token 统计，允许做安全补全和缓存字段整理。
 	CollectedUsage CollectedUsageData
 	// 上游原始 token 快照，仅用于指标与调用方统计，不接受客户端出口修补。
@@ -55,9 +56,6 @@ type Context struct {
 	// 低质量渠道处理
 	RequestModel string // 请求中的 model（用于一致性检查）
 	LowQuality   bool   // 是否为低质量渠道
-	// 兼容旧的隐式缓存推断状态。标准 Anthropic usage 不再填入该字段，避免把
-	// message_start 与 message_delta 的供应商私有差值冒充 cache_read。
-	MessageStartInputTokens int
 	// 兜底注入
 	SeenMessageStart bool // 是否已收到 message_start 事件
 	// 最终转换为 Claude SSE 后的工具调用；用于限定来源的历史思考恢复。
@@ -169,7 +167,7 @@ func HandleStreamResponse(
 
 	// 校验上游 Content-Type：如果不是 event-stream，说明上游返回了非流式错误内容。
 	// 此时还未写响应头，返回 error 可触发 failover。
-	if !IsEventStreamResponse(resp) {
+	if !streams.IsEventStreamResponse(resp) {
 		bodySnippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		snippet := strings.TrimSpace(string(bodySnippet))
 		log.Printf("[Messages-Stream] 上游返回非 event-stream Content-Type: %s, body: %s",
@@ -209,7 +207,7 @@ func HandleStreamResponse(
 	var firstEvent string
 	var primed bool
 
-	for !primed {
+	for !primed && (eventChan != nil || errChan != nil) {
 		select {
 		case <-c.Request.Context().Done():
 			return nil, c.Request.Context().Err()
@@ -234,29 +232,29 @@ func HandleStreamResponse(
 				return nil, err
 			}
 			if !ok {
-				return nil, fmt.Errorf("upstream stream closed without sending any events")
+				eventChan = nil
+				continue
+			}
+			if err := streamEventError(event); err != nil {
+				return nil, err
+			}
+			if isStreamControlEvent(event) {
+				continue
 			}
 			firstEvent = event
 			primed = true
 		}
 	}
 
-	if IsStreamErrorEvent(firstEvent) {
-		errorMsg := ExtractStreamErrorMessage(firstEvent)
-		log.Printf("[Messages-Stream] 上游首包返回错误事件: %s", errorMsg)
-		return nil, fmt.Errorf("upstream stream returned error event: %s", errorMsg)
+	if !primed {
+		return nil, fmt.Errorf("upstream stream closed without sending any events: %w", io.ErrUnexpectedEOF)
 	}
 
 	// Commit 阶段：成功收到有效首包后，正式向客户端写入响应头与状态码
 	SetupStreamHeaders(c, resp)
 
 	w := c.Writer
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		log.Printf("[Messages-Stream] 警告: ResponseWriter不支持Flush接口")
-		return nil, fmt.Errorf("ResponseWriter不支持Flush接口")
-	}
-	flusher.Flush()
+	var flusher http.Flusher = w
 
 	ctx := NewStreamContext(envCfg)
 	ctx.ReasoningScope = providers.ReasoningCacheScope(c.GetString(upstreamreq.ContextKeyConversationUserID), upstream, requestModel)
@@ -266,13 +264,7 @@ func HandleStreamResponse(
 
 	// 处理并写出预读的首个事件
 	if err := ProcessStreamEvent(c, w, flusher, firstEvent, ctx, envCfg, requestBody); err != nil {
-		// 内容安全错误由上层统一按入口协议编码，避免先写通用
-		// stream_error、随后再写 content_safety_error 的重复事件。
-		if !ctx.ClientGone && pipeline.ContentSafetyErrorFrom(err) == nil && pipeline.ContentSafetyHookErrorFrom(err) == nil {
-			w.Write([]byte(BuildStreamErrorEvent(err)))
-			flusher.Flush()
-		}
-		return ctx.upstreamUsageSnapshot(), err
+		return ctx.upstreamUsageSnapshot(), ctx.failStream(c, w, flusher, envCfg, err)
 	}
 
 	usage, processErr := ProcessStreamEvents(c, w, flusher, eventChan, errChan, ctx, envCfg, startTime, requestBody)
@@ -298,8 +290,12 @@ func ProcessStreamEvents(
 	// 事件和错误由两个通道交付。必须等两者都关闭后才能认定成功，
 	// 否则 eventChan 的关闭信号可能抢在已缓冲的错误之前被选中。
 	for eventChan != nil || errChan != nil {
+		cancelled := c.Request.Context().Done()
+		if ctx.TerminalDelivered {
+			cancelled = nil
+		}
 		select {
-		case <-c.Request.Context().Done():
+		case <-cancelled:
 			ctx.ClientGone = true
 			if envCfg.ShouldLog("info") {
 				log.Printf("[Messages-Stream] 客户端上下文已取消: %v", c.Request.Context().Err())
@@ -323,20 +319,7 @@ func ProcessStreamEvents(
 				continue
 			}
 			if err := ProcessStreamEvent(c, w, flusher, event, ctx, envCfg, requestBody); err != nil {
-				if !ctx.ClientGone {
-					if closeErr := ctx.closeDeliveredBlocks(w, flusher); closeErr != nil {
-						return ctx.upstreamUsageSnapshot(), errors.Join(err, closeErr)
-					}
-				}
-				// 内容安全错误由上层统一按入口协议编码，避免先写通用
-				// stream_error、随后再写 content_safety_error 的重复事件。
-				if !ctx.ClientGone && pipeline.ContentSafetyErrorFrom(err) == nil && pipeline.ContentSafetyHookErrorFrom(err) == nil {
-					if _, writeErr := w.Write([]byte(BuildStreamErrorEvent(err))); writeErr != nil {
-						return ctx.upstreamUsageSnapshot(), errors.Join(err, writeErr)
-					}
-					flusher.Flush()
-				}
-				return ctx.upstreamUsageSnapshot(), err
+				return ctx.upstreamUsageSnapshot(), ctx.failStream(c, w, flusher, envCfg, err)
 			}
 
 		case err, ok := <-errChan:
@@ -349,22 +332,9 @@ func ProcessStreamEvents(
 				continue
 			}
 			if err != nil {
-				log.Printf("[Messages-Stream] 错误: 流式传输错误: %v", err)
-				logPartialResponse(c, ctx, envCfg)
-				if !ctx.ClientGone {
-					if closeErr := ctx.closeDeliveredBlocks(w, flusher); closeErr != nil {
-						return ctx.upstreamUsageSnapshot(), errors.Join(err, closeErr)
-					}
-				}
-				if !ctx.ClientGone && pipeline.ContentSafetyErrorFrom(err) == nil && pipeline.ContentSafetyHookErrorFrom(err) == nil {
-					if _, writeErr := w.Write([]byte(BuildStreamErrorEvent(err))); writeErr != nil {
-						return ctx.upstreamUsageSnapshot(), errors.Join(err, writeErr)
-					}
-					flusher.Flush()
-				}
-
-				return ctx.upstreamUsageSnapshot(), err
+				return ctx.upstreamUsageSnapshot(), ctx.failStream(c, w, flusher, envCfg, err)
 			}
+
 		}
 	}
 	remaining, err := pipeline.DrainAttachedStreamRestoration(c)
@@ -372,10 +342,9 @@ func ProcessStreamEvents(
 		return ctx.upstreamUsageSnapshot(), err
 	}
 	for _, pendingEvent := range remaining {
-		if _, err := w.Write([]byte(pendingEvent)); err != nil {
+		if err := ctx.writeEvent(c, w, flusher, pendingEvent); err != nil {
 			return ctx.upstreamUsageSnapshot(), err
 		}
-		flusher.Flush()
 	}
 	if err := pipeline.FlushAttachedStreamHooks(c); err != nil {
 		return ctx.upstreamUsageSnapshot(), err
@@ -395,6 +364,12 @@ func ProcessStreamEvent(
 ) error {
 	if err := pipeline.AttachedStreamVetoError(c); err != nil {
 		return err
+	}
+	if err := streamEventError(event); err != nil {
+		return err
+	}
+	if ctx.TerminalDelivered {
+		return nil
 	}
 	// SSE 事件调试日志
 	ctx.EventCount++
@@ -490,13 +465,13 @@ func ProcessStreamEvent(
 
 	// 在 message_stop 前注入 usage（上游完全没有 usage 的情况）
 	if !ctx.HasUsage && !ctx.ClientGone && IsMessageStopEvent(event) {
-		usageEvent := BuildUsageEvent(requestBody, ctx.OutputTextBuffer.String())
+		usageEvent := BuildUsageEvent(ctx.OutputTextBuffer.String())
 		if envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug") {
 			log.Printf("[Messages-Stream-Token] 上游无usage, 注入本地估算事件")
 		}
-		proxycore.MarkRequestLogFirstToken(c)
-		w.Write([]byte(usageEvent))
-		flusher.Flush()
+		if err := ctx.writeEvent(c, w, flusher, usageEvent); err != nil {
+			return err
+		}
 		ctx.HasUsage = true
 	}
 
@@ -510,9 +485,9 @@ func ProcessStreamEvent(
 			if envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug") {
 				log.Printf("[Messages-Stream-Patch] 上游缺少 message_start，自动注入")
 			}
-			proxycore.MarkRequestLogFirstToken(c)
-			w.Write([]byte(syntheticStart))
-			flusher.Flush()
+			if err := ctx.writeEvent(c, w, flusher, syntheticStart); err != nil {
+				return err
+			}
 			ctx.SeenMessageStart = true
 		}
 	}
@@ -543,12 +518,12 @@ func ProcessStreamEvent(
 				ctx.CollectedUsage.OutputTokens = outputTokens
 			}
 
-			// 修补事件，包括推断的 cache_read_input_tokens
+			// 只修补输入、输出量，不推断缓存命中。
 			if hasEventData {
-				PatchTokensInEventDataWithCache(eventData, inputTokens, outputTokens, 0 /* no cache to client */, false, envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug"), ctx.LowQuality)
+				PatchTokensInEventData(eventData, inputTokens, outputTokens, envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug"))
 				eventToSend = ReplaceSSEData(eventToSend, eventData)
 			} else {
-				eventToSend = PatchTokensInEventWithCache(eventToSend, inputTokens, outputTokens, 0 /* no cache to client */, false, envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug"), ctx.LowQuality)
+				eventToSend = PatchTokensInEvent(eventToSend, inputTokens, outputTokens, envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug"))
 			}
 			ctx.NeedTokenPatch = false
 		}
@@ -560,11 +535,8 @@ func ProcessStreamEvent(
 	// 「压缩后立刻又要压缩」或「撞满上限也不压缩」。与估算相差 2 倍且量级 ≥20000 时，
 	// 用估算总量重建客户端 usage。正常缓存字段完整保留；缓存量本身不可信时，客户端副本
 	// 会同时清理缓存字段，避免留下 input=0、cache_read=20万这种仍然虚假的总量。
-	// 只改客户端事件，ctx.CollectedUsage 保持上游原值用于指标/计费。
+	// 只改客户端事件，ctx.UpstreamUsage 保持上游原值用于指标。
 	//
-	// 历史约定变更：stream_usage_patch.go 曾约定「绝不用更大的估算覆盖真实正数」，那是防
-	// 「全量估算塞给客户端」的无条件覆盖；本校正只在数量级级错报（≥2 倍）时介入，
-	// 两种风险同时挡住。实测数据与外部佐证见 utils/usage_sanity.go。
 	if eventHasUsage {
 		if corrected, ok := sanityCheckMessageStreamInputTokens(eventToSend, requestBody, envCfg.Current().EnableResponseLogs); ok {
 			eventToSend = corrected
@@ -582,21 +554,7 @@ func ProcessStreamEvent(
 	// 未做 usage / message_start 修补的事件按原文字节转发。未知事件和字段
 	// （含 safeguard_results）会留下，这条 Claude 透传路径也不改写 tool_use.id。
 	// 需要补 usage 时按 map 重编码，未知字段仍留在 map 里。
-	if !ctx.ClientGone {
-		proxycore.MarkRequestLogFirstToken(c)
-		if _, err := w.Write([]byte(eventToSend)); err != nil {
-			ctx.ClientGone = true
-			if !IsClientDisconnectError(err) {
-				log.Printf("[Messages-Stream] 警告: 写入错误: %v", err)
-			} else if envCfg.ShouldLog("info") {
-				log.Printf("[Messages-Stream] 客户端中断连接 (正常行为)，继续接收上游数据...")
-			}
-		} else {
-			ctx.trackDeliveredBlocks(eventToSend)
-			flusher.Flush()
-		}
-	}
-	return nil
+	return ctx.writeEvent(c, w, flusher, eventToSend)
 }
 
 type streamToolArgumentFragment struct {
@@ -638,13 +596,4 @@ func streamSafetyFragments(data map[string]interface{}) (string, []streamToolArg
 		}
 	}
 	return text, toolArguments
-}
-
-// IsClientDisconnectError 判断是否为客户端断开连接错误
-func IsClientDisconnectError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "broken pipe") || strings.Contains(msg, "connection reset")
 }

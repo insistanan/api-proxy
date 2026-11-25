@@ -49,7 +49,6 @@ type geminiToClaudeStreamState struct {
 	hasToolCall         bool
 	shadowParts         []interface{}
 	shadowToolCalls     []GeminiShadowToolCall
-	shadowTextParts     map[string]int
 	seenStreamToolCalls map[string]struct{}
 	reasoningText       strings.Builder
 	assistantText       strings.Builder
@@ -68,7 +67,6 @@ type geminiToClaudeStreamState struct {
 
 func newGeminiToClaudeStreamState() *geminiToClaudeStreamState {
 	return &geminiToClaudeStreamState{
-		shadowTextParts:     make(map[string]int),
 		seenStreamToolCalls: make(map[string]struct{}),
 		textBlockIndex:      -1,
 	}
@@ -263,16 +261,7 @@ func (s *geminiToClaudeStreamState) ProcessChunk(jsonStr string) []string {
 			}
 			if text != "" {
 				s.assistantText.WriteString(text)
-				key := fmt.Sprintf("text:%d", s.textBlockIndex)
-				if idx, exists := s.shadowTextParts[key]; exists {
-					if existing, ok := s.shadowParts[idx].(map[string]interface{}); ok {
-						existingText, _ := existing["text"].(string)
-						existing["text"] = existingText + text
-					}
-				} else {
-					s.shadowTextParts[key] = len(s.shadowParts)
-					s.shadowParts = append(s.shadowParts, map[string]interface{}{"text": text})
-				}
+				s.shadowParts = append(s.shadowParts, cloneMapStringInterface(part))
 			}
 
 			deltaEvent := map[string]interface{}{
@@ -291,14 +280,16 @@ func (s *geminiToClaudeStreamState) ProcessChunk(jsonStr string) []string {
 		if fc, ok := part["functionCall"].(map[string]interface{}); ok {
 			name, _ := fc["name"].(string)
 			args := fc["args"]
-			streamToolCallKey := geminiFunctionCallKey(fc, name, args)
-			if _, exists := s.seenStreamToolCalls[streamToolCallKey]; exists {
+			streamToolCallKey, _ := fc["id"].(string)
+			if _, exists := s.seenStreamToolCalls[streamToolCallKey]; streamToolCallKey != "" && exists {
 				// Gemini 兼容网关可能在多个 chunk 重复发送同一个完整
 				// functionCall。它不是参数 delta，不能重复转成多个
 				// Claude tool_use 或 shadow tool call。
 				continue
 			}
-			s.seenStreamToolCalls[streamToolCallKey] = struct{}{}
+			if streamToolCallKey != "" {
+				s.seenStreamToolCalls[streamToolCallKey] = struct{}{}
+			}
 			out = append(out, s.closeTextBlock()...)
 
 			toolUseBlockIndex := s.nextBlockIndex

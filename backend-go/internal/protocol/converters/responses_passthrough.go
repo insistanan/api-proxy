@@ -176,8 +176,3 @@ func int64FromInterface(value interface{}) int64 {
 		return 0
 	}
 }
-
-// GetProviderName 获取上游服务名称
-func (c *ResponsesPassthroughConverter) GetProviderName() string {
-	return "Responses API (Passthrough)"
-}

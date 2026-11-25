@@ -19,9 +19,17 @@
         </UiBadge>
       </template>
       <template #free-summary="{ channel }">
-        <span class="channel-concurrency text-xs" title="当前在免费渠道处理中的独立对话数">
-          并发对话 <strong>{{ getChannelMetrics(channel.index)?.activeConversations ?? '—' }}</strong>
-        </span>
+        <ChannelConcurrency
+          :key="`${channelType}-${channel.id ?? channel.index}`"
+          class="channel-concurrency text-xs"
+          :channel="channel"
+          :kind="kindOf(channel)"
+          :active="getChannelMetrics(channel.index)?.activeBranches"
+          :title="channelConcurrencyTitle(channel.index)"
+          @refresh="emit('refresh')"
+          @success="emit('success', $event)"
+          @error="emit('error', $event)"
+        />
       </template>
       <template #free-activity="{ channel }">
         <ChannelActivityChart
@@ -116,14 +124,18 @@
                 <span v-else class="channel-service">{{ channelServiceLabel(channelType, element.serviceType) }}</span>
               </div>
               <div class="channel-live-status">
-                <span
-                  v-if="showsConversations"
+                <ChannelConcurrency
+                  :key="`${channelType}-${element.id ?? element.index}`"
                   class="channel-concurrency"
+                  :channel="element"
+                  :kind="kindOf(element)"
+                  :active="getChannelMetrics(element.index)?.activeBranches"
                   :class="{ 'has-conversations': (getChannelMetrics(element.index)?.activeConversations ?? 0) > 0 }"
-                  title="当前在此渠道处理中的独立对话数"
-                >
-                  并发对话 <strong>{{ getChannelMetrics(element.index)?.activeConversations ?? '—' }}</strong>
-                </span>
+                  :title="channelConcurrencyTitle(element.index)"
+                  @refresh="emit('refresh')"
+                  @success="emit('success', $event)"
+                  @error="emit('error', $event)"
+                />
                 <span v-if="isLatencyValid(element, currentTime)" :class="`text-${getLatencyColor(element.latency!)}`" title="最近探测延迟">{{ element.latency }} ms</span>
               </div>
             </div>
@@ -227,6 +239,7 @@ import ChannelPromotionDialog from '@/features/channels/components/dashboard/Cha
 import ChannelLogsDialog from '@/features/channels/components/dashboard/ChannelLogsDialog.vue'
 import ChannelReservePools from '@/features/channels/components/dashboard/ChannelReservePools.vue'
 import ChannelMetricsCell from '@/features/channels/components/dashboard/ChannelMetricsCell.vue'
+import ChannelConcurrency from '@/features/channels/components/dashboard/ChannelConcurrency.vue'
 import { useChannelLogs } from '@/features/channels/composables/useChannelLogs'
 import { useChannelPromotion } from '@/features/channels/composables/useChannelPromotion'
 
@@ -358,14 +371,21 @@ watch(() => props.channelType, () => {
   expandedChannelIndex.value = null
 })
 
-const showsConversations = computed(() => ['messages', 'responses', 'chat', 'gemini'].includes(props.channelType))
-
 const metricsByChannel = computed<Map<number, ChannelMetrics>>(previous => new Map(props.dashboardMetrics.map(metric => {
   const oldMetric = previous?.get(metric.channelIndex)
   // 指标快照很小；未变化的渠道复用引用，避免每次轮询刷新其指标条和提示框。
   return [metric.channelIndex, oldMetric && JSON.stringify(oldMetric) === JSON.stringify(metric) ? oldMetric : metric] as const
 })))
 const getChannelMetrics = (channelIndex: number): ChannelMetrics | undefined => metricsByChannel.value.get(channelIndex)
+
+const channelConcurrencyTitle = (channelIndex: number): string => {
+  const metric = getChannelMetrics(channelIndex)
+  if (metric?.activeBranches === undefined || metric.activeConversations === undefined || metric.unidentifiedBranchConversations === undefined) return '当前服务尚未提供分支并发统计'
+  if (metric.unidentifiedBranchConversations > 0) {
+    return `${metric.activeConversations} 个会话；${metric.unidentifiedBranchConversations} 个会话缺少分支标识，按会话去重，实际分支数可能更多。只统计当前在此渠道处理中的活动。`
+  }
+  return `${metric.activeConversations} 个会话，${metric.activeBranches} 个活跃分支；同一分支的重复请求只计一次。只统计当前在此渠道处理中的活动。`
+}
 
 const toggleVisionCapability = async (channel: Channel) => {
   const nextValue = !channel.visionCapable

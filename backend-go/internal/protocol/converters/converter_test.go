@@ -103,7 +103,7 @@ func TestExtractUsageMetrics_GeminiCachedAndThoughtsTogether(t *testing.T) {
 // ============== OpenAI 转换器测试 ==============
 
 func TestOpenAIChatConverter_WithMessageType(t *testing.T) {
-	converter := &OpenAIChatConverter{}
+	converter := &chatDispatcherFixture{}
 	sess := &types.Session{
 		ID:       "sess_test",
 		Messages: []types.ResponsesItem{},
@@ -170,7 +170,7 @@ func TestOpenAIChatResponseToResponses_WithReasoningAndToolCalls(t *testing.T) {
 		},
 	}
 
-	result, err := OpenAIChatResponseToResponses(resp, "sess_test")
+	result, err := convertChatResponseFixture(resp, "sess_test")
 	if err != nil {
 		t.Fatalf("转换失败: %v", err)
 	}
@@ -438,7 +438,7 @@ func TestResponsesToOpenAIChatMessages_CustomToolOutputReplay(t *testing.T) {
 // ============== 会话历史测试 ==============
 
 func TestOpenAIChatConverter_WithSessionHistory(t *testing.T) {
-	converter := &OpenAIChatConverter{}
+	converter := &chatDispatcherFixture{}
 	sess := &types.Session{
 		ID: "sess_test",
 		Messages: []types.ResponsesItem{
@@ -488,7 +488,7 @@ func TestOpenAIChatConverter_WithSessionHistory(t *testing.T) {
 // ============== FinishReason 映射测试 ==============
 
 func TestOpenAIChatConverter_ForwardsPromptCacheKey(t *testing.T) {
-	converter := &OpenAIChatConverter{}
+	converter := &chatDispatcherFixture{}
 	sess := &types.Session{
 		ID:       "sess_cache",
 		Messages: []types.ResponsesItem{},

@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/insistanan/api-proxy/internal/safety/pipeline"
 )
@@ -46,7 +45,7 @@ func HandleAllChannelsFailed(c *gin.Context, fuzzyMode bool, lastFailoverError *
 		c.JSON(400, gin.H{"error": gin.H{"message": lastError.Error(), "type": "unsupported_protocol", "code": "unsupported_protocol"}})
 		return
 	}
-	if upstreamcontrol.IsLocalError(lastError) {
+	if isLocalAdmissionError(lastError) {
 		localAdmissionResult(c, lastError, false)
 		return
 	}
@@ -97,7 +96,7 @@ func HandleAllKeysFailed(c *gin.Context, fuzzyMode bool, lastFailoverError *Fail
 		c.JSON(400, gin.H{"error": gin.H{"message": lastError.Error(), "type": "unsupported_protocol", "code": "unsupported_protocol"}})
 		return
 	}
-	if upstreamcontrol.IsLocalError(lastError) {
+	if isLocalAdmissionError(lastError) {
 		localAdmissionResult(c, lastError, false)
 		return
 	}

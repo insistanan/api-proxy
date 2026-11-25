@@ -46,6 +46,10 @@ export interface ChannelMetrics {
   lastFailureAt?: string
   /** 仪表盘快照中，该渠道正在处理的独立对话数。 */
   activeConversations?: number
+  /** 按会话与稳定线程、分支、Agent 标识去重；无标识的会话至少计一个。 */
+  activeBranches?: number
+  /** 有请求缺少稳定分支标识的活跃会话数，此时分支统计可能不完整。 */
+  unidentifiedBranchConversations?: number
   // 渠道级三态熔断运行时状态（dashboard API 注入）
   circuitState?: CircuitState
   circuitConsecutiveFailures?: number
@@ -63,6 +67,7 @@ export interface Channel {
   cacheKeepalive?: CacheKeepaliveConfig
   builtinProvider?: 'kilo'
   maxConcurrency?: number // 每个 URL、实际协议、Key 组合的配置并发，默认 5
+  maxBranchConcurrency?: number // 渠道分支并发上限，默认 3，同分支重复请求不额外占用
   effectiveConcurrency?: { baseUrl: string; protocol: string; keyIndex: number; maxConcurrency: number }[]
   clientIdentityMode?: 'inherit' | 'api' | 'compatibility'
   id?: string
@@ -128,7 +133,6 @@ export interface CacheKeepaliveConfig {
   prompt: string
   minCacheHitPercent: number
   maxOutputTokens: number
-  maxTotalTokens: number
 }
 
 export interface CacheKeepaliveStatus {

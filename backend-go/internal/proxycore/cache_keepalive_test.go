@@ -26,6 +26,11 @@ func TestCacheKeepaliveKey_UsesStableConversationAndAgent(t *testing.T) {
 	require.NotEqual(t, key, cacheKeepaliveKey(identity, "access-key"))
 	identity.AgentID = ""
 	require.NotEqual(t, key, cacheKeepaliveKey(identity, "other-access-key"))
+	identity.ExplicitID = "other-session"
+	require.NotEqual(t, key, cacheKeepaliveKey(identity, "access-key"))
+	identity.ExplicitID = "session"
+	identity.ClientFamily = "codex"
+	require.NotEqual(t, key, cacheKeepaliveKey(identity, "access-key"))
 }
 
 func TestCacheKeepalive_ProxyAttemptCapturesFinalRequestAndUsage(t *testing.T) {
@@ -38,7 +43,7 @@ func TestCacheKeepalive_ProxyAttemptCapturesFinalRequestAndUsage(t *testing.T) {
 	upstream := &config.UpstreamConfig{ID: "keepalive-test", Name: "缓存保活测试", BaseURL: server.URL,
 		ServiceType: "claude", APIKeys: []string{"test-key"}, MaxConcurrency: 5,
 		CacheKeepalive: config.CacheKeepaliveConfig{Enabled: true, IntervalSeconds: 280, MaxAttempts: 2,
-			Prompt: "接下来应该怎么做？", MinCacheHitPercent: 90, MaxOutputTokens: 16, MaxTotalTokens: 100000}}
+			Prompt: "接下来应该怎么做？", MinCacheHitPercent: 90, MaxOutputTokens: 16}}
 	require.NoError(t, h.cfgManager.AddUpstream(*upstream))
 	manager := cachekeepalive.New(h.cfgManager, nil)
 	t.Cleanup(manager.Stop)

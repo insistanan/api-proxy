@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/api/streams"
+	messagestreams "github.com/insistanan/api-proxy/internal/api/streams/messages"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/infra/middleware"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
@@ -76,7 +76,7 @@ func Handler(
 			var claudeReq types.ClaudeRequest
 			_ = json.Unmarshal(body, &claudeReq)
 			if claudeReq.Stream {
-				return streams.HandleStreamResponse(c, resp, resolvedProvider, envCfg, startTime, up, body, claudeReq.Model)
+				return messagestreams.HandleStreamResponse(c, resp, resolvedProvider, envCfg, startTime, up, body, claudeReq.Model)
 			}
 			return handleNormalResponse(c, resp, resolvedProvider, envCfg, startTime, body, up, apiKey)
 		},

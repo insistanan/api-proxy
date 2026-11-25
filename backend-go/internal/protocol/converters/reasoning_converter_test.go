@@ -9,7 +9,7 @@ import (
 
 func TestDisabledThinkingRemainsExplicitAcrossProtocols(t *testing.T) {
 	budget := int32(0)
-	input := &types.GeminiRequest{GenerationConfig: &types.GeminiGenerationConfig{ThinkingConfig: &types.GeminiThinkingConfig{ThinkingBudget: &budget}}}
+	input := &types.GeminiRequest{GenerationConfig: &types.GeminiGenerationConfig{MaxOutputTokens: 20000, ThinkingConfig: &types.GeminiThinkingConfig{ThinkingBudget: &budget}}}
 	chat, err := GeminiToOpenAIRequest(input, "chat-model")
 	assert.NoError(t, err)
 	assert.Equal(t, "none", chat["reasoning_effort"])

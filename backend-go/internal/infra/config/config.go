@@ -20,8 +20,9 @@ import (
 
 // UpstreamConfig 上游配置
 type UpstreamConfig struct {
-	CacheKeepalive  CacheKeepaliveConfig `json:"cacheKeepalive,omitempty"`
-	BuiltinProvider string               `json:"builtinProvider,omitempty"`
+	CacheKeepalive       CacheKeepaliveConfig `json:"cacheKeepalive,omitempty"`
+	BuiltinProvider      string               `json:"builtinProvider,omitempty"`
+	MaxBranchConcurrency int                  `json:"maxBranchConcurrency"` // 渠道同时处理的独立分支上限，默认 3
 	// MaxConcurrency 保存用户设置的并发上限。生效上限和实际上游协议
 	// 在发布配置时计算，不写入配置文件。
 	MaxConcurrency       int                         `json:"maxConcurrency"`               // URL、协议、Key 相同的配置共享最小上限
@@ -104,12 +105,15 @@ type UpstreamConfig struct {
 //	"modelMapping": { "opus": ["gpt-4o"] }
 func (u *UpstreamConfig) UnmarshalJSON(data []byte) error {
 	type upstreamConfigAlias UpstreamConfig
-	alias := upstreamConfigAlias{MaxConcurrency: upstreamcontrol.DefaultConcurrency}
+	alias := upstreamConfigAlias{MaxConcurrency: upstreamcontrol.DefaultConcurrency, MaxBranchConcurrency: DefaultBranchConcurrency}
 	decoded := struct {
 		*upstreamConfigAlias
 		ModelMapping json.RawMessage `json:"modelMapping"`
 	}{upstreamConfigAlias: &alias}
 	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	if err := validateExplicitBranchConcurrency(data); err != nil {
 		return err
 	}
 	mapping, err := decodeModelMapping(decoded.ModelMapping)
@@ -144,22 +148,23 @@ func ValidateReasoningOptions(upstream *UpstreamConfig) error {
 
 // UpstreamUpdate 用于部分更新 UpstreamConfig
 type UpstreamUpdate struct {
-	CacheKeepalive     *CacheKeepaliveConfig `json:"cacheKeepalive"`
-	MaxConcurrency     *int                  `json:"maxConcurrency"`
-	ClientIdentityMode *string               `json:"clientIdentityMode"`
-	Name               *string               `json:"name"`
-	PoolID             *string               `json:"poolId"`
-	ServiceType        *string               `json:"serviceType"`
-	BaseURL            *string               `json:"baseUrl"`
-	BaseURLs           []string              `json:"baseUrls"`
-	UseFullURL         *bool                 `json:"useFullUrl"`
-	APIKeys            []string              `json:"apiKeys"`
-	Description        *string               `json:"description"`
-	Website            *string               `json:"website"`
-	InsecureSkipVerify *bool                 `json:"insecureSkipVerify"`
-	ProxyMode          *string               `json:"proxyMode"`
-	ProxyURL           *string               `json:"proxyUrl"`
-	ModelMapping       map[string][]string   `json:"modelMapping"` // 支持一对多映射
+	MaxBranchConcurrency *int                  `json:"maxBranchConcurrency,omitempty"`
+	CacheKeepalive       *CacheKeepaliveConfig `json:"cacheKeepalive"`
+	MaxConcurrency       *int                  `json:"maxConcurrency"`
+	ClientIdentityMode   *string               `json:"clientIdentityMode"`
+	Name                 *string               `json:"name"`
+	PoolID               *string               `json:"poolId"`
+	ServiceType          *string               `json:"serviceType"`
+	BaseURL              *string               `json:"baseUrl"`
+	BaseURLs             []string              `json:"baseUrls"`
+	UseFullURL           *bool                 `json:"useFullUrl"`
+	APIKeys              []string              `json:"apiKeys"`
+	Description          *string               `json:"description"`
+	Website              *string               `json:"website"`
+	InsecureSkipVerify   *bool                 `json:"insecureSkipVerify"`
+	ProxyMode            *string               `json:"proxyMode"`
+	ProxyURL             *string               `json:"proxyUrl"`
+	ModelMapping         map[string][]string   `json:"modelMapping"` // 支持一对多映射
 	// ModelMappingChannels 与 ModelMapping 同步更新：传入即整体替换，并按新的 ModelMapping 修剪失效条目。
 	ModelMappingChannels map[string]map[string]string `json:"modelMappingChannels"`
 	DefaultModel         *string                      `json:"defaultModel"`
@@ -209,6 +214,9 @@ func (u *UpstreamUpdate) UnmarshalJSON(data []byte) error {
 		ModelMapping json.RawMessage `json:"modelMapping"`
 	}{upstreamUpdateAlias: &alias}
 	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	if err := validateExplicitBranchConcurrency(data); err != nil {
 		return err
 	}
 	mapping, err := decodeModelMapping(decoded.ModelMapping)

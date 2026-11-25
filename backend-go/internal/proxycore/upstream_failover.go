@@ -171,7 +171,10 @@ func (a UpstreamAttempt) tryWithModelMappingFailover() UpstreamAttemptResult {
 		}
 
 		// 本地容量不足必须穿透模型层，避免换模型后再次等待同一组合。
-		if upstreamcontrol.IsLocalError(result.LastError) || result.AbortFailover {
+		if isLocalAdmissionError(result.LastError) || result.AbortFailover {
+			if channelID != "" && !a.ConfigManager.GetFuzzyModeEnabledForProtocol(string(a.Kind)) {
+				return result.withHealth(channelHealthNeutral).withAbortFailover()
+			}
 			return result.withHealth(channelHealthNeutral)
 		}
 		if types.IsUnsupportedProtocol(result.LastError) {

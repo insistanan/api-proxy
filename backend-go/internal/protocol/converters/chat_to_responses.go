@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/contract"
 	"strings"
 	"time"
 
@@ -13,6 +14,9 @@ import (
 
 // chatToResponsesState 流式转换状态
 type chatToResponsesState struct {
+	Completion   contract.Completion
+	Err          error
+	Candidate    *int
 	Seq          int
 	ResponseID   string
 	CreatedAt    int64
@@ -95,10 +99,11 @@ func ConvertOpenAIChatToResponses(ctx context.Context, modelName string, origina
 			FuncNames:   make(map[int]string),
 			FuncCallIDs: make(map[int]string),
 			FirstChunk:  true,
+			Completion:  contract.Completion{Status: "completed"},
 		}
 	}
 	st := (*param).(*chatToResponsesState)
-	if st.Completed || st.Failed {
+	if st.Completed || st.Failed || st.Err != nil {
 		return nil
 	}
 
@@ -116,6 +121,10 @@ func ConvertOpenAIChatToResponses(ctx context.Context, modelName string, origina
 	}
 
 	root := gjson.ParseBytes(rawJSON)
+	if !gjson.ValidBytes(rawJSON) || !root.IsObject() {
+		st.Err = fmt.Errorf("Chat SSE 必须是有效 JSON 对象")
+		return nil
+	}
 	var out []string
 
 	nextSeq := func() int { st.Seq++; return st.Seq }
@@ -193,7 +202,17 @@ func ConvertOpenAIChatToResponses(ctx context.Context, modelName string, origina
 		return out
 	}
 
+	if len(choices.Array()) > 1 {
+		st.Err = fmt.Errorf("Chat → Responses 不支持多个候选")
+		return nil
+	}
 	for _, choice := range choices.Array() {
+		index := int(choice.Get("index").Int())
+		if st.Candidate != nil && *st.Candidate != index {
+			st.Err = fmt.Errorf("Chat 流中出现第二个候选")
+			return nil
+		}
+		st.Candidate = &index
 		if st.FinishPending {
 			break
 		}
@@ -402,6 +421,10 @@ func ConvertOpenAIChatToResponses(ctx context.Context, modelName string, origina
 
 		// 处理 finish_reason
 		if finishReason != "" && finishReason != "null" && finishReason != "none" {
+			st.Completion, st.Err = contract.Finish("openai", finishReason)
+			if st.Err != nil {
+				return nil
+			}
 			st.FinishPending = true
 			// 关闭所有打开的 blocks
 			if st.ReasoningActive {

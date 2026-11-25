@@ -1,12 +1,9 @@
 package providers
 
 import (
-	"bufio"
 	"context"
 	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"io"
-
-	"github.com/insistanan/api-proxy/internal/infra/utils"
 )
 
 // streamPump 聚合各 provider 流式实现共有的脚手架：事件/错误双通道、
@@ -15,7 +12,7 @@ import (
 // 留在各自的循环体内。
 //
 // 约定：pump goroutine 必须 defer close 双通道。消费方
-// （api/streams.ProcessStreamEvents）对 errChan 关闭有专门分支；
+// （api/streams/messages.ProcessStreamEvents）对 errChan 关闭有专门分支；
 // close 不清除已缓冲的错误，fail 先入队的错误仍会被消费。
 type streamPump struct {
 	ctx       context.Context
@@ -52,13 +49,9 @@ func (p *streamPump) fail(err error) {
 	}
 }
 
-// newScanner 构造上游 SSE scanner：初始 64KB、上限 1MB 缓冲，
-// 处理大 JSON chunk，避免默认 64KB 限制截断。
-func (p *streamPump) newScanner(body io.Reader) *bufio.Scanner {
-	scanner := bufio.NewScanner(body)
-	const maxScannerBufferSize = 1024 * 1024 // 1MB
-	scanner.Buffer(utils.GetChunkBuffer64KB()[:0], maxScannerBufferSize)
-	return scanner
+// newScanner 共用可取消的逐行读取器，大小由实际事件决定。
+func (p *streamPump) newScanner(body io.Reader) *codec.SSELineReader {
+	return codec.NewSSELineReader(p.ctx, body)
 }
 
 // finishRead 验证协议完成状态；取消不伪造成功，也不记录上游故障。

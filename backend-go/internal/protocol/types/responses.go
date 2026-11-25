@@ -13,11 +13,11 @@ type ResponsesRequest struct {
 	Instructions         string                 `json:"instructions,omitempty"` // 系统指令（映射为 system message）
 	Input                interface{}            `json:"input"`                  // string 或 []ResponsesItem
 	PreviousResponseID   string                 `json:"previous_response_id,omitempty"`
-	Store                *bool                  `json:"store,omitempty"`                  // 默认 true
-	MaxTokens            int                    `json:"max_tokens,omitempty"`             // 最大 tokens
-	MaxOutputTokens      int                    `json:"max_output_tokens,omitempty"`      // Responses 原生最大输出 tokens
-	Temperature          float64                `json:"temperature,omitempty"`            // 温度参数
-	TopP                 float64                `json:"top_p,omitempty"`                  // top_p 参数
+	Store                *bool                  `json:"store,omitempty"`             // 默认 true
+	MaxTokens            int                    `json:"max_tokens,omitempty"`        // 最大 tokens
+	MaxOutputTokens      int                    `json:"max_output_tokens,omitempty"` // Responses 原生最大输出 tokens
+	Temperature          *float64               `json:"temperature,omitempty"`       // nil 表示未设置，保留显式零值
+	TopP                 *float64               `json:"top_p,omitempty"`
 	FrequencyPenalty     float64                `json:"frequency_penalty,omitempty"`      // 频率惩罚
 	PresencePenalty      float64                `json:"presence_penalty,omitempty"`       // 存在惩罚
 	Stream               bool                   `json:"stream,omitempty"`                 // 是否流式输出

@@ -3,6 +3,8 @@ package converters
 
 import (
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/protocol/contract"
+	"sort"
 
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -100,22 +102,19 @@ func (st *chatToResponsesState) closeFuncBlocks(nextSeq func() int) []string {
 	for idx := range st.FuncArgsBuf {
 		idxs = append(idxs, idx)
 	}
-	// 简单排序
-	for i := 0; i < len(idxs); i++ {
-		for j := i + 1; j < len(idxs); j++ {
-			if idxs[j] < idxs[i] {
-				idxs[i], idxs[j] = idxs[j], idxs[i]
-			}
-		}
-	}
+	sort.Ints(idxs)
 
 	for _, idx := range idxs {
-		args := "{}"
+		args := ""
 		if buf := st.FuncArgsBuf[idx]; buf != nil && buf.Len() > 0 {
 			args = buf.String()
 		}
 		callID := st.FuncCallIDs[idx]
 		name := st.FuncNames[idx]
+		if _, err := contract.Arguments(args, callID); err != nil {
+			st.Err = err
+			return nil
+		}
 		itemID, itemType, itemName, namespace, execution, argumentValue := classifyChatToolCall(name, callID, args, st.CustomTools)
 		// 锁定类型优先：added/delta 阶段已按锁定类型发事件，收尾必须一致。
 		// 名称后到的退化场景（锁定 function、分类结果 custom）按 function_call
@@ -168,6 +167,7 @@ func (st *chatToResponsesState) closeFuncBlocks(nextSeq func() int) []string {
 		itemDone, _ = sjson.Set(itemDone, "output_index", outputIndex)
 		itemDone, _ = sjson.Set(itemDone, "item.id", itemID)
 		itemDone, _ = sjson.Set(itemDone, "item.type", itemType)
+		itemDone, _ = sjson.Set(itemDone, "item.status", st.Completion.Status)
 		itemDone, _ = sjson.Set(itemDone, "item.call_id", callID)
 		if itemType == "custom_tool_call" {
 			itemDone, _ = sjson.Set(itemDone, "item.name", itemName)
@@ -193,7 +193,7 @@ func (st *chatToResponsesState) closeFuncBlocks(nextSeq func() int) []string {
 
 // generateCompletedEvents 生成完成事件
 func (st *chatToResponsesState) generateCompletedEvents(originalRequestRawJSON []byte) []string {
-	if st.Completed || st.Failed || st.FirstChunk {
+	if st.Completed || st.Failed || st.Err != nil || st.FirstChunk {
 		return nil
 	}
 	st.Completed = true
@@ -211,11 +211,20 @@ func (st *chatToResponsesState) generateCompletedEvents(originalRequestRawJSON [
 		out = append(out, st.closeFuncBlocks(nextSeq)...)
 	}
 
-	// 构建 response.completed
+	if st.Err != nil {
+		return nil
+	}
+	// 构建最终响应
 	completed := `{"type":"response.completed","sequence_number":0,"response":{"id":"","object":"response","created_at":0,"status":"completed","background":false,"error":null}}`
 	completed, _ = sjson.Set(completed, "sequence_number", nextSeq())
 	completed, _ = sjson.Set(completed, "response.id", st.ResponseID)
 	completed, _ = sjson.Set(completed, "response.created_at", st.CreatedAt)
+	event := "response." + st.Completion.Status
+	completed, _ = sjson.Set(completed, "type", event)
+	completed, _ = sjson.Set(completed, "response.status", st.Completion.Status)
+	if st.Completion.Reason != "" {
+		completed, _ = sjson.Set(completed, "response.incomplete_details.reason", st.Completion.Reason)
+	}
 
 	// 注入原始请求字段
 	if originalRequestRawJSON != nil {
@@ -263,7 +272,7 @@ func (st *chatToResponsesState) generateCompletedEvents(originalRequestRawJSON [
 		r := map[string]interface{}{
 			"id":     st.ReasoningItemID,
 			"type":   "reasoning",
-			"status": "completed",
+			"status": st.Completion.Status,
 			"summary": []interface{}{map[string]interface{}{
 				"type": "summary_text",
 				"text": st.ReasoningBuf.String(),
@@ -278,7 +287,7 @@ func (st *chatToResponsesState) generateCompletedEvents(originalRequestRawJSON [
 		m := map[string]interface{}{
 			"id":     st.CurrentMsgID,
 			"type":   "message",
-			"status": "completed",
+			"status": st.Completion.Status,
 			"content": []interface{}{map[string]interface{}{
 				"type":        "output_text",
 				"annotations": []interface{}{},
@@ -308,14 +317,12 @@ func (st *chatToResponsesState) generateCompletedEvents(originalRequestRawJSON [
 			if b := st.FuncArgsBuf[idx]; b != nil {
 				args = b.String()
 			}
-			if args == "" {
-				args = "{}"
-			}
 			callID := st.FuncCallIDs[idx]
 			name := st.FuncNames[idx]
 			// 类型尊重流式锁定（与 output_item.done 同一规则），保证 completed
 			// 的 item 类型与流中事件一致。
 			item := buildChatToolCallOutputItemWithLock(callID, name, args, st.CustomTools, !st.lockChatToolIsCustom(idx, name))
+			item["status"] = st.Completion.Status
 			outputs = append(outputs, item)
 		}
 	}
@@ -366,6 +373,6 @@ func (st *chatToResponsesState) generateCompletedEvents(originalRequestRawJSON [
 		completed, _ = sjson.Set(completed, "response.usage.cache_ttl", st.CacheTTL)
 	}
 
-	out = append(out, emitResponsesEvent("response.completed", completed))
+	out = append(out, emitResponsesEvent(event, completed))
 	return out
 }

@@ -47,8 +47,8 @@ type ClaudeRequest struct {
 	System              interface{}            `json:"system,omitempty"` // string 或 content 数组
 	MaxTokens           int                    `json:"max_tokens,omitempty"`
 	MaxCompletionTokens int                    `json:"max_completion_tokens,omitempty"`
-	Temperature         float64                `json:"temperature,omitempty"`
-	TopP                float64                `json:"top_p,omitempty"`
+	Temperature         *float64               `json:"temperature,omitempty"`
+	TopP                *float64               `json:"top_p,omitempty"`
 	StopSequences       []string               `json:"stop_sequences,omitempty"`
 	Stream              bool                   `json:"stream,omitempty"`
 	Tools               []ClaudeTool           `json:"tools,omitempty"`
@@ -66,8 +66,8 @@ func (r *ClaudeRequest) UnmarshalJSON(data []byte) error {
 		System              interface{}            `json:"system,omitempty"`
 		MaxTokens           int                    `json:"max_tokens,omitempty"`
 		MaxCompletionTokens int                    `json:"max_completion_tokens,omitempty"`
-		Temperature         float64                `json:"temperature,omitempty"`
-		TopP                float64                `json:"top_p,omitempty"`
+		Temperature         *float64               `json:"temperature,omitempty"`
+		TopP                *float64               `json:"top_p,omitempty"`
 		StopSequences       []string               `json:"stop_sequences,omitempty"`
 		Stream              bool                   `json:"stream,omitempty"`
 		Tools               json.RawMessage        `json:"tools,omitempty"`
@@ -215,8 +215,8 @@ type OpenAIRequest struct {
 	Messages            []OpenAIMessage `json:"messages"`
 	MaxCompletionTokens int             `json:"max_completion_tokens,omitempty"`
 	MaxTokens           int             `json:"max_tokens,omitempty"`
-	Temperature         float64         `json:"temperature,omitempty"`
-	TopP                float64         `json:"top_p,omitempty"`
+	Temperature         *float64        `json:"temperature,omitempty"`
+	TopP                *float64        `json:"top_p,omitempty"`
 	Stop                []string        `json:"stop,omitempty"`
 	Stream              bool            `json:"stream,omitempty"`
 	StreamOptions       interface{}     `json:"stream_options,omitempty"`

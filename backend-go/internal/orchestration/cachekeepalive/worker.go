@@ -75,7 +75,7 @@ func (m *Manager) dispatch() {
 			m.stopEntry(e, "配置已更新，等待新的真实请求")
 			continue
 		}
-		if !now.Before(e.deadline) {
+		if !e.deadline.IsZero() && !now.Before(e.deadline) {
 			m.stopEntry(e, "已达到最长保活时间")
 			continue
 		}
@@ -86,7 +86,12 @@ func (m *Manager) dispatch() {
 				continue
 			}
 		}
-		ctx, cancel := context.WithTimeout(m.ctx, e.deadline.Sub(now))
+		// 每次工作仍有执行超时；次数模式不需要额外的整轮截止时间。
+		budget := requestTimeout
+		if !e.deadline.IsZero() && e.deadline.Sub(now) < budget {
+			budget = e.deadline.Sub(now)
+		}
+		ctx, cancel := context.WithTimeout(m.ctx, budget)
 		job := work{entry: e, generation: e.generation, snapshot: s, ctx: ctx, prepare: prepare}
 		select {
 		case m.jobs <- job:
@@ -111,16 +116,11 @@ func stopReason(e *entry, now time.Time) string {
 	if s.policy.MaxAttempts > 0 && e.status.Attempts >= s.policy.MaxAttempts {
 		return "已达到保活次数上限"
 	}
-	if !now.Before(e.deadline) {
+	if !e.deadline.IsZero() && !now.Before(e.deadline) {
 		return "已达到最长保活时间"
 	}
 	if s.ttl > 0 && !now.Before(s.lastSent.Add(s.ttl-expiryMargin)) {
 		return "已错过缓存续期窗口，不重建过期缓存"
-	}
-	used := e.status.InputTokens + e.status.CacheRead + e.status.CacheCreation + e.status.OutputTokens
-	// 保留整段输入和最大输出的预算；实际扣费无法由网关核验。
-	if s.mode != "explicit" && used+s.input+int64(len(s.policy.Prompt))+32+int64(s.policy.MaxOutputTokens) > s.policy.MaxTotalTokens {
-		return "剩余 Token 预算不足以发送下一次心跳"
 	}
 	return ""
 }
@@ -152,7 +152,7 @@ func (m *Manager) run(job work) {
 	if job.ctx.Err() != nil {
 		m.mu.Lock()
 		if e := job.entry; m.entries[e.key] == e && e.snapshot == job.snapshot && e.generation == job.generation {
-			m.stopEntry(e, "保活任务已取消或达到持续时间上限")
+			m.stopEntry(e, "保活任务已取消、执行超时或达到持续时间上限")
 		}
 		m.mu.Unlock()
 		return
@@ -170,7 +170,7 @@ func (m *Manager) run(job work) {
 		}
 		e, s := job.entry, job.snapshot
 		if job.ctx.Err() != nil {
-			m.stopEntry(e, "保活准备已达到持续时间上限")
+			m.stopEntry(e, "保活准备已超时或达到持续时间上限")
 			return
 		}
 		e.cancel()
@@ -187,9 +187,6 @@ func (m *Manager) run(job work) {
 		}
 		// 第一轮遵守用户配置的空闲时间；不能因真实请求响应较慢而提前发送。
 		due := e.updated.Add(time.Duration(s.policy.IntervalSeconds) * time.Second)
-		if s.mode == "explicit" {
-			due = m.now()
-		}
 		if due.Before(m.now()) {
 			due = m.now()
 		}
@@ -199,11 +196,22 @@ func (m *Manager) run(job work) {
 
 	_, revision := m.state()
 	m.mu.Lock()
-	valid := m.validWork(job, revision) && job.ctx.Err() == nil
-	m.mu.Unlock()
-	if !valid {
+	if !m.validWork(job, revision) {
+		m.mu.Unlock()
 		return
 	}
+	// 调度和执行之间可能发生等待；真正发送前再次检查额度与期限。
+	if reason := stopReason(job.entry, m.now()); reason != "" {
+		m.stopEntry(job.entry, reason)
+		m.mu.Unlock()
+		return
+	}
+	if job.ctx.Err() != nil {
+		m.stopEntry(job.entry, "保活任务已取消或执行超时")
+		m.mu.Unlock()
+		return
+	}
+	m.mu.Unlock()
 	result := m.send(job.ctx, job.snapshot)
 	_, revision = m.state()
 	m.mu.Lock()
@@ -219,7 +227,9 @@ func (m *Manager) run(job work) {
 	e.status.UpdatedAt = e.updated.UnixMilli()
 	if result.sent || s.mode == "explicit" && result.err == nil {
 		e.status.Attempts++
-		e.status.LastAt = result.sentAt.UnixMilli()
+		if !result.sentAt.IsZero() {
+			e.status.LastAt = result.sentAt.UnixMilli()
+		}
 	}
 	input, read, creation, output, usageErr := usageNumbers(result.usage)
 	if usageErr == nil {
@@ -234,10 +244,18 @@ func (m *Manager) run(job work) {
 		return
 	}
 	if contextErr != nil {
-		m.stopEntry(e, "保活任务达到持续时间上限")
+		m.stopEntry(e, "保活任务已超时或达到持续时间上限")
+		return
+	}
+	if s.mode != "explicit" && !result.sent || !result.sentAt.After(s.lastSent) {
+		m.stopEntry(e, "无法确认本次发送及有效时间，停止保活以防重复发送")
 		return
 	}
 	if s.mode == "explicit" {
+		if !result.expiresAt.After(result.sentAt) {
+			m.stopEntry(e, "无法确认显式缓存的有效到期时间，停止保活")
+			return
+		}
 		e.status.ExpiresAt = result.expiresAt.UnixMilli()
 		s.lastSent = result.sentAt
 		if reason := stopReason(e, m.now()); reason != "" {
@@ -259,7 +277,6 @@ func (m *Manager) run(job work) {
 		return
 	}
 	s.read = read
-	s.input = input + read + creation
 	s.lastSent = result.sentAt
 	if reason := stopReason(e, m.now()); reason != "" {
 		m.stopEntry(e, reason)
@@ -270,7 +287,7 @@ func (m *Manager) run(job work) {
 }
 
 func minTime(a, b time.Time) time.Time {
-	if a.Before(b) {
+	if b.IsZero() || a.Before(b) {
 		return a
 	}
 	return b

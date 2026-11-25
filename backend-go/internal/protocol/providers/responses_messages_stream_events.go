@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/insistanan/api-proxy/internal/protocol/contract"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
 )
@@ -96,6 +97,9 @@ func (s *responsesToClaudeStreamState) emitTextDelta(text string) []string {
 }
 
 func (s *responsesToClaudeStreamState) emitToolUse(root gjson.Result) []string {
+	if status := root.Get("item.status").String(); status != "" && status != "completed" {
+		return nil
+	}
 	key := responsesToolCallKey(root)
 	if key != "" && s.emittedToolCalls[key] {
 		return nil
@@ -138,12 +142,13 @@ func (s *responsesToClaudeStreamState) emitToolUse(root gjson.Result) []string {
 	if callID == "" {
 		callID = fmt.Sprintf("call_%d", s.nextBlockIndex)
 	}
-	var input interface{} = map[string]interface{}{}
-	if arguments != "" {
-		if err := json.Unmarshal([]byte(arguments), &input); err != nil && root.Get("item.type").String() == "custom_tool_call" {
-			input = map[string]interface{}{"input": arguments}
-		}
+	input, err := contract.Arguments(arguments, callID)
+	if err != nil {
+		s.failed = true
+		s.failedMessage = err.Error()
+		return nil
 	}
+
 	if stored != nil {
 		stored.CallID = callID
 		stored.Name = name

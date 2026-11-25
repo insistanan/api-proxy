@@ -29,6 +29,7 @@ export const useFreeChannelsStore = defineStore('freeChannels', () => {
 
   return {
     config, busy, refresh,
+    setBranchConcurrency: (limit: number) => update(() => freeChannelsApi.setBranchConcurrency(limit)),
     setEnabled: (enabled: boolean) => update(() => freeChannelsApi.setEnabled(enabled)),
     syncModels: () => update(freeChannelsApi.syncModels)
   }

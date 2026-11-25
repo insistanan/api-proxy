@@ -20,6 +20,8 @@ const StripThoughtSignatureMarker = "__STRIP_THOUGHT_SIGNATURE__"
 
 // GeminiRequest Gemini API 请求
 type GeminiRequest struct {
+	// 原生发送保留完整载荷，已知字段仅用于读取和跨协议转换。
+	RawJSON           json.RawMessage         `json:"-"`
 	CachedContent     string                  `json:"cachedContent,omitempty"`
 	Contents          []GeminiContent         `json:"contents"`
 	SystemInstruction *GeminiContent          `json:"systemInstruction,omitempty"`
@@ -122,6 +124,7 @@ type GeminiFileData struct {
 // - 驼峰格式（thoughtSignature）：Gemini CLI 等第三方客户端
 // 为了保持透传，我们记录原始格式并在输出时使用相同格式
 type GeminiFunctionCall struct {
+	ID               string                 `json:"id,omitempty"`
 	Name             string                 `json:"name"`
 	Args             map[string]interface{} `json:"args"`
 	ThoughtSignature string                 `json:"-"` // thoughtSignature 位于 part 层级，仅内部使用
@@ -129,6 +132,7 @@ type GeminiFunctionCall struct {
 
 // GeminiFunctionResponse 函数响应
 type GeminiFunctionResponse struct {
+	ID       string                 `json:"id,omitempty"`
 	Name     string                 `json:"name"`
 	Response map[string]interface{} `json:"response"`
 }
@@ -151,192 +155,17 @@ type GeminiFunctionCallingConfig struct {
 
 // GeminiFunctionDeclaration 函数声明
 type GeminiFunctionDeclaration struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description,omitempty"`
-	Parameters  interface{} `json:"parameters,omitempty"` // JSON Schema
-}
-
-// UnmarshalJSON 自定义反序列化：
-// - 支持 parameters（官方字段）
-// - 兼容部分客户端使用 parametersJsonSchema（例如 Gemini CLI）
-// 为了让上游模型正确理解参数结构，统一写入 Parameters，并在序列化时输出为 parameters。
-func (fd *GeminiFunctionDeclaration) UnmarshalJSON(data []byte) error {
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-
-	if nameRaw, ok := raw["name"]; ok {
-		if err := json.Unmarshal(nameRaw, &fd.Name); err != nil {
-			return err
-		}
-	}
-	if descRaw, ok := raw["description"]; ok {
-		if err := json.Unmarshal(descRaw, &fd.Description); err != nil {
-			return err
-		}
-	}
-
-	var paramsRaw json.RawMessage
-	if v, ok := raw["parameters"]; ok {
-		paramsRaw = v
-	} else if v, ok := raw["parametersJsonSchema"]; ok {
-		paramsRaw = v
-	}
-	if paramsRaw != nil {
-		var params interface{}
-		if err := json.Unmarshal(paramsRaw, &params); err != nil {
-			return err
-		}
-		fd.Parameters = sanitizeGeminiToolSchema(params)
-	}
-
-	return nil
-}
-
-// sanitizeGeminiToolSchema 清洗工具参数 schema，以兼容 Gemini functionDeclaration.parameters 的严格校验。
-func sanitizeGeminiToolSchema(v interface{}) interface{} {
-	switch vv := v.(type) {
-	case map[string]interface{}:
-		out := make(map[string]interface{}, len(vv))
-		var constValue interface{}
-		hasConst := false
-
-		for k, val := range vv {
-			switch k {
-			case "$schema", "$id", "$ref", "$defs", "definitions",
-				"additionalProperties", "unevaluatedProperties", "propertyNames", "patternProperties",
-				"oneOf", "allOf", "not", "if", "then", "else",
-				"dependentRequired", "dependentSchemas", "contains", "minContains", "maxContains",
-				"prefixItems", "exclusiveMinimum", "exclusiveMaximum", "multipleOf", "examples":
-				continue
-			case "const":
-				constValue = val
-				hasConst = true
-				continue
-			case "type":
-				if schemaType, nullable, ok := sanitizeGeminiSchemaType(val); ok {
-					out[k] = schemaType
-					if nullable {
-						out["nullable"] = true
-					}
-				}
-			case "properties":
-				if properties, ok := val.(map[string]interface{}); ok {
-					cleanedProperties := make(map[string]interface{}, len(properties))
-					for name, propertySchema := range properties {
-						cleanedProperties[name] = sanitizeGeminiToolSchema(propertySchema)
-					}
-					out[k] = cleanedProperties
-				}
-			case "items":
-				out[k] = sanitizeGeminiToolSchema(val)
-			case "anyOf":
-				if values, ok := val.([]interface{}); ok {
-					cleanedValues := make([]interface{}, 0, len(values))
-					for _, value := range values {
-						cleanedValues = append(cleanedValues, sanitizeGeminiToolSchema(value))
-					}
-					out[k] = cleanedValues
-				}
-			case "format", "title", "description", "nullable", "enum",
-				"maxItems", "minItems", "required", "minProperties", "maxProperties",
-				"minLength", "maxLength", "pattern", "example", "propertyOrdering",
-				"default", "minimum", "maximum":
-				out[k] = val
-			}
-		}
-
-		if hasConst {
-			if _, ok := out["enum"]; !ok {
-				out["enum"] = []interface{}{sanitizeGeminiToolSchema(constValue)}
-			}
-		}
-		normalizeGeminiSchemaShape(out)
-
-		return out
-	case []interface{}:
-		out := make([]interface{}, len(vv))
-		for i := range vv {
-			out[i] = sanitizeGeminiToolSchema(vv[i])
-		}
-		return out
-	default:
-		return v
-	}
-}
-
-func sanitizeGeminiSchemaType(v interface{}) (interface{}, bool, bool) {
-	if str, ok := v.(string); ok {
-		if str == "" {
-			return nil, false, false
-		}
-		return str, false, true
-	}
-
-	values, ok := v.([]interface{})
-	if !ok {
-		return nil, false, false
-	}
-
-	nullable := false
-	for _, value := range values {
-		str, ok := value.(string)
-		if ok && str == "null" {
-			nullable = true
-		}
-		if ok && str != "" && str != "null" {
-			return str, nullable, true
-		}
-	}
-	return nil, nullable, false
-}
-
-func normalizeGeminiSchemaShape(schema map[string]interface{}) {
-	if _, hasType := schema["type"]; !hasType {
-		if _, hasProperties := schema["properties"]; hasProperties {
-			schema["type"] = "object"
-		} else if _, hasItems := schema["items"]; hasItems {
-			schema["type"] = "array"
-		} else if enumValues, ok := schema["enum"].([]interface{}); ok {
-			if inferredType, ok := inferGeminiSchemaTypeFromValues(enumValues); ok {
-				schema["type"] = inferredType
-			}
-		}
-	}
-
-	if schema["type"] == "object" {
-		if _, hasProperties := schema["properties"]; !hasProperties {
-			schema["properties"] = map[string]interface{}{}
-		}
-	}
-}
-
-func inferGeminiSchemaTypeFromValues(values []interface{}) (string, bool) {
-	for _, value := range values {
-		switch value.(type) {
-		case string:
-			return "string", true
-		case bool:
-			return "boolean", true
-		case float64, float32, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-			return "number", true
-		case []interface{}:
-			return "array", true
-		case map[string]interface{}:
-			return "object", true
-		}
-	}
-	return "", false
-}
-
-// SanitizeGeminiToolSchema 清洗 Gemini functionDeclaration 参数 schema。
-func SanitizeGeminiToolSchema(v interface{}) interface{} {
-	return sanitizeGeminiToolSchema(v)
+	Name                 string      `json:"name"`
+	Description          string      `json:"description,omitempty"`
+	Parameters           interface{} `json:"parameters,omitempty"` // Gemini Schema
+	ParametersJSONSchema interface{} `json:"parametersJsonSchema,omitempty"`
 }
 
 // GeminiGenerationConfig 生成配置
 type GeminiGenerationConfig struct {
+	CandidateCount     int                   `json:"candidateCount,omitempty"`
+	ResponseSchema     interface{}           `json:"responseSchema,omitempty"`
+	ResponseJSONSchema interface{}           `json:"responseJsonSchema,omitempty"`
 	Temperature        *float64              `json:"temperature,omitempty"`
 	TopP               *float64              `json:"topP,omitempty"`
 	TopK               *int                  `json:"topK,omitempty"`

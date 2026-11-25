@@ -79,6 +79,11 @@ func TestChatStreamLifecycle(t *testing.T) {
 					}
 				} else {
 					require.Error(t, err)
+					require.Equal(t, 1, strings.Count(recorder.Body.String(), `"error":`))
+					require.NotContains(t, recorder.Body.String(), "[DONE]")
+					if tc.name == "上游错误" {
+						require.Contains(t, recorder.Body.String(), "boom")
+					}
 				}
 				require.NotContains(t, recorder.Body.String(), "late")
 				if strings.Contains(tc.tail, "[DONE]") {

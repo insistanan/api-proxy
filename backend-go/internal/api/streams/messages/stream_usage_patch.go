@@ -1,7 +1,7 @@
 // 本文件负责把估算/补齐后的 usage "写回" SSE 事件：token 字段修补、message_start 的
 // input_tokens 校验、message_delta 形态的 usage 事件构造，以及异常 usage 元组的重建。
 // 读取（检测）侧在 stream_usage_detect.go。
-package streams
+package messages
 
 import (
 	"encoding/json"
@@ -12,46 +12,14 @@ import (
 	"strings"
 )
 
-// PatchTokensInEventWithCache 修补事件中的 token 字段。
-// inferredCacheRead 当前只参与日志：cache_read_input_tokens 有意不写进下发客户端的 SSE
-// （见函数内 "never write cache_read into client SSE"），所以传 0 与传正数对输出等价。
-func PatchTokensInEventWithCache(event string, estimatedInputTokens, estimatedOutputTokens, inferredCacheRead int, hasCacheTokens bool, enableLog bool, lowQuality bool) string {
+// PatchTokensInEvent 只修补输入、输出量，保留上游明确报告的缓存字段。
+func PatchTokensInEvent(event string, estimatedInputTokens, estimatedOutputTokens int, enableLog bool) string {
 	patched, _ := codec.RewriteSSEDataLines(event, func(payload string) (string, bool) {
 		var data map[string]interface{}
 		if err := json.Unmarshal([]byte(payload), &data); err != nil {
 			return "", false
 		}
-
-		// 修补顶层 usage
-		if usage, ok := data["usage"].(map[string]interface{}); ok {
-			patchUsageFieldsWithLog(usage, estimatedInputTokens, estimatedOutputTokens, hasCacheTokens, enableLog, "顶层usage", lowQuality)
-			// 写入推断的 cache_read_input_tokens（仅当字段不存在时）
-			if inferredCacheRead > 0 {
-				if _, exists := usage["cache_read_input_tokens"]; !exists {
-					_ = inferredCacheRead // never write cache_read into client SSE
-					if enableLog {
-						log.Printf("[Messages-Stream-Token] 顶层usage: 写入推断的 cache_read_input_tokens=%d", inferredCacheRead)
-					}
-				}
-			}
-		}
-
-		// 修补 message.usage
-		if msg, ok := data["message"].(map[string]interface{}); ok {
-			if usage, ok := msg["usage"].(map[string]interface{}); ok {
-				patchUsageFieldsWithLog(usage, estimatedInputTokens, estimatedOutputTokens, hasCacheTokens, enableLog, "message.usage", lowQuality)
-				// 写入推断的 cache_read_input_tokens（仅当字段不存在时）
-				if inferredCacheRead > 0 {
-					if _, exists := usage["cache_read_input_tokens"]; !exists {
-						_ = inferredCacheRead // never write cache_read into client SSE
-						if enableLog {
-							log.Printf("[Messages-Stream-Token] message.usage: 写入推断的 cache_read_input_tokens=%d", inferredCacheRead)
-						}
-					}
-				}
-			}
-		}
-
+		PatchTokensInEventData(data, estimatedInputTokens, estimatedOutputTokens, enableLog)
 		patchedJSON, err := json.Marshal(data)
 		if err != nil {
 			return "", false
@@ -61,60 +29,30 @@ func PatchTokensInEventWithCache(event string, estimatedInputTokens, estimatedOu
 	return patched
 }
 
-func PatchTokensInEventDataWithCache(data map[string]interface{}, estimatedInputTokens, estimatedOutputTokens, inferredCacheRead int, hasCacheTokens bool, enableLog bool, lowQuality bool) {
-	if data == nil {
-		return
-	}
-
-	// 修补顶层 usage
+func PatchTokensInEventData(data map[string]interface{}, estimatedInputTokens, estimatedOutputTokens int, enableLog bool) {
 	if usage, ok := data["usage"].(map[string]interface{}); ok {
-		patchUsageFieldsWithLog(usage, estimatedInputTokens, estimatedOutputTokens, hasCacheTokens, enableLog, "顶层usage", lowQuality)
-		// 写入推断的 cache_read_input_tokens（仅当字段不存在时）
-		if inferredCacheRead > 0 {
-			if _, exists := usage["cache_read_input_tokens"]; !exists {
-				_ = inferredCacheRead // never write cache_read into client SSE
-				if enableLog {
-					log.Printf("[Messages-Stream-Token] 顶层usage: 写入推断的 cache_read_input_tokens=%d", inferredCacheRead)
-				}
-			}
-		}
+		patchUsageFieldsWithLog(usage, estimatedInputTokens, estimatedOutputTokens, enableLog, "顶层usage")
 	}
-
-	// 修补 message.usage
 	if msg, ok := data["message"].(map[string]interface{}); ok {
 		if usage, ok := msg["usage"].(map[string]interface{}); ok {
-			patchUsageFieldsWithLog(usage, estimatedInputTokens, estimatedOutputTokens, hasCacheTokens, enableLog, "message.usage", lowQuality)
-			// 写入推断的 cache_read_input_tokens（仅当字段不存在时）
-			if inferredCacheRead > 0 {
-				if _, exists := usage["cache_read_input_tokens"]; !exists {
-					_ = inferredCacheRead // never write cache_read into client SSE
-					if enableLog {
-						log.Printf("[Messages-Stream-Token] message.usage: 写入推断的 cache_read_input_tokens=%d", inferredCacheRead)
-					}
-				}
-			}
+			patchUsageFieldsWithLog(usage, estimatedInputTokens, estimatedOutputTokens, enableLog, "message.usage")
 		}
 	}
 }
 
-func patchUsageFieldsWithLog(usage map[string]interface{}, estimatedInput, estimatedOutput int, hasCacheTokens bool, enableLog bool, location string, lowQuality bool) {
+func patchUsageFieldsWithLog(usage map[string]interface{}, estimatedInput, estimatedOutput int, enableLog bool, location string) {
 	originalInput := usage["input_tokens"]
 	originalOutput := usage["output_tokens"]
 	inputPatched := false
 	outputPatched := false
 
-	// CRITICAL for Cursor compact thrash:
-	// estimatedInput often comes from EstimateRequestTokens(full requestBody) which is the
-	// entire Cursor transcript (100k-300k). NEVER replace a real positive input_tokens with
-	// a larger estimate. Only fill missing/zero/nil input. Admin logs still use CollectedUsage.
-	_ = hasCacheTokens
-	_ = lowQuality
+	// 仅补全缺失或接近零的输入量，避免用全量历史估算扩大客户端上下文计数。
+	// 指标与管理日志读取独立的 UpstreamUsage，不使用此处修补后的值。
 
 	if v, ok := usage["input_tokens"].(float64); ok {
 		currentInput := int(v)
 		if currentInput <= 1 && estimatedInput > 1 {
-			// Only fill near-zero missing values, never inflate.
-			// Cap estimate so a buggy caller cannot push the whole long context into the client meter.
+			// 估算仍走公共约束，避免调用方传入全量历史导致计数膨胀。
 			safeEstimate := tokenusage.SafeEstimatedInputTokens(estimatedInput)
 			if safeEstimate > 1 {
 				usage["input_tokens"] = safeEstimate
@@ -122,7 +60,7 @@ func patchUsageFieldsWithLog(usage map[string]interface{}, estimatedInput, estim
 			}
 		}
 	} else if usage["input_tokens"] == nil {
-		// nil: leave unset or use tiny safe fill only
+		// 没有可靠补全值时保留缺失字段。
 		safeEstimate := tokenusage.SafeEstimatedInputTokens(estimatedInput)
 		if safeEstimate > 1 {
 			usage["input_tokens"] = safeEstimate
@@ -149,34 +87,9 @@ func patchUsageFieldsWithLog(usage map[string]interface{}, estimatedInput, estim
 	}
 }
 
-// PatchMessageStartInputTokensIfNeeded 在首个 message_start 事件中尽早补全 input_tokens。
-//
-// 部分客户端（例如终端工具）只读取首个 usage 来累计 prompt tokens；如果 message_start 的 input_tokens 为 0/极小值，
-// 即便后续顶层 usage 给出正确值，也可能导致累计失败。
-func PatchMessageStartInputTokensIfNeeded(event string, requestBody []byte, needInputPatch bool, usageData CollectedUsageData, hasUsage bool, enableLog bool, lowQuality bool) string {
-	if !IsMessageStartEvent(event) {
-		return event
-	}
-	if !hasUsage {
-		return event
-	}
-
-	// Do NOT replace real/missing input with EstimateRequestTokens(requestBody).
-	// requestBody is Cursor full history (often 100k-300k tokens). Writing that into
-	// message_start makes Cursor Conversation full immediately after compact and
-	// triggers compact thrash (admin may show in~21k while client saw estimated 200k+).
-	// Real usage arrives on message_delta; leave message_start alone when risky.
-	_ = requestBody
-	_ = needInputPatch
-	_ = usageData
-	_ = enableLog
-	_ = lowQuality
-	return event
-}
-
 // BuildUsageEvent 构建带 usage 的 message_delta SSE 事件
-func BuildUsageEvent(requestBody []byte, outputText string) string {
-	inputTokens := 0 // do not estimate full Cursor body for client
+func BuildUsageEvent(outputText string) string {
+	inputTokens := 0 // 上游未提供输入量，不把全量历史估算写给客户端。
 	outputTokens := tokenusage.EstimateTokens(outputText)
 
 	event := map[string]interface{}{
@@ -197,7 +110,7 @@ func BuildUsageEvent(requestBody []byte, outputText string) string {
 // 缓存创建总量优先使用 cache_creation_input_tokens；5m/1h 只是总量明细，只有总字段
 // 缺失时才求和。若缓存量本身不可信，则连同缓存明细一起从客户端副本清除。
 //
-// 只改返回的事件字符串；ctx.CollectedUsage 与指标路径一律保持上游原值。
+// 只改返回的事件字符串；ctx.UpstreamUsage 与指标路径保持上游原值。
 func sanityCheckMessageStreamInputTokens(event string, requestBody []byte, enableLog bool) (string, bool) {
 	if len(requestBody) == 0 {
 		return event, false

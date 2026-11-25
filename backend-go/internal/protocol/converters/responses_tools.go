@@ -121,14 +121,18 @@ func collectResponseToolContextFromTools(context map[string]responseToolSpec, ra
 			}
 			for _, child := range children {
 				childSpec := normalizeResponsesToolDefinition(child)
-				if childSpec.ToolType != "" && childSpec.ToolType != "function" {
+				if childSpec.ToolType != "" && childSpec.ToolType != "function" && childSpec.ToolType != "custom" {
 					continue
 				}
 				if childSpec.Name == "" {
 					continue
 				}
+				kind := responseToolKindFunction
+				if childSpec.ToolType == "custom" {
+					kind = responseToolKindCustom
+				}
 				context[flattenNamespaceToolName(namespace, childSpec.Name)] = responseToolSpec{
-					Kind:         responseToolKindFunction,
+					Kind:         kind,
 					OriginalName: childSpec.Name,
 					Namespace:    namespace,
 				}
@@ -147,9 +151,6 @@ func collectResponseToolContextFromToolSearchOutputs(context map[string]response
 		itemType, _ := value["type"].(string)
 		if itemType == "tool_search_output" {
 			collectResponseToolContextFromTools(context, value["tools"])
-		}
-		for _, nested := range value {
-			collectResponseToolContextFromToolSearchOutputs(context, nested)
 		}
 	case []types.ResponsesItem:
 		for _, item := range value {

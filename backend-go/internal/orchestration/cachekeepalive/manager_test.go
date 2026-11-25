@@ -18,7 +18,7 @@ const sampleBody = `{"model":"claude-test","max_tokens":1024,"tools":[{"name":"r
 
 func samplePolicy() config.CacheKeepaliveConfig {
 	return config.CacheKeepaliveConfig{Enabled: true, IntervalSeconds: 280, MaxAttempts: 2,
-		MaxIdleMinutes: 120, Prompt: "接下来应该怎么做？", MinCacheHitPercent: 90, MaxOutputTokens: 16, MaxTotalTokens: 5000000}
+		MaxIdleMinutes: 120, Prompt: "接下来应该怎么做？", MinCacheHitPercent: 90, MaxOutputTokens: 16}
 }
 
 func sampleSource(body, attempt string, reads *int) Source {
@@ -139,14 +139,13 @@ func TestKeepalive_NewRequestCancelsInFlightAndAccountsPinnedMemory(t *testing.T
 	}
 }
 
-func TestKeepalive_StopsOnMissingUsageExpiredCacheAndBudget(t *testing.T) {
+func TestKeepalive_StopsOnMissingUsageAndExpiredCache(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		change  func(*Source)
 		elapsed time.Duration
 	}{
 		{"长响应导致过期", func(*Source) {}, 4 * time.Minute},
-		{"预算不足", func(s *Source) { s.Upstream.CacheKeepalive.MaxTotalTokens = 10 }, 0},
 		{"实际 TTL 不允许间隔", func(s *Source) { s.Upstream.CacheKeepalive.IntervalSeconds = 300 }, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -174,6 +173,70 @@ func TestKeepalive_StopsOnMissingUsageExpiredCacheAndBudget(t *testing.T) {
 	turn.End()
 	if m.bytes != 0 || len(m.queue) != 0 {
 		t.Fatal("缺少用量时不应安排付费探测")
+	}
+}
+
+func TestKeepalive_CountOnlyIgnoresCumulativeTokensAndUnconfiguredDuration(t *testing.T) {
+	m, now, _ := fixture(t)
+	started := *now
+	reads := 0
+	body := strings.ReplaceAll(sampleBody, `"type":"ephemeral"`, `"type":"ephemeral","ttl":"1h"`)
+	source := sampleSource(body, "attempt", &reads)
+	source.Upstream.CacheKeepalive.MaxAttempts = 6
+	source.Upstream.CacheKeepalive.MaxIdleMinutes = 0
+	turn := m.Begin("session")
+	turn.Capture(source)
+	turn.Result("attempt", true, &types.Usage{InputTokens: 10, CacheReadInputTokens: 1000000})
+	turn.End()
+	*now = now.Add(time.Minute)
+	runDue(t, m)
+	m.send = func(context.Context, *snapshot) sendResult {
+		return sendResult{sent: true, sentAt: *now, usage: &types.Usage{InputTokens: 10, CacheReadInputTokens: 1000000, OutputTokens: 1}}
+	}
+	// 调度晚于旧实现暗加的 (6+1)*280 秒期限，但一小时缓存仍有效。
+	*now = started.Add(2000 * time.Second)
+	m.clean()
+	for attempt := 1; attempt <= 6; attempt++ {
+		runDue(t, m)
+		status := m.Status("channel-test")[0]
+		if status.Attempts != attempt || attempt < 6 && status.State != "ready" {
+			t.Fatalf("次数未达到上限却提前停止: %+v", status)
+		}
+		*now = now.Add(280 * time.Second)
+	}
+	status := m.Status("channel-test")[0]
+	if status.State != "stopped" || status.Reason != "已达到保活次数上限" || status.CacheRead != 6000000 || m.bytes != 0 {
+		t.Fatalf("超过旧 Token 限制后没有完整执行六次并释放快照: %+v", status)
+	}
+}
+
+func TestKeepalive_ExplicitCacheAlsoWaitsConfiguredIdleInterval(t *testing.T) {
+	m, now, _ := fixture(t)
+	started := *now
+	reads, sends := 0, 0
+	source := sampleSource(`{"cachedContent":"cachedContents/existing","contents":[]}`, "attempt", &reads)
+	source.Upstream.ServiceType = "gemini"
+	source.URL = "https://example.test/v1beta/models/gemini-test:generateContent"
+	source.Upstream.CacheKeepalive.MaxIdleMinutes = 0
+	source.Upstream.CacheKeepalive.MaxAttempts = 1
+	finishReal(m.Begin("session"), source)
+	m.send = func(_ context.Context, s *snapshot) sendResult {
+		sends++
+		if s.mode != "explicit" {
+			t.Fatal("显式缓存不应发送生成心跳")
+		}
+		return sendResult{sent: true, sentAt: *now, expiresAt: now.Add(10 * time.Minute)}
+	}
+	*now = started.Add(time.Minute)
+	runDue(t, m)
+	m.dispatch()
+	if len(m.jobs) != 0 || sends != 0 || m.Status("channel-test")[0].NextAt != started.Add(280*time.Second).UnixMilli() {
+		t.Fatal("显式缓存空闲一分钟后提前续期")
+	}
+	*now = started.Add(280 * time.Second)
+	runDue(t, m)
+	if status := m.Status("channel-test")[0]; sends != 1 || status.State != "stopped" || status.Attempts != 1 {
+		t.Fatalf("显式缓存没有按设定间隔及次数执行: %+v", status)
 	}
 }
 

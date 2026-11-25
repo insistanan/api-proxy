@@ -68,6 +68,11 @@ func TestResponsesStreamLifecycle(t *testing.T) {
 					require.True(t, strings.HasSuffix(recorder.Body.String(), "\n\n"))
 				} else {
 					require.Error(t, err)
+					require.Equal(t, 1, strings.Count(recorder.Body.String(), "event: error\n"))
+					require.NotContains(t, recorder.Body.String(), `"type":"response.completed"`)
+					if strings.Contains(tc.tail, "boom") {
+						require.Contains(t, recorder.Body.String(), "boom")
+					}
 				}
 				require.NotContains(t, recorder.Body.String(), "late")
 			})

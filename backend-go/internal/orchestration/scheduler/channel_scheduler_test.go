@@ -37,28 +37,72 @@ func TestInitializeProfiles_RejectsMissingProtocolMetrics(t *testing.T) {
 
 func TestActiveChannelConversationsDeduplicatesUntilLastRequestEnds(t *testing.T) {
 	s := &ChannelScheduler{}
-	finishFirst := s.TrackChannelConversation(ChannelKindResponses, "channel-a", "conversation-1")
-	finishParallel := s.TrackChannelConversation(ChannelKindResponses, "channel-a", "conversation-1")
-	finishSecond := s.TrackChannelConversation(ChannelKindResponses, "channel-a", "conversation-2")
-	finishChat := s.TrackChannelConversation(ChannelKindChat, "channel-a", "conversation-1")
+	finishFirst := s.TrackChannelConversation(ChannelKindResponses, "channel-a", "conversation-1", "")
+	finishParallel := s.TrackChannelConversation(ChannelKindResponses, "channel-a", "conversation-1", "")
+	finishSecond := s.TrackChannelConversation(ChannelKindResponses, "channel-a", "conversation-2", "")
+	finishChat := s.TrackChannelConversation(ChannelKindChat, "channel-a", "conversation-1", "")
 	defer finishChat()
 
-	if count := s.ActiveChannelConversations(ChannelKindResponses, "channel-a"); count != 2 {
+	if count := s.ActiveChannelActivity(ChannelKindResponses, "channel-a").Conversations; count != 2 {
 		t.Fatalf("独立对话数 = %d，预期 2", count)
 	}
 	finishFirst()
 	finishFirst()
 	finishSecond()
-	if count := s.ActiveChannelConversations(ChannelKindResponses, "channel-a"); count != 1 {
+	if count := s.ActiveChannelActivity(ChannelKindResponses, "channel-a").Conversations; count != 1 {
 		t.Fatalf("同一对话仍有请求时计数 = %d，预期 1", count)
 	}
 	finishParallel()
-	if count := s.ActiveChannelConversations(ChannelKindResponses, "channel-a"); count != 0 {
+	if count := s.ActiveChannelActivity(ChannelKindResponses, "channel-a").Conversations; count != 0 {
 		t.Fatalf("全部请求结束后计数 = %d，预期 0", count)
 	}
-	if count := s.ActiveChannelConversations(ChannelKindChat, "channel-a"); count != 1 {
+	if count := s.ActiveChannelActivity(ChannelKindChat, "channel-a").Conversations; count != 1 {
 		t.Fatalf("其他协议渠道计数 = %d，预期 1", count)
 	}
+}
+
+func TestActiveChannelActivityCountsBranchesAndReleasesReferences(t *testing.T) {
+	s := &ChannelScheduler{}
+	finishMain := s.TrackChannelConversation(ChannelKindResponses, "channel-a", "conversation-1", "main")
+	finishParallel := s.TrackChannelConversation(ChannelKindResponses, "channel-a", "conversation-1", "main")
+	finishSide := s.TrackChannelConversation(ChannelKindResponses, "channel-a", "conversation-1", "side")
+	finishNested := s.TrackChannelConversation(ChannelKindResponses, "channel-a", "conversation-1", "side-child")
+	finishOther := s.TrackChannelConversation(ChannelKindResponses, "channel-a", "conversation-2", "main")
+	finishOtherChannel := s.TrackChannelConversation(ChannelKindResponses, "channel-b", "conversation-1", "main")
+	defer finishOtherChannel()
+	require.Equal(t, ChannelActivity{Conversations: 2, Branches: 4}, s.ActiveChannelActivity(ChannelKindResponses, "channel-a"))
+	require.Equal(t, ChannelActivity{Conversations: 1, Branches: 1}, s.ActiveChannelActivity(ChannelKindResponses, "channel-b"))
+	require.Equal(t, ChannelActivity{}, s.ActiveChannelActivity(ChannelKindChat, "channel-a"))
+
+	finishMain()
+	finishMain()
+	require.Equal(t, 4, s.ActiveChannelActivity(ChannelKindResponses, "channel-a").Branches)
+	finishParallel()
+	require.Equal(t, 3, s.ActiveChannelActivity(ChannelKindResponses, "channel-a").Branches)
+	finishSide()
+	finishNested()
+	finishOther()
+	require.Equal(t, ChannelActivity{}, s.ActiveChannelActivity(ChannelKindResponses, "channel-a"))
+	require.NotContains(t, s.activeConversations, channelIdentity{kind: ChannelKindResponses, id: "channel-a"})
+	finishAgain := s.TrackChannelConversation(ChannelKindResponses, "channel-a", "conversation-1", "main")
+	require.Equal(t, ChannelActivity{Conversations: 1, Branches: 1}, s.ActiveChannelActivity(ChannelKindResponses, "channel-a"))
+	finishAgain()
+}
+
+func TestActiveChannelActivityMarksUnidentifiedBranchesWithoutInflatingCount(t *testing.T) {
+	s := &ChannelScheduler{}
+	finishUnknown := s.TrackChannelConversation(ChannelKindMessages, "channel-a", "conversation-1", "")
+	finishParallel := s.TrackChannelConversation(ChannelKindMessages, "channel-a", "conversation-1", "")
+	require.Equal(t, ChannelActivity{Conversations: 1, Branches: 1, UnidentifiedConversations: 1}, s.ActiveChannelActivity(ChannelKindMessages, "channel-a"))
+	finishMain := s.TrackChannelConversation(ChannelKindMessages, "channel-a", "conversation-1", "main")
+	finishSide := s.TrackChannelConversation(ChannelKindMessages, "channel-a", "conversation-1", "side")
+	require.Equal(t, ChannelActivity{Conversations: 1, Branches: 2, UnidentifiedConversations: 1}, s.ActiveChannelActivity(ChannelKindMessages, "channel-a"))
+	finishUnknown()
+	finishParallel()
+	require.Equal(t, ChannelActivity{Conversations: 1, Branches: 2}, s.ActiveChannelActivity(ChannelKindMessages, "channel-a"))
+	finishMain()
+	finishSide()
+	require.Equal(t, ChannelActivity{}, s.ActiveChannelActivity(ChannelKindMessages, "channel-a"))
 }
 
 // createTestConfigManager 创建测试用配置管理器

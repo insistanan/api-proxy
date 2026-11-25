@@ -10,7 +10,7 @@ import (
 	"context"
 	"errors"
 	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
-	"strings"
+	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
 // CandidateRetryState 保存一个 BaseURL 下的失败 Key 和同候选重试次数。
@@ -118,23 +118,26 @@ func IsUpstreamModelCapacityErrorBody(body []byte) bool {
 	return upstreamreq.IsUpstreamModelCapacityErrorBody(body)
 }
 
-// IsClientSideCancel 判断错误是否为客户端明确取消。
-//
-// 浏览器或本机隧道在响应头阶段断开时，Windows 的 net/http 可能把写回错误
-// 表示为 wsasend，而不是 context.Canceled。10054 是 forcibly closed by the
-// remote host，10053 是 aborted by the software in your host machine。
-// 两者都发生在代理向客户端写响应的阶段，不应把已经返回 200 的上游渠道记为失败。
+// IsClientSideCancel 仅使用明确的取消或下游交付来源，不从网络错误文本猜测方向。
 func IsClientSideCancel(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, context.Canceled) {
+	switch wrapped := err.(type) {
+	case *types.DownstreamWriteError:
 		return true
+	case interface{ Unwrap() []error }:
+		// 上游失败后的通知也可能写失败，附加错误不能覆盖原始故障来源。
+		causes := wrapped.Unwrap()
+		if len(causes) == 0 {
+			return false
+		}
+		for _, cause := range causes {
+			if !IsClientSideCancel(cause) {
+				return false
+			}
+		}
+		return true
+	case interface{ Unwrap() error }:
+		return IsClientSideCancel(wrapped.Unwrap())
+	default:
+		return errors.Is(err, context.Canceled)
 	}
-	message := strings.ToLower(err.Error())
-	if !strings.Contains(message, "wsasend") {
-		return false
-	}
-	return strings.Contains(message, "forcibly closed by the remote host") ||
-		strings.Contains(message, "aborted by the software in your host machine")
 }

@@ -21,11 +21,15 @@
         <span class="round-index" :title="row.summary.requestId">调用 #{{ row.summary.requestId.slice(0, 8) }}</span>
         <span class="round-time">{{ formatDateTime(row.summary.startedAt || row.summary.unixMilli) }}</span>
         <UiBadge size="x-small" :color="row.status.color" variant="tonal">{{ row.status.label }}</UiBadge>
+        <span class="round-meta tabular-nums" :title="row.active ? '自本次请求开始计时' : '本次请求的总耗时'">{{ requestDuration(row.summary) }}</span>
         <span v-if="row.summary.model" class="round-meta">{{ row.summary.model }}</span>
         <span v-if="row.summary.channelName" class="round-meta">{{ row.summary.channelName }}</span>
         <span class="round-meta">{{ row.summary.stream ? 'stream' : 'normal' }}</span>
         <span class="round-spacer"></span>
         <UiIcon class="round-chevron" icon="mdi-chevron-down" size="small" />
+        <span v-if="row.summary.promptPreview" class="round-prompt" :title="row.summary.promptPreview">
+          <span class="text-muted-foreground">输入摘要：</span>{{ row.summary.promptPreview }}
+        </span>
       </summary>
       <div v-if="opened.has(row.summary.requestId)" class="round-content">
         <div class="round-actions">
@@ -51,7 +55,7 @@
             <div class="section-label">模型回复</div>
             <SessionInspector :body="row.output.body || ''" :replayable="false" compact wrap />
           </div>
-          <div v-else class="text-xs text-muted-foreground mt-3">{{ ['processing', 'retrying'].includes(row.detail.summary.status || '') ? '等待响应结束…' : '本次没有响应正文记录。' }}</div>
+          <div v-else class="text-xs text-muted-foreground mt-3">{{ row.active ? '等待响应结束…' : '本次没有响应正文记录。' }}</div>
           <details v-if="row.attempts.length > 1" class="round-config">
             <summary>{{ row.attempts.length }} 次上游尝试</summary>
             <div v-for="attempt in row.attempts" :key="attempt.key" class="text-xs attempt-summary">
@@ -72,7 +76,7 @@ import UiAlert from '@/shared/ui/feedback/Alert.vue'
 import UiBadge from '@/shared/ui/feedback/Badge.vue'
 import UiIcon from '@/shared/ui/icon/Icon.vue'
 // 轮次摘要可分页；仅展开轮次和它的前一轮需要正文，增量始终来自实际请求。
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { conversationVersion, summaryVersion } from '@/features/observability/stores/logs'
 import { useLogSession } from '@/features/observability/composables/useLogSession'
 import type { SystemLogSummary } from '@/types/logs'
@@ -82,18 +86,23 @@ import SessionInspector from '@/features/observability/components/conversation/S
 import ContextSnapshotPanel from '@/features/observability/components/context/ContextSnapshotPanel.vue'
 import ToolTraceLinks from '@/features/observability/components/conversation/ToolTraceLinks.vue'
 import { formatDateTime } from '@/shared/utils/datetime'
+import { useAutoRefresh } from '@/shared/composables/useAutoRefresh'
 
 const props = defineProps<{ groupKey: string; requests: SystemLogSummary[]; highlightRequestId?: string }>()
 const emit = defineEmits<{ inspect: [requestId: string] }>()
 const logs = useLogSession()
 const shownCount = ref(3)
 const opened = ref(new Set<string>())
+const now = ref(Date.now())
 let generation = 0
 let loadedGroupKey = ''
 let latestRequestId = ''
 const visible = computed(() => props.requests.slice(-shownCount.value))
 const rows = computed(() => visible.value.map(summary => {
   const detail = logs.details[summary.requestId]
+  // 已结束的摘要优先，避免折叠卡片的旧详情让计时继续增长。
+  const detailEnded = detail && ['completed', 'cancelled', 'failed', 'blocked', 'interrupted'].includes(detail.summary.status || '')
+  const current = isRequestActive(summary) && detail && detailEnded ? detail.summary : summary
   const index = props.requests.findIndex(item => item.requestId === summary.requestId)
   const previous = index > 0 ? logs.details[props.requests[index - 1]!.requestId] : undefined
   const input = detail ? requestInputLog(detail.trafficLogs) : undefined
@@ -101,16 +110,37 @@ const rows = computed(() => visible.value.map(summary => {
   const finalAttempt = attempts[attempts.length - 1]
   const synthesized = detail ? [...detail.trafficLogs].reverse().find(log => log.phase === 'stream_synth' && (!finalAttempt?.request?.attemptId || log.attemptId === finalAttempt.request.attemptId)) : undefined
   return {
-    summary,
+    summary: current,
+    active: isRequestActive(current),
     detail,
     input,
     context: detail?.contexts?.find(snapshot => snapshot.phase === 'client_input' || snapshot.phase === 'client_request'),
     attempts,
     output: synthesized || finalAttempt?.response,
     delta: opened.value.has(summary.requestId) && input ? getRequestDelta(previous ? requestInputLog(previous.trafficLogs) : undefined, input) : undefined,
-    status: logStatus(detail?.summary || summary)
+    status: logStatus(current)
   }
 }))
+
+function isRequestActive(summary: SystemLogSummary) {
+  return !summary.endedAt && ['processing', 'retrying'].includes(summary.status || '')
+}
+
+function requestDuration(summary: SystemLogSummary): string {
+  const active = isRequestActive(summary)
+  const startedAt = summary.startedAt
+  const duration = active
+    ? startedAt ? now.value - startedAt : undefined
+    : summary.durationMs ?? (startedAt && summary.endedAt ? summary.endedAt - startedAt : undefined)
+  if (duration === undefined || !Number.isFinite(duration) || duration < 0) return '耗时未知'
+  const seconds = Math.floor(duration / 1000)
+  const minutes = Math.floor(seconds / 60)
+  const elapsed = seconds < 60 ? `${seconds}秒` : minutes < 60 ? `${minutes}分${seconds % 60}秒` : `${Math.floor(minutes / 60)}小时${minutes % 60}分${seconds % 60}秒`
+  return `${active ? '已运行' : '耗时'} ${elapsed}`
+}
+
+const { start: startClock } = useAutoRefresh(() => { now.value = Date.now() }, computed(() => !rows.value.some(row => row.active)), 1000)
+onMounted(startClock)
 
 async function loadOpened() {
   const revision = ++generation
@@ -157,6 +187,7 @@ async function revealHighlight() {
   document.getElementById(`log-round-${props.highlightRequestId}`)?.scrollIntoView({ block: 'nearest' })
 }
 watch(() => `${props.groupKey}:${conversationVersion(logs.selectedConversation)}:${props.requests.map(summary => `${summary.requestId}:${summaryVersion(summary)}`).join(',')}`, () => {
+  now.value = Date.now()
   const changed = loadedGroupKey !== props.groupKey
   if (changed) { generation++; shownCount.value = 3; opened.value = new Set(); loadedGroupKey = props.groupKey; latestRequestId = '' }
   const latest = props.requests[props.requests.length - 1]
@@ -198,6 +229,7 @@ onBeforeUnmount(() => { generation++ })
 }
 .round-time { @apply [font-size:13px] [color:color-mix(in_srgb,_var(--foreground)_75%,_transparent)] whitespace-nowrap; }
 .round-meta { @apply [font-size:12px] [color:color-mix(in_srgb,_var(--foreground)_55%,_transparent)]; }
+.round-prompt { @apply basis-full min-w-0 truncate text-sm text-foreground; }
 .round-spacer { @apply [flex:1_1_auto]; }
 .round-chevron { @apply text-primary [transition:transform_0.15s_ease]; }
 .timeline-round[open] .round-chevron { @apply [transform:rotate(180deg)]; }

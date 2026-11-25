@@ -17,8 +17,7 @@ export function defaultCacheKeepalive(): CacheKeepaliveConfig {
     maxIdleMinutes: 30,
     prompt: '接下来应该怎么做？',
     minCacheHitPercent: 90,
-    maxOutputTokens: 16,
-    maxTotalTokens: 5000000
+    maxOutputTokens: 16
   }
 }
 
@@ -29,8 +28,7 @@ export function validateCacheKeepalive(draft: CacheKeepaliveDraft): string {
     ['maxAttempts', 0, 10000, '最多发送次数须为 0–10000'],
     ['maxIdleMinutes', 0, 1440, '最长持续时间须为 0–1440 分钟'],
     ['minCacheHitPercent', 1, 100, '最低命中保持比例须为 1–100%'],
-    ['maxOutputTokens', 1, 4096, '单次输出上限须为 1–4096 Token'],
-    ['maxTotalTokens', 1, 1000000000, '累计 Token 上限须为 1–1000000000']
+    ['maxOutputTokens', 1, 4096, '单次输出上限须为 1–4096 Token']
   ]
   for (const [field, min, max, message] of ranges) {
     const value = draft[field]
@@ -47,7 +45,7 @@ export function buildCacheKeepalive(draft: CacheKeepaliveDraft, supported: boole
   if (error) throw new Error(error)
   // 关闭功能也保留用户的有效参数，重新开启时无需重新填写。
   // 未完成的数字输入不能被 Number('') 或 JSON 的 NaN -> null 静默改写。
-  for (const field of ['intervalSeconds', 'maxAttempts', 'maxIdleMinutes', 'minCacheHitPercent', 'maxOutputTokens', 'maxTotalTokens'] as const) {
+  for (const field of ['intervalSeconds', 'maxAttempts', 'maxIdleMinutes', 'minCacheHitPercent', 'maxOutputTokens'] as const) {
     const value = draft[field]
     if (value === null || String(value).trim() === '' || !Number.isInteger(Number(value))) {
       throw new Error('缓存保活参数包含未完成的数字，请补全后保存')
@@ -60,7 +58,6 @@ export function buildCacheKeepalive(draft: CacheKeepaliveDraft, supported: boole
     maxIdleMinutes: Number(draft.maxIdleMinutes),
     prompt: draft.prompt,
     minCacheHitPercent: Number(draft.minCacheHitPercent),
-    maxOutputTokens: Number(draft.maxOutputTokens),
-    maxTotalTokens: Number(draft.maxTotalTokens)
+    maxOutputTokens: Number(draft.maxOutputTokens)
   }
 }

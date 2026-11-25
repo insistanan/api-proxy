@@ -80,6 +80,15 @@ func buildImagesUpstreamRequest(c *gin.Context, upstream *config.UpstreamConfig,
 	if upstream.ServiceType == "responses" {
 		return buildImagesResponsesRequest(c, upstream, apiKey, endpoint, originalBody)
 	}
+	if err := validateNativeImagesMultipartOutput(c.GetHeader("Content-Type"), originalBody); err != nil {
+		return nil, &proxycore.RequestValidationError{Err: err}
+	}
+	_, _, outputNonStream := imagesOutputOverrides(upstream)
+	if (upstream.ImagesForceNonStream || outputNonStream) && extractImagesRequestMetadata(c.GetHeader("Content-Type"), originalBody).Stream {
+		if err := validateImagesStreamFormat(c.GetHeader("Content-Type"), originalBody); err != nil {
+			return nil, err
+		}
+	}
 	bodyBytes, contentType, err := applyImagesModelMapping(c.GetHeader("Content-Type"), originalBody, upstream)
 	if err != nil {
 		var configErr *config.ConfigError
@@ -91,6 +100,11 @@ func buildImagesUpstreamRequest(c *gin.Context, upstream *config.UpstreamConfig,
 	if err := validateNativeImagesMultipartOutput(contentType, bodyBytes); err != nil {
 		return nil, &proxycore.RequestValidationError{Err: err}
 	}
+	count, err := nativeImagesCount(contentType, bodyBytes)
+	if err != nil {
+		return nil, &proxycore.RequestValidationError{Err: err}
+	}
+	c.Set(nativeImageCountKey, count)
 
 	url := buildOpenAIEndpointURL(upstream.GetEffectiveBaseURL(), endpoint, upstream.UseFullURL)
 	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, url, bytes.NewReader(bodyBytes))
@@ -135,18 +149,17 @@ func handleImagesSuccess(c *gin.Context, resp *http.Response, envCfg *config.Env
 		}
 	}
 
+	if isStream {
+		return forwardNativeImageStream(c, resp, endpoint)
+	}
 	var finishCapture func() *types.Usage
 	if tokenusage.RecorderFrom(c.Request.Context()) != nil {
 		finishCapture = captureNativeUsage(resp, envCfg.Current().MaxRequestBodySize)
 	}
-	err := streams.ForwardUpstreamResponseBody(c, resp, "application/json", isStream)
+	err := streams.ForwardUpstreamResponseBody(c, resp, "application/json", false)
 	if envCfg.Current().EnableResponseLogs {
 		responseTime := time.Since(startTime).Milliseconds()
-		if isStream {
-			log.Printf("[Images-Stream] Images 流式响应完成: %dms", responseTime)
-		} else {
-			log.Printf("[Images-Timing] Images 响应转发完成: %dms", responseTime)
-		}
+		log.Printf("[Images-Timing] Images 响应转发结束: %dms", responseTime)
 	}
 	if finishCapture != nil {
 		return finishCapture(), err

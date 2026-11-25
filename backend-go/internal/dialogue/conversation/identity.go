@@ -15,6 +15,9 @@ type Identity struct {
 	ClientFamily  string
 	ExplicitID    string
 	ScopeID       string
+	// ThreadID 与 BranchID 仅细分并发观测；不覆盖已有的会话归组与授权身份。
+	ThreadID      string
+	BranchID      string
 	AgentID       string
 	ParentAgentID string
 	Source        string

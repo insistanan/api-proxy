@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -11,6 +12,69 @@ import (
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestClaudeStream_MidstreamFailureStopsBeforeTerminal(t *testing.T) {
+	for _, errorEvent := range []string{
+		"event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"upstream boom\"}}\n\n",
+		"event:error\ndata: {\"message\":\"upstream boom\"}\n\n",
+	} {
+		for _, tail := range []string{"", "data: {\"type\":\"message_stop\"}\n\n"} {
+			body := &claudeStreamResetBody{Reader: strings.NewReader(
+				"data: {\"type\":\"message_start\",\"message\":{}}\n\n" +
+					errorEvent + tail,
+			), err: io.EOF}
+			events, failures, err := (&ClaudeProvider{}).HandleStreamResponseCtx(context.Background(), body)
+			require.NoError(t, err)
+			var output strings.Builder
+			for event := range events {
+				output.WriteString(event)
+			}
+			var streamErrors []error
+			for failure := range failures {
+				streamErrors = append(streamErrors, failure)
+			}
+			require.True(t, body.closed)
+			require.Len(t, streamErrors, 1)
+			failure, ok := IsUpstreamStreamFailed(streamErrors[0])
+			require.True(t, ok)
+			require.Contains(t, failure.Payload, "upstream boom")
+			require.NotContains(t, output.String(), "message_stop")
+			require.NotContains(t, output.String(), "event: error")
+		}
+	}
+}
+
+func TestProviderStream_LargeEventsAreDeliveredIntact(t *testing.T) {
+	large := strings.Repeat("x", 2*1024*1024)
+	for _, protocol := range []struct {
+		name, payload, terminal string
+		provider                Provider
+	}{
+		{"Claude工具参数", `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":%q}}`, `{"type":"message_stop"}`, &ClaudeProvider{}},
+		{"Chat", `{"model":"m","choices":[{"index":0,"delta":{"content":%q}}]}`, `{"choices":[{"index":0,"finish_reason":"stop"}]}`, &OpenAIProvider{}},
+		{"Gemini", `{"candidates":[{"content":{"parts":[{"text":%q}]}}]}`, `{"candidates":[{"finishReason":"STOP","content":{}}]}`, &GeminiProvider{}},
+		{"Responses", `{"type":"response.output_text.delta","delta":%q}`, `{"type":"response.completed","response":{"status":"completed","output":[]}}`, &MessagesResponsesProvider{}},
+	} {
+		t.Run(protocol.name, func(t *testing.T) {
+			content := large
+			if protocol.name == "Claude工具参数" {
+				content = `{"payload":"` + large + `"}`
+			}
+			body := io.NopCloser(strings.NewReader("data: " + fmt.Sprintf(protocol.payload, content) + "\n\ndata: " + protocol.terminal + "\n\n"))
+			events, failures, err := protocol.provider.HandleStreamResponseCtx(context.Background(), body)
+			require.NoError(t, err)
+			var output strings.Builder
+			for event := range events {
+				output.WriteString(event)
+			}
+			for failure := range failures {
+				require.NoError(t, failure)
+			}
+			require.Contains(t, output.String(), large)
+			require.Equal(t, 1, strings.Count(output.String(), `"type":"message_stop"`))
+		})
+	}
+}
 
 // 协议完成信号与底层网络错误组合验证，避免依赖某个平台的错误文本。
 func TestProviderStreamCompletion(t *testing.T) {

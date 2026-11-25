@@ -12,13 +12,15 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/api/common"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/insistanan/api-proxy/internal/proxycore"
 	"github.com/insistanan/api-proxy/internal/safety/pipeline"
 )
 
-func handleStreamSuccess(c *gin.Context, resp *http.Response, envCfg *config.EnvConfig, startTime time.Time) (*types.Usage, error) {
+func handleStreamSuccess(c *gin.Context, resp *http.Response, envCfg *config.EnvConfig, startTime time.Time) (usage *types.Usage, resultErr error) {
+	defer func() { resultErr = common.ReportStreamFailure(c, "chat", resultErr) }()
 	envCfg = proxycore.RequestLogEnv(c, envCfg)
 	stopVeto := pipeline.BindAttachedStreamVeto(c, resp.Body)
 	defer stopVeto()
@@ -107,11 +109,8 @@ func handleStreamSuccess(c *gin.Context, resp *http.Response, envCfg *config.Env
 			continue
 		}
 		proxycore.MarkRequestLogFirstToken(c)
-		if _, err := c.Writer.Write([]byte(restoredLine)); err != nil {
+		if err := common.WriteStream(c.Writer, flusher, []byte(restoredLine)); err != nil {
 			return streamUsage, err
-		}
-		if flusher != nil {
-			flusher.Flush()
 		}
 		if completion.done {
 			// 不再读取 [DONE] 后的连接；补齐事件分隔符供 SSE 客户端分派。
@@ -119,11 +118,8 @@ func handleStreamSuccess(c *gin.Context, resp *http.Response, envCfg *config.Env
 			if !strings.HasSuffix(string(rawLine), "\n") {
 				separator = "\n\n"
 			}
-			if _, err := c.Writer.Write([]byte(separator)); err != nil {
+			if err := common.WriteStream(c.Writer, flusher, []byte(separator)); err != nil {
 				return streamUsage, err
-			}
-			if flusher != nil {
-				flusher.Flush()
 			}
 			break
 		}
@@ -141,11 +137,8 @@ func handleStreamSuccess(c *gin.Context, resp *http.Response, envCfg *config.Env
 		if !trailingLineTerminated {
 			separator = "\n\n"
 		}
-		if _, err := c.Writer.Write([]byte(separator)); err != nil {
+		if err := common.WriteStream(c.Writer, flusher, []byte(separator)); err != nil {
 			return streamUsage, err
-		}
-		if flusher != nil {
-			flusher.Flush()
 		}
 	}
 	remaining, err := pipeline.DrainAttachedStreamRestoration(c)
@@ -153,7 +146,7 @@ func handleStreamSuccess(c *gin.Context, resp *http.Response, envCfg *config.Env
 		return streamUsage, err
 	}
 	for _, event := range remaining {
-		if _, err := c.Writer.Write([]byte(event)); err != nil {
+		if err := common.WriteStream(c.Writer, flusher, []byte(event)); err != nil {
 			return streamUsage, err
 		}
 	}

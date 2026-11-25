@@ -58,9 +58,18 @@ func newSender(cfg *config.ConfigManager, recorders ...func(tokenusage.Fact)) fu
 				s.source.ConversationID, s.source.Upstream.ID, attemptID, result.sent,
 				input, read, creation, output, usageErr, result.err)
 		}()
-		// 续期窗口限制开始发送的时间；响应仍有完整的超时预算。
+		// 缓存窗口限制开始发送的时间；整轮截止时间同时约束发送和响应读取。
 		ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 		defer cancel()
+		if !s.deadline.IsZero() {
+			var cancelDeadline context.CancelFunc
+			ctx, cancelDeadline = context.WithDeadline(ctx, s.deadline)
+			defer cancelDeadline()
+		}
+		if ctx.Err() != nil {
+			result.err = errors.New("保活已取消或达到持续时间上限，不发送请求")
+			return
+		}
 		ctx = logger.ContextWithAttemptID(ctx, attemptID)
 		if s.mode == "explicit" {
 			resource, err := url.Parse(s.cacheURL)

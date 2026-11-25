@@ -16,7 +16,6 @@ type CacheKeepaliveConfig struct {
 	Prompt             string `json:"prompt"`
 	MinCacheHitPercent int    `json:"minCacheHitPercent"`
 	MaxOutputTokens    int    `json:"maxOutputTokens"`
-	MaxTotalTokens     int64  `json:"maxTotalTokens"`
 }
 
 // SupportsCacheKeepalive 与现有对话入口的实际上游转换能力保持一致。
@@ -61,9 +60,6 @@ func ValidateCacheKeepalive(kind string, upstream *UpstreamConfig) error {
 	}
 	if c.MaxOutputTokens < 1 || c.MaxOutputTokens > 4096 {
 		return fmt.Errorf("缓存保活输出上限必须为 1–4096 Token")
-	}
-	if c.MaxTotalTokens < 1 || c.MaxTotalTokens > 1000000000 {
-		return fmt.Errorf("缓存保活累计 Token 上限必须为 1–1000000000")
 	}
 	return nil
 }

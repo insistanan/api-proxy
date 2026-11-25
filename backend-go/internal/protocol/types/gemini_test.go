@@ -2,6 +2,7 @@ package types
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 )
 
@@ -24,110 +25,27 @@ func TestGeminiPart_TextAndThoughtSignaturesSurviveReplay(t *testing.T) {
 	}
 }
 
-func TestGeminiFunctionDeclaration_UnmarshalJSON_ParametersJsonSchema(t *testing.T) {
-	input := `{
-	  "name": "list_directory",
-	  "description": "Lists the names of files and subdirectories directly within a specified directory path.",
-	  "parametersJsonSchema": {
-	    "type": "object",
-	    "properties": {
-	      "dir_path": { "type": "string" }
-	    },
-	    "required": ["dir_path"]
-	  }
-	}`
-
-	var decl GeminiFunctionDeclaration
-	if err := json.Unmarshal([]byte(input), &decl); err != nil {
-		t.Fatalf("UnmarshalJSON 失败: %v", err)
+func TestGeminiFunctionDeclaration_PreservesSchemaDialect(t *testing.T) {
+	input := `{"name":"run","parametersJsonSchema":{"type":"object","properties":{"title":{"type":"string"}},"additionalProperties":false,"const":{"mode":"fast"}}}`
+	var declaration GeminiFunctionDeclaration
+	if err := json.Unmarshal([]byte(input), &declaration); err != nil {
+		t.Fatal(err)
 	}
-	if decl.Name != "list_directory" {
-		t.Fatalf("Name=%q, want=%q", decl.Name, "list_directory")
+	if declaration.Parameters != nil || declaration.ParametersJSONSchema == nil {
+		t.Fatal("schema 方言没有保留")
 	}
-	if decl.Parameters == nil {
-		t.Fatalf("Parameters 为空，期望从 parametersJsonSchema 读取")
-	}
-
-	outBytes, err := json.Marshal(decl)
+	encoded, err := json.Marshal(declaration)
 	if err != nil {
-		t.Fatalf("Marshal 失败: %v", err)
+		t.Fatal(err)
 	}
-	var got map[string]interface{}
-	if err := json.Unmarshal(outBytes, &got); err != nil {
-		t.Fatalf("解析输出 JSON 失败: %v", err)
+	var before, after interface{}
+	if err := json.Unmarshal([]byte(input), &before); err != nil {
+		t.Fatal(err)
 	}
-	if _, ok := got["parameters"]; !ok {
-		t.Fatalf("输出缺少 parameters 字段: %v", got)
+	if err := json.Unmarshal(encoded, &after); err != nil {
+		t.Fatal(err)
 	}
-	if _, ok := got["parametersJsonSchema"]; ok {
-		t.Fatalf("不应输出 parametersJsonSchema 字段: %v", got)
-	}
-}
-
-func TestSanitizeGeminiToolSchema_RemovesGeminiUnsupportedJSONSchemaKeywords(t *testing.T) {
-	input := map[string]interface{}{
-		"$schema": "https://json-schema.org/draft/2020-12/schema",
-		"type":    "object",
-		"properties": map[string]interface{}{
-			"query": map[string]interface{}{
-				"type":          "string",
-				"propertyNames": map[string]interface{}{"pattern": "^[a-z]+$"},
-			},
-			"count": map[string]interface{}{
-				"type":             "integer",
-				"exclusiveMinimum": float64(0),
-			},
-			"mode": map[string]interface{}{
-				"type":  "string",
-				"const": "fast",
-			},
-			"nullable_text": map[string]interface{}{
-				"type": []interface{}{"null", "string"},
-			},
-		},
-		"required": []interface{}{"query"},
-	}
-
-	got, ok := SanitizeGeminiToolSchema(input).(map[string]interface{})
-	if !ok {
-		t.Fatalf("清理结果类型=%T, want=map[string]interface{}", got)
-	}
-	if _, ok := got["$schema"]; ok {
-		t.Fatalf("不应包含 $schema: %v", got)
-	}
-
-	props, ok := got["properties"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("properties 类型=%T, want=map[string]interface{}", got["properties"])
-	}
-	if _, ok := props["query"]; !ok {
-		t.Fatalf("不应删除 properties 下的参数名: %v", props)
-	}
-
-	query := props["query"].(map[string]interface{})
-	if _, ok := query["propertyNames"]; ok {
-		t.Fatalf("不应包含 propertyNames: %v", query)
-	}
-
-	count := props["count"].(map[string]interface{})
-	if _, ok := count["exclusiveMinimum"]; ok {
-		t.Fatalf("不应包含 exclusiveMinimum: %v", count)
-	}
-
-	mode := props["mode"].(map[string]interface{})
-	if _, ok := mode["const"]; ok {
-		t.Fatalf("不应包含 const: %v", mode)
-	}
-	enum, ok := mode["enum"].([]interface{})
-	if !ok || len(enum) != 1 || enum[0] != "fast" {
-		t.Fatalf("mode.enum=%v, want=%v", mode["enum"], []interface{}{"fast"})
-	}
-
-	nullableText := props["nullable_text"].(map[string]interface{})
-	if nullableText["type"] != "string" {
-		t.Fatalf("nullable_text.type=%v, want=string", nullableText["type"])
-	}
-	if nullableText["nullable"] != true {
-		t.Fatalf("nullable_text.nullable=%v, want=true", nullableText["nullable"])
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("schema 被修改: %s", encoded)
 	}
 }

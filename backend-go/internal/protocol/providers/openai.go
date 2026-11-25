@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"github.com/insistanan/api-proxy/internal/protocol/converters"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -47,6 +48,9 @@ func (p *OpenAIProvider) ConvertToProviderRequest(c *gin.Context, upstream *conf
 // BuildRequest 以显式输入构造 OpenAI Chat 请求（R4-a 主实现，不依赖 gin）。
 func (p *OpenAIProvider) buildRequest(input RequestInput, upstream *config.UpstreamConfig, apiKey string) (*RequestOutcome, error) {
 	originalBodyBytes := input.Body
+	if err := converters.ValidateClaudeConversion(input.Body, "openai"); err != nil {
+		return nil, err
+	}
 	if err := config.ValidateReasoningOptions(upstream); err != nil {
 		return nil, err
 	}
@@ -74,7 +78,7 @@ func (p *OpenAIProvider) buildRequest(input RequestInput, upstream *config.Upstr
 	}
 	// top_p / stop_sequences：与 temperature 同级的采样参数直传
 	//（cc-switch transform.rs 同映射；0 值/空数组省略避免触发部分网关的严格校验）。
-	if claudeReq.TopP > 0 {
+	if claudeReq.TopP != nil {
 		openaiReq.TopP = claudeReq.TopP
 	}
 	if len(claudeReq.StopSequences) > 0 {
