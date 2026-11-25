@@ -108,8 +108,7 @@ func TestVaultMaskBatchReusesExistingAndPersistsNewMappings(t *testing.T) {
 	if err := store.PutMapping("old-value", "SECRET", previous); err != nil {
 		t.Fatal(err)
 	}
-	vault := NewVault()
-	vault.state = &placeholderKeyState{store: store}
+	vault := store.NewScopedVault(context.Background(), "test-session", nil)
 	text := "old-value; new-value; old-value"
 	var matches []RedactionMatch
 	start := 0
@@ -130,8 +129,10 @@ func TestVaultMaskBatchReusesExistingAndPersistsNewMappings(t *testing.T) {
 	if err != nil || count != 2 {
 		t.Fatalf("重复原文只能登记一次，新原文必须已落库: count=%d err=%v", count, err)
 	}
-	restarted := NewVault()
-	restarted.state = &placeholderKeyState{store: store}
+	if err := vault.CommitScope(); err != nil {
+		t.Fatal(err)
+	}
+	restarted := store.NewScopedVault(context.Background(), "test-session", nil)
 	if got := restarted.Restore(masked); got != text || restarted.Err() != nil {
 		t.Fatalf("新请求必须能从持久库完整还原: %v", restarted.Err())
 	}

@@ -224,7 +224,7 @@ func TestUpstreamAttemptReadBodyErrorFailsOverToNextKey(t *testing.T) {
 	metricsManager := metrics.NewMetricsManager()
 	t.Cleanup(metricsManager.Stop)
 
-	channelScheduler := scheduler.NewChannelScheduler(cfgManager, metricsManager, nil, nil, nil, nil, nil, nil, nil, nil)
+	channelScheduler := scheduler.NewChannelScheduler(cfgManager, map[scheduler.ChannelKind]*metrics.MetricsManager{scheduler.ChannelKindMessages: metricsManager}, nil, nil)
 	t.Cleanup(channelScheduler.Stop)
 
 	upstream := &config.UpstreamConfig{
@@ -302,7 +302,7 @@ func TestUpstreamAttempt2xxErrorEnvelopeFailsOverToNextKey(t *testing.T) {
 	metricsManager := metrics.NewMetricsManager()
 	t.Cleanup(metricsManager.Stop)
 
-	channelScheduler := scheduler.NewChannelScheduler(cfgManager, metricsManager, nil, nil, nil, nil, nil, nil, nil, nil)
+	channelScheduler := scheduler.NewChannelScheduler(cfgManager, map[scheduler.ChannelKind]*metrics.MetricsManager{scheduler.ChannelKindMessages: metricsManager}, nil, nil)
 	t.Cleanup(channelScheduler.Stop)
 
 	upstream := &config.UpstreamConfig{
@@ -404,7 +404,7 @@ func TestUpstreamAttemptThinkingBudgetRectifierRetriesSuccessfully(t *testing.T)
 	metricsManager := metrics.NewMetricsManager()
 	t.Cleanup(metricsManager.Stop)
 
-	channelScheduler := scheduler.NewChannelScheduler(cfgManager, metricsManager, nil, nil, nil, nil, nil, nil, nil, nil)
+	channelScheduler := scheduler.NewChannelScheduler(cfgManager, map[scheduler.ChannelKind]*metrics.MetricsManager{scheduler.ChannelKindMessages: metricsManager}, nil, nil)
 	t.Cleanup(channelScheduler.Stop)
 
 	upstream := &config.UpstreamConfig{
@@ -476,7 +476,7 @@ func TestUpstreamAttemptThinkingSignatureRectifierRetriesSuccessfully(t *testing
 	metricsManager := metrics.NewMetricsManager()
 	t.Cleanup(metricsManager.Stop)
 
-	channelScheduler := scheduler.NewChannelScheduler(cfgManager, metricsManager, nil, nil, nil, nil, nil, nil, nil, nil)
+	channelScheduler := scheduler.NewChannelScheduler(cfgManager, map[scheduler.ChannelKind]*metrics.MetricsManager{scheduler.ChannelKindMessages: metricsManager}, nil, nil)
 	t.Cleanup(channelScheduler.Stop)
 
 	upstream := &config.UpstreamConfig{
@@ -551,7 +551,7 @@ func TestUpstreamAttemptMediaSanitizerRetriesSuccessfully(t *testing.T) {
 	metricsManager := metrics.NewMetricsManager()
 	t.Cleanup(metricsManager.Stop)
 
-	channelScheduler := scheduler.NewChannelScheduler(cfgManager, metricsManager, nil, nil, nil, nil, nil, nil, nil, nil)
+	channelScheduler := scheduler.NewChannelScheduler(cfgManager, map[scheduler.ChannelKind]*metrics.MetricsManager{scheduler.ChannelKindMessages: metricsManager}, nil, nil)
 	t.Cleanup(channelScheduler.Stop)
 
 	// 渠道声明支持图片（visionlayer 因此放行原图），上游却回模态拒绝——

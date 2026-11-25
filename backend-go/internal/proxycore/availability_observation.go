@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/infra/httpclient"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"github.com/insistanan/api-proxy/internal/orchestration/availability"
 )
 
@@ -23,7 +24,7 @@ type availabilityObservation struct {
 	responseHeadersMs  *int64
 	upstreamStatusCode int
 	recorded           bool
-	retryAfter         string
+	retryAfterUntil    time.Time
 	status             int
 	body               string
 	evidence           string
@@ -70,7 +71,8 @@ func (a UpstreamAttempt) observeAvailabilityRequest(req *http.Request) *http.Req
 func (a UpstreamAttempt) observeAvailabilityResponse(resp *http.Response) {
 	if observation := currentAvailabilityObservation(a.Context); observation != nil {
 		if resp != nil {
-			observation.retryAfter = resp.Header.Get("Retry-After")
+			// 秒数从响应头到达时起算，后续读取正文不能延长上游要求的等待。
+			observation.retryAfterUntil, _ = upstreamreq.ParseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
 			observation.upstreamStatusCode = resp.StatusCode
 		}
 	}
@@ -94,8 +96,8 @@ func availabilitySample(c *gin.Context, success bool, status int, errorType, mes
 	}
 	outcome, reason := availability.Classify(success, status, errorType, message)
 	sample := &availability.Sample{Kind: observation.kind, ChannelID: observation.upstream.ID, Model: observation.model, CandidateID: identity.Fingerprint(), Outcome: outcome, Reason: reason}
-	if outcome == availability.RateLimited {
-		sample.CooldownUntil = availability.Cooldown(observation.retryAfter, time.Now())
+	if reason == availability.ModelCapacity && !observation.retryAfterUntil.IsZero() {
+		sample.CooldownUntil = observation.retryAfterUntil.UnixMilli()
 	}
 	return sample
 }

@@ -141,10 +141,11 @@ func RunProxyRequest(
 	transcript := BuildConversationTranscript(string(spec.Kind), bodyBytes)
 	imageFingerprints := visionmedia.ExtractImageFingerprints(bodyBytes)
 	pipeline.AttachHookPipeline(c, spec.HookPipeline, pipeline.HookContext{
-		APIType:   string(spec.Kind),
-		Model:     model,
-		Stream:    stream,
-		RequestID: requestID,
+		RedactionScope: RedactionScope(identity, envCfg.Current().ProxyAccessKey),
+		APIType:        string(spec.Kind),
+		Model:          model,
+		Stream:         stream,
+		RequestID:      requestID,
 	})
 	defer pipeline.ClearAttachedSensitiveData(c)
 	if err := pipeline.RunAttachedPreRequestHooks(c.Request.Context(), c, c.Request, "", string(spec.Kind)); err != nil {
@@ -275,7 +276,7 @@ func RunProxyRequest(
 // buildProtocolAttempt 构造五协议共享的 UpstreamAttempt 骨架：公共字段与
 // 五个协议级闭包（NextAPIKey/BuildRequest/DeprioritizeKey/HandleSuccess/
 // LogContext）只写一份，调用方只补差异点。差异经参数表达：
-//   - urlResults：单渠道为配置序（BuildDefaultURLResults），多渠道为延迟排序序
+//   - urlResults：单渠道为配置序（BuildDefaultURLResults），多渠道按 URL 健康排序
 //   - deprioritizeKind：密钥降级目标池，多渠道修复为按实际 kind 写池
 //     （历史 bug：曾硬编码 "messages"，跨池降级写错渠道池）
 //   - markURL：多渠道需回写 URL 健康状态（MarkURLFailure/Success），
@@ -295,7 +296,7 @@ func buildProtocolAttempt(
 	upstream *config.UpstreamConfig,
 	channelIndex int,
 	startTime time.Time,
-	urlResults []urlhealth.URLLatencyResult,
+	urlResults []urlhealth.Candidate,
 	deprioritizeKind scheduler.ChannelKind,
 	markURLFailure func(url string),
 	markURLSuccess func(url string),
@@ -518,7 +519,7 @@ func handleMultiChannelProxy(
 			baseURLs := upstream.GetAllBaseURLs()
 			sortedURLResults := channelScheduler.GetSortedURLsForChannel(spec.Kind, channelIndex, baseURLs)
 
-			// 多渠道：URL 用延迟排序序，回写 URL 健康状态；密钥降级按实际
+			// 多渠道：URL 按健康状态排序并回写结果；密钥降级按实际
 			// kind 写池（修复历史 bug：曾硬编码 messages 池，跨池降级写错渠道）。
 			// 内容审核跨渠道转移按 spec 开关生效；选渠许可传入 attempt，
 			// 供发送层"未发出即失败"路径中性归还探测名额。

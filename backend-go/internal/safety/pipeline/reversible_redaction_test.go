@@ -3,6 +3,7 @@ package pipeline
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http/httptest"
 	"path/filepath"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/safety/sensitive"
+	"github.com/stretchr/testify/require"
 )
 
 func TestReversibleRedactionCoversAllRequestProtocolsAndResponseFields(t *testing.T) {
@@ -64,7 +67,7 @@ func TestReversibleRedactionCoversAllRequestProtocolsAndResponseFields(t *testin
 					t.Fatalf("敏感原文仍在上游请求中: %q body=%s", secret, upstreamBody)
 				}
 			}
-			placeholder := regexp.MustCompile(`\bMASKED_[A-Z0-9_]+_[A-Z2-7]{13}_PRESERVE_EXACTLY\b`).Find(upstreamBody)
+			placeholder := regexp.MustCompile(`\bMASKED_[A-Z0-9_]+_[A-Z2-7]{13}_(?:END|PRESERVE_EXACTLY)\b`).Find(upstreamBody)
 			if len(placeholder) == 0 {
 				t.Fatalf("上游请求未包含语义占位符: %s", upstreamBody)
 			}
@@ -83,4 +86,116 @@ func TestReversibleRedactionCoversAllRequestProtocolsAndResponseFields(t *testin
 			}
 		})
 	}
+}
+
+func TestPersistentRedaction_ModeChangeUsesRequestSnapshot(t *testing.T) {
+	manager, err := config.NewConfigManager(filepath.Join(t.TempDir(), "config.json"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, manager.Close()) })
+	dir := t.TempDir()
+	store, err := sensitive.NewMappingStore(filepath.Join(dir, "mappings.db"), filepath.Join(dir, "master-key"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	settings := manager.GetSettings()
+	settings.ContentSafety.SensitiveInfo.Enabled = true
+	settings.ContentSafety.SensitiveInfo.EnabledRules = []string{config.SensitiveInfoRulePhone}
+	settings.ContentSafety.SensitiveData.Mode = config.ContentSafetyModeBlock
+	require.NoError(t, manager.UpdateSettings(settings))
+	pipeline := NewContentSafetyPipelineWithSemantic(manager, &gateTestRecorder{}, nil, nil, store)
+	newRequest := func() *gin.Context {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest("POST", "/v1/messages", nil)
+		AttachHookPipeline(c, pipeline, HookContext{APIType: "messages", RedactionScope: "test-session"})
+		t.Cleanup(func() { ClearAttachedSensitiveData(c) })
+		return c
+	}
+	blockRequest := newRequest()
+	settings.ContentSafety.SensitiveData.Mode = config.ContentSafetyModeMask
+	require.NoError(t, manager.UpdateSettings(settings))
+	maskRequest := newRequest()
+	// 请求已绑定后再切回 block，已有请求仍应按 mask 处理并持久化。
+	settings.ContentSafety.SensitiveData.Mode = config.ContentSafetyModeBlock
+	require.NoError(t, manager.UpdateSettings(settings))
+	for _, tc := range []struct {
+		name string
+		ctx  *gin.Context
+		mask bool
+	}{
+		{name: "切换前的阻断请求", ctx: blockRequest},
+		{name: "切换后立即到达的脱敏请求", ctx: maskRequest, mask: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/", strings.NewReader(`{"messages":[{"role":"user","content":"电话 18012345523"}]}`))
+			req.Header.Set("Content-Type", "application/json")
+			err := RunAttachedPreRequestHooks(context.Background(), tc.ctx, req, "primary")
+			if !tc.mask {
+				require.NotNil(t, ContentSafetyErrorFrom(err))
+				return
+			}
+			require.NoError(t, err)
+			body, err := io.ReadAll(req.Body)
+			require.NoError(t, err)
+			placeholder := regexp.MustCompile(`MASKED_PHONE_[A-Z2-7]{13}_(?:END|PRESERVE_EXACTLY)`).FindString(string(body))
+			require.NotEmpty(t, placeholder)
+			// 全新 Vault 只能从数据库找回原文，避免只验证同请求内存映射。
+			restored := store.NewScopedVault(context.Background(), "test-session", nil).Restore(placeholder)
+			require.Equal(t, "18012345523", restored)
+			response, err := RunAttachedPostResponseHooks(context.Background(), tc.ctx, []byte(`{"text":"`+placeholder+`"}`), nil)
+			require.NoError(t, err)
+			require.Contains(t, string(response), "18012345523")
+			attached, err := attachedPipelineFromContext(tc.ctx)
+			require.NoError(t, err)
+			require.NoError(t, ensureAttachedStreamScanner(attached))
+			require.Equal(t, config.ContentSafetyModeMask, attached.streamMaskMode)
+		})
+	}
+}
+
+func TestPersistentRedaction_RestoreMissUsesRequestIdentity(t *testing.T) {
+	manager, err := config.NewConfigManager(filepath.Join(t.TempDir(), "config.json"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, manager.Close()) })
+	settings := manager.GetSettings()
+	settings.ContentSafety.SensitiveData.Mode = config.ContentSafetyModeMask
+	require.NoError(t, manager.UpdateSettings(settings))
+	dir := t.TempDir()
+	store, err := sensitive.NewMappingStore(filepath.Join(dir, "mappings.db"), filepath.Join(dir, "master-key"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	const body = `{"text":"MASKED_PHONE_AAAAAAAAAAAAA_PRESERVE_EXACTLY"}`
+	for _, protocol := range []string{"messages", "responses", "chat", "gemini", "images"} {
+		t.Run(protocol, func(t *testing.T) {
+			recorder := &gateTestRecorder{}
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest("POST", "/", nil)
+			AttachHookPipeline(c, NewContentSafetyPipelineWithSemantic(manager, recorder, nil, nil, store), HookContext{APIType: protocol, RequestID: "request-1"})
+			defer ClearAttachedSensitiveData(c)
+			require.NoError(t, AssignAttachedConversation(context.Background(), c, "conversation-1"))
+			for i := 0; i < 2; i++ {
+				restored, err := RestoreAttachedResponseBody(c, []byte(body))
+				require.NoError(t, err)
+				require.JSONEq(t, body, string(restored))
+			}
+			require.Len(t, recorder.entries, 1)
+			require.Equal(t, protocol, recorder.entries[0].APIType)
+			require.Equal(t, "request-1", recorder.entries[0].RequestID)
+			require.Equal(t, "conversation-1", recorder.entries[0].ConversationID)
+			require.Equal(t, sensitive.BlockTypeRestoreMiss, recorder.entries[0].BlockType)
+		})
+	}
+	t.Run("审计失败返回原始错误", func(t *testing.T) {
+		cause := errors.New("审计存储不可用")
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest("POST", "/", nil)
+		AttachHookPipeline(c, NewContentSafetyPipelineWithSemantic(manager, restoreMissFailureRecorder{cause}, nil, nil, store), HookContext{APIType: "chat"})
+		defer ClearAttachedSensitiveData(c)
+		_, err := RestoreAttachedResponseBody(c, []byte(body))
+		require.ErrorIs(t, err, cause)
+	})
+}
+
+type restoreMissFailureRecorder struct{ err error }
+
+func (r restoreMissFailureRecorder) Record(context.Context, sensitive.BlockedLog) (sensitive.BlockedLog, error) {
+	return sensitive.BlockedLog{}, r.err
 }

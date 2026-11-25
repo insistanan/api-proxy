@@ -217,7 +217,7 @@ function bucketText(bucket: AvailabilityCounts & { from: number }) {
 function reasonLabel(reason: string) {
   const labels: Record<string, string> = {
     success: '最近有效结果成功', model_not_found: '模型不存在或不支持', credential_or_quota: '凭据或额度异常',
-    rate_limited: '限流／容量不足', network: '连接失败或超时', read_body: '响应读取中断',
+    rate_limited: '上游限流', model_capacity: '模型容量不足', network: '连接失败或超时', read_body: '响应读取中断',
     read_response: '响应读取中断', response_processing: '响应或流处理失败', empty_response: '空响应',
     error_envelope: '成功状态中含错误', upstream_error: '上游服务异常'
   }

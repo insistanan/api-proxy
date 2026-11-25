@@ -177,7 +177,7 @@ func TestExtractSafetySegmentsFindsToolResultsInAllProtocols(t *testing.T) {
 			}
 			var toolResult *SafetySegment
 			for index := range segments {
-				if segments[index].Source == safetySourceToolResult {
+				if segments[index].Source == safetySourceToolResult && segments[index].Mutable {
 					toolResult = &segments[index]
 					break
 				}
@@ -280,7 +280,7 @@ func TestExtractResponseToolArgumentsUsesProtocolFieldsOnly(t *testing.T) {
 		"metadata": map[string]interface{}{"arguments": "PASSWORD=metadata-value"},
 	}
 	segments := extractResponseToolArgumentSegments("messages", payload)
-	if len(segments) != 1 || !strings.Contains(segments[0].Text, "actual-tool-value") || segments[0].Source != safetySourceToolArgument {
+	if len(segments) != 2 || segments[0].Text != "value" || !strings.Contains(segments[1].Text, "actual-tool-value") || segments[1].Source != safetySourceToolArgument {
 		t.Fatalf("工具参数提取范围错误: %+v", segments)
 	}
 }

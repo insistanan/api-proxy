@@ -16,7 +16,8 @@ import (
 	"sync"
 )
 
-var reservedPlaceholderPattern = regexp.MustCompile(`\bMASKED_[A-Z0-9_]+_[A-Z2-7]{13}_PRESERVE_EXACTLY\b`)
+var reservedPlaceholderPattern = regexp.MustCompile(`\bMASKED_[A-Z0-9_]+_[A-Z2-7]{13}_(?:END|PRESERVE_EXACTLY)\b`)
+var placeholderTokenPattern = regexp.MustCompile(`MASKED_[A-Z0-9_]+_[A-Z2-7]{13}_(?:END|PRESERVE_EXACTLY)`)
 
 const (
 	maxVaultMappings    = 8192
@@ -24,7 +25,7 @@ const (
 	maxPlaceholderBytes = 256
 )
 
-// 每次配置切换创建独立状态，已开始的请求继续持有原状态；不重置正在使用的 Once。
+// 密钥状态随映射库实例存活；请求持有固定状态，不受配置热切换影响。
 type placeholderKeyState struct {
 	store *MappingStore
 	once  sync.Once
@@ -32,38 +33,8 @@ type placeholderKeyState struct {
 	err   error
 }
 
-// SetPersistentMappingStore 注入进程级持久映射库（mask 模式启用时由 main.go 调用）。
-// 注入后新 Vault 的占位符密钥改由主密钥经 HKDF 派生——同一原文跨重启生成同一
-// 占位符，历史会话里的旧占位符可还原；还原 miss 记审计（回调由 hooks 层设置）。
-// 传 nil 撤销持久化（设置热切换 mask→block 时）；已生成的占位符不受影响。
-func SetPersistentMappingStore(store *MappingStore) {
-	globalPersistentStoreMu.Lock()
-	if globalPlaceholderState.store != store {
-		globalPlaceholderState = &placeholderKeyState{store: store}
-	}
-	globalPersistentStoreMu.Unlock()
-}
-
-var (
-	globalPersistentStoreMu sync.RWMutex
-	globalPlaceholderState  = &placeholderKeyState{}
-	// persistentMissCallback 在还原遇到持久库 miss 时被调用（hooks 层注入审计）。
-	persistentMissCallback func(placeholder string)
-)
-
-// SetPersistentMissCallback 设置还原 miss 的审计回调（hooks 层注入）。
-func SetPersistentMissCallback(callback func(placeholder string)) {
-	globalPersistentStoreMu.Lock()
-	persistentMissCallback = callback
-	globalPersistentStoreMu.Unlock()
-}
-
-// PersistentMappingStore 返回当前进程级持久映射库（可能为 nil）。
-func PersistentMappingStore() *MappingStore {
-	globalPersistentStoreMu.RLock()
-	defer globalPersistentStoreMu.RUnlock()
-	return globalPlaceholderState.store
-}
+// 显式使用内存模式的 Vault 共用进程密钥，保持跨请求占位符稳定。
+var memoryPlaceholderState placeholderKeyState
 
 // RedactionMatch 是可逆脱敏使用的统一命中区间。Original 必须与 Text 的对应
 // 字节区间完全一致；调用方不得记录该字段。
@@ -75,15 +46,27 @@ type RedactionMatch struct {
 	End      int
 }
 
-// RestoreJSON 递归还原 JSON 中的全部字符串值。非 JSON 响应按普通文本还原。
+// RestoreJSON 还原协议正文，保留协议身份、签名和不透明载荷。
 func (v *Vault) RestoreJSON(body []byte) ([]byte, error) {
+	return v.restoreJSONBody(body, false)
+}
+
+// RestoreToolJSON 还原工具业务值，name/id/type 等业务键的值也必须恢复。
+func (v *Vault) RestoreToolJSON(body []byte) ([]byte, error) {
+	if err := v.ValidateToolJSON(body); err != nil {
+		return nil, err
+	}
+	return v.restoreJSONBody(body, true)
+}
+
+func (v *Vault) restoreJSONBody(body []byte, business bool) ([]byte, error) {
 	if v == nil || len(body) == 0 {
 		return body, nil
 	}
 	if err := v.Err(); err != nil {
 		return nil, err
 	}
-	if !v.CanRestore() {
+	if !bytes.Contains(body, []byte("MASKED_")) && !bytes.ContainsRune(body, '\\') {
 		return body, nil
 	}
 	var value interface{}
@@ -101,7 +84,7 @@ func (v *Vault) RestoreJSON(body []byte) ([]byte, error) {
 	} else {
 		return nil, fmt.Errorf("解析待还原响应体失败: JSON 包含多个顶层值")
 	}
-	value = restoreJSONStrings(value, v)
+	value = restoreJSONValue(value, v, business)
 	if err := v.Err(); err != nil {
 		return nil, err
 	}
@@ -115,34 +98,77 @@ func (v *Vault) RestoreJSON(body []byte) ([]byte, error) {
 }
 
 func restoreJSONStrings(value interface{}, vault *Vault) interface{} {
+	return restoreJSONValue(value, vault, false)
+}
+
+func restoreJSONValue(value interface{}, vault *Vault, business bool) interface{} {
 	switch typed := value.(type) {
 	case map[string]interface{}:
+		if !business && IsSignedProtocolValue(typed) {
+			// 签名工具调用不能同时提供改写参数与有效签名，明确拒绝这种交付。
+			if call, ok := typed["functionCall"].(map[string]interface{}); ok {
+				encoded, err := json.Marshal(call["args"])
+				if err != nil || bytes.Contains(encoded, []byte("MASKED_")) {
+					vault.setError(fmt.Errorf("签名工具参数包含脱敏占位符，无法安全还原并保持签名"))
+				}
+			}
+			return value
+		}
 		for key, item := range typed {
+			if !business && IsProtocolStructuralField(key) {
+				continue
+			}
+			toolValue := !business && (key == "args" && typed["name"] != nil ||
+				key == "input" && (typed["type"] == "tool_use" || typed["type"] == "custom_tool_call") ||
+				key == "arguments" && (typed["type"] == "function_call" || typed["name"] != nil))
 			// Chat/Responses 的工具参数是 JSON 内嵌字符串；先还原其 JSON 值，
 			// 避免明文中的引号、反斜杠或换行破坏客户端将要解析的参数。
-			if key == "arguments" && (typed["type"] == "function_call" || typed["name"] != nil) {
-				if encoded, ok := item.(string); ok && json.Valid([]byte(encoded)) {
-					restored, err := vault.RestoreJSON([]byte(encoded))
+			if toolValue && key == "arguments" {
+				if encoded, ok := item.(string); ok {
+					restored, err := vault.RestoreToolJSON([]byte(encoded))
 					if err != nil {
-						vault.mu.Lock()
-						vault.err = err
-						vault.mu.Unlock()
+						vault.setError(err)
 						return value
 					}
 					typed[key] = string(restored)
 					continue
 				}
 			}
-			typed[key] = restoreJSONStrings(item, vault)
+			if toolValue {
+				if err := vault.validateToolValue(item); err != nil {
+					vault.setError(err)
+					return value
+				}
+			}
+			typed[key] = restoreJSONValue(item, vault, business || toolValue)
 		}
 	case []interface{}:
 		for index, item := range typed {
-			typed[index] = restoreJSONStrings(item, vault)
+			typed[index] = restoreJSONValue(item, vault, business)
 		}
 	case string:
+		if business && (strings.Contains(typed, "MASKED_") || strings.Contains(typed, "\\")) {
+			trimmed := strings.TrimSpace(typed)
+			if (strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")) && json.Valid([]byte(trimmed)) {
+				restored, err := vault.RestoreToolJSON([]byte(typed))
+				if err != nil {
+					vault.setError(err)
+					return value
+				}
+				return string(restored)
+			}
+		}
 		return vault.Restore(typed)
 	}
 	return value
+}
+
+func (v *Vault) setError(err error) {
+	v.mu.Lock()
+	if v.err == nil {
+		v.err = err
+	}
+	v.mu.Unlock()
 }
 
 // Vault 保存单次请求的明文与占位符映射。Vault 只能挂在请求上下文中，
@@ -155,15 +181,19 @@ type Vault struct {
 	missing       map[string]struct{}
 	state         *placeholderKeyState
 	ctx           context.Context
+	restoreMiss   func(context.Context, string) error
 	bytes         int
 	err           error
 	maskReplacer  *strings.Replacer
+	scope         string
+	scopeKnown    map[string]struct{}
+	scopeSnapshot *scopeMappingSnapshot
 }
 
 // ReserveText 登记同一请求中尚未处理的原始文本，用于避免占位符与请求
 // 自带文本发生冲突。
 func (v *Vault) ReserveText(text string) {
-	if v == nil || text == "" {
+	if v == nil || !strings.Contains(text, "MASKED_") {
 		return
 	}
 	placeholders := reservedPlaceholderPattern.FindAllString(text, maxVaultMappings+1)
@@ -193,16 +223,34 @@ func NewVault() *Vault {
 }
 
 func NewVaultWithContext(ctx context.Context) *Vault {
-	globalPersistentStoreMu.RLock()
-	state := globalPlaceholderState
-	globalPersistentStoreMu.RUnlock()
+	return newVault(ctx, &memoryPlaceholderState, nil)
+}
+
+// NewVault 创建绑定当前映射库的请求级 Vault；审计回调由请求所属管线提供。
+func (s *MappingStore) NewVault(ctx context.Context, restoreMiss func(context.Context, string) error) *Vault {
+	return newVault(ctx, &s.placeholderState, restoreMiss)
+}
+
+// NewScopedVault 仅加载该调用方会话已授权的映射。空范围退为请求内恢复。
+func (s *MappingStore) NewScopedVault(ctx context.Context, scope string, restoreMiss func(context.Context, string) error) *Vault {
+	v := s.NewVault(ctx, restoreMiss)
+	v.scope = scope
+	if scope != "" {
+		v.err = s.loadScope(ctx, scope, v)
+	}
+	return v
+}
+
+func newVault(ctx context.Context, state *placeholderKeyState, restoreMiss func(context.Context, string) error) *Vault {
 	return &Vault{
 		byOriginal:    make(map[string]string),
 		byPlaceholder: make(map[string]string),
 		reserved:      make(map[string]struct{}),
 		missing:       make(map[string]struct{}),
+		scopeKnown:    make(map[string]struct{}),
 		state:         state,
 		ctx:           ctx,
+		restoreMiss:   restoreMiss,
 	}
 }
 
@@ -226,7 +274,17 @@ func (v *Vault) Empty() bool {
 }
 
 func (v *Vault) CanRestore() bool {
-	return v != nil && (!v.Empty() || v.state.store != nil)
+	return v != nil && (!v.Empty() || v.state.store != nil || v.Err() != nil)
+}
+
+// Generation 随本次请求新增映射递增，用于使已处理正文缓存失效。
+func (v *Vault) Generation() int {
+	if v == nil {
+		return 0
+	}
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return len(v.byPlaceholder)
 }
 
 // Clear 释放当前请求持有的全部明文、占位符和冲突检查文本。
@@ -239,15 +297,17 @@ func (v *Vault) Clear() {
 	clear(v.byPlaceholder)
 	clear(v.reserved)
 	clear(v.missing)
+	clear(v.scopeKnown)
 	v.maskReplacer = nil
+	v.scopeSnapshot = nil
 	v.bytes = 0
 	v.err = nil
 	v.mu.Unlock()
 }
 
 // Mask 使用语义类型和进程级密钥保护的稳定标识替换命中区间。同一原文在
-// 进程内的不同请求复用同一占位符，提升上游前缀缓存命中；明文仍只保留在
-// 当前请求 Vault 中，占位符不包含可直接推断明文的哈希、长度或尾号。
+// 进程内的不同请求复用同一占位符，提升上游前缀缓存命中。明文只用于请求
+// 与有界会话缓存；占位符不包含可直接推断明文的哈希、长度或尾号。
 func (v *Vault) Mask(text string, matches []RedactionMatch) (string, error) {
 	if v == nil {
 		return "", fmt.Errorf("敏感信息映射仓未初始化")
@@ -366,7 +426,7 @@ func (v *Vault) placeholder(kind, original, source string) (string, error) {
 		_, _ = mac.Write([]byte{0})
 		_, _ = mac.Write([]byte(original))
 		token := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(mac.Sum(nil)[:8])
-		placeholder := "MASKED_" + kind + "_" + token + "_PRESERVE_EXACTLY"
+		placeholder := "MASKED_" + kind + "_" + token + "_END"
 		if strings.Contains(source, placeholder) {
 			continue
 		}
@@ -434,6 +494,7 @@ func (v *Vault) addMappingLocked(original, placeholder string) error {
 	v.byPlaceholder[placeholder] = original
 	v.bytes += len(original) + len(placeholder)
 	v.maskReplacer = nil
+	v.scopeSnapshot = nil
 	return nil
 }
 
@@ -456,7 +517,7 @@ func normalizePlaceholderType(kind string) string {
 }
 
 // Restore 还原当前请求中的完整语义占位符。占位符必须位于独立的标识符边界，
-// 未知值和部分匹配均保持原样。持久映射库按完整候选值查询历史映射，miss 记审计回调。
+// 未知值和部分匹配均保持原样；仅使用本次识别及会话授权映射，miss 记审计回调。
 func (v *Vault) Restore(text string) string {
 	if v == nil || text == "" {
 		return text
@@ -465,7 +526,7 @@ func (v *Vault) Restore(text string) string {
 	return restorer.Feed(text) + restorer.Flush()
 }
 
-// PreloadPersistent 预载完整占位符；跨片段占位符由 StreamRestorer 在拼全时读取。
+// PreloadPersistent 检查完整占位符的会话授权；历史映射由 NewScopedVault 一次加载。
 func (v *Vault) PreloadPersistent(text string) error {
 	if v == nil {
 		return nil
@@ -491,21 +552,11 @@ func (v *Vault) lookupPlaceholder(placeholder string) (string, bool) {
 		v.mu.Unlock()
 		return original, true
 	}
-	if _, missed := v.missing[placeholder]; missed || v.state.store == nil || v.err != nil {
+	if _, missed := v.missing[placeholder]; missed || v.err != nil {
 		v.mu.Unlock()
 		return "", false
 	}
-	lookup, err := v.state.store.lookupPlaceholder(v.ctx, placeholder)
-	if err != nil {
-		v.err = fmt.Errorf("读取持久脱敏占位符失败: %w", err)
-		v.mu.Unlock()
-		return "", false
-	}
-	if lookup.Found {
-		err := v.addMappingLocked(lookup.Original, placeholder)
-		v.mu.Unlock()
-		return lookup.Original, err == nil
-	}
+	// 不能凭模型返回的占位符解密全库；只有本次识别或已加载的会话映射可恢复。
 	if len(v.missing) >= maxVaultMappings {
 		v.err = fmt.Errorf("请求中的未知占位符超过 %d 个上限", maxVaultMappings)
 		v.mu.Unlock()
@@ -513,11 +564,12 @@ func (v *Vault) lookupPlaceholder(placeholder string) (string, bool) {
 	}
 	v.missing[strings.Clone(placeholder)] = struct{}{}
 	v.mu.Unlock()
-	globalPersistentStoreMu.RLock()
-	callback := persistentMissCallback
-	globalPersistentStoreMu.RUnlock()
-	if callback != nil {
-		callback(placeholder)
+	if v.restoreMiss != nil {
+		if err := v.restoreMiss(v.ctx, placeholder); err != nil {
+			v.mu.Lock()
+			v.err = fmt.Errorf("记录脱敏还原未命中失败: %w", err)
+			v.mu.Unlock()
+		}
 	}
 	return "", false
 }
@@ -529,26 +581,54 @@ func (v *Vault) MaskKnown(text string) string {
 		return text
 	}
 	v.mu.Lock()
+	if len(v.byOriginal) == 0 {
+		v.mu.Unlock()
+		return text
+	}
 	if v.maskReplacer == nil {
-		originals := make([]string, 0, len(v.byOriginal))
-		for original := range v.byOriginal {
-			originals = append(originals, original)
+		if v.scopeSnapshot != nil {
+			v.maskReplacer = v.scopeSnapshot.maskReplacer()
+		} else {
+			v.maskReplacer = newMaskReplacer(v.byOriginal)
 		}
-		sort.Slice(originals, func(i, j int) bool {
-			if len(originals[i]) != len(originals[j]) {
-				return len(originals[i]) > len(originals[j])
-			}
-			return originals[i] < originals[j]
-		})
-		pairs := make([]string, 0, len(originals)*2)
-		for _, original := range originals {
-			pairs = append(pairs, original, v.byOriginal[original])
-		}
-		v.maskReplacer = strings.NewReplacer(pairs...)
 	}
 	replacer := v.maskReplacer
 	v.mu.Unlock()
-	return replacer.Replace(text)
+	// 占位符本身不可再掩码，否则短原值会破坏类型名或标识。
+	if !strings.Contains(text, "MASKED_") {
+		return replacer.Replace(text)
+	}
+	spans := reservedPlaceholderPattern.FindAllStringIndex(text, -1)
+	if len(spans) == 0 {
+		return replacer.Replace(text)
+	}
+	var out strings.Builder
+	last := 0
+	for _, span := range spans {
+		out.WriteString(replacer.Replace(text[last:span[0]]))
+		out.WriteString(text[span[0]:span[1]])
+		last = span[1]
+	}
+	out.WriteString(replacer.Replace(text[last:]))
+	return out.String()
+}
+
+func newMaskReplacer(byOriginal map[string]string) *strings.Replacer {
+	originals := make([]string, 0, len(byOriginal))
+	for original := range byOriginal {
+		originals = append(originals, original)
+	}
+	sort.Slice(originals, func(i, j int) bool {
+		if len(originals[i]) != len(originals[j]) {
+			return len(originals[i]) > len(originals[j])
+		}
+		return originals[i] < originals[j]
+	})
+	pairs := make([]string, 0, len(originals)*2)
+	for _, original := range originals {
+		pairs = append(pairs, original, byOriginal[original])
+	}
+	return strings.NewReplacer(pairs...)
 }
 
 // StreamRestorer 对一个逻辑文本通道执行增量精确还原。它只暂存可能成为

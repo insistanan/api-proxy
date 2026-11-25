@@ -71,7 +71,8 @@ func (a *attachedHookPipeline) prepareToolDelivery(event string) ([]string, erro
 	pending := false
 	for _, state := range a.toolArgs {
 		needsReview := a.streamSettings.DangerousCmd.Enabled && sensitive.IsExecutionTool(state.name) ||
-			a.streamSettings.Credential.Enabled && a.streamMaskMode == config.ContentSafetyModeBlock
+			a.streamSettings.Credential.Enabled && a.streamMaskMode == config.ContentSafetyModeBlock ||
+			a.streamMaskMode == config.ContentSafetyModeMask
 		if needsReview && !state.finished {
 			pending = true
 			break
@@ -101,6 +102,9 @@ func restoreAttachedSSEEvent(c requestContextGetter, event string, boundary stre
 	}
 	attached.streamMu.Lock()
 	defer attached.streamMu.Unlock()
+	if err := attached.vault.Err(); err != nil {
+		return "", wrapContentSafetyHookError(err)
+	}
 
 	attached.restoreEventBytes = len(event)
 
@@ -129,6 +133,7 @@ func restoreAttachedSSEEvent(c requestContextGetter, event string, boundary stre
 		decoder := json.NewDecoder(strings.NewReader(payload))
 		decoder.UseNumber()
 		if err := decoder.Decode(&value); err != nil {
+			attached.restoreErr = fmt.Errorf("解析待还原 SSE 数据失败: %w", err)
 			return payload, false
 		}
 		valueChanged := restoreStreamValue(attached, value, value, fmt.Sprintf("line[%d]", currentLine), nil, nil, eventName, false)
@@ -137,6 +142,7 @@ func restoreAttachedSSEEvent(c requestContextGetter, event string, boundary stre
 		}
 		body, err := codec.MarshalJSONNoEscape(value)
 		if err != nil {
+			attached.restoreErr = fmt.Errorf("编码已还原 SSE 数据失败: %w", err)
 			return payload, false
 		}
 		return string(body), true
@@ -157,10 +163,22 @@ func restoreStreamValue(attached *attachedHookPipeline, root, value interface{},
 	changed := false
 	switch typed := value.(type) {
 	case map[string]interface{}:
+		business := streamPathIsToolValue(path)
+		if !business && sensitive.IsSignedProtocolValue(typed) {
+			if call, ok := typed["functionCall"].(map[string]interface{}); ok {
+				body, err := codec.MarshalJSONNoEscape(call["args"])
+				if err != nil || strings.Contains(string(body), "MASKED_") {
+					attached.restoreErr = fmt.Errorf("签名工具参数包含脱敏占位符，无法安全还原并保持签名")
+				}
+			}
+			return false
+		}
 		fields := sortedMapKeys(typed)
-		identities = appendStreamIdentities(identities, path, typed, fields)
+		if !business {
+			identities = appendStreamIdentities(identities, path, typed, fields)
+		}
 		for _, field := range fields {
-			if isStreamStructuralField(field) {
+			if !business && isStreamStructuralField(field) {
 				continue
 			}
 			childPath := appendPath(path, streamPathStep{key: field})
@@ -171,9 +189,21 @@ func restoreStreamValue(attached *attachedHookPipeline, root, value interface{},
 				field == "args" && typed["name"] != nil && streamPathHasFunction(path)
 			if text, ok := typed[field].(string); ok {
 				stateKey := streamStateKey(key, eventName, childPath, identities)
-				jsonEncoded := field == "partial_json" || field == "arguments" && (typed["name"] != nil || typed["type"] == "function_call" ||
+				jsonEncoded := !business && (field == "partial_json" || field == "arguments" && (typed["name"] != nil || typed["type"] == "function_call" ||
 					equalString(rootEventType(root), "response.function_call_arguments.done") || streamPathHasFunction(path)) ||
-					field == "delta" && equalString(rootEventType(root), "response.function_call_arguments.delta")
+					field == "delta" && equalString(rootEventType(root), "response.function_call_arguments.delta"))
+				if childComplete && (business || jsonEncoded) && json.Valid([]byte(text)) && (jsonEncoded || strings.HasPrefix(strings.TrimSpace(text), "{") || strings.HasPrefix(strings.TrimSpace(text), "[")) {
+					restored, err := attached.vault.RestoreToolJSON([]byte(text))
+					if err != nil {
+						attached.restoreErr = err
+						return changed
+					}
+					if string(restored) != text {
+						typed[field] = string(restored)
+						changed = true
+					}
+					continue
+				}
 				var restorer *sensitive.StreamRestorer
 				if childComplete {
 					restorer = sensitive.NewStreamRestorer(attached.vault)
@@ -182,6 +212,9 @@ func restoreStreamValue(attached *attachedHookPipeline, root, value interface{},
 					}
 				} else {
 					restorer = attached.restorer(stateKey, jsonEncoded)
+				}
+				if restorer == nil {
+					return changed
 				}
 				restored := restorer.Feed(text)
 				if childComplete {
@@ -234,6 +267,15 @@ func restoreStreamValue(attached *attachedHookPipeline, root, value interface{},
 		}
 	}
 	return changed
+}
+
+func streamPathIsToolValue(path []streamPathStep) bool {
+	for _, step := range path {
+		if step.key == "args" || step.key == "input" || step.key == "arguments" {
+			return true
+		}
+	}
+	return false
 }
 
 func rootEventType(root interface{}) interface{} {
@@ -544,12 +586,7 @@ func blankStreamStrings(value interface{}) {
 }
 
 func isStreamStructuralField(key string) bool {
-	switch strings.ToLower(key) {
-	case "type", "object", "id", "item_id", "call_id", "model", "role", "name", "status", "finish_reason", "stop_reason":
-		return true
-	default:
-		return false
-	}
+	return sensitive.IsProtocolStructuralField(key)
 }
 
 func sseEventName(event string) string {

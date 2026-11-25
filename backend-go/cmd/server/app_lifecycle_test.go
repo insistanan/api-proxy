@@ -17,8 +17,10 @@ func TestAppShutdownReversesDependenciesAndKeepsAllErrors(t *testing.T) {
 	storeErr, workerErr := errors.New("存储关闭失败"), errors.New("维护关闭失败")
 	var events []string
 	a.registerCleanup("存储", func() error { events = append(events, "store"); return storeErr })
-	a.registerCleanup("调度器", func() error { events = append(events, "scheduler"); return nil })
-	a.registerCleanup("维护", func() error { events = append(events, "worker"); return workerErr })
+	a.registerWorker("调度器", func() error { events = append(events, "scheduler"); return nil })
+	a.registerWorker("维护", func() error { events = append(events, "worker"); return workerErr })
+	// 配置生产者早于指标库创建，仍必须先退出；不能仅倒序关闭所有组件。
+	a.registerCleanup("后创建的指标存储", func() error { events = append(events, "metrics"); return nil })
 	results := make(chan error, 16)
 	for i := 0; i < 16; i++ {
 		go func() { results <- a.shutdown() }()
@@ -28,7 +30,7 @@ func TestAppShutdownReversesDependenciesAndKeepsAllErrors(t *testing.T) {
 		require.ErrorIs(t, err, storeErr)
 		require.ErrorIs(t, err, workerErr)
 	}
-	require.Equal(t, []string{"worker", "scheduler", "store"}, events)
+	require.Equal(t, []string{"worker", "scheduler", "metrics", "store"}, events)
 }
 
 func TestHTTPListenFailureReturns(t *testing.T) {

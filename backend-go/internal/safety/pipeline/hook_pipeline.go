@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/insistanan/api-proxy/internal/dialogue/routing/semantic"
+	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/safety/sensitive"
 )
 
@@ -27,10 +28,13 @@ type HookContext struct {
 	Stream             bool
 	RequestID          string
 	ConversationID     string
+	RedactionScope     string
 	ChannelName        string
 	eventDeduper       *safetyEventDeduper
 	redactionVault     *sensitive.Vault
 	preRequestSnapshot *contentSafetySnapshot
+	safetySettings     *config.ContentSafetyConfig
+	auditBatch         *safetyAuditBatch
 }
 
 // 独立执行处理器时可不提供请求级去重器；AttachHookPipeline 会为代理请求创建共享实例。
@@ -143,6 +147,7 @@ type Pipeline struct {
 	blockedLogRecorder BlockedLogRecorder
 	cmdGate            *CmdGate
 	semantic           *semantic.Service
+	mappingStore       *sensitive.MappingStore
 }
 
 func NewPipeline() *Pipeline {

@@ -45,7 +45,7 @@ func (s *ChannelScheduler) SetPreferredBaseURL(sessionKey string, baseURL string
 }
 
 // PreferBaseURLInResults 将会话偏好的 BaseURL 排到候选列表最前（保持其余相对顺序）。
-func PreferBaseURLInResults(results []urlhealth.URLLatencyResult, preferred string) []urlhealth.URLLatencyResult {
+func PreferBaseURLInResults(results []urlhealth.Candidate, preferred string) []urlhealth.Candidate {
 	if preferred == "" || len(results) <= 1 {
 		return results
 	}
@@ -59,7 +59,7 @@ func PreferBaseURLInResults(results []urlhealth.URLLatencyResult, preferred stri
 	if preferredIdx <= 0 {
 		return results
 	}
-	reordered := make([]urlhealth.URLLatencyResult, 0, len(results))
+	reordered := make([]urlhealth.Candidate, 0, len(results))
 	reordered = append(reordered, results[preferredIdx])
 	reordered = append(reordered, results[:preferredIdx]...)
 	reordered = append(reordered, results[preferredIdx+1:]...)

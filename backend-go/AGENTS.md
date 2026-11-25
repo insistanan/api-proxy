@@ -17,12 +17,12 @@
 | `api/` | 代理与管理 HTTP 接入、SSE 写回；`api/admin/` 按业务域分包，`api/admin/shared` 放跨管理子包协作，`api/common` 放跨 API 子包共用能力；协议差异留在端点中 |
 | `proxycore/` | 统一请求编排、上游尝试、故障转移与日志策略；入口 protocol.go |
 | `clients/` | 客户端配置接口与文件操作；协同服务在下方子包中 |
-| `management/` | 管理支撑：channelcrud、modelcatalog、modelfingerprint（指定上游采样、后台任务与指纹评分） |
+| `management/` | 管理支撑：channelcrud、modelcatalog、modelfingerprint（指定上游采样、后台任务与指纹评分）、forest（成长、岛屿与计时） |
 | `orchestration/` | scheduler、circuit、upstreamcontrol、availability、proxy、ratelimit、urlhealth |
 | `protocol/` | converters、providers、codec、items、tokenusage、visionmedia、types |
 | `safety/` | sensitive、llmgate、pipeline、bodyfilter、mediasanitizer、visionlayer |
 | `dialogue/` | session、conversation、prompt、routing（intent / semantic） |
-| `storage/` | logger、logbody、metrics、sqlitedb、atomicfile |
+| `storage/` | logger、logbody、metrics、sqlitedb、atomicfile、usageledger |
 | `infra/` | config、httpclient、upstreamreq、middleware、cli、utils |
 
 `api/` 子包登记：
@@ -32,20 +32,20 @@
 | `api/messages`、`api/responses`、`api/chat`、`api/gemini`、`api/images` | 五类编排协议入口 |
 | `api/embeddings`、`api/decisions` | 原样透传 |
 | `api/admin/` | 管理 API 的业务域子包 |
-| `api/admin/{conversations,extensions,intent,logs,security,settings}` | 对应业务域的管理接口 |
+| `api/admin/{conversations,extensions,forest,intent,logs,security,settings,usage}` | 对应业务域的管理接口 |
 | `api/channels`、`api/modelapi` | 渠道与模型接口 |
 | `api/system` | 健康检查、前端资源与代理模型列表 |
 | `api/streams` | 流式写回与生命周期处理 |
 | `api/common` | HTTP 接入层共用契约与工具 |
 
-`clients/` 子包：`clients/piagent` 处理 pi-agent 配置，`clients/mcpsync` 同步 MCP，`clients/skills` 管理 Skill 文件。
+`clients/` 子包：`clients/piagent` 处理 pi-agent 配置，`clients/mcpsync` 同步 MCP，`clients/skills` 管理 Skill 文件，`clients/extensions` 负责 Skills / MCP 统一目录迁移。
 
 ## 依赖边界
 
 - Go 子目录就是独立包；只有职责独立且依赖方向清晰时才拆包。同一职责内文件较多时按职责命名文件，不为缩短文件列表制造包边界。
 - 通用编排留在 proxycore，协议转换留在 protocol；安全管线不反向依赖 api 或 proxycore。
 - JSON、SSE 等编解码工具放 protocol/codec；用量、Responses 条目和上游请求分别放对应包，避免重新堆入 utils。
-- clients 顶层包含 HTTP 配置接口；其 piagent / mcpsync / skills 子包不依赖 HTTP，供接口层调用。
+- clients 顶层包含 HTTP 配置接口；其 piagent / mcpsync / skills / extensions 子包不依赖 HTTP，供接口层调用。
 
 ## 维护命令
 

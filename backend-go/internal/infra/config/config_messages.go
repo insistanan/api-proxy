@@ -1,9 +1,6 @@
 package config
 
-import (
-	"log"
-	"time"
-)
+import "log"
 
 func (cm *ConfigManager) AddUpstream(upstream UpstreamConfig) error {
 	_, err := cm.AddUpstreamWithResult(upstream)
@@ -20,10 +17,6 @@ func (cm *ConfigManager) UpdateUpstream(index int, updates UpstreamUpdate) (shou
 
 func (cm *ConfigManager) AddAPIKey(index int, apiKey string) error {
 	return cm.AddChannelKey("messages", index, apiKey)
-}
-
-func (cm *ConfigManager) MoveAPIKeyToBottom(upstreamIndex int, apiKey string) error {
-	return cm.MoveChannelKeyBottom("messages", upstreamIndex, apiKey)
 }
 
 func (cm *ConfigManager) SetChannelStatus(index int, status string) error {
@@ -46,8 +39,4 @@ func (cm *ConfigManager) ConsumePromotionCount(channelIndex int, channelType str
 			log.Printf("[Config-Promotion] 保存促销次数失败: %v", err)
 		}
 	}
-}
-
-func (cm *ConfigManager) SetChannelPromotion(index int, duration time.Duration, count int) error {
-	return cm.SetChannelPromotionFor("messages", index, duration, count)
 }

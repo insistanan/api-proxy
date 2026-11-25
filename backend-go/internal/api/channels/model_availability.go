@@ -36,12 +36,12 @@ func GetModelAvailability(store *logger.Store, cfgManager *config.ConfigManager)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		rows := buildAvailabilityRows(upstreams, aggregates, now)
+		rows := buildAvailabilityRows(upstreams, aggregates, cfgManager.UpstreamCooldowns(), now)
 		c.JSON(http.StatusOK, gin.H{"rows": rows, "generatedAt": now.UnixMilli(), "minSamples": availability.MinSamples})
 	}
 }
 
-func buildAvailabilityRows(upstreams []config.UpstreamConfig, aggregates []availability.Aggregate, now time.Time) []availability.Row {
+func buildAvailabilityRows(upstreams []config.UpstreamConfig, aggregates []availability.Aggregate, cooldowns map[string]int64, now time.Time) []availability.Row {
 	models := make(map[string]map[string]bool)
 	byChannel := make(map[string]map[string][]availability.Aggregate)
 	addModel := func(channelID, model string) {
@@ -81,7 +81,7 @@ func buildAvailabilityRows(upstreams []config.UpstreamConfig, aggregates []avail
 		if upstream.Status == "deleted" || upstream.ID == "" {
 			continue
 		}
-		candidates := availabilityCandidates(upstream)
+		candidates := availabilityCandidates(upstream, cooldowns)
 		for model := range models[upstream.ID] {
 			rows = append(rows, availability.Summarize(upstream.ID, upstream.Name, model, candidates, byChannel[upstream.ID][model], now))
 		}
@@ -98,7 +98,7 @@ func buildAvailabilityRows(upstreams []config.UpstreamConfig, aggregates []avail
 	return rows
 }
 
-func availabilityCandidates(upstream config.UpstreamConfig) []availability.Candidate {
+func availabilityCandidates(upstream config.UpstreamConfig, cooldowns map[string]int64) []availability.Candidate {
 	result := make([]availability.Candidate, 0)
 	seen := make(map[string]bool)
 	for _, baseURL := range upstream.GetAllBaseURLs() {
@@ -119,7 +119,7 @@ func availabilityCandidates(upstream config.UpstreamConfig) []availability.Candi
 			if upstream.BuiltinProvider != "" {
 				label = "免 Key · " + id[:8]
 			}
-			result = append(result, availability.Candidate{ID: id, Label: label, Endpoint: endpoint, Protocol: identity.Protocol})
+			result = append(result, availability.Candidate{ID: id, Label: label, Endpoint: endpoint, Protocol: identity.Protocol, CooldownUntil: cooldowns[id]})
 		}
 	}
 	return result

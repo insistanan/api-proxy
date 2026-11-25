@@ -1,8 +1,8 @@
 <template>
   <teleport to="body">
     <transition-group name="gate-notif" tag="div" class="gate-notif-stack" aria-live="assertive">
-      <div v-if="pollError || decisionError" key="gate-error" class="gate-notif" role="status">
-        {{ decisionError || pollError }}
+      <div v-if="pollError || decisionError || notifications.desktopError" key="gate-error" class="gate-notif" role="status">
+        {{ decisionError || pollError || notifications.desktopError }}
       </div>
       <div
         v-for="item in pendingItems"
@@ -16,7 +16,7 @@
             {{ item.aiVerdict === 'allow' ? 'mdi-shield-check' : 'mdi-shield-alert' }}
           </UiIcon>
           <span class="gate-notif__title">
-            {{ item.aiVerdict === 'allow' ? '危险命令已放行（可否决）' : '危险命令待确认' }}
+            {{ item.aiVerdict === 'allow' ? 'AI 已放行命令' : '危险命令待确认' }}
           </span>
           <span class="gate-notif__meta">{{ item.apiType }} · {{ item.rule }}</span>
         </div>
@@ -59,7 +59,7 @@
               :disabled="decidingId !== null"
               @click="decide(item, 'block')"
             >
-              否决并拦截
+              阻止后续同命令
             </UiButton>
           </template>
         </div>
@@ -131,13 +131,12 @@ const poll = async () => {
     const fresh = response.pending
     const arrivals = fresh.filter(item => !knownIds.has(item.id))
     for (const item of arrivals) {
-      notifications.addMessage(`${item.aiVerdict === 'allow' ? '危险命令已放行（可否决）' : '危险命令待确认'}\n${item.command}${item.aiReason ? `\nAI：${item.aiReason}` : ''}`, item.aiVerdict === 'allow' ? 'warning' : 'error', { level: 'warning', source: '命令审核', key: `gate:${item.id}` })
+      notifications.addMessage(`${item.aiVerdict === 'allow' ? 'AI 已放行命令，已交付内容无法撤回' : '危险命令待确认'}\n${item.command}${item.aiReason ? `\nAI：${item.aiReason}` : ''}`, item.aiVerdict === 'allow' ? 'warning' : 'error', { level: 'warning', source: '命令审核', key: `gate:${item.id}` })
     }
     knownIds.clear()
     for (const item of fresh) knownIds.add(item.id)
     if (arrivals.length > 0) {
       playAlertSound()
-      for (const item of arrivals.slice(0, 3)) desktopNotify(item)
     }
     pendingItems.value = fresh
     pollError.value = ''
@@ -174,7 +173,8 @@ const decide = async (item: GatePending, decision: 'allow' | 'block') => {
   try {
     await api.decideGatePending(item.id, decision, controller.signal)
     if (stopped) return
-    notifications.addMessage(`${decision === 'allow' ? '已放行' : '已拦截'}命令：${item.command}`, 'success', { level: 'notice', source: '命令审核', key: `gate-decision:${item.id}:${decision}` })
+    const outcome = decision === 'allow' ? '已放行' : item.aiVerdict === 'allow' ? '已禁止后续同命令，已交付内容无法撤回' : '已拦截'
+    notifications.addMessage(`${outcome}：${item.command}`, 'success', { level: 'notice', source: '命令审核', key: `gate-decision:${item.id}:${decision}` })
     pendingItems.value = pendingItems.value.filter(pending => pending.id !== item.id)
     knownIds.delete(item.id)
   } catch (err) {
@@ -234,24 +234,6 @@ const playAlertSound = () => {
     })
   } catch {
     // 浏览器限制自动播放等场景静默跳过：气泡本身已是可见提醒。
-  }
-}
-
-// ----- 浏览器系统通知（跨 Windows/macOS/Linux，需用户授权，默认关）-----
-const desktopNotify = (item: GatePending) => {
-  if (typeof Notification === 'undefined') return
-  if (localStorage.getItem('gate-desktop-notify') !== 'enabled') return
-  if (Notification.permission !== 'granted') return
-  try {
-    const title = item.aiVerdict === 'allow' ? '危险命令已放行，可否决' : '危险命令待确认'
-    const body = `${item.rule}: ${item.command.slice(0, 120)}`
-    const notification = new Notification(title, { body, tag: `gate-${item.id}` })
-    notification.onclick = () => {
-      window.focus()
-      notification.close()
-    }
-  } catch {
-    // 通知 API 不可用静默跳过。
   }
 }
 

@@ -75,9 +75,8 @@ type CallMetadata struct {
 
 type callLogContext struct {
 	CallMetadata
-	recorded   bool
-	retryAfter string
-	sent       bool
+	recorded bool
+	sent     bool
 }
 
 // Call 在选中渠道上发起一次非流式单轮调用。prompt 是 Claude Messages 格式的
@@ -446,7 +445,6 @@ func (c *Caller) sendRequest(
 	attemptStart time.Time,
 	retried bool,
 ) (*CallResult, error) {
-	trace.retryAfter = ""
 	trace.sent = false
 	timeout := c.timeoutDuration()
 	if c.EnvConfig != nil && c.EnvConfig.Current().EnableRequestLogs && trace.APIType != "cmd_gate" {
@@ -490,7 +488,6 @@ func (c *Caller) sendRequest(
 		c.recordAttempt(selection, upstream, trace, attemptID, model, baseURL, apiKey, "failed", 0, false, attemptStart, "network", requestErr.Error(), retried, nil)
 		return nil, err
 	}
-	trace.retryAfter = response.Header.Get("Retry-After")
 	body, readErr := readBoundedResponse(response)
 	_ = response.Body.Close()
 	if readErr == nil && c.EnvConfig != nil && c.EnvConfig.Current().EnableResponseLogs && trace.APIType != "cmd_gate" {
@@ -521,7 +518,9 @@ func (c *Caller) sendRequest(
 			c.recordFinalizeNeutral(baseURL, apiKey, selection, metricsRequestID)
 		} else {
 			c.recordFinalizeFailure(baseURL, apiKey, selection, metricsRequestID)
-			c.ChannelScheduler.MarkURLFailure(selection.Kind, selection.ChannelIndex, baseURL)
+			if upstreamreq.IsEndpointFailure(response.StatusCode, body) {
+				c.ChannelScheduler.MarkURLFailure(selection.Kind, selection.ChannelIndex, baseURL)
+			}
 		}
 		err := &gateAttemptError{
 			StatusCode: response.StatusCode,
@@ -540,7 +539,9 @@ func (c *Caller) sendRequest(
 	})
 	if convertErr != nil {
 		c.recordFinalizeFailure(baseURL, apiKey, selection, metricsRequestID)
-		c.ChannelScheduler.MarkURLFailure(selection.Kind, selection.ChannelIndex, baseURL)
+		if !upstreamreq.IsUpstreamErrorEnvelope(body) || upstreamreq.IsEndpointFailure(response.StatusCode, body) {
+			c.ChannelScheduler.MarkURLFailure(selection.Kind, selection.ChannelIndex, baseURL)
+		}
 		err := fmt.Errorf("解析内部调用响应失败: %w", convertErr)
 		c.recordAttempt(selection, upstream, trace, attemptID, model, baseURL, apiKey, "failed", response.StatusCode, false, attemptStart, "response_processing", err.Error(), retried, nil)
 		return nil, &gateAttemptError{Err: err, message: redactCallText(err.Error(), apiKey)}
@@ -725,9 +726,6 @@ func (c *Caller) recordAttempt(
 				outcome, reason := availability.Classify(success, statusCode, errorType, errorMessage)
 				sample = &availability.Sample{Kind: string(selection.Kind), ChannelID: upstream.ID, Model: model,
 					CandidateID: identityUpstream.RequestIdentity(apiKey).Fingerprint(), Outcome: outcome, Reason: reason}
-				if outcome == availability.RateLimited {
-					sample.CooldownUntil = availability.Cooldown(trace.retryAfter, time.Now())
-				}
 			}
 		}
 		store.Record(metrics.RequestLogEntry{

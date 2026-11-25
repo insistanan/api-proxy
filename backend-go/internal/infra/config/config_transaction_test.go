@@ -16,7 +16,7 @@ import (
 // 不启动 watcher 或后台维护，确保失败后观察到的状态仅来自被测写操作。
 func newTransactionTestManager(t *testing.T, kind string) *ConfigManager {
 	t.Helper()
-	cfg := Config{Settings: SettingsConfig{ContentSafety: DefaultContentSafetyConfig()}}
+	cfg := Config{Settings: SettingsConfig{Gateway: DefaultGatewaySettings(), ContentSafety: DefaultContentSafetyConfig()}}
 	cs, err := cfg.channelSetFor(kind)
 	if err != nil {
 		t.Fatal(err)

@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-var semanticPlaceholderPattern = regexp.MustCompile(`\bMASKED_([A-Z0-9_]+)_[A-Z2-7]{13}_PRESERVE_EXACTLY\b`)
+var semanticPlaceholderPattern = regexp.MustCompile(`\bMASKED_([A-Z0-9_]+)_[A-Z2-7]{13}_(?:END|PRESERVE_EXACTLY)\b`)
 
 // StringValue 读取 JSON 中的可选字符串字段；缺失或类型不符时返回空串。
 func StringValue(value interface{}) string {

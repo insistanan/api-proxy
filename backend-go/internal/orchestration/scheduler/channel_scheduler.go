@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"maps"
 	"sync"
 
 	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
@@ -80,7 +81,7 @@ func (s *ChannelScheduler) ActiveChannelConversations(kind ChannelKind, channelI
 
 // ChannelKind 标识调度器所处理的渠道类型
 // 注意：这里的 kind 与 upstream.ServiceType（openai/claude/gemini）不同，
-// kind 对应的是本代理对外暴露的一等公民入口：messages / responses / gemini / chat / images。
+// kind 对应本代理对外暴露的七类渠道入口。
 type ChannelKind string
 
 const (
@@ -93,43 +94,35 @@ const (
 	ChannelKindDecisions  ChannelKind = "decisions"
 )
 
+// ChannelKinds 与配置模块共享渠道集合，返回独立切片供调用方遍历。
+func ChannelKinds() []ChannelKind {
+	names := config.ChannelKinds()
+	kinds := make([]ChannelKind, 0, len(names))
+	for _, name := range names {
+		kinds = append(kinds, ChannelKind(name))
+	}
+	return kinds
+}
+
 // NewChannelScheduler 创建多渠道调度器
 func NewChannelScheduler(
 	cfgManager *config.ConfigManager,
-	messagesMetrics *metrics.MetricsManager,
-	responsesMetrics *metrics.MetricsManager,
-	geminiMetrics *metrics.MetricsManager,
-	chatMetrics *metrics.MetricsManager,
-	imagesMetrics *metrics.MetricsManager,
-	embeddingsMetrics *metrics.MetricsManager,
-	decisionsMetrics *metrics.MetricsManager,
+	metricsByKind map[ChannelKind]*metrics.MetricsManager,
 	traceAffinity *session.TraceAffinityManager,
 	urlMgr *urlhealth.URLManager,
 ) *ChannelScheduler {
+	logStores := make(map[ChannelKind]*metrics.ChannelLogStore)
+	for _, kind := range ChannelKinds() {
+		logStores[kind] = metrics.NewChannelLogStore()
+	}
 	return &ChannelScheduler{
-		configManager: cfgManager,
-		metricsManagers: map[ChannelKind]*metrics.MetricsManager{
-			ChannelKindMessages:   messagesMetrics,
-			ChannelKindResponses:  responsesMetrics,
-			ChannelKindGemini:     geminiMetrics,
-			ChannelKindChat:       chatMetrics,
-			ChannelKindImages:     imagesMetrics,
-			ChannelKindEmbeddings: embeddingsMetrics,
-			ChannelKindDecisions:  decisionsMetrics,
-		},
-		channelLogStores: map[ChannelKind]*metrics.ChannelLogStore{
-			ChannelKindMessages:   metrics.NewChannelLogStore(),
-			ChannelKindResponses:  metrics.NewChannelLogStore(),
-			ChannelKindGemini:     metrics.NewChannelLogStore(),
-			ChannelKindChat:       metrics.NewChannelLogStore(),
-			ChannelKindImages:     metrics.NewChannelLogStore(),
-			ChannelKindEmbeddings: metrics.NewChannelLogStore(),
-			ChannelKindDecisions:  metrics.NewChannelLogStore(),
-		},
-		traceAffinity:   traceAffinity,
-		baseURLAffinity: session.NewBaseURLAffinityManager(),
-		urlManager:      urlMgr,
-		inFlightByKind:  make(map[ChannelKind]map[int]int64),
+		configManager:    cfgManager,
+		metricsManagers:  maps.Clone(metricsByKind),
+		channelLogStores: logStores,
+		traceAffinity:    traceAffinity,
+		baseURLAffinity:  session.NewBaseURLAffinityManager(),
+		urlManager:       urlMgr,
+		inFlightByKind:   make(map[ChannelKind]map[int]int64),
 	}
 }
 

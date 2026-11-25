@@ -1,13 +1,10 @@
-// Package availability 仅解释真实请求结果，不参与选渠和主动探测。
+// Package availability 解释真实请求结果，供管理台展示和免费模型排序使用，不执行主动探测。
 package availability
 
 import (
-	"encoding/json"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"net/http"
-	"strconv"
-	"strings"
-	"time"
+
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 )
 
 const (
@@ -19,6 +16,12 @@ const (
 	Ignored     = "ignored"
 )
 
+// 由调用方与分类器共用的错误阶段；ModelCapacity 同时标识明确的模型容量原因。
+const (
+	IntentState   = "intent_state"
+	ModelCapacity = "model_capacity"
+)
+
 // Sample 不包含正文和明文凭据。CandidateID 是 URL、实际协议和 Key 的组合指纹。
 type Sample struct {
 	Kind          string `json:"kind"`
@@ -27,6 +30,7 @@ type Sample struct {
 	CandidateID   string `json:"candidateId"`
 	Outcome       string `json:"outcome"`
 	Reason        string `json:"reason"`
+	// CooldownUntil 仅记录模型容量错误的显式截止时间；共享冷却读取准入控制器。
 	CooldownUntil int64  `json:"cooldownUntil,omitempty"`
 }
 
@@ -35,58 +39,31 @@ func Classify(success bool, status int, errorType, message string) (string, stri
 	switch errorType {
 	case "client_cancelled", "cancelled":
 		return Ignored, "client_cancelled"
-	case "local_admission", "build_request", "request_body", "configuration_error", "unsupported_protocol", "vision_layer", "local_response", "content_safety", "content_safety_hook":
+	case "local_admission", "build_request", "request_body", "configuration_error", "unsupported_protocol", "vision_layer", "local_response", "content_safety", "content_safety_hook", IntentState:
 		return Ignored, "local_error"
 	}
 	if success {
 		return Success, Success
 	}
-	type upstreamError struct {
-		Code   json.RawMessage `json:"code"`
-		Type   string          `json:"type"`
-		Status string          `json:"status"`
-		Param  string          `json:"param"`
+	rateLimitReason := RateLimited
+	if errorType == ModelCapacity {
+		rateLimitReason = ModelCapacity
 	}
-	var envelope struct {
-		upstreamError
-		Error    upstreamError `json:"error"`
-		Response struct {
-			Error upstreamError `json:"error"`
-		} `json:"response"`
-	}
-	// 非 JSON 错误仍按 HTTP 状态和调用阶段分类，不将正文解析失败视为成功。
-	if json.Unmarshal([]byte(message), &envelope) == nil {
-		for _, detail := range []upstreamError{envelope.Error, envelope.Response.Error, envelope.upstreamError} {
-			codes := []string{detail.Type, detail.Status}
-			var code string
-			if json.Unmarshal(detail.Code, &code) == nil {
-				codes = append([]string{code}, codes...)
-			}
-			for _, code := range codes {
-				switch strings.ToLower(code) {
-				case "model_not_found", "model_not_supported", "unsupported_model", "model_not_exist":
-					if detail.Param == "" || detail.Param == "model" {
-						return Unsupported, "model_not_found"
-					}
-					return Ignored, "request_rejected"
-				case "invalid_api_key", "authentication_error", "invalid_key", "insufficient_quota", "quota_exceeded", "account_deactivated", "unauthenticated":
-					return Credential, "credential_or_quota"
-				case "context_length_exceeded", "safety_violation":
-					return Ignored, "request_rejected"
-				case "rate_limit_exceeded", "rate_limit_error", "resource_exhausted":
-					return RateLimited, "rate_limited"
-				}
-				if upstreamreq.IsNonRetryableUpstreamErrorCode(code) {
-					return Ignored, "request_rejected"
-				}
-			}
-		}
+	switch upstreamreq.ClassifyResponseError([]byte(message)) {
+	case upstreamreq.ErrorModelUnsupported:
+		return Unsupported, "model_not_found"
+	case upstreamreq.ErrorCredential:
+		return Credential, "credential_or_quota"
+	case upstreamreq.ErrorRequestRejected:
+		return Ignored, "request_rejected"
+	case upstreamreq.ErrorRateLimited:
+		return RateLimited, rateLimitReason
 	}
 	if status == http.StatusUnauthorized || status == http.StatusPaymentRequired {
 		return Credential, "credential_or_quota"
 	}
-	if status == http.StatusTooManyRequests || errorType == "model_capacity" {
-		return RateLimited, "rate_limited"
+	if status == http.StatusTooManyRequests || errorType == ModelCapacity {
+		return RateLimited, rateLimitReason
 	}
 	// 这些阶段意味着响应未能完整交付，即便曾收到 HTTP 200 也不是成功。
 	switch errorType {
@@ -102,16 +79,4 @@ func Classify(success bool, status int, errorType, message string) (string, stri
 		return Ignored, "request_rejected"
 	}
 	return Ignored, "unclassified"
-}
-
-// Cooldown 只供观测展示。缺少有效 Retry-After 时显示 30 秒估计冷却，不改变准入。
-func Cooldown(value string, now time.Time) int64 {
-	value = strings.TrimSpace(value)
-	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds >= 0 && seconds <= 7*24*60*60 {
-		return now.Add(time.Duration(seconds) * time.Second).UnixMilli()
-	}
-	if until, err := http.ParseTime(value); err == nil && until.After(now) {
-		return until.UnixMilli()
-	}
-	return now.Add(30 * time.Second).UnixMilli()
 }

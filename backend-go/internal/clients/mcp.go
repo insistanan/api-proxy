@@ -57,6 +57,24 @@ func (api *MCPAPI) SyncToAgents() ([]mcpsync.AgentResult, error) {
 	return api.service.SyncToAgents()
 }
 
+// SyncOnStartup 先迁移旧列表，再分发当前列表；逐项保留失败原因。
+func (api *MCPAPI) SyncOnStartup(legacyPath string) error {
+	if _, err := api.MigrateLegacy(legacyPath); err != nil {
+		return fmt.Errorf("迁移旧 MCP 列表失败: %w", err)
+	}
+	results, err := api.SyncToAgents()
+	if err != nil {
+		return err
+	}
+	var failures []error
+	for _, result := range results {
+		if !result.OK {
+			failures = append(failures, fmt.Errorf("%s (%s): %s", result.Name, result.Key, result.Error))
+		}
+	}
+	return errors.Join(failures...)
+}
+
 type mcpStateResponse struct {
 	Revision string                   `json:"revision"`
 	Servers  []mcpsync.Server         `json:"servers"`

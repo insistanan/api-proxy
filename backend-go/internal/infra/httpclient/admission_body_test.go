@@ -16,7 +16,7 @@ func TestStreamHoldsSlotUntilBodyClose(t *testing.T) {
 	id := upstreamcontrol.NewIdentity("https://example.com", "responses", "fixture")
 	controller := upstreamcontrol.NewController()
 	controller.Reconcile(map[upstreamcontrol.Identity]int{id: 1})
-	ctx := upstreamcontrol.WithCandidate(upstreamcontrol.WithScope(context.Background()), controller, id)
+	ctx := upstreamcontrol.WithCandidate(upstreamcontrol.WithScope(context.Background()), controller, id, false)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://example.com/v1/responses", nil)
 	require.NoError(t, err)
 	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {

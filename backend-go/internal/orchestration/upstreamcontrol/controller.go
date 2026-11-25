@@ -4,11 +4,8 @@ package upstreamcontrol
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
-	"net/url"
-	"strings"
+	"slices"
 	"sync"
 	"time"
 )
@@ -24,30 +21,6 @@ var (
 	ErrQueueTimeout = errors.New("上游共享队列等待超过 10 秒")
 	ErrRemoved      = errors.New("上游组合已从有效配置中移除")
 )
-
-// Identity 不保留明文 Key，也不推断不同 Key 是否属于同一账号。
-type Identity struct {
-	URL        string
-	Protocol   string
-	Credential [32]byte
-}
-
-func NewIdentity(baseURL, protocol, key string) Identity {
-	baseURL = strings.TrimSpace(baseURL)
-	if parsed, err := url.Parse(baseURL); err == nil {
-		parsed.Scheme = strings.ToLower(parsed.Scheme)
-		parsed.Host = strings.ToLower(parsed.Host)
-		baseURL = parsed.String()
-	}
-	return Identity{URL: baseURL, Protocol: strings.ToLower(strings.TrimSpace(protocol)), Credential: sha256.Sum256([]byte(key))}
-}
-
-// Fingerprint 用于持久化 response ID 的归属，不记录明文凭据。
-func (id Identity) Fingerprint() string {
-	payload := append([]byte(id.URL+"\x00"+id.Protocol+"\x00"), id.Credential[:]...)
-	sum := sha256.Sum256(payload)
-	return hex.EncodeToString(sum[:])
-}
 
 func IsAdmissionError(err error) bool {
 	return errors.Is(err, ErrQueueFull) || errors.Is(err, ErrQueueTimeout) || errors.Is(err, ErrRemoved)
@@ -178,7 +151,7 @@ func (c *Controller) Acquire(ctx context.Context, id Identity) (*Lease, time.Dur
 		} else {
 			for i, queued := range state.queue {
 				if queued == w {
-					state.queue = append(state.queue[:i], state.queue[i+1:]...)
+					state.queue = slices.Delete(state.queue, i, i+1)
 					break
 				}
 			}
@@ -217,6 +190,7 @@ func (c *Controller) dispatchLocked(id Identity, state *entry) {
 			kept = append(kept, w)
 		}
 	}
+	clear(state.queue[len(kept):])
 	state.queue = kept
 	if now.Before(state.cooldown) && state.active && len(state.queue) > 0 {
 		state.wake = time.AfterFunc(time.Until(state.cooldown), func() {
@@ -230,10 +204,14 @@ func (c *Controller) dispatchLocked(id Identity, state *entry) {
 	}
 	for state.active && state.running < state.limit && len(state.queue) > 0 {
 		w := state.queue[0]
+		state.queue[0] = nil
 		state.queue = state.queue[1:]
 		state.running++
 		w.granted = true
 		close(w.ready)
+	}
+	if len(state.queue) == 0 {
+		state.queue = nil
 	}
 }
 

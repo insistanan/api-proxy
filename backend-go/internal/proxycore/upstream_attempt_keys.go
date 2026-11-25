@@ -15,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/orchestration/availability"
 	"github.com/insistanan/api-proxy/internal/orchestration/proxy"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
 	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
@@ -272,7 +273,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 					failoverState.markNeutralTermination()
 					candidate := currentBaseURL + "\x00" + apiKey
 					canRetry := retryState.CanRetryCandidate(candidate, c.Request.Context())
-					finishAttempt(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", resp.StatusCode, false, attemptStart, "model_capacity", string(respBodyBytes), canRetry, isStream, nil)
+					finishAttempt(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", resp.StatusCode, false, attemptStart, availability.ModelCapacity, string(respBodyBytes), canRetry, isStream, nil)
 					if canRetry {
 						retryCount := retryState.RecordCandidateRetry(candidate)
 						log.Printf("[%s-Capacity] 模型暂时满载，使用同一 BaseURL 和 Key 重试 (%d/%d)", apiType, retryCount, proxy.DefaultMaxSameCandidateRetries)
@@ -330,7 +331,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 						retryState.MarkKeyFailed(apiKey)
 						cfgManager.MarkKeyAsFailed(apiKey, apiType)
 						lifecycle.finalizeFailed()
-						if a.MarkURLFailure != nil {
+						if a.MarkURLFailure != nil && !decision.quotaRelated && upstreamreq.IsEndpointFailure(resp.StatusCode, respBodyBytes) {
 							a.MarkURLFailure(currentBaseURL)
 						}
 						log.Printf("[%s-Key] 警告: API密钥失败 (状态: %d)，尝试下一个密钥", apiType, resp.StatusCode)
@@ -414,7 +415,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 					retryState.MarkKeyFailed(apiKey)
 					cfgManager.MarkKeyAsFailed(apiKey, apiType)
 					lifecycle.finalizeFailed()
-					if a.MarkURLFailure != nil {
+					if a.MarkURLFailure != nil && upstreamreq.IsEndpointFailure(resp.StatusCode, sniff) {
 						a.MarkURLFailure(currentBaseURL)
 					}
 					finishAttempt(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", http.StatusBadGateway, false, attemptStart, "error_envelope", string(sniff), true, isStream, nil)

@@ -9,6 +9,20 @@
         <div><h2 class="font-semibold">消息中心</h2><p class="mt-1 text-xs text-muted-foreground">{{ store.unreadCount }} 条未读 · 已读消息在 7 天后自动移除</p></div>
         <UiButton icon="mdi-close" variant="text" size="small" aria-label="关闭消息中心" @click="open = false" />
       </header>
+      <div class="shrink-0 border-b border-border px-4 py-3">
+        <div class="flex flex-wrap items-center gap-2">
+          <label for="desktop-notification-mode" class="text-sm">系统通知</label>
+          <select id="desktop-notification-mode" :value="store.desktopMode" class="field-surface min-h-8 px-2 text-xs" @change="changeDesktopMode">
+            <option value="off">关闭</option>
+            <option value="gate">仅命令审核</option>
+            <option value="warning">仅警告</option>
+            <option value="all">全部消息</option>
+          </select>
+          <UiButton variant="text" size="small" :disabled="store.desktopMode === 'off'" @click="store.testDesktopNotification">测试通知</UiButton>
+        </div>
+        <p class="mt-2 text-xs text-muted-foreground">仅当前浏览器生效，需保持管理台打开并允许通知。系统弹窗不显示正文；未出现时检查系统通知权限与勿扰模式。</p>
+        <UiAlert v-if="store.desktopError" type="error" class="mt-2">{{ store.desktopError }}</UiAlert>
+      </div>
       <div class="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-2">
         <select v-model="levelFilter" aria-label="消息等级" class="field-surface min-h-8 px-2 text-xs">
           <option value="">所有等级</option>
@@ -65,7 +79,7 @@ import UiIcon from '@/shared/ui/icon/Icon.vue'
 import UiDialog from '@/shared/ui/overlay/Dialog.vue'
 import UiAlert from '@/shared/ui/feedback/Alert.vue'
 import AppDialog from '@/shared/components/overlay/AppDialog.vue'
-import { notificationLevel, useNotificationStore, type AppNotification, type NotificationLevel } from '@/shared/stores/notifications'
+import { notificationLevel, useNotificationStore, type AppNotification, type DesktopNotificationMode, type NotificationLevel } from '@/shared/stores/notifications'
 import { useClipboard } from '@/shared/composables/useClipboard'
 import { toastIcons } from '@/shared/composables/useToast'
 import { formatDateTime, formatShortDateTime } from '@/shared/utils/datetime'
@@ -73,6 +87,17 @@ import { formatDateTime, formatShortDateTime } from '@/shared/utils/datetime'
 const store = useNotificationStore()
 const { copyText } = useClipboard()
 const open = ref(false)
+async function changeDesktopMode(event: Event) {
+  const select = event.target as HTMLSelectElement
+  await store.setDesktopMode(select.value as DesktopNotificationMode)
+  select.value = store.desktopMode
+}
+function openFromDesktop(event: Event) {
+  open.value = true
+  const id: unknown = (event as CustomEvent).detail
+  const item = store.messages.find(message => message.id === id)
+  if (item) showDetails(item)
+}
 const hasUnreadWarning = computed(() => store.messages.some(item => item.readAt === null && notificationLevel(item) === 'warning'))
 const detailsOpen = ref(false)
 const selectedSnapshot = ref<AppNotification | null>(null)
@@ -92,8 +117,14 @@ const visibleMessages = computed(() => filteredMessages.value.slice(0, visibleLi
 watch([open, unreadOnly, levelFilter], () => { visibleLimit.value = 50; store.pruneRead() })
 watch(open, value => { if (!value) detailsOpen.value = false })
 let pruneTimer: ReturnType<typeof setInterval> | undefined
-onMounted(() => { pruneTimer = setInterval(() => store.pruneRead(), 60 * 1000) })
-onUnmounted(() => clearInterval(pruneTimer))
+onMounted(() => {
+  pruneTimer = setInterval(() => store.pruneRead(), 60 * 1000)
+  window.addEventListener('api-proxy-open-notifications', openFromDesktop)
+})
+onUnmounted(() => {
+  clearInterval(pruneTimer)
+  window.removeEventListener('api-proxy-open-notifications', openFromDesktop)
+})
 </script>
 
 <style>

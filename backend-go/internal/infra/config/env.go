@@ -1,7 +1,7 @@
 package config
 
 import (
-	"log"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -46,30 +46,26 @@ type EnvConfig struct {
 	settingsProvider          func() GatewaySettings
 }
 
-// NewEnvConfig 创建环境配置。
-// .env 仅解析 6 项核心配置，其余字段初始化为稳态最佳默认值。
-func NewEnvConfig() *EnvConfig {
-	env := getEnv("ENV", "production")
-	logLevel := getEnv("LOG_LEVEL", "info")
-	isDebug := logLevel == "debug"
+// DefaultEnvConfig 返回独立默认配置，不读取进程环境；运行时策略和测试夹具均可复用。
+func DefaultEnvConfig() *EnvConfig {
 	// 网关策略默认值以 DefaultGatewaySettings 为唯一来源，避免与持久化设置各写一份。
 	defaults := DefaultGatewaySettings()
 
 	return &EnvConfig{
 		// 6 项核心外部环境变量
-		Port:           getEnvAsInt("PORT", 3000),
-		Env:            env,
-		ProxyAccessKey: getEnv("PROXY_ACCESS_KEY", "your-proxy-access-key"),
-		EnableWebUI:    getEnv("ENABLE_WEB_UI", "true") != "false",
-		LogLevel:       logLevel,
-		LogToConsole:   getEnv("LOG_TO_CONSOLE", "false") == "true",
+		Port:           3000,
+		Env:            "production",
+		ProxyAccessKey: "your-proxy-access-key",
+		EnableWebUI:    true,
+		LogLevel:       "info",
+		LogToConsole:   false,
 
 		// 日志与调试：根据 LogLevel 或稳态默认值自动决定
 		EnableRequestLogs:           defaults.EnableRequestLogs,
 		EnableResponseLogs:          defaults.EnableResponseLogs,
 		LogCaptureMode:              defaults.LogCaptureMode,
 		LogBodyLimitKB:              defaults.LogBodyLimitKB,
-		QuietPollingLogs:            !isDebug, // 非 debug 模式下静默轮询日志
+		QuietPollingLogs:            true, // 非 debug 模式下静默轮询日志
 		RawLogOutput:                false,
 		SSEDebugLevel:               "off",
 		RewriteResponseModel:        false,
@@ -94,6 +90,48 @@ func NewEnvConfig() *EnvConfig {
 	}
 }
 
+// LoadEnvConfig 只在启动时读取环境变量。缺失采用默认值，显式无效值必须报错。
+func LoadEnvConfig() (*EnvConfig, error) {
+	current := DefaultEnvConfig()
+	if value, exists := os.LookupEnv("PORT"); exists {
+		port, err := strconv.Atoi(value)
+		if err != nil || port < 1 || port > 65535 {
+			return nil, fmt.Errorf("PORT 必须是 1 至 65535 之间的整数")
+		}
+		current.Port = port
+	}
+	for key, target := range map[string]*bool{"ENABLE_WEB_UI": &current.EnableWebUI, "LOG_TO_CONSOLE": &current.LogToConsole} {
+		if value, exists := os.LookupEnv(key); exists {
+			if value != "true" && value != "false" {
+				return nil, fmt.Errorf("%s 必须是 true 或 false", key)
+			}
+			*target = value == "true"
+		}
+	}
+	if value, exists := os.LookupEnv("ENV"); exists {
+		if value != "production" && value != "development" {
+			return nil, fmt.Errorf("ENV 必须是 production 或 development")
+		}
+		current.Env = value
+	}
+	if value, exists := os.LookupEnv("LOG_LEVEL"); exists {
+		switch value {
+		case "error", "warn", "info", "debug":
+			current.LogLevel = value
+		default:
+			return nil, fmt.Errorf("LOG_LEVEL 必须是 error、warn、info 或 debug")
+		}
+	}
+	if value, exists := os.LookupEnv("PROXY_ACCESS_KEY"); exists {
+		if value == "" {
+			return nil, fmt.Errorf("PROXY_ACCESS_KEY 不能为空")
+		}
+		current.ProxyAccessKey = value
+	}
+	current.QuietPollingLogs = current.LogLevel != "debug"
+	return current, nil
+}
+
 // IsDevelopment 是否为开发环境
 func (c *EnvConfig) IsDevelopment() bool {
 	return c.Env == "development"
@@ -107,46 +145,43 @@ func (c *EnvConfig) IsProduction() bool {
 // LoadDotEnv 加载 .env。先读可执行文件同目录，再读进程工作目录；
 // 已存在的环境变量不覆盖。两条路径相同则只加载一次。
 // 返回实际加载成功的文件路径（可能为空）。
-func LoadDotEnv() []string {
+func LoadDotEnv() ([]string, error) {
 	loaded := make([]string, 0, 2)
-	for _, envPath := range candidateDotEnvPaths() {
+	paths, err := candidateDotEnvPaths()
+	if err != nil {
+		return nil, err
+	}
+	for _, envPath := range paths {
 		if _, err := os.Stat(envPath); err != nil {
 			if !os.IsNotExist(err) {
-				log.Printf("[Env-Load] 无法访问 %s: %v", envPath, err)
+				return loaded, fmt.Errorf("无法访问 %s: %w", envPath, err)
 			}
 			continue
 		}
 		if err := godotenv.Load(envPath); err != nil {
-			log.Printf("[Env-Load] 加载失败 %s: %v", envPath, err)
-			continue
+			return loaded, fmt.Errorf("加载 %s 失败: %w", envPath, err)
 		}
 		loaded = append(loaded, envPath)
 	}
-	return loaded
+	return loaded, nil
 }
 
-func candidateDotEnvPaths() []string {
+func candidateDotEnvPaths() ([]string, error) {
 	paths := make([]string, 0, 2)
-	seen := make(map[string]struct{}, 2)
-	add := func(envPath string) {
-		if envPath == "" {
-			return
-		}
-		absolutePath, err := filepath.Abs(envPath)
-		if err != nil {
-			return
-		}
-		if _, exists := seen[absolutePath]; exists {
-			return
-		}
-		seen[absolutePath] = struct{}{}
-		paths = append(paths, absolutePath)
+	executablePath, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("解析可执行文件路径失败: %w", err)
 	}
-	if executablePath, err := os.Executable(); err == nil {
-		add(filepath.Join(filepath.Dir(executablePath), ".env"))
+	workingPath, err := filepath.Abs(".env")
+	if err != nil {
+		return nil, fmt.Errorf("解析工作目录环境文件路径失败: %w", err)
 	}
-	add(".env")
-	return paths
+	executableEnv := filepath.Join(filepath.Dir(executablePath), ".env")
+	paths = append(paths, executableEnv)
+	if !SamePath(executableEnv, workingPath) {
+		paths = append(paths, workingPath)
+	}
+	return paths, nil
 }
 
 // ShouldLog 是否应该记录日志
@@ -169,22 +204,4 @@ func (c *EnvConfig) ShouldLog(level string) bool {
 	}
 
 	return requestLevel <= currentLevel
-}
-
-// getEnv 获取环境变量，如果不存在则返回默认值
-func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
-}
-
-// getEnvAsInt 获取环境变量并转换为整数
-func getEnvAsInt(key string, defaultValue int) int {
-	if value := os.Getenv(key); value != "" {
-		if intValue, err := strconv.Atoi(value); err == nil {
-			return intValue
-		}
-	}
-	return defaultValue
 }

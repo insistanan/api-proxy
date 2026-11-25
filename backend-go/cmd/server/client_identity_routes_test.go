@@ -49,14 +49,14 @@ func TestConvertedRequestIdentityFollowsUpstream(t *testing.T) {
 				channelAdminRequest(t, r, http.MethodPost, "/api/"+entry+"/channels", fmt.Sprintf(
 					`{"name":"official","baseUrl":"https://upstream.example/v1/%s","useFullUrl":true,"apiKeys":["fixture-key"],"serviceType":%q,"clientIdentityMode":%q}`,
 					target, upstream, mode.identity), http.StatusOK)
-				app.envCfg = &config.EnvConfig{ProxyAccessKey: "test-admin", LogLevel: "error", MaxRequestBodySize: 1024 * 1024, RequestTimeout: 5502}
+				app.envCfg = &config.EnvConfig{ProxyAccessKey: "test-admin", LogLevel: "error", MaxRequestBodySize: 1024 * 1024, RequestTimeout: 5502, ResponseHeaderTimeout: 5}
 				app.contentSafetyPipeline = pipeline.NewContentSafetyPipeline(app.cfgManager)
 				manager, err := session.NewPersistentSessionManager(filepath.Join(t.TempDir(), "sessions.db"), time.Hour, 0, 0)
 				require.NoError(t, err)
 				t.Cleanup(manager.Stop)
 				app.sessionManager = manager
 				app.setupProxyEndpoints(r)
-				client, err := httpclient.GetManager().GetStandardClient(5502*time.Millisecond, false, "")
+				client, err := httpclient.GetManager().GetClient(httpclient.ClientOptions{Timeout: 5502 * time.Millisecond, ResponseHeaderTimeout: 5 * time.Second})
 				require.NoError(t, err)
 				original := client.Transport
 				t.Cleanup(func() { client.Transport = original })

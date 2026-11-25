@@ -40,7 +40,7 @@ type UpstreamAttempt struct {
 	Upstream           *config.UpstreamConfig
 	RequestedModel     string
 	AllowModelFailover bool
-	URLResults         []urlhealth.URLLatencyResult
+	URLResults         []urlhealth.Candidate
 	RequestBody        []byte
 	IsStream           bool
 	RequestTimeout     time.Duration

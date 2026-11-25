@@ -203,8 +203,8 @@ func preferConversationBaseURL(
 	envCfg *config.EnvConfig,
 	apiType string,
 	logCtx AttemptLogContext,
-	urlResults []urlhealth.URLLatencyResult,
-) []urlhealth.URLLatencyResult {
+	urlResults []urlhealth.Candidate,
+) []urlhealth.Candidate {
 	if channelScheduler == nil || logCtx.ConversationID == "" {
 		return urlResults
 	}
@@ -219,14 +219,6 @@ func preferConversationBaseURL(
 }
 
 // BuildDefaultURLResults 将 URLs 转为按原始顺序的结果列表（无动态排序）
-func BuildDefaultURLResults(urls []string) []urlhealth.URLLatencyResult {
-	results := make([]urlhealth.URLLatencyResult, len(urls))
-	for i, url := range urls {
-		results[i] = urlhealth.URLLatencyResult{
-			URL:         url,
-			OriginalIdx: i,
-			Success:     true,
-		}
-	}
-	return results
+func BuildDefaultURLResults(urls []string) []urlhealth.Candidate {
+	return urlhealth.InConfigOrder(urls)
 }

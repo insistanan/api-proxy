@@ -32,6 +32,17 @@ func (cfg *Config) channelSets() []channelSet {
 	}
 }
 
+// ChannelKinds 从配置字段映射导出渠道类型，装配与管理路由共用同一集合。
+func ChannelKinds() []string {
+	var cfg Config
+	sets := cfg.channelSets()
+	kinds := make([]string, 0, len(sets))
+	for _, set := range sets {
+		kinds = append(kinds, set.kind)
+	}
+	return kinds
+}
+
 // channelSetFor 返回指定渠道类型的存放位置。
 // 未知类型显式报错，避免误写入 Messages 配置。
 func (cfg *Config) channelSetFor(kind string) (*channelSet, error) {
@@ -80,19 +91,6 @@ func (cm *ConfigManager) AddChannel(kind string, up UpstreamConfig) (AddedUpstre
 	up.DefaultModel = strings.TrimSpace(up.DefaultModel)
 	if kind == "images" {
 		up.ResponsesModel = strings.TrimSpace(up.ResponsesModel)
-		if err := ValidateImagesUpstream(&up); err != nil {
-			return AddedUpstream{}, err
-		}
-	}
-	if kind == "embeddings" {
-		if err := ValidateEmbeddingsUpstream(&up); err != nil {
-			return AddedUpstream{}, err
-		}
-	}
-	if kind == "decisions" {
-		if err := ValidateDecisionsUpstream(&up); err != nil {
-			return AddedUpstream{}, err
-		}
 	}
 	next, result, err := addValidatedUpstreamOp(&candidate, cs, up)
 	if err != nil {
@@ -131,21 +129,6 @@ func (cm *ConfigManager) UpdateChannel(kind string, index int, updates UpstreamU
 	shouldReset, err := applyCommonUpdatesToList(&candidate, cs, index, updates)
 	if err != nil {
 		return false, err
-	}
-	if kind == "images" {
-		if err := ValidateImagesUpstream(&upstreams[index]); err != nil {
-			return false, err
-		}
-	}
-	if kind == "embeddings" {
-		if err := ValidateEmbeddingsUpstream(&upstreams[index]); err != nil {
-			return false, err
-		}
-	}
-	if kind == "decisions" {
-		if err := ValidateDecisionsUpstream(&upstreams[index]); err != nil {
-			return false, err
-		}
 	}
 
 	err = cm.saveConfigLocked(candidate)

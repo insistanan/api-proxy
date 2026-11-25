@@ -19,6 +19,7 @@ func TestFreeModelRankingUsesActualCandidateHealth(t *testing.T) {
 			Count: count, Recent: count, LastSeen: now.UnixMilli(), Bucket: now.UnixMilli() / availability.BucketMillis * availability.BucketMillis}
 	}
 	cooling := sample("cooling", availability.RateLimited, 1)
+	cooling.Reason = availability.ModelCapacity
 	cooling.CooldownUntil = now.Add(time.Minute).UnixMilli()
 	history := []availability.Aggregate{sample("bad", availability.Failure, 5), sample("healthy", availability.Success, 10),
 		cooling, sample("missing", availability.Unsupported, 1), sample(config.KiloAutoModelID, availability.Success, 100)}
@@ -39,4 +40,6 @@ func TestFreeModelRankingUsesActualCandidateHealth(t *testing.T) {
 	require.Equal(t, "bad", ids("free", []availability.Aggregate{stale})[0])
 	cooling.CooldownUntil = now.Add(-time.Second).UnixMilli()
 	require.Contains(t, ids("free", []availability.Aggregate{cooling}), "cooling")
+	cooling.Reason, cooling.CooldownUntil = availability.RateLimited, now.Add(time.Minute).UnixMilli()
+	require.Contains(t, ids("free/cooling", []availability.Aggregate{cooling}), "cooling", "共享凭据冷却交给准入排队，不能用历史估计过滤模型")
 }

@@ -18,7 +18,11 @@ import (
 )
 
 func main() {
-	loadedEnvFiles := config.LoadDotEnv()
+	loadedEnvFiles, err := config.LoadDotEnv()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	if len(loadedEnvFiles) == 0 {
 		log.Println("没有找到 .env 文件，使用环境变量或默认值")
 	} else {

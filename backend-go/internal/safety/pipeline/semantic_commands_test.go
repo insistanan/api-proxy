@@ -134,7 +134,7 @@ func TestSemanticObservationReleasesReviewedStream(t *testing.T) {
 	recorder := &gateTestRecorder{}
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest("POST", "/v1/messages", nil)
-	AttachHookPipeline(c, NewContentSafetyPipelineWithSemantic(manager, recorder, nil, s), HookContext{APIType: "messages", Stream: true})
+	AttachHookPipeline(c, NewContentSafetyPipelineWithSemantic(manager, recorder, nil, s, nil), HookContext{APIType: "messages", Stream: true})
 	defer ClearAttachedSensitiveData(c)
 	require.NoError(t, FeedAttachedStreamToolArgumentsForKey(c, "messages.0", `{"command":"synthetic-`, "Bash"))
 	event := "data: {\"type\":\"content_block_delta\",\"delta\":{\"partial_json\":\"prefix\"}}\n\n"
@@ -193,7 +193,7 @@ func TestSemanticPipelineHoldsStreamAndPreservesExistingRules(t *testing.T) {
 	cfg := manager.GetSettings()
 	cfg.ContentSafety.DangerousCmd = settings
 	require.NoError(t, manager.UpdateSettings(cfg))
-	pipeline := NewContentSafetyPipelineWithSemantic(manager, &gateTestRecorder{}, nil, s)
+	pipeline := NewContentSafetyPipelineWithSemantic(manager, &gateTestRecorder{}, nil, s, nil)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest("POST", "/v1/messages", nil)
 	AttachHookPipeline(c, pipeline, HookContext{APIType: "messages", Stream: true})

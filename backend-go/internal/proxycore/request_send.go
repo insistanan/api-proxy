@@ -19,12 +19,6 @@ import (
 	"github.com/insistanan/api-proxy/internal/storage/logger"
 )
 
-// ShouldForceIdentityEncoding 判定是否应强制上游使用 identity 编码（禁止压缩）。
-// 判据唯一出处已收敛到 internal/infra/httpclient（R4-a），此处保留导出供既有调用方使用。
-func ShouldForceIdentityEncoding(req *http.Request, isStream bool) bool {
-	return httpclient.ShouldForceIdentityEncoding(req, isStream)
-}
-
 // SendRequest 将请求交给 internal/infra/httpclient.Send 发送，并记录业务日志和请求流量（R4-a）。
 // 流式请求使用不设整体超时的客户端，通过 context 处理取消，通过 body reader 检查空闲超时。
 // apiType 用于标记入口协议的日志；共享准入则使用请求上下文中绑定的实际上游协议。
@@ -52,22 +46,24 @@ func SendRequest(req *http.Request, upstream *config.UpstreamConfig, envCfg *con
 		return nil, err
 	}
 
+	settings := envCfg.Current()
 	if requestTimeout <= 0 {
-		requestTimeout = time.Duration(envCfg.Current().RequestTimeout) * time.Millisecond
+		requestTimeout = time.Duration(settings.RequestTimeout) * time.Millisecond
 	}
-	streamIdleTimeout := time.Duration(envCfg.Current().StreamIdleTimeout) * time.Second
+	streamIdleTimeout := time.Duration(settings.StreamIdleTimeout) * time.Second
 	if isStream && requestTimeout > streamIdleTimeout {
 		// 生图流式请求使用同一套请求超时策略，避免 partial_images 间隔超过
 		// 默认 5 分钟时被空闲 reader 提前中止。
 		streamIdleTimeout = requestTimeout
 	}
 	resp, err := httpclient.Send(req, httpclient.SendOptions{
-		IsStream:           isStream,
-		Timeout:            requestTimeout,
-		ProxyURL:           proxyURL,
-		InsecureSkipVerify: upstream.InsecureSkipVerify,
-		StreamIdleTimeout:  streamIdleTimeout,
-		StreamLabel:        apiType,
+		IsStream:              isStream,
+		Timeout:               requestTimeout,
+		ResponseHeaderTimeout: time.Duration(settings.ResponseHeaderTimeout) * time.Second,
+		ProxyURL:              proxyURL,
+		InsecureSkipVerify:    upstream.InsecureSkipVerify,
+		StreamIdleTimeout:     streamIdleTimeout,
+		StreamLabel:           apiType,
 	})
 	if err != nil {
 		logger.RecordTrafficContext(req.Context(), logger.TrafficLog{

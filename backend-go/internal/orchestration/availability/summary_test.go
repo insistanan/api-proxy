@@ -43,9 +43,9 @@ func TestSummaryRequiresFreshEvidenceAndEnoughSamples(t *testing.T) {
 	require.Equal(t, "unknown", row.State)
 }
 
-func TestSuccessAfterRateLimitClearsCooldownAndCancellationDoesNot(t *testing.T) {
+func TestSuccessClearsModelCooldownAndCancellationDoesNot(t *testing.T) {
 	now := time.Now()
-	limited := Aggregate{ChannelID: "c", Model: "m", CandidateID: "key", Outcome: RateLimited, Count: 1, Recent: 1,
+	limited := Aggregate{ChannelID: "c", Model: "m", CandidateID: "key", Outcome: RateLimited, Reason: ModelCapacity, Count: 1, Recent: 1,
 		LastSeen: now.Add(-time.Second).UnixMilli(), CooldownUntil: now.Add(time.Minute).UnixMilli(), LastSequence: 1}
 	cancelled := limited
 	cancelled.Outcome, cancelled.LastSeen, cancelled.LastSequence = Ignored, now.UnixMilli(), 2
@@ -56,4 +56,22 @@ func TestSuccessAfterRateLimitClearsCooldownAndCancellationDoesNot(t *testing.T)
 	row = Summarize("c", "", "m", []Candidate{{ID: "key"}}, []Aggregate{limited, succeeded, cancelled}, now)
 	require.NotEqual(t, "cooling", row.State)
 	require.Equal(t, int64(0), row.Candidates[0].CooldownUntil)
+}
+
+func TestSummary_SharedCooldownUsesLiveStateInsteadOfHistoricalEstimates(t *testing.T) {
+	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
+	history := []Aggregate{{ChannelID: "c", Model: "m", CandidateID: "key", Outcome: RateLimited, Reason: RateLimited,
+		Count: 1, Recent: 1, LastSeen: now.Add(-time.Second).UnixMilli(), CooldownUntil: now.Add(time.Hour).UnixMilli()}}
+	row := Summarize("c", "", "m", []Candidate{{ID: "key"}}, history, now)
+	require.NotEqual(t, "cooling", row.State, "历史估计不能重新建立共享冷却")
+	require.Zero(t, row.Candidates[0].CooldownUntil)
+	until := now.Add(time.Minute).UnixMilli()
+	history = append(history, Aggregate{ChannelID: "c", Model: "m", CandidateID: "key", Outcome: Success,
+		Count: 10, Recent: 10, LastSeen: now.UnixMilli()})
+	candidates := []Candidate{{ID: "key", CooldownUntil: until}}
+	row = Summarize("c", "", "m", candidates, history, now)
+	require.Equal(t, "cooling", row.State, "在途成功不应缩短其他响应要求的共享冷却")
+	require.Equal(t, until, row.Candidates[0].CooldownUntil)
+	row = Summarize("c", "", "another-model", candidates, nil, now)
+	require.Equal(t, "cooling", row.State, "共享冷却作用于相同凭据的其他模型")
 }

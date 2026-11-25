@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 import type { ToastType } from '@/shared/composables/useToast'
 
 export type NotificationLevel = 'notice' | 'warning'
+export type DesktopNotificationMode = 'off' | 'gate' | 'warning' | 'all'
 
 export interface AppNotification {
   id: string
@@ -17,6 +18,7 @@ export interface AppNotification {
 }
 
 const STORAGE_KEY = 'api-proxy-notifications'
+const DESKTOP_STORAGE_KEY = 'api-proxy-desktop-notifications'
 const READ_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 
 export function notificationLevel(item: AppNotification): NotificationLevel {
@@ -35,9 +37,65 @@ export const useNotificationStore = defineStore('notifications', () => {
   const messages = computed(() => storedMessages.value.filter(showInCenter))
   const readError = ref('')
   const writeError = ref('')
+  const desktopMode = ref<DesktopNotificationMode>('off')
+  const desktopError = ref('')
   const storageError = computed(() => [readError.value, writeError.value].filter(Boolean).join('；'))
   const unreadCount = computed(() => messages.value.filter(item => item.readAt === null).length)
   const describeError = (error: unknown) => error instanceof Error ? error.message : String(error)
+
+  function showDesktop(message?: AppNotification) {
+    if (!window.isSecureContext) throw new Error('系统通知需要 HTTPS 或 localhost；普通 HTTP 局域网地址不支持')
+    if (typeof Notification === 'undefined') throw new Error('当前浏览器不支持系统通知')
+    if (Notification.permission !== 'granted') throw new Error('尚未获得系统通知权限，请在浏览器站点设置中允许')
+    // 锁屏和系统通知历史可被他人看到，不发送命令、凭据或消息正文。
+    const notification = new Notification(message?.source === '命令审核' ? 'api-proxy · 命令审核' : 'api-proxy · 消息提醒', {
+      body: message ? '有新的消息需要关注，请打开管理台消息中心查看。' : '这是一条测试通知。',
+      tag: message ? `api-proxy-${message.id}` : 'api-proxy-notification-test'
+    })
+    notification.onclick = () => {
+      window.focus()
+      window.dispatchEvent(new CustomEvent('api-proxy-open-notifications', { detail: message?.id }))
+      notification.close()
+    }
+    notification.onerror = () => { desktopError.value = '浏览器未能显示系统通知，请检查浏览器和操作系统的通知设置' }
+  }
+
+  async function setDesktopMode(mode: DesktopNotificationMode) {
+    desktopError.value = ''
+    try {
+      if (mode !== 'off') {
+        if (!window.isSecureContext) throw new Error('系统通知需要 HTTPS 或 localhost；普通 HTTP 局域网地址不支持')
+        if (typeof Notification === 'undefined') throw new Error('当前浏览器不支持系统通知')
+        const permission = Notification.permission === 'default' ? await Notification.requestPermission() : Notification.permission
+        if (permission !== 'granted') throw new Error('未获得通知权限，请在浏览器站点设置中允许后重试')
+      }
+      localStorage.setItem(DESKTOP_STORAGE_KEY, mode)
+      desktopMode.value = mode
+    } catch (error) {
+      desktopError.value = `系统通知设置失败：${describeError(error)}`
+    }
+  }
+
+  function testDesktopNotification() {
+    desktopError.value = ''
+    try {
+      showDesktop()
+    } catch (error) {
+      desktopError.value = `测试通知失败：${describeError(error)}`
+    }
+  }
+
+  try {
+    const mode = localStorage.getItem(DESKTOP_STORAGE_KEY)
+    if (mode !== null) {
+      if (!['off', 'gate', 'warning', 'all'].includes(mode)) throw new Error('通知范围无效')
+      desktopMode.value = mode as DesktopNotificationMode
+    } else if (localStorage.getItem('gate-desktop-notify') === 'enabled') {
+      desktopMode.value = 'gate'
+    }
+  } catch (error) {
+    desktopError.value = `读取系统通知设置失败：${describeError(error)}`
+  }
 
   function persist() {
     if (readError.value) {
@@ -71,6 +129,16 @@ export const useNotificationStore = defineStore('notifications', () => {
     }
     storedMessages.value.unshift(item)
     persist()
+    const shouldNotify = desktopMode.value === 'all' ||
+      (desktopMode.value === 'warning' && notificationLevel(item) === 'warning') ||
+      (desktopMode.value === 'gate' && item.key?.startsWith('gate:'))
+    if (shouldNotify) {
+      try {
+        showDesktop(item)
+      } catch (error) {
+        desktopError.value = `系统通知发送失败：${describeError(error)}`
+      }
+    }
     return item.id
   }
 
@@ -109,5 +177,5 @@ export const useNotificationStore = defineStore('notifications', () => {
     readError.value = `消息记录读取失败：${describeError(error)}`
   }
 
-  return { messages, storageError, unreadCount, addMessage, setRead, markAllRead, pruneRead }
+  return { messages, storageError, unreadCount, addMessage, setRead, markAllRead, pruneRead, desktopMode, desktopError, setDesktopMode, testDesktopNotification }
 })

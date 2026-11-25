@@ -8,84 +8,58 @@ import (
 	"time"
 )
 
-// URLLatencyResult 单个 URL 的结果
-type URLLatencyResult struct {
+// Candidate 是按优先级排列的地址，OriginalIdx 始终对应本次配置顺序。
+type Candidate struct {
 	URL         string
-	OriginalIdx int  // 原始索引（用于指标记录）
-	Success     bool // 是否可用（未在冷却期内）
+	OriginalIdx int
 }
 
-// URLState URL 状态信息
-type URLState struct {
-	URL             string
-	OriginalIdx     int       // 原始索引（用于指标记录）
-	FailCount       int       // 连续失败次数
-	LastFailTime    time.Time // 最后失败时间
-	LastSuccessTime time.Time // 最后成功时间
-	TotalRequests   int64     // 总请求数
-	TotalFailures   int64     // 总失败数
+// InConfigOrder 构造配置顺序的候选，供不启用动态排序的调用方复用。
+func InConfigOrder(urls []string) []Candidate {
+	results := make([]Candidate, len(urls))
+	for i, url := range urls {
+		results[i] = Candidate{URL: url, OriginalIdx: i}
+	}
+	return results
 }
 
-// ChannelURLState 渠道 URL 状态
-type ChannelURLState struct {
-	ChannelIndex int
-	URLs         []*URLState
-	UpdatedAt    time.Time
+type urlState struct {
+	failCount    int
+	lastFailTime time.Time
 }
 
 // URLManager URL 管理器（非阻塞，基于 failover 动态排序）
 type URLManager struct {
-	mu              sync.RWMutex
-	channelStates   map[int]*ChannelURLState // key: channelIndex
-	failureCooldown time.Duration            // 失败冷却时间（过后允许重试）
-	maxFailCount    int                      // 最大连续失败次数（超过则移到末尾）
+	mu              sync.Mutex
+	channelStates   map[int]map[string]*urlState
+	failureCooldown time.Duration // 达到失败阈值后的降序时间
+	maxFailCount    int           // 连续失败达到此值才降序
 }
 
-// NewURLManager 创建 URL 管理器
+// NewURLManager 创建 URL 管理器；装配方必须提供正的冷却时间和失败阈值。
 func NewURLManager(failureCooldown time.Duration, maxFailCount int) *URLManager {
 	if failureCooldown <= 0 {
-		failureCooldown = 30 * time.Second // 默认 30 秒冷却
+		panic("URL 健康管理的冷却时间必须大于 0")
 	}
 	if maxFailCount <= 0 {
-		maxFailCount = 3 // 默认连续 3 次失败后移到末尾
+		panic("URL 健康管理的失败阈值必须大于 0")
 	}
 	return &URLManager{
-		channelStates:   make(map[int]*ChannelURLState),
+		channelStates:   make(map[int]map[string]*urlState),
 		failureCooldown: failureCooldown,
 		maxFailCount:    maxFailCount,
 	}
 }
 
 // GetSortedURLs 获取排序后的 URL 列表（非阻塞，立即返回）
-// 排序规则：
-// 1. 成功的 URL 优先
-// 2. 冷却期过后的失败 URL 可重试
-// 3. 仍在冷却期的失败 URL 放到最后
-func (m *URLManager) GetSortedURLs(channelIndex int, urls []string) []URLLatencyResult {
-	if len(urls) == 0 {
-		return nil
-	}
-	if len(urls) == 1 {
-		return []URLLatencyResult{{URL: urls[0], OriginalIdx: 0, Success: true}}
-	}
-
+// 冷却只影响排序，不禁止尝试；调用方仍可遍历全部候选。
+func (m *URLManager) GetSortedURLs(channelIndex int, urls []string) []Candidate {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	state := m.ensureChannelState(channelIndex, urls)
-	m.sortURLs(state)
-
-	now := time.Now()
-	results := make([]URLLatencyResult, len(state.URLs))
-
-	for i, urlState := range state.URLs {
-		results[i] = URLLatencyResult{
-			URL:         urlState.URL,
-			OriginalIdx: urlState.OriginalIdx,
-			Success:     urlState.FailCount == 0 || now.Sub(urlState.LastFailTime) >= m.failureCooldown,
-		}
-	}
-
+	states := m.syncChannelState(channelIndex, urls)
+	results := InConfigOrder(urls)
+	m.sortURLs(results, states, time.Now())
 	return results
 }
 
@@ -94,22 +68,10 @@ func (m *URLManager) MarkSuccess(channelIndex int, url string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	state, ok := m.channelStates[channelIndex]
-	if !ok {
-		return
+	if state := m.channelStates[channelIndex][url]; state != nil {
+		state.failCount = 0
+		state.lastFailTime = time.Time{}
 	}
-
-	for _, urlState := range state.URLs {
-		if urlState.URL == url {
-			urlState.FailCount = 0
-			urlState.LastSuccessTime = time.Now()
-			urlState.TotalRequests++
-			break
-		}
-	}
-
-	m.sortURLs(state)
-	state.UpdatedAt = time.Now()
 }
 
 // MarkFailure 标记 URL 失败
@@ -117,125 +79,67 @@ func (m *URLManager) MarkFailure(channelIndex int, url string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	state, ok := m.channelStates[channelIndex]
-	if !ok {
-		return
+	// 配置已移除的地址可能仍有在途请求，迟到回写不重新创建其状态。
+	if state := m.channelStates[channelIndex][url]; state != nil {
+		state.failCount++
+		state.lastFailTime = time.Now()
+		log.Printf("[URLManager] URL 失败: 渠道 [%d], URL: %s, 连续失败: %d", channelIndex, url, state.failCount)
 	}
-
-	now := time.Now()
-	for _, urlState := range state.URLs {
-		if urlState.URL == url {
-			urlState.FailCount++
-			urlState.LastFailTime = now
-			urlState.TotalRequests++
-			urlState.TotalFailures++
-			log.Printf("[URLManager] URL 失败: 渠道 [%d], URL: %s, 连续失败: %d", channelIndex, url, urlState.FailCount)
-			break
-		}
-	}
-
-	m.sortURLs(state)
-	state.UpdatedAt = time.Now()
 }
 
-func (m *URLManager) ensureChannelState(channelIndex int, urls []string) *ChannelURLState {
-	state, ok := m.channelStates[channelIndex]
-
-	if !ok {
-		state = &ChannelURLState{
-			ChannelIndex: channelIndex,
-			URLs:         make([]*URLState, len(urls)),
-			UpdatedAt:    time.Now(),
-		}
-		for i, url := range urls {
-			state.URLs[i] = &URLState{
-				URL:         url,
-				OriginalIdx: i,
-			}
-		}
-		m.channelStates[channelIndex] = state
-		return state
-	}
-
-	if !m.urlsMatch(state.URLs, urls) {
-		log.Printf("[URLManager] 检测到渠道 [%d] URL 配置变化，重置状态", channelIndex)
-		state = &ChannelURLState{
-			ChannelIndex: channelIndex,
-			URLs:         make([]*URLState, len(urls)),
-			UpdatedAt:    time.Now(),
-		}
-		for i, url := range urls {
-			state.URLs[i] = &URLState{
-				URL:         url,
-				OriginalIdx: i,
-			}
-		}
-		m.channelStates[channelIndex] = state
-	}
-
-	return state
-}
-
-func (m *URLManager) urlsMatch(states []*URLState, urls []string) bool {
-	if len(states) != len(urls) {
-		return false
-	}
-	urlSet := make(map[string]bool)
+// syncChannelState 按地址保留健康记录，顺序和原始索引由本次配置单独生成。
+func (m *URLManager) syncChannelState(channelIndex int, urls []string) map[string]*urlState {
+	previous := m.channelStates[channelIndex]
+	current := make(map[string]*urlState, len(urls))
 	for _, url := range urls {
-		urlSet[url] = true
-	}
-	for _, state := range states {
-		if !urlSet[state.URL] {
-			return false
+		state := previous[url]
+		if state == nil {
+			state = &urlState{}
 		}
+		current[url] = state
 	}
-	return true
+	if len(current) == 0 {
+		delete(m.channelStates, channelIndex)
+	} else {
+		m.channelStates[channelIndex] = current
+	}
+	return current
 }
 
 // sortURLs 对 URL 列表排序
 // 排序规则：
-// 1. 无失败记录的 URL 在最前（按原始索引排序）
+// 1. 未达到失败阈值的 URL 在最前（按当前配置索引排序）
 // 2. 冷却期已过的失败 URL 次之（按失败次数升序）
 // 3. 仍在冷却期的失败 URL 在最后（按冷却剩余时间升序）
-func (m *URLManager) sortURLs(state *ChannelURLState) {
-	now := time.Now()
-
-	sort.SliceStable(state.URLs, func(i, j int) bool {
-		ui, uj := state.URLs[i], state.URLs[j]
-
-		iNoFail := ui.FailCount == 0
-		jNoFail := uj.FailCount == 0
-		if iNoFail != jNoFail {
-			return iNoFail
+func (m *URLManager) sortURLs(results []Candidate, states map[string]*urlState, now time.Time) {
+	sort.SliceStable(results, func(i, j int) bool {
+		ui, uj := states[results[i].URL], states[results[j].URL]
+		iHealthy := ui.failCount < m.maxFailCount
+		jHealthy := uj.failCount < m.maxFailCount
+		if iHealthy != jHealthy {
+			return iHealthy
 		}
-		if iNoFail && jNoFail {
-			return ui.OriginalIdx < uj.OriginalIdx
+		if iHealthy {
+			return results[i].OriginalIdx < results[j].OriginalIdx
 		}
 
-		iCooldownPassed := now.Sub(ui.LastFailTime) >= m.failureCooldown
-		jCooldownPassed := now.Sub(uj.LastFailTime) >= m.failureCooldown
+		iCooldownPassed := now.Sub(ui.lastFailTime) >= m.failureCooldown
+		jCooldownPassed := now.Sub(uj.lastFailTime) >= m.failureCooldown
 
 		if iCooldownPassed != jCooldownPassed {
 			return iCooldownPassed
 		}
 
 		if iCooldownPassed && jCooldownPassed {
-			if ui.FailCount != uj.FailCount {
-				return ui.FailCount < uj.FailCount
+			if ui.failCount != uj.failCount {
+				return ui.failCount < uj.failCount
 			}
-			return ui.OriginalIdx < uj.OriginalIdx
+			return results[i].OriginalIdx < results[j].OriginalIdx
 		}
 
-		iRemaining := m.failureCooldown - now.Sub(ui.LastFailTime)
-		jRemaining := m.failureCooldown - now.Sub(uj.LastFailTime)
-		return iRemaining < jRemaining
+		if !ui.lastFailTime.Equal(uj.lastFailTime) {
+			return ui.lastFailTime.Before(uj.lastFailTime)
+		}
+		return results[i].OriginalIdx < results[j].OriginalIdx
 	})
-}
-
-// InvalidateAll 清除所有状态
-func (m *URLManager) InvalidateAll() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.channelStates = make(map[int]*ChannelURLState)
-	log.Printf("[URLManager] 所有渠道状态已清除")
 }

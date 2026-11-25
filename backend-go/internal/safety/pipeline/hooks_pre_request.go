@@ -152,6 +152,7 @@ type attachedHookPipeline struct {
 
 // attachedPreRequestCache 是请求级请求前钩子的结果缓存。
 type attachedPreRequestCache struct {
+	mappingGeneration int
 	inputSHA          [sha256.Size]byte
 	protocol          string // payloadProtocols[0]，空表示默认
 	output            []byte // 处理后的请求体
@@ -162,11 +163,12 @@ type attachedPreRequestCache struct {
 
 type checkedPreRequestBody struct {
 	*bytes.Reader
-	body        []byte
-	owner       *attachedHookPipeline
-	protocol    string
-	contentType string
-	size        int
+	mappingGeneration int
+	body              []byte
+	owner             *attachedHookPipeline
+	protocol          string
+	contentType       string
+	size              int
 }
 
 func (b *checkedPreRequestBody) Close() error { return nil }
@@ -178,7 +180,7 @@ func PreparedRequestBody(req *http.Request) ([]byte, bool) {
 		return nil, false
 	}
 	body, ok := req.Body.(*checkedPreRequestBody)
-	if !ok || body.owner == nil || body.Len() != body.size || body.contentType != req.Header.Get("Content-Type") {
+	if !ok || body.owner == nil || body.Len() != body.size || body.contentType != req.Header.Get("Content-Type") || body.mappingGeneration != body.owner.vault.Generation() {
 		return nil, false
 	}
 	return body.body, true
@@ -192,7 +194,7 @@ func (a *attachedHookPipeline) preparePreRequest() (bool, error) {
 	}
 	enabled := false
 	if hook := a.pipeline.preRequest; hook != nil {
-		snapshot, err := hook.currentSnapshot()
+		snapshot, err := hook.currentSnapshot(a.currentMetadata().safetySettings)
 		if err != nil {
 			return false, err
 		}
@@ -205,7 +207,7 @@ func (a *attachedHookPipeline) preparePreRequest() (bool, error) {
 
 func (s *contentSafetySnapshot) requestEnabled() bool {
 	return s.settings.SensitiveWord.Enabled || s.settings.SensitiveInfo.Enabled || s.settings.Credential.Enabled ||
-		s.settings.SensitiveData.Mode == config.ContentSafetyModeMask && s.custom != nil && s.custom.Enabled()
+		s.settings.SensitiveData.Mode == config.ContentSafetyModeMask
 }
 
 // AttachHookPipeline 将内容安全 Hook 管道绑定到当前请求。入口解析请求后调用，
@@ -222,16 +224,25 @@ func AttachHookPipeline(c requestContextSetter, pipeline *Pipeline, metadata Hoo
 		requestCtx = attachedRequestContext(getter)
 	}
 	lifecycleCtx, lifecycleCancel := context.WithCancel(requestCtx)
-	vault := sensitive.NewVaultWithContext(lifecycleCtx)
-	metadata.redactionVault = vault
-	c.Set(contentSafetyPipelineKey, &attachedHookPipeline{
+	if hook := pipeline.preRequest; hook != nil && hook.cfgManager != nil {
+		settings := hook.cfgManager.GetContentSafetyConfig()
+		metadata.safetySettings = &settings
+	}
+	attached := &attachedHookPipeline{
 		pipeline:        pipeline,
 		metadata:        metadata,
-		vault:           vault,
 		vetoGuard:       newStreamVetoGuard(),
 		lifecycleCtx:    lifecycleCtx,
 		lifecycleCancel: lifecycleCancel,
-	})
+	}
+	// 模式与映射库由同一请求快照决定，后续热更新只影响新请求。
+	if metadata.safetySettings != nil && metadata.safetySettings.SensitiveData.Mode == config.ContentSafetyModeMask && pipeline.mappingStore != nil {
+		attached.vault = pipeline.mappingStore.NewScopedVault(lifecycleCtx, metadata.RedactionScope, attached.recordRestoreMiss)
+	} else {
+		attached.vault = sensitive.NewVaultWithContext(lifecycleCtx)
+	}
+	attached.metadata.redactionVault = attached.vault
+	c.Set(contentSafetyPipelineKey, attached)
 }
 
 type requestContextSetter interface {
@@ -280,7 +291,7 @@ func runAttachedPreRequestHooks(ctx context.Context, c requestContextGetter, req
 		return nil
 	}
 	contentType := req.Header.Get("Content-Type")
-	if inspected, ok := req.Body.(*checkedPreRequestBody); ok && inspected.owner == attached && inspected.protocol == protocolKey && inspected.contentType == contentType && inspected.Len() == inspected.size {
+	if inspected, ok := req.Body.(*checkedPreRequestBody); ok && inspected.owner == attached && inspected.protocol == protocolKey && inspected.contentType == contentType && inspected.Len() == inspected.size && inspected.mappingGeneration == attached.vault.Generation() {
 		return nil
 	}
 	var (
@@ -307,7 +318,7 @@ func runAttachedPreRequestHooks(ctx context.Context, c requestContextGetter, req
 	attached.preRequestMu.Lock()
 	cached := attached.preRequestCache
 	attached.preRequestMu.Unlock()
-	if cached != nil && cached.protocol == protocolKey && cached.contentType == contentType && cached.inputSHA == inputSHA {
+	if cached != nil && cached.protocol == protocolKey && cached.contentType == contentType && cached.inputSHA == inputSHA && cached.mappingGeneration == attached.vault.Generation() {
 		if req.Header != nil && cached.outputContentType != contentType {
 			req.Header.Set("Content-Type", cached.outputContentType)
 		}
@@ -333,6 +344,7 @@ func runAttachedPreRequestHooks(ctx context.Context, c requestContextGetter, req
 	changed := !bytes.Equal(result.RequestBody, body)
 	attached.preRequestMu.Lock()
 	attached.preRequestCache = &attachedPreRequestCache{
+		mappingGeneration: attached.vault.Generation(),
 		inputSHA:          inputSHA,
 		protocol:          protocolKey,
 		output:            result.RequestBody,
@@ -348,7 +360,7 @@ func runAttachedPreRequestHooks(ctx context.Context, c requestContextGetter, req
 
 func markCheckedPreRequestBody(req *http.Request, owner *attachedHookPipeline, protocol string, body []byte) {
 	if req.Body != nil {
-		req.Body = &checkedPreRequestBody{Reader: bytes.NewReader(body), body: body, owner: owner, protocol: protocol, contentType: req.Header.Get("Content-Type"), size: len(body)}
+		req.Body = &checkedPreRequestBody{Reader: bytes.NewReader(body), mappingGeneration: owner.vault.Generation(), body: body, owner: owner, protocol: protocol, contentType: req.Header.Get("Content-Type"), size: len(body)}
 	}
 }
 
@@ -425,14 +437,15 @@ func NewContentSafetyPipelineWithRecorder(cfgManager *config.ConfigManager, reco
 	if len(cmdGate) > 0 {
 		gate = cmdGate[0]
 	}
-	return NewContentSafetyPipelineWithSemantic(cfgManager, recorder, gate, nil)
+	return NewContentSafetyPipelineWithSemantic(cfgManager, recorder, gate, nil, nil)
 }
 
-func NewContentSafetyPipelineWithSemantic(cfgManager *config.ConfigManager, recorder BlockedLogRecorder, cmdGate *CmdGate, datasets *semantic.Service) *Pipeline {
+func NewContentSafetyPipelineWithSemantic(cfgManager *config.ConfigManager, recorder BlockedLogRecorder, cmdGate *CmdGate, datasets *semantic.Service, mappingStore *sensitive.MappingStore) *Pipeline {
 	pipeline := NewPipeline()
 	pipeline.blockedLogRecorder = recorder
 	pipeline.cmdGate = cmdGate
 	pipeline.semantic = datasets
+	pipeline.mappingStore = mappingStore
 	pipeline.preRequest = &contentSafetyPreRequestHook{cfgManager: cfgManager, recorder: recorder}
 	pipeline.postResponse = &contentSafetyPostResponseHook{cfgManager: cfgManager, recorder: recorder, gate: cmdGate, semantic: datasets}
 	return pipeline
@@ -642,6 +655,7 @@ type contentSafetySnapshot struct {
 	info       *sensitive.InfoDetector
 	credential *sensitive.CredentialDetector
 	custom     *sensitive.CustomDetector
+	memo       safetyDetectionMemo
 }
 
 type contentSafetyPreRequestHook struct {
@@ -661,7 +675,7 @@ func (h *contentSafetyPreRequestHook) Run(ctx context.Context, metadata HookCont
 	snapshot := metadata.preRequestSnapshot
 	if snapshot == nil {
 		var err error
-		snapshot, err = h.currentSnapshot()
+		snapshot, err = h.currentSnapshot(metadata.safetySettings)
 		if err != nil {
 			return result, err
 		}
@@ -733,11 +747,16 @@ func (h *contentSafetyPreRequestHook) Run(ctx context.Context, metadata HookCont
 	return result, nil
 }
 
-func (h *contentSafetyPreRequestHook) currentSnapshot() (*contentSafetySnapshot, error) {
+func (h *contentSafetyPreRequestHook) currentSnapshot(requestSettings *config.ContentSafetyConfig) (*contentSafetySnapshot, error) {
 	if h.cfgManager == nil {
 		return nil, fmt.Errorf("内容安全 Hook 未绑定配置管理器")
 	}
-	settings := h.cfgManager.GetContentSafetyConfig()
+	var settings config.ContentSafetyConfig
+	if requestSettings != nil {
+		settings = *requestSettings
+	} else {
+		settings = h.cfgManager.GetContentSafetyConfig()
+	}
 	current := h.snapshot.Load()
 	if current != nil && reflect.DeepEqual(current.settings, settings) {
 		return current, nil

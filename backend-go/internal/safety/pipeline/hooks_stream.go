@@ -134,7 +134,7 @@ func feedAttachedStreamToolArguments(c requestContextGetter, key, fragment strin
 	if err := ensureAttachedStreamScanner(attached); err != nil {
 		return wrapContentSafetyHookError(err)
 	}
-	if !attached.streamSettings.DangerousCmd.Enabled && !attached.streamSettings.Credential.Enabled {
+	if !attached.streamSettings.DangerousCmd.Enabled && !attached.streamSettings.Credential.Enabled && attached.streamMaskMode != config.ContentSafetyModeMask {
 		return nil
 	}
 	if len(toolNames) > 1 {
@@ -169,7 +169,7 @@ func feedAttachedStreamToolArguments(c requestContextGetter, key, fragment strin
 		}
 		state.name = toolNames[0]
 	}
-	if state.name != "" && !sensitive.IsExecutionTool(state.name) && !attached.streamSettings.Credential.Enabled {
+	if state.name != "" && !sensitive.IsExecutionTool(state.name) && !attached.streamSettings.Credential.Enabled && attached.streamMaskMode != config.ContentSafetyModeMask {
 		// 非执行工具没有响应凭据策略时只保留身份，文件内容无需累积或解析。
 		state.ignored = true
 		state.finished = true
@@ -254,14 +254,42 @@ func (a *attachedHookPipeline) scanStreamToolArguments(c requestContextGetter, k
 	}
 	toolArgs := state.body.String()
 	reviewArgs := toolArgs
-	if a.streamSettings.DangerousCmd.Enabled && sensitive.IsExecutionTool(state.name) && a.vault != nil && a.vault.CanRestore() {
+	if a.streamMaskMode == config.ContentSafetyModeMask && a.vault != nil {
+		var err error
+		if state.rawInput {
+			err = a.vault.ValidateToolText(toolArgs)
+			reviewArgs = a.vault.Restore(toolArgs)
+		} else {
+			var restored []byte
+			restored, err = a.vault.RestoreToolJSON([]byte(toolArgs))
+			if err == nil {
+				reviewArgs = string(restored)
+				// 逐片段替换只理解一层 JSON 转义。交付前比较完整值，拒绝
+				// Unicode 转义标记或嵌套 JSON 导致的错误还原，不能执行坏参数。
+				restorer := sensitive.NewJSONStreamRestorer(a.vault)
+				streamed := restorer.Feed(toolArgs) + restorer.Flush()
+				expected, expectedErr := streamToolArgumentDigest(reviewArgs, false)
+				actual, actualErr := streamToolArgumentDigest(streamed, false)
+				if expectedErr != nil || actualErr != nil || expected != actual {
+					err = fmt.Errorf("工具参数包含无法安全逐片段还原的 JSON 转义，请使用非流式请求")
+				}
+			}
+		}
+		if err != nil {
+			return wrapContentSafetyHookError(err)
+		}
+		if err := a.vault.Err(); err != nil {
+			return wrapContentSafetyHookError(err)
+		}
+	}
+	if a.streamSettings.DangerousCmd.Enabled && sensitive.IsExecutionTool(state.name) && a.streamMaskMode != config.ContentSafetyModeMask && a.vault != nil && a.vault.CanRestore() {
 		if state.rawInput {
 			reviewArgs = a.vault.Restore(toolArgs)
 			if err := a.vault.Err(); err != nil {
 				return wrapContentSafetyHookError(err)
 			}
 		} else {
-			restored, err := a.vault.RestoreJSON([]byte(toolArgs))
+			restored, err := a.vault.RestoreToolJSON([]byte(toolArgs))
 			if err != nil {
 				return wrapContentSafetyHookError(err)
 			}
@@ -336,7 +364,7 @@ func scanAttachedStreamCredentials(c requestContextGetter, attached *attachedHoo
 	if allowlistSkipsWholeSegment(settings.Allowlist, segment.Text) {
 		return recordAllowlistAllowed(attachedRequestContext(c), metadata, attached.pipeline.blockedLogRecorder, segment)
 	}
-	matches := attached.streamCredential.FindAll(segment.Text)
+	matches := attached.streamCredential.FindField(segment.Field, segment.Text)
 	matches = filterAllowlistedCredentialMatches(matches, segment.Text, settings.Allowlist)
 	if len(matches) == 0 {
 		return nil
@@ -707,7 +735,7 @@ func ensureAttachedStreamScanner(attached *attachedHookPipeline) error {
 		return nil
 	}
 	if hook := attached.pipeline.postResponse; hook != nil {
-		snapshot, err := hook.currentSnapshot()
+		snapshot, err := hook.currentSnapshot(attached.currentMetadata().safetySettings)
 		if err != nil {
 			return err
 		}

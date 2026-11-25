@@ -74,6 +74,7 @@ type Candidate struct {
 	Recent        Counts `json:"recent"`
 	lastEffective int64
 	lastSequence  int64
+	modelCooldown int64
 }
 
 type Row struct {
@@ -113,7 +114,10 @@ func Summarize(channelID, name, model string, candidates []Candidate, aggregates
 			candidate.lastSequence = a.LastSequence
 			candidate.LastOutcome = a.Outcome
 			candidate.LastReason = a.Reason
-			candidate.CooldownUntil = a.CooldownUntil
+			candidate.modelCooldown = 0
+			if a.Outcome == RateLimited && a.Reason == ModelCapacity {
+				candidate.modelCooldown = a.CooldownUntil
+			}
 		}
 		row.Counts.add(a.Outcome, a.Count)
 		row.Recent.add(a.Outcome, a.Recent)
@@ -128,7 +132,12 @@ func Summarize(channelID, name, model string, candidates []Candidate, aggregates
 	for i := range row.Candidates {
 		c := &row.Candidates[i]
 		c.State = "unknown"
-		if c.LastOutcome == RateLimited && c.CooldownUntil > now.UnixMilli() {
+		// 输入携带当前共享冷却；模型成功只能清除模型冷却，不能改写共享准入状态。
+		c.CooldownUntil = max(c.CooldownUntil, c.modelCooldown)
+		if c.CooldownUntil <= now.UnixMilli() {
+			c.CooldownUntil = 0
+		}
+		if c.CooldownUntil > 0 {
 			c.State = "cooling"
 		} else if c.lastEffective >= now.Add(-time.Hour).UnixMilli() {
 			switch c.LastOutcome {

@@ -3,7 +3,8 @@ package settings
 
 import (
 	"encoding/json"
-	"log"
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -11,6 +12,7 @@ import (
 	adminshared "github.com/insistanan/api-proxy/internal/api/admin/shared"
 	"github.com/insistanan/api-proxy/internal/api/common"
 	"github.com/insistanan/api-proxy/internal/clients"
+	"github.com/insistanan/api-proxy/internal/clients/extensions"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 )
@@ -113,7 +115,7 @@ func UpdateSettings(cfgManager *config.ConfigManager, skillsAPI *clients.SkillsA
 			var saveErr error
 			var userBadRequest bool
 			lockErr := adminshared.WithExtensionsLocks(skillsAPI, mcpAPI, func() error {
-				migrated, rollback, migErr := config.MigrateSkillsDir(oldSkillsDir, newSkillsDir)
+				migrated, rollback, migErr := extensions.MigrateSkillsDir(oldSkillsDir, newSkillsDir)
 				if migErr != nil {
 					userBadRequest = config.IsConfigError(migErr)
 					return migErr
@@ -121,7 +123,7 @@ func UpdateSettings(cfgManager *config.ConfigManager, skillsAPI *clients.SkillsA
 				if err := cfgManager.UpdateSettings(settings); err != nil {
 					if migrated && rollback != nil && !config.IsCommittedError(err) {
 						if rbErr := rollback(); rbErr != nil {
-							log.Printf("[Settings-Migrate] 配置保存失败后回滚 Skills 目录失败 (%s -> %s): %v", newSkillsDir, oldSkillsDir, rbErr)
+							err = errors.Join(err, fmt.Errorf("恢复 Skills 目录失败: %w", rbErr))
 						}
 					}
 					saveErr = err

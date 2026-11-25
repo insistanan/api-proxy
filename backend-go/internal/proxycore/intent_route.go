@@ -75,12 +75,12 @@ func (a UpstreamAttempt) pinIntentCredentials() UpstreamAttempt {
 			}
 			if turn.Strict() {
 				up.APIKeys = []string{key}
-				a.URLResults = []urlhealth.URLLatencyResult{candidate}
+				a.URLResults = []urlhealth.Candidate{candidate}
 			} else {
 				up.APIKeys = append([]string{key}, a.Upstream.APIKeys[:keyIndex]...)
 				up.APIKeys = append(up.APIKeys, a.Upstream.APIKeys[keyIndex+1:]...)
 				remaining := a.URLResults[urlIndex+1:]
-				a.URLResults = append([]urlhealth.URLLatencyResult{candidate}, a.URLResults[:urlIndex]...)
+				a.URLResults = append([]urlhealth.Candidate{candidate}, a.URLResults[:urlIndex]...)
 				a.URLResults = append(a.URLResults, remaining...)
 			}
 			a.Upstream = up

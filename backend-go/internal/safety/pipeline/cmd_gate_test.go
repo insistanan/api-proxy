@@ -107,13 +107,16 @@ func newGateTestHarness(t *testing.T, waitSeconds int) *gateTestHarness {
 			manager.Stop()
 		}
 	})
-	channelScheduler := scheduler.NewChannelScheduler(
-		cfgManager,
-		metricsManagers[0], metricsManagers[1], metricsManagers[2], metricsManagers[3], metricsManagers[4],
-		metricsManagers[5], metricsManagers[6],
-		nil, nil,
-	)
-	caller := &llmgate.Caller{EnvConfig: config.NewEnvConfig(), CfgManager: cfgManager, ChannelScheduler: channelScheduler}
+	channelScheduler := scheduler.NewChannelScheduler(cfgManager, map[scheduler.ChannelKind]*metrics.MetricsManager{
+		scheduler.ChannelKindMessages:   metricsManagers[0],
+		scheduler.ChannelKindResponses:  metricsManagers[1],
+		scheduler.ChannelKindGemini:     metricsManagers[2],
+		scheduler.ChannelKindChat:       metricsManagers[3],
+		scheduler.ChannelKindImages:     metricsManagers[4],
+		scheduler.ChannelKindEmbeddings: metricsManagers[5],
+		scheduler.ChannelKindDecisions:  metricsManagers[6],
+	}, nil, nil)
+	caller := &llmgate.Caller{EnvConfig: config.DefaultEnvConfig(), CfgManager: cfgManager, ChannelScheduler: channelScheduler}
 	harness.gate = NewCmdGate(cfgManager, caller, store, harness.recorder)
 	return harness
 }

@@ -18,7 +18,7 @@ func TestVaultMasksReusesAndRestoresExactValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("脱敏失败: %v", err)
 	}
-	if strings.Contains(masked, original) || strings.Count(masked, "MASKED_SECRET_") != 2 || !strings.Contains(masked, "_PRESERVE_EXACTLY") {
+	if strings.Contains(masked, original) || strings.Count(masked, "MASKED_SECRET_") != 2 || !strings.Contains(masked, "_END") {
 		t.Fatalf("脱敏结果错误: %q", masked)
 	}
 	parts := strings.Split(masked, ", second=")

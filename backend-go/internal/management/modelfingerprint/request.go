@@ -115,7 +115,8 @@ func (s *Service) sample(ctx context.Context, target *Target, challenge lmfpd.Ch
 	ctx = s.cfg.UpstreamRequestContext(upstreamcontrol.WithScope(ctx), target.upstream, target.apiKey)
 	resp, err := httpclient.Send(req.WithContext(ctx), httpclient.SendOptions{
 		IsStream: true, ProxyURL: target.proxyURL, InsecureSkipVerify: target.upstream.InsecureSkipVerify,
-		StreamIdleTimeout: sampleTimeout, StreamLabel: "ModelFingerprint", DisableRedirects: true,
+		StreamIdleTimeout: sampleTimeout, StreamLabel: "ModelFingerprint",
+		ResponseHeaderTimeout: time.Duration(s.cfg.GetGatewaySettings().ResponseHeaderTimeout) * time.Second,
 	})
 	if err != nil {
 		return fail(fmt.Errorf("请求上游失败：%w", err))

@@ -112,7 +112,7 @@ func TestCommittedOperationsFinishSchedulerCleanup(t *testing.T) {
 				}
 				mm := metrics.NewMetricsManager()
 				trace := session.NewTraceAffinityManager()
-				sch := scheduler.NewChannelScheduler(cm, mm, nil, nil, nil, nil, nil, nil, trace, nil)
+				sch := scheduler.NewChannelScheduler(cm, map[scheduler.ChannelKind]*metrics.MetricsManager{scheduler.ChannelKindMessages: mm}, trace, nil)
 				t.Cleanup(sch.Stop)
 				breaker := circuit.NewManager(circuit.Config{FailureThreshold: 1, Cooldown: time.Hour}, true)
 				sch.SetCircuitManager(breaker)

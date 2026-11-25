@@ -14,7 +14,26 @@ import (
 	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
 	"github.com/insistanan/api-proxy/internal/orchestration/urlhealth"
 	"github.com/insistanan/api-proxy/internal/storage/metrics"
+	"github.com/stretchr/testify/require"
 )
+
+func TestInitializeProfiles_RejectsMissingProtocolMetrics(t *testing.T) {
+	manager, err := config.NewConfigManager(filepath.Join(t.TempDir(), "config.json"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, manager.Close()) })
+	managers := make(map[ChannelKind]*metrics.MetricsManager)
+	for _, kind := range ChannelKinds() {
+		if kind != ChannelKindDecisions {
+			managers[kind] = metrics.NewMetricsManager()
+		}
+	}
+	sch := NewChannelScheduler(manager, managers, nil, nil)
+	t.Cleanup(sch.Stop)
+	sch.SetProfileManager(metrics.NewProfileManager())
+	require.ErrorContains(t, sch.InitializeProfiles(), "decisions")
+	sch.metricsManagers[ChannelKindDecisions] = metrics.NewMetricsManager()
+	require.NoError(t, sch.InitializeProfiles())
+}
 
 func TestActiveChannelConversationsDeduplicatesUntilLastRequestEnds(t *testing.T) {
 	s := &ChannelScheduler{}
@@ -105,7 +124,13 @@ func createTestScheduler(t *testing.T, cfg config.Config) (*ChannelScheduler, fu
 	traceAffinity := session.NewTraceAffinityManager()
 	urlManager := urlhealth.NewURLManager(30*time.Second, 3)
 
-	scheduler := NewChannelScheduler(cfgManager, messagesMetrics, responsesMetrics, geminiMetrics, chatMetrics, imagesMetrics, nil, nil, traceAffinity, urlManager)
+	scheduler := NewChannelScheduler(cfgManager, map[ChannelKind]*metrics.MetricsManager{
+		ChannelKindMessages:  messagesMetrics,
+		ChannelKindResponses: responsesMetrics,
+		ChannelKindGemini:    geminiMetrics,
+		ChannelKindChat:      chatMetrics,
+		ChannelKindImages:    imagesMetrics,
+	}, traceAffinity, urlManager)
 
 	return scheduler, func() {
 		scheduler.Stop()

@@ -102,23 +102,3 @@ func TestReadRequestBody_DecompressionBomb(t *testing.T) {
 	assert.Nil(t, bodyBytes)
 	assert.Equal(t, http.StatusRequestEntityTooLarge, responseRecorder.Code)
 }
-
-func TestShouldForceIdentityEncoding(t *testing.T) {
-	// 1. isStream = true 必须强制 identity
-	streamReq, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/chat/completions", nil)
-	assert.True(t, ShouldForceIdentityEncoding(streamReq, true))
-
-	// 2. Gemini 流式 URL (streamGenerateContent) 必须强制 identity
-	geminiReq, _ := http.NewRequest(http.MethodPost, "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse", nil)
-	assert.True(t, ShouldForceIdentityEncoding(geminiReq, false))
-
-	// 3. Accept 包含 text/event-stream 必须强制 identity
-	sseAcceptReq, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/responses", nil)
-	sseAcceptReq.Header.Set("Accept", "text/event-stream")
-	assert.True(t, ShouldForceIdentityEncoding(sseAcceptReq, false))
-
-	// 4. 普通非流式请求不强制 identity
-	normalReq, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/chat/completions", nil)
-	normalReq.Header.Set("Accept", "application/json")
-	assert.False(t, ShouldForceIdentityEncoding(normalReq, false))
-}

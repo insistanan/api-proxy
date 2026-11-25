@@ -163,7 +163,11 @@ func (s *Service) embed(ctx context.Context, cfg config.IntentRoutingConfig, inp
 	}
 	req.Header.Set("Content-Type", "application/json")
 	upstreamreq.SetAuthenticationHeader(req.Header, key)
-	response, err := httpclient.Send(req, httpclient.SendOptions{Timeout: time.Duration(cfg.TimeoutMS) * time.Millisecond, ProxyURL: proxyURL, InsecureSkipVerify: up.InsecureSkipVerify})
+	response, err := httpclient.Send(req, httpclient.SendOptions{
+		Timeout:               time.Duration(cfg.TimeoutMS) * time.Millisecond,
+		ResponseHeaderTimeout: time.Duration(s.Cfg.GetGatewaySettings().ResponseHeaderTimeout) * time.Second,
+		ProxyURL: proxyURL, InsecureSkipVerify: up.InsecureSkipVerify,
+	})
 	if err != nil {
 		if ctx.Err() != nil || upstreamcontrol.IsLocalError(err) {
 			selection.Permit.RecordHealthNeutral()

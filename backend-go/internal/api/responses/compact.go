@@ -77,6 +77,7 @@ func CompactHandler(
 		}
 		model := compactRequestModel(bodyBytes)
 		pipeline.AttachHookPipeline(c, contentSafetyPipeline, pipeline.HookContext{
+			RedactionScope: proxycore.RedactionScope(identity, envCfg.Current().ProxyAccessKey),
 			APIType:        string(scheduler.ChannelKindResponses),
 			Model:          model,
 			Stream:         false,

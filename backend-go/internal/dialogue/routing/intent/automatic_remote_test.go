@@ -27,7 +27,15 @@ func automaticRemoteService(t *testing.T, protocol, baseURL string) *Service {
 		managers[i] = metrics.NewMetricsManager()
 		t.Cleanup(managers[i].Stop)
 	}
-	sch := scheduler.NewChannelScheduler(s.Cfg, managers[0], managers[1], managers[2], managers[3], managers[4], managers[5], managers[6], nil, nil)
+	sch := scheduler.NewChannelScheduler(s.Cfg, map[scheduler.ChannelKind]*metrics.MetricsManager{
+		scheduler.ChannelKindMessages:   managers[0],
+		scheduler.ChannelKindResponses:  managers[1],
+		scheduler.ChannelKindGemini:     managers[2],
+		scheduler.ChannelKindChat:       managers[3],
+		scheduler.ChannelKindImages:     managers[4],
+		scheduler.ChannelKindEmbeddings: managers[5],
+		scheduler.ChannelKindDecisions:  managers[6],
+	}, nil, nil)
 	t.Cleanup(sch.Stop)
 	up := config.UpstreamConfig{ID: "classifier", Name: "自动分类测试", BaseURL: baseURL, ServiceType: "openai", APIKeys: []string{"test-key"}, DefaultModel: "default-model"}
 	kind := "decisions"
@@ -36,7 +44,7 @@ func automaticRemoteService(t *testing.T, protocol, baseURL string) *Service {
 	}
 	_, err := s.Cfg.AddChannel(kind, up)
 	require.NoError(t, err)
-	s.Caller = &llmgate.Caller{EnvConfig: config.NewEnvConfig(), CfgManager: s.Cfg, ChannelScheduler: sch}
+	s.Caller = &llmgate.Caller{EnvConfig: config.DefaultEnvConfig(), CfgManager: s.Cfg, ChannelScheduler: sch}
 	return s
 }
 

@@ -67,7 +67,13 @@ func TestGetDashboard_IncludesStripThoughtSignature(t *testing.T) {
 
 	traceAffinity := session.NewTraceAffinityManager()
 	urlManager := urlhealth.NewURLManager(30*time.Second, 3)
-	sch := scheduler.NewChannelScheduler(cfgManager, messagesMetrics, responsesMetrics, geminiMetrics, chatMetrics, imagesMetrics, nil, nil, traceAffinity, urlManager)
+	sch := scheduler.NewChannelScheduler(cfgManager, map[scheduler.ChannelKind]*metrics.MetricsManager{
+		scheduler.ChannelKindMessages:  messagesMetrics,
+		scheduler.ChannelKindResponses: responsesMetrics,
+		scheduler.ChannelKindGemini:    geminiMetrics,
+		scheduler.ChannelKindChat:      chatMetrics,
+		scheduler.ChannelKindImages:    imagesMetrics,
+	}, traceAffinity, urlManager)
 
 	r := gin.New()
 	r.GET("/gemini/channels/dashboard", GetChannelDashboard(cfgManager, sch, scheduler.ChannelKindGemini))

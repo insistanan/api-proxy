@@ -1,6 +1,7 @@
 package sensitive
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,9 +76,7 @@ func TestMappingStoreRestartRestore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建映射库 A 失败: %v", err)
 	}
-	SetPersistentMappingStore(storeA)
-	t.Cleanup(func() { SetPersistentMappingStore(nil) })
-	vaultA := NewVault()
+	vaultA := storeA.NewScopedVault(context.Background(), "test-session", nil)
 	masked, err := vaultA.Mask("电话 13800138000", []RedactionMatch{{
 		Type: "PHONE", Rule: "phone", Original: "13800138000", Start: 7, End: 18,
 	}})
@@ -86,6 +85,9 @@ func TestMappingStoreRestartRestore(t *testing.T) {
 	}
 	if strings.Contains(masked, "13800138000") {
 		t.Fatalf("应已掩码: %q", masked)
+	}
+	if err := vaultA.CommitScope(); err != nil {
+		t.Fatal(err)
 	}
 	if err := storeA.Close(); err != nil {
 		t.Fatalf("关闭映射库 A 失败: %v", err)
@@ -97,8 +99,7 @@ func TestMappingStoreRestartRestore(t *testing.T) {
 		t.Fatalf("创建映射库 B 失败: %v", err)
 	}
 	t.Cleanup(func() { _ = storeB.Close() })
-	SetPersistentMappingStore(storeB)
-	vaultB := NewVault()
+	vaultB := storeB.NewScopedVault(context.Background(), "test-session", nil)
 	restored := vaultB.Restore(masked)
 	if restored != "电话 13800138000" {
 		t.Fatalf("跨重启还原失败: %q", restored)
@@ -106,7 +107,7 @@ func TestMappingStoreRestartRestore(t *testing.T) {
 
 	// 同一原文在新进程生成同一占位符（提示词缓存稳定）。
 	// "另一个请求也提 " 7 个汉字（21 字节）+ 空格 = 22 字节，原文区间 [22, 33)。
-	vaultC := NewVault()
+	vaultC := storeB.NewVault(context.Background(), nil)
 	again, err := vaultC.Mask("另一个请求也提 13800138000", []RedactionMatch{{
 		Type: "PHONE", Rule: "phone", Original: "13800138000", Start: 22, End: 33,
 	}})
@@ -120,15 +121,7 @@ func TestMappingStoreRestartRestore(t *testing.T) {
 
 // placeholderTokenOf 从掩码文本中提取完整占位符。
 func placeholderTokenOf(masked string) string {
-	start := strings.Index(masked, "MASKED_")
-	if start < 0 {
-		return ""
-	}
-	end := strings.Index(masked[start:], "_PRESERVE_EXACTLY")
-	if end < 0 {
-		return ""
-	}
-	return masked[start : start+end+len("_PRESERVE_EXACTLY")]
+	return reservedPlaceholderPattern.FindString(masked)
 }
 
 // TestMappingStoreRotatedKeyCannotRestore 主密钥轮换后旧占位符还原 miss：
@@ -143,9 +136,7 @@ func TestMappingStoreRotatedKeyCannotRestore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建映射库 A 失败: %v", err)
 	}
-	SetPersistentMappingStore(storeA)
-	t.Cleanup(func() { SetPersistentMappingStore(nil) })
-	vaultA := NewVault()
+	vaultA := storeA.NewVault(context.Background(), nil)
 	masked, err := vaultA.Mask("邮箱 user@example.com", []RedactionMatch{{
 		Type: "EMAIL", Rule: "email", Original: "user@example.com", Start: 7, End: 23,
 	}})
@@ -162,13 +153,11 @@ func TestMappingStoreRotatedKeyCannotRestore(t *testing.T) {
 		t.Fatalf("创建映射库 B 失败: %v", err)
 	}
 	t.Cleanup(func() { _ = storeB.Close() })
-	SetPersistentMappingStore(storeB)
-
 	missCount := 0
-	SetPersistentMissCallback(func(string) { missCount++ })
-	t.Cleanup(func() { SetPersistentMissCallback(nil) })
-
-	vaultB := NewVault()
+	vaultB := storeB.NewVault(context.Background(), func(context.Context, string) error {
+		missCount++
+		return nil
+	})
 	restored := vaultB.Restore(masked)
 	if restored != masked {
 		t.Fatalf("密钥轮换后应原样下发: %q", restored)

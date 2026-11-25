@@ -86,9 +86,7 @@ func newChannelAdminTestRouter(t *testing.T) (*gin.Engine, *app) {
 	for _, kind := range channelAdminKinds {
 		mms[kind] = metrics.NewMetricsManager()
 	}
-	sch := scheduler.NewChannelScheduler(cm, mms[scheduler.ChannelKindMessages], mms[scheduler.ChannelKindResponses],
-		mms[scheduler.ChannelKindGemini], mms[scheduler.ChannelKindChat], mms[scheduler.ChannelKindImages],
-		mms[scheduler.ChannelKindEmbeddings], mms[scheduler.ChannelKindDecisions], session.NewTraceAffinityManager(), nil)
+	sch := scheduler.NewChannelScheduler(cm, mms, session.NewTraceAffinityManager(), nil)
 	t.Cleanup(func() {
 		sch.Stop()
 		require.NoError(t, cm.Close())

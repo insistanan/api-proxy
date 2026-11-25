@@ -450,7 +450,9 @@ func describeImagesOnChannel(
 				}
 				channelScheduler.RecordRequestFinalizeFailure(baseURL, apiKey, selection.ChannelIndex, metricsRequestID, channelKind)
 				channelScheduler.RecordRequestEnd(baseURL, apiKey, selection.ChannelIndex, channelKind)
-				channelScheduler.MarkURLFailure(channelKind, selection.ChannelIndex, baseURL)
+				if upstreamreq.IsEndpointFailure(response.StatusCode, body) {
+					channelScheduler.MarkURLFailure(channelKind, selection.ChannelIndex, baseURL)
+				}
 				lastErr = fmt.Errorf("图片理解渠道 %q 返回 HTTP %d（协议=%s，模型=%s，URL=%s）: %s",
 					upstream.Name, response.StatusCode, upstream.ServiceType, visionModel, baseURL, truncateErrorBody(body))
 				retry := shouldRetryVisionAttempt(response.StatusCode, body)
@@ -477,7 +479,9 @@ func describeImagesOnChannel(
 			if convertErr != nil {
 				channelScheduler.RecordRequestFinalizeFailure(baseURL, apiKey, selection.ChannelIndex, metricsRequestID, channelKind)
 				channelScheduler.RecordRequestEnd(baseURL, apiKey, selection.ChannelIndex, channelKind)
-				channelScheduler.MarkURLFailure(channelKind, selection.ChannelIndex, baseURL)
+				if !upstreamreq.IsUpstreamErrorEnvelope(body) || upstreamreq.IsEndpointFailure(response.StatusCode, body) {
+					channelScheduler.MarkURLFailure(channelKind, selection.ChannelIndex, baseURL)
+				}
 				lastErr = fmt.Errorf("解析图片理解响应失败: %w", convertErr)
 				recordVisionAttempt(channelScheduler, selection, upstream, visionRequestID, visionModel, baseURL, apiKey, "failed", response.StatusCode, false, attemptStart, "response_processing", lastErr.Error(), attempt > 0, nil)
 				return nil, failCount, lastErr

@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -35,7 +36,7 @@ func NewConfigManager(configFile string) (*ConfigManager, error) {
 		keyRecoveryTime: keyRecoveryTime,
 		maxFailureCount: maxFailureCount,
 		stopChan:        make(chan struct{}),
-		settingsChanged: make(chan struct{}, 1),
+		disguiseChanges: make(chan struct{}, 1),
 	}
 
 	// 加载配置
@@ -91,14 +92,15 @@ func (cm *ConfigManager) applyConfigDataLocked(data []byte) error {
 		return err
 	}
 	// 历史 Key 存在指标库时，用库里的注册项补齐候选（配置文件里已不含它们）。
-	// 读取失败按渠道 ID 沿用当前快照，避免把仍在使用的旧 Key 丢掉。
-	if cm.historicalKeysReady && cm.historicalKeyStore != nil {
-		if mergeErr := cm.mergeHistoricalKeysLocked(&candidate, &needSave); mergeErr != nil {
-			log.Printf("[Config-HistoricalKeys] 合并指标库历史 Key 失败，沿用当前快照: %v", mergeErr)
-			carryHistoricalKeysByID(&candidate, cm.config)
+	// 待同步快照是完整的已提交结果，不能再与可能过时的数据库合并。
+	if cm.historicalKeysReady && cm.historicalKeyStore != nil && !candidate.HistoricalKeysPending {
+		needsSync := false
+		if mergeErr := cm.mergeHistoricalKeysLocked(&candidate, &needsSync); mergeErr != nil {
+			return fmt.Errorf("读取历史 Key 失败，未发布新配置: %w", mergeErr)
 		}
+		candidate.HistoricalKeysPending = needsSync
 	}
-	if needSave {
+	if needSave || cm.historicalKeysReady && (candidate.HistoricalKeysPending || historicalKeysChanged(cm.config, candidate)) {
 		return cm.saveConfigLocked(candidate)
 	}
 	cm.publishConfigLocked(candidate)
@@ -134,16 +136,20 @@ func (cm *ConfigManager) prepareCandidate(data []byte) (Config, bool, error) {
 	if clearUnsupportedClientIdentityIn(&candidate) {
 		needNormalization = true
 	}
-	if err := validateConcurrency(&candidate); err != nil {
+	// 旧相对路径只在读取边界转换一次，保存与运行时统一使用规范值。
+	if path := candidate.Settings.Extensions.SkillsDir; path != "" && !filepath.IsAbs(path) {
+		resolved, err := ResolveSkillsDir(path)
+		if err != nil {
+			return Config{}, false, err
+		}
+		candidate.Settings.Extensions.SkillsDir = resolved
+		needNormalization = true
+	}
+	beforeValidation := cloneConfig(candidate)
+	if err := validateConfig(&candidate); err != nil {
 		return Config{}, false, err
 	}
-
-	if err := validateProxyConfigOf(&candidate); err != nil {
-		return Config{}, false, err
-	}
-	if err := ValidateContentSafetyConfig(candidate.Settings.ContentSafety); err != nil {
-		return Config{}, false, fmt.Errorf("内容安全配置无效: %w", err)
-	}
+	needNormalization = needNormalization || !reflect.DeepEqual(beforeValidation, candidate)
 
 	// 自检：没有配置 key 的渠道自动暂停
 	needKeyCheck := validateChannelKeysIn(&candidate)
@@ -511,61 +517,34 @@ func validateUpstreamKeys(upstreams []UpstreamConfig, label string) bool {
 	return changed
 }
 
-// validateProxyConfigOf 校验候选配置的代理设置（不触碰当前快照）。
-func validateProxyConfigOf(candidate *Config) error {
-	if err := validateIntentRouting(candidate); err != nil {
-		return err
-	}
-	if err := ValidateProxyURL(candidate.Settings.Network.UpstreamProxyURL); err != nil {
-		return fmt.Errorf("全局上游代理配置无效: %w", err)
-	}
-	groups := upstreamLists(candidate)
-	for _, upstreams := range groups {
-		for index := range upstreams {
-			if err := validateUpstreamProxyConfig(&upstreams[index]); err != nil {
-				return fmt.Errorf("渠道 %q 的代理配置无效: %w", upstreams[index].Name, err)
-			}
-		}
-	}
-	return nil
-}
-
 // saveConfigLocked 提交配置变更（R3 唯一提交入口，调用方必须已持锁）。
 // 顺序：序列化候选 → 备份旧文件 → 原子替换（提交点）→ 发布新快照。
 //   - 提交点前失败：原文件保持原样，当前快照不变，返回普通错误（未提交）；
 //   - 提交点后失败（目录同步等）：文件已是新内容，快照同样发布，
 //     返回 *atomicfile.CommittedError（调用方不得按未提交重试）。
 func (cm *ConfigManager) saveConfigLocked(config Config) error {
-	if err := validateIntentRouting(&config); err != nil {
-		return err
-	}
-	if err := validateFuzzyModeProtocols(&config); err != nil {
-		return err
-	}
+	// SaveConfig 也可能传入当前快照；所有归一化仅作用于独立候选。
+	config = cloneConfig(config)
 	if err := materializeFreeChannels(&config); err != nil {
 		return err
 	}
 	// 保存前清除不支持伪装的协议池上的身份模式，保证落盘内容与运行时一致。
 	clearUnsupportedClientIdentityIn(&config)
-	if err := validateConcurrency(&config); err != nil {
+	if err := validateConfig(&config); err != nil {
 		return err
 	}
 	// 清理已废弃字段，确保不会被序列化到 JSON
 	config.CurrentUpstream = 0
 	config.CurrentResponsesUpstream = 0
 
-	// 历史 Key 是运行时数据：指标库可用时先同步，落盘配置不再包含它们。
-	// 同步失败则回退为随配置保存，保证任何情况下都不会丢 Key。
+	// 先以配置原子替换提交完整待同步快照，再更新数据库；不在提交前修改数据库。
+	// 前次同步失败时，候选仍包含完整历史 Key，可与本次修改一起恢复。
 	persisted := config
 	stripHistoricalKeys := cm.historicalKeysReady && cm.historicalKeyStore != nil
-	if stripHistoricalKeys {
-		if err := cm.syncHistoricalKeysToStoreLocked(config); err != nil {
-			logHistoricalKeyFallback(err)
-			cm.historicalKeysReady = false
-			stripHistoricalKeys = false
-		}
-	}
-	if stripHistoricalKeys {
+	if stripHistoricalKeys && (config.HistoricalKeysPending || historicalKeysChanged(cm.config, config)) {
+		config.HistoricalKeysPending = true
+		persisted = config
+	} else if stripHistoricalKeys {
 		persisted = cloneConfig(config)
 		clearHistoricalKeys(&persisted)
 	}
@@ -588,6 +567,11 @@ func (cm *ConfigManager) saveConfigLocked(config Config) error {
 	if err == nil || atomicfile.IsCommitted(err) {
 		cm.publishConfigLocked(config)
 		cm.persistedDigest = configDigest(data)
+		if stripHistoricalKeys && config.HistoricalKeysPending {
+			if syncErr := cm.finishHistoricalKeysLocked(); syncErr != nil {
+				return errors.Join(err, &atomicfile.CommittedError{Phase: "historical_keys", Err: syncErr})
+			}
+		}
 	}
 	return err
 }

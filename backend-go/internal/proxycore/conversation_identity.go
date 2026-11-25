@@ -2,16 +2,31 @@ package proxycore
 
 import (
 	"bytes"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
 	"github.com/insistanan/api-proxy/internal/infra/utils"
+	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 )
+
+// RedactionScope 只接受已认证调用方和明确、稳定的会话身份。
+// previous_response_id 会逐轮改变，窗口/缓存键也不是会话授权依据。
+func RedactionScope(identity conversation.Identity, accessKey string) string {
+	if accessKey == "" || identity.ExplicitID == "" || identity.Source == "previous_response" {
+		return ""
+	}
+	mac := hmac.New(sha256.New, []byte(accessKey))
+	for _, field := range []string{"redaction-scope-v1", identity.ClientFamily, identity.ExplicitID} {
+		_, _ = mac.Write([]byte(strconv.Itoa(len(field)) + ":" + field))
+	}
+	return hex.EncodeToString(mac.Sum(nil))
+}
 
 // ResolveConversationIdentity 只把语义明确的 conversation/thread/composer 标识
 // 作为强身份。缓存键、普通用户 ID 和 Cursor session 仅作为历史匹配范围。

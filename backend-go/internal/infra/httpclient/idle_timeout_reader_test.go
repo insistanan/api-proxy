@@ -1,75 +1,60 @@
 package httpclient
 
 import (
-	"errors"
 	"io"
+	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
-type blockingReader struct{}
-
-func (b *blockingReader) Read(p []byte) (int, error) {
-	select {} // 永久阻塞，模拟上游挂起
-}
-func (b *blockingReader) Close() error { return nil }
-
-type oneShotReader struct {
-	read  bool
-	inner io.Reader
-}
-
-func (o *oneShotReader) Read(p []byte) (int, error) {
-	if o.read {
-		return 0, io.EOF
-	}
-	o.read = true
-	return o.inner.Read(p)
-}
-func (o *oneShotReader) Close() error { return nil }
-
-// TestIdleTimeoutReader_TriggerOnHang 验证：上游挂起（Read 永久阻塞）时触发空闲超时。
 func TestIdleTimeoutReader_TriggerOnHang(t *testing.T) {
-	r := NewIdleTimeoutReader(&blockingReader{}, 100*time.Millisecond, "Test")
-	buf := make([]byte, 1024)
-	_, err := r.Read(buf)
-	if !errors.Is(err, ErrStreamIdleTimeout) {
-		t.Fatalf("期望 ErrStreamIdleTimeout，得到: %v", err)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		reader, writer := io.Pipe()
+		defer writer.Close()
+		wrapped := NewIdleTimeoutReader(reader, time.Second, "Test")
+		defer wrapped.Close()
+		_, err := wrapped.Read(make([]byte, 1024))
+		require.ErrorIs(t, err, ErrStreamIdleTimeout)
+		synctest.Wait() // Close 解阻塞底层 Read，所有读取 goroutine 都能结束。
+	})
 }
 
-// lateWriteReader 模拟"Close 未能立即解阻塞"的病态底层：
-// Read 永久阻塞到放行后才写入。Close 对 Read 无解阻塞作用。
+// lateWriteReader 模拟 Close 无法立即终止读取，但可由测试显式放行并等待结束。
 type lateWriteReader struct {
 	release chan struct{}
+	done    chan struct{}
+	once    sync.Once
 }
 
-func (l *lateWriteReader) Read(p []byte) (int, error) {
-	<-l.release
+func (r *lateWriteReader) Read(p []byte) (int, error) {
+	<-r.release
 	p[0] = 0x41
+	close(r.done)
 	return 1, nil
 }
-func (l *lateWriteReader) Close() error { return nil }
 
-// TestIdleTimeoutReader_NoWriteToCallerBufferAfterTimeout 验证：空闲超时返回后，
-// 调用方复用自己的缓冲 p，迟到的底层写入不得落在 p 上（旧实现为数据竞争，
-// -race 下必报）；且超时为终态，后续 Read 直接返回同一错误，不再起读底层。
+func (r *lateWriteReader) Close() error { return nil }
+
+func (r *lateWriteReader) unblock() { r.once.Do(func() { close(r.release) }) }
+
 func TestIdleTimeoutReader_NoWriteToCallerBufferAfterTimeout(t *testing.T) {
-	release := make(chan struct{})
-	r := NewIdleTimeoutReader(&lateWriteReader{release: release}, 50*time.Millisecond, "Test")
-	p := make([]byte, 16)
-	_, err := r.Read(p)
-	if !errors.Is(err, ErrStreamIdleTimeout) {
-		t.Fatalf("期望 ErrStreamIdleTimeout，得到: %v", err)
-	}
-
-	// 模拟 io.Copy / bufio.Scanner 在 Read 返回后复用缓冲的常态行为。
-	p[0] = 0x00
-	p[1] = 0x01
-	close(release)
-	time.Sleep(100 * time.Millisecond) // 给迟到的底层读留出写入窗口
-
-	if _, err := r.Read(p); !errors.Is(err, ErrStreamIdleTimeout) {
-		t.Fatalf("超时后后续 Read 应返回 ErrStreamIdleTimeout，得到: %v", err)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		inner := &lateWriteReader{release: make(chan struct{}), done: make(chan struct{})}
+		defer inner.unblock()
+		reader := NewIdleTimeoutReader(inner, time.Second, "Test")
+		p := make([]byte, 16)
+		_, err := reader.Read(p)
+		require.ErrorIs(t, err, ErrStreamIdleTimeout)
+		p[0], p[1] = 0, 1
+		inner.unblock()
+		<-inner.done
+		synctest.Wait()
+		require.Equal(t, byte(0), p[0], "迟到写入不得污染调用方缓冲")
+		require.Equal(t, byte(1), p[1])
+		_, err = reader.Read(p)
+		require.ErrorIs(t, err, ErrStreamIdleTimeout)
+	})
 }

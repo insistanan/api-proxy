@@ -52,7 +52,13 @@ func newCompatRetryHarness(t *testing.T) *compatRetryHarness {
 	chat := newMetrics()
 	images := newMetrics()
 
-	channelScheduler := scheduler.NewChannelScheduler(cfgManager, messages, responses, gemini, chat, images, nil, nil, nil, nil)
+	channelScheduler := scheduler.NewChannelScheduler(cfgManager, map[scheduler.ChannelKind]*metrics.MetricsManager{
+		scheduler.ChannelKindMessages:  messages,
+		scheduler.ChannelKindResponses: responses,
+		scheduler.ChannelKindGemini:    gemini,
+		scheduler.ChannelKindChat:      chat,
+		scheduler.ChannelKindImages:    images,
+	}, nil, nil)
 	t.Cleanup(channelScheduler.Stop)
 
 	return &compatRetryHarness{cfgManager: cfgManager, metricsManager: messages, channelScheduler: channelScheduler}

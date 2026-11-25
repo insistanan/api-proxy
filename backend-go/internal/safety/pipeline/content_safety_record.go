@@ -12,6 +12,33 @@ import (
 	"github.com/insistanan/api-proxy/internal/safety/sensitive"
 )
 
+// recordRestoreMiss 使用当前请求的真实协议与关联信息，审计失败显式返回。
+func (a *attachedHookPipeline) recordRestoreMiss(ctx context.Context, placeholder string) error {
+	recorder := a.pipeline.blockedLogRecorder
+	if recorder == nil {
+		return fmt.Errorf("持久脱敏还原未命中，但未配置审计记录器")
+	}
+	metadata := a.currentMetadata()
+	ctx, cancel := context.WithTimeout(ctx, gateStoreTimeout)
+	defer cancel()
+	if _, err := recorder.Record(ctx, sensitive.BlockedLog{
+		APIType:        metadata.APIType,
+		BlockType:      sensitive.BlockTypeRestoreMiss,
+		RuleName:       "restore_miss",
+		PromptSnippet:  "mode=restore_miss source=session_mapping\n占位符不在当前请求或会话授权范围内，未恢复原值: " + placeholder,
+		ChannelName:    metadata.ChannelName,
+		Model:          metadata.Model,
+		RequestID:      metadata.RequestID,
+		ConversationID: metadata.ConversationID,
+	}); err != nil {
+		return err
+	}
+	if metadata.ConversationID == "" {
+		metadata.eventDeduper.markUnassigned()
+	}
+	return nil
+}
+
 // recordSafetyMatches 写入 mask/audit 模式的内容安全事件。sourceText 是命中
 // 时的原始片段文本（掩码改写之前），hits 携带每个命中规则的原始字节偏移；
 // 凭据命中只落规则名，绝不把明文写入拦截记录。
@@ -19,8 +46,6 @@ func recordSafetyMatches(ctx context.Context, metadata HookContext, recorder Blo
 	if len(hits) == 0 || mode == "" || mode == config.ContentSafetyModeBlock {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, gateStoreTimeout)
-	defer cancel()
 	if recorder == nil {
 		if mode == config.ContentSafetyModeAudit {
 			return fmt.Errorf("内容安全审计模式未配置记录器")
@@ -37,15 +62,26 @@ func recordSafetyMatches(ctx context.Context, metadata HookContext, recorder Blo
 		}
 		seen[hit.rule] = struct{}{}
 		eventKey := fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%x", blockType, mode, segment.Source, segment.Path, hit.rule, contentHash)
-		if metadata.eventDeduper.contains(eventKey) {
+		if metadata.safetyEventSeen(eventKey) {
 			continue
 		}
 		// 先去重，再为确实需要落库的事件扫描并隐藏上下文中的凭据。
 		if !contextPrepared {
-			safeContext = sensitive.RedactAuditContext(sourceText)
+			if snapshot := metadata.preRequestSnapshot; snapshot != nil {
+				ranges := snapshot.memo.find('a', "", sourceText, func() []sensitive.RedactionMatch {
+					return sensitive.AuditCredentialRanges(sourceText)
+				})
+				var err error
+				safeContext, err = sensitive.RedactAuditContextRanges(sourceText, ranges)
+				if err != nil {
+					return err
+				}
+			} else {
+				safeContext = sensitive.RedactAuditContext(sourceText)
+			}
 			contextPrepared = true
 		}
-		if _, err := recorder.Record(ctx, sensitive.BlockedLog{
+		if err := recordSafetyEvent(ctx, metadata, recorder, eventKey, sensitive.BlockedLog{
 			APIType:        metadata.APIType,
 			BlockType:      blockType,
 			RuleName:       hit.rule,
@@ -56,9 +92,6 @@ func recordSafetyMatches(ctx context.Context, metadata HookContext, recorder Blo
 			ConversationID: metadata.ConversationID,
 		}); err != nil {
 			return fmt.Errorf("写入内容安全%s记录失败: %w", mode, err)
-		}
-		if err := metadata.eventDeduper.mark(eventKey, metadata.ConversationID == ""); err != nil {
-			return err
 		}
 	}
 	return nil
@@ -76,12 +109,10 @@ func recordWhitelistAllowed(ctx context.Context, metadata HookContext, recorder 
 		return nil
 	}
 	eventKey := fmt.Sprintf("%s\x00%s\x00%s\x00%s", sensitive.BlockTypeWhitelist, segment.Source, segment.Path, toolName)
-	if metadata.eventDeduper.contains(eventKey) {
+	if metadata.safetyEventSeen(eventKey) {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, gateStoreTimeout)
-	defer cancel()
-	if _, err := recorder.Record(ctx, sensitive.BlockedLog{
+	if err := recordSafetyEvent(ctx, metadata, recorder, eventKey, sensitive.BlockedLog{
 		APIType:        metadata.APIType,
 		BlockType:      sensitive.BlockTypeWhitelist,
 		RuleName:       toolName,
@@ -93,7 +124,7 @@ func recordWhitelistAllowed(ctx context.Context, metadata HookContext, recorder 
 	}); err != nil {
 		return fmt.Errorf("写入白名单放行记录失败: %w", err)
 	}
-	return metadata.eventDeduper.mark(eventKey, metadata.ConversationID == "")
+	return nil
 }
 
 // safetyHit 表示检测器返回的单个命中。Start/End 是原始片段文本

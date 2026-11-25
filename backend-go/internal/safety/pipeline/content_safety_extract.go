@@ -3,8 +3,9 @@ package pipeline
 
 import (
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"strings"
+
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 )
 
 func extractMessagesSafetySegments(root map[string]interface{}) []SafetySegment {
@@ -126,6 +127,11 @@ func extractChatSafetySegments(root map[string]interface{}) []SafetySegment {
 			source = safetySourceToolResult
 		case "assistant":
 			appendChatMessageToolArguments(&segments, "messages", messageIndex, message)
+			for _, key := range []string{"reasoning_content", "reasoning"} {
+				if text, ok := message[key].(string); ok {
+					appendMapStringSegment(&segments, "chat", safetySourceAssistant, fmt.Sprintf("messages[%d].%s", messageIndex, key), message, key, text)
+				}
+			}
 			source = safetySourceAssistant
 		default:
 			continue
@@ -205,6 +211,13 @@ func extractResponsesSafetySegments(root map[string]interface{}) []SafetySegment
 		case "input_text":
 			appendMapTextField(&segments, "responses", safetySourceUser, path, item)
 			continue
+		case "output_text", "summary_text":
+			appendMapTextField(&segments, "responses", safetySourceAssistant, path, item)
+			continue
+		case "reasoning":
+			appendRootTextSegments(&segments, "responses", safetySourceAssistant, path+".summary", item, "summary")
+			appendRootTextSegments(&segments, "responses", safetySourceAssistant, path+".content", item, "content")
+			continue
 		}
 		role := strings.ToLower(codec.StringValue(item["role"]))
 		source := ""
@@ -257,6 +270,7 @@ func extractGeminiSafetySegments(root map[string]interface{}) []SafetySegment {
 				continue
 			}
 			if functionCall, exists := part["functionCall"]; exists {
+				start := len(segments)
 				toolName := ""
 				if call, ok := functionCall.(map[string]interface{}); ok {
 					toolName = codec.StringValue(call["name"])
@@ -264,16 +278,28 @@ func extractGeminiSafetySegments(root map[string]interface{}) []SafetySegment {
 						appendMutableJSONValue(&segments, "gemini", safetySourceToolArgument, path+".functionCall.args", args, toolName, func(masked interface{}) { call["args"] = masked })
 					}
 				}
+				markSignedSegments(segments[start:], part)
 				continue
 			}
+			start := len(segments)
 			if role == "" || role == "user" {
 				appendMapTextField(&segments, "gemini", safetySourceUser, path, part)
 			} else if role == "model" || role == "assistant" {
 				appendMapTextField(&segments, "gemini", safetySourceAssistant, path, part)
 			}
+			markSignedSegments(segments[start:], part)
 		}
 	}
 	return segments
+}
+
+func markSignedSegments(segments []SafetySegment, part map[string]interface{}) {
+	if part["thoughtSignature"] == nil && part["thought_signature"] == nil {
+		return
+	}
+	for i := range segments {
+		segments[i].Signed = true
+	}
 }
 
 // extractImagesSafetySegments 提取 Images API（/v1/images/generations|edits|variations）

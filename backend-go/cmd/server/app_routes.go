@@ -1,9 +1,10 @@
-// app_routes.go 路由装配（R4-b 按初始化职责分文件）：
+// app_routes.go 集中装配路由与中间件：
 // 管理路由组（/api、/admin）与各协议代理端点的注册。
 package main
 
 import (
 	"github.com/gin-gonic/gin"
+	apiproxy "github.com/insistanan/api-proxy"
 	adminconversations "github.com/insistanan/api-proxy/internal/api/admin/conversations"
 	adminforest "github.com/insistanan/api-proxy/internal/api/admin/forest"
 	adminintent "github.com/insistanan/api-proxy/internal/api/admin/intent"
@@ -22,6 +23,8 @@ import (
 	"github.com/insistanan/api-proxy/internal/api/responses"
 	"github.com/insistanan/api-proxy/internal/api/system"
 	"github.com/insistanan/api-proxy/internal/clients"
+	"github.com/insistanan/api-proxy/internal/dialogue/routing/intent"
+	"github.com/insistanan/api-proxy/internal/infra/middleware"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
 	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
 	"github.com/insistanan/api-proxy/internal/storage/metrics"
@@ -47,8 +50,7 @@ func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
 	apiGroup.GET("/log-conversation-requests", adminlogs.GetLogConversationRequests(a.logStore))
 	apiGroup.GET("/log-context-overview", adminlogs.GetLogContextOverview(a.logStore))
 	apiGroup.GET("/runtime-logs", adminlogs.GetRuntimeLogs(a.logStore))
-	// 会话注册表直接注入（R4-b：scheduler 退出服务定位器角色，
-	// 装配层持有实例并显式传参）。
+	// 会话注册表由装配层直接注入，管理接口不通过调度器查找依赖。
 	apiGroup.GET("/blocked-logs", adminlogs.GetBlockedLogs(a.blockedStore, a.conversationRegistry))
 	apiGroup.GET("/blocked-logs/:id", adminlogs.GetBlockedLog(a.blockedStore))
 	apiGroup.DELETE("/blocked-logs/:id", adminlogs.DeleteBlockedLog(a.blockedStore))
@@ -79,7 +81,7 @@ func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
 
 	// 对话与路由覆盖
 	apiGroup.GET("/conversations/route-options", adminconversations.GetConversationRouteOptions(a.cfgManager))
-	// 会话注册表直接注入（R4-b：调度器退出服务定位器角色）
+	// 会话注册表直接注入。
 	apiGroup.GET("/conversations", adminconversations.ListConversations(a.conversationRegistry))
 	apiGroup.DELETE("/conversations", adminconversations.DeleteAllConversations(a.conversationRegistry, a.sessionManager))
 	apiGroup.GET("/conversations/:id", adminconversations.GetConversation(a.conversationRegistry))
@@ -154,7 +156,7 @@ func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
 
 // setupChannelAdminAPI 装配各协议渠道管理路由，沿用调用方路由组的鉴权。
 func (a *app) setupChannelAdminAPI(apiGroup *gin.RouterGroup) {
-	a.registerCleanup("指纹检测任务", channels.RegisterModelFingerprintRoutes(apiGroup, a.cfgManager))
+	a.registerWorker("指纹检测任务", channels.RegisterModelFingerprintRoutes(apiGroup, a.cfgManager))
 	channelDeps := channels.ChannelRouteDeps{
 		Cfg:       a.cfgManager,
 		Scheduler: a.channelScheduler,
@@ -167,15 +169,7 @@ func (a *app) setupChannelAdminAPI(apiGroup *gin.RouterGroup) {
 	// 四个会话协议共享的公用图片理解池，带每条渠道自身的 kind。
 	apiGroup.GET("/vision-channels", channels.GetVisionChannels(a.cfgManager))
 
-	for _, kind := range []scheduler.ChannelKind{
-		scheduler.ChannelKindMessages,
-		scheduler.ChannelKindResponses,
-		scheduler.ChannelKindGemini,
-		scheduler.ChannelKindChat,
-		scheduler.ChannelKindImages,
-		scheduler.ChannelKindEmbeddings,
-		scheduler.ChannelKindDecisions,
-	} {
+	for _, kind := range scheduler.ChannelKinds() {
 		opts := channels.ChannelRouteOptions{
 			LoadBalance: true,
 			Dashboard:   channels.GetChannelDashboard(a.cfgManager, a.channelScheduler, kind),
@@ -226,4 +220,75 @@ func (a *app) setupProxyEndpoints(r *gin.Engine) {
 	// 使用通配符捕获 model:action 格式，如 gemini-pro:generateContent
 	// 路径格式：/v1beta/models/{model}:generateContent (Gemini 原生格式)
 	proxy.POST("/v1beta/models/*modelAction", gemini.Handler(a.envCfg, a.cfgManager, a.channelScheduler, a.contentSafetyPipeline))
+}
+
+// setupHTTP 集中装配 HTTP 中间件、管理路由、代理入口与静态资源。
+func (a *app) setupHTTP() *gin.Engine {
+	// 设置 Gin 模式
+	if a.envCfg.IsProduction() {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
+	// 创建路由器。QuietPollingLogs 由日志级别决定，FilteredLogger 据此过滤轮询访问日志。
+	r := gin.New()
+	r.Use(middleware.FilteredLogger(a.envCfg))
+	r.Use(gin.Recovery())
+	r.Use(func(c *gin.Context) {
+		c.Request = c.Request.WithContext(intent.WithService(c.Request.Context(), a.intentService))
+		c.Next()
+	})
+
+	// 配置 CORS
+	r.Use(middleware.CORSMiddleware(a.envCfg))
+
+	// Web UI 访问控制中间件
+	r.Use(middleware.WebAuthMiddleware(a.envCfg, a.cfgManager))
+
+	// 健康检查端点（固定路径 /health，与 Dockerfile HEALTHCHECK 保持一致）
+	r.GET("/health", system.HealthCheck(a.envCfg, a.cfgManager))
+
+	// 管理端点显式绑定管理鉴权，不依赖 WebAuthMiddleware 的路径判断。
+	adminGroup := r.Group("/admin", middleware.AdminAuthMiddleware(a.envCfg))
+	// 配置保存端点
+	adminGroup.POST("/config/save", system.SaveConfigHandler(a.cfgManager))
+
+	// 开发信息端点
+	if a.envCfg.IsDevelopment() {
+		adminGroup.GET("/dev/info", system.DevInfo(a.envCfg, a.cfgManager))
+	}
+
+	// Web 管理界面 API 路由（管理鉴权在路由组上显式绑定）
+	apiGroup := r.Group("/api", middleware.AdminAuthMiddleware(a.envCfg))
+	a.setupAdminAPI(apiGroup)
+
+	// 各协议代理端点
+	a.setupProxyEndpoints(r)
+
+	// 静态文件服务 (嵌入的前端)
+	if a.envCfg.EnableWebUI {
+		system.ServeFrontend(r, apiproxy.FrontendFS)
+	} else {
+		// 纯 API 模式
+		r.GET("/", func(c *gin.Context) {
+			c.JSON(200, gin.H{
+				"name":    "API Proxy",
+				"mode":    "API Only",
+				"version": Version,
+				"endpoints": gin.H{
+					"chat":       "/v1/chat/completions",
+					"config":     "/admin/config/save",
+					"decisions":  "/v1/decisions",
+					"embeddings": "/v1/embeddings",
+					"gemini":     "/v1beta/models/*modelAction",
+					"health":     "/health",
+					"images":     "/v1/images/generations",
+					"messages":   "/v1/messages",
+					"responses":  "/v1/responses",
+				},
+				"message": "Web界面已禁用，此服务器运行在纯API模式下",
+			})
+		})
+	}
+
+	return r
 }

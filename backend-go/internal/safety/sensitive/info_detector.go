@@ -20,6 +20,26 @@ type InfoMatch struct {
 	End         int    `json:"end"`
 }
 
+// FindField 让依赖邻近提示词的规则看见 JSON 字段名，返回偏移仍相对值本身。
+func (d *InfoDetector) FindField(field, text string) []InfoMatch {
+	if field == "" {
+		return d.FindAll(text)
+	}
+	prefix := field + "="
+	matches := d.FindAll(prefix + text)
+	result := make([]InfoMatch, 0, len(matches))
+	for _, match := range matches {
+		if match.Start < len(prefix) {
+			continue
+		}
+		match.Start -= len(prefix)
+		match.End -= len(prefix)
+		match.Original = text[match.Start:match.End]
+		result = append(result, match)
+	}
+	return result
+}
+
 type infoRule struct {
 	name  string
 	regex *regexp.Regexp

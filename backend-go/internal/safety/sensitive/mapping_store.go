@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-// 加密持久化映射库（参考 Veil ADR 0004 方案）：
+// 加密持久化映射库：
 // 明文列 AES-256-GCM 加密（每行独立随机 nonce），等值查找索引用
 // HMAC-SHA256(macKey, original) 而非裸哈希——只偷到数据库文件的人
 // 无法对手机号等有限字符集做彩虹表反查。
@@ -45,16 +45,18 @@ var (
 
 // MappingStore 是加密持久化的占位符↔原文映射库。
 type MappingStore struct {
-	db            *sql.DB
-	masterKeyPath string
-	mu            sync.RWMutex
-	closed        bool
-	closeOnce     sync.Once
-	encKey        [32]byte
-	macKey        [32]byte
-	purgeStop     chan struct{}
-	purgeDone     chan struct{}
-	purgeOnce     sync.Once
+	db               *sql.DB
+	masterKeyPath     string
+	mu               sync.RWMutex
+	closed           bool
+	closeOnce        sync.Once
+	encKey           [32]byte
+	macKey           [32]byte
+	purgeStop        chan struct{}
+	purgeDone        chan struct{}
+	purgeOnce        sync.Once
+	placeholderState placeholderKeyState
+	scopeCache       scopeMappingCache
 }
 
 // NewMappingStore 打开（或创建）映射库并加载/生成主密钥。
@@ -92,6 +94,7 @@ func NewMappingStore(dbPath, masterKeyPath string) (*MappingStore, error) {
 		purgeStop:     make(chan struct{}),
 		purgeDone:     make(chan struct{}),
 	}
+	store.placeholderState.store = store
 	if err := store.initSchema(); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -182,15 +185,19 @@ func (s *MappingStore) initSchema() error {
 			return fmt.Errorf("初始化持久映射容量保护失败: %w", err)
 		}
 	}
-	return nil
+	return s.initScopeSchema()
 }
 
 func (s *MappingStore) purgeLoop() {
 	defer close(s.purgeDone)
 	ticker := time.NewTicker(mappingPurgeEvery)
 	defer ticker.Stop()
+	cacheTicker := time.NewTicker(time.Minute)
+	defer cacheTicker.Stop()
 	for {
 		select {
+		case now := <-cacheTicker.C:
+			s.scopeCache.purge(now)
 		case <-ticker.C:
 			if err := s.Purge(); err != nil {
 				log.Printf("[SensitiveData-Purge] 清理持久映射失败: %v", err)
@@ -400,6 +407,7 @@ func (s *MappingStore) Close() error {
 		s.mu.Lock()
 		s.closed = true
 		s.mu.Unlock()
+		s.scopeCache.close()
 		s.purgeOnce.Do(func() { close(s.purgeStop) })
 		<-s.purgeDone
 		closeErr = s.db.Close()

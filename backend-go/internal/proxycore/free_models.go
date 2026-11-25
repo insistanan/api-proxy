@@ -96,6 +96,7 @@ func rankFreeModels(upstream *config.UpstreamConfig, requested string, aggregate
 		byModel[aggregate.Model] = append(byModel[aggregate.Model], aggregate)
 	}
 	identity := upstream.RequestIdentity("").Fingerprint()
+	// 选模只过滤有明确证据的模型容量冷却；共享凭据冷却由发送准入统一排队。
 	identities := []availability.Candidate{{ID: identity}}
 	explicit := ""
 	if requested != config.FreeModelID {

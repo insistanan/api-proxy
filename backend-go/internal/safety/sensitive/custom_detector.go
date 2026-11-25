@@ -70,19 +70,42 @@ func (d *CustomDetector) FindAll(text string) []CustomMatch {
 		return nil
 	}
 	matches := make([]CustomMatch, 0)
+	var protected [][]int
+	if strings.Contains(text, "MASKED_") {
+		protected = reservedPlaceholderPattern.FindAllStringIndex(text, -1)
+	}
 	for _, rule := range d.rules {
 		if rule.prefix != "" && !strings.Contains(text, rule.prefix) {
 			continue
 		}
+		protectedIndex := 0
 		for _, index := range rule.pattern.FindAllStringIndex(text, -1) {
 			if index[0] == index[1] {
 				continue // 空匹配无掩码意义
 			}
+			// 不再包装既有占位符。宽规则仅覆盖命中范围内仍为原文的部分。
+			last := index[0]
+			for protectedIndex < len(protected) && protected[protectedIndex][1] <= last {
+				protectedIndex++
+			}
+			for _, span := range protected[protectedIndex:] {
+				if span[0] >= index[1] {
+					break
+				}
+				start, end := max(last, span[0]), min(index[1], span[1])
+				if last < start {
+					matches = append(matches, CustomMatch{Rule: rule.name, Type: rule.typeTag, Original: text[last:start], Start: last, End: start})
+				}
+				last = end
+			}
+			if last >= index[1] {
+				continue
+			}
 			matches = append(matches, CustomMatch{
 				Rule:     rule.name,
 				Type:     rule.typeTag,
-				Original: text[index[0]:index[1]],
-				Start:    index[0],
+				Original: text[last:index[1]],
+				Start:    last,
 				End:      index[1],
 			})
 		}

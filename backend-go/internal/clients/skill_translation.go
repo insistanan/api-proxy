@@ -9,15 +9,39 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/insistanan/api-proxy/internal/clients/skills"
+	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
+	"github.com/insistanan/api-proxy/internal/safety/llmgate"
 	"github.com/insistanan/api-proxy/internal/safety/sensitive"
 )
 
 // SkillTranslator 通过用户指定的渠道翻译一份文档。
 type SkillTranslator func(ctx context.Context, protocol, channelID, model, instructions, original string) (translated, channelName string, err error)
+
+// NewSkillTranslator 将内部模型调用适配为技能翻译，输出截断时拒绝保存。
+func NewSkillTranslator(caller *llmgate.Caller) SkillTranslator {
+	translationCaller := *caller
+	translationCaller.TimeoutSecs = int((10 * time.Minute).Seconds())
+	return func(ctx context.Context, protocol, channelID, model, instructions, original string) (string, string, error) {
+		result, err := translationCaller.Call(ctx, channelID, llmgate.Prompt{
+			Model: model, System: instructions, MaxTokens: 8192, OverrideModel: true,
+			ChannelKind: scheduler.ChannelKind(protocol),
+			Messages:    []llmgate.PromptMessage{{Role: "user", Content: original}},
+			Metadata:    llmgate.CallMetadata{APIType: "skill_translation"},
+		})
+		if err != nil {
+			return "", "", err
+		}
+		if result.StopReason == "max_tokens" {
+			return "", "", errors.New("译文达到模型输出上限，未保存不完整的译文")
+		}
+		return result.Text, result.ChannelName, nil
+	}
+}
 
 type skillTranslationRequest struct {
 	ChannelID string `json:"channelId"`

@@ -217,6 +217,50 @@ func (s *BlockedStore) Record(ctx context.Context, entry BlockedLog) (BlockedLog
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
+	return recordBlockedLog(ctx, entry, func(ctx context.Context, args ...any) (sql.Result, error) {
+		return s.db.ExecContext(ctx, insertBlockedLogSQL, args...)
+	})
+}
+
+const insertBlockedLogSQL = `INSERT INTO blocked_logs (
+	timestamp, api_type, block_type, rule_name, prompt_snippet, command, channel_name, model, request_id, conversation_id, created_at, ai_review_json, command_hash
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+// RecordBatch 在一个事务内写入完整批次，失败时不保留该批次的部分记录。
+func (s *BlockedStore) RecordBatch(ctx context.Context, entries []BlockedLog) error {
+	if err := s.ensureOpen(); err != nil {
+		return err
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+	if len(entries) > 256 {
+		return fmt.Errorf("单批安全审计超过 256 条上限")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("开始安全审计事务失败: %w", err)
+	}
+	defer tx.Rollback()
+	statement, err := tx.PrepareContext(ctx, insertBlockedLogSQL)
+	if err != nil {
+		return fmt.Errorf("准备安全审计批次失败: %w", err)
+	}
+	defer statement.Close()
+	for _, entry := range entries {
+		if _, err := recordBlockedLog(ctx, entry, statement.ExecContext); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("提交安全审计批次失败: %w", err)
+	}
+	return nil
+}
+
+func recordBlockedLog(ctx context.Context, entry BlockedLog, execute func(context.Context, ...any) (sql.Result, error)) (BlockedLog, error) {
 	entry, err := normalizeBlockedLog(entry)
 	if err != nil {
 		return BlockedLog{}, err
@@ -235,9 +279,7 @@ func (s *BlockedStore) Record(ctx context.Context, entry BlockedLog) (BlockedLog
 		}
 		reviewJSON = string(encoded)
 	}
-	result, err := s.db.ExecContext(ctx, `INSERT INTO blocked_logs (
-		timestamp, api_type, block_type, rule_name, prompt_snippet, command, channel_name, model, request_id, conversation_id, created_at, ai_review_json, command_hash
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	result, err := execute(ctx,
 		entry.Timestamp.Format(blockedLogTimeLayout), entry.APIType, entry.BlockType, entry.RuleName,
 		entry.PromptSnippet, entry.Command, entry.ChannelName, entry.Model, entry.RequestID, entry.ConversationID, entry.CreatedAt.Format(blockedLogTimeLayout), reviewJSON, entry.CommandHash,
 	)

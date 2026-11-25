@@ -138,7 +138,7 @@ func TestImagesResponsesSendingStopsOnClientCancellation(t *testing.T) {
 	defer finishResponsesLifecycle(c)
 	result := make(chan error, 1)
 	go func() {
-		resp, err := httpclient.Send(req, httpclient.SendOptions{IsStream: true})
+		resp, err := httpclient.Send(req, httpclient.SendOptions{IsStream: true, ResponseHeaderTimeout: time.Minute})
 		if resp != nil {
 			resp.Body.Close()
 		}

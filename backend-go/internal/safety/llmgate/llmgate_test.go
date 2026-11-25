@@ -50,12 +50,15 @@ func newGateTestEnv(t *testing.T) (*config.ConfigManager, *scheduler.ChannelSche
 			manager.Stop()
 		}
 	})
-	channelScheduler := scheduler.NewChannelScheduler(
-		cfgManager,
-		metricsManagers[0], metricsManagers[1], metricsManagers[2], metricsManagers[3], metricsManagers[4],
-		metricsManagers[5], metricsManagers[6],
-		nil, nil,
-	)
+	channelScheduler := scheduler.NewChannelScheduler(cfgManager, map[scheduler.ChannelKind]*metrics.MetricsManager{
+		scheduler.ChannelKindMessages:   metricsManagers[0],
+		scheduler.ChannelKindResponses:  metricsManagers[1],
+		scheduler.ChannelKindGemini:     metricsManagers[2],
+		scheduler.ChannelKindChat:       metricsManagers[3],
+		scheduler.ChannelKindImages:     metricsManagers[4],
+		scheduler.ChannelKindEmbeddings: metricsManagers[5],
+		scheduler.ChannelKindDecisions:  metricsManagers[6],
+	}, nil, nil)
 	return cfgManager, channelScheduler
 }
 
@@ -82,7 +85,7 @@ func TestCallDecisionProtocolsUseSelectedChannelAndModel(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			caller := &Caller{EnvConfig: config.NewEnvConfig(), CfgManager: cfgManager, ChannelScheduler: sch}
+			caller := &Caller{EnvConfig: config.DefaultEnvConfig(), CfgManager: cfgManager, ChannelScheduler: sch}
 			prompt := Prompt{
 				Protocol: protocol, Model: "approval-alias", OverrideModel: true,
 				Messages: []PromptMessage{{Role: "user", Content: `{"command":"rm -rf /tmp/build"}`}},
@@ -334,7 +337,7 @@ func TestPickChannelGroupRouting(t *testing.T) {
 	}
 	releasePick(selected)
 
-	caller := &Caller{EnvConfig: config.NewEnvConfig(), CfgManager: cfgManager, ChannelScheduler: sch}
+	caller := &Caller{EnvConfig: config.DefaultEnvConfig(), CfgManager: cfgManager, ChannelScheduler: sch}
 	preview, err := caller.PreviewChannel(context.Background(), "", "glm")
 	if err != nil {
 		t.Fatalf("PreviewChannel 失败: %v", err)
@@ -394,7 +397,7 @@ func TestPreviewChannelReleasesCircuitProbe(t *testing.T) {
 	sch.RecordCircuitFailure(scheduler.ChannelKindMessages, 0)
 	time.Sleep(30 * time.Millisecond)
 
-	caller := &Caller{EnvConfig: config.NewEnvConfig(), CfgManager: cfgManager, ChannelScheduler: sch}
+	caller := &Caller{EnvConfig: config.DefaultEnvConfig(), CfgManager: cfgManager, ChannelScheduler: sch}
 	preview, err := caller.PreviewChannel(context.Background(), "", "")
 	if err != nil {
 		t.Fatalf("PreviewChannel 失败: %v", err)
@@ -442,7 +445,7 @@ func TestCallFailoverAcrossChannels(t *testing.T) {
 		t.Fatalf("添加 chat 渠道失败: %v", err)
 	}
 
-	caller := &Caller{EnvConfig: config.NewEnvConfig(), CfgManager: cfgManager, ChannelScheduler: sch}
+	caller := &Caller{EnvConfig: config.DefaultEnvConfig(), CfgManager: cfgManager, ChannelScheduler: sch}
 	result, err := caller.Call(context.Background(), "", Prompt{Messages: []PromptMessage{{Role: "user", Content: "ping"}}})
 	if err != nil {
 		t.Fatalf("渠道级失败应换渠道重试，实际整体失败: %v", err)
@@ -500,7 +503,7 @@ func TestCallClaudeUpstream(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("添加 messages 渠道失败: %v", err)
 	}
-	envCfg := config.NewEnvConfig()
+	envCfg := config.DefaultEnvConfig()
 	envCfg.EnableRequestLogs = true
 	envCfg.EnableResponseLogs = true
 	caller := &Caller{EnvConfig: envCfg, CfgManager: cfgManager, ChannelScheduler: sch, RequestLogStore: requestLogStore}
@@ -645,7 +648,7 @@ func TestCallTimeout(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("添加渠道失败: %v", err)
 	}
-	caller := &Caller{EnvConfig: config.NewEnvConfig(), CfgManager: cfgManager, ChannelScheduler: sch, TimeoutSecs: 1}
+	caller := &Caller{EnvConfig: config.DefaultEnvConfig(), CfgManager: cfgManager, ChannelScheduler: sch, TimeoutSecs: 1}
 	if _, err := caller.Call(context.Background(), "", Prompt{Messages: []PromptMessage{{Role: "user", Content: "ping"}}}); err == nil {
 		t.Fatal("上游超时应返回错误")
 	}

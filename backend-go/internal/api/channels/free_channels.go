@@ -54,7 +54,10 @@ func SyncKiloFreeModels(cfg *config.ConfigManager) gin.HandlerFunc {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
 		}
-		client, err := httpclient.GetManager().GetStandardClient(20*time.Second, false, proxyURL)
+		client, err := httpclient.GetManager().GetClient(httpclient.ClientOptions{
+			Timeout: 20 * time.Second, ProxyURL: proxyURL,
+			ResponseHeaderTimeout: time.Duration(cfg.GetGatewaySettings().ResponseHeaderTimeout) * time.Second,
+		})
 		if err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return

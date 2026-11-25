@@ -3,10 +3,10 @@ package config
 import (
 	"context"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"slices"
 	"strings"
 
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
 )
 
@@ -50,21 +50,18 @@ func (cm *ConfigManager) publishConfigLocked(candidate Config) {
 		cm.admission = upstreamcontrol.NewController()
 	}
 	rules := make(map[upstreamcontrol.Identity]int)
-	for group, list := range upstreamLists(&candidate) {
+	for _, set := range candidate.channelSets() {
+		list := *set.upstreams
 		for i := range list {
 			upstream := &list[i]
 			upstream.upstreamProtocol = upstream.ServiceType
-			if group == 4 && upstream.ServiceType == "openai" {
-				upstream.upstreamProtocol = "images"
+			if upstream.ServiceType == "openai" {
+				switch set.kind {
+				case "images", "embeddings", "decisions":
+					upstream.upstreamProtocol = set.kind
+				}
 			}
-			if group == 5 && upstream.ServiceType == "openai" {
-				upstream.upstreamProtocol = "embeddings"
-			}
-			if group == 6 && upstream.ServiceType == "openai" {
-				upstream.upstreamProtocol = "decisions"
-			}
-			// 分组 0 = Messages、1 = Responses，只有这两组支持客户端伪装。
-			upstream.noClientIdentity = group > 1
+			upstream.noClientIdentity = set.kind != "messages" && set.kind != "responses"
 			if GetChannelStatus(upstream) == ChannelStatusDeleted {
 				continue
 			}
@@ -97,21 +94,19 @@ func (cm *ConfigManager) publishConfigLocked(candidate Config) {
 	cm.admission.Reconcile(rules)
 	previousDisguise := cm.config.Settings.Disguise
 	cm.config = candidate
-	gateway := candidate.Settings.Gateway
-	activeGatewaySettings.Store(&gateway)
 	disguise := candidate.Settings.Disguise
 	upstreamreq.SetDisguiseSettings(disguise.ClaudeCodeVersion, disguise.CodexVersion, disguise.AutoUpdateFromRegistry)
 	if disguise != previousDisguise {
 		select {
-		case cm.settingsChanged <- struct{}{}:
+		case cm.disguiseChanges <- struct{}{}:
 		default:
 		}
 	}
 }
 
-// SettingsChanged 合并配置发布事件，后台任务读取最新快照，不积压旧设置。
-func (cm *ConfigManager) SettingsChanged() <-chan struct{} {
-	return cm.settingsChanged
+// DisguiseChanges 供唯一的伪装同步任务消费合并通知；其他设置不触发此通道。
+func (cm *ConfigManager) DisguiseChanges() <-chan struct{} {
+	return cm.disguiseChanges
 }
 
 // UpstreamRequestContext 必须使用本次实际 URL、上游协议和 Key，不能使用入口协议。
@@ -138,15 +133,25 @@ func upstreamIdentity(upstream *UpstreamConfig, baseURL, apiKey string) upstream
 		protocol = upstream.ServiceType
 	}
 	baseURL = strings.TrimSpace(baseURL)
-	if !upstream.UseFullURL {
-		baseURL = strings.TrimRight(baseURL, "/")
-	}
-	return upstreamcontrol.NewIdentity(baseURL, protocol, apiKey)
+	targetURL := upstreamreq.BuildUpstreamIdentityURL(baseURL, protocol, upstream.UseFullURL)
+	return upstreamcontrol.NewIdentity(targetURL, protocol, apiKey)
 }
 
 // RequestIdentity 与准入表使用同一规范化规则，也供 Responses 链归属使用。
 func (u *UpstreamConfig) RequestIdentity(apiKey string) upstreamcontrol.Identity {
 	return upstreamIdentity(u, u.GetEffectiveBaseURL(), apiKey)
+}
+
+// UpstreamCooldowns 对已发布配置读取准入状态，不暴露 URL、明文凭据或可变控制器。
+func (cm *ConfigManager) UpstreamCooldowns() map[string]int64 {
+	cm.mu.RLock()
+	controller := cm.admission
+	cm.mu.RUnlock()
+	result := make(map[string]int64)
+	for id, until := range controller.Cooldowns() {
+		result[id.Fingerprint()] = until.UnixMilli()
+	}
+	return result
 }
 
 // ClientCompatibilityEnabled 让辅助推理的正文构建与最终发送使用同一身份模式。

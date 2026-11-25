@@ -3,8 +3,11 @@ package pipeline
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"strconv"
 	"strings"
+
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/safety/sensitive"
 )
 
 const (
@@ -25,23 +28,55 @@ type SafetySegment struct {
 	Text     string
 	Mutable  bool
 	ToolName string
-	replace  func(string)
+	Field    string
+	// Signed 文本不能改写；命中必须阻断，避免破坏供应商签名。
+	Signed  bool
+	replace func(string)
+	commits []func() error
 }
 
 func extractSafetySegments(apiType string, root map[string]interface{}) ([]SafetySegment, error) {
+	var segments []SafetySegment
 	switch strings.ToLower(apiType) {
 	case "messages":
-		return extractMessagesSafetySegments(root), nil
+		segments = extractMessagesSafetySegments(root)
 	case "chat":
-		return extractChatSafetySegments(root), nil
+		segments = extractChatSafetySegments(root)
 	case "responses":
-		return extractResponsesSafetySegments(root), nil
+		segments = extractResponsesSafetySegments(root)
 	case "gemini":
-		return extractGeminiSafetySegments(root), nil
+		segments = extractGeminiSafetySegments(root)
 	case "images":
-		return extractImagesSafetySegments(root), nil
+		segments = extractImagesSafetySegments(root)
 	default:
 		return nil, fmt.Errorf("内容安全不支持协议 %q", apiType)
+	}
+	appendToolDefinitionSegments(&segments, apiType, "tools", root["tools"])
+	return segments, nil
+}
+
+// 工具说明可脱敏；schema 的默认值、示例与枚举只能阻断，避免改变工具契约。
+func appendToolDefinitionSegments(segments *[]SafetySegment, protocol, path string, value interface{}) {
+	switch typed := value.(type) {
+	case []interface{}:
+		for i, child := range typed {
+			appendToolDefinitionSegments(segments, protocol, fmt.Sprintf("%s[%d]", path, i), child)
+		}
+	case map[string]interface{}:
+		for _, key := range sortedMapKeys(typed) {
+			switch key {
+			case "description", "title":
+				if text, ok := typed[key].(string); ok {
+					appendMapStringSegment(segments, protocol, safetySourceSystem, path+"."+key, typed, key, text)
+				} else {
+					appendToolDefinitionSegments(segments, protocol, path+"."+key, typed[key])
+				}
+			case "enum", "const", "default", "examples":
+				appendImmutableJSONSegment(segments, protocol, safetySourceSystem, path+"."+key, typed[key])
+			default:
+				appendToolDefinitionSegments(segments, protocol, path+"."+key, typed[key])
+			}
+		}
 	}
 }
 
@@ -109,8 +144,16 @@ func appendKnownTextContent(segments *[]SafetySegment, protocol, source, path st
 			continue
 		}
 		blockType := strings.ToLower(codec.StringValue(block["type"]))
-		if blockType == "" || blockType == "text" || blockType == "input_text" {
+		if blockType == "" || blockType == "text" || blockType == "input_text" || blockType == "output_text" || blockType == "summary_text" {
 			appendMapTextField(segments, protocol, source, fmt.Sprintf("%s[%d]", path, index), block)
+		}
+		if blockType == "thinking" {
+			if text, ok := block["thinking"].(string); ok {
+				appendMapStringSegment(segments, protocol, source, fmt.Sprintf("%s[%d].thinking", path, index), block, "thinking", text)
+				if text != "" {
+					(*segments)[len(*segments)-1].Signed = block["signature"] != nil
+				}
+			}
 		}
 	}
 }
@@ -164,30 +207,53 @@ func appendMutableJSONValue(
 	toolName string,
 	replace func(interface{}),
 ) {
+	appendJSONSafetyValue(segments, protocol, source, path, "", value, toolName, replace)
+}
+
+func appendJSONSafetyValue(segments *[]SafetySegment, protocol, source, path, field string, value interface{}, toolName string, replace func(interface{})) {
 	switch typed := value.(type) {
 	case string:
-		if replace == nil {
-			if decoded, ok := decodeJSONValue([]byte(typed)); ok {
-				switch decoded.(type) {
-				case map[string]interface{}, []interface{}:
-					appendMutableJSONValue(segments, protocol, source, path, decoded, toolName, nil)
-					return
+		if decoded, ok := decodeSafetyContainer(typed, field); ok {
+			switch decoded.(type) {
+			case map[string]interface{}, []interface{}:
+				start := len(*segments)
+				var setDecoded func(interface{})
+				if replace != nil {
+					setDecoded = func(updated interface{}) { decoded = updated }
 				}
+				appendJSONSafetyValue(segments, protocol, source, path, field, decoded, toolName, setDecoded)
+				if replace != nil && len(*segments) > start {
+					last := &(*segments)[len(*segments)-1]
+					last.commits = append(last.commits, func() error {
+						body, err := codec.MarshalJSONNoEscape(decoded)
+						if err != nil {
+							return fmt.Errorf("编码脱敏后的嵌套 JSON 失败: %w", err)
+						}
+						replace(string(body))
+						return nil
+					})
+				}
+				return
 			}
-			appendSafetySegmentWithTool(segments, protocol, source, path, typed, toolName, nil)
-			return
 		}
-		appendSafetySegmentWithTool(segments, protocol, source, path, typed, toolName, func(masked string) {
-			replace(masked)
-		})
+		if replace == nil {
+			appendSafetySegmentWithTool(segments, protocol, source, path, typed, toolName, nil)
+		} else {
+			appendSafetySegmentWithTool(segments, protocol, source, path, typed, toolName, func(masked string) { replace(masked) })
+		}
+		if typed != "" {
+			(*segments)[len(*segments)-1].Field = field
+		}
 	case map[string]interface{}:
 		for _, key := range sortedMapKeys(typed) {
 			field := key
+			// 键本身也可能是邮箱或其他已知原值，不能改名破坏工具 schema。
+			appendSafetySegmentWithTool(segments, protocol, source, path+".[key]", key, toolName, nil)
 			if replace == nil {
-				appendMutableJSONValue(segments, protocol, source, path+"."+field, typed[field], toolName, nil)
+				appendJSONSafetyValue(segments, protocol, source, path+"."+field, field, typed[field], toolName, nil)
 				continue
 			}
-			appendMutableJSONValue(segments, protocol, source, path+"."+field, typed[field], toolName, func(masked interface{}) {
+			appendJSONSafetyValue(segments, protocol, source, path+"."+field, field, typed[field], toolName, func(masked interface{}) {
 				typed[field] = masked
 			})
 		}
@@ -195,20 +261,29 @@ func appendMutableJSONValue(
 		for index := range typed {
 			itemIndex := index
 			if replace == nil {
-				appendMutableJSONValue(segments, protocol, source, fmt.Sprintf("%s[%d]", path, index), typed[index], toolName, nil)
+				appendJSONSafetyValue(segments, protocol, source, fmt.Sprintf("%s[%d]", path, index), field, typed[index], toolName, nil)
 				continue
 			}
-			appendMutableJSONValue(segments, protocol, source, fmt.Sprintf("%s[%d]", path, index), typed[index], toolName, func(masked interface{}) {
+			appendJSONSafetyValue(segments, protocol, source, fmt.Sprintf("%s[%d]", path, index), field, typed[index], toolName, func(masked interface{}) {
 				typed[itemIndex] = masked
 			})
 		}
-	default:
-		if replace == nil {
-			if body, err := json.Marshal(value); err == nil {
-				appendSafetySegmentWithTool(segments, protocol, source, path, string(body), toolName, nil)
-			}
-		}
+	case json.Number:
+		// 用字符串占位符替换数字会改变工具 schema；命中时显式阻断。
+		appendSafetySegmentWithTool(segments, protocol, source, path, typed.String(), toolName, nil)
+		(*segments)[len(*segments)-1].Field = field
+	case float64:
+		appendSafetySegmentWithTool(segments, protocol, source, path, strconv.FormatFloat(typed, 'f', -1, 64), toolName, nil)
+		(*segments)[len(*segments)-1].Field = field
 	}
+}
+
+func decodeSafetyContainer(text, field string) (interface{}, bool) {
+	trimmed := strings.TrimSpace(text)
+	if len(trimmed) < 2 || trimmed[0] != '{' && trimmed[0] != '[' || sensitive.IsCredentialFieldName(field) {
+		return nil, false
+	}
+	return decodeJSONValue([]byte(trimmed))
 }
 
 func equalString(value interface{}, expected string) bool {

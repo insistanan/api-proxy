@@ -512,6 +512,10 @@ func DefaultContentSafetyConfig() ContentSafetyConfig {
 
 // Config 配置结构
 type Config struct {
+	// HistoricalKeysPending 表示配置已提交，完整历史 Key 快照尚待同步到指标库。
+	// 同步成功即移除此标记及磁盘中的历史 Key，重启期间不能合并旧数据库覆盖它。
+	HistoricalKeysPending bool `json:"historicalKeysPending,omitempty"`
+
 	IntentRouting map[string]IntentRoutingConfig `json:"intentRouting,omitempty"`
 	FreeChannels  *FreeChannelsConfig            `json:"freeChannels,omitempty"`
 	Settings      SettingsConfig                 `json:"settings"`
@@ -574,7 +578,7 @@ type ConfigManager struct {
 	config          Config
 	configFile      string
 	watcher         *fsnotify.Watcher
-	settingsChanged chan struct{}
+	disguiseChanges chan struct{}
 	failedKeysCache map[string]*FailedKey
 	keyRecoveryTime time.Duration
 	maxFailureCount int

@@ -1,10 +1,14 @@
 // 历史 Key 迁移：换 Key 后仍需聚合统计的旧 Key 属运行时数据。
-// 它们不再写入配置文件，改由指标库按渠道稳定 ID 保存。
+// 稳态由指标库按渠道稳定 ID 保存；提交期间用配置中的待同步快照保证可恢复。
 package config
 
 import (
-	"log"
+	"encoding/json"
+	"fmt"
+	"reflect"
 	"strings"
+
+	"github.com/insistanan/api-proxy/internal/storage/atomicfile"
 )
 
 // HistoricalKeyStore 按协议与渠道稳定 ID 保存历史 API Key。
@@ -22,8 +26,7 @@ func (cm *ConfigManager) SetHistoricalKeyStore(store HistoricalKeyStore) {
 	cm.historicalKeyStore = store
 }
 
-// SyncHistoricalKeys 启动迁移：把配置中的历史 Key 写入指标库，并用指标库补齐全量渠道。
-// 配置文件里残留的历史 Key 会在本次或下次保存时剔除。
+// SyncHistoricalKeys 启动同步：恢复待提交快照，或合并配置与指标库中的历史 Key。
 func (cm *ConfigManager) SyncHistoricalKeys() error {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
@@ -32,20 +35,29 @@ func (cm *ConfigManager) SyncHistoricalKeys() error {
 	}
 
 	candidate := cloneConfig(cm.config)
-	dirty := false
-	if err := cm.mergeHistoricalKeysLocked(&candidate, &dirty); err != nil {
-		return err
+	needsCommit := candidate.HistoricalKeysPending
+	if !candidate.HistoricalKeysPending {
+		if err := cm.mergeHistoricalKeysLocked(&candidate, &needsCommit); err != nil {
+			return err
+		}
 	}
+	wasReady := cm.historicalKeysReady
 	cm.historicalKeysReady = true
-	if dirty {
-		return cm.saveConfigLocked(candidate)
+	if !needsCommit {
+		cm.publishConfigLocked(candidate)
+		return nil
 	}
-	cm.publishConfigLocked(candidate)
-	return nil
+	// 首次迁移也先落盘完整快照，数据库失败时可以按同一提交继续恢复。
+	candidate.HistoricalKeysPending = true
+	err := cm.saveConfigLocked(candidate)
+	if err != nil && !IsCommittedError(err) {
+		cm.historicalKeysReady = wasReady
+	}
+	return err
 }
 
 // mergeHistoricalKeysLocked 用指标库补齐候选配置的历史 Key。
-// dirty 表示配置文件中仍带历史 Key，需要保存一次把它们从文件里剔除。
+// dirty 表示需要剥离配置内的历史 Key，或修正数据库中的历史 Key 注册项。
 func (cm *ConfigManager) mergeHistoricalKeysLocked(candidate *Config, dirty *bool) error {
 	store := cm.historicalKeyStore
 	if store == nil {
@@ -56,6 +68,7 @@ func (cm *ConfigManager) mergeHistoricalKeysLocked(candidate *Config, dirty *boo
 		if err != nil {
 			return err
 		}
+		activeIDs := make(map[string]bool, len(*set.upstreams))
 		for index := range *set.upstreams {
 			channel := &(*set.upstreams)[index]
 			channelID := strings.TrimSpace(channel.ID)
@@ -63,41 +76,44 @@ func (cm *ConfigManager) mergeHistoricalKeysLocked(candidate *Config, dirty *boo
 				continue
 			}
 			if GetChannelStatus(channel) == ChannelStatusDeleted {
-				// 删除占位不再需要历史 Key，清掉可能遗留的注册项。
-				if len(stored[channelID]) > 0 {
-					if err := store.DeleteHistoricalKeys(set.kind, channelID); err != nil {
-						return err
-					}
-				}
+				*dirty = *dirty || len(channel.HistoricalAPIKeys) > 0
+				channel.HistoricalAPIKeys = nil
 				continue
 			}
+			activeIDs[channelID] = true
 			if len(channel.HistoricalAPIKeys) > 0 {
 				*dirty = true
 			}
 			merged := mergeHistoricalKeyList(channel.HistoricalAPIKeys, stored[channelID])
 			if !equalHistoricalKeyList(merged, stored[channelID]) {
-				if err := store.SaveHistoricalKeys(set.kind, channelID, merged); err != nil {
-					return err
-				}
+				*dirty = true
 			}
 			channel.HistoricalAPIKeys = merged
+		}
+		for channelID, keys := range stored {
+			if !activeIDs[channelID] && len(keys) > 0 {
+				*dirty = true
+			}
 		}
 	}
 	return nil
 }
 
-// syncHistoricalKeysToStoreLocked 在配置保存成功后，把发生变化的渠道历史 Key 同步到指标库。
-// 只处理有差异的渠道，避免每次保存都重写全部注册项。
+// syncHistoricalKeysToStoreLocked 将已提交的完整快照同步到数据库。
+// 以数据库实际值比较，重复执行会继续完成中断的写入和删除。
 func (cm *ConfigManager) syncHistoricalKeysToStoreLocked(next Config) error {
 	store := cm.historicalKeyStore
 	if store == nil {
 		return nil
 	}
-	before := historicalKeysByChannelID(cm.config, true)
-	after := historicalKeysByChannelID(next, false)
+	after := historicalKeysByChannelID(next)
 	for kind, afterChannels := range after {
+		before, err := store.LoadHistoricalKeys(kind)
+		if err != nil {
+			return fmt.Errorf("读取 %s 历史 Key 失败: %w", kind, err)
+		}
 		for channelID, keys := range afterChannels {
-			if equalHistoricalKeyList(keys, before[kind][channelID]) {
+			if equalHistoricalKeyList(keys, before[channelID]) {
 				continue
 			}
 			if err := store.SaveHistoricalKeys(kind, channelID, keys); err != nil {
@@ -105,7 +121,7 @@ func (cm *ConfigManager) syncHistoricalKeysToStoreLocked(next Config) error {
 			}
 		}
 		// before 有、after 没有：渠道被删除或历史 Key 被清空，需要清理注册项。
-		for channelID, keys := range before[kind] {
+		for channelID, keys := range before {
 			if _, exists := afterChannels[channelID]; exists || len(keys) == 0 {
 				continue
 			}
@@ -118,14 +134,14 @@ func (cm *ConfigManager) syncHistoricalKeysToStoreLocked(next Config) error {
 }
 
 // historicalKeysByChannelID 汇总各协议渠道的历史 Key。
-// includeDeleted 用于保存前快照：删除占位在 after 中缺席，从而触发注册项清理。
-func historicalKeysByChannelID(cfg Config, includeDeleted bool) map[string]map[string][]string {
+// 删除占位不保留历史 Key，同步时据此清理注册项。
+func historicalKeysByChannelID(cfg Config) map[string]map[string][]string {
 	result := make(map[string]map[string][]string)
 	for _, set := range cfg.channelSets() {
 		channels := make(map[string][]string)
 		for index := range *set.upstreams {
 			channel := &(*set.upstreams)[index]
-			if !includeDeleted && GetChannelStatus(channel) == ChannelStatusDeleted {
+			if GetChannelStatus(channel) == ChannelStatusDeleted {
 				continue
 			}
 			channelID := strings.TrimSpace(channel.ID)
@@ -148,17 +164,30 @@ func clearHistoricalKeys(cfg *Config) {
 	}
 }
 
-// carryHistoricalKeysByID 在指标库读取失败时，按渠道 ID 沿用当前快照的历史 Key。
-func carryHistoricalKeysByID(dst *Config, src Config) {
-	byKind := historicalKeysByChannelID(src, false)
-	for _, set := range dst.channelSets() {
-		for index := range *set.upstreams {
-			channel := &(*set.upstreams)[index]
-			if keys := byKind[set.kind][strings.TrimSpace(channel.ID)]; len(keys) > 0 {
-				channel.HistoricalAPIKeys = append([]string(nil), keys...)
-			}
-		}
+func historicalKeysChanged(before, after Config) bool {
+	return !reflect.DeepEqual(historicalKeysByChannelID(before), historicalKeysByChannelID(after))
+}
+
+// finishHistoricalKeysLocked 仅在完整快照已经落盘后执行。
+// 同步或替换失败时保留待同步标记；若替换已提交而目录同步失败，内存跟随磁盘。
+// 调用方统一按“已提交但收尾失败”报告，不能回滚业务操作。
+func (cm *ConfigManager) finishHistoricalKeysLocked() error {
+	if err := cm.syncHistoricalKeysToStoreLocked(cm.config); err != nil {
+		return err
 	}
+	persisted := cloneConfig(cm.config)
+	persisted.HistoricalKeysPending = false
+	clearHistoricalKeys(&persisted)
+	data, err := json.MarshalIndent(persisted, "", "  ")
+	if err != nil {
+		return err
+	}
+	err = atomicfile.Write(cm.configFile, data, atomicfile.Options{TempPrefix: ".config-", Mode: 0600})
+	if err == nil || atomicfile.IsCommitted(err) {
+		cm.config.HistoricalKeysPending = false
+		cm.persistedDigest = configDigest(data)
+	}
+	return err
 }
 
 func mergeHistoricalKeyList(primary, extra []string) []string {
@@ -186,9 +215,4 @@ func equalHistoricalKeyList(left, right []string) bool {
 		}
 	}
 	return true
-}
-
-// logHistoricalKeyFallback 统一记录迁移失败后的降级行为，避免静默丢失。
-func logHistoricalKeyFallback(err error) {
-	log.Printf("[Config-HistoricalKeys] 历史 Key 同步指标库失败，后续保存将恢复写入配置文件: %v", err)
 }

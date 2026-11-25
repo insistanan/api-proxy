@@ -6,13 +6,13 @@ import (
 )
 
 // 历史 API Key 注册表：换 Key 后仍需用旧 Key 聚合统计。
-// 这是运行时数据，跟随指标库保存，不再写入配置文件。
+// 稳态跟随指标库保存；配置层只在待同步提交中暂存完整快照，以便失败恢复。
 // 渠道身份使用稳定 ID，避免渠道重排或索引变化后错绑。
 
 // SaveHistoricalKeys 覆盖保存某渠道的历史 Key 集合。
 func (s *SQLiteStore) SaveHistoricalKeys(apiType string, channelID string, keys []string) error {
 	if s == nil || s.db == nil {
-		return nil
+		return fmt.Errorf("保存历史 Key 失败: 指标库未初始化")
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -49,7 +49,7 @@ func (s *SQLiteStore) SaveHistoricalKeys(apiType string, channelID string, keys 
 func (s *SQLiteStore) LoadHistoricalKeys(apiType string) (map[string][]string, error) {
 	result := make(map[string][]string)
 	if s == nil || s.db == nil {
-		return result, nil
+		return nil, fmt.Errorf("读取历史 Key 失败: 指标库未初始化")
 	}
 	rows, err := s.db.Query(
 		`SELECT channel_id, api_key FROM channel_historical_keys WHERE api_type = ? ORDER BY added_at, rowid`,
@@ -76,7 +76,7 @@ func (s *SQLiteStore) LoadHistoricalKeys(apiType string) (map[string][]string, e
 // DeleteHistoricalKeys 删除某渠道的历史 Key。
 func (s *SQLiteStore) DeleteHistoricalKeys(apiType string, channelID string) error {
 	if s == nil || s.db == nil {
-		return nil
+		return fmt.Errorf("删除历史 Key 失败: 指标库未初始化")
 	}
 	if _, err := s.db.Exec(
 		`DELETE FROM channel_historical_keys WHERE api_type = ? AND channel_id = ?`,

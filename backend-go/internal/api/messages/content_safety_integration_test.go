@@ -243,13 +243,13 @@ func newContentSafetyTestRouter(t *testing.T) (*gin.Engine, *config.ConfigManage
 	})
 	traceAffinity := session.NewTraceAffinityManager()
 	t.Cleanup(traceAffinity.Stop)
-	channelScheduler := scheduler.NewChannelScheduler(
-		cfgManager,
-		metricsManagers[0], metricsManagers[1], metricsManagers[2], metricsManagers[3], metricsManagers[4],
-		nil, nil,
-		traceAffinity,
-		urlhealth.NewURLManager(30*time.Second, 3),
-	)
+	channelScheduler := scheduler.NewChannelScheduler(cfgManager, map[scheduler.ChannelKind]*metrics.MetricsManager{
+		scheduler.ChannelKindMessages:  metricsManagers[0],
+		scheduler.ChannelKindResponses: metricsManagers[1],
+		scheduler.ChannelKindGemini:    metricsManagers[2],
+		scheduler.ChannelKindChat:      metricsManagers[3],
+		scheduler.ChannelKindImages:    metricsManagers[4],
+	}, traceAffinity, urlhealth.NewURLManager(30*time.Second, 3))
 
 	store, err := sensitive.NewBlockedStore(filepath.Join(t.TempDir(), "blocked-logs.db"))
 	if err != nil {
@@ -262,7 +262,7 @@ func newContentSafetyTestRouter(t *testing.T) (*gin.Engine, *config.ConfigManage
 	})
 	pipeline := pipeline.NewContentSafetyPipelineWithRecorder(cfgManager, store)
 
-	envCfg := config.NewEnvConfig()
+	envCfg := config.DefaultEnvConfig()
 	envCfg.ProxyAccessKey = contentSafetyTestAccessKey
 	envCfg.EnableRequestLogs = false
 	envCfg.EnableResponseLogs = false

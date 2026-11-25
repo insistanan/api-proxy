@@ -10,16 +10,14 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	apiproxy "github.com/insistanan/api-proxy"
 	adminextensions "github.com/insistanan/api-proxy/internal/api/admin/extensions"
 	adminsettings "github.com/insistanan/api-proxy/internal/api/admin/settings"
-	"github.com/insistanan/api-proxy/internal/api/system"
 	"github.com/insistanan/api-proxy/internal/clients"
 	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
 	"github.com/insistanan/api-proxy/internal/dialogue/routing/intent"
 	"github.com/insistanan/api-proxy/internal/dialogue/session"
 	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/infra/middleware"
+	"github.com/insistanan/api-proxy/internal/infra/httpclient"
 	"github.com/insistanan/api-proxy/internal/management/forest"
 	"github.com/insistanan/api-proxy/internal/orchestration/circuit"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
@@ -34,7 +32,7 @@ import (
 )
 
 // app 聚合一次进程运行的全部组件。
-// 资源在创建成功后登记清理；启动失败与正常关闭均由同一登记表逆序释放。
+// 资源创建后立即登记；停机先停止后台生产者，再逆序释放存储。
 type app struct {
 	intentService         *intent.Service
 	envCfg                *config.EnvConfig
@@ -46,8 +44,6 @@ type app struct {
 	blockedStore          *sensitive.BlockedStore
 	gateStore             *sensitive.GateStore
 	mappingStore          *sensitive.MappingStore
-	mappingWatchStop      chan struct{}
-	mappingWatchDone      chan struct{}
 	cmdGate               *pipeline.CmdGate
 	contentSafetyPipeline *pipeline.Pipeline
 	sessionManager        *session.SessionManager
@@ -64,33 +60,75 @@ type app struct {
 	disguiseSyncer        *adminsettings.DisguiseSyncer
 	engine                *gin.Engine
 	cleanups              []appCleanup
+	workers               []appCleanup
 	shutdownOnce          sync.Once
 	shutdownErr           error
 }
 
 // newApp 构造并装配全部组件：基础设施 → 存储 → 调度器 → 路由。
 // 只做装配，不启动监听；进程退出统一走 shutdown。
-// 初始化中途失败时按逆序清理已创建资源（方案 R4-b 第 6 步），
-// 不把半初始化的资源泄漏给操作系统回收。
+// 初始化中途失败也遵循生产者先于存储退出的依赖顺序。
 func newApp() (_ *app, err error) {
 	a := &app{}
+	a.registerCleanup("上游 HTTP 连接池", func() error {
+		httpclient.GetManager().CloseIdleConnections()
+		return nil
+	})
 	defer func() {
 		if err != nil {
 			err = errors.Join(err, a.shutdown())
 		}
 	}()
 
+	if err := a.initConfigAndLogs(); err != nil {
+		return nil, err
+	}
+	a.initUsageJournal()
+	if err := a.initStores(); err != nil {
+		return nil, err
+	}
+	if err := a.initScheduling(); err != nil {
+		return nil, err
+	}
+	gateCaller := &llmgate.Caller{
+		EnvConfig:        a.envCfg,
+		CfgManager:       a.cfgManager,
+		ChannelScheduler: a.channelScheduler,
+		RequestLogStore:  a.requestLogStore,
+	}
+	if err := a.initSafety(gateCaller); err != nil {
+		return nil, err
+	}
+	if err := a.initClients(gateCaller); err != nil {
+		return nil, err
+	}
+	a.disguiseSyncer = adminsettings.StartDisguiseAutoSync(a.cfgManager)
+	a.registerWorker("伪装版本自动同步", func() error {
+		a.disguiseSyncer.Stop()
+		return nil
+	})
+	a.engine = a.setupHTTP()
+
+	return a, nil
+}
+
+func (a *app) initConfigAndLogs() error {
+	var err error
 	// 初始化配置管理器
-	a.envCfg = config.NewEnvConfig()
+	a.envCfg, err = config.LoadEnvConfig()
+	if err != nil {
+		return fmt.Errorf("加载启动配置失败: %w", err)
+	}
 
 	// 先加载并迁移设置，日志路径和指标保留期必须在存储初始化前确定。
 	a.cfgManager, err = config.NewConfigManager(".config/config.json")
 	if err != nil {
-		return nil, fmt.Errorf("初始化配置管理器失败: %w", err)
+		return fmt.Errorf("初始化配置管理器失败: %w", err)
 	}
+	a.registerWorker("配置管理器", a.cfgManager.Close)
 	a.envCfg = a.envCfg.WithSettings(a.cfgManager)
 	if err := a.cfgManager.EnsureFreeChannels(); err != nil {
-		return nil, errors.Join(fmt.Errorf("初始化免费分组失败: %w", err), a.cfgManager.Close())
+		return fmt.Errorf("初始化免费分组失败: %w", err)
 	}
 
 	// 初始化日志系统；清理仍按配置生产者 → 日志存储的顺序执行。
@@ -103,10 +141,14 @@ func newApp() (_ *app, err error) {
 		},
 	})
 	if err != nil {
-		return nil, errors.Join(fmt.Errorf("初始化日志系统失败: %w", err), a.cfgManager.Close())
+		return fmt.Errorf("初始化日志系统失败: %w", err)
 	}
 	a.registerCleanup("日志存储", a.logStore.Close)
 	a.requestLogStore = metrics.NewRequestLogStore(a.logStore)
+	return nil
+}
+
+func (a *app) initUsageJournal() {
 	const ledgerPath = ".config/usage-ledger.db"
 	ledger, ledgerErr := usageledger.Open(ledgerPath)
 	if ledgerErr != nil {
@@ -117,25 +159,25 @@ func newApp() (_ *app, err error) {
 	} else {
 		a.usageLedger = ledger
 		a.registerCleanup("用量账本", ledger.Close)
-		world, worldErr := forest.Open(".config/forest.db", ledger)
-		if worldErr != nil {
-			log.Printf("[Forest-Open] 个人森林不可用: %v", worldErr)
+		forestStore, forestErr := forest.Open(".config/forest.db", ledger)
+		if forestErr != nil {
+			log.Printf("[Forest-Open] 个人森林不可用: %v", forestErr)
 		} else {
-			a.forest = world
-			a.registerCleanup("个人森林", world.Close)
+			a.forest = forestStore
+			a.registerWorker("个人森林", forestStore.Close)
 		}
 	}
+}
 
-	a.registerCleanup("配置管理器", a.cfgManager.Close)
-
+func (a *app) initStores() error {
 	blockedDB, err := sqlitedb.Open(".config/blocked-logs.db")
 	if err != nil {
-		return nil, err
+		return err
 	}
 	a.registerCleanup("内容安全数据库", blockedDB.Close)
 	a.blockedStore, err = sensitive.NewBlockedStoreWithDB(blockedDB)
 	if err != nil {
-		return nil, fmt.Errorf("初始化内容安全拦截记录存储失败: %w", err)
+		return fmt.Errorf("初始化内容安全拦截记录存储失败: %w", err)
 	}
 	a.registerCleanup("拦截记录存储", a.blockedStore.Close)
 	logInitf(a.envCfg, "[ContentSafety-Init] 拦截记录存储已初始化")
@@ -143,7 +185,7 @@ func newApp() (_ *app, err error) {
 	// 初始化会话管理器（Responses API 专用），与对话记录共用持久化数据库。
 	conversationDB, err := sqlitedb.Open(".config/conversations.db")
 	if err != nil {
-		return nil, err
+		return err
 	}
 	a.registerCleanup("对话数据库", conversationDB.Close)
 	a.sessionManager, err = session.NewPersistentSessionManagerWithDB(
@@ -153,18 +195,18 @@ func newApp() (_ *app, err error) {
 		0,              // 不按 Token 数删除整段会话
 	)
 	if err != nil {
-		return nil, fmt.Errorf("初始化 Responses 会话持久化存储失败: %w", err)
+		return fmt.Errorf("初始化 Responses 会话持久化存储失败: %w", err)
 	}
-	a.registerCleanup("Responses 会话", func() error { a.sessionManager.Stop(); return nil })
+	a.registerWorker("Responses 会话", func() error { a.sessionManager.Stop(); return nil })
 	a.sessionManager.SetMaxSessions(5000) // 全局最多 5000 个活跃 session
 	logInitf(a.envCfg, "[Session-Init] 持久化会话管理器已初始化 (保留: 7天, 上限: 5000)")
 
 	// 对话存储先于调度组件创建，关闭时必须等依赖它的生产者退出。
 	a.conversationRegistry, err = conversation.NewPersistentRegistryWithDB(conversationDB)
 	if err != nil {
-		return nil, fmt.Errorf("初始化对话持久化存储失败: %w", err)
+		return fmt.Errorf("初始化对话持久化存储失败: %w", err)
 	}
-	a.registerCleanup("对话注册表", func() error { a.conversationRegistry.Stop(); return nil })
+	a.registerWorker("对话注册表", func() error { a.conversationRegistry.Stop(); return nil })
 
 	// 初始化指标持久化存储（可选）
 	if a.envCfg.MetricsPersistenceEnabled {
@@ -176,7 +218,7 @@ func newApp() (_ *app, err error) {
 			},
 		})
 		if err != nil {
-			return nil, fmt.Errorf("初始化指标持久化存储失败: %w", err)
+			return fmt.Errorf("初始化指标持久化存储失败: %w", err)
 		}
 		a.registerCleanup("指标存储", a.metricsStore.Close)
 	} else {
@@ -187,51 +229,43 @@ func newApp() (_ *app, err error) {
 	if a.metricsStore != nil {
 		a.cfgManager.SetHistoricalKeyStore(a.metricsStore)
 		if err := a.cfgManager.SyncHistoricalKeys(); err != nil {
-			log.Printf("[Metrics-Init] 警告: 同步历史 API Key 到指标库失败，继续随配置保存: %v", err)
+			return fmt.Errorf("同步历史 API Key 到指标库失败: %w", err)
 		}
 	}
 
+	// 危险命令 AI 闸门：存储与拦截记录同库；遗留的 waiting 记录一律按拦截处理
+	// （重启后内存等待者已不存在）。llmgate.Caller 供闸门与意图识别共用。
+	a.gateStore, err = sensitive.NewGateStoreWithDB(blockedDB)
+	if err != nil {
+		return fmt.Errorf("初始化危险命令 AI 闸门存储失败: %w", err)
+	}
+	a.registerCleanup("命令闸门存储", a.gateStore.Close)
+	if expired, expireErr := a.gateStore.ExpireStalePending(context.Background()); expireErr != nil {
+		return fmt.Errorf("清理重启前命令确认记录失败: %w", expireErr)
+	} else if expired > 0 {
+		log.Printf("[Gate-Init] 已将 %d 条重启前遗留的待确认记录标记为过期（按拦截处理）", expired)
+	}
+	return nil
+}
+
+func (a *app) initScheduling() error {
 	// 每类协议入口分别使用独立的指标管理器，共用渠道调度器。
 	// 启用指标持久化时，各管理器使用同一份存储，并按入口类型区分记录。
-	metricsKinds := []scheduler.ChannelKind{
-		scheduler.ChannelKindMessages,
-		scheduler.ChannelKindResponses,
-		scheduler.ChannelKindGemini,
-		scheduler.ChannelKindChat,
-		scheduler.ChannelKindImages,
-		scheduler.ChannelKindEmbeddings,
-		scheduler.ChannelKindDecisions,
-	}
+	metricsKinds := scheduler.ChannelKinds()
 	a.metricsByKind = make(map[scheduler.ChannelKind]*metrics.MetricsManager, len(metricsKinds))
-	var traceAffinityManager *session.TraceAffinityManager
-	// 构造调度器前由装配层持有组件，成功后由调度器聚合停止，只有一个清理入口。
-	a.registerCleanup("调度与观测", func() error {
-		if a.channelScheduler != nil {
-			a.channelScheduler.Stop()
-		} else {
-			for _, mm := range a.metricsByKind {
-				mm.Stop()
-			}
-			if traceAffinityManager != nil {
-				traceAffinityManager.Stop()
-			}
-		}
-		return nil
-	})
+	// 先处理可选存储，避免将有类型的 nil 指针传入接口。
+	var store metrics.PersistenceStore
+	if a.metricsStore != nil {
+		store = a.metricsStore
+	}
 	for _, kind := range metricsKinds {
 		// apiType 必须无条件传入：空串会被当成 messages 口径，
 		// 影响 Token 统计的缓存口径归属。
-		// 这里先把可选的 metricsStore 收进接口变量：直接传 nil 的 *SQLiteStore
-		// 会变成"非 nil 接口值"，AddRecord 里的 store != nil 判断随之失效。
-		var store metrics.PersistenceStore
-		if a.metricsStore != nil {
-			store = a.metricsStore
-		}
 		a.metricsByKind[kind] = metrics.NewMetricsManagerWithPersistence(
 			a.envCfg.MetricsWindowSize, a.envCfg.MetricsFailureThreshold, store, string(kind))
 	}
 
-	traceAffinityManager = session.NewTraceAffinityManager()
+	traceAffinityManager := session.NewTraceAffinityManager()
 
 	// 初始化 URL 管理器（非阻塞，动态排序）
 	urlManager := urlhealth.NewURLManager(30*time.Second, 3) // 30秒冷却期，连续3次失败后移到末尾
@@ -239,16 +273,11 @@ func newApp() (_ *app, err error) {
 
 	a.channelScheduler = scheduler.NewChannelScheduler(
 		a.cfgManager,
-		a.metricsByKind[scheduler.ChannelKindMessages],
-		a.metricsByKind[scheduler.ChannelKindResponses],
-		a.metricsByKind[scheduler.ChannelKindGemini],
-		a.metricsByKind[scheduler.ChannelKindChat],
-		a.metricsByKind[scheduler.ChannelKindImages],
-		a.metricsByKind[scheduler.ChannelKindEmbeddings],
-		a.metricsByKind[scheduler.ChannelKindDecisions],
+		a.metricsByKind,
 		traceAffinityManager,
 		urlManager,
 	)
+	a.registerWorker("调度与观测", func() error { a.channelScheduler.Stop(); return nil })
 	a.channelScheduler.SetRequestLogStore(a.requestLogStore)
 	a.channelScheduler.SetConversationRegistry(a.conversationRegistry)
 	logInitf(a.envCfg, "[Scheduler-Init] 多渠道调度器已初始化 (失败率阈值: %.0f%%, 滑动窗口: %d)",
@@ -267,101 +296,52 @@ func newApp() (_ *app, err error) {
 	// 不参与生产选渠——默认遵循配置顺序，健康促销在分组内临时优先。
 	a.profileManager = metrics.NewProfileManager()
 	a.channelScheduler.SetProfileManager(a.profileManager)
+	if err := a.channelScheduler.InitializeProfiles(); err != nil {
+		return err
+	}
 	logInitf(a.envCfg, "[Main] 渠道性能画像已启用（仅观测展示，默认按配置顺序选渠，健康促销在分组内临时优先）")
+	return nil
+}
 
-	// 危险命令 AI 闸门：存储与拦截记录同库；遗留的 waiting 记录一律按拦截处理
-	// （重启后内存等待者已不存在）。llmgate.Caller 供闸门与意图识别共用。
-	a.gateStore, err = sensitive.NewGateStoreWithDB(blockedDB)
-	if err != nil {
-		return nil, fmt.Errorf("初始化危险命令 AI 闸门存储失败: %w", err)
-	}
-	a.registerCleanup("命令闸门存储", a.gateStore.Close)
-	if expired, expireErr := a.gateStore.ExpireStalePending(context.Background()); expireErr != nil {
-		return nil, fmt.Errorf("清理重启前命令确认记录失败: %w", expireErr)
-	} else if expired > 0 {
-		log.Printf("[Gate-Init] 已将 %d 条重启前遗留的待确认记录标记为过期（按拦截处理）", expired)
-	}
-	gateCaller := &llmgate.Caller{
-		EnvConfig:        a.envCfg,
-		CfgManager:       a.cfgManager,
-		ChannelScheduler: a.channelScheduler,
-		RequestLogStore:  a.requestLogStore, // R4-b 装配层注入，不经调度器定位器
-	}
+func (a *app) initSafety(gateCaller *llmgate.Caller) error {
 	a.cmdGate = pipeline.NewCmdGate(a.cfgManager, gateCaller, a.gateStore, a.blockedStore)
 	localEmbedding, err := intent.NewLocal(".config/intent-embedding")
 	if err != nil {
-		return nil, err
+		return err
 	}
+	a.registerWorker("本地向量助手", localEmbedding.Stop)
 	a.intentService, err = intent.New(a.cfgManager, gateCaller, ".config/intent.db", localEmbedding)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	a.registerCleanup("意图会话存储", a.intentService.Close)
-	a.registerCleanup("本地向量助手", localEmbedding.Stop)
-	// 内容安全管道注入闸门；未启用时保持"命中即拦截"的既有行为。
-	a.contentSafetyPipeline = pipeline.NewContentSafetyPipelineWithSemantic(a.cfgManager, a.blockedStore, a.cmdGate, a.intentService.Datasets)
-	logInitf(a.envCfg, "[Gate-Init] 危险命令 AI 闸门已装配")
 
-	// 持久映射库在启动时初始化，以便运行中切换脱敏模式（Veil ADR 0004）。
+	// 持久映射库在启动时初始化，是否使用由每次请求的配置快照决定。
 	// 只有 mask 模式会向请求注入映射库：占位符密钥从主密钥派生，
 	// 映射以 AES-256-GCM 加密保存。block 模式不写入脱敏映射，拦截记录仍正常保存。
 	a.mappingStore, err = sensitive.NewMappingStore(".config/redaction-mappings.db", ".config/master-key")
 	if err != nil {
-		return nil, fmt.Errorf("初始化可逆脱敏持久映射库失败: %w", err)
+		return fmt.Errorf("初始化可逆脱敏持久映射库失败: %w", err)
 	}
 	a.registerCleanup("持久映射存储", a.mappingStore.Close)
-	if a.cfgManager.GetSettings().ContentSafety.SensitiveData.Mode == config.ContentSafetyModeMask {
-		sensitive.SetPersistentMappingStore(a.mappingStore)
-		logInitf(a.envCfg, "[SensitiveData-Init] 可逆脱敏持久映射库已启用（跨重启还原，AES-256-GCM 加密落盘）")
-	} else {
-		logInitf(a.envCfg, "[SensitiveData-Init] 敏感数据处置为阻断模式，持久映射库未启用（零落盘）")
-	}
-	// 还原 miss 的审计回调：合法占位符形态但持久库查不到（如密钥已轮换）→ 原样下发 + 留痕。
-	sensitive.SetPersistentMissCallback(func(placeholder string) {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		if _, recordErr := a.blockedStore.Record(ctx, sensitive.BlockedLog{
-			APIType:       "messages",
-			BlockType:     sensitive.BlockTypeRestoreMiss,
-			RuleName:      "restore_miss",
-			PromptSnippet: "mode=restore_miss source=persistent_store\n合法占位符形态但持久库未命中，已原样下发: " + placeholder,
-		}); recordErr != nil {
-			log.Printf("[SensitiveData-Restore] 写入还原未命中审计失败: %v", recordErr)
-		}
-	})
-	a.registerCleanup("脱敏全局绑定", func() error {
-		sensitive.SetPersistentMissCallback(nil)
-		sensitive.SetPersistentMappingStore(nil)
-		return nil
-	})
+	a.contentSafetyPipeline = pipeline.NewContentSafetyPipelineWithSemantic(a.cfgManager, a.blockedStore, a.cmdGate, a.intentService.Datasets, a.mappingStore)
+	a.registerWorker("安全历史清理", sensitive.StartHistoryRetention(a.blockedStore, a.gateStore))
+	return nil
+}
 
+func (a *app) initClients(gateCaller *llmgate.Caller) error {
+	var err error
 	// pi-agent 与 skills 管理 API（实例持有各自的互斥锁与存储）
 	a.piAgentAPI, err = clients.NewPiAgentAPI()
 	if err != nil {
-		return nil, fmt.Errorf("初始化 pi-agent 管理 API 失败: %w", err)
+		return fmt.Errorf("初始化 pi-agent 管理 API 失败: %w", err)
 	}
 	skillsDirFn := func() (string, error) {
 		return config.ResolveSkillsDir(a.cfgManager.GetSettings().Extensions.SkillsDir)
 	}
 	a.skillsAPI = clients.NewSkillsAPI(skillsDirFn)
-	a.registerCleanup("技能翻译任务", a.skillsAPI.CloseSkillTranslations)
-	translationCaller := *gateCaller
-	translationCaller.TimeoutSecs = int((10 * time.Minute).Seconds())
-	a.skillTranslator = func(ctx context.Context, protocol, channelID, model, instructions, original string) (string, string, error) {
-		result, err := translationCaller.Call(ctx, channelID, llmgate.Prompt{
-			Model: model, System: instructions, MaxTokens: 8192, OverrideModel: true,
-			ChannelKind: scheduler.ChannelKind(protocol),
-			Messages:    []llmgate.PromptMessage{{Role: "user", Content: original}},
-			Metadata:    llmgate.CallMetadata{APIType: "skill_translation"},
-		})
-		if err != nil {
-			return "", "", err
-		}
-		if result.StopReason == "max_tokens" {
-			return "", "", errors.New("译文达到模型输出上限，未保存不完整的译文")
-		}
-		return result.Text, result.ChannelName, nil
-	}
+	a.registerWorker("技能翻译任务", a.skillsAPI.CloseSkillTranslations)
+	a.skillTranslator = clients.NewSkillTranslator(gateCaller)
 
 	// MCP 统一列表与智能体分发（存放在项目 Skills 目录下 mcp.json，便于与 Skills 一起 Git 管理）
 	a.mcpAPI = clients.NewDynamicMCPAPI(func() (string, error) {
@@ -371,134 +351,14 @@ func newApp() (_ *app, err error) {
 		}
 		return filepath.Join(dir, "mcp.json"), nil
 	})
-	if migrated, migErr := a.mcpAPI.MigrateLegacy(".config/mcp.json"); migErr != nil {
-		log.Printf("[MCP-Migrate] 迁移旧 .config/mcp.json 失败: %v", migErr)
-	} else if migrated {
-		logInitf(a.envCfg, "[MCP-Migrate] 已将 .config/mcp.json 迁移到项目目录")
-	}
 	if report, syncErr := a.skillsAPI.SyncOnStartup(); syncErr != nil {
 		log.Printf("[Skills-Sync] 启动同步项目 Skills 到 Agent 失败: %v", syncErr)
 	} else if report.Synced > 0 || report.Removed > 0 || len(report.Errors) > 0 {
 		logInitf(a.envCfg, "[Skills-Sync] 启动同步完成: synced=%d removed=%d skipped=%d errors=%d", report.Synced, report.Removed, report.Skipped, len(report.Errors))
 	}
-	if mcpResults, syncErr := a.mcpAPI.SyncToAgents(); syncErr != nil {
+	if syncErr := a.mcpAPI.SyncOnStartup(".config/mcp.json"); syncErr != nil {
 		log.Printf("[MCP-Sync] 启动分发 MCP 到 Agent 失败: %v", syncErr)
-	} else if len(mcpResults) > 0 {
-		failed := 0
-		for _, res := range mcpResults {
-			if !res.OK {
-				failed++
-			}
-		}
-		if failed > 0 {
-			log.Printf("[MCP-Sync] 启动分发 MCP 完成，%d 个智能体失败", failed)
-		} else {
-			logInitf(a.envCfg, "[MCP-Sync] 启动分发 MCP 到 %d 个智能体完成", len(mcpResults))
-		}
 	}
 	a.extensionsGitAPI = adminextensions.NewExtensionsGitAPI(a.cfgManager, a.skillsAPI, a.mcpAPI)
-
-	// 从现有指标同步数据到性能画像
-	syncConfig := a.cfgManager.GetConfig()
-	kindToUpstreams := []struct {
-		kind      scheduler.ChannelKind
-		upstreams []config.UpstreamConfig
-	}{
-		{scheduler.ChannelKindMessages, syncConfig.Upstream},
-		{scheduler.ChannelKindResponses, syncConfig.ResponsesUpstream},
-		{scheduler.ChannelKindGemini, syncConfig.GeminiUpstream},
-		{scheduler.ChannelKindChat, syncConfig.ChatUpstream},
-		{scheduler.ChannelKindImages, syncConfig.ImagesUpstream},
-		{scheduler.ChannelKindEmbeddings, syncConfig.EmbeddingsUpstream},
-		{scheduler.ChannelKindDecisions, syncConfig.DecisionsUpstream},
-	}
-	for _, entry := range kindToUpstreams {
-		for i := range entry.upstreams {
-			syncUpstreamProfiles(a.metricsByKind[entry.kind], a.profileManager, &entry.upstreams[i], i)
-		}
-	}
-	log.Println("[Main] 已从现有指标同步性能画像数据")
-
-	// 设置 Gin 模式
-	if a.envCfg.IsProduction() {
-		gin.SetMode(gin.ReleaseMode)
-	}
-
-	// 创建路由器。QuietPollingLogs 由日志级别决定，FilteredLogger 据此过滤轮询访问日志。
-	r := gin.New()
-	r.Use(middleware.FilteredLogger(a.envCfg))
-	r.Use(gin.Recovery())
-	r.Use(func(c *gin.Context) {
-		c.Request = c.Request.WithContext(intent.WithService(c.Request.Context(), a.intentService))
-		c.Next()
-	})
-
-	// 配置 CORS
-	r.Use(middleware.CORSMiddleware(a.envCfg))
-
-	// Web UI 访问控制中间件
-	r.Use(middleware.WebAuthMiddleware(a.envCfg, a.cfgManager))
-
-	// 健康检查端点（固定路径 /health，与 Dockerfile HEALTHCHECK 保持一致）
-	r.GET("/health", system.HealthCheck(a.envCfg, a.cfgManager))
-
-	// 管理端点显式绑定管理鉴权（R1：不依赖 WebAuthMiddleware 的路径判断）
-	adminGroup := r.Group("/admin", middleware.AdminAuthMiddleware(a.envCfg))
-	// 配置保存端点
-	adminGroup.POST("/config/save", system.SaveConfigHandler(a.cfgManager))
-
-	// 开发信息端点
-	if a.envCfg.IsDevelopment() {
-		adminGroup.GET("/dev/info", system.DevInfo(a.envCfg, a.cfgManager))
-	}
-
-	// Web 管理界面 API 路由（管理鉴权在路由组上显式绑定）
-	a.disguiseSyncer = adminsettings.StartDisguiseAutoSync(a.cfgManager)
-	a.registerCleanup("伪装版本自动同步", func() error {
-		a.disguiseSyncer.Stop()
-		return nil
-	})
-	apiGroup := r.Group("/api", middleware.AdminAuthMiddleware(a.envCfg))
-	a.setupAdminAPI(apiGroup)
-
-	// 各协议代理端点
-	a.setupProxyEndpoints(r)
-
-	// 静态文件服务 (嵌入的前端)
-	if a.envCfg.EnableWebUI {
-		system.ServeFrontend(r, apiproxy.FrontendFS)
-	} else {
-		// 纯 API 模式
-		r.GET("/", func(c *gin.Context) {
-			c.JSON(200, gin.H{
-				"name":    "API Proxy",
-				"mode":    "API Only",
-				"version": Version,
-				"endpoints": gin.H{
-					"chat":       "/v1/chat/completions",
-					"config":     "/admin/config/save",
-					"decisions":  "/v1/decisions",
-					"embeddings": "/v1/embeddings",
-					"gemini":     "/v1beta/models/*modelAction",
-					"health":     "/health",
-					"images":     "/v1/images/generations",
-					"messages":   "/v1/messages",
-					"responses":  "/v1/responses",
-				},
-				"message": "Web界面已禁用，此服务器运行在纯API模式下",
-			})
-		})
-	}
-
-	a.engine = r
-	a.mappingWatchStop = make(chan struct{})
-	a.mappingWatchDone = make(chan struct{})
-	go a.watchMappingStoreMode()
-	a.registerCleanup("脱敏后台跟随", func() error {
-		close(a.mappingWatchStop)
-		<-a.mappingWatchDone
-		return nil
-	})
-
-	return a, nil
+	return nil
 }

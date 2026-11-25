@@ -7,16 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 )
-
-// ConfigManager 促销期配置管理接口，渠道路由与设置类 handler 共用。
-type ConfigManager interface {
-	SetChannelPromotion(index int, duration time.Duration, count int) error
-}
 
 // WriteSaveError 保留配置已提交但收尾失败的状态，避免调用方误按未提交重试。
 func WriteSaveError(c *gin.Context, message string, err error) {

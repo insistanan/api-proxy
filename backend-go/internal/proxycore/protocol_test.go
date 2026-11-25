@@ -174,16 +174,17 @@ func newRunProxyTestEnv(t *testing.T) *runProxyTestEnv {
 	metricsManager := metrics.NewMetricsManager()
 	t.Cleanup(metricsManager.Stop)
 
-	channelScheduler := scheduler.NewChannelScheduler(cfgManager, metricsManager, nil, nil, nil, nil, nil, nil, nil, nil)
+	channelScheduler := scheduler.NewChannelScheduler(cfgManager, map[scheduler.ChannelKind]*metrics.MetricsManager{scheduler.ChannelKindMessages: metricsManager}, nil, nil)
 	t.Cleanup(channelScheduler.Stop)
 
 	return &runProxyTestEnv{
 		envCfg: &config.EnvConfig{
-			LogLevel:           "error",
-			MaxRequestBodySize: 50 * 1024 * 1024,
-			RequestTimeout:     5000,
-			StreamIdleTimeout:  300,
-			ProxyAccessKey:     "test-access-key",
+			LogLevel:              "error",
+			MaxRequestBodySize:    50 * 1024 * 1024,
+			RequestTimeout:        5000,
+			ResponseHeaderTimeout: 120,
+			StreamIdleTimeout:     300,
+			ProxyAccessKey:        "test-access-key",
 		},
 		cfgManager:       cfgManager,
 		channelScheduler: channelScheduler,

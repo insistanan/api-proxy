@@ -5,7 +5,10 @@ import { useNotificationStore } from '@/shared/stores/notifications'
 import { useToast } from '@/shared/composables/useToast'
 
 describe('消息中心', () => {
-  afterEach(() => vi.restoreAllMocks())
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
   beforeEach(() => {
     localStorage.clear()
     setActivePinia(createPinia())
@@ -75,5 +78,57 @@ describe('消息中心', () => {
     expect(store.messages[0].id).toBe(id)
     expect(store.unreadCount).toBe(1)
     expect(store.storageError).toContain('消息记录保存失败：存储空间已满')
+  })
+
+  it('全部消息可以通知系统，正文不会离开管理台，重复消息不再次通知', async () => {
+    const shown: Array<{ title: string; options: NotificationOptions }> = []
+    class BrowserNotification {
+      static permission = 'granted'
+      constructor(title: string, options: NotificationOptions) { shown.push({ title, options }) }
+    }
+    vi.stubGlobal('Notification', BrowserNotification)
+    vi.stubGlobal('isSecureContext', true)
+    const store = useNotificationStore()
+    await store.setDesktopMode('all')
+    const options = { level: 'notice' as const, source: '批量翻译', key: 'translation' }
+    store.addMessage('secret-password', 'success', options)
+    store.addMessage('secret-password', 'success', options)
+    expect(shown).toHaveLength(1)
+    expect(JSON.stringify(shown)).not.toContain('secret-password')
+    expect(store.messages[0].message).toBe('secret-password')
+    setActivePinia(createPinia())
+    expect(useNotificationStore().desktopMode).toBe('all')
+    expect(shown).toHaveLength(1)
+  })
+
+  it('通知拒绝或浏览器发送失败时明确报错，消息仍可阅读', async () => {
+    class BrowserNotification {
+      static permission = 'denied'
+      constructor() { throw new Error('通知服务不可用') }
+    }
+    vi.stubGlobal('Notification', BrowserNotification)
+    vi.stubGlobal('isSecureContext', true)
+    const store = useNotificationStore()
+    await store.setDesktopMode('all')
+    expect(store.desktopMode).toBe('off')
+    expect(store.desktopError).toContain('未获得通知权限')
+    BrowserNotification.permission = 'granted'
+    await store.setDesktopMode('warning')
+    store.addMessage('任务失败', 'error', { level: 'warning' })
+    expect(store.desktopError).toContain('通知服务不可用')
+    expect(store.messages).toHaveLength(1)
+  })
+
+  it('旧命令通知偏好仅通知新的待审核事件', () => {
+    const notify = vi.fn(function () { return {} })
+    Object.defineProperty(notify, 'permission', { value: 'granted' })
+    vi.stubGlobal('Notification', notify)
+    vi.stubGlobal('isSecureContext', true)
+    localStorage.setItem('gate-desktop-notify', 'enabled')
+    const store = useNotificationStore()
+    store.addMessage('任务完成', 'success', { level: 'notice' })
+    store.addMessage('待确认', 'warning', { level: 'warning', source: '命令审核', key: 'gate:1' })
+    store.addMessage('已决定', 'success', { level: 'notice', source: '命令审核', key: 'gate-decision:1:block' })
+    expect(notify).toHaveBeenCalledTimes(1)
   })
 })

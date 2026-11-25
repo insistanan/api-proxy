@@ -82,7 +82,7 @@ func (s *DisguiseSyncer) run() {
 			return
 		case <-s.refresh:
 			s.syncOnce(true)
-		case <-s.cfgManager.SettingsChanged():
+		case <-s.cfgManager.DisguiseChanges():
 			s.syncOnce(false)
 		case <-ticker.C:
 			s.syncOnce(false)
@@ -158,7 +158,10 @@ func (s *DisguiseSyncer) registryGet(ctx context.Context, url string) ([]byte, i
 	}
 	req.Header.Set("User-Agent", "api-proxy-disguise-sync")
 	req.Header.Set("Accept", "application/json")
-	resp, err := httpclient.Send(req, httpclient.SendOptions{Timeout: 10 * time.Second, ProxyURL: proxyURL})
+	resp, err := httpclient.Send(req, httpclient.SendOptions{
+		Timeout: 10 * time.Second, ProxyURL: proxyURL,
+		ResponseHeaderTimeout: time.Duration(s.cfgManager.GetGatewaySettings().ResponseHeaderTimeout) * time.Second,
+	})
 	if err != nil {
 		return nil, 0, err
 	}

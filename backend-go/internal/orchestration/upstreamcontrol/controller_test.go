@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -205,13 +206,13 @@ func TestBudgetSharedAcrossCandidatesAndAuxiliaryContexts(t *testing.T) {
 		if i%2 == 1 {
 			id = second
 		}
-		child := WithCandidate(WithScope(ctx), c, id)
+		child := WithCandidate(WithScope(ctx), c, id, false)
 		lease, _, attempts, err := AcquireRequest(child)
 		require.NoError(t, err)
 		require.Equal(t, i+1, attempts)
 		lease.Release()
 	}
-	_, _, _, err := AcquireRequest(WithCandidate(ctx, c, first))
+	_, _, _, err := AcquireRequest(WithCandidate(ctx, c, first, false))
 	require.ErrorIs(t, err, ErrBudget)
 }
 
@@ -220,7 +221,7 @@ func TestRetryAfterOnlyCoolsMatchingTuple(t *testing.T) {
 	second := NewIdentity("https://example.com", "responses", "second-key")
 	c := NewController()
 	c.Reconcile(map[Identity]int{first: 1, second: 1})
-	ctx := WithCandidate(WithScope(context.Background()), c, first)
+	ctx := WithCandidate(WithScope(context.Background()), c, first, false)
 	started := time.Now()
 	Record429(ctx, http.Header{"Retry-After": []string{"60"}})
 	c.mu.Lock()
@@ -235,4 +236,69 @@ func TestRetryAfterOnlyCoolsMatchingTuple(t *testing.T) {
 	unchanged := c.entries[first].cooldown
 	c.mu.Unlock()
 	require.Equal(t, until, unchanged)
+}
+
+func TestQueueRemoval_ReleasesBackingReferences(t *testing.T) {
+	for _, mode := range []string{"cancel", "timeout", "grant", "remove"} {
+		t.Run(mode, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				id := NewIdentity("https://example.com", "responses", "key")
+				controller := NewController()
+				controller.Reconcile(map[Identity]int{id: 1})
+				active, _, err := controller.Acquire(context.Background(), id)
+				require.NoError(t, err)
+				defer active.Release()
+				var cancels []context.CancelFunc
+				var results []<-chan acquireResult
+				for range MaxQueue {
+					ctx, cancel := context.WithCancel(context.Background())
+					defer cancel()
+					cancels = append(cancels, cancel)
+					results = append(results, asyncAcquire(ctx, controller, id))
+					synctest.Wait()
+				}
+				controller.mu.Lock()
+				state := controller.entries[id]
+				backing := state.queue[:cap(state.queue)]
+				controller.mu.Unlock()
+				switch mode {
+				case "cancel":
+					// 先取消非队首，再排空其余等待者，覆盖移动与过滤后的尾部清理。
+					cancels[1]()
+					synctest.Wait()
+					controller.mu.Lock()
+					tail := backing[MaxQueue-1]
+					controller.mu.Unlock()
+					require.Nil(t, tail)
+					cancels[0]()
+					cancels[2]()
+				case "timeout":
+					time.Sleep(QueueTimeout + time.Second)
+				case "grant":
+					active.Release()
+				case "remove":
+					controller.Reconcile(nil)
+				}
+				for _, result := range results {
+					acquired := <-result
+					if mode == "grant" {
+						require.NoError(t, acquired.err)
+						require.NotNil(t, acquired.lease)
+					} else {
+						require.Error(t, acquired.err)
+					}
+					acquired.lease.Release()
+				}
+				synctest.Wait()
+				controller.mu.Lock()
+				queue := state.queue
+				retained := append([]*waiter(nil), backing...)
+				controller.mu.Unlock()
+				require.Nil(t, queue)
+				for _, reference := range retained {
+					require.Nil(t, reference, "底层数组不能继续保留已结束请求的 context")
+				}
+			})
+		})
+	}
 }

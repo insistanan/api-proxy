@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -120,4 +121,32 @@ func TestUnsentAttemptDoesNotCreateAvailabilityEvidence(t *testing.T) {
 	require.Equal(t, availability.Failure, sample.Outcome)
 	sample = availabilitySample(c, false, 200, "client_cancelled", "context canceled")
 	require.Equal(t, availability.Ignored, sample.Outcome)
+	sample = availabilitySample(c, false, 500, availability.IntentState, "保存意图状态失败")
+	require.Equal(t, availability.Ignored, sample.Outcome)
+	require.Equal(t, "local_error", sample.Reason)
+}
+
+func TestModelCapacityCooldown_StartsAtHeadersAndRequiresExplicitDeadline(t *testing.T) {
+	for _, value := range []string{"90", "", "invalid"} {
+		t.Run(value, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				c := newAttemptTestContext(context.Background())
+				a := UpstreamAttempt{Context: c, Kind: scheduler.ChannelKindMessages, LogContext: AttemptLogContext{Model: "model"}}
+				a.beginAvailabilityObservation(&config.UpstreamConfig{ID: "channel", BaseURL: "https://example.com", ServiceType: "openai"}, "key")
+				currentAvailabilityObservation(c).sent = true
+				headersAt := time.Now()
+				a.observeAvailabilityResponse(&http.Response{StatusCode: 503, Header: http.Header{"Retry-After": {value}}})
+				time.Sleep(10 * time.Second) // 虚拟时间，模拟较慢的响应正文读取。
+				sample := availabilitySample(c, false, 503, availability.ModelCapacity, "model is at capacity")
+				require.Equal(t, availability.ModelCapacity, sample.Reason)
+				if value == "90" {
+					require.Equal(t, headersAt.Add(90*time.Second).UnixMilli(), sample.CooldownUntil)
+				} else {
+					require.Zero(t, sample.CooldownUntil)
+				}
+				sample = availabilitySample(c, false, 429, "upstream", "rate limited")
+				require.Zero(t, sample.CooldownUntil, "共享冷却不从日志样本重新建立")
+			})
+		})
+	}
 }

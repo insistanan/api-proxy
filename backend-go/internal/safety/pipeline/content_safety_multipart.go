@@ -77,6 +77,7 @@ func multipartSafetySegments(parts []codec.MultipartPart, protocol string) []Saf
 			Protocol: protocol,
 			Source:   safetySourceUser,
 			Path:     multipartSegmentPath(part.FormName, index),
+			Field:    part.FormName,
 			Text:     string(part.Content),
 			Mutable:  true,
 			replace:  func(text string) { part.Content = []byte(text) },

@@ -7,23 +7,25 @@ package httpclient
 
 import (
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
 	"github.com/insistanan/api-proxy/internal/storage/logger"
 )
 
 // SendOptions 描述一次上游发送的传输选项（由调用方解析后传入）。
 type SendOptions struct {
-	// IsStream 流式请求：使用无超时客户端 + identity 编码 + 空闲超时 reader。
+	// IsStream 流式请求：不设整体超时，使用 identity 编码和空闲超时 reader。
 	IsStream bool
-	// Timeout 非流式请求的整体超时；IsStream 时忽略。
+	// Timeout 非流式请求的整体超时；零表示仅由 context 控制，IsStream 时忽略。
 	Timeout time.Duration
+	// ResponseHeaderTimeout 流式时必须大于零，覆盖连接、上传至收到响应头，正文另计空闲超时。
+	ResponseHeaderTimeout time.Duration
 	// ProxyURL 代理地址，空为直连。
 	ProxyURL string
 	// InsecureSkipVerify 跳过上游 TLS 证书验证。
@@ -32,8 +34,6 @@ type SendOptions struct {
 	StreamIdleTimeout time.Duration
 	// StreamLabel 流式空闲超时日志的协议前缀（如 "Messages"）。
 	StreamLabel string
-	// DisableRedirects 防止诊断采样被重定向到另一个目标。
-	DisableRedirects bool
 }
 
 // ShouldForceIdentityEncoding 判定是否应强制上游使用 identity 编码（禁止压缩）。
@@ -55,20 +55,17 @@ func ShouldForceIdentityEncoding(req *http.Request, isStream bool) bool {
 }
 
 // Send 发送上游推理请求，复用客户端并遵守共享准入策略。
-// 请求体重放（Body 为 *bytes.Reader/bytes.Buffer 时可重试）由调用方负责
-// 构造；resp.Body 的关闭责任归调用方；取消经 req 自带的 context 传播。
+// 不执行额外的传输重试或重定向；重试由调用层决定。
+// resp.Body 的关闭责任归调用方；取消经 req 自带的 context 传播。
 // 返回错误时 resp 恒为 nil（无资源泄漏窗口）。
 func Send(req *http.Request, opts SendOptions) (*http.Response, error) {
 	PrepareInferenceHeaders(req, opts.IsStream)
 	manager := GetManager()
 
-	var client *http.Client
-	var err error
-	if opts.IsStream {
-		client, err = manager.GetStreamClient(opts.InsecureSkipVerify, opts.ProxyURL)
-	} else {
-		client, err = manager.GetStandardClient(opts.Timeout, opts.InsecureSkipVerify, opts.ProxyURL)
-	}
+	client, err := manager.GetClient(ClientOptions{
+		IsStream: opts.IsStream, Timeout: opts.Timeout, ResponseHeaderTimeout: opts.ResponseHeaderTimeout,
+		InsecureSkipVerify: opts.InsecureSkipVerify, ProxyURL: opts.ProxyURL,
+	})
 	if err != nil {
 		if req.Body != nil {
 			_ = req.Body.Close()
@@ -82,12 +79,7 @@ func Send(req *http.Request, opts SendOptions) (*http.Response, error) {
 		req.Header.Set("Accept-Encoding", "identity")
 	}
 
-	if opts.DisableRedirects {
-		isolatedClient := *client
-		isolatedClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-		client = &isolatedClient
-	}
-	resp, err := doWithTLSHandshakeRetry(client, req)
+	resp, err := sendWithAdmission(client, req)
 	if err != nil {
 		return nil, err
 	}
@@ -141,29 +133,10 @@ func SendForUpstream(req *http.Request, timeout time.Duration, cfgManager *confi
 		return nil, err
 	}
 	ctx := cfgManager.UpstreamRequestContext(upstreamcontrol.WithScope(req.Context()), upstream, apiKey)
-	return Send(req.WithContext(ctx), SendOptions{Timeout: timeout, ProxyURL: proxyURL, InsecureSkipVerify: upstream.InsecureSkipVerify})
-}
-
-// TLS 握手未完成时 HTTP 请求尚未发送；可重放请求体时最多重试一次，
-// 缓解上游首次握手抖动，同时不重发已被上游接收的图片生成请求。
-func doWithTLSHandshakeRetry(client *http.Client, req *http.Request) (*http.Response, error) {
-	resp, err := sendWithAdmission(client, req)
-	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "tls handshake timeout") {
-		return resp, err
-	}
-	if req.Body != nil && req.GetBody == nil {
-		return nil, err
-	}
-
-	retryRequest := req.Clone(req.Context())
-	if req.GetBody != nil {
-		body, bodyErr := req.GetBody()
-		if bodyErr != nil {
-			return nil, fmt.Errorf("重建 TLS 握手重试请求体失败: %w", bodyErr)
-		}
-		retryRequest.Body = body
-	}
-	return sendWithAdmission(client, retryRequest)
+	return Send(req.WithContext(ctx), SendOptions{
+		Timeout: timeout, ResponseHeaderTimeout: time.Duration(cfgManager.GetGatewaySettings().ResponseHeaderTimeout) * time.Second,
+		ProxyURL: proxyURL, InsecureSkipVerify: upstream.InsecureSkipVerify,
+	})
 }
 
 func sendWithAdmission(client *http.Client, req *http.Request) (*http.Response, error) {

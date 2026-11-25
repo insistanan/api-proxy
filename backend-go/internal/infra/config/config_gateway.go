@@ -3,11 +3,11 @@ package config
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"os"
 	"strconv"
 	"strings"
-	"sync/atomic"
+
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 )
 
 // GatewaySettings 将有部署差异的策略从 env 迁移到持久化设置。
@@ -30,8 +30,6 @@ type GatewaySettings struct {
 	EnableCORS                bool   `json:"enableCORS"`
 	CORSOrigin                string `json:"corsOrigin"`
 }
-
-var activeGatewaySettings atomic.Pointer[GatewaySettings]
 
 func DefaultGatewaySettings() GatewaySettings {
 	return GatewaySettings{
@@ -245,15 +243,6 @@ func (c *EnvConfig) WithSettings(cm *ConfigManager) *EnvConfig {
 	current := *c
 	current.settingsProvider = cm.GetGatewaySettings
 	return current.Current()
-}
-
-// NewRuntimeEnvConfig 供共享 HTTP 客户端读取已发布的策略，不重复加载配置文件。
-func NewRuntimeEnvConfig() *EnvConfig {
-	current := NewEnvConfig()
-	if settings := activeGatewaySettings.Load(); settings != nil {
-		current.applyGatewaySettings(*settings)
-	}
-	return current
 }
 
 // ReadGatewaySettings 供只读 CLI 读取存储路径，不启动 watcher 或回写迁移。

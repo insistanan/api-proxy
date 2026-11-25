@@ -111,12 +111,10 @@ func recordAllowlistAllowed(ctx context.Context, metadata HookContext, recorder 
 		return nil
 	}
 	key := fmt.Sprintf("allowlist\x00%s\x00%s\x00%s", segment.Source, segment.Path, segment.Text)
-	if metadata.eventDeduper.contains(key) {
+	if metadata.safetyEventSeen(key) {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, gateStoreTimeout)
-	defer cancel()
-	_, err := recorder.Record(ctx, sensitive.BlockedLog{
+	err := recordSafetyEvent(ctx, metadata, recorder, key, sensitive.BlockedLog{
 		APIType:        metadata.APIType,
 		BlockType:      sensitive.BlockTypeAllowlist,
 		RuleName:       "allowlist",
@@ -129,7 +127,7 @@ func recordAllowlistAllowed(ctx context.Context, metadata HookContext, recorder 
 	if err != nil {
 		return err
 	}
-	return metadata.eventDeduper.mark(key, metadata.ConversationID == "")
+	return nil
 }
 
 // customRedactionMatches 把自定义规则命中转换为 Vault 掩码区间。

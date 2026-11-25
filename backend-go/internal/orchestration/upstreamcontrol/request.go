@@ -4,10 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/rand/v2"
-	"net/http"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
@@ -47,11 +43,8 @@ func ScopeFromContext(ctx context.Context) *Scope {
 	return scope
 }
 
-func WithCandidate(ctx context.Context, c *Controller, id Identity, compatibility ...bool) context.Context {
-	bound := Candidate{Controller: c, Identity: id}
-	if len(compatibility) > 0 {
-		bound.Compatibility = compatibility[0]
-	}
+func WithCandidate(ctx context.Context, c *Controller, id Identity, compatibility bool) context.Context {
+	bound := Candidate{Controller: c, Identity: id, Compatibility: compatibility}
 	return context.WithValue(ctx, candidateKey{}, bound)
 }
 
@@ -116,32 +109,4 @@ func AcquireRequest(ctx context.Context) (*Lease, time.Duration, int, error) {
 	attempts := scope.attempts
 	scope.mu.Unlock()
 	return lease, waited, attempts, err
-}
-
-// Record429 支持 Retry-After 秒数和 HTTP 日期，无效时指数退避并添加抖动。
-func Record429(ctx context.Context, header http.Header) {
-	candidate, ok := CandidateFromContext(ctx)
-	if !ok || candidate.Controller == nil {
-		return
-	}
-	now := time.Now()
-	value := strings.TrimSpace(header.Get("Retry-After"))
-	until := time.Time{}
-	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds >= 0 && seconds <= int64((1<<63-1)/int64(time.Second)) {
-		until = now.Add(time.Duration(seconds) * time.Second)
-	} else if date, err := http.ParseTime(value); err == nil && date.After(now) {
-		until = date
-	}
-	if until.IsZero() {
-		attempts := 1
-		if scope := ScopeFromContext(ctx); scope != nil {
-			scope.mu.Lock()
-			attempts = scope.attempts
-			scope.mu.Unlock()
-		}
-		exponent := min(max(attempts-1, 0), 5)
-		base := time.Second * time.Duration(1<<exponent)
-		until = now.Add(base + time.Duration(rand.Int64N(int64(base/2)+1)))
-	}
-	candidate.Controller.CoolDown(candidate.Identity, until)
 }

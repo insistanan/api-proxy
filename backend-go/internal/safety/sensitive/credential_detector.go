@@ -84,8 +84,13 @@ func RedactAuditContext(text string) string {
 }
 
 func redactAuditText(text string, preserveOffsets bool) string {
+	return redactAuditRanges(text, AuditCredentialRanges(text), preserveOffsets)
+}
+
+// AuditCredentialRanges 仅返回审计凭据的合并区间，供有界缓存复用；不携带原文。
+func AuditCredentialRanges(text string) []RedactionMatch {
 	if text == "" {
-		return text
+		return nil
 	}
 	ranges := make([]credentialCandidate, 0)
 	for _, match := range auditCredentialDetector.FindAll(text) {
@@ -95,11 +100,10 @@ func redactAuditText(text string, preserveOffsets bool) string {
 		ranges = append(ranges, credentialCandidate{start: index[2], end: index[3]})
 	}
 	if len(ranges) == 0 {
-		return text
+		return nil
 	}
 	sort.Slice(ranges, func(i, j int) bool { return ranges[i].start < ranges[j].start })
-	var builder strings.Builder
-	last := 0
+	merged := make([]RedactionMatch, 0, len(ranges))
 	for index := 0; index < len(ranges); index++ {
 		start, end := ranges[index].start, ranges[index].end
 		for index+1 < len(ranges) && ranges[index+1].start <= end {
@@ -108,6 +112,31 @@ func redactAuditText(text string, preserveOffsets bool) string {
 				end = ranges[index].end
 			}
 		}
+		merged = append(merged, RedactionMatch{Start: start, End: end})
+	}
+	return merged
+}
+
+// RedactAuditContextRanges 应用同一文本的审计区间，保留原字节偏移。
+func RedactAuditContextRanges(text string, ranges []RedactionMatch) (string, error) {
+	last := 0
+	for _, span := range ranges {
+		if span.Start < last || span.End > len(text) || span.Start >= span.End {
+			return "", fmt.Errorf("审计脱敏区间与正文不一致")
+		}
+		last = span.End
+	}
+	return redactAuditRanges(text, ranges, true), nil
+}
+
+func redactAuditRanges(text string, ranges []RedactionMatch, preserveOffsets bool) string {
+	if len(ranges) == 0 {
+		return text
+	}
+	var builder strings.Builder
+	last := 0
+	for _, span := range ranges {
+		start, end := span.Start, span.End
 		builder.WriteString(text[last:start])
 		if preserveOffsets {
 			builder.WriteString(strings.Repeat("*", end-start))
@@ -189,6 +218,23 @@ func (d *CredentialDetector) FindAll(text string) []CredentialMatch {
 		lastEnd = candidate.end
 	}
 	return matches
+}
+
+// FindField 保留结构化键的语境；明确的凭据字段整体覆盖，避免引号、空格截断秘密。
+func (d *CredentialDetector) FindField(field, text string) []CredentialMatch {
+	if d != nil && d.enabled && text != "" && isLikelySecretAssignmentName(field) && reservedPlaceholderPattern.FindString(text) != text {
+		for _, rule := range d.rules {
+			if rule.name == config.CredentialRuleNamedSecret {
+				return []CredentialMatch{{Rule: rule.name, Original: text, Start: 0, End: len(text)}}
+			}
+		}
+	}
+	return d.FindAll(text)
+}
+
+// IsCredentialFieldName 识别需要整体保留检测语境的结构化凭据值。
+func IsCredentialFieldName(field string) bool {
+	return isLikelySecretAssignmentName(field)
 }
 
 func (d *CredentialDetector) Mask(text string) (string, []CredentialMatch) {
@@ -518,18 +564,15 @@ func isLikelySecretValue(value string) bool {
 func isCredentialPlaceholder(value string) bool {
 	trimmed := strings.Trim(strings.TrimSpace(value), "\"'")
 	lower := strings.ToLower(trimmed)
-	if trimmed == "" || strings.Contains(lower, "masked_") || strings.Contains(lower, "redacted") {
+	if trimmed == "" || reservedPlaceholderPattern.FindString(trimmed) == trimmed {
 		return true
 	}
-	if strings.Contains(lower, "placeholder") || strings.Contains(lower, "example") || strings.Contains(lower, "changeme") {
-		return true
-	}
-	if environmentReferencePattern.MatchString(trimmed) || strings.HasPrefix(trimmed, "{{") || strings.HasPrefix(trimmed, "<") {
+	if environmentReferencePattern.MatchString(trimmed) || strings.HasPrefix(trimmed, "{{") && strings.HasSuffix(trimmed, "}}") {
 		return true
 	}
 	switch lower {
-	case "null", "none", "redacted", "changeme", "change-me", "example", "password", "secret":
+	case "null", "none", "redacted", "changeme", "change-me", "example", "placeholder", "password", "secret":
 		return true
 	}
-	return strings.Trim(trimmed, "*xX-_") == "" || strings.HasPrefix(lower, "your-") || strings.HasPrefix(lower, "your_")
+	return strings.Trim(trimmed, "*xX-_") == ""
 }

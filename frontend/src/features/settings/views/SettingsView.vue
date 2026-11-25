@@ -89,6 +89,9 @@
               <div class="setting-row safety-master-row">
                 <div class="setting-copy">
                   <div class="text-base font-medium">敏感数据处置</div>
+                  <p v-if="contentSafety.sensitiveData.mode === 'mask'" class="mt-1 text-xs text-muted-foreground">
+                    模型接收占位符，客户端正文与工具参数按已授权映射还原。跨轮恢复需要稳定会话标识；签名内容、敏感数字或无法还原的工具参数可能被阻断。
+                  </p>
                 </div>
                 <UiToggleGroup
                   v-model="contentSafety.sensitiveData.mode"
@@ -107,33 +110,9 @@
               </div>
             </div>
 
-            <div class="safety-group">
-              <div class="setting-row safety-master-row">
-                <div class="setting-copy">
-                  <div class="text-base font-medium">敏感词检测</div>
-                </div>
-                <UiSwitch
-                  v-model="contentSafety.sensitiveWord.enabled"
-                  color="primary"
-                  inset
-                  hide-details
-                  aria-label="启用敏感词检测"
-                />
-              </div>
-              <div class="option-grid" :class="{ 'options-disabled': !contentSafety.sensitiveWord.enabled }">
-                <UiSwitch
-                  v-for="item in sensitiveWordCategories"
-                  :key="item.key"
-                  v-model="contentSafety.sensitiveWord[item.key]"
-                  :label="item.label"
-                  :disabled="!contentSafety.sensitiveWord.enabled"
-                  density="compact"
-                  color="primary"
-                  inset
-                  hide-details
-                />
-              </div>
-            </div>
+            <UiAlert v-if="legacyWordFilterEnabled" type="info" variant="tonal" class="mb-4">
+              当前服务端仍启用了旧敏感词检测。保存本页后将关闭，保留个人信息、凭据和危险命令保护。
+            </UiAlert>
 
             <div class="safety-group">
               <div class="setting-row safety-master-row">
@@ -148,7 +127,7 @@
                   aria-label="启用个人信息保护"
                 />
               </div>
-              <div class="option-grid" :class="{ 'options-disabled': !contentSafety.sensitiveInfo.enabled }">
+              <div v-if="contentSafety.sensitiveInfo.enabled" class="option-grid">
                 <UiCheckbox
                   v-for="item in sensitiveInfoRules"
                   :key="item.value"
@@ -196,7 +175,7 @@
                   aria-label="启用凭据保护"
                 />
               </div>
-              <div class="option-grid" :class="{ 'options-disabled': !contentSafety.credential.enabled }">
+              <div v-if="contentSafety.credential.enabled" class="option-grid">
                 <UiCheckbox
                   v-for="item in credentialRules"
                   :key="item.value"
@@ -215,7 +194,7 @@
               <div class="setting-row safety-master-row">
                 <div class="setting-copy">
                   <div class="text-base font-medium">危险命令检测</div>
-                  <div class="text-sm text-muted-foreground mt-1">检查 Bash、exec_command 等已知执行工具；普通回复和代码示例直接放行。</div>
+                  <div class="text-sm text-muted-foreground mt-1">在交付 Bash、exec_command 等已知执行工具前检查。拦截会结束当前响应，Agent 可能报错或重试；本地权限和沙箱仍由 Agent 管理。</div>
                 </div>
                 <UiSwitch
                   v-model="contentSafety.dangerousCmd.enabled"
@@ -225,7 +204,7 @@
                   aria-label="启用危险命令检测"
                 />
               </div>
-              <div class="option-grid" :class="{ 'options-disabled': !contentSafety.dangerousCmd.enabled }">
+              <div v-if="contentSafety.dangerousCmd.enabled" class="option-grid">
                 <UiCheckbox
                   v-for="item in dangerousCommandRules"
                   :key="item.value"
@@ -246,7 +225,7 @@
                         <UiIcon size="18" class="mr-1" color="warning">mdi-brain</UiIcon>
                         AI 闸门
                       </div>
-                      <div class="text-sm text-muted-foreground mt-1">模型审批最多等待 10 秒。判定危险后进入确认窗口；审批失败时拦截该工具调用。</div>
+                      <div class="text-sm text-muted-foreground mt-1">关闭时，规则命中直接拦截。开启后增加一次模型审批：AI 判安全立即交付，事后否决不能撤回执行；判危险才等待人工确认，超时或审批失败则拦截。</div>
                     </div>
                     <UiSwitch
                       v-model="contentSafety.dangerousCmd.aiGate.enabled"
@@ -286,6 +265,9 @@
               </Transition>
             </div>
 
+            <details class="safety-group" :open="advancedSafetyActive">
+              <summary class="cursor-pointer text-base font-medium">高级规则与放行例外{{ advancedSafetyActive ? '（已有启用项）' : '' }}</summary>
+              <p class="mt-2 text-sm text-muted-foreground">用于处理误报和自定义敏感数据。工具白名单跳过该工具输入、输出的上行检测；放行值会绕过对应上行检测，请仅添加确认可公开的内容。</p>
             <div class="safety-group">
               <div class="setting-row safety-master-row">
                 <div class="setting-copy">
@@ -416,34 +398,8 @@ v-model="contentSafety.allowlist.entries" searchable
               </div>
             </div>
 
-            <div class="safety-group">
-              <div class="setting-row safety-master-row">
-                <div class="setting-copy">
-                  <div class="text-base font-medium">
-                    <UiIcon size="18" class="mr-1" color="primary">mdi-bell-ring</UiIcon>
-                    危险命令桌面通知
-                  </div>
-                  <!-- 危险命令 AI 闸门弹窗时同步发送浏览器系统通知（仅本浏览器生效） -->
-                </div>
-                <UiSwitch
-                  :model-value="desktopNotifyEnabled"
-                  color="primary"
-                  inset
-                  hide-details
-                  aria-label="启用危险命令桌面通知"
-                  @update:model-value="toggleDesktopNotify"
-                />
-              </div>
-              <UiAlert
-                v-if="desktopNotifyNotice"
-                :type="desktopNotifyNotice.type"
-                variant="tonal"
-                density="compact"
-                class="mx-4 mt-2"
-              >
-                {{ desktopNotifyNotice.message }}
-              </UiAlert>
-            </div>
+            </details>
+            <p class="mt-3 text-sm text-muted-foreground">桌面提醒在右上角消息中心启用和测试。浏览器通知需要保持管理台打开。</p>
 
             <UiAlert v-if="notice" :type="notice.type" variant="tonal" density="compact" class="mt-5">
               {{ notice.message }}
@@ -505,23 +461,6 @@ import { defaultContentSafety, normalizeContentSafety } from '@/features/setting
 import SemanticSafetySettings from '@/features/settings/components/SemanticSafetySettings.vue'
 import ThemePanel from '@/shared/theme/components/ThemePanel.vue'
 import type { SettingsSection, SettingsNotice as Notice } from '@/features/settings/composables/types'
-
-type SensitiveWordToggle =
-  | 'pornographyEnabled'
-  | 'gamblingEnabled'
-  | 'drugsEnabled'
-  | 'violenceTerrorEnabled'
-  | 'politicalEnabled'
-  | 'illegalCrimeEnabled'
-
-const sensitiveWordCategories: Array<{ key: SensitiveWordToggle; label: string }> = [
-  { key: 'pornographyEnabled', label: '色情' },
-  { key: 'gamblingEnabled', label: '赌博' },
-  { key: 'drugsEnabled', label: '毒品' },
-  { key: 'violenceTerrorEnabled', label: '暴力与恐怖' },
-  { key: 'politicalEnabled', label: '政治敏感' },
-  { key: 'illegalCrimeEnabled', label: '违法犯罪' }
-]
 
 const sensitiveInfoRules: Array<{ value: SensitiveInfoRule; label: string }> = [
   { value: 'phone', label: '手机号' },
@@ -619,6 +558,9 @@ const savedProxyEnabled = ref(false)
 const contentSafety = ref<ContentSafetySettings>(defaultContentSafety())
 const savedContentSafety = ref('')
 const notice = ref<Notice>(null)
+const legacyWordFilterEnabled = ref(false)
+const advancedSafetyActive = computed(() => contentSafety.value.whitelist.enabled || contentSafety.value.customRules.enabled ||
+  (contentSafety.value.allowlist.enabled && contentSafety.value.allowlist.entries.some(entry => !['127.0.0.1', 'localhost', '0.0.0.0', '::1'].includes(entry))))
 
 const resetGateTarget = () => {
   contentSafety.value.dangerousCmd.aiGate.channelId = ''
@@ -686,6 +628,8 @@ const loadSettings = async () => {
     proxyEnabled.value = enabled
     contentSafety.value = normalizeContentSafety(settings.contentSafety)
     savedContentSafety.value = JSON.stringify(contentSafety.value)
+    legacyWordFilterEnabled.value = contentSafety.value.sensitiveWord.enabled
+    contentSafety.value.sensitiveWord.enabled = false
     // 伪装设置
     if (!settings.disguise) throw new Error('服务端未返回伪装设置，请确认后端版本')
     const savedDisguise = settings.disguise
@@ -772,12 +716,7 @@ const saveContentSafetySettings = async () => {
   notice.value = null
   const settingsToSave = normalizeContentSafety(contentSafety.value)
   settingsToSave.dangerousCmd.aiGate.model = settingsToSave.dangerousCmd.aiGate.model?.trim() ?? ''
-  const hasSensitiveWordRule = sensitiveWordCategories.some(item => settingsToSave.sensitiveWord[item.key]) ||
-    settingsToSave.sensitiveWord.customWords.length > 0
-  if (settingsToSave.sensitiveWord.enabled && !hasSensitiveWordRule) {
-    notice.value = { type: 'error', message: '敏感词检测已启用，但未选择任何分类或自定义词' }
-    return
-  }
+  settingsToSave.sensitiveWord.enabled = false
   for (const [enabled, rules, label] of [
     [settingsToSave.sensitiveInfo.enabled, settingsToSave.sensitiveInfo.enabledRules, '个人信息保护'],
     [settingsToSave.credential.enabled, settingsToSave.credential.enabledRules, '凭据保护'],
@@ -817,6 +756,7 @@ const saveContentSafetySettings = async () => {
     contentSafety.value = normalizeContentSafety(settings.contentSafety)
     savedContentSafety.value = JSON.stringify(contentSafety.value)
     notice.value = { type: 'success', message: '内容安全设置已保存' }
+    legacyWordFilterEnabled.value = false
   } catch (error) {
     notice.value = { type: 'error', message: error instanceof Error ? error.message : '保存内容安全设置失败' }
   } finally {
@@ -824,46 +764,9 @@ const saveContentSafetySettings = async () => {
   }
 }
 
-// 危险命令桌面通知（纯浏览器偏好，存 localStorage；开关打开时向浏览器申请授权）
-const DESKTOP_NOTIFY_STORAGE_KEY = 'gate-desktop-notify'
-const desktopNotifyEnabled = ref(false)
-const desktopNotifyNotice = ref<Notice>(null)
-
-const initDesktopNotify = () => {
-  desktopNotifyEnabled.value = localStorage.getItem(DESKTOP_NOTIFY_STORAGE_KEY) === 'enabled'
-}
-
-const toggleDesktopNotify = async (value: boolean | null) => {
-  desktopNotifyNotice.value = null
-  if (!value) {
-    localStorage.setItem(DESKTOP_NOTIFY_STORAGE_KEY, 'disabled')
-    desktopNotifyEnabled.value = false
-    return
-  }
-  if (typeof Notification === 'undefined') {
-    desktopNotifyNotice.value = { type: 'error', message: '当前浏览器不支持系统通知' }
-    return
-  }
-  if (Notification.permission === 'denied') {
-    desktopNotifyNotice.value = { type: 'error', message: '浏览器已拒绝通知授权，请在浏览器设置中重新允许' }
-    return
-  }
-  if (Notification.permission !== 'granted') {
-    const permission = await Notification.requestPermission()
-    if (permission !== 'granted') {
-      desktopNotifyNotice.value = { type: 'error', message: '未获得通知授权，桌面通知未启用' }
-      return
-    }
-  }
-  localStorage.setItem(DESKTOP_NOTIFY_STORAGE_KEY, 'enabled')
-  desktopNotifyEnabled.value = true
-  desktopNotifyNotice.value = { type: 'success', message: '桌面通知已启用（仅本浏览器）' }
-}
-
 onMounted(() => {
   loadSettings()
   loadGateChannels()
-  initDesktopNotify()
 })
 </script>
 

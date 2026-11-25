@@ -1,5 +1,4 @@
-// app_lifecycle.go 进程生命周期（R4-b 按初始化职责分文件）：
-// 启动横幅、后台模式跟随、性能画像同步与逆序停机。
+// app_lifecycle.go 管理启动摘要、HTTP 排空与分阶段停机。
 package main
 
 import (
@@ -8,13 +7,10 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/insistanan/api-proxy/internal/infra/config"
-	"github.com/insistanan/api-proxy/internal/safety/sensitive"
-	"github.com/insistanan/api-proxy/internal/storage/metrics"
 )
 
 // logStartupInfo 输出紧凑的启动摘要：地址与构建信息一次展示。
@@ -41,55 +37,12 @@ func (a *app) logStartupInfo() {
 
 // logInitf 输出装配细节。常规启动只保留摘要，LOG_LEVEL=debug 时才展开。
 func logInitf(envCfg *config.EnvConfig, format string, args ...any) {
-	if envCfg != nil && envCfg.LogLevel == "debug" {
+	if envCfg.LogLevel == "debug" {
 		log.Printf(format, args...)
 	}
 }
 
-// watchMappingStoreMode 跟随 sensitiveData.mode 的热切换：
-// mask → 为新请求注入持久库；mask 之外 → 新请求停止使用持久映射。
-// 已开始的请求保留自己的存储与密钥快照，直到请求结束。
-func (a *app) watchMappingStoreMode() {
-	defer close(a.mappingWatchDone)
-	ticker := time.NewTicker(15 * time.Second)
-	defer ticker.Stop()
-	retentionTicker := time.NewTicker(time.Minute)
-	defer retentionTicker.Stop()
-	for {
-		select {
-		case <-a.mappingWatchStop:
-			return
-		case <-retentionTicker.C:
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if err := a.blockedStore.Purge(ctx); err != nil {
-				log.Printf("[ContentSafety-Purge] 清理内容安全历史失败: %v", err)
-			}
-			cancel()
-			ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-			if err := a.gateStore.Purge(ctx); err != nil {
-				log.Printf("[Gate-Purge] 清理命令确认历史失败: %v", err)
-			}
-			cancel()
-			continue
-		case <-ticker.C:
-		}
-		mode := a.cfgManager.GetSettings().ContentSafety.SensitiveData.Mode
-		enabled := sensitive.PersistentMappingStore() != nil
-		want := mode == config.ContentSafetyModeMask
-		if want == enabled {
-			continue
-		}
-		if want {
-			sensitive.SetPersistentMappingStore(a.mappingStore)
-			log.Printf("[SensitiveData-Watch] 已切换到可逆脱敏，持久映射库启用")
-		} else {
-			sensitive.SetPersistentMappingStore(nil)
-			log.Printf("[SensitiveData-Watch] 已离开可逆脱敏，新请求停用持久映射，已有请求沿用原快照")
-		}
-	}
-}
-
-// appCleanup 记录资源的释放责任；清理顺序由实际构造时的登记顺序决定。
+// appCleanup 记录释放责任，同一阶段内按登记顺序逆序执行。
 type appCleanup struct {
 	name  string
 	close func() error
@@ -99,16 +52,20 @@ func (a *app) registerCleanup(name string, closeResource func() error) {
 	a.cleanups = append(a.cleanups, appCleanup{name: name, close: closeResource})
 }
 
-// shutdown 供启动失败和正常关闭共用。每个资源只清理一次；一项失败不阻断其余清理。
+func (a *app) registerWorker(name string, stopWorker func() error) {
+	a.workers = append(a.workers, appCleanup{name: name, close: stopWorker})
+}
+
+// shutdown 先停止全部后台生产者，再关闭存储；启动失败也遵循同一依赖约束。
+// 每个资源只清理一次，一项失败不阻断其余清理。
 func (a *app) shutdown() error {
-	if a == nil {
-		return nil
-	}
 	a.shutdownOnce.Do(func() {
-		for i := len(a.cleanups) - 1; i >= 0; i-- {
-			cleanup := a.cleanups[i]
-			if err := cleanup.close(); err != nil {
-				a.shutdownErr = errors.Join(a.shutdownErr, fmt.Errorf("关闭%s失败: %w", cleanup.name, err))
+		for _, phase := range [][]appCleanup{a.workers, a.cleanups} {
+			for i := len(phase) - 1; i >= 0; i-- {
+				cleanup := phase[i]
+				if err := cleanup.close(); err != nil {
+					a.shutdownErr = errors.Join(a.shutdownErr, fmt.Errorf("关闭%s失败: %w", cleanup.name, err))
+				}
 			}
 		}
 	})
@@ -168,34 +125,4 @@ func serveUntilStopped(ctx context.Context, srv *http.Server, shutdownTimeout ti
 	}
 	log.Println("[Server-Shutdown] 服务器已安全关闭")
 	return nil
-}
-
-func syncUpstreamProfiles(mm *metrics.MetricsManager, pm *metrics.ProfileManager, upstream *config.UpstreamConfig, channelIdx int) {
-	if mm == nil || pm == nil || upstream == nil || len(upstream.APIKeys) == 0 {
-		return
-	}
-
-	models := make(map[string]struct{})
-	if model := strings.TrimSpace(upstream.DefaultModel); model != "" {
-		models[model] = struct{}{}
-	}
-	for sourceModel, targetModels := range upstream.ModelMapping {
-		if source := strings.TrimSpace(sourceModel); source != "" && source != "*" {
-			models[source] = struct{}{}
-		}
-		for _, targetModel := range targetModels {
-			if target := strings.TrimSpace(targetModel); target != "" {
-				models[target] = struct{}{}
-			}
-		}
-	}
-	if len(models) == 0 {
-		return
-	}
-
-	for _, baseURL := range upstream.GetAllBaseURLs() {
-		for model := range models {
-			mm.SyncToProfile(pm, baseURL, upstream.APIKeys, model, channelIdx)
-		}
-	}
 }

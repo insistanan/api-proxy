@@ -139,28 +139,10 @@ func (cm *ConfigManager) GetContentSafetyConfig() ContentSafetyConfig {
 
 // UpdateSettings 原子更新可由管理界面维护的全部全局设置。
 func (cm *ConfigManager) UpdateSettings(settings SettingsConfig) error {
-	if err := ValidateGatewaySettings(settings.Gateway); err != nil {
-		return err
-	}
 	settings.Disguise.ClaudeCodeVersion = strings.TrimSpace(settings.Disguise.ClaudeCodeVersion)
 	settings.Disguise.CodexVersion = strings.TrimSpace(settings.Disguise.CodexVersion)
-	if err := ValidateDisguiseSettings(settings.Disguise); err != nil {
-		return err
-	}
 	settings.Network.UpstreamProxyURL = strings.TrimSpace(settings.Network.UpstreamProxyURL)
-	if err := ValidateProxyURL(settings.Network.UpstreamProxyURL); err != nil {
-		return err
-	}
-	if err := ValidateContentSafetyConfig(settings.ContentSafety); err != nil {
-		return err
-	}
-	if err := ValidatePromptSettings(settings.Prompts); err != nil {
-		return err
-	}
 	settings.Extensions = NormalizeExtensionsSettings(settings.Extensions)
-	if err := ValidateExtensionsSettings(settings.Extensions); err != nil {
-		return err
-	}
 	settings = cloneSettingsConfig(settings)
 
 	cm.mu.Lock()

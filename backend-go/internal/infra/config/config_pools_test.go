@@ -25,6 +25,7 @@ func TestDeleteChannelPoolDeletesAllMembersAtomically(t *testing.T) {
 				channel.PoolID = "empty"
 				channel.Status = status
 				channel.ExcludeFromConversation = status == ChannelStatusDisabled
+				channel.VisionCapable = channel.ExcludeFromConversation
 				*cs.upstreams = append(*cs.upstreams, channel)
 			}
 			if err := cm.SaveConfig(); err != nil {
@@ -199,6 +200,7 @@ func TestSaveChannelPoolLayoutMovesAndReordersChannels(t *testing.T) {
 	manager := &ConfigManager{
 		configFile: filepath.Join(t.TempDir(), "config.json"),
 		config: Config{
+			Settings: SettingsConfig{Gateway: DefaultGatewaySettings(), ContentSafety: DefaultContentSafetyConfig()},
 			MessagePools: []ChannelPool{
 				{ID: "gpt", Name: "GPT", ModelMatcher: "gpt", Priority: 1},
 				defaultChannelPool(),

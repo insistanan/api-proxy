@@ -146,7 +146,7 @@ func TestChannelGIFConfigReachesBothUpstreamProtocols(t *testing.T) {
 			req, err := buildImagesUpstreamRequest(c, up, "fixture", "/images/generations", []byte(`{"model":"gpt-image-2.6-sunburst","prompt":"猫咪挥手","stream":true,"output_format":"png","output_compression":100,"partial_images":2,"n":1}`))
 			require.NoError(t, err)
 			defer finishResponsesLifecycle(c)
-			resp, err := httpclient.Send(req, httpclient.SendOptions{Timeout: imagesRequestTimeout})
+			resp, err := httpclient.Send(req, httpclient.SendOptions{Timeout: imagesRequestTimeout, ResponseHeaderTimeout: imagesRequestTimeout})
 			require.NoError(t, err)
 			require.NoError(t, resp.Body.Close())
 			payload := <-observed

@@ -10,6 +10,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/dialogue/routing/intent"
 	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	"github.com/insistanan/api-proxy/internal/orchestration/availability"
 	"github.com/insistanan/api-proxy/internal/orchestration/proxy"
 	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
 	"github.com/insistanan/api-proxy/internal/protocol/codec"
@@ -163,7 +165,7 @@ func (step candidateAttempt) deliverResponse(resp *http.Response) (UpstreamAttem
 				_ = resp.Body.Close()
 				lifecycle.finalizeNeutral()
 				intentRouteError(c, saveErr)
-				finishAttempt(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", http.StatusInternalServerError, false, attemptStart, "intent_state", saveErr.Error(), false, isStream, usage)
+				finishAttempt(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", http.StatusInternalServerError, false, attemptStart, availability.IntentState, saveErr.Error(), false, isStream, usage)
 				return newUpstreamAttemptResult(true, "", 0, nil, usage, saveErr).withHealth(channelHealthNeutral), false
 			}
 		} else if saveErr := turn.Complete(err == nil); saveErr != nil {
@@ -239,7 +241,7 @@ func (step candidateAttempt) deliverResponse(resp *http.Response) (UpstreamAttem
 
 			candidate := currentBaseURL + "\x00" + apiKey
 			canRetry := retryState.CanRetryCandidate(candidate, c.Request.Context())
-			finishAttempt(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", resp.StatusCode, false, attemptStart, "model_capacity", err.Error(), canRetry, isStream, usage)
+			finishAttempt(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", resp.StatusCode, false, attemptStart, availability.ModelCapacity, err.Error(), canRetry, isStream, usage)
 			if canRetry {
 				retryCount := retryState.RecordCandidateRetry(candidate)
 				log.Printf("[%s-Capacity] 上游未产出内容，使用同一 BaseURL 和 Key 重试 (%d/%d)", apiType, retryCount, proxy.DefaultMaxSameCandidateRetries)
@@ -264,7 +266,12 @@ func (step candidateAttempt) deliverResponse(resp *http.Response) (UpstreamAttem
 			log.Printf("[%s-Key] 警告: 响应处理失败: %s", apiType, codec.RedactSensitivePlaceholdersForLog(err.Error()))
 			if shouldRetryResponseProcessing {
 				retryState.MarkKeyFailed(apiKey)
-				if a.MarkURLFailure != nil {
+				endpointFailure := true
+				if streamFailure, ok := providers.IsUpstreamStreamFailed(err); ok {
+					// 流内错误沿用结构化分类，凭据或模型拒绝同样不能降序整个地址。
+					endpointFailure = !streamFailure.Capacity && upstreamreq.IsEndpointFailure(failureStatus, []byte(streamFailure.Payload))
+				}
+				if a.MarkURLFailure != nil && endpointFailure {
 					a.MarkURLFailure(currentBaseURL)
 				}
 				failoverState.lastFailoverError = &FailoverError{

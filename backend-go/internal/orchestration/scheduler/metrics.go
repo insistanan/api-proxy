@@ -94,19 +94,11 @@ func (s *ChannelScheduler) GetSortedURLsForChannel(
 	kind ChannelKind,
 	channelIndex int,
 	urls []string,
-) []urlhealth.URLLatencyResult {
-	if s.urlManager == nil || len(urls) <= 1 {
-		// 无 URL 管理器或单 URL，返回默认结果
-		results := make([]urlhealth.URLLatencyResult, len(urls))
-		for i, url := range urls {
-			results[i] = urlhealth.URLLatencyResult{
-				URL:         url,
-				OriginalIdx: i,
-				Success:     true,
-			}
-		}
-		return results
+) []urlhealth.Candidate {
+	if s.urlManager == nil {
+		return urlhealth.InConfigOrder(urls)
 	}
+	// 单 URL 和空列表也要同步，避免缩减配置后留下已移除地址的状态。
 	return s.urlManager.GetSortedURLs(urlManagerChannelKey(kind, channelIndex), urls)
 }
 

@@ -40,7 +40,7 @@ func (h *contentSafetyPostResponseHook) Run(ctx context.Context, metadata HookCo
 	if h == nil || h.cfgManager == nil {
 		return result, fmt.Errorf("响应安全 Hook 未绑定配置管理器")
 	}
-	snapshot, err := h.currentSnapshot()
+	snapshot, err := h.currentSnapshot(metadata.safetySettings)
 	if err != nil {
 		return result, err
 	}
@@ -107,7 +107,7 @@ func (h *contentSafetyPostResponseHook) Run(ctx context.Context, metadata HookCo
 					}
 					continue
 				}
-				matches := snapshot.credential.FindAll(segment.Text)
+				matches := snapshot.credential.FindField(segment.Field, segment.Text)
 				matches = filterAllowlistedCredentialMatches(matches, segment.Text, snapshot.settings.Allowlist)
 				if len(matches) == 0 {
 					continue
@@ -166,11 +166,16 @@ func (h *contentSafetyPostResponseHook) reviewDangerousMatch(ctx context.Context
 	}
 }
 
-func (h *contentSafetyPostResponseHook) currentSnapshot() (*dangerousCmdSnapshot, error) {
+func (h *contentSafetyPostResponseHook) currentSnapshot(requestSettings *config.ContentSafetyConfig) (*dangerousCmdSnapshot, error) {
 	if h.cfgManager == nil {
 		return nil, fmt.Errorf("响应安全 Hook 未绑定配置管理器")
 	}
-	settings := h.cfgManager.GetContentSafetyConfig()
+	var settings config.ContentSafetyConfig
+	if requestSettings != nil {
+		settings = *requestSettings
+	} else {
+		settings = h.cfgManager.GetContentSafetyConfig()
+	}
 	current := h.snapshot.Load()
 	if current != nil && reflect.DeepEqual(current.settings, settings) {
 		return current, nil
@@ -239,7 +244,7 @@ func collectResponseToolCommands(value interface{}, vault *sensitive.Vault, scan
 		if len(encoded) > sensitive.MaxCommandBytes {
 			return arguments, nil // 超限参数由检测器明确拦截，不继续还原大对象。
 		}
-		restored, err := vault.RestoreJSON([]byte(encoded))
+		restored, err := vault.RestoreToolJSON([]byte(encoded))
 		if err != nil {
 			return nil, fmt.Errorf("还原待审核工具参数失败: %w", err)
 		}

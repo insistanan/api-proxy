@@ -73,11 +73,10 @@ func TestMessagesChannelReasoningOffSendsDisableAndForwardsUpstreamThinking(t *t
 			off := "none"
 			_, err = manager.UpdateUpstream(0, config.UpstreamUpdate{ReasoningEffort: &off})
 			require.NoError(t, err)
-			channels := scheduler.NewChannelScheduler(manager, metrics.NewMetricsManager(), nil, nil, nil, nil, nil, nil,
-				session.NewTraceAffinityManager(), urlhealth.NewURLManager(30*time.Second, 3))
+			channels := scheduler.NewChannelScheduler(manager, map[scheduler.ChannelKind]*metrics.MetricsManager{scheduler.ChannelKindMessages: metrics.NewMetricsManager()}, session.NewTraceAffinityManager(), urlhealth.NewURLManager(30*time.Second, 3))
 			t.Cleanup(channels.Stop)
 
-			env := config.NewEnvConfig()
+			env := config.DefaultEnvConfig()
 			env.ProxyAccessKey = contentSafetyTestAccessKey
 			router := gin.New()
 			router.POST("/v1/messages", Handler(env, manager, channels))

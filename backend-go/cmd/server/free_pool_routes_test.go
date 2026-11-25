@@ -63,7 +63,7 @@ func TestFreePoolRoutesAllProtocolsThroughChat(t *testing.T) {
 				if mode == "health-unavailable" {
 					app.channelScheduler.SetRequestLogStore(metrics.NewRequestLogStore(nil))
 				}
-				app.envCfg = &config.EnvConfig{ProxyAccessKey: "test-admin", LogLevel: "error", MaxRequestBodySize: 1024 * 1024, RequestTimeout: 5501, StreamIdleTimeout: 5}
+				app.envCfg = &config.EnvConfig{ProxyAccessKey: "test-admin", LogLevel: "error", MaxRequestBodySize: 1024 * 1024, RequestTimeout: 5501, ResponseHeaderTimeout: 5, StreamIdleTimeout: 5}
 				app.contentSafetyPipeline = pipeline.NewContentSafetyPipeline(app.cfgManager)
 				app.sessionManager, err = session.NewPersistentSessionManager(filepath.Join(t.TempDir(), "sessions.db"), time.Hour, 0, 0)
 				require.NoError(t, err)
@@ -94,12 +94,10 @@ func TestFreePoolRoutesAllProtocolsThroughChat(t *testing.T) {
 					}
 					require.NoError(t, store.Flush())
 				}
-				client, err := httpclient.GetManager().GetStandardClient(5501*time.Millisecond, false, "")
+				client, err := httpclient.GetManager().GetClient(httpclient.ClientOptions{
+					IsStream: mode == "committed", Timeout: 5501 * time.Millisecond, ResponseHeaderTimeout: 5 * time.Second,
+				})
 				require.NoError(t, err)
-				if mode == "committed" {
-					client, err = httpclient.GetManager().GetStreamClient(false, "")
-					require.NoError(t, err)
-				}
 				original := client.Transport
 				t.Cleanup(func() { client.Transport = original })
 				var sentModels []string

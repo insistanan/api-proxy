@@ -56,6 +56,50 @@ func TestBlockedStoreRecordListAndFilters(t *testing.T) {
 	}
 }
 
+func TestBlockedStoreRecordBatch_RollsBackAndRetainsRequestOwnership(t *testing.T) {
+	store := openTestBlockedStore(t)
+	ctx := context.Background()
+	entries := []BlockedLog{
+		{APIType: "chat", BlockType: BlockTypeCredential, RequestID: "first", PromptSnippet: "password=K8p!rQ7vZ2"},
+		{APIType: "chat", BlockType: BlockTypeSensitiveInfo, RequestID: "second"},
+	}
+	if _, err := store.db.Exec(`CREATE TRIGGER fail_test_batch BEFORE INSERT ON blocked_logs WHEN NEW.request_id = 'second' BEGIN SELECT RAISE(ABORT, 'test failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordBatch(ctx, entries); err == nil {
+		t.Fatal("批内写入失败必须返回错误")
+	}
+	page, err := store.List(ctx, BlockedLogListOptions{})
+	if err != nil || page.Total != 0 {
+		t.Fatalf("失败批次留下部分记录: %+v %v", page, err)
+	}
+	if _, err := store.db.Exec(`DROP TRIGGER fail_test_batch`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordBatch(ctx, entries); err != nil {
+		t.Fatal(err)
+	}
+	page, err = store.List(ctx, BlockedLogListOptions{})
+	if err != nil || page.Total != 2 {
+		t.Fatalf("批量审计记录不完整: %+v %v", page, err)
+	}
+	seen := make(map[string]bool)
+	for _, entry := range page.Logs {
+		seen[entry.RequestID] = true
+		if strings.Contains(entry.PromptSnippet, "K8p!rQ7vZ2") {
+			t.Fatal("批量写入绕过了凭据隐藏")
+		}
+	}
+	if !seen["first"] || !seen["second"] {
+		t.Fatal("请求归属丢失")
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := store.RecordBatch(cancelled, entries); err == nil {
+		t.Fatal("已取消批次不能写入")
+	}
+}
+
 func TestBlockedStoreAssignsAndListsConversationGroups(t *testing.T) {
 	store := openTestBlockedStore(t)
 	ctx := context.Background()

@@ -1,9 +1,7 @@
 package availability
 
 import (
-	"net/http"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -18,6 +16,7 @@ func TestClassifySeparatesUpstreamFailuresFromRequestRejection(t *testing.T) {
 		{"流中断不能按200成功", "response_processing", "unexpected EOF", Failure, 200, false},
 		{"客户端取消", "client_cancelled", "", Ignored, 502, false},
 		{"本地排队", "local_admission", "", Ignored, 503, false},
+		{"本地意图状态保存失败", IntentState, "写入状态失败", Ignored, 500, false},
 		{"模型明确不存在", "upstream_4xx", `{"error":{"code":"model_not_found"}}`, Unsupported, 404, false},
 		{"普通404不推断模型", "upstream_4xx", `{"error":{"message":"route not found"}}`, Ignored, 404, false},
 		{"上下文超限", "upstream", `{"error":{"code":"context_length_exceeded"}}`, Ignored, 400, false},
@@ -39,9 +38,10 @@ func TestClassifySeparatesUpstreamFailuresFromRequestRejection(t *testing.T) {
 	}
 }
 
-func TestCooldownUsesSecondsAndHTTPDate(t *testing.T) {
-	now := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
-	require.Equal(t, now.Add(90*time.Second).UnixMilli(), Cooldown("90", now))
-	require.Equal(t, now.Add(time.Minute).UnixMilli(), Cooldown(now.Add(time.Minute).Format(http.TimeFormat), now))
-	require.Equal(t, now.Add(30*time.Second).UnixMilli(), Cooldown("invalid", now))
+func TestClassify_ModelCapacityHasExplicitReason(t *testing.T) {
+	for _, body := range []string{"model is at capacity", `{"error":{"code":"rate_limit_exceeded"}}`} {
+		outcome, reason := Classify(false, 503, ModelCapacity, body)
+		require.Equal(t, RateLimited, outcome)
+		require.Equal(t, ModelCapacity, reason)
+	}
 }

@@ -3,6 +3,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -24,25 +25,41 @@ func applyContentSafetySegments(
 	recorder BlockedLogRecorder,
 	prompts *[]string,
 	segmentsPreReserved bool,
-) (bool, error) {
+) (changed bool, resultErr error) {
+	if recorder != nil {
+		metadata.auditBatch = &safetyAuditBatch{recorder: recorder, deduper: metadata.eventDeduper}
+		defer func() {
+			if err := metadata.auditBatch.flush(ctx); err != nil && !errors.Is(resultErr, err) {
+				resultErr = errors.Join(resultErr, fmt.Errorf("提交请求安全审计失败: %w", err))
+			}
+		}()
+	}
+	metadata.preRequestSnapshot = snapshot
 	vault := metadata.redactionVault
 	if vault == nil {
 		vault = sensitive.NewVaultWithContext(ctx)
 	}
-	if !segmentsPreReserved {
-		for index := range segments {
+	// JSON 转义可能把占位符隐藏在原始字节中，解码后的文本仍需冲突登记。
+	for index := range segments {
+		if !segmentsPreReserved || strings.Contains(segments[index].Text, "MASKED_") {
 			vault.ReserveText(segments[index].Text)
 		}
-		if err := vault.Err(); err != nil {
-			return false, err
-		}
 	}
-	changed := false
+	if err := vault.Err(); err != nil {
+		return false, err
+	}
+	skipped := make([]bool, len(segments))
+	originals := make([]string, len(segments))
 	for index := range segments {
 		segment := &segments[index]
+		originals[index] = segment.Text
+		if err := ctx.Err(); err != nil {
+			return changed, err
+		}
 		// 白名单放行：命中工具名的 tool_result / tool_argument 跳过全部检测维度，
 		// 并记录一条 whitelist 审计事件，让拦截记录页可见"已放行"的条目。
 		if isWhitelistedSegment(snapshot, segment) {
+			skipped[index] = true
 			if err := recordWhitelistAllowed(ctx, metadata, recorder, *segment); err != nil {
 				return changed, err
 			}
@@ -54,6 +71,7 @@ func applyContentSafetySegments(
 		// 放行字面量（整段相等）：segment 文本与某条目完全相等时跳过全部检测维度，
 		// 写一条 allowlist 审计事件。覆盖"整个字段就是 localhost 这类值"的最常见场景。
 		if allowlistSkipsWholeSegment(snapshot.settings.Allowlist, segment.Text) {
+			skipped[index] = true
 			if err := recordAllowlistAllowed(ctx, metadata, recorder, *segment); err != nil {
 				return changed, err
 			}
@@ -82,10 +100,10 @@ func applyContentSafetySegments(
 		// credentialSource 是凭据检测时的原文；掩码会改写 segment.Text，
 		// 命中偏移只对原文有效，必须先留存。
 		credentialSource := segment.Text
-		credentialMatches := snapshot.credential.FindAll(segment.Text)
+		credentialMatches := snapshot.credentialMatches(segment.Field, segment.Text)
 		credentialMatches = filterAllowlistedCredentialMatches(credentialMatches, credentialSource, snapshot.settings.Allowlist)
 		if len(credentialMatches) > 0 {
-			if credentialMode == config.ContentSafetyModeBlock || credentialMode == config.ContentSafetyModeMask && !segment.Mutable {
+			if credentialMode == config.ContentSafetyModeBlock || credentialMode == config.ContentSafetyModeMask && (!segment.Mutable || segment.Signed) {
 				first := credentialMatches[0]
 				return changed, &ContentSafetyError{
 					BlockType: sensitive.BlockTypeCredential,
@@ -117,11 +135,11 @@ func applyContentSafetySegments(
 			// 敏感信息检测在凭据掩码之后执行，命中偏移相对当前文本；
 			// 以此为窗口基准，改写前再留存一份。
 			infoSource := segment.Text
-			infoMatches := snapshot.info.FindAll(segment.Text)
+			infoMatches := snapshot.infoMatches(segment.Field, segment.Text)
 			infoMatches = filterAllowlistedInfoMatches(infoMatches, infoSource, snapshot.settings.Allowlist)
 			if len(infoMatches) > 0 {
 				mode := snapshot.settings.SensitiveData.Mode
-				if mode == config.ContentSafetyModeBlock || mode == config.ContentSafetyModeMask && !segment.Mutable {
+				if mode == config.ContentSafetyModeBlock || mode == config.ContentSafetyModeMask && (!segment.Mutable || segment.Signed) {
 					first := infoMatches[0]
 					return changed, &ContentSafetyError{
 						BlockType: sensitive.BlockTypeSensitiveInfo,
@@ -154,9 +172,12 @@ func applyContentSafetySegments(
 		// 放行字面量过滤同样生效（命中原文与条目相等则丢弃）。
 		if snapshot.settings.SensitiveData.Mode == config.ContentSafetyModeMask && snapshot.custom != nil && snapshot.custom.Enabled() {
 			customSource := segment.Text
-			customMatches := snapshot.custom.FindAll(segment.Text)
+			customMatches := snapshot.customMatches(segment.Text)
 			customMatches = filterAllowlistedCustomMatches(customMatches, snapshot.settings.Allowlist)
 			if len(customMatches) > 0 {
+				if !segment.Mutable || segment.Signed {
+					return changed, &ContentSafetyError{BlockType: sensitive.BlockTypeCustomRule, RuleName: customMatches[0].Rule}
+				}
 				masked, maskErr := vault.Mask(segment.Text, customRedactionMatches(customMatches))
 				if maskErr != nil {
 					return changed, maskErr
@@ -170,9 +191,6 @@ func applyContentSafetySegments(
 			}
 		}
 
-		if segment.Mutable && segment.Text != "" {
-			segment.replace(segment.Text)
-		}
 		if snapshot.settings.SensitiveData.Mode == config.ContentSafetyModeMask && !infoChecked {
 			// 未分类来源没有经过前面的个人信息检测，保留原有末尾校验；
 			// 已改写片段不再复检（R1-e：脱敏输出假定可信，避免整段二次扫描）。
@@ -191,11 +209,44 @@ func applyContentSafetySegments(
 				}
 			}
 		}
+	}
+	// 全部检测结束后再覆盖已知原值，包含出现在较早片段和不同语境的同值。
+	// 此步骤不缓存，后续轮次新识别出的秘密也必须重新保护旧历史。
+	for index := range segments {
+		segment := &segments[index]
+		if !skipped[index] && snapshot.settings.SensitiveData.Mode == config.ContentSafetyModeMask {
+			masked := vault.MaskKnown(originals[index])
+			if err := vault.ValidateRequestPlaceholders(masked); err != nil {
+				return changed, err
+			}
+			if masked != segment.Text {
+				if !segment.Mutable || segment.Signed {
+					return changed, &ContentSafetyError{BlockType: sensitive.BlockTypeSensitiveInfo, RuleName: "known_sensitive_immutable"}
+				}
+				segment.Text = masked
+				changed = true
+			}
+		}
+		if segment.Mutable && !segment.Signed {
+			segment.replace(segment.Text)
+		}
 		if (segment.Source == safetySourceUser || segment.Source == safetySourceSystem) && strings.TrimSpace(segment.Text) != "" {
 			*prompts = append(*prompts, segment.Text)
 		}
 	}
-	return changed, nil
+	if changed {
+		for _, segment := range segments {
+			if segment.Signed {
+				continue
+			}
+			for _, commit := range segment.commits {
+				if err := commit(); err != nil {
+					return changed, err
+				}
+			}
+		}
+	}
+	return changed, vault.CommitScope()
 }
 
 func credentialRedactionMatches(matches []sensitive.CredentialMatch) []sensitive.RedactionMatch {

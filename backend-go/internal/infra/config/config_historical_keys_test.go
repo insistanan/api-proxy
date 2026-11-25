@@ -1,5 +1,4 @@
-// 历史 API Key 迁移验收：历史 Key 只在配置文件里出现一次（迁移前），
-// 之后由指标库按渠道稳定 ID 保管，配置保存不再回写。
+// 历史 API Key 提交验收：稳态由指标库保管，提交中断时由配置中的完整快照恢复。
 package config
 
 import (
@@ -7,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 
@@ -15,10 +15,11 @@ import (
 
 // fakeHistoricalKeyStore 用内存模拟指标库注册表，便于断言写入与清理行为。
 type fakeHistoricalKeyStore struct {
-	mu       sync.Mutex
-	keys     map[string]map[string][]string
-	failSave bool
-	failLoad bool
+	mu         sync.Mutex
+	keys       map[string]map[string][]string
+	failSave   bool
+	failLoad   bool
+	failDelete bool
 }
 
 func newFakeHistoricalKeyStore() *fakeHistoricalKeyStore {
@@ -54,6 +55,9 @@ func (s *fakeHistoricalKeyStore) SaveHistoricalKeys(kind string, channelID strin
 func (s *fakeHistoricalKeyStore) DeleteHistoricalKeys(kind string, channelID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.failDelete {
+		return errors.New("模拟删除失败")
+	}
 	delete(s.keys[kind], channelID)
 	return nil
 }
@@ -133,8 +137,8 @@ func TestHistoricalKeysRemovedWhenChannelDeleted(t *testing.T) {
 	requireNoHistoricalKeysOnDisk(t, cm.configFile)
 }
 
-// 指标库写入失败时必须降级为随配置保存，不能丢历史 Key。
-func TestHistoricalKeysFallbackWhenStoreFails(t *testing.T) {
+// 同步失败必须保留完整提交和明确错误，恢复后不能永久回退为双份存储。
+func TestHistoricalKeys_ReportsPendingCommitAndRecovers(t *testing.T) {
 	cm := newTransactionTestManager(t, "messages")
 	seed := cloneConfig(cm.config)
 	seed.Upstream[0].HistoricalAPIKeys = []string{"old-1"}
@@ -143,17 +147,26 @@ func TestHistoricalKeysFallbackWhenStoreFails(t *testing.T) {
 	store := newFakeHistoricalKeyStore()
 	store.failSave = true
 	cm.SetHistoricalKeyStore(store)
-	require.Error(t, cm.SyncHistoricalKeys())
-	require.False(t, cm.historicalKeysReady)
+	err := cm.SyncHistoricalKeys()
+	require.Error(t, err)
+	require.True(t, IsCommittedError(err))
+	require.True(t, cm.historicalKeysReady)
 
-	_, err := cm.UpdateChannel("messages", 0, UpstreamUpdate{APIKeys: []string{"k1"}})
-	require.NoError(t, err)
+	_, err = cm.UpdateChannel("messages", 0, UpstreamUpdate{APIKeys: []string{"k1"}})
+	require.Error(t, err)
+	require.True(t, IsCommittedError(err))
 	saved := readConfigFileForTest(t, cm.configFile)
+	require.True(t, saved.HistoricalKeysPending)
 	require.Equal(t, []string{"old-1", "k2"}, saved.Upstream[0].HistoricalAPIKeys)
+	store.failSave = false
+	require.NoError(t, cm.SaveConfig())
+	require.False(t, cm.GetConfig().HistoricalKeysPending)
+	require.Equal(t, []string{"old-1", "k2"}, store.snapshot("messages", "first"))
+	requireNoHistoricalKeysOnDisk(t, cm.configFile)
 }
 
-// 指标库读取失败时按渠道 ID 沿用当前快照，且不阻断配置重载。
-func TestHistoricalKeysReloadFallsBackToSnapshot(t *testing.T) {
+// 读取数据库失败时拒绝发布候选，不能报告重载成功却沿用部分旧数据。
+func TestHistoricalKeys_RejectsReloadWhenStoreReadFails(t *testing.T) {
 	cm := newTransactionTestManager(t, "messages")
 	seed := cloneConfig(cm.config)
 	seed.Settings.Gateway = DefaultGatewaySettings()
@@ -174,19 +187,90 @@ func TestHistoricalKeysReloadFallsBackToSnapshot(t *testing.T) {
 	require.NotEqual(t, raw, updated, "测试配置未包含预期渠道名")
 	require.NoError(t, os.WriteFile(cm.configFile, updated, 0o600))
 
-	require.NoError(t, cm.reloadFromDisk())
+	require.Error(t, cm.reloadFromDisk())
 	reloaded := cm.GetConfig()
-	require.Equal(t, "renamed", reloaded.Upstream[0].Name)
+	require.Equal(t, "first", reloaded.Upstream[0].Name)
 	require.Equal(t, []string{"old-1"}, reloaded.Upstream[0].HistoricalAPIKeys)
 }
 
-// 重载时配置文件没变：只从指标库补齐内存，不触发多余回写。
-func TestHistoricalKeysReloadMergesFromStore(t *testing.T) {
+func TestHistoricalKeys_ConfigFailureDoesNotDeleteDatabaseRecords(t *testing.T) {
 	cm := newTransactionTestManager(t, "messages")
+	cm.config.Upstream[0].HistoricalAPIKeys = []string{"old-1"}
+	store := newFakeHistoricalKeyStore()
+	cm.SetHistoricalKeyStore(store)
+	require.NoError(t, cm.SyncHistoricalKeys())
+	before := cm.GetConfig()
+	backupDir := filepath.Join(filepath.Dir(cm.configFile), "backups")
+	require.NoError(t, os.Rename(backupDir, backupDir+".saved"))
+	blockTransactionBackup(t, cm)
+	_, err := cm.RemoveChannel("messages", 0)
+	require.Error(t, err)
+	require.False(t, IsCommittedError(err))
+	require.Equal(t, before, cm.GetConfig())
+	require.Equal(t, []string{"old-1"}, store.snapshot("messages", "first"))
+}
+
+func TestHistoricalKeys_RestartCompletesPendingDeletion(t *testing.T) {
+	cm := newTransactionTestManager(t, "messages")
+	cm.config.Upstream[0].HistoricalAPIKeys = []string{"old-1"}
+	store := newFakeHistoricalKeyStore()
+	cm.SetHistoricalKeyStore(store)
+	require.NoError(t, cm.SyncHistoricalKeys())
+	store.failDelete = true
+	_, err := cm.RemoveChannel("messages", 0)
+	require.Error(t, err)
+	require.True(t, IsCommittedError(err))
+	require.True(t, readConfigFileForTest(t, cm.configFile).HistoricalKeysPending)
+	require.Equal(t, []string{"old-1"}, store.snapshot("messages", "first"))
+	// 不启动 watcher，直接模拟进程重建和装配阶段恢复。
+	restarted := &ConfigManager{configFile: cm.configFile}
+	require.NoError(t, restarted.loadConfig())
+	store.failDelete = false
+	restarted.SetHistoricalKeyStore(store)
+	require.NoError(t, restarted.SyncHistoricalKeys())
+	require.Equal(t, ChannelStatusDeleted, restarted.GetConfig().Upstream[0].Status)
+	require.Empty(t, store.snapshot("messages", "first"))
+	require.False(t, readConfigFileForTest(t, cm.configFile).HistoricalKeysPending)
+}
+
+// 稳态启动只从指标库补齐内存，不触发待同步提交或多余备份。
+func TestHistoricalKeys_StartupReadsStoreWithoutRewritingConfig(t *testing.T) {
+	cm := newTransactionTestManager(t, "messages")
+	before, err := os.ReadFile(cm.configFile)
+	require.NoError(t, err)
 	store := newFakeHistoricalKeyStore()
 	require.NoError(t, store.SaveHistoricalKeys("messages", "first", []string{"stored-1"}))
 	cm.SetHistoricalKeyStore(store)
 	require.NoError(t, cm.SyncHistoricalKeys())
 	require.Equal(t, []string{"stored-1"}, cm.GetConfig().Upstream[0].HistoricalAPIKeys)
 	requireNoHistoricalKeysOnDisk(t, cm.configFile)
+	after, err := os.ReadFile(cm.configFile)
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+	_, err = os.Stat(filepath.Join(filepath.Dir(cm.configFile), "backups"))
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestHistoricalKeys_ReloadRecoversOrphanedDatabaseRecord(t *testing.T) {
+	cm := newTransactionTestManager(t, "messages")
+	store := newFakeHistoricalKeyStore()
+	cm.SetHistoricalKeyStore(store)
+	require.NoError(t, cm.SyncHistoricalKeys())
+	// 数据库中的孤立注册项也需要先提交恢复标记，不能在加载时直接删除。
+	require.NoError(t, store.SaveHistoricalKeys("messages", "orphan", []string{"old"}))
+	store.failDelete = true
+	raw, err := os.ReadFile(cm.configFile)
+	require.NoError(t, err)
+	updated := bytes.Replace(raw, []byte(`"name": "first"`), []byte(`"name": "renamed"`), 1)
+	require.NotEqual(t, raw, updated)
+	require.NoError(t, os.WriteFile(cm.configFile, updated, 0o600))
+	err = cm.reloadFromDisk()
+	require.Error(t, err)
+	require.True(t, IsCommittedError(err))
+	require.Equal(t, "renamed", cm.GetConfig().Upstream[0].Name)
+	require.True(t, readConfigFileForTest(t, cm.configFile).HistoricalKeysPending)
+	store.failDelete = false
+	require.NoError(t, cm.SaveConfig())
+	require.Empty(t, store.snapshot("messages", "orphan"))
+	require.False(t, readConfigFileForTest(t, cm.configFile).HistoricalKeysPending)
 }
