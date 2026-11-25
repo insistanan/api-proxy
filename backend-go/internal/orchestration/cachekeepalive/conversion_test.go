@@ -30,7 +30,7 @@ func TestKeepalive_UsesProviderConversionOutputForEveryTarget(t *testing.T) {
 					t.Cleanup(manager.Stop)
 					provider = &providers.ResponsesProvider{SessionManager: manager}
 					input.Path = "/v1/responses"
-					input.Body = []byte(`{"model":"client-model","instructions":"fixed prefix","stream":true,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"question"}]}]}`)
+					input.Body = []byte(`{"model":"client-model","max_output_tokens":128,"instructions":"fixed prefix","stream":true,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"question"}]}]}`)
 				}
 				outcome, err := provider.BuildRequest(input, up, "fixture-key")
 				require.NoError(t, err)

@@ -1,6 +1,8 @@
 // 公开健康端点：用于版本与运行状态查询。
 // 健康检查响应类型
 export interface HealthResponse {
+  /** 平台来自网关进程；远程访问时不使用浏览器设备推断安装包。 */
+  platform?: { os: string; arch: string }
   version?: {
     version: string
     buildTime: string

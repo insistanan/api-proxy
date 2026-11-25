@@ -5,21 +5,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/protocol/items"
-	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 	"io"
 	"log"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/api/streams"
 	"github.com/insistanan/api-proxy/internal/dialogue/session"
 	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"github.com/insistanan/api-proxy/internal/protocol/converters"
+	"github.com/insistanan/api-proxy/internal/protocol/items"
 	"github.com/insistanan/api-proxy/internal/protocol/providers"
 	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
@@ -43,6 +41,11 @@ func Handler(
 ) gin.HandlerFunc {
 	contentSafetyPipeline := pipeline.ResolveContentSafetyPipeline(cfgManager, contentSafetyPipelines...)
 	provider := &providers.ResponsesProvider{SessionManager: sessionManager}
+	if sessionManager != nil && channelScheduler != nil {
+		if err := sessionManager.BindRegistry(channelScheduler.GetConversationRegistry()); err != nil {
+			return func(c *gin.Context) { c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()}) }
+		}
+	}
 
 	spec := proxycore.ProtocolSpec{
 		Kind:         scheduler.ChannelKindResponses,
@@ -68,6 +71,9 @@ func Handler(
 			return responsesReq.Model, responsesReq.Stream, proxycore.ExtractPromptsFromResponsesInput(responsesReq.Input), true
 		},
 		BuildUpstreamRequest: func(c *gin.Context, up *config.UpstreamConfig, apiKey string, body []byte) (*http.Request, error) {
+			if err := beginResponsesTurn(c, sessionManager, body, c.GetString(upstreamreq.ContextKeyConversationUserID)); err != nil {
+				return nil, err
+			}
 			req, _, err := provider.ConvertToProviderRequest(c, up, apiKey)
 			return req, err
 		},
@@ -88,6 +94,7 @@ func Handler(
 		},
 	}
 	return gin.HandlerFunc(func(c *gin.Context) {
+		defer closeResponsesTurn(c)
 		proxycore.RunProxyRequest(c, envCfg, cfgManager, channelScheduler, spec)
 	})
 }
@@ -110,9 +117,7 @@ func handleSuccess(
 	defer resp.Body.Close()
 
 	isStream := originalReq != nil && originalReq.Stream
-	if upstreamType == converters.ResponsesUpstreamResponses && isResponsesImageGenerationRequest(originalRequestJSON) {
-		return handleResponsesImagePassthrough(c, resp, envCfg, startTime, isStream)
-	}
+
 	usageRequestJSON, err := prepareResponsesUsageRequestBody(
 		originalRequestJSON,
 		c.GetBool(upstreamreq.ContextKeyResponsesHistoryBoundary),
@@ -150,7 +155,7 @@ func handleSuccess(
 		proxycore.LogResponseDetails(resp, bodyBytes, envCfg, "Responses")
 	}
 
-	responsesResp, err := converters.ConvertUpstreamResponseToResponses(upstreamType, originalRequestJSON, bodyBytes, "")
+	responsesResp, err := converters.ConvertUpstreamResponseToResponses(upstreamType, originalRequestJSON, bodyBytes, "", providers.ResponseToolsForRequest(c))
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Failed to convert response"})
 		return nil, err
@@ -216,52 +221,13 @@ func handleSuccess(
 	if err := json.Unmarshal(responseBody, responsesResp); err != nil {
 		return &metricsUsage, fmt.Errorf("解析已还原 Responses 响应失败: %w", err)
 	}
-	// 客户端的 store 只控制上游是否保存，不能关闭本代理自己的七天会话持久化。
 	if originalReq != nil {
-		sessionLookupPreviousResponseID := originalReq.PreviousResponseID
-		if c.GetBool(upstreamreq.ContextKeyResponsesHistoryBoundary) {
-			// provider 已经把客户端 input 作为新的历史根发送给上游；
-			// 这里必须按 conversation 找到旧 session，再原子替换其内容。
-			sessionLookupPreviousResponseID = ""
+		if err := commitResponsesTurn(c, sessionManager, originalReq, originalRequestJSON, responsesResp.Output, sessionTokens, responsesResp.ID, responseUpstreamOwner(resp), false, false); err != nil {
+			return &metricsUsage, err
 		}
-		sess, err := sessionManager.GetOrCreateSessionForConversation(sessionLookupPreviousResponseID, conversationID)
-		if err == nil {
-			previousResponseID := sess.LastResponseID
-			compactionRoot := respitems.ResponsesItemsContainCompactionFromInput(originalReq.Input) ||
-				respitems.ResponsesItemsContainCompaction(responsesResp.Output)
-			inputItems, parseErr := parseInputToItems(originalReq.Input)
-			if parseErr != nil {
-				return nil, fmt.Errorf("保存 Responses 输入历史失败: %w", parseErr)
-			}
-			turnItems := respitems.ResponsesTurnItems(inputItems, responsesResp.Output)
-			var commitErr error
-			if compactionRoot {
-				// 压缩窗口整体替换旧历史，并原子失效旧 response ID 映射。
-				commitErr = sessionManager.CommitTurn(sess.ID, turnItems, sessionTokens,
-					visionmedia.DetectImageContent(originalRequestJSON), responsesResp.ID, responseUpstreamOwner(resp))
-			} else if c.GetBool(upstreamreq.ContextKeyResponsesHistoryBoundary) {
-				commitErr = sessionManager.ReplaceSessionAfterBoundary(sess.ID, turnItems,
-					visionmedia.DetectImageContent(originalRequestJSON), responsesResp.ID, responseUpstreamOwner(resp))
-			} else {
-				commitErr = sessionManager.CommitTurn(sess.ID, turnItems, sessionTokens,
-					visionmedia.DetectImageContent(originalRequestJSON), responsesResp.ID, responseUpstreamOwner(resp))
-			}
-			if err := commitErr; err != nil {
-				return nil, fmt.Errorf("持久化 Responses 会话轮次失败: %w", err)
-			}
-			if compactionRoot || c.GetBool(upstreamreq.ContextKeyResponsesHistoryBoundary) {
-				// 压缩或客户端历史替换成功后，Messages→Responses 的旧链也必须
-				// 失效；否则下一轮仍可能携带压缩前的 previous_response_id。
-				session.DefaultResponseChainManager().Clear(conversationID)
-			}
-
-			if previousResponseID != "" && !compactionRoot &&
-				!c.GetBool(upstreamreq.ContextKeyResponsesPreviousIDDropped) {
-				responsesResp.PreviousID = previousResponseID
-				responsesResp.PreviousResponseID = previousResponseID
-			}
-		} else {
-			return nil, fmt.Errorf("保存 Responses 会话失败: %w", err)
+		if snapshot := providers.ResponseSessionForRequest(c); snapshot != nil && snapshot.LastResponseID != "" && !c.GetBool(upstreamreq.ContextKeyResponsesPreviousIDDropped) {
+			responsesResp.PreviousID = snapshot.LastResponseID
+			responsesResp.PreviousResponseID = snapshot.LastResponseID
 		}
 	}
 	if originalReq != nil && respitems.ResponsesItemsContainCompactionFromInput(originalReq.Input) {
@@ -272,9 +238,6 @@ func handleSuccess(
 		// 继续交给 Cursor，否则客户端下一轮会重新走旧服务端会话。
 		clearResponsesPreviousIDs(responsesResp)
 	}
-	// 只有本地 session 成功写入新 response ID 后才更新 conversation alias，
-	// 避免持久化失败时 registry 先暴露一个不可恢复的外部边界。
-	proxycore.AssociateConversationExternalID(channelScheduler, conversationID, scheduler.ChannelKindResponses, responsesResp.ID)
 
 	upstreamreq.ForwardResponseHeaders(resp.Header, c.Writer)
 	proxycore.MarkRequestLogFirstToken(c)
@@ -294,34 +257,6 @@ func clearResponsesPreviousIDs(resp *types.ResponsesResponse) {
 		delete(resp.Extra, "previous_id")
 		delete(resp.Extra, "previous_response_id")
 	}
-}
-
-func handleResponsesImagePassthrough(
-	c *gin.Context,
-	resp *http.Response,
-	envCfg *config.EnvConfig,
-	startTime time.Time,
-	requestedStream bool,
-) (*types.Usage, error) {
-	isStream := requestedStream || streams.IsEventStreamResponse(resp)
-	if envCfg.Current().EnableResponseLogs {
-		responseTime := time.Since(startTime).Milliseconds()
-		if isStream {
-			log.Printf("[Responses-Image-Stream] 原生生图流式响应开始: %dms, 状态: %d", responseTime, resp.StatusCode)
-		} else {
-			log.Printf("[Responses-Image] 原生生图响应开始转发: %dms, 状态: %d", responseTime, resp.StatusCode)
-		}
-	}
-
-	if isStream {
-		return forwardResponsesImageStream(c, resp)
-	}
-	err := streams.ForwardUpstreamResponseBody(c, resp, "application/json", false)
-	if envCfg.Current().EnableResponseLogs {
-		responseTime := time.Since(startTime).Milliseconds()
-		log.Printf("[Responses-Image] 原生生图响应转发完成: %dms", responseTime)
-	}
-	return nil, err
 }
 
 func isResponsesImageGenerationRequest(bodyBytes []byte) bool {
@@ -354,7 +289,10 @@ func parseInputToItems(input interface{}) ([]types.ResponsesItem, error) {
 			if !ok {
 				return nil, fmt.Errorf("input 第 %d 项必须是对象", index)
 			}
-			parsed := parseResponsesItemMap(itemMap)
+			parsed, err := types.ParseResponsesItem(itemMap)
+			if err != nil {
+				return nil, fmt.Errorf("input 第 %d 项: %w", index, err)
+			}
 			if parsed.Type == "" {
 				return nil, fmt.Errorf("input 第 %d 项缺少 type", index)
 			}
@@ -364,60 +302,4 @@ func parseInputToItems(input interface{}) ([]types.ResponsesItem, error) {
 	default:
 		return nil, fmt.Errorf("unsupported input type")
 	}
-}
-
-// parseResponsesItemMap 把请求输入和 response.completed.output 中的 item
-// 统一解析为内部表示。Responses 的 function_call_output 使用 output 字段，
-// custom_tool_call 使用 input 字段；如果只读取 content，会在 session 重放时
-// 丢失工具结果或把后续工具调用错误地当成空消息。
-func parseResponsesItemMap(itemMap map[string]interface{}) types.ResponsesItem {
-	itemType, _ := itemMap["type"].(string)
-	role, _ := itemMap["role"].(string)
-	content := itemMap["content"]
-	if content == nil {
-		if itemType == "custom_tool_call" {
-			content = itemMap["input"]
-		}
-		if content == nil {
-			content = itemMap["output"]
-		}
-	}
-	if itemType == "" && role != "" {
-		itemType = "message"
-	}
-
-	arguments, _ := itemMap["arguments"].(string)
-	if arguments == "" {
-		if rawArguments, ok := itemMap["arguments"]; ok && rawArguments != nil {
-			if encoded, err := codec.MarshalJSONNoEscape(rawArguments); err == nil {
-				arguments = string(encoded)
-			}
-		}
-	}
-
-	item := types.ResponsesItem{}
-	item.ID, _ = itemMap["id"].(string)
-	item.Type = itemType
-	item.Status, _ = itemMap["status"].(string)
-	item.Role = role
-	item.Content = content
-	item.Summary = itemMap["summary"]
-	item.CallID, _ = itemMap["call_id"].(string)
-	item.Name, _ = itemMap["name"].(string)
-	item.Arguments = arguments
-	item.Tools = itemMap["tools"]
-	item.Namespace, _ = itemMap["namespace"].(string)
-	item.Execution, _ = itemMap["execution"].(string)
-	item.EncryptedContent = itemMap["encrypted_content"]
-	item.Signature, _ = itemMap["signature"].(string)
-	item.Action = itemMap["action"]
-
-	if rawToolUse, ok := itemMap["tool_use"].(map[string]interface{}); ok {
-		item.ToolUse = &types.ToolUse{
-			ID:    codec.StringValue(rawToolUse["id"]),
-			Name:  codec.StringValue(rawToolUse["name"]),
-			Input: rawToolUse["input"],
-		}
-	}
-	return item
 }

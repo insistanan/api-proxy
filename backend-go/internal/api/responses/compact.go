@@ -49,7 +49,13 @@ func CompactHandler(
 	contentSafetyPipelines ...*pipeline.Pipeline,
 ) gin.HandlerFunc {
 	contentSafetyPipeline := pipeline.ResolveContentSafetyPipeline(cfgManager, contentSafetyPipelines...)
+	if sessionManager != nil && channelScheduler != nil {
+		if err := sessionManager.BindRegistry(channelScheduler.GetConversationRegistry()); err != nil {
+			return func(c *gin.Context) { c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()}) }
+		}
+	}
 	return gin.HandlerFunc(func(c *gin.Context) {
+		defer closeResponsesTurn(c)
 		// 认证
 		middleware.ProxyAuthMiddleware(envCfg)(c)
 		if c.IsAborted() {
@@ -69,7 +75,7 @@ func CompactHandler(
 		// compact 是控制面操作：只复用主请求已经建立的内部会话，不创建新的会话记录。
 		// 这样不会改变客户端协议，同时避免外部 conversation ID 与内部记录 ID 分裂。
 		identity := proxycore.ResolveConversationIdentity(c, bodyBytes)
-		conversationID, err := proxycore.ResolveExistingConversationID(
+		conversationID, err := proxycore.ResolveExistingConversationID(c.Request.Context(),
 			channelScheduler, scheduler.ChannelKindResponses, identity)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "CONVERSATION_STORE_ERROR"})
@@ -268,8 +274,11 @@ func buildCompactRequest(c *gin.Context, upstream *config.UpstreamConfig, apiKey
 	if err != nil {
 		return nil, fmt.Errorf("设置 compact 目标模型失败: %w", err)
 	}
-	bodyBytes, err = providers.PrepareNativeResponseHistory(sessionManager, conversationID,
-		bodyBytes, upstream.RequestIdentity(apiKey).Fingerprint())
+	if err := beginResponsesTurn(c, sessionManager, bodyBytes, conversationID); err != nil {
+		return nil, err
+	}
+	bodyBytes, err = providers.PrepareNativeResponseHistory(c.Request.Context(), sessionManager, conversationID,
+		bodyBytes, upstream.RequestIdentity(apiKey).Fingerprint(), providers.ResponseSessionForRequest(c))
 	if err != nil {
 		return nil, fmt.Errorf("准备 compact 历史失败: %w", err)
 	}
@@ -370,35 +379,24 @@ func finishCompactResponse(c *gin.Context, resp *http.Response, requestBody []by
 	if err != nil {
 		return usage, err
 	}
-	if err := commitCompactSession(sessionManager, requestBody, respBody, conversationID, responseUpstreamOwner(resp)); err != nil {
-		return usage, &compactCommitError{Err: fmt.Errorf("本地会话压缩状态保存失败: %w", err)}
+	if sessionManager != nil {
+		responseID, items, err := parseCompactOutput(respBody)
+		if err != nil {
+			return usage, &sessionCommitError{Err: err}
+		}
+		if err := commitResponsesTurn(c, sessionManager, nil, requestBody, items, 0, responseID, responseUpstreamOwner(resp), true, false); err != nil {
+			return usage, err
+		}
 	}
-	compactResponseID := extractCompactResponseID(respBody)
-	if compactResponseID != "" {
-		proxycore.AssociateConversationExternalID(channelScheduler, conversationID, scheduler.ChannelKindResponses, compactResponseID)
-	}
+
 	respBody, err = clearCompactPreviousResponseIDs(respBody)
 	if err != nil {
-		return usage, &compactCommitError{Err: fmt.Errorf("清理 compact 旧会话 ID 失败: %w", err)}
+		return usage, &sessionCommitError{Err: fmt.Errorf("清理 compact 旧会话 ID 失败: %w", err)}
 	}
 	session.DefaultResponseChainManager().Clear(conversationID)
 	upstreamreq.ForwardResponseHeaders(resp.Header, c.Writer)
 	c.Data(resp.StatusCode, "application/json", respBody)
 	return usage, nil
-}
-
-type compactCommitError struct{ Err error }
-
-func (e *compactCommitError) Error() string {
-	return e.Err.Error()
-}
-
-func (e *compactCommitError) Unwrap() error {
-	return e.Err
-}
-
-func (e *compactCommitError) LocalResponseError() bool {
-	return true
 }
 
 func clearCompactPreviousResponseIDs(body []byte) ([]byte, error) {
@@ -428,17 +426,11 @@ func extractCompactResponseID(body []byte) string {
 	return ""
 }
 
-// commitCompactSession 用 compact 结果替换代理本地旧历史。compact 请求的
-// input 通常是客户端重放的完整 transcript，绝不能再把它当作普通一轮追加，
-// 否则压缩成功后本地 session 仍会保留完整旧上下文。
-func commitCompactSession(sessionManager *session.SessionManager, requestBody, responseBody []byte, conversationID string, owner ...string) error {
-	if sessionManager == nil {
-		return nil
-	}
-	previousResponseID := strings.TrimSpace(gjson.GetBytes(requestBody, "previous_response_id").String())
+// parseCompactOutput 只解释压缩结果，提交交由普通/流式共用的生命周期入口。
+func parseCompactOutput(responseBody []byte) (string, []types.ResponsesItem, error) {
 	responseID := extractCompactResponseID(responseBody)
 	if responseID == "" {
-		return fmt.Errorf("compact 响应缺少新 response id，无法建立压缩后的会话边界")
+		return "", nil, fmt.Errorf("compact 响应缺少新 response id，无法建立压缩后的会话边界")
 	}
 
 	output := gjson.GetBytes(responseBody, "output")
@@ -446,20 +438,17 @@ func commitCompactSession(sessionManager *session.SessionManager, requestBody, r
 		output = gjson.GetBytes(responseBody, "response.output")
 	}
 	if !output.Exists() || !output.IsArray() || len(output.Array()) == 0 {
-		return fmt.Errorf("compact 响应缺少非空 output，保留压缩前会话")
+		return "", nil, fmt.Errorf("compact 响应缺少非空 output，保留压缩前会话")
 	}
 	var rawItems []interface{}
 	if err := json.Unmarshal([]byte(output.Raw), &rawItems); err != nil {
-		return fmt.Errorf("解析 compact output 失败: %w", err)
+		return "", nil, fmt.Errorf("解析 compact output 失败: %w", err)
 	}
 	items, err := parseInputToItems(rawItems)
 	if err != nil {
-		return fmt.Errorf("解析 compact session item 失败: %w", err)
+		return "", nil, fmt.Errorf("解析 compact session item 失败: %w", err)
 	}
-	if previousResponseID == "" {
-		return sessionManager.ReplaceConversationSessionAfterCompact(conversationID, responseID, items, owner...)
-	}
-	return sessionManager.ReplaceSessionAfterCompact(previousResponseID, responseID, items, owner...)
+	return responseID, items, nil
 }
 
 func writeCompactContentSafetyError(c *gin.Context, err error) {

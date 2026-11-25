@@ -9,6 +9,8 @@ import (
 	"net/http"
 
 	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/protocol/converters"
+	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
 // RequestInput 保存一次协议转换所需的请求参数。
@@ -31,7 +33,8 @@ type RequestInput struct {
 
 	// ConversationID 是编排流程通过 registry 解析得到的内部会话 ID。
 	// llmgate 和 visionlayer 的内部调用不记录会话，传入空串。
-	ConversationID string
+	ConversationID  string
+	ResponseSession *types.Session
 
 	// 客户端伪装开关（入口按配置解析）。
 	ClaudeCodeDisguise bool
@@ -45,6 +48,8 @@ type RequestOutcome struct {
 	Request *http.Request
 	// OriginalBody 入站原始请求体（日志用，与 RequestInput.Body 相同）。
 	OriginalBody []byte
+	// ResponseTools 保存本次候选包含历史恢复结果的工具身份，供普通和流式回程共用。
+	ResponseTools *converters.ResponseToolContext
 
 	// 以下为 Responses 链的转换产物（其余协议为零值）：
 

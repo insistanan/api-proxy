@@ -269,7 +269,7 @@ func HandleStreamResponse(
 
 	usage, processErr := ProcessStreamEvents(c, w, flusher, eventChan, errChan, ctx, envCfg, startTime, requestBody)
 	if processErr == nil {
-		ctx.cacheClaudeReasoning()
+		processErr = ctx.cacheClaudeReasoning(c.Request.Context())
 	}
 	return usage, processErr
 }

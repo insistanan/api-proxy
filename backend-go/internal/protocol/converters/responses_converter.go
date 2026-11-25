@@ -1,11 +1,10 @@
 package converters
 
 import (
-	"encoding/json"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/protocol/items"
 	"strings"
 
+	"github.com/insistanan/api-proxy/internal/protocol/items"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
@@ -45,11 +44,6 @@ func ResponsesToClaudeMessagesWithOptions(sess *types.Session, newInput interfac
 	}
 
 	return messages, instructions, nil
-}
-
-// responsesItemToClaudeMessage 单个 ResponsesItem 转换为 Claude Message
-func responsesItemToClaudeMessage(item types.ResponsesItem) (*types.ClaudeMessage, error) {
-	return responsesItemToClaudeMessageWithOptions(item, false)
 }
 
 func responsesItemToClaudeMessageWithOptions(item types.ResponsesItem, includeHistoryThinking bool) (*types.ClaudeMessage, error) {
@@ -157,135 +151,6 @@ func ClaudeResponseToResponses(claudeResp map[string]interface{}, sessionID stri
 
 // ============== Responses → OpenAI Chat ==============
 
-// ResponsesToOpenAIChatMessages 将 Responses 格式转换为 OpenAI Chat 格式
-func ResponsesToOpenAIChatMessages(sess *types.Session, newInput interface{}, instructions string) ([]map[string]interface{}, error) {
-	newItems, err := parseResponsesInput(newInput)
-	if err != nil {
-		return nil, err
-	}
-
-	mergedItems := newItems
-	if sess != nil && len(sess.Messages) > 0 {
-		mergedItems = respitems.MergeResponsesItemsDedup(sess.Messages, newItems)
-	}
-	if respitems.ResponsesItemsContainCompaction(mergedItems) {
-		return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("Responses compaction item 只能由 Responses 原生上游处理，无法转换为 OpenAI Chat")}
-	}
-
-	messages := make([]map[string]interface{}, 0, len(mergedItems)+1)
-	if instructions != "" {
-		messages = append(messages, map[string]interface{}{
-			"role":    "system",
-			"content": instructions,
-		})
-	}
-	for _, item := range mergedItems {
-		if msg := responsesItemToOpenAIMessage(item); msg != nil {
-			messages = append(messages, msg)
-		}
-	}
-	return collapseSystemMessagesToHead(messages), nil
-}
-
-// responsesItemToOpenAIMessage 单个 ResponsesItem 转换为 OpenAI Message
-func responsesItemToOpenAIMessage(item types.ResponsesItem) map[string]interface{} {
-	switch item.Type {
-	case "message":
-		role := normalizeResponsesMessageRole(item.Role)
-
-		content := buildOpenAIMessageContent(item.Content)
-		if content == nil {
-			return nil
-		}
-
-		return map[string]interface{}{
-			"role":    role,
-			"content": content,
-		}
-
-	case "text":
-		content := buildOpenAIMessageContent(item.Content)
-		if content == nil {
-			return nil
-		}
-
-		role := normalizeResponsesMessageRole(item.Role)
-
-		return map[string]interface{}{
-			"role":    role,
-			"content": content,
-		}
-
-	case "tool_call":
-		if item.ToolUse == nil {
-			return nil
-		}
-		arguments, err := json.Marshal(item.ToolUse.Input)
-		if err != nil {
-			return nil
-		}
-		return map[string]interface{}{
-			"role": "assistant",
-			"tool_calls": []map[string]interface{}{{
-				"id":   item.ToolUse.ID,
-				"type": "function",
-				"function": map[string]interface{}{
-					"name":      item.ToolUse.Name,
-					"arguments": string(arguments),
-				},
-			}},
-		}
-
-	case "function_call", "custom_tool_call", "tool_search_call":
-		callID := item.CallID
-		if callID == "" {
-			callID = item.ID
-		}
-		arguments := item.Arguments
-		name := item.Name
-		if item.Type == "custom_tool_call" {
-			arguments = customToolArgumentsJSON(item)
-		} else if item.Type == "tool_search_call" {
-			name = openAIChatToolSearchName
-			if strings.TrimSpace(arguments) == "" {
-				arguments = "{}"
-			}
-		} else if arguments == "" {
-			arguments = "{}"
-		}
-		if item.Namespace != "" {
-			name = flattenNamespaceToolName(item.Namespace, name)
-		}
-		return map[string]interface{}{
-			"role": "assistant",
-			"tool_calls": []map[string]interface{}{
-				{
-					"id":   callID,
-					"type": "function",
-					"function": map[string]interface{}{
-						"name":      name,
-						"arguments": arguments,
-					},
-				},
-			},
-		}
-	}
-
-	if isResponsesToolOutputType(item.Type) {
-		content := stringifyResponsesToolOutput(item.Content)
-		if content == "" && item.Type == "tool_search_output" && item.Tools != nil {
-			content = stringifyResponsesToolOutput(item.Tools)
-		}
-		return map[string]interface{}{
-			"role":         "tool",
-			"tool_call_id": item.CallID,
-			"content":      content,
-		}
-	}
-
-	return nil
-}
-
 func normalizeResponsesMessageRole(role string) string {
 	switch strings.ToLower(strings.TrimSpace(role)) {
 	case "", "user":
@@ -300,7 +165,3 @@ func normalizeResponsesMessageRole(role string) string {
 		return "user"
 	}
 }
-
-// ============== OpenAI Chat Response → Responses ==============
-
-// ============== 工具函数 ==============

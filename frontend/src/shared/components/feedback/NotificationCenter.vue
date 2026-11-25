@@ -34,6 +34,7 @@
       </div>
       <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
         <UiAlert v-if="store.storageError" type="error" class="mb-3">{{ store.storageError }}</UiAlert>
+        <UiAlert v-if="navigationError" type="error" class="mb-3">{{ navigationError }}</UiAlert>
         <p v-if="!visibleMessages.length" class="py-10 text-center text-sm text-muted-foreground">{{ unreadOnly ? '暂无未读消息' : '暂无消息' }}</p>
         <article v-for="item in visibleMessages" :key="item.id" class="mb-3 rounded-control border p-3" :class="item.readAt === null ? 'border-primary/40 bg-primary/5' : 'border-border'">
           <div class="flex items-center gap-2 text-xs text-muted-foreground">
@@ -74,6 +75,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import UiButton from '@/shared/ui/button/Button.vue'
 import UiIcon from '@/shared/ui/icon/Icon.vue'
 import UiDialog from '@/shared/ui/overlay/Dialog.vue'
@@ -85,6 +87,8 @@ import { toastIcons } from '@/shared/composables/useToast'
 import { formatDateTime, formatShortDateTime } from '@/shared/utils/datetime'
 
 const store = useNotificationStore()
+const router = useRouter()
+const navigationError = ref('')
 const { copyText } = useClipboard()
 const open = ref(false)
 async function changeDesktopMode(event: Event) {
@@ -106,6 +110,13 @@ const selectedMessage = computed(() => store.messages.find(item => item.id === s
 const levelLabels: Record<NotificationLevel, string> = { notice: '通知', warning: '警告' }
 const levelFilter = ref<NotificationLevel | ''>('')
 function showDetails(item: AppNotification) {
+  if (item.route?.startsWith('/') && !item.route.startsWith('//')) {
+    navigationError.value = ''
+    void router.push(item.route).then(() => { store.setRead(item.id, true); open.value = false }).catch(cause => {
+      navigationError.value = `打开消息失败：${cause instanceof Error ? cause.message : String(cause)}`
+    })
+    return
+  }
   store.setRead(item.id, true)
   selectedSnapshot.value = { ...item }
   detailsOpen.value = true

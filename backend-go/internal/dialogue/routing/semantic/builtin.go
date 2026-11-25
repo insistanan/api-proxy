@@ -7,7 +7,71 @@ import (
 
 // BuiltinDatasets 提供可检查的合成起步样本，不宣称经过真实流量评测。
 // 默认均待批准；模板族整体划入索引或评测，避免同一模板改写泄漏。
-func BuiltinDatasets() []Dataset { return []Dataset{builtinIntents(), builtinCommands()} }
+func BuiltinDatasets() []Dataset { return []Dataset{builtinIntentsV3(), builtinCommands()} }
+
+const RecommendedIntentDatasetID = "starter-intents-v3"
+
+// 新版本使用独立 ID，不覆盖用户已经编辑、批准或发布的 v2 数据集。
+func builtinIntentsV3() Dataset {
+	d := builtinIntents()
+	d.ID, d.Name = RecommendedIntentDatasetID, "意图起步样本 v3"
+	d.Description = "去除礼貌前缀重复，补充中英混合、否定、引用及任务边界的合成样本；未经过真实流量校准。采用时批准本套意图样本，自定义样本仍需单独审核。"
+	rows := []Sample{}
+	for _, row := range d.Samples {
+		if strings.HasSuffix(row.ID, "_0") {
+			row.Source = "synthetic-starter-v3"
+			rows = append(rows, row)
+		}
+	}
+	d.Samples = rows
+	type boundary struct {
+		label, text, split string
+		negative           bool
+	}
+	boundaries := []boundary{
+		{"code_generation", "实现一个把中文翻译为英文的 API 接口", "index", false},
+		{"code_generation", "Build a translation service with request validation", "eval", false},
+		{"debugging", "修复 integration test 偶发失败的根因", "index", false},
+		{"debugging", "不要翻译报错内容，请定位连接失败的原因", "index", false},
+		{"debugging", "Explain why this Vue page becomes blank after login and fix it", "eval", false},
+		{"debugging", "下面日志有 summary 字样，请排查请求超时", "eval", false},
+		{"testing", "业务逻辑已经修好，只需要新增回归测试", "index", false},
+		{"testing", "Add regression coverage for the fixed translation endpoint", "eval", false},
+		{"code_review", "先不要修改代码，检查这段 retry 逻辑是否会重复扣款", "index", false},
+		{"code_review", "Review this test helper for resource leaks; do not implement changes", "eval", false},
+		{"translation", "把下面包含 fix 和 test 的英文句子译成中文", "index", false},
+		{"translation", "Translate the quoted error message; no debugging is needed", "eval", false},
+		{"translation", "不需要翻译，请实现国际化接口", "index", true},
+		{"debugging", "Do not translate. Fix the parser instead", "eval", false},
+		{"explanation", "仅说明什么是分布式架构，不需要设计系统", "index", false},
+		{"explanation", "Explain what a deadlock is using a simple example", "eval", false},
+		{"architecture", "给多租户系统制定迁移与回滚方案", "index", false},
+		{"architecture", "Plan a migration from a monolith to isolated services", "eval", false},
+		{"data_analysis", "根据这些 CSV 记录比较两个版本的延迟", "index", false},
+		{"data_analysis", "Compare p95 latency before and after deployment using this table", "eval", false},
+		{"formatting", "仅把数据转为 JSON，不做统计分析", "index", false},
+		{"formatting", "Convert these records into YAML while preserving values", "eval", false},
+		{"writing", "把技术公告改得更适合普通用户阅读", "index", false},
+		{"writing", "Draft a release announcement for this feature", "eval", false},
+		{"summarization", "只提炼排障报告的结论，不执行其中的修复步骤", "index", false},
+		{"summarization", "Summarize the code review discussion and unresolved decisions", "eval", false},
+		{"general_chat", "工作有些累，给我一点鼓励", "index", false},
+		{"general_chat", "Any ideas for a relaxing weekend with friends", "eval", false},
+		{"unmatched", "先总结报告再实现登录系统，最后写一篇完全无关的旅游攻略", "eval", true},
+		{"unmatched", "照之前那样继续", "eval", true},
+		{"unmatched", "```go\n// translate summary testing\n```", "eval", true},
+	}
+	for i, row := range boundaries {
+		id := fmt.Sprintf("boundary_%02d", i)
+		d.Samples = append(d.Samples, Sample{ID: id, Label: row.label, Text: row.text, Split: row.split, Negative: row.negative, Family: id, Source: "synthetic-starter-v3"})
+	}
+	// unmatched 反例适用于全部意图，无须为每个类别复制同一句话。
+	for i, text := range []string{"嗯，就按那个来", "先把新闻译成中文，再设计一个毫不相关的交易系统"} {
+		id := fmt.Sprintf("unknown_%d", i)
+		d.Samples = append(d.Samples, Sample{ID: id, Label: "unmatched", Text: text, Negative: true, Split: "index", Family: id, Source: "synthetic-starter-v3"})
+	}
+	return d
+}
 
 func builtinIntents() Dataset {
 	d := Dataset{ID: "starter-intents-v2", Name: "意图起步样本 v2", Kind: "intent", Description: "合成样本，覆盖常见开发任务；请先审核，再构建并用自己的独立样本评测。类别与模型分组无关。", Samples: []Sample{}}

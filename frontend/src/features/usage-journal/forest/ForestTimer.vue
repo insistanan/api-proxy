@@ -1,6 +1,6 @@
 <template>
-  <section class="panel-surface p-4" aria-labelledby="forest-timer-title">
-    <h3 id="forest-timer-title" class="font-semibold">专注与交接</h3>
+  <section aria-label="森林时钟">
+    <p class="text-sm leading-6 text-muted-foreground">专注时，留一段安静的时光。交给 Agent 后，就放心去歇一会儿。</p>
     <p v-if="syncError" role="status" class="mt-2 text-xs text-destructive">{{ syncError }}</p>
     <div v-if="timer" class="mt-3 space-y-3">
       <div class="flex flex-wrap items-baseline justify-between gap-2">
@@ -8,9 +8,9 @@
         <strong v-if="timer.mode && timer.mode !== 'focus-due'" class="font-mono text-2xl tabular-nums">{{ clock(remaining) }}</strong>
       </div>
       <div v-if="timer.waitStarted" class="rounded-control bg-muted px-3 py-2 text-sm">
-        <p>Agent 等待 {{ clock(now - timer.waitStarted) }}</p>
+        <p>已交给 Agent {{ clock(now - timer.waitStarted) }}</p>
         <p v-if="timer.waitDue" class="text-xs text-muted-foreground">{{ timer.waitDue <= now ? '已到回看时间' : `距回看还有 ${clock(timer.waitDue - now)}` }}</p>
-        <UiButton class="mt-1" variant="text" size="small" :disabled="busy" @click="send('end-wait')">结束等待</UiButton>
+        <UiButton class="mt-1" variant="text" size="small" :disabled="busy" @click="send('end-wait')">我回来了</UiButton>
       </div>
       <div v-if="timer.mode !== 'rest'" class="flex flex-wrap gap-2">
         <UiButton v-if="timer.mode === 'paused'" color="primary" size="small" :disabled="busy" @click="send('resume')">继续专注</UiButton>
@@ -35,7 +35,7 @@
           <label class="text-xs">回看分钟<input v-model.number="reviewMinutes" type="number" class="field-surface mt-1 w-full p-1.5" min="0" max="240" /></label>
         </div>
         <p class="mt-1 text-xs text-muted-foreground">回看设为 0 表示只记录等待。</p>
-        <UiButton class="mt-2" variant="text" size="small" @click="enableDesktop">允许桌面提醒</UiButton>
+        <UiButton class="mt-2" variant="text" size="small" @click="enableDesktop">开启所有消息的桌面提醒</UiButton>
         <p v-if="desktop" class="text-xs text-muted-foreground">{{ desktop }}</p>
       </details>
       <p v-if="error" class="text-sm text-destructive" role="alert">{{ error }}</p>
@@ -49,9 +49,11 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import UiButton from '@/shared/ui/button/Button.vue'
 import { ApiError } from '@/shared/services/http'
+import { useNotificationStore } from '@/shared/stores/notifications'
 import { useForest } from './store'
 
 const forest = useForest()
+const notifications = useNotificationStore()
 const { timer, receivedAt, syncError } = storeToRefs(forest)
 const emit = defineEmits<{ changed: [] }>()
 const tick = ref(Date.now())
@@ -105,14 +107,8 @@ async function send(action: string, minutes = 0) {
   }
 }
 async function enableDesktop() {
-  const NotificationAPI = window.Notification
-  if (!NotificationAPI) { desktop.value = '当前浏览器不支持桌面提醒'; return }
-  try {
-    const permission = await NotificationAPI.requestPermission()
-    desktop.value = permission === 'granted' ? '已允许。关闭所有管理台页面后，打开时可查看到期状态。' : '桌面提醒未获授权，仍会使用站内提醒。'
-  } catch (cause) {
-    desktop.value = cause instanceof Error ? cause.message : String(cause)
-  }
+  await notifications.setDesktopMode('all')
+  desktop.value = notifications.desktopError || '已开启，可在消息中心调整提醒范围。'
 }
 function loadPreferences() {
   try {

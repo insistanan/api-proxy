@@ -53,7 +53,7 @@ func TestGeminiFinishReason_RejectsAbnormalCompletion(t *testing.T) {
 		state := newGeminiToClaudeStreamState()
 		state.ProcessChunk(body)
 		require.ErrorContains(t, state.streamError, reason)
-		require.Empty(t, state.Finish("", ""), "错误响应不能发出正常完成事件")
+		require.Empty(t, state.Finish(), "错误响应不能发出正常完成事件")
 	}
 }
 

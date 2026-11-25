@@ -15,46 +15,10 @@ import (
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/converters/toimages"
 	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
-
-type responsesImageItem struct {
-	ID            string          `json:"id"`
-	Type          string          `json:"type"`
-	Status        string          `json:"status"`
-	Result        string          `json:"result"`
-	ResultJSON    string          `json:"-"` // 流式路径保留原始 JSON 字符串切片，不解码或复制整张图片
-	RevisedPrompt string          `json:"revised_prompt"`
-	OutputFormat  string          `json:"output_format"`
-	Background    string          `json:"background"`
-	Size          string          `json:"size"`
-	Quality       string          `json:"quality"`
-	Usage         json.RawMessage `json:"usage"`
-}
-
-type responsesImageResponse struct {
-	CreatedAt int64                `json:"created_at"`
-	Status    string               `json:"status"`
-	Output    []responsesImageItem `json:"output"`
-	Error     json.RawMessage      `json:"error"`
-	Usage     json.RawMessage      `json:"usage"`
-}
-
-type imagesResponseData struct {
-	Base64        string `json:"b64_json"`
-	RevisedPrompt string `json:"revised_prompt,omitempty"`
-}
-
-type imagesResponse struct {
-	Created      int64                `json:"created"`
-	Data         []imagesResponseData `json:"data"`
-	OutputFormat string               `json:"output_format,omitempty"`
-	Background   string               `json:"background,omitempty"`
-	Size         string               `json:"size,omitempty"`
-	Quality      string               `json:"quality,omitempty"`
-	Usage        json.RawMessage      `json:"usage,omitempty"`
-}
 
 // handleImagesResponsesSuccess 只输出 Images 协议，绝不把 Responses 的
 // output/text/reasoning 当作成功图片返回。关闭与解压都覆盖客户端断连出口。
@@ -103,7 +67,7 @@ func handleImagesResponsesSuccess(c *gin.Context, resp *http.Response, envCfg *c
 	if err != nil {
 		return nil, fmt.Errorf("读取 Responses 图片响应失败: %w", err)
 	}
-	var response responsesImageResponse
+	var response toimages.ResponsesResponse
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, fmt.Errorf("解析 Responses 图片响应失败: %w", err)
 	}
@@ -111,7 +75,7 @@ func handleImagesResponsesSuccess(c *gin.Context, resp *http.Response, envCfg *c
 	if usageErr != nil {
 		return nil, fmt.Errorf("解析 Responses 图片用量失败: %w", usageErr)
 	}
-	converted, err := convertResponsesImageResponse(response)
+	converted, err := toimages.ConvertResponse(response)
 	if err != nil {
 		return usage, err
 	}
@@ -194,7 +158,7 @@ func writeImagesJSONAsCompletedStream(c *gin.Context, resp *http.Response, envCf
 		if err != nil {
 			return usage, writer.failure(err)
 		}
-		if err := writer.completed(responsesImageItem{
+		if err := writer.completed(toimages.ImageItem{
 			ResultJSON:    quoted,
 			RevisedPrompt: item.RevisedPrompt,
 			OutputFormat:  response.OutputFormat,
@@ -210,7 +174,7 @@ func writeImagesJSONAsCompletedStream(c *gin.Context, resp *http.Response, envCf
 }
 
 // writeImagesJSON 显式返回交付失败，避免 gin.JSON 将写错误留在 Context 后仍返回成功。
-func writeImagesJSON(c *gin.Context, headers http.Header, payload imagesResponse) error {
+func writeImagesJSON(c *gin.Context, headers http.Header, payload toimages.Response) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("编码 Images 响应失败: %w", err)
@@ -248,52 +212,4 @@ func nativeImagesJSONError(raw json.RawMessage) error {
 		return fmt.Errorf("Images 接口返回错误，错误码为 %s", details.Code)
 	}
 	return fmt.Errorf("Images 接口失败: %s", details.Message)
-}
-
-func convertResponsesImageResponse(response responsesImageResponse) (imagesResponse, error) {
-	if len(response.Error) > 0 && string(response.Error) != "null" {
-		return imagesResponse{}, responsesImageError(response.Error)
-	}
-	if response.Status != "" && response.Status != "completed" {
-		return imagesResponse{}, fmt.Errorf("Responses 图片请求未完成，状态为 %s", response.Status)
-	}
-	created := response.CreatedAt
-	if created == 0 {
-		created = time.Now().Unix()
-	}
-	result := imagesResponse{Created: created, Data: make([]imagesResponseData, 0)}
-	for _, item := range response.Output {
-		if item.Type != "image_generation_call" {
-			continue
-		}
-		if item.Status != "" && item.Status != "completed" {
-			return imagesResponse{}, fmt.Errorf("Responses 图片生成未完成，状态为 %s", item.Status)
-		}
-		if strings.TrimSpace(item.Result) == "" {
-			return imagesResponse{}, fmt.Errorf("Responses 图片生成结果缺少图片数据")
-		}
-		result.Data = append(result.Data, imagesResponseData{Base64: item.Result, RevisedPrompt: item.RevisedPrompt})
-		if len(result.Data) == 1 {
-			result.OutputFormat, result.Background = item.OutputFormat, item.Background
-			result.Size, result.Quality, result.Usage = item.Size, item.Quality, item.Usage
-		}
-	}
-	if len(result.Data) == 0 {
-		return imagesResponse{}, fmt.Errorf("Responses 接口未返回任何已完成的图片生成结果")
-	}
-	return result, nil
-}
-
-func responsesImageError(raw json.RawMessage) error {
-	var details struct {
-		Message string `json:"message"`
-		Code    string `json:"code"`
-	}
-	if err := json.Unmarshal(raw, &details); err != nil {
-		return fmt.Errorf("Responses 图片接口返回无效的错误信息: %w", err)
-	}
-	if details.Message == "" {
-		return fmt.Errorf("Responses 图片接口返回错误，错误码为 %s", details.Code)
-	}
-	return fmt.Errorf("Responses 图片接口失败: %s", details.Message)
 }

@@ -193,13 +193,13 @@ func TestBuildConversationTranscriptIgnoresThinkingSignatures(t *testing.T) {
 	}
 }
 
-func TestBuildConversationTranscriptIgnoresChangingCursorAgentTranscriptEnvelope(t *testing.T) {
+func TestBuildConversationTranscriptPreservesUserSuppliedTranscriptMarkup(t *testing.T) {
 	first := BuildConversationTranscript("messages", []byte(`{"messages":[{"role":"user","content":"<agent_transcripts>old internal transcript</agent_transcripts>"},{"role":"user","content":"review this code"}]}`))
 	continued := BuildConversationTranscript("messages", []byte(`{"messages":[{"role":"user","content":"<agent_transcripts>new internal transcript</agent_transcripts>"},{"role":"user","content":"review this code"},{"role":"assistant","content":"done"},{"role":"user","content":"continue"}]}`))
-	if first.Depth() != 1 || continued.Depth() != 3 {
+	if first.Depth() != 2 || continued.Depth() != 4 {
 		t.Fatalf("unexpected transcript depths: %d and %d", first.Depth(), continued.Depth())
 	}
-	if first.FrontierHash() != continued.PrefixHashes[0] {
-		t.Fatal("changing agent transcript envelope broke Cursor history continuity")
+	if first.FrontierHash() == continued.PrefixHashes[1] {
+		t.Fatal("different user text must not share a transcript identity")
 	}
 }

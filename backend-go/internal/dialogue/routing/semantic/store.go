@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"sort"
 	"sync"
@@ -87,6 +88,17 @@ func (s *Service) initializeBuiltins() error {
 			data, err := json.Marshal(d)
 			if err != nil {
 				return err
+			}
+			if d.ID == RecommendedIntentDatasetID && (count >= 32 || total+int64(len(data)) > maxDatasetTotalBytes) {
+				var upgraded bool
+				if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM semantic_builtin_initializations WHERE id='starter-intents-v2') OR EXISTS(SELECT 1 FROM semantic_datasets WHERE id='starter-intents-v2')`).Scan(&upgraded); err != nil {
+					return err
+				}
+				if upgraded {
+					// 新模板是可选升级，不能因保留旧样本导致整个网关无法启动。
+					log.Printf("[Semantic] 数据集容量已满，保留已有样本；未创建 %s，请释放容量后在意图设置中采用新版样本", d.ID)
+					continue
+				}
 			}
 			if count >= 32 {
 				return fmt.Errorf("添加 %q 将超过 32 个数据集上限，请先移除不再使用的数据集", d.ID)

@@ -1,6 +1,7 @@
 package conversation
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -102,7 +103,7 @@ func newSQLiteStore(db *sql.DB) (*SQLiteStore, error) {
 	return store, nil
 }
 
-func (s *SQLiteStore) Upsert(rec *Record) error {
+func (s *SQLiteStore) Upsert(ctx context.Context, rec *Record) error {
 	prompts, err := json.Marshal(rec.Prompts)
 	if err != nil {
 		return err
@@ -119,12 +120,12 @@ func (s *SQLiteStore) Upsert(rec *Record) error {
 	if err != nil {
 		return err
 	}
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	_, err = tx.Exec(`INSERT INTO conversations (id, identity_key, api_kind, name, last_model, last_resolved_model, first_prompt, prompts_json, stream,
+	_, err = tx.ExecContext(ctx, `INSERT INTO conversations (id, identity_key, api_kind, name, last_model, last_resolved_model, first_prompt, prompts_json, stream,
 		first_seen_at, last_seen_at, last_request_at, last_completed_at, request_count, error_count, last_error, route_override_json, last_resolved_json, image_fingerprints_json)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET name=excluded.name, last_model=excluded.last_model, last_resolved_model=excluded.last_resolved_model,
@@ -138,21 +139,21 @@ func (s *SQLiteStore) Upsert(rec *Record) error {
 	if err != nil {
 		return err
 	}
-	if err := upsertLineage(tx, rec.ID, rec.lineage); err != nil {
+	if err := upsertLineage(ctx, tx, rec.ID, rec.lineage); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
 type sqlExecer interface {
-	Exec(query string, args ...interface{}) (sql.Result, error)
+	ExecContext(context.Context, string, ...interface{}) (sql.Result, error)
 }
 
-func upsertLineage(execer sqlExecer, conversationID string, lineage lineageState) error {
+func upsertLineage(ctx context.Context, execer sqlExecer, conversationID string, lineage lineageState) error {
 	if strings.TrimSpace(conversationID) == "" {
 		return nil
 	}
-	_, err := execer.Exec(`INSERT INTO conversation_lineages (
+	_, err := execer.ExecContext(ctx, `INSERT INTO conversation_lineages (
 		conversation_id, client_family, identity_source, scope_hash, lane_hash, frontier_hash,
 		frontier_depth, parent_conversation_id, updated_at
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)

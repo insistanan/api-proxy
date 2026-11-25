@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/insistanan/api-proxy/internal/protocol/items"
@@ -23,25 +24,25 @@ func validateResponseHistoryBoundary(sess *session.Session, previousID string) e
 }
 
 // PrepareNativeResponseHistory 供原生 Responses 的辅助端点复用凭据归属检查。
-func PrepareNativeResponseHistory(manager *session.SessionManager, conversationID string, body []byte, owner string) ([]byte, error) {
+func PrepareNativeResponseHistory(ctx context.Context, manager *session.SessionManager, conversationID string, body []byte, owner string, snapshot *session.Session) ([]byte, error) {
 	var req types.ResponsesRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		return nil, &ResponseHistoryError{Message: "无法解析 Responses 请求"}
 	}
-	var sess *session.Session
-	if manager != nil && req.PreviousResponseID != "" {
+	sess := snapshot
+	if sess == nil && manager != nil && req.PreviousResponseID != "" {
 		var err error
-		sess, err = manager.GetOrCreateSessionForConversation(req.PreviousResponseID, conversationID)
+		sess, err = manager.GetOrCreateSessionForConversation(ctx, req.PreviousResponseID, conversationID)
 		if err != nil {
 			return nil, fmt.Errorf("获取 Responses 历史失败: %w", err)
 		}
 	}
-	result, _, err := restoreNativeResponseHistory(manager, sess, &req, body, owner)
+	result, _, err := restoreNativeResponseHistory(ctx, manager, sess, &req, body, owner)
 	return result, err
 }
 
 // restoreNativeResponseHistory 换凭据后从本地完整会话恢复输入，不把旧 ID 发给新 Key。
-func restoreNativeResponseHistory(manager *session.SessionManager, sess *session.Session, req *types.ResponsesRequest, body []byte, owner string) ([]byte, bool, error) {
+func restoreNativeResponseHistory(ctx context.Context, manager *session.SessionManager, sess *session.Session, req *types.ResponsesRequest, body []byte, owner string) ([]byte, bool, error) {
 	previousID := req.PreviousResponseID
 	if previousID == "" {
 		return body, false, nil
@@ -52,7 +53,7 @@ func restoreNativeResponseHistory(manager *session.SessionManager, sess *session
 	if err := validateResponseHistoryBoundary(sess, previousID); err != nil {
 		return nil, false, err
 	}
-	previousOwner, known, err := manager.ResponseOwner(previousID)
+	previousOwner, known, err := manager.ResponseOwner(ctx, previousID)
 	if err != nil {
 		return nil, false, err
 	}

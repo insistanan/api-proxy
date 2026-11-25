@@ -7,56 +7,14 @@ import (
 	"encoding/json"
 	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
-	"net/http"
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/dialogue/session"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
 )
-
-// extractMessagesConversationID 从请求中提取会话 ID，用于 BaseURL 粘滞与 previous_response_id 链。
-func extractMessagesConversationID(c *gin.Context, claudeReq *types.ClaudeRequest) string {
-	if c != nil {
-		return extractMessagesConversationIDFromInput(c.Request.Header, func(key string) string { return c.Query(key) }, claudeReq)
-	}
-	return extractMessagesConversationIDFromInput(nil, nil, claudeReq)
-}
-
-// extractMessagesConversationIDFromInput 以显式输入提取会话 ID（R4-a，无 gin）。
-func extractMessagesConversationIDFromInput(header http.Header, query func(string) string, claudeReq *types.ClaudeRequest) string {
-	if header != nil {
-		for _, headerName := range []string{
-			"X-Conversation-Id",
-			"Conversation-Id",
-			"X-Session-Id",
-			"Session-Id",
-			"X-Claude-Code-Session-Id",
-		} {
-			if value := strings.TrimSpace(header.Get(headerName)); value != "" {
-				return value
-			}
-		}
-	}
-	if query != nil {
-		if value := strings.TrimSpace(query("conversation_id")); value != "" {
-			return value
-		}
-	}
-	if claudeReq != nil && claudeReq.Metadata != nil {
-		for _, key := range []string{"conversation_id", "session_id", "user_id"} {
-			if value, ok := claudeReq.Metadata[key].(string); ok {
-				if trimmed := strings.TrimSpace(value); trimmed != "" {
-					return trimmed
-				}
-			}
-		}
-	}
-	return ""
-}
 
 // applyPreviousResponseIDChain 在渠道开启 EnablePreviousResponseID 时，
 // 若会话链状态可用且前缀指纹匹配，则仅发送 messages 后缀并带 previous_response_id。
@@ -68,7 +26,7 @@ func applyPreviousResponseIDChain(
 	upstream *config.UpstreamConfig,
 	conversationID string,
 	model string,
-	identity ...upstreamcontrol.Identity,
+	identity upstreamcontrol.Identity,
 ) {
 	if req == nil || claudeReq == nil || conversationID == "" {
 		return
@@ -77,7 +35,7 @@ func applyPreviousResponseIDChain(
 	if !ok || state.ResponseID == "" {
 		return
 	}
-	if len(identity) > 0 && state.UpstreamIdentity != identity[0] {
+	if state.UpstreamIdentity != identity {
 		// Messages 输入携带当前完整历史；换 URL/协议/Key 后清链并发送全量。
 		session.DefaultResponseChainManager().Clear(conversationID)
 		return
@@ -97,7 +55,7 @@ func applyPreviousResponseIDChain(
 		}
 		if state.MessageFingerprint != "" {
 			currentPrefix := claudeReq.Messages[:state.MessageCount]
-			if codec.CanonicalJSON(currentPrefix) != state.MessageFingerprint {
+			if chainFingerprint(codec.CanonicalJSON(currentPrefix)) != state.MessageFingerprint {
 				// 消息正文发生变化（包括客户端压缩/分支重写），旧的
 				// Responses 链已经不能代表当前前缀，必须回退全量请求。
 				session.DefaultResponseChainManager().Clear(conversationID)
@@ -116,8 +74,8 @@ func applyPreviousResponseIDChain(
 		session.DefaultResponseChainManager().Clear(conversationID)
 		return
 	}
-	systemFingerprint := extractSystemText(claudeReq.System)
-	toolsFingerprint := codec.CanonicalJSON(normalizeToolsForPromptCacheKey(claudeReq.Tools))
+	systemFingerprint := chainFingerprint(extractSystemText(claudeReq.System))
+	toolsFingerprint := chainFingerprint(codec.CanonicalJSON(normalizeToolsForPromptCacheKey(claudeReq.Tools)))
 	if state.SystemFingerprint != systemFingerprint || state.ToolsFingerprint != toolsFingerprint {
 		session.DefaultResponseChainManager().Clear(conversationID)
 		return
@@ -140,13 +98,7 @@ func applyPreviousResponseIDChain(
 	if state.MessageCount <= 0 {
 		return
 	}
-	if state.OutputFingerprint == "" {
-		// 旧版本链状态没有记录上一条 server output，无法证明客户端
-		// 重放的 assistant 消息已经存在于 previous_response_id 链中。
-		// 不冒险叠加，清链并发送当前完整历史。
-		session.DefaultResponseChainManager().Clear(conversationID)
-		return
-	}
+
 	if len(claudeReq.Messages) <= state.MessageCount {
 		// No new messages or history shortened: send the complete current payload without chain.
 		if len(claudeReq.Messages) < state.MessageCount {
@@ -180,7 +132,7 @@ func applyPreviousResponseIDChain(
 	req.PreviousResponseID = state.ResponseID
 }
 
-func rememberResponsesChainFromBody(conversationID string, claudeReq *types.ClaudeRequest, upstream *config.UpstreamConfig, model string, body []byte, identity ...upstreamcontrol.Identity) {
+func rememberResponsesChainFromBody(conversationID string, claudeReq *types.ClaudeRequest, upstream *config.UpstreamConfig, model string, body []byte, identity upstreamcontrol.Identity) {
 	if conversationID == "" || len(body) == 0 || claudeReq == nil {
 		return
 	}
@@ -201,11 +153,11 @@ func rememberResponsesChainFromBody(conversationID string, claudeReq *types.Clau
 		return
 	}
 	rememberResponsesChain(conversationID, claudeReq, upstream, model, responseID,
-		responsesAssistantOutputFingerprint(response.Output), identity...)
+		responsesAssistantOutputFingerprint(response.Output), identity)
 }
 
 // rememberResponsesChain 将上游 response id 与当前 messages 指纹写入会话链。
-func rememberResponsesChain(conversationID string, claudeReq *types.ClaudeRequest, upstream *config.UpstreamConfig, model string, responseID, outputFingerprint string, identity ...upstreamcontrol.Identity) {
+func rememberResponsesChain(conversationID string, claudeReq *types.ClaudeRequest, upstream *config.UpstreamConfig, model string, responseID, outputFingerprint string, identity upstreamcontrol.Identity) {
 	if conversationID == "" || responseID == "" || claudeReq == nil {
 		return
 	}
@@ -222,18 +174,15 @@ func rememberResponsesChain(conversationID string, claudeReq *types.ClaudeReques
 		session.DefaultResponseChainManager().Clear(conversationID)
 		return
 	}
-	owner := upstreamcontrol.Identity{}
-	if len(identity) > 0 {
-		owner = identity[0]
-	}
+
 	session.DefaultResponseChainManager().Set(conversationID, session.ResponseChainState{
-		UpstreamIdentity:   owner,
+		UpstreamIdentity:   identity,
 		ResponseID:         responseID,
 		MessageCount:       len(claudeReq.Messages),
 		OutputFingerprint:  outputFingerprint,
-		MessageFingerprint: codec.CanonicalJSON(claudeReq.Messages),
-		SystemFingerprint:  extractSystemText(claudeReq.System),
-		ToolsFingerprint:   codec.CanonicalJSON(normalizeToolsForPromptCacheKey(claudeReq.Tools)),
+		MessageFingerprint: chainFingerprint(codec.CanonicalJSON(claudeReq.Messages)),
+		SystemFingerprint:  chainFingerprint(extractSystemText(claudeReq.System)),
+		ToolsFingerprint:   chainFingerprint(codec.CanonicalJSON(normalizeToolsForPromptCacheKey(claudeReq.Tools))),
 		BaseURL:            responseChainBaseURL(upstream),
 		Model:              model,
 	})
@@ -370,4 +319,9 @@ func responseChainBaseURL(upstream *config.UpstreamConfig) string {
 		return ""
 	}
 	return strings.TrimRight(strings.TrimSpace(upstream.GetEffectiveBaseURL()), "/#")
+}
+
+func chainFingerprint(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
 }

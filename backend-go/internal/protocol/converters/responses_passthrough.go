@@ -90,6 +90,7 @@ func (c *ResponsesPassthroughConverter) FromProviderResponse(resp map[string]int
 	// 解析 usage（使用统一入口自动检测格式：Claude/Gemini/OpenAI）
 	usage := ExtractUsageMetrics(resp["usage"])
 	_, usagePresent := resp["usage"]
+	incompleteDetails, _ := resp["incomplete_details"].(map[string]interface{})
 
 	return &types.ResponsesResponse{
 		ID:                 id,
@@ -104,56 +105,12 @@ func (c *ResponsesPassthroughConverter) FromProviderResponse(resp map[string]int
 		CreatedAt:          createdAt,
 		Extra:              resp,
 		UsagePresent:       usagePresent,
+		IncompleteDetails:  incompleteDetails,
 	}, nil
 }
 
 func parseResponsesPassthroughItem(itemMap map[string]interface{}) (types.ResponsesItem, error) {
-	itemType, _ := itemMap["type"].(string)
-	if itemType == "" {
-		return types.ResponsesItem{}, fmt.Errorf("item 缺少 type")
-	}
-	arguments, _ := itemMap["arguments"].(string)
-	if arguments == "" {
-		if rawArguments, exists := itemMap["arguments"]; exists && rawArguments != nil {
-			encoded, err := json.Marshal(rawArguments)
-			if err != nil {
-				return types.ResponsesItem{}, fmt.Errorf("arguments 序列化失败: %w", err)
-			}
-			arguments = string(encoded)
-		}
-	}
-	content := itemMap["content"]
-	if content == nil && itemType == "custom_tool_call" {
-		content = itemMap["input"]
-	}
-	if content == nil {
-		content = itemMap["output"]
-	}
-	item := types.ResponsesItem{
-		ID:               stringValue(itemMap, "id"),
-		Type:             itemType,
-		Status:           stringValue(itemMap, "status"),
-		Role:             stringValue(itemMap, "role"),
-		Content:          content,
-		Summary:          itemMap["summary"],
-		CallID:           stringValue(itemMap, "call_id"),
-		Name:             stringValue(itemMap, "name"),
-		Arguments:        arguments,
-		Tools:            itemMap["tools"],
-		Namespace:        stringValue(itemMap, "namespace"),
-		Execution:        stringValue(itemMap, "execution"),
-		EncryptedContent: itemMap["encrypted_content"],
-		Signature:        stringValue(itemMap, "signature"),
-		Action:           itemMap["action"],
-	}
-	if rawToolUse, ok := itemMap["tool_use"].(map[string]interface{}); ok {
-		item.ToolUse = &types.ToolUse{
-			ID:    stringValue(rawToolUse, "id"),
-			Name:  stringValue(rawToolUse, "name"),
-			Input: rawToolUse["input"],
-		}
-	}
-	return item, nil
+	return types.ParseResponsesItem(itemMap)
 }
 
 func stringValue(values map[string]interface{}, key string) string {

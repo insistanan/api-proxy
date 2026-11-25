@@ -166,11 +166,14 @@ func TestRunProxyRequestRecordsRequestAndConversationIDs(t *testing.T) {
 
 func TestRunProxyRequestLatestPromptPreviewRespectsCaptureAndMasking(t *testing.T) {
 	for _, test := range []struct {
-		name string
-		mode string
+		name      string
+		mode      string
+		prompt    string
+		preserved bool
 	}{
-		{name: "正文采集使用脱敏后的最新输入", mode: "bounded"},
-		{name: "仅元数据不生成输入摘要", mode: "metadata"},
+		{name: "正文采集使用脱敏后的最新输入", mode: "bounded", prompt: "最新问题 手机号 13800138000"},
+		{name: "仅元数据不生成输入摘要", mode: "metadata", prompt: "最新问题 手机号 13800138000"},
+		{name: "业务编号不会被当作手机号", mode: "bounded", prompt: "最新问题 业务编号 13800138000", preserved: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			env := newRunProxyTestEnv(t)
@@ -193,13 +196,17 @@ func TestRunProxyRequestLatestPromptPreviewRespectsCaptureAndMasking(t *testing.
 				c.JSON(http.StatusOK, gin.H{"ok": true})
 				return true
 			}
-			response := performRunProxyRequest(t, env, spec, `{"model":"test-model","messages":[{"role":"user","content":"旧问题"},{"role":"user","content":"最新问题 13800138000"}]}`, "test-access-key")
+			response := performRunProxyRequest(t, env, spec, `{"model":"test-model","messages":[{"role":"user","content":"旧问题"},{"role":"user","content":"`+test.prompt+`"}]}`, "test-access-key")
 			if response.Code != http.StatusOK {
 				t.Fatalf("请求失败: %d %s", response.Code, response.Body.String())
 			}
 			if test.mode == "metadata" {
 				if preview != "" {
 					t.Fatalf("仅元数据模式不应记录摘要: %q", preview)
+				}
+			} else if test.preserved {
+				if preview != test.prompt {
+					t.Fatalf("业务编号被错误脱敏: %q", preview)
 				}
 			} else if !strings.HasPrefix(preview, "最新问题") || strings.Contains(preview, "13800138000") {
 				t.Fatalf("摘要未使用脱敏后的最新输入: %q", preview)
@@ -211,7 +218,7 @@ func TestRunProxyRequestLatestPromptPreviewRespectsCaptureAndMasking(t *testing.
 func TestRunProxyRequestTracksBranchesWithinOneConversation(t *testing.T) {
 	env := newRunProxyTestEnv(t)
 	registry := conversation.NewRegistry()
-	t.Cleanup(registry.Stop)
+	t.Cleanup(func() { registry.Stop() })
 	env.channelScheduler.SetConversationRegistry(registry)
 	server := newRecordingUpstreamServer(t, nil)
 	addTestUpstream(t, env, "branch-channel", server.URL(), "key-a")
@@ -272,10 +279,10 @@ func newRunProxyTestEnv(t *testing.T) *runProxyTestEnv {
 	t.Cleanup(func() { _ = cfgManager.Close() })
 
 	metricsManager := metrics.NewMetricsManager()
-	t.Cleanup(metricsManager.Stop)
+	t.Cleanup(func() { metricsManager.Stop() })
 
 	channelScheduler := scheduler.NewChannelScheduler(cfgManager, map[scheduler.ChannelKind]*metrics.MetricsManager{scheduler.ChannelKindMessages: metricsManager}, nil, nil)
-	t.Cleanup(channelScheduler.Stop)
+	t.Cleanup(func() { channelScheduler.Stop() })
 
 	return &runProxyTestEnv{
 		envCfg: &config.EnvConfig{

@@ -37,8 +37,11 @@
       "required": ["runtimeUrl", "runtimeSha256", "executable", "modelUrl", "modelSha256", "modelName", "pooling"],
       "properties": {
         "runtimeUrl": { "$ref": "#/$defs/https" },
+        "runtimeFormat": { "enum": ["zip", "tar.gz"] },
+        "runtimeMirrors": { "type": "array", "maxItems": 3, "items": { "$ref": "#/$defs/https" } },
+        "modelMirrors": { "type": "array", "maxItems": 3, "items": { "$ref": "#/$defs/https" } },
         "runtimeSha256": { "$ref": "#/$defs/sha256" },
-        "executable": { "type": "string", "minLength": 1, "description": "ZIP 内 llama-server 的安全相对路径，目录分隔符使用 /" },
+        "executable": { "type": "string", "minLength": 1, "description": "压缩包内 llama-server 的安全相对路径；只有文件名时必须能唯一找到" },
         "modelUrl": { "$ref": "#/$defs/https" },
         "modelSha256": { "$ref": "#/$defs/sha256" },
         "modelName": { "type": "string", "minLength": 1, "maxLength": 100 },

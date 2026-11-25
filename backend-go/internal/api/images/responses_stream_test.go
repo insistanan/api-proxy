@@ -16,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/protocol/converters/toimages"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/stretchr/testify/require"
 )
@@ -91,7 +92,7 @@ func TestResponsesStreamCanReturnNormalImagesJSON(t *testing.T) {
 	c, recorder := imageStreamContext()
 	_, err := convertResponsesImageStream(c, strings.NewReader(completedImageStream("AQID")), make(http.Header), "/images/generations", false, 1024*1024)
 	require.NoError(t, err)
-	var payload imagesResponse
+	var payload toimages.Response
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &payload))
 	require.Equal(t, int64(123), payload.Created)
 	require.Len(t, payload.Data, 1)
@@ -126,15 +127,15 @@ func TestResponsesStreamClientCloseAfterImageKeepsUsage(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("图片事件没有写出")
 	}
+	completed := fmt.Sprintf("event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"created_at\":123,\"usage\":{\"input_tokens\":9233,\"output_tokens\":702,\"input_tokens_details\":{\"cached_tokens\":4224}},\"output\":[%s]}}\n\n", item)
+	_, err := io.WriteString(writer, completed)
+	require.NoError(t, err)
 	select {
 	case <-flushed:
 	case <-time.After(2 * time.Second):
 		t.Fatal("完整图片没有写出")
 	}
 	cancel()
-	completed := fmt.Sprintf("event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"created_at\":123,\"usage\":{\"input_tokens\":9233,\"output_tokens\":702,\"input_tokens_details\":{\"cached_tokens\":4224}},\"output\":[%s]}}\n\n", item)
-	_, err := io.WriteString(writer, completed)
-	require.NoError(t, err)
 	require.NoError(t, writer.Close())
 	select {
 	case err = <-result:

@@ -224,43 +224,6 @@ func (s *responsesToClaudeStreamState) captureToolArgumentDelta(root gjson.Resul
 	}
 }
 
-// cacheReasoning 保存成功完成的 Responses 流式推理，供后续切换到严格 Chat
-// 渠道时补回 reasoning_content。下一轮 Messages→Responses 转换默认跳过历史
-// thinking，因此它不会进入上游上下文。
-func (s *responsesToClaudeStreamState) cacheReasoning() {
-	if s == nil || !s.completed || s.reasoning.Len() == 0 {
-		return
-	}
-
-	content := make([]types.ClaudeContent, 0, len(s.toolCallOrder)+1)
-	if s.assistantText.Len() > 0 {
-		content = append(content, types.ClaudeContent{
-			Type: "text",
-			Text: s.assistantText.String(),
-		})
-	}
-	for _, key := range s.toolCallOrder {
-		call := s.toolCalls[key]
-		if call == nil {
-			continue
-		}
-		var input interface{} = map[string]interface{}{}
-		if call.Arguments != "" {
-			_ = json.Unmarshal([]byte(call.Arguments), &input)
-		}
-		content = append(content, types.ClaudeContent{
-			Type:  "tool_use",
-			ID:    call.CallID,
-			Name:  call.Name,
-			Input: input,
-		})
-	}
-	CacheClaudeResponseReasoning(&types.ClaudeResponse{
-		Role:    "assistant",
-		Content: append([]types.ClaudeContent{{Type: "thinking", Thinking: s.reasoning.String()}}, content...),
-	})
-}
-
 func (s *responsesToClaudeStreamState) outputFingerprint() string {
 	if s == nil || !s.completed {
 		return ""

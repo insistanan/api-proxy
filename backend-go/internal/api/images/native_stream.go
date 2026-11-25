@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/api/streams"
 	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/converters/toimages"
 	"github.com/insistanan/api-proxy/internal/protocol/providers"
 	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
@@ -35,7 +36,7 @@ func nativeImagesCount(contentType string, body []byte) (int, error) {
 	if raw == "" {
 		return 1, nil
 	}
-	count, err := imagesIntegerParameter("n", json.Number(raw))
+	count, err := toimages.IntegerParameter("n", json.Number(raw))
 	if err != nil {
 		return 0, err
 	}

@@ -1,0 +1,72 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    uses: ./.github/workflows/release-windows.yml
+  linux:
+    uses: ./.github/workflows/release-linux.yml
+  macos:
+    uses: ./.github/workflows/release-macos.yml
+  assemble:
+    needs: [windows, linux, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+      - name: 核对六个平台产物
+        shell: bash
+        run: |
+          set -euo pipefail
+          for platform in windows-amd64.exe windows-arm64.exe linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
+            test -s "release-assets/api-proxy-$platform"
+          done
+      - name: 准备固定名称的模型与运行时附件
+        run: node scripts/prepare-embedding-assets.mjs release-assets
+      - name: 复制清单并生成校验文件
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp deploy/embedding-presets.json deploy/embedding-presets.schema.json release-assets/
+          cd release-assets
+          sha256sum api-proxy-* embedding-* > SHA256SUMS
+      - name: 确认仅更新发布草稿
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | [.tag_name, .draft] | @tsv' > releases.tsv
+          if awk -F '\t' -v tag="$GITHUB_REF_NAME" '$1 == tag && $2 == "false" { found=1 } END { exit !found }' releases.tsv; then
+            echo '该 tag 已公开发布，拒绝覆盖已发布附件；请发布新版本。' >&2
+            exit 1
+          fi
+      - name: 汇总生成发布草稿
+        uses: softprops/action-gh-release@v2.0.5
+        with:
+          files: release-assets/*
+          fail_on_unmatched_files: true
+          draft: true
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

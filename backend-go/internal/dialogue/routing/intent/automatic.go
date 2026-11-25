@@ -17,27 +17,69 @@ var taskSignals = []struct {
 	task    string
 	pattern *regexp.Regexp
 }{
-	{"translation", regexp.MustCompile(`(?i)(翻译|译为|译成|translate|translation)`)},
-	{"summarization", regexp.MustCompile(`(?i)(总结|概括|归纳|提炼|提取.*(要点|行动项)|summari[sz]e|summary|action items)`)},
-	{"explanation", regexp.MustCompile(`(?i)(解释|讲解|介绍.*(概念|原理)|说明.*(含义|原理|意思)|explain|how .* works?)`)},
-	{"code_review", regexp.MustCompile(`(?i)(代码审查|审查.*(代码|修改|逻辑|PR)|审计|review.*(code|patch|PR)|code review|security audit)`)},
-	{"testing", regexp.MustCompile(`(?i)(测试|验证.*(行为|结果|接口)|test cases?|write tests?|unit tests?|integration tests?)`)},
-	{"debugging", regexp.MustCompile(`(?i)(调试|排查|修复|定位.*(错误|故障|问题)|debug|fix |troubleshoot)`)},
-	{"architecture", regexp.MustCompile(`(?i)(架构设计|设计.*(架构|系统|方案)|规划.*(架构|系统|方案)|design.*(architecture|system)|architecture design)`)},
-	{"data_analysis", regexp.MustCompile(`(?i)(统计|分析.*(数据|指标|分布|趋势|错误率|耗时)|data analysis|analy[sz]e.*(data|latency|metrics))`)},
-	{"formatting", regexp.MustCompile(`(?i)(格式化|转换.*(格式|JSON|YAML|CSV|Markdown)|统一.*(缩进|格式)|format|convert.*(JSON|YAML|CSV|Markdown))`)},
-	{"writing", regexp.MustCompile(`(?i)(润色|文案|改写|写.*(文章|邮件|公告|标题)|rewrite|write.*(email|article)|proofread)`)},
-	{"code_generation", regexp.MustCompile(`(?i)(实现|编写.*(代码|函数|接口|程序|组件)|写代码|生成.*(代码|函数)|implement|generate.*code|create.*component)`)},
-	{"general_chat", regexp.MustCompile(`(?i)(你好|早上好|谢谢|聊聊|笑话|生活建议|hello|how are you|thank you)`)},
+	{"translation", regexp.MustCompile(`(?i)(翻译|译为|译成|\b(translate|translation)\b)`)},
+	{"summarization", regexp.MustCompile(`(?i)(总结|概括|归纳|提炼|提取.*(要点|行动项)|\b(summari[sz]e|summary|action items)\b)`)},
+	{"explanation", regexp.MustCompile(`(?i)(解释|讲解|介绍.*(概念|原理)|说明.*(含义|原理|意思)|\b(explain|how .* works?)\b)`)},
+	{"code_review", regexp.MustCompile(`(?i)(代码审查|审查.*(代码|修改|逻辑|PR)|审计|\b(review.*(code|patch|PR)|code review|security audit)\b)`)},
+	{"testing", regexp.MustCompile(`(?i)(测试|验证.*(行为|结果|接口)|\b(test cases?|write tests?|unit tests?|integration tests?)\b)`)},
+	{"debugging", regexp.MustCompile(`(?i)(调试|排查|修复|定位.*(错误|故障|问题)|\b(debug|fix|troubleshoot)\b)`)},
+	{"architecture", regexp.MustCompile(`(?i)(架构设计|设计.*(架构|系统|方案)|规划.*(架构|系统|方案)|\b(design.*(architecture|system)|architecture design)\b)`)},
+	{"data_analysis", regexp.MustCompile(`(?i)(统计|分析.*(数据|指标|分布|趋势|错误率|耗时)|\b(data analysis|analy[sz]e.*(data|latency|metrics))\b)`)},
+	{"formatting", regexp.MustCompile(`(?i)(格式化|转换.*(格式|JSON|YAML|CSV|Markdown)|统一.*(缩进|格式)|\b(format|convert.*(JSON|YAML|CSV|Markdown))\b)`)},
+	{"writing", regexp.MustCompile(`(?i)(润色|文案|改写|写.*(文章|邮件|公告|标题)|\b(rewrite|write.*(email|article)|proofread)\b)`)},
+	{"code_generation", regexp.MustCompile(`(?i)(实现|编写.*(代码|函数|接口|程序|组件)|写代码|生成.*(代码|函数)|\b(implement|generate.*code|create.*component)\b)`)},
+	{"general_chat", regexp.MustCompile(`(?i)(你好|早上好|谢谢|聊聊|笑话|生活建议|\b(hello|how are you|thank you)\b)`)},
 }
 
 func builtinTask(text string) string {
+	text = builtinInstruction(text)
+	if text == "" || ambiguousInstruction.MatchString(text) {
+		return ""
+	}
+	matched := ""
+	greeting := false
 	for _, signal := range taskSignals {
 		if signal.pattern.MatchString(text) {
-			return signal.task
+			if signal.task == "general_chat" {
+				greeting = true
+				continue
+			}
+			if matched != "" && matched != signal.task {
+				return ""
+			}
+			matched = signal.task
 		}
 	}
-	return ""
+	if matched == "" && greeting {
+		return "general_chat"
+	}
+	// 解释故障原因与概念讲解的边界交给向量或辅助模型，不依据“解释”抢先结束。
+	if matched == "explanation" && diagnosticInstruction.MatchString(text) {
+		return ""
+	}
+	return matched
+}
+
+var ambiguousInstruction = regexp.MustCompile(`(?i)(不要|不需要|无需|别再|而不是|不是要|并非|\bdo not\b|\bdon't\b|\binstead of\b|\bwithout\b)`)
+var diagnosticInstruction = regexp.MustCompile(`(?i)(为什么|为何|why|失败|故障|空白|报错|异常|deadlock|failing|crash)`)
+var quotedInstruction = regexp.MustCompile("`[^`]*`|\"[^\"]*\"|“[^”]*”|「[^」]*」")
+
+// 引用、代码和日志不是操作指令。保守规则只采纳唯一任务信号，不声称概率置信度。
+func builtinInstruction(text string) string {
+	var lines []string
+	fenced := false
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "```") || strings.HasPrefix(line, "~~~") {
+			fenced = !fenced
+			continue
+		}
+		if fenced || strings.HasPrefix(line, ">") {
+			continue
+		}
+		lines = append(lines, quotedInstruction.ReplaceAllString(line, " "))
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 // classifyAutomatic 先独立识别任务，再判定难度，最后把两项条件交集映射到分组。
@@ -195,14 +237,11 @@ func (s *Service) automaticTask(ctx context.Context, cfg config.IntentRoutingCon
 			return "", 0, err
 		}
 		recordSemanticTrace(ctx, cfg, result)
-		hits := semantic.PositiveLabels(result, cfg.Threshold, cfg.SwitchMargin)
-		if len(hits) == 0 {
+		hit, matched := semantic.SelectIntent(result, cfg.Threshold, cfg.SwitchMargin)
+		if !matched {
 			return "", 0, nil
 		}
-		if len(hits) > 1 && hits[0].Score-hits[1].Score < cfg.SwitchMargin {
-			return "", 0, nil
-		}
-		return hits[0].Sample.Label, hits[0].Score, nil
+		return hit.Sample.Label, hit.Score, nil
 	}
 	task := builtinTask(text)
 	if cfg.Classifier == "heuristic" || cfg.Classifier == "hybrid" && task != "" {
@@ -210,7 +249,7 @@ func (s *Service) automaticTask(ctx context.Context, cfg config.IntentRoutingCon
 			trace.TaskSource = "heuristic"
 			for _, signal := range taskSignals {
 				if signal.task == task {
-					trace.TaskEvidence = "内置任务规则命中：" + safeTraceText(signal.pattern.FindString(text))
+					trace.TaskEvidence = "内置任务规则命中：" + safeTraceText(signal.pattern.FindString(builtinInstruction(text)))
 					break
 				}
 			}

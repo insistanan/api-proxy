@@ -27,7 +27,7 @@ func prepareIntentRoute(c *gin.Context, cfg *config.ConfigManager, sched *schedu
 		}
 		manualPool = up.PoolID
 	} else if registry := sched.GetConversationRegistry(); registry != nil {
-		override, err := registry.LookupRouteOverride(conversation)
+		override, err := registry.LookupRouteOverride(c.Request.Context(), conversation)
 		if err != nil {
 			return func() {}, err
 		}

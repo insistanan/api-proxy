@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/insistanan/api-proxy/internal/infra/utils"
+	"github.com/insistanan/api-proxy/internal/protocol/converters/toimages"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
 )
@@ -62,8 +63,8 @@ func parseResponsesImageEvent(raw, name string) (responsesImageEvent, error) {
 	return event, nil
 }
 
-func imageItemFromJSON(raw gjson.Result) responsesImageItem {
-	var item responsesImageItem
+func imageItemFromJSON(raw gjson.Result) toimages.ImageItem {
+	var item toimages.ImageItem
 	raw.ForEach(func(key, value gjson.Result) bool {
 		switch key.Str {
 		case "id":
@@ -94,7 +95,7 @@ func imageItemFromJSON(raw gjson.Result) responsesImageItem {
 	return item
 }
 
-func imageStreamItemKey(item responsesImageItem) string {
+func imageStreamItemKey(item toimages.ImageItem) string {
 	if item.ID != "" {
 		// gjson 的小字段可能是大事件字符串的子串，克隆 ID 后才能及时释放整张图片。
 		return "id:" + strings.Clone(item.ID)
@@ -130,7 +131,7 @@ func responsesImageStreamMetadata(raw gjson.Result) (int64, *types.Usage, gjson.
 			}
 		case "error":
 			if value.Type != gjson.Null {
-				resultErr = responsesImageError(json.RawMessage(value.Raw))
+				resultErr = toimages.ResponseError(json.RawMessage(value.Raw))
 			}
 		case "usage":
 			parsed, err := responsesImageUsage(json.RawMessage(value.Raw))

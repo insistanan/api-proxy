@@ -126,33 +126,38 @@ func ReasoningEffortToOpenAIChatReasoningEffort(effort string) string {
 // thinkingLevel: none/minimal/low/medium/high（minimal 视为 low，none 表示关闭思考）。
 // thinkingBudget: 0 表示关闭思考；-1 表示自适应；正值走 EffortFromReasoningBudget 反向阈值。
 // includeThoughts=true 且无 level/budget：视为 auto（自适应）。
-func EffortFromGeminiThinkingConfig(cfg *types.GeminiThinkingConfig) string {
+func EffortFromGeminiThinkingConfig(cfg *types.GeminiThinkingConfig) (string, error) {
 	if cfg == nil {
-		return ""
+		return "", nil
 	}
 	if level := strings.ToLower(strings.TrimSpace(cfg.ThinkingLevel)); level != "" {
 		switch level {
 		case "none":
-			return "none"
+			return "none", nil
 		case "minimal":
-			return "minimal"
+			return "minimal", nil
 		case "low", "medium", "high":
-			return level
+			return level, nil
+		default:
+			return "", fmt.Errorf("thinkingLevel 无效: %q", level)
 		}
 	}
 	if cfg.ThinkingBudget != nil {
 		budget := int(*cfg.ThinkingBudget)
 		switch {
 		case budget == 0:
-			return "none"
-		case budget < 0:
-			return "auto"
+			return "none", nil
+		case budget == -1:
+			return "auto", nil
 		default:
-			return EffortFromReasoningBudget(budget)
+			if budget < 0 {
+				return "", fmt.Errorf("thinkingBudget 只能为 -1、0 或正整数")
+			}
+			return EffortFromReasoningBudget(budget), nil
 		}
 	}
 	if cfg.IncludeThoughts {
-		return "auto"
+		return "auto", nil
 	}
-	return ""
+	return "", nil
 }

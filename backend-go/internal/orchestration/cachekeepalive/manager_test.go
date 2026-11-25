@@ -113,6 +113,36 @@ func TestKeepalive_LateRealResponseCannotReplaceLatest(t *testing.T) {
 	}
 }
 
+func TestKeepalive_ClaudeCodePreserveAllThinkingReachesFirstHeartbeat(t *testing.T) {
+	m, now, _ := fixture(t)
+	reads := 0
+	body := strings.TrimSuffix(sampleBody, "}") + `,"thinking":{"type":"adaptive","display":"updates"},"context_management":{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]}}`
+	finishReal(m.Begin("session"), sampleSource(body, "attempt", &reads))
+	if len(m.ActiveChannels()) != 0 {
+		t.Fatal("尚未保存上下文时不应展示保活图标")
+	}
+	*now = now.Add(time.Minute)
+	runDue(t, m)
+	if status := m.Status("channel-test")[0]; status.State != "ready" || status.Attempts != 0 ||
+		status.SnapshotAt != now.UnixMilli() || status.NextHeartbeatAt != now.Add(220*time.Second).UnixMilli() {
+		t.Fatalf("保留全部思考的 Claude Code 请求未进入等待心跳状态: %+v", status)
+	}
+	if m.ActiveChannels()["channel-test"] != 1 {
+		t.Fatal("等待下一次心跳的会话应展示保活图标")
+	}
+	snapshotAt := now.UnixMilli()
+	*now = now.Add(220 * time.Second)
+	runDue(t, m)
+	if status := m.Status("channel-test")[0]; status.State != "ready" || status.Attempts != 1 || status.SnapshotAt != snapshotAt {
+		t.Fatalf("空闲满配置间隔后没有完成首轮心跳: %+v", status)
+	}
+	*now = now.Add(280 * time.Second)
+	runDue(t, m)
+	if status := m.Status("channel-test")[0]; len(m.ActiveChannels()) != 0 || status.NextHeartbeatAt != 0 || status.SnapshotAt != snapshotAt {
+		t.Fatalf("次数达到上限后应隐藏图标、清除下一次心跳并保留历史时间: %+v", status)
+	}
+}
+
 func TestKeepalive_NewRequestCancelsInFlightAndAccountsPinnedMemory(t *testing.T) {
 	m, now, _ := fixture(t)
 	reads := 0

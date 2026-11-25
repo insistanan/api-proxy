@@ -105,6 +105,9 @@ export interface IntentEvent {
   feedback?: boolean
 }
 export interface LocalManifest {
+  runtimeFormat?: 'zip' | 'tar.gz'
+  runtimeMirrors?: string[]
+  modelMirrors?: string[]
   runtimeUrl: string
   runtimeSha256: string
   executable: string
@@ -113,18 +116,29 @@ export interface LocalManifest {
   modelName: string
   pooling: string
 }
-export interface LocalStatus { installed: boolean; running: boolean; ready: boolean; busy: boolean; error: string; platform: string; installPath: string; presetsUrl: string; phase: string; manifest: LocalManifest }
-export interface LocalPreset { id: string; name: string; description: string; sizeBytes: number }
+export interface LocalStatus { installed: boolean; running: boolean; ready: boolean; busy: boolean; error: string; platform: string; installPath: string; presetsUrl: string; phase: string; manifest: LocalManifest; downloadedBytes?: number; totalBytes?: number; notice?: string }
+export interface IntentPreparation { id: string; protocol: string; running: boolean; phase: string; error: string; config?: IntentConfig }
+export interface IntentRuntimeStatus { state: 'disabled' | 'ready' | 'preparing' | 'error'; reason: string }
+export interface IntentEvaluation { total: number; correct: number; unmatched: number; wrongRoutes: number; failures: number; durationMs: number; cases: { id: string; expected: string; actual: string; poolId: string; tier: number; correct: boolean; error?: string; durationMs: number }[] }
+export interface LocalPreset { id: string; name: string; description: string; sizeBytes: number; runtimeUrl?: string; modelUrl?: string }
 export interface LocalPresets { version: number; presets: LocalPreset[]; presetsUrl: string; defaultPresetsUrl: string; installPath: string; platform: string; error: string; stale: boolean }
 export interface ClassifierOption extends ChannelSelectionOption { builtin: boolean; sharedKey: string; defaultModel: string; models: string[] }
 export interface IntentOptions {
+  groups?: Partial<Record<IntentProtocol, { id: string; activeChannels: number }[]>>
   tasks?: IntentTask[]
   classifiers: ClassifierOption[]
   embeddings: (Omit<ChannelSelectionOption, 'kind'> & { kind?: string })[]
 }
 
 export const intentApi = {
-	buildIndex: (protocol: IntentProtocol, config: IntentConfig) => apiRequest(`/intent/${protocol}/index`, { method: 'POST', body: JSON.stringify(config) }),
+  importResource: (presetId: string, resource: 'runtime' | 'model', file: File) => apiRequest<LocalStatus>(`/intent/local/import?presetId=${encodeURIComponent(presetId)}&resource=${resource}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file }),
+  evaluate: (protocol: IntentProtocol, config: IntentConfig, datasetId: string) => apiRequest<IntentEvaluation>(`/intent/${protocol}/evaluate`, { method: 'POST', body: JSON.stringify({ config, datasetId }) }),
+  correctTask: (protocol: IntentProtocol, requestId: string, task: string) => apiRequest<{ datasetId: string }>(`/intent/${protocol}/correction`, { method: 'POST', body: JSON.stringify({ requestId, task }) }),
+  status: (protocol: IntentProtocol) => apiRequest<IntentRuntimeStatus>(`/intent/${protocol}/status`),
+  preparation: () => apiRequest<IntentPreparation>('/intent/preparation'),
+  cancelPreparation: () => apiRequest<IntentPreparation>('/intent/preparation', { method: 'DELETE' }),
+  prepare: (protocol: IntentProtocol, config: IntentConfig, adoptBuiltin: boolean) => apiRequest<IntentPreparation>(`/intent/${protocol}/prepare`, { method: 'POST', body: JSON.stringify({ config, adoptBuiltin }) }),
+  buildIndex: (protocol: IntentProtocol, config: IntentConfig) => apiRequest(`/intent/${protocol}/index`, { method: 'POST', body: JSON.stringify(config) }),
   get: (protocol: IntentProtocol) => apiRequest<IntentConfig>(`/intent/${protocol}`),
   save: (protocol: IntentProtocol, config: IntentConfig) => apiRequest<IntentConfig>(`/intent/${protocol}`, { method: 'PUT', body: JSON.stringify(config) }),
   preview: (protocol: IntentProtocol, config: IntentConfig, text: string, model = '') => apiRequest<IntentDecision>(`/intent/${protocol}/preview`, { method: 'POST', body: JSON.stringify({ config, text, model }) }),

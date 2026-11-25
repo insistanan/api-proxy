@@ -1,4 +1,4 @@
-package converters
+package togemini
 
 import (
 	"fmt"
@@ -17,15 +17,21 @@ type geminiStreamCall struct {
 	arguments strings.Builder
 }
 
-// GeminiStreamTools 按上游 block/tool index 累积工具，完整校验后才交付 functionCall。
-// HTTP 读取、取消、用量和写出仍由 API 入口负责。
-type GeminiStreamTools struct{ calls map[int]*geminiStreamCall }
+// StreamTools 按上游 block/tool index 累积工具，完整校验后才交付 functionCall。
+// 用量与终态由 Stream 管理；HTTP 读取、取消和写出由 API 入口负责。
+type StreamTools struct{ calls map[int]*geminiStreamCall }
 
-func (s *GeminiStreamTools) Feed(protocol string, payload []byte) ([]types.GeminiPart, error) {
+func (s *StreamTools) Feed(protocol string, payload []byte) ([]types.GeminiPart, error) {
+	if err := contract.ResponseContent(protocol, payload); err != nil {
+		return nil, err
+	}
 	if s.calls == nil {
 		s.calls = make(map[int]*geminiStreamCall)
 	}
 	root := gjson.ParseBytes(payload)
+	if root.Get("content_block.type").String() == "redacted_thinking" {
+		return nil, contract.Unsupported("Gemini 无法表示 Claude redacted_thinking")
+	}
 	if protocol == "claude" {
 		index := int(root.Get("index").Int())
 		switch root.Get("type").String() {
@@ -84,16 +90,16 @@ func (s *GeminiStreamTools) Feed(protocol string, payload []byte) ([]types.Gemin
 	return nil, nil
 }
 
-func (s *GeminiStreamTools) finish(indices []int) ([]types.GeminiPart, error) {
+func (s *StreamTools) finish(indices []int) ([]types.GeminiPart, error) {
 	parts := make([]types.GeminiPart, 0, len(indices))
 	for _, index := range indices {
 		call := s.calls[index]
 		if call.id == "" || call.name == "" {
 			return nil, fmt.Errorf("上游工具调用缺少 ID 或 name")
 		}
-		arguments := call.arguments.String()
-		if arguments == "" {
-			arguments = call.initial
+		arguments, err := contract.StreamArguments(call.initial, call.arguments.String(), call.id)
+		if err != nil {
+			return nil, err
 		}
 		parsed, err := contract.Arguments(arguments, call.id)
 		if err != nil {
@@ -105,7 +111,7 @@ func (s *GeminiStreamTools) finish(indices []int) ([]types.GeminiPart, error) {
 	return parts, nil
 }
 
-func (s *GeminiStreamTools) CheckComplete() error {
+func (s *StreamTools) CheckComplete() error {
 	if len(s.calls) != 0 {
 		return fmt.Errorf("上游流结束时仍有未完成工具参数")
 	}

@@ -229,12 +229,9 @@ func TestBlockedLogsCategoryAndActiveOnlyFilters(t *testing.T) {
 		}
 	}
 
-	// registry 为 nil + activeOnly：空集语义，返回空页。
+	// 没有注册表时无法判断活跃状态，必须明确报错。
 	response = performBlockedLogRequest(router, http.MethodGet, "/blocked-logs?page=1&pageSize=20&activeOnly=true")
-	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil {
-		t.Fatalf("解析活跃筛选响应失败: %v", err)
-	}
-	if page.Total != 0 || len(page.Logs) != 0 {
-		t.Fatalf("无注册表时活跃筛选应返回空集，实际 total=%d logs=%d", page.Total, len(page.Logs))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("未初始化的活跃筛选应失败: %d", response.Code)
 	}
 }

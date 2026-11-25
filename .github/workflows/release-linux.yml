@@ -1,15 +1,9 @@
 name: Release Linux Build
 permissions:
-  contents: write
+  contents: read
 
 on:
-  push:
-    tags:
-      - "v*"
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  workflow_call:
 
 jobs:
   release:
@@ -62,30 +56,12 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -mod=readonly -ldflags "-s -w -X main.Version=${{ github.ref_name }} -X main.BuildTime=$(date -u '+%Y-%m-%d_%H:%M:%S') -X main.GitCommit=${{ github.sha }}" -o api-proxy-linux-arm64 ./cmd/server
         working-directory: ./backend-go
 
-      - name: Release
-        uses: softprops/action-gh-release@v2.0.5
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: 保存平台构建产物
+        uses: actions/upload-artifact@v4
         with:
-          files: |
+          name: release-linux
+          path: |
             backend-go/api-proxy-linux-amd64
             backend-go/api-proxy-linux-arm64
-          draft: true
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload embedding presets to Release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # 三个平台上传同一清单；同名 asset 的并发替换失败须有限重试。
-          for attempt in 1 2 3 4; do
-            if gh release upload "$GITHUB_REF_NAME" deploy/embedding-presets.json deploy/embedding-presets.schema.json --clobber; then
-              exit 0
-            fi
-            if [[ "$attempt" -lt 4 ]]; then
-              sleep "$((attempt * 2))"
-            fi
-          done
-          echo "上传本地向量预设清单失败" >&2
-          exit 1
+          if-no-files-found: error
+          retention-days: 7

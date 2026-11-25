@@ -9,8 +9,7 @@ import (
 
 // ClaudeConverter 实现 Responses → Claude Messages API 转换
 type ClaudeConverter struct {
-	// Upstream carries channel options (IncludeHistoryThinking, etc.).
-	// Injected by convertResponsesRequestWithStructConverter; may be nil in tests.
+	// Upstream 由请求分发入口传入，提供历史思考和缓存等渠道选项。
 	Upstream *config.UpstreamConfig
 }
 
@@ -97,9 +96,4 @@ func (c *ClaudeConverter) ToProviderRequest(sess *types.Session, req *types.Resp
 	}
 
 	return claudeReq, nil
-}
-
-// FromProviderResponse 将 Claude 响应转换为 Responses 格式
-func (c *ClaudeConverter) FromProviderResponse(resp map[string]interface{}, sessionID string) (*types.ResponsesResponse, error) {
-	return ClaudeResponseToResponses(resp, sessionID)
 }

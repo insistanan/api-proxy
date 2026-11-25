@@ -6,18 +6,18 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 	"net/url"
 	"strings"
 
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/orchestration/upstreamcontrol"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"github.com/insistanan/api-proxy/internal/protocol/converters"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 )
 
-func claudeRequestToResponsesRequest(claudeReq *types.ClaudeRequest, upstream *config.UpstreamConfig, conversationID string, identity ...upstreamcontrol.Identity) (*claudeResponsesRequest, error) {
+func claudeRequestToResponsesRequest(claudeReq *types.ClaudeRequest, upstream *config.UpstreamConfig, conversationID string, identity upstreamcontrol.Identity) (*claudeResponsesRequest, error) {
 	model := config.ResolveUpstreamModel(claudeReq.Model, upstream)
 	req := &claudeResponsesRequest{
 		Model:  model,
@@ -48,7 +48,9 @@ func claudeRequestToResponsesRequest(claudeReq *types.ClaudeRequest, upstream *c
 	if toolChoice := claudeToolChoiceToResponses(claudeReq.ToolChoice); toolChoice != nil {
 		req.ToolChoice = toolChoice
 	}
-	if reasoning := claudeReasoningToResponsesReasoning(claudeReq); reasoning != nil {
+	if reasoning, err := claudeReasoningToResponsesReasoning(claudeReq); err != nil {
+		return nil, err
+	} else if reasoning != nil {
 		req.Reasoning = reasoning
 	}
 	// Claude metadata 仅用于代理内部识别会话。
@@ -65,7 +67,7 @@ func claudeRequestToResponsesRequest(claudeReq *types.ClaudeRequest, upstream *c
 	// previous_response_id 链式上下文（可选）：仅发送“新增 messages 后缀”，减少重复传输。
 	// 注意：官方仍对链上历史 input 计费；失败时由上层全量重试或清链。
 	if upstream != nil && upstream.EnablePreviousResponseID && conversationID != "" {
-		applyPreviousResponseIDChain(req, claudeReq, upstream, conversationID, model, identity...)
+		applyPreviousResponseIDChain(req, claudeReq, upstream, conversationID, model, identity)
 	}
 	return req, nil
 }
@@ -357,32 +359,17 @@ func claudeToolChoiceToResponses(raw interface{}) interface{} {
 	return nil
 }
 
-func claudeReasoningToResponsesReasoning(claudeReq *types.ClaudeRequest) interface{} {
-	if effort := resolveClaudeReasoningEffort(claudeReq); effort != "" {
-		return map[string]interface{}{"effort": effort}
+func claudeReasoningToResponsesReasoning(req *types.ClaudeRequest) (interface{}, error) {
+	effort, err := resolveClaudeReasoningEffort(req)
+	if err != nil {
+		return nil, err
 	}
-	return nil
-}
-
-func resolveClaudeReasoningEffort(claudeReq *types.ClaudeRequest) string {
-	cfg := converters.ExtractReasoningFromClaude(claudeReq)
-	return cfg.Effort
-}
-
-func numericBudgetTokens(raw interface{}) (float64, bool) {
-	switch v := raw.(type) {
-	case float64:
-		return v, true
-	case float32:
-		return float64(v), true
-	case int:
-		return float64(v), true
-	case int64:
-		return float64(v), true
-	case json.Number:
-		n, err := v.Float64()
-		return n, err == nil
-	default:
-		return 0, false
+	if effort != "" {
+		return map[string]interface{}{"effort": effort}, nil
 	}
+	return nil, nil
+}
+func resolveClaudeReasoningEffort(req *types.ClaudeRequest) (string, error) {
+	cfg, err := converters.ExtractReasoningFromClaude(req)
+	return cfg.Effort, err
 }

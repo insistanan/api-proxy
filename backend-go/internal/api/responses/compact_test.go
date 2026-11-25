@@ -1,6 +1,7 @@
 package responses
 
 import (
+	"context"
 	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"io"
 	"net/http"
@@ -46,6 +47,7 @@ func TestCompactTruncatedAndLocalCommitFailure(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			var requests atomic.Int64
+			var failCommit func()
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests.Add(1)
 				w.Header().Set("Content-Type", "application/json")
@@ -54,6 +56,7 @@ func TestCompactTruncatedAndLocalCommitFailure(t *testing.T) {
 					_, _ = io.WriteString(w, `{"id":"truncated"}`)
 					return
 				}
+				failCommit()
 				_, _ = io.WriteString(w, `{"id":"compact-new","output":[{"type":"compaction","encrypted_content":"opaque"}]}`)
 			}))
 			defer server.Close()
@@ -72,10 +75,12 @@ func TestCompactTruncatedAndLocalCommitFailure(t *testing.T) {
 			manager, err := session.NewPersistentSessionManager(filepath.Join(t.TempDir(), "responses.db"), time.Hour, 0, 0)
 			require.NoError(t, err)
 			t.Cleanup(manager.Stop)
+			failCommit = manager.Stop
 			body := []byte(`{"model":"test-model","input":"compact"}`)
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", strings.NewReader(string(body)))
-			// 没有 conversation ID 时本地提交明确失败，不能重发成功的 compact。
+			// 上游已收到请求后关闭本地数据库，验证保存失败不能重发成功的 compact。
+			defer closeResponsesTurn(c)
 			handleSingleChannelCompact(c, &config.EnvConfig{RequestTimeout: 5000}, cfgManager, manager, sch, body, "", "test-model")
 			if truncated {
 				require.Equal(t, http.StatusBadGateway, c.Writer.Status())
@@ -176,9 +181,9 @@ func TestCompactMappedTargetUsesActualURLAndOwner(t *testing.T) {
 	manager, err := session.NewPersistentSessionManager(filepath.Join(t.TempDir(), "responses.db"), time.Hour, 0, 0)
 	require.NoError(t, err)
 	t.Cleanup(manager.Stop)
-	sess, err := manager.GetOrCreateSessionForConversation("", "compact-conv")
+	sess, err := manager.GetOrCreateSessionForConversation(context.Background(), "", "compact-conv")
 	require.NoError(t, err)
-	require.NoError(t, manager.CommitTurn(sess.ID, []types.ResponsesItem{{Type: "message", Role: "user", Content: "旧历史"}}, 10, false, "old-response"))
+	require.NoError(t, commitFixtureTurn(manager, sess, []types.ResponsesItem{{Type: "message", Role: "user", Content: "旧历史"}}, 10, false, "old-response"))
 	body := []byte(`{"model":"alias","input":"压缩整个窗口"}`)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", strings.NewReader(string(body)))
@@ -190,7 +195,7 @@ func TestCompactMappedTargetUsesActualURLAndOwner(t *testing.T) {
 	require.Equal(t, 30, result.Usage.InputTokens)
 	require.Equal(t, 70, result.Usage.CacheReadInputTokens)
 	require.Equal(t, 12, result.Usage.OutputTokens)
-	owner, found, err := manager.ResponseOwner("compact-new")
+	owner, found, err := manager.ResponseOwner(context.Background(), "compact-new")
 	require.NoError(t, err)
 	require.True(t, found)
 	target := cfgManager.GetConfig().ResponsesUpstream[1]
@@ -202,7 +207,7 @@ func TestCompactMappedTargetUsesActualURLAndOwner(t *testing.T) {
 	targetMetrics := mm.GetKeyMetrics(server.URL+"/api#", "target-key", 1)
 	require.NotNil(t, targetMetrics)
 	require.Equal(t, int64(1), targetMetrics.SuccessCount)
-	continued, err := manager.GetOrCreateSessionForConversation("compact-new", "compact-conv")
+	continued, err := manager.GetOrCreateSessionForConversation(context.Background(), "compact-new", "compact-conv")
 	require.NoError(t, err)
 	require.Len(t, continued.Messages, 2)
 	require.Equal(t, "必须保留", continued.Messages[0].Content)

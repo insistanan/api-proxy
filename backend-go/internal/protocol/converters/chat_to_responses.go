@@ -3,35 +3,32 @@ package converters
 import (
 	"context"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/protocol/contract"
 	"strings"
 	"time"
 
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/contract"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
 
 // chatToResponsesState 流式转换状态
 type chatToResponsesState struct {
-	Completion   contract.Completion
-	Err          error
-	Candidate    *int
-	Seq          int
-	ResponseID   string
-	CreatedAt    int64
-	CurrentMsgID string
-	CurrentFCID  string
-	InTextBlock  bool
-	InFuncBlock  bool
-	FuncArgsBuf  map[int]*strings.Builder // index -> args
-	FuncNames    map[int]string           // index -> function name
-	FuncCallIDs  map[int]string           // index -> call id
-	// ToolIsCustom index -> 是否为自定义工具（custom_tool_call）。
-	// 事件类型一经首个事件锁定不再变化，added/delta/done/completed 必须对同一
-	// 调用发同类型事件，否则内容安全流式检查会按"参数类型变化"中断整个响应。
-	ToolIsCustom map[int]bool
-	TextBuf      strings.Builder
+	Completion       contract.Completion
+	Err              error
+	Candidate        *int
+	Seq              int
+	ResponseID       string
+	CreatedAt        int64
+	CurrentMsgID     string
+	InTextBlock      bool
+	InFuncBlock      bool
+	FuncArgsBuf      map[int]*strings.Builder // index -> args
+	FuncNames        map[int]string           // index -> function name
+	FuncCallIDs      map[int]string           // index -> call id
+	ToolAdded        map[int]bool
+	ToolArgumentSent map[int]int
+	TextBuf          strings.Builder
 	// reasoning state
 	ReasoningActive    bool
 	ReasoningItemID    string
@@ -61,30 +58,6 @@ func emitResponsesEvent(event string, payload string) string {
 	return fmt.Sprintf("event: %s\ndata: %s\n\n", event, payload)
 }
 
-// lockChatToolIsCustom 锁定该 tool_calls 下标是否为自定义工具（custom_tool_call）。
-// 分类只依赖工具名与请求携带的工具上下文；首个事件（output_item.added 或首个
-// 参数增量）到达时锁定，此后即使名称后到也不改变类型——added/delta/done/
-// completed 必须对同一调用发同类型事件，否则内容安全流式检查会因
-// "同一工具调用的参数类型发生变化"中断整个响应。
-// 锁定为 function 后名称才到的退化场景，全链路按 function_call 收尾：
-// 宁可客户端把 JSON 参数当函数参数解析，也不混发事件类型打断流。
-func (st *chatToResponsesState) lockChatToolIsCustom(idx int, name string) bool {
-	if st.ToolIsCustom == nil {
-		st.ToolIsCustom = make(map[int]bool)
-	}
-	if locked, exists := st.ToolIsCustom[idx]; exists {
-		return locked
-	}
-	isCustom := false
-	if name != "" {
-		if spec, ok := st.CustomTools[name]; ok && spec.Kind == responseToolKindCustom {
-			isCustom = true
-		}
-	}
-	st.ToolIsCustom[idx] = isCustom
-	return isCustom
-}
-
 // ConvertOpenAIChatToResponses 将 OpenAI Chat Completions SSE 转换为 Responses SSE 事件
 // ctx: 上下文
 // modelName: 模型名称
@@ -92,7 +65,7 @@ func (st *chatToResponsesState) lockChatToolIsCustom(idx int, name string) bool 
 // requestRawJSON: 转换后的 Chat Completions 请求 JSON
 // rawJSON: OpenAI Chat Completions SSE 行
 // param: 状态指针（在多次调用间保持状态）
-func ConvertOpenAIChatToResponses(ctx context.Context, modelName string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, param *any) []string {
+func ConvertOpenAIChatToResponses(ctx context.Context, modelName string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, param *any, toolContexts ...*ResponseToolContext) []string {
 	if *param == nil {
 		*param = &chatToResponsesState{
 			FuncArgsBuf: make(map[int]*strings.Builder),
@@ -147,7 +120,7 @@ func ConvertOpenAIChatToResponses(ctx context.Context, modelName string, origina
 	// 处理首次 chunk - 初始化并生成 response.created 和 response.in_progress
 	if st.FirstChunk {
 		st.FirstChunk = false
-		st.CustomTools = extractCustomToolContextFromRawRequest(originalRequestRawJSON)
+		st.CustomTools = responseTools(originalRequestRawJSON, toolContexts...)
 		// 从 chunk 中提取 id
 		if id := root.Get("id"); id.Exists() {
 			st.ResponseID = id.String()
@@ -163,14 +136,14 @@ func ConvertOpenAIChatToResponses(ctx context.Context, modelName string, origina
 		st.InTextBlock = false
 		st.InFuncBlock = false
 		st.CurrentMsgID = ""
-		st.CurrentFCID = ""
 		st.ReasoningItemID = ""
 		st.ReasoningIndex = 0
 		st.ReasoningPartAdded = false
 		st.FuncArgsBuf = make(map[int]*strings.Builder)
 		st.FuncNames = make(map[int]string)
 		st.FuncCallIDs = make(map[int]string)
-		st.ToolIsCustom = make(map[int]bool)
+		st.ToolAdded = make(map[int]bool)
+		st.ToolArgumentSent = make(map[int]int)
 		st.InputTokens = 0
 		st.OutputTokens = 0
 		st.CachedTokens = 0
@@ -306,116 +279,10 @@ func ConvertOpenAIChatToResponses(ctx context.Context, modelName string, origina
 		}
 
 		// 处理 tool_calls
-		if toolCalls := delta.Get("tool_calls"); toolCalls.Exists() && toolCalls.IsArray() {
-			for _, tc := range toolCalls.Array() {
-				idx := int(tc.Get("index").Int())
-
-				// 如果 reasoning 还在活跃状态，先关闭它
-				if st.ReasoningActive {
-					out = append(out, st.closeReasoningBlock(nextSeq)...)
-				}
-
-				// 如果 text block 还在活跃状态，先关闭它
-				if st.InTextBlock {
-					out = append(out, st.closeTextBlock(nextSeq)...)
-				}
-
-				// 初始化 tool call 状态
-				if st.FuncArgsBuf[idx] == nil {
-					st.FuncArgsBuf[idx] = &strings.Builder{}
-				}
-				if st.FuncCallIDs[idx] == "" {
-					st.FuncCallIDs[idx] = fmt.Sprintf("call_%d", idx)
-				}
-
-				// 处理 tool call ID
-				if tcID := tc.Get("id"); tcID.Exists() && tcID.String() != "" {
-					st.FuncCallIDs[idx] = tcID.String()
-					st.CurrentFCID = tcID.String()
-
-					// 开始新的 tool call item
-					st.InFuncBlock = true
-
-					// 计算 output_index
-					outputIndex := idx
-					if st.ReasoningPartAdded {
-						outputIndex += 1
-					}
-					if st.CurrentMsgID != "" {
-						outputIndex += 1
-					}
-
-					// 提前提取 function.name，确保 output_item.added 事件携带 name 字段
-					addedName := ""
-					if fn := tc.Get("function"); fn.Exists() {
-						if name := fn.Get("name"); name.Exists() && name.String() != "" {
-							st.FuncNames[idx] = name.String()
-							addedName = name.String()
-						}
-					} else if st.FuncNames[idx] != "" {
-						addedName = st.FuncNames[idx]
-					}
-
-					// 自定义工具按 Responses 规范发 custom_tool_call 事件（类型按锁定
-					// 结果，与后续 delta/done/completed 保持一致），不能与 function_call
-					// 事件混发，否则内容安全流式检查按"参数类型变化"中断响应。
-					var item string
-					if st.lockChatToolIsCustom(idx, addedName) {
-						item = `{"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"id":"","type":"custom_tool_call","status":"in_progress","input":"","call_id":"","name":""}}`
-						item, _ = sjson.Set(item, "item.id", fmt.Sprintf("ctc_%s", st.CurrentFCID))
-					} else {
-						item = `{"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"id":"","type":"function_call","status":"in_progress","arguments":"","call_id":"","name":""}}`
-						item, _ = sjson.Set(item, "item.id", fmt.Sprintf("fc_%s", st.CurrentFCID))
-					}
-					item, _ = sjson.Set(item, "sequence_number", nextSeq())
-					item, _ = sjson.Set(item, "output_index", outputIndex)
-					item, _ = sjson.Set(item, "item.call_id", st.CurrentFCID)
-					if addedName != "" {
-						item, _ = sjson.Set(item, "item.name", addedName)
-					}
-
-					out = append(out, emitResponsesEvent("response.output_item.added", item))
-				}
-
-				// 处理 function
-				if function := tc.Get("function"); function.Exists() {
-					// 处理函数名（若尚未存储则补存）
-					if name := function.Get("name"); name.Exists() && name.String() != "" {
-						if st.FuncNames[idx] == "" {
-							st.FuncNames[idx] = name.String()
-						}
-					}
-
-					// 处理参数
-					if args := function.Get("arguments"); args.Exists() && args.String() != "" {
-						st.FuncArgsBuf[idx].WriteString(args.String())
-
-						// 自定义工具不发 function_call_arguments.delta：chat 上游的
-						// arguments 是 JSON 分片，不是自由文本输入，逐段转发与
-						// custom_tool_call 的 done/completed 事件类型冲突（内容安全
-						// 会按"参数类型变化"中断流）；参数审核推迟到 done 事件的
-						// 完整文本（extractCustomToolInput 还原）。
-						if st.lockChatToolIsCustom(idx, st.FuncNames[idx]) {
-							continue
-						}
-
-						// 计算 output_index
-						outputIndex := idx
-						if st.ReasoningPartAdded {
-							outputIndex += 1
-						}
-						if st.CurrentMsgID != "" {
-							outputIndex += 1
-						}
-
-						msg := `{"type":"response.function_call_arguments.delta","sequence_number":0,"item_id":"","output_index":0,"delta":""}`
-						msg, _ = sjson.Set(msg, "sequence_number", nextSeq())
-						msg, _ = sjson.Set(msg, "item_id", fmt.Sprintf("fc_%s", st.FuncCallIDs[idx]))
-						msg, _ = sjson.Set(msg, "output_index", outputIndex)
-						msg, _ = sjson.Set(msg, "delta", args.String())
-						out = append(out, emitResponsesEvent("response.function_call_arguments.delta", msg))
-					}
-				}
+		if toolCalls := delta.Get("tool_calls"); toolCalls.IsArray() {
+			out = append(out, st.receiveToolCalls(toolCalls, nextSeq)...)
+			if st.Err != nil {
+				return nil
 			}
 		}
 

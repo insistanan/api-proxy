@@ -79,7 +79,9 @@ func TestIntentAndDatasetEndpointsShareVectorReadinessError(t *testing.T) {
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/datasets/builtin", nil))
 	var builtins []semantic.Dataset
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &builtins))
-	require.Len(t, builtins[0].Samples, 192)
+	require.Equal(t, semantic.RecommendedIntentDatasetID, builtins[0].ID)
+	require.Greater(t, len(builtins[0].Samples), 96, "保留基础句并补充边界与拒识样本")
+	require.Less(t, len(builtins[0].Samples), 192, "移除礼貌前缀重复样本")
 	require.Len(t, builtins[1].Samples, 300)
 	stored, err := service.Datasets.Get(dataset.ID)
 	require.NoError(t, err)

@@ -134,7 +134,7 @@ func TestEmbeddedReasoning_UnclosedIsExplicitError(t *testing.T) {
 
 func TestOpenAIReasoning_DedicatedFieldTakesPrecedence(t *testing.T) {
 	response, err := (&OpenAIProvider{parseEmbeddedReasoning: true}).ConvertToClaudeResponse(&types.ProviderResponse{Body: []byte(`{
-		"choices":[{"message":{"role":"assistant","reasoning_content":"原始思考","content":"<think>重复思考</think>答案"}}]
+		"choices":[{"message":{"role":"assistant","reasoning_content":"原始思考","content":"<think>重复思考</think>答案"},"finish_reason":"stop"}]
 	}`)})
 	if err != nil {
 		t.Fatal(err)

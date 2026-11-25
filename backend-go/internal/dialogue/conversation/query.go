@@ -1,6 +1,7 @@
 package conversation
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -24,13 +25,18 @@ type Page struct {
 }
 
 // QueryPage 在数据库分页后才解码正文；发送状态始终采用当前进程的实时快照。
-func (r *Registry) QueryPage(options ListOptions) (Page, error) {
+func (r *Registry) QueryPage(ctx context.Context, options ListOptions) (Page, error) {
 	page := Page{Conversations: make([]*Record, 0), Page: options.Page, PageSize: options.PageSize}
 	if options.Page < 1 || options.PageSize < 1 || options.PageSize > 100 {
 		return page, fmt.Errorf("分页参数超出范围")
 	}
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	if err := r.mu.LockContext(ctx); err != nil {
+		return page, err
+	}
+	defer r.mu.Unlock()
+	if err := r.retryDirtyLocked(ctx); err != nil {
+		return page, err
+	}
 	q := strings.ToLower(strings.TrimSpace(options.Query))
 	if r.store == nil {
 		for _, rec := range r.records {
@@ -99,7 +105,7 @@ func (r *Registry) QueryPage(options ListOptions) (Page, error) {
  OR EXISTS (SELECT 1 FROM json_each(c.prompts_json) WHERE instr(lower(value), ?) > 0))`
 		args = append(args, q, q)
 	}
-	if err := r.store.db.QueryRow(`SELECT COUNT(*) FROM conversations c `+where, args...).Scan(&page.Total); err != nil {
+	if err := r.store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM conversations c `+where, args...).Scan(&page.Total); err != nil {
 		return page, err
 	}
 	if options.Page-1 > page.Total/options.PageSize {
@@ -112,7 +118,7 @@ func (r *Registry) QueryPage(options ListOptions) (Page, error) {
 	}
 	order += `c.first_seen_at DESC, c.id ASC LIMIT ? OFFSET ?`
 	args = append(args, options.PageSize, (options.Page-1)*options.PageSize)
-	records, err := r.store.loadRecords(where+order, args...)
+	records, err := r.store.loadRecords(ctx, where+order, args...)
 	if err != nil {
 		return page, err
 	}

@@ -98,6 +98,7 @@ func (m *Manager) dispatch() {
 			s.refs++
 			e.cancel = cancel
 			e.status.NextAt = 0
+			e.status.NextHeartbeatAt = 0
 			e.status.State = "sending"
 			if prepare {
 				e.status.State = "preparing"
@@ -180,6 +181,7 @@ func (m *Manager) run(job work) {
 			return
 		}
 		s.body, s.ttl, s.source.Open, s.model = body, ttl, nil, model
+		e.status.SnapshotAt = m.now().UnixMilli()
 		e.status.Model, e.status.State, e.status.CacheMode = model, "ready", s.mode
 		if reason := stopReason(e, m.now()); reason != "" {
 			m.stopEntry(e, reason)

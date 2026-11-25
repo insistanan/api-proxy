@@ -3,9 +3,9 @@ package converters
 
 import (
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/protocol/contract"
 	"sort"
 
+	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -111,20 +111,15 @@ func (st *chatToResponsesState) closeFuncBlocks(nextSeq func() int) []string {
 		}
 		callID := st.FuncCallIDs[idx]
 		name := st.FuncNames[idx]
-		if _, err := contract.Arguments(args, callID); err != nil {
+		if !st.ToolAdded[idx] {
+			st.Err = fmt.Errorf("Chat 工具 index=%d 结束时缺少调用 ID 或名称", idx)
+			return nil
+		}
+		if _, err := restoreResponseToolItem(types.ResponsesItem{Type: "function_call", Name: name, CallID: callID, Arguments: args}, st.CustomTools); err != nil {
 			st.Err = err
 			return nil
 		}
 		itemID, itemType, itemName, namespace, execution, argumentValue := classifyChatToolCall(name, callID, args, st.CustomTools)
-		// 锁定类型优先：added/delta 阶段已按锁定类型发事件，收尾必须一致。
-		// 名称后到的退化场景（锁定 function、分类结果 custom）按 function_call
-		// 收尾，宁可客户端按 JSON 参数解析也不混发事件类型。
-		if !st.lockChatToolIsCustom(idx, name) && itemType == "custom_tool_call" {
-			itemID = fmt.Sprintf("fc_%s", callID)
-			itemType = "function_call"
-			itemName = name
-			argumentValue = args
-		}
 
 		// 计算 output_index
 		outputIndex := idx
@@ -146,7 +141,7 @@ func (st *chatToResponsesState) closeFuncBlocks(nextSeq func() int) []string {
 				ctcDone, _ = sjson.Set(ctcDone, "input", input)
 			}
 			out = append(out, emitResponsesEvent("response.custom_tool_call_input.done", ctcDone))
-		} else {
+		} else if itemType == "function_call" {
 			// response.function_call_arguments.done（function 与 tool_search 沿用）
 			fcDone := `{"type":"response.function_call_arguments.done","sequence_number":0,"item_id":"","name":"","output_index":0,"arguments":""}`
 			fcDone, _ = sjson.Set(fcDone, "sequence_number", nextSeq())
@@ -319,9 +314,7 @@ func (st *chatToResponsesState) generateCompletedEvents(originalRequestRawJSON [
 			}
 			callID := st.FuncCallIDs[idx]
 			name := st.FuncNames[idx]
-			// 类型尊重流式锁定（与 output_item.done 同一规则），保证 completed
-			// 的 item 类型与流中事件一致。
-			item := buildChatToolCallOutputItemWithLock(callID, name, args, st.CustomTools, !st.lockChatToolIsCustom(idx, name))
+			item := buildChatToolCallOutputItem(callID, name, args, st.CustomTools)
 			item["status"] = st.Completion.Status
 			outputs = append(outputs, item)
 		}

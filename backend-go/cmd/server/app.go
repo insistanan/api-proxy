@@ -23,6 +23,7 @@ import (
 	"github.com/insistanan/api-proxy/internal/orchestration/circuit"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
 	"github.com/insistanan/api-proxy/internal/orchestration/urlhealth"
+	"github.com/insistanan/api-proxy/internal/protocol/providers"
 	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
 	"github.com/insistanan/api-proxy/internal/proxycore"
 	"github.com/insistanan/api-proxy/internal/safety/llmgate"
@@ -217,7 +218,11 @@ func (a *app) initStores() error {
 	if err != nil {
 		return fmt.Errorf("初始化对话持久化存储失败: %w", err)
 	}
-	a.registerWorker("对话注册表", func() error { a.conversationRegistry.Stop(); return nil })
+	a.registerWorker("对话注册表", a.conversationRegistry.Stop)
+	if err := a.sessionManager.BindRegistry(a.conversationRegistry); err != nil {
+		return fmt.Errorf("绑定会话生命周期失败: %w", err)
+	}
+	providers.BindConversationCaches(a.conversationRegistry)
 
 	// 初始化指标持久化存储（可选）
 	if a.envCfg.MetricsPersistenceEnabled {
@@ -326,6 +331,10 @@ func (a *app) initSafety(gateCaller *llmgate.Caller) error {
 		return err
 	}
 	a.registerCleanup("意图会话存储", a.intentService.Close)
+	a.registerWorker("意图准备任务", a.intentService.StopPreparation)
+	if err := a.intentService.RestoreLocal(); err != nil {
+		return fmt.Errorf("恢复本地向量任务失败: %w", err)
+	}
 
 	// 持久映射库在启动时初始化，是否使用由每次请求的配置快照决定。
 	// 只有 mask 模式会向请求注入映射库：占位符密钥从主密钥派生，

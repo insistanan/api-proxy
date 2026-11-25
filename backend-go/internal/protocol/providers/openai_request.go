@@ -6,13 +6,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 	"log"
 	"strings"
 
 	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 )
 
 // convertMessages 转换消息
@@ -327,11 +327,6 @@ func (p *OpenAIProvider) convertToolChoice(toolChoice interface{}) interface{} {
 	}
 
 	return nil
-}
-
-// convertThinkingToReasoningEffort 保留给测试/兼容调用；实现统一走 resolveClaudeReasoningEffort。
-func (p *OpenAIProvider) convertThinkingToReasoningEffort(thinking interface{}) string {
-	return resolveClaudeReasoningEffort(&types.ClaudeRequest{Thinking: thinking})
 }
 
 // buildClaudeChatPromptCacheKey builds a stable prompt_cache_key for Messages->Chat.

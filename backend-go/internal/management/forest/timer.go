@@ -143,7 +143,7 @@ func (s *Store) ChangeTimer(ctx context.Context, cmd TimerCommand, now time.Time
 		if err := reward(ctx, tx, "daily-rest:"+day, 2); err != nil {
 			return t, err
 		}
-		if err := event(ctx, tx, "daily-rest:"+day, day, now, 0, "林地安静了一会儿", "这段休息已经记在森林手账里。"); err != nil {
+		if err := event(ctx, tx, "daily-rest:"+day, day, now, 0, "林地安静了一会儿", "你抽空歇了歇，海风也跟着慢下来。今天的第一段休息，带来了 2 点成就。"); err != nil {
 			return t, err
 		}
 		clear()
@@ -176,6 +176,9 @@ func (s *Store) ChangeTimer(ctx context.Context, cmd TimerCommand, now time.Time
 		return t, fmt.Errorf("保存计时状态: %w", err)
 	}
 	if err := g.save(ctx, tx); err != nil {
+		return t, err
+	}
+	if err := settleAchievements(ctx, tx, day, now); err != nil {
 		return t, err
 	}
 	return t, tx.Commit()

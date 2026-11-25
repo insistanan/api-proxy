@@ -146,7 +146,13 @@ func TestDeployPresetManifestIsValid(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, manifest.Presets)
 	for _, preset := range manifest.Presets {
-		_, ok := preset.Platforms["windows/amd64"]
-		require.True(t, ok, "当前一键安装只支持 windows/amd64：%s", preset.ID)
+		for _, platform := range []string{"windows/amd64", "windows/arm64", "linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64"} {
+			entry, ok := preset.Platforms[platform]
+			require.True(t, ok, "缺少平台 %s 的推荐资源：%s", platform, preset.ID)
+			require.Contains(t, entry.RuntimeURL, "/releases/latest/download/embedding-runtime-"+entry.RuntimeSHA256)
+			require.Contains(t, entry.ModelURL, "/releases/latest/download/embedding-model-"+entry.ModelSHA256)
+			require.NotEmpty(t, entry.RuntimeMirrors)
+			require.NotEmpty(t, entry.ModelMirrors)
+		}
 	}
 }

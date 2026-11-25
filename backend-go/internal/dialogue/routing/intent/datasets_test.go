@@ -52,9 +52,9 @@ func TestDatasetRoutingRetainsCurrentPoolScoreBelowThreshold(t *testing.T) {
 	s := &Service{Datasets: datasets}
 	decision, err := s.semantic(ctx, cfg, "query", "test")
 	require.NoError(t, err)
-	require.Equal(t, "group-b", decision.PoolID)
+	require.Empty(t, decision.PoolID, "次佳类别低于阈值也必须参与差值判定")
 	require.InDelta(t, 0.74, decision.PoolScores["group-a"], 0.00001)
-	require.Less(t, decision.Score-decision.PoolScores["group-a"], cfg.SwitchMargin, "未过阈值的当前分数不能变成零而触发无收益切换")
+	require.InDelta(t, 0.8, decision.PoolScores["group-b"], 0.00001)
 }
 
 func TestInlineMigrationDoesNotOverwriteIndependentDatasetEdits(t *testing.T) {

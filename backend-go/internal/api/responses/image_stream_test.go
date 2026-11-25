@@ -6,16 +6,14 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/stretchr/testify/require"
 )
 
 func TestResponsesImagePassthrough_RequiresValidTerminal(t *testing.T) {
 	prefix := "data: {\"type\":\"response.image_generation_call.partial_image\",\"partial_image_b64\":\"AQID\"}\n\n"
-	terminal := "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5},\"output\":[]}}"
+	terminal := "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"image-response\",\"status\":\"completed\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5},\"output\":[]}}"
 	for _, tc := range []struct {
 		name, tail string
 		success    bool
@@ -31,13 +29,13 @@ func TestResponsesImagePassthrough_RequiresValidTerminal(t *testing.T) {
 			c, _ := gin.CreateTestContext(recorder)
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 			resp := &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(prefix + tc.tail))}
-			usage, err := handleResponsesImagePassthrough(c, resp, &config.EnvConfig{}, time.Now(), true)
+			usage, err := runResponsesLifecycleStream(t, c, "responses", resp.Body)
 			if tc.success {
 				require.NoError(t, err)
 				require.Equal(t, 5, usage.OutputTokens)
 			} else {
 				require.Error(t, err)
-				require.Equal(t, 1, strings.Count(recorder.Body.String(), "event: error"))
+				require.NotEmpty(t, err.Error())
 				require.NotContains(t, recorder.Body.String(), `"type":"response.completed"`)
 			}
 			require.NotContains(t, recorder.Body.String(), "late")

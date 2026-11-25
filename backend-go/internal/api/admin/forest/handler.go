@@ -23,6 +23,41 @@ func Register(parent *gin.RouterGroup, store *domain.Store) {
 		value, err := store.World(c.Request.Context(), time.Now())
 		reply(c, value, err)
 	})
+	r.POST("/visit", func(c *gin.Context) {
+		reply(c, nil, store.Visit(c.Request.Context(), time.Now()))
+	})
+	r.POST("/trees/:id/recover", func(c *gin.Context) {
+		id, ok := parseID(c)
+		if !ok {
+			return
+		}
+		var input domain.RecoveryCommand
+		if !bind(c, &input) {
+			return
+		}
+		reply(c, nil, store.RecoverTree(c.Request.Context(), id, input, time.Now()))
+	})
+	r.GET("/events", func(c *gin.Context) {
+		after, err := strconv.ParseInt(c.DefaultQuery("after", "0"), 10, 64)
+		if err != nil || after < 0 {
+			reply(c, nil, domain.ErrInvalid)
+			return
+		}
+		value, err := store.Events(c.Request.Context(), after)
+		reply(c, value, err)
+	})
+	r.GET("/events/:id", func(c *gin.Context) {
+		value, err := store.Event(c.Request.Context(), c.Param("id"))
+		reply(c, value, err)
+	})
+	r.GET("/trees/:id", func(c *gin.Context) {
+		id, ok := parseID(c)
+		if !ok {
+			return
+		}
+		value, err := store.Tree(c.Request.Context(), id)
+		reply(c, value, err)
+	})
 	r.GET("/groups", func(c *gin.Context) {
 		value, err := store.Groups(c.Request.Context())
 		reply(c, value, err)
@@ -119,7 +154,7 @@ func reply(c *gin.Context, value any, err error) {
 	case err == nil:
 		c.JSON(http.StatusOK, value)
 	case errors.Is(err, domain.ErrInvalid):
-		c.JSON(http.StatusBadRequest, gin.H{"error": domain.ErrInvalid.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	case errors.Is(err, domain.ErrConflict):
 		c.JSON(http.StatusConflict, gin.H{"error": domain.ErrConflict.Error()})
 	default:

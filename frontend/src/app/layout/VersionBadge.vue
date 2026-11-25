@@ -5,9 +5,10 @@
       type="button"
       class="version-badge"
       data-header-hit
-      :class="{ 'version-clickable': canOpenRelease, 'version-update': versionInfo.status === 'update-available' }"
-      :aria-label="`当前版本 ${versionInfo.currentVersion}，查看版本信息`"
-      @click="openRelease"
+      :class="{ 'version-clickable': canOpenRelease || versionInfo.status === 'error', 'version-update': versionInfo.status === 'update-available' }"
+      :aria-label="downloadHint"
+      :title="downloadHint"
+      @click="downloadLatest"
     >
       <UiIcon v-if="statusIcon" size="14" class="mr-1" :color="statusIcon.color">{{ statusIcon.icon }}</UiIcon>
       <span>{{ versionInfo.currentVersion }}</span>
@@ -31,7 +32,9 @@
           <UiIcon size="13">mdi-arrow-right</UiIcon>
           <span class="version-latest">{{ versionInfo.latestVersion }}</span>
         </div>
-        <UiButton size="x-small" variant="flat" color="primary" @click="openRelease">查看更新</UiButton>
+        <p class="text-xs">{{ downloadHint }}</p>
+        <UiButton size="x-small" variant="flat" color="primary" :disabled="!canDownload" @click="downloadLatest">下载 {{ downloadTarget?.label }}</UiButton>
+        <UiButton size="x-small" variant="text" @click="openRelease">更新说明</UiButton>
       </div>
     </transition>
   </div>
@@ -43,12 +46,16 @@ import UiIcon from '@/shared/ui/icon/Icon.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { fetchHealth } from '@/shared/services/health'
-import { versionService } from '@/shared/services/version'
+import { compareVersions, releaseDownload, versionService } from '@/shared/services/version'
+import { useToast } from '@/shared/composables/useToast'
 import { useSystemStore } from '@/shared/stores/system'
 import { useNotificationStore } from '@/shared/stores/notifications'
 
 const systemStore = useSystemStore()
 const notifications = useNotificationStore()
+const { showToast } = useToast()
+const downloadTarget = ref<ReturnType<typeof releaseDownload>>()
+const platformError = ref('')
 const { versionInfo } = storeToRefs(systemStore)
 
 const statusIcon = computed(() => {
@@ -63,6 +70,21 @@ const statusIcon = computed(() => {
 const canOpenRelease = computed(() =>
   (versionInfo.value.status === 'update-available' || versionInfo.value.status === 'latest') && !!versionInfo.value.releaseUrl
 )
+const canDownload = computed(() => canOpenRelease.value && !!downloadTarget.value && !!versionInfo.value.assets?.includes(downloadTarget.value.asset) && !!versionInfo.value.latestVersion && compareVersions(versionInfo.value.currentVersion, versionInfo.value.latestVersion) <= 0)
+const downloadHint = computed(() => {
+  if (versionInfo.value.status === 'error') return `${versionInfo.value.error || '版本检查失败'}；点击重试`
+  if (platformError.value) return platformError.value
+  if (!downloadTarget.value || versionInfo.value.status === 'checking') return '正在读取网关平台与最新版本'
+  if (!versionInfo.value.assets?.includes(downloadTarget.value.asset)) return `最新正式版尚无 ${downloadTarget.value.label} 附件，请查看更新说明`
+  if (!canDownload.value) return '当前网关版本领先于最新正式版，点击查看更新说明'
+  return `下载最新正式版 · 网关平台 ${downloadTarget.value.label}；文件保存到浏览器所在电脑，需自行替换并重启网关`
+})
+function downloadLatest() {
+  hideBubble()
+  if (versionInfo.value.status === 'error') { versionService.clearCache(); void checkVersion(); return }
+  if (canDownload.value && downloadTarget.value) window.location.assign(downloadTarget.value.url)
+  else if (canOpenRelease.value) { showToast(downloadHint.value, 'info'); openRelease() }
+}
 
 const openRelease = () => {
   if (canOpenRelease.value) window.open(versionInfo.value.releaseUrl!, '_blank', 'noopener,noreferrer')
@@ -71,9 +93,16 @@ const openRelease = () => {
 // 版本检查独立于认证，失败只影响徽标状态，不打断页面。
 const checkVersion = async () => {
   try {
-    const currentVersion = (await fetchHealth()).version?.version || ''
+    const health = await fetchHealth()
+    const currentVersion = health.version?.version || ''
+    downloadTarget.value = undefined
+    platformError.value = ''
+    try {
+      if (!health.platform) throw new Error('当前后端未返回平台信息，请从更新说明选择安装包')
+      downloadTarget.value = releaseDownload(health.platform)
+    } catch (error) { platformError.value = error instanceof Error ? error.message : String(error) }
     if (!currentVersion) {
-      systemStore.setVersionInfo({ ...versionInfo.value, status: 'error' })
+      systemStore.setVersionInfo({ ...versionInfo.value, status: 'error', error: '当前网关未返回版本号' })
       return
     }
     versionService.setCurrentVersion(currentVersion)
@@ -81,7 +110,7 @@ const checkVersion = async () => {
     systemStore.setVersionInfo(await versionService.checkForUpdates())
   } catch (error) {
     console.warn('Version check failed:', error)
-    systemStore.setVersionInfo({ ...versionInfo.value, status: 'error' })
+    systemStore.setVersionInfo({ ...versionInfo.value, status: 'error', error: error instanceof Error ? error.message : String(error) })
   }
 }
 
@@ -115,7 +144,7 @@ watch(() => versionInfo.value.status, maybeShowBubble)
 onMounted(() => {
   void checkVersion()
   maybeShowBubble()
-  remindTimer = setInterval(maybeShowBubble, BUBBLE_REMIND_INTERVAL_MS)
+  remindTimer = setInterval(() => { void checkVersion(); maybeShowBubble() }, BUBBLE_REMIND_INTERVAL_MS)
 })
 onBeforeUnmount(() => {
   clearInterval(remindTimer)

@@ -23,6 +23,24 @@ func automaticConfig() config.IntentRoutingConfig {
 	return cfg
 }
 
+func TestBuiltinTaskRejectsAmbiguousAndQuotedSignals(t *testing.T) {
+	for _, tc := range []struct{ text, task string }{
+		{"不要翻译，请修复接口", ""},
+		{"先总结，再实现一个接口", ""},
+		{"实现翻译 API", ""},
+		{"解释为什么页面空白", ""},
+		{"Please give more information", ""},
+		{"```go\n// translate summary test\n```", ""},
+		{"解释下面的日志\n> fix this code", "explanation"},
+		{"Translate \"fix the code\" into Chinese", "translation"},
+		{"你好，请帮我实现缓存接口", "code_generation"},
+		{"翻译你好", "translation"},
+		{"你好", "general_chat"},
+	} {
+		t.Run(tc.text, func(t *testing.T) { require.Equal(t, tc.task, builtinTask(tc.text)) })
+	}
+}
+
 func TestAutomaticMatchesTaskBeforeDifficulty(t *testing.T) {
 	s := &Service{}
 	for _, tc := range []struct {

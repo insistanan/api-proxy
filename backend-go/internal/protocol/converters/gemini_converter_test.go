@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/insistanan/api-proxy/internal/protocol/converters/togemini"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,6 +15,7 @@ func TestClaudeResponseToGemini_WithThoughtSignature(t *testing.T) {
 	t.Run("不把 Claude signature 当作 Gemini 签名", func(t *testing.T) {
 		// 测试场景 1: Claude 响应包含 signature
 		claudeResp := map[string]interface{}{
+			"stop_reason": "tool_use",
 			"content": []interface{}{
 				map[string]interface{}{
 					"type":      "tool_use",
@@ -24,7 +26,7 @@ func TestClaudeResponseToGemini_WithThoughtSignature(t *testing.T) {
 			},
 		}
 
-		geminiResp, err := ClaudeResponseToGemini(claudeResp)
+		geminiResp, err := togemini.ClaudeResponse(claudeResp)
 		assert.NoError(t, err)
 		assert.NotNil(t, geminiResp)
 		assert.Len(t, geminiResp.Candidates, 1)
@@ -39,6 +41,7 @@ func TestClaudeResponseToGemini_WithThoughtSignature(t *testing.T) {
 	t.Run("缺少签名时不生成占位签名", func(t *testing.T) {
 		// 测试场景 2: Claude 响应不包含 signature
 		claudeResp := map[string]interface{}{
+			"stop_reason": "tool_use",
 			"content": []interface{}{
 				map[string]interface{}{
 					"type":  "tool_use",
@@ -48,7 +51,7 @@ func TestClaudeResponseToGemini_WithThoughtSignature(t *testing.T) {
 			},
 		}
 
-		geminiResp, err := ClaudeResponseToGemini(claudeResp)
+		geminiResp, err := togemini.ClaudeResponse(claudeResp)
 		assert.NoError(t, err)
 		assert.NotNil(t, geminiResp)
 		assert.Len(t, geminiResp.Candidates, 1)
@@ -61,6 +64,7 @@ func TestClaudeResponseToGemini_WithThoughtSignature(t *testing.T) {
 	t.Run("空签名不转换为占位签名", func(t *testing.T) {
 		// 测试场景 3: Claude 响应包含空 signature
 		claudeResp := map[string]interface{}{
+			"stop_reason": "tool_use",
 			"content": []interface{}{
 				map[string]interface{}{
 					"type":      "tool_use",
@@ -71,7 +75,7 @@ func TestClaudeResponseToGemini_WithThoughtSignature(t *testing.T) {
 			},
 		}
 
-		geminiResp, err := ClaudeResponseToGemini(claudeResp)
+		geminiResp, err := togemini.ClaudeResponse(claudeResp)
 		assert.NoError(t, err)
 		assert.Empty(t, geminiResp.Candidates[0].Content.Parts[0].FunctionCall.ThoughtSignature)
 	})
@@ -83,6 +87,7 @@ func TestOpenAIResponseToGemini_WithThoughtSignature(t *testing.T) {
 		openaiResp := map[string]interface{}{
 			"choices": []interface{}{
 				map[string]interface{}{
+					"finish_reason": "tool_calls",
 					"message": map[string]interface{}{
 						"tool_calls": []interface{}{
 							map[string]interface{}{
@@ -97,7 +102,7 @@ func TestOpenAIResponseToGemini_WithThoughtSignature(t *testing.T) {
 			},
 		}
 
-		geminiResp, err := OpenAIResponseToGemini(openaiResp)
+		geminiResp, err := togemini.ChatResponse(openaiResp)
 		assert.NoError(t, err)
 		assert.NotNil(t, geminiResp)
 		assert.Len(t, geminiResp.Candidates, 1)
@@ -111,6 +116,7 @@ func TestOpenAIResponseToGemini_WithThoughtSignature(t *testing.T) {
 		openaiResp := map[string]interface{}{
 			"choices": []interface{}{
 				map[string]interface{}{
+					"finish_reason": "tool_calls",
 					"message": map[string]interface{}{
 						"tool_calls": []interface{}{
 							map[string]interface{}{
@@ -131,7 +137,7 @@ func TestOpenAIResponseToGemini_WithThoughtSignature(t *testing.T) {
 			},
 		}
 
-		geminiResp, err := OpenAIResponseToGemini(openaiResp)
+		geminiResp, err := togemini.ChatResponse(openaiResp)
 		assert.NoError(t, err)
 		assert.Len(t, geminiResp.Candidates[0].Content.Parts, 2)
 

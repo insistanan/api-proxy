@@ -139,9 +139,11 @@ func handleNormalResponse(
 	if err := json.Unmarshal(requestBody, &cacheRequest); err != nil {
 		return nil, fmt.Errorf("解析思考缓存来源失败: %w", err)
 	}
-	providers.CacheClaudeResponseReasoning(claudeResp, providers.ReasoningCacheScope(
+	if err := providers.CacheClaudeResponseReasoning(c.Request.Context(), claudeResp, providers.ReasoningCacheScope(
 		c.GetString(upstreamreq.ContextKeyConversationUserID), upstream, cacheRequest.Model,
-	))
+	)); err != nil {
+		return claudeResp.Usage, err
+	}
 
 	// Token 补全逻辑
 	// 先保存上游 usage 快照；客户端副本后续会做错报校正，不能反向

@@ -1,9 +1,12 @@
 package providers
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
 	"log"
 	"strings"
 	"sync"
@@ -46,7 +49,7 @@ func ReasoningCacheScope(conversationID string, upstream *config.UpstreamConfig,
 		conversationID, upstream.ID, upstream.ServiceType,
 		config.ResolveUpstreamModel(model, upstream), upstream.GetEffectiveBaseURL(),
 	})
-	return reasoningFingerprint(string(payload))
+	return reasoningFingerprint(conversationID) + ":" + reasoningFingerprint(string(payload))
 }
 
 func scopedReasoningKey(scope, key string) string {
@@ -271,10 +274,10 @@ func reasoningContentForAssistantMessage(message types.OpenAIMessage, scope stri
 }
 
 // CacheClaudeResponseReasoning 在入口已知会话和来源时登记缓存。
-// 旧调用没有来源范围时不缓存；跨渠道续接依赖客户端回传原文。
-func CacheClaudeResponseReasoning(response *types.ClaudeResponse, scopes ...string) {
-	if response == nil || response.Role != "assistant" || len(scopes) == 0 || scopes[0] == "" {
-		return
+// 来源范围必传，删除后的晚到结果不能重新填充缓存。
+func CacheClaudeResponseReasoning(ctx context.Context, response *types.ClaudeResponse, scope string) error {
+	if response == nil || response.Role != "assistant" || scope == "" {
+		return nil
 	}
 
 	var text strings.Builder
@@ -288,8 +291,11 @@ func CacheClaudeResponseReasoning(response *types.ClaudeResponse, scopes ...stri
 			text.WriteString(content.Text)
 		case "tool_use":
 			arguments, err := json.Marshal(content.Input)
-			if err != nil || string(arguments) == "null" {
-				arguments = []byte("{}")
+			if err != nil {
+				return fmt.Errorf("编码推理缓存工具参数失败: %w", err)
+			}
+			if string(arguments) == "null" {
+				return fmt.Errorf("推理缓存工具参数不能为 null")
 			}
 			toolCalls = append(toolCalls, types.OpenAIToolCall{
 				ID:   content.ID,
@@ -302,11 +308,14 @@ func CacheClaudeResponseReasoning(response *types.ClaudeResponse, scopes ...stri
 		}
 	}
 
-	storeReasoningForAssistantMessage(types.OpenAIMessage{
-		Role:      "assistant",
-		Content:   text.String(),
-		ToolCalls: toolCalls,
-	}, reasoning.String(), scopes[0])
+	conversation.RequestLeaseFrom(ctx).Store(func() {
+		storeReasoningForAssistantMessage(types.OpenAIMessage{
+			Role:      "assistant",
+			Content:   text.String(),
+			ToolCalls: toolCalls,
+		}, reasoning.String(), scope)
+	})
+	return nil
 }
 
 // clearReasoningContentCacheForTest 清空全局缓存，仅供测试使用。

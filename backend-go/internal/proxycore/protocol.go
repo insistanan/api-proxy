@@ -152,7 +152,7 @@ func RunProxyRequest(
 	})
 	defer pipeline.ClearAttachedSensitiveData(c)
 	if err := pipeline.RunAttachedPreRequestHooks(c.Request.Context(), c, c.Request, "", string(spec.Kind)); err != nil {
-		conversationID, observeErr := ObserveConversationRequest(
+		conversationID, observeErr := ObserveConversationRequest(c.Request.Context(),
 			channelScheduler, spec.Kind, identity, transcript, model, nil, imageFingerprints, stream,
 		)
 		if observeErr != nil {
@@ -189,7 +189,7 @@ func RunProxyRequest(
 	}
 
 	// 4. 会话观测
-	conversationID, observeErr := ObserveConversationRequest(
+	conversationID, observeErr := ObserveConversationRequest(c.Request.Context(),
 		channelScheduler,
 		spec.Kind,
 		identity,
@@ -202,6 +202,11 @@ func RunProxyRequest(
 	if observeErr != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": observeErr.Error(), "code": "CONVERSATION_STORE_ERROR"})
 		return
+	}
+	if channelScheduler != nil {
+		if registry := channelScheduler.GetConversationRegistry(); registry != nil {
+			c.Request = c.Request.WithContext(registry.WithRequestLease(c.Request.Context(), conversationID))
+		}
 	}
 	defer MarkConversationComplete(channelScheduler, conversationID, spec.Kind)
 	keepaliveTurn.BindConversation(conversationID)
@@ -442,7 +447,7 @@ func handleSingleChannelProxy(
 	}
 
 	// 对话路由冲突检查
-	if err := channelScheduler.ValidateFixedChannel(conversationID, spec.Kind, channelIndex); err != nil {
+	if err := channelScheduler.ValidateFixedChannel(c.Request.Context(), conversationID, spec.Kind, channelIndex); err != nil {
 		// 路由冲突是本地拒绝：中性归还探测名额。
 		if singlePermit != nil {
 			singlePermit.RecordHealthNeutral()

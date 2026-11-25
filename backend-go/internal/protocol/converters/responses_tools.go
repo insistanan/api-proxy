@@ -4,11 +4,11 @@ package converters
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 	"strings"
 
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 )
 
 type responseToolKind string
@@ -163,19 +163,6 @@ func collectResponseToolContextFromToolSearchOutputs(context map[string]response
 	}
 }
 
-func parseToolSearchArguments(arguments string) interface{} {
-	arguments = strings.TrimSpace(arguments)
-	if arguments == "" {
-		return map[string]interface{}{}
-	}
-
-	var parsed interface{}
-	if err := json.Unmarshal([]byte(arguments), &parsed); err == nil {
-		return parsed
-	}
-	return map[string]interface{}{"query": arguments}
-}
-
 // extractTextFromContent 从 content 中提取文本内容
 // 支持三种格式：
 // 1. string - 直接返回
@@ -315,39 +302,4 @@ func stringifyResponsesToolOutput(content interface{}) string {
 		return fmt.Sprint(content)
 	}
 	return string(contentJSON)
-}
-
-func extractCustomToolInput(arguments string) string {
-	arguments = strings.TrimSpace(arguments)
-	if arguments == "" {
-		return ""
-	}
-
-	var payload map[string]interface{}
-	if err := json.Unmarshal([]byte(arguments), &payload); err != nil {
-		return arguments
-	}
-	input, _ := payload["input"].(string)
-	if input == "" {
-		return arguments
-	}
-	return input
-}
-
-func customToolArgumentsJSON(item types.ResponsesItem) string {
-	var input interface{}
-	if text := extractTextFromContent(item.Content); text != "" {
-		input = text
-	} else if item.Content != nil {
-		// custom_tool_call 的 input 也可能是结构化值；不能只取文本，
-		// 否则回灌到 Chat/Claude 时会把整个工具输入变成空字符串。
-		input = item.Content
-	} else {
-		input = strings.TrimSpace(item.Arguments)
-	}
-	payload, err := json.Marshal(map[string]interface{}{"input": input})
-	if err != nil {
-		return "{}"
-	}
-	return string(payload)
 }

@@ -110,7 +110,7 @@ func handleRoutedChat(
 		return
 	}
 
-	if err := channelScheduler.ValidateFixedChannel(conversationID, scheduler.ChannelKindChat, route.ChannelIndex); err != nil {
+	if err := channelScheduler.ValidateFixedChannel(c.Request.Context(), conversationID, scheduler.ChannelKindChat, route.ChannelIndex); err != nil {
 		proxycore.MarkConversationFailure(channelScheduler, conversationID, scheduler.ChannelKindChat, err)
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "CONVERSATION_ROUTE_OVERRIDE"})
 		return

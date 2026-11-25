@@ -46,7 +46,7 @@ func TestCacheKeepalive_ProxyAttemptCapturesFinalRequestAndUsage(t *testing.T) {
 			Prompt: "接下来应该怎么做？", MinCacheHitPercent: 90, MaxOutputTokens: 16}}
 	require.NoError(t, h.cfgManager.AddUpstream(*upstream))
 	manager := cachekeepalive.New(h.cfgManager, nil)
-	t.Cleanup(manager.Stop)
+	t.Cleanup(func() { manager.Stop() })
 	h.channelScheduler.SetCacheKeepalive(manager)
 	identity := conversation.Identity{ClientFamily: "claude-code", ExplicitID: "session", Source: "session_header"}
 	for _, tc := range []struct {

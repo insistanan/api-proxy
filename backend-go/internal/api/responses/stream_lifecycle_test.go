@@ -3,6 +3,8 @@ package responses
 import (
 	"context"
 	"errors"
+	"fmt"
+	"github.com/insistanan/api-proxy/internal/protocol/providers"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -39,6 +41,8 @@ func runResponsesLifecycleStream(t *testing.T, c *gin.Context, upstream string, 
 	require.NoError(t, err)
 	t.Cleanup(manager.Stop)
 	requestJSON := []byte(`{"model":"m","input":"hello"}`)
+	require.NoError(t, beginResponsesTurn(c, manager, requestJSON, ""))
+	defer closeResponsesTurn(c)
 	return handleStreamSuccess(c, &http.Response{StatusCode: 200, Header: make(http.Header), Body: body}, upstream, &config.EnvConfig{}, manager, time.Now(), &types.ResponsesRequest{Model: "m", Input: "hello"}, requestJSON, requestJSON, nil, "")
 }
 
@@ -151,7 +155,7 @@ func TestResponsesToolDeliveryCancellationAndWriteFailure(t *testing.T) {
 		if completed {
 			status = "completed"
 		}
-		sse := "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"fc1\",\"type\":\"function_call\",\"status\":\"" + status + "\",\"name\":\"tool\",\"call_id\":\"c1\",\"arguments\":\"{}\"}}\n\n"
+		sse := "data: {\"type\":\"response.created\",\"response\":{\"id\":\"tool-response\"}}\n\ndata: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"fc1\",\"type\":\"function_call\",\"status\":\"" + status + "\",\"name\":\"tool\",\"call_id\":\"c1\",\"arguments\":\"{}\"}}\n\n"
 		_, err := runResponsesLifecycleStream(t, c, converters.ResponsesUpstreamResponses, io.NopCloser(strings.NewReader(sse)))
 		if completed {
 			require.NoError(t, err)
@@ -186,6 +190,74 @@ func TestResponsesCancellationAtDeliveryBoundary(t *testing.T) {
 			} else {
 				require.ErrorIs(t, err, context.Canceled)
 			}
+		})
+	}
+}
+
+func TestResponsesToolCancellationOnlyPersistsDeliveredCompletePrefix(t *testing.T) {
+	for _, blockedPrefix := range []bool{false, true} {
+		t.Run(fmt.Sprint(blockedPrefix), func(t *testing.T) {
+			manager, err := session.NewPersistentSessionManager(filepath.Join(t.TempDir(), "history.db"), time.Hour, 0, 0)
+			require.NoError(t, err)
+			defer manager.Stop()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(ctx)
+			request := []byte(`{"model":"m","input":"hello","stream":true}`)
+			require.NoError(t, beginResponsesTurn(c, manager, request, ""))
+			defer closeResponsesTurn(c)
+			events := []string{`{"type":"response.created","response":{"id":"tool-prefix"}}`}
+			if blockedPrefix {
+				events = append(events, `{"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"unfinished","content":[]}}`,
+					`{"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","call_id":"complete","name":"exec","arguments":"{}"}}`)
+				c.Writer = &responsesLifecycleWriter{ResponseWriter: c.Writer, cancel: cancel}
+			} else {
+				events = append(events, `{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","call_id":"complete","name":"exec","arguments":"{}"}}`,
+					`{"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","call_id":"half","name":"exec","arguments":""}}`,
+					`{"type":"response.function_call_arguments.delta","output_index":1,"delta":"{"}`)
+				c.Writer = &responsesLifecycleWriter{ResponseWriter: c.Writer, cancel: cancel, cancelOnType: "response.function_call_arguments.delta"}
+			}
+			body := "data: " + strings.Join(events, "\n\ndata: ") + "\n\n"
+			_, err = handleStreamSuccess(c, &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, "responses", &config.EnvConfig{}, manager, time.Now(), &types.ResponsesRequest{Model: "m", Input: "hello", Stream: true}, request, request, nil, "")
+			if blockedPrefix {
+				require.ErrorContains(t, err, "未完成条目")
+				_, known, readErr := manager.ResponseOwner(context.Background(), "tool-prefix")
+				require.NoError(t, readErr)
+				require.False(t, known)
+			} else {
+				require.NoError(t, err)
+				history, err := manager.GetOrCreateSessionForConversation(context.Background(), "tool-prefix", "")
+				require.NoError(t, err)
+				require.Len(t, history.Messages, 2)
+				require.Equal(t, "complete", history.Messages[1].CallID)
+			}
+		})
+	}
+}
+func TestResponsesCommitFailurePreservesReportedUsage(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprint(stream), func(t *testing.T) {
+			manager, err := session.NewPersistentSessionManager(filepath.Join(t.TempDir(), "history.db"), time.Hour, 0, 0)
+			require.NoError(t, err)
+			defer manager.Stop()
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			request := []byte(`{"model":"m","input":"hello"}`)
+			require.NoError(t, beginResponsesTurn(c, manager, request, ""))
+			defer closeResponsesTurn(c)
+			manager.Stop()
+			body := `{"id":"save-fails","status":"completed","model":"m","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]}],"usage":{"input_tokens":11,"output_tokens":7}}`
+			if stream {
+				body = "data: {\"type\":\"response.completed\",\"response\":" + body + "}\n\n"
+			}
+			usage, err := handleSuccess(c, &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, &providers.ResponsesProvider{SessionManager: manager}, "responses", &config.EnvConfig{}, manager, time.Now(), &types.ResponsesRequest{Model: "m", Input: "hello", Stream: stream}, request, nil, "")
+			var commitErr *sessionCommitError
+			require.ErrorAs(t, err, &commitErr)
+			require.NotNil(t, usage)
+			require.Equal(t, 11, usage.InputTokens)
+			require.Equal(t, 7, usage.OutputTokens)
 		})
 	}
 }

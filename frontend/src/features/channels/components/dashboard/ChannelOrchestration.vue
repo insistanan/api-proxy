@@ -80,6 +80,12 @@
                 </UiIcon>
               </div>
               <div class="channel-actions" @click.stop>
+                <ChannelKeepaliveIndicator
+                  v-if="element.cacheKeepalive?.enabled && element.id && (getChannelMetrics(element.index)?.activeKeepaliveSessions ?? 0) > 0"
+                  :key="element.id"
+                  :channel-id="element.id"
+                  :policy="element.cacheKeepalive"
+                />
                 <UiButton
                   size="x-small"
                   variant="text"
@@ -240,6 +246,7 @@ import ChannelLogsDialog from '@/features/channels/components/dashboard/ChannelL
 import ChannelReservePools from '@/features/channels/components/dashboard/ChannelReservePools.vue'
 import ChannelMetricsCell from '@/features/channels/components/dashboard/ChannelMetricsCell.vue'
 import ChannelConcurrency from '@/features/channels/components/dashboard/ChannelConcurrency.vue'
+import ChannelKeepaliveIndicator from '@/features/channels/components/dashboard/ChannelKeepaliveIndicator.vue'
 import { useChannelLogs } from '@/features/channels/composables/useChannelLogs'
 import { useChannelPromotion } from '@/features/channels/composables/useChannelPromotion'
 

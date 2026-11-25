@@ -12,7 +12,7 @@ func restoreGeminiShadowMetadata(current map[string]interface{}, source interfac
 		return
 	}
 	identity := geminiVisiblePartsIdentity(currentParts)
-	ids, _ := extractAssistantToolUseKeys(source)
+	ids := extractAssistantToolUseIDs(source)
 	match := -1
 	for i, turn := range snapshot.Turns {
 		if len(ids) != len(turn.ToolCalls) {

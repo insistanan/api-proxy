@@ -18,7 +18,7 @@ func TestRunProxyRequest_BranchCapacitySkipsFullChannels(t *testing.T) {
 				env := newRunProxyTestEnv(t)
 				require.NoError(t, env.cfgManager.SetFuzzyModeForProtocol("messages", fuzzy))
 				registry := conversation.NewRegistry()
-				t.Cleanup(registry.Stop)
+				t.Cleanup(func() { registry.Stop() })
 				env.channelScheduler.SetConversationRegistry(registry)
 				server := newRecordingUpstreamServer(t, nil)
 				addTestUpstream(t, env, "first", server.URL(), "key-a")

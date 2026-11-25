@@ -42,12 +42,12 @@ type routeOptionGroup struct {
 func ListConversations(registry *conversation.Registry) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if registry == nil {
-			c.JSON(http.StatusOK, gin.H{"conversations": []*conversation.Record{}})
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "conversation registry is not initialized"})
 			return
 		}
 
-		if c.Query("page") != "" {
-			page, err := strconv.Atoi(c.Query("page"))
+		{
+			page, err := strconv.Atoi(c.DefaultQuery("page", "1"))
 			if err != nil || page < 1 {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "页码必须为正整数"})
 				return
@@ -62,7 +62,7 @@ func ListConversations(registry *conversation.Registry) gin.HandlerFunc {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "无效的状态或排序参数"})
 				return
 			}
-			result, err := registry.QueryPage(conversation.ListOptions{Query: c.Query("q"), Kind: c.Query("kind"), Status: status, Order: order, Page: page, PageSize: size})
+			result, err := registry.QueryPage(c.Request.Context(), conversation.ListOptions{Query: c.Query("q"), Kind: c.Query("kind"), Status: status, Order: order, Page: page, PageSize: size})
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
@@ -70,24 +70,6 @@ func ListConversations(registry *conversation.Registry) gin.HandlerFunc {
 			c.JSON(http.StatusOK, result)
 			return
 		}
-		query := strings.ToLower(strings.TrimSpace(c.Query("q")))
-		apiKind := strings.ToLower(strings.TrimSpace(c.Query("kind")))
-		items, err := registry.ListRecords()
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		filtered := make([]*conversation.Record, 0, len(items))
-		for _, item := range items {
-			if apiKind != "" && strings.ToLower(item.APIKind) != apiKind {
-				continue
-			}
-			if query != "" && !matchConversationQuery(item, query) {
-				continue
-			}
-			filtered = append(filtered, item)
-		}
-		c.JSON(http.StatusOK, gin.H{"conversations": filtered})
 	}
 }
 
@@ -98,7 +80,7 @@ func GetConversation(registry *conversation.Registry) gin.HandlerFunc {
 			return
 		}
 
-		item, err := registry.Lookup(c.Param("id"))
+		item, err := registry.Lookup(c.Request.Context(), c.Param("id"))
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -122,7 +104,7 @@ func SetConversationName(registry *conversation.Registry) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 			return
 		}
-		item, err := registry.SetName(c.Param("id"), req.Name)
+		item, err := registry.SetName(c.Request.Context(), c.Param("id"), req.Name)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -138,7 +120,7 @@ func DeleteConversation(registry *conversation.Registry, sessionManager *session
 			return
 		}
 		conversationID := c.Param("id")
-		item, err := registry.Lookup(conversationID)
+		item, err := registry.Lookup(c.Request.Context(), conversationID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -151,12 +133,7 @@ func DeleteConversation(registry *conversation.Registry, sessionManager *session
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "response session manager is not initialized"})
 			return
 		}
-		// 先删除 Responses 会话链；若持久化删除失败，保留对话记录供用户重试。
-		if err := sessionManager.DeleteConversation(conversationID); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		if err := registry.Delete(conversationID); err != nil {
+		if err := registry.DeleteWithHistory(c.Request.Context(), conversationID, sessionManager); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
@@ -180,11 +157,7 @@ func DeleteAllConversations(registry *conversation.Registry, sessionManager *ses
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "response session manager is not initialized"})
 			return
 		}
-		if err := sessionManager.DeleteAll(); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		if err := registry.DeleteAll(); err != nil {
+		if err := registry.DeleteWithHistory(c.Request.Context(), "", sessionManager); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
@@ -209,7 +182,7 @@ func SetConversationRouteOverride(registry *conversation.Registry, cfgManager *c
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 			return
 		}
-		item, err := registry.Lookup(c.Param("id"))
+		item, err := registry.Lookup(c.Request.Context(), c.Param("id"))
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -236,7 +209,7 @@ func SetConversationRouteOverride(registry *conversation.Registry, cfgManager *c
 			return
 		}
 
-		item, err = registry.SetRouteOverride(c.Param("id"), req.Kind, req.ChannelIndex, channelName)
+		item, err = registry.SetRouteOverride(c.Request.Context(), c.Param("id"), req.Kind, req.ChannelIndex, channelName)
 		if err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 			return
@@ -252,7 +225,7 @@ func ClearConversationRouteOverride(registry *conversation.Registry) gin.Handler
 			return
 		}
 
-		item, err := registry.ClearRouteOverride(c.Param("id"))
+		item, err := registry.ClearRouteOverride(c.Request.Context(), c.Param("id"))
 		if err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 			return
@@ -377,21 +350,4 @@ func isValidConversationKind(kind string) bool {
 	default:
 		return false
 	}
-}
-
-func matchConversationQuery(item *conversation.Record, query string) bool {
-	values := []string{
-		item.ID,
-		item.Name,
-		item.APIKind,
-		item.LastModel,
-		item.FirstPrompt,
-		item.RouteOverrideString(),
-	}
-	for _, value := range values {
-		if strings.Contains(strings.ToLower(value), query) {
-			return true
-		}
-	}
-	return false
 }

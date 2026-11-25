@@ -123,7 +123,8 @@ func (s *Service) semantic(ctx context.Context, cfg config.IntentRoutingConfig, 
 			}
 		}
 	}
-	for _, hit := range semantic.PositiveLabels(result, cfg.Threshold, cfg.SwitchMargin) {
+	hit, matched := semantic.SelectIntent(result, cfg.Threshold, cfg.SwitchMargin)
+	if matched {
 		for _, route := range cfg.Routes {
 			label := route.Label
 			if label == "" {

@@ -4,11 +4,12 @@ package providers
 import (
 	"errors"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/contract"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
 )
@@ -31,8 +32,9 @@ type responsesToClaudeStreamState struct {
 	reasoningBlockOpen  bool
 	reasoningEmittedLen int
 	assistantText       strings.Builder
-	deliveredParts      map[string]string
+	deliveredParts      map[responsesPartKey]string
 	itemIndexes         map[string]int
+	indexItems          map[int]string
 	completedOutput     []types.ResponsesItem
 	completed           bool
 	messageStopped      bool
@@ -63,7 +65,9 @@ func newResponsesToClaudeStreamState() *responsesToClaudeStreamState {
 		responseID:       fmt.Sprintf("msg_%s", uuid.New().String()),
 		toolCalls:        make(map[string]*responsesStreamToolCall),
 		emittedToolCalls: make(map[string]bool),
-		deliveredParts:   make(map[string]string), itemIndexes: make(map[string]int),
+		deliveredParts:   make(map[responsesPartKey]string),
+		itemIndexes:      make(map[string]int),
+		indexItems:       make(map[int]string),
 	}
 }
 
@@ -82,6 +86,10 @@ func (s *responsesToClaudeStreamState) processLine(line string) []string {
 	if !gjson.Valid(data) || !root.IsObject() {
 		s.failed = true
 		s.failedMessage = "上游 Responses SSE 数据不是有效 JSON 对象"
+		return nil
+	}
+	if err := contract.ResponseContent("responses", []byte(data)); err != nil {
+		s.failed, s.failedMessage = true, err.Error()
 		return nil
 	}
 
@@ -111,8 +119,14 @@ func (s *responsesToClaudeStreamState) processLine(line string) []string {
 	s.captureUpstreamResponseID(root)
 	s.captureResponsesUsage(root)
 	s.rememberItemIndex(root)
+	if s.failed {
+		return nil
+	}
 	out := s.ensureMessageStart(root)
 	switch {
+	case eventType == "response.refusal.delta":
+		s.stopReason = "refusal"
+		out = append(out, s.deliverPart(s.eventPartKey(root, "text"), root.Get("delta").String(), false, false)...)
 	case strings.Contains(eventType, "output_text.delta"):
 		out = append(out, s.deliverPart(s.eventPartKey(root, "text"), root.Get("delta").String(), false, false)...)
 	case strings.Contains(eventType, "reasoning") && strings.Contains(eventType, "delta"):
@@ -138,19 +152,18 @@ func (s *responsesToClaudeStreamState) processLine(line string) []string {
 	case strings.Contains(eventType, "function_call_arguments.done"):
 		s.captureToolCall(root)
 	case eventType == "response.completed" || eventType == "response.incomplete":
+		completion, err := contract.ResponsesCompletion(strings.TrimPrefix(eventType, "response."), root.Get("response.incomplete_details.reason").String())
+		if err != nil {
+			s.failed, s.failedMessage = true, err.Error()
+			return nil
+		}
 		s.completed = true
 		out = append(out, s.emitCompletedOutput(root)...)
 		if s.failed {
 			return nil
 		}
-		if s.stopReason == "" {
-			s.stopReason = "end_turn"
-		}
-		if status := root.Get("response.status").String(); status == "incomplete" || eventType == "response.incomplete" {
-			s.stopReason = "max_tokens"
-			if root.Get("response.incomplete_details.reason").String() == "content_filter" {
-				s.stopReason = "refusal"
-			}
+		if s.stopReason != "refusal" {
+			s.stopReason = completion.ClaudeStopReason(len(s.emittedToolCalls) > 0)
 		}
 		// Final usage is usually on response.completed; re-capture then emit message_delta with real tokens.
 		s.captureResponsesUsage(root)

@@ -1,6 +1,7 @@
 package logs
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -32,8 +33,8 @@ func TestLogConversationsNamesAreReadLiveAndPreserveFirstPrompt(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	registry := conversation.NewRegistry()
-	t.Cleanup(registry.Stop)
-	record, err := registry.ObserveRequestWithError(conversation.Observation{APIKind: "responses", FirstPrompt: "注册表提示词"})
+	t.Cleanup(func() { registry.Stop() })
+	record, err := registry.ObserveRequestWithError(context.Background(), conversation.Observation{APIKind: "responses", FirstPrompt: "注册表提示词"})
 	require.NoError(t, err)
 	now := time.Now().UnixMilli()
 	recordConversationLog(t, store, "first", "Responses", record.ID, "首条提示词", now)
@@ -65,7 +66,7 @@ func TestLogConversationsNamesAreReadLiveAndPreserveFirstPrompt(t *testing.T) {
 	groups := query(registry)
 	require.Empty(t, groups[key].Name)
 	require.Equal(t, "首条提示词", groups[key].Title)
-	_, err = registry.SetName(record.ID, "自定义会话")
+	_, err = registry.SetName(context.Background(), record.ID, "自定义会话")
 	require.NoError(t, err)
 	groups = query(registry)
 	require.Equal(t, "自定义会话", groups[key].Name)
@@ -76,7 +77,7 @@ func TestLogConversationsNamesAreReadLiveAndPreserveFirstPrompt(t *testing.T) {
 	require.Empty(t, groups["messages:missing-record"].Name)
 	require.Equal(t, "已删除会话的提示词", groups["messages:missing-record"].Title)
 	require.Empty(t, groups["request:no-identity"].Name)
-	_, err = registry.SetName(record.ID, "再次改名")
+	_, err = registry.SetName(context.Background(), record.ID, "再次改名")
 	require.NoError(t, err)
 	require.Equal(t, "再次改名", query(registry)[key].Name)
 	require.Empty(t, query(nil)[key].Name)
@@ -94,7 +95,7 @@ func TestLogConversationsRegistryReadFailureIsReported(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	registry, err := conversation.NewPersistentRegistryWithDB(db)
 	require.NoError(t, err)
-	t.Cleanup(registry.Stop)
+	t.Cleanup(func() { registry.Stop() })
 	require.NoError(t, db.Close())
 	router := gin.New()
 	router.GET("/log-conversations", GetLogConversations(store, registry))

@@ -4,7 +4,7 @@ import { renderToString } from '@vue/server-renderer'
 import LocalEmbeddingSettings from '@/features/channels/components/routing/LocalEmbeddingSettings.vue'
 import type { LocalPresets, LocalStatus } from '@/features/channels/services/intent'
 
-const api = vi.hoisted(() => ({ local: vi.fn(), presets: vi.fn(), installPreset: vi.fn(), localAction: vi.fn() }))
+const api = vi.hoisted(() => ({ local: vi.fn(), presets: vi.fn(), installPreset: vi.fn(), localAction: vi.fn(), importResource: vi.fn(), setPresetsUrl: vi.fn(), cancelPreparation: vi.fn() }))
 vi.mock('@/features/channels/services/intent', () => ({ intentApi: api, intentErrorText: (error: Error) => error.message }))
 type State = Record<string, unknown>
 const value = <T>(state: State, key: string) => (state[key] as Ref<T>).value
@@ -21,6 +21,29 @@ async function setup() {
 beforeEach(() => { vi.resetAllMocks(); api.local.mockResolvedValue(status()); api.presets.mockResolvedValue(catalog()) })
 
 describe('本地向量安装的清单与阶段状态', () => {
+  it('后台接口立即返回后继续显示忙碌，随后刷新真实完成状态', async () => {
+    api.presets.mockResolvedValue({ ...catalog(), presets: [{ id: 'cpu', name: 'CPU', description: '测试条目', sizeBytes: 100 }] })
+    api.installPreset.mockResolvedValue({ ...status(), busy: true, phase: 'queued' })
+    const state = await setup()
+    await (state.run as (action: string) => Promise<void>)('preset')
+    expect(value<boolean>(state, 'busy')).toBe(true)
+    api.local.mockResolvedValue({ ...status(), installed: true, running: true, ready: true, phase: 'ready' })
+    await (state.refresh as () => Promise<void>)()
+    expect(value<boolean>(state, 'busy')).toBe(false)
+    expect(value<LocalStatus>(state, 'status').ready).toBe(true)
+  })
+  it('离线导入发送文件流和预设 ID，失败明确显示并清空文件选择', async () => {
+    api.presets.mockResolvedValue({ ...catalog(), presets: [{ id: 'cpu', name: 'CPU', description: '测试条目', sizeBytes: 100 }] })
+    api.importResource.mockRejectedValue(new Error('SHA-256 校验不匹配'))
+    const state = await setup()
+    const file = { size: 8, name: 'test.gguf' } as File
+    const input = { files: [file], value: 'test.gguf' }
+    await (state.importFile as (event: Event, resource: string) => Promise<void>)({ target: input } as unknown as Event, 'model')
+    expect(api.importResource).toHaveBeenCalledWith('cpu', 'model', file)
+    expect(value<string>(state, 'actionError')).toContain('SHA-256')
+    expect(input.value).toBe('')
+    expect(value<boolean>(state, 'busy')).toBe(false)
+  })
   it('空清单没有可安装选项，刷新错误显式保留且不能执行旧预设', async () => {
     const state = await setup()
     expect(value<LocalPresets>(state, 'catalog').presets).toEqual([])

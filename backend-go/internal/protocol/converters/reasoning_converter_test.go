@@ -19,7 +19,8 @@ func TestDisabledThinkingRemainsExplicitAcrossProtocols(t *testing.T) {
 	thinking, err := ResponsesReasoningToClaudeThinking(map[string]interface{}{"effort": "none"}, 4000)
 	assert.NoError(t, err)
 	assert.Equal(t, "disabled", thinking.(map[string]interface{})["type"])
-	conflict := ExtractReasoningFromClaude(&types.ClaudeRequest{Thinking: map[string]interface{}{"type": "disabled"}, OutputConfig: map[string]interface{}{"effort": "max"}})
+	conflict, err := ExtractReasoningFromClaude(&types.ClaudeRequest{Thinking: map[string]interface{}{"type": "disabled"}, OutputConfig: map[string]interface{}{"effort": "max"}})
+	assert.NoError(t, err)
 	assert.Equal(t, "none", conflict.Effort)
 }
 

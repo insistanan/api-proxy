@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/insistanan/api-proxy/internal/protocol/contract"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
@@ -15,6 +16,15 @@ func sanitizeOpenAIChatPayloadForUpstream(payload map[string]interface{}) error 
 	toolsRaw, hasToolsField := payload["tools"]
 	tools, err := sanitizeOpenAIChatTools(toolsRaw)
 	if err != nil {
+		return err
+	}
+	names := make(map[string]bool, len(tools))
+	for _, tool := range tools {
+		function, _ := tool["function"].(map[string]interface{})
+		name, _ := function["name"].(string)
+		names[name] = true
+	}
+	if err := contract.ToolChoice(payload["tool_choice"], names); err != nil {
 		return err
 	}
 	if len(tools) > 0 {

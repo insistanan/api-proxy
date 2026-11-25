@@ -8,12 +8,51 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
 
 	"github.com/insistanan/api-proxy/internal/storage/atomicfile"
 	"github.com/stretchr/testify/require"
 )
+
+func TestLocalImportValidatesBeforeReplacingCache(t *testing.T) {
+	local, err := NewLocal(t.TempDir())
+	require.NoError(t, err)
+	manifest := testPresetManifest()
+	entry := manifest.Presets[0].Platforms[runtime.GOOS+"/"+runtime.GOARCH]
+	model := "GGUFoffline-model"
+	entry.ModelSHA256 = digest(model)
+	manifest.Presets[0].Platforms[runtime.GOOS+"/"+runtime.GOARCH] = entry
+	local.presets.manifest, local.presets.fetchedAt = manifest, time.Now()
+	require.NoError(t, local.ImportResource(context.Background(), "cpu", "model", strings.NewReader(model)))
+	file := filepath.Join(local.dir, entry.ModelSHA256+".gguf")
+	require.ErrorContains(t, local.ImportResource(context.Background(), "cpu", "model", strings.NewReader("GGUFwrong")), "SHA-256")
+	data, err := os.ReadFile(file)
+	require.NoError(t, err)
+	require.Equal(t, model, string(data))
+	require.NoError(t, local.downloadResource(context.Background(), []string{"https://example.invalid/must-not-be-called"}, entry.ModelSHA256, 1<<30, file, "GGUF"))
+	require.Contains(t, local.Status().Notice, "复用")
+	require.False(t, local.Status().Installed, "离线导入本身不能启动或发布运行时")
+}
+
+func TestBoundedEmbeddingPreservesUTF8AndInputTail(t *testing.T) {
+	input := strings.Repeat("中a🙂", 1000) + "最后才给出具体任务"
+	chunks := embeddingChunks(input)
+	require.Greater(t, len(chunks), 1)
+	require.Equal(t, input, strings.Join(chunks, ""))
+	for _, chunk := range chunks {
+		require.True(t, utf8.ValidString(chunk))
+		require.LessOrEqual(t, len(chunk), 384)
+	}
+	text, truncated := normalizeInput(strings.Repeat("中", 6000) + "请修复接口")
+	require.True(t, truncated)
+	require.Len(t, []rune(text), 4000)
+	require.True(t, strings.HasSuffix(text, "请修复接口"))
+	require.Contains(t, text, "中间材料已省略")
+}
 
 func TestVerifiedDownloadCommitsOnlyCompleteValidModel(t *testing.T) {
 	model := "GGUF" + strings.Repeat("model", 20000)

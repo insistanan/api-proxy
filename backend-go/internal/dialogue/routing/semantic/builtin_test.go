@@ -30,7 +30,7 @@ func TestBuiltinDatasetsAvailableWithoutImportAndDeletionPersists(t *testing.T) 
 		require.Zero(t, item.Approved)
 		require.Empty(t, item.Indexes)
 	}
-	intents, err := s.Get("starter-intents-v2")
+	intents, err := s.Get(RecommendedIntentDatasetID)
 	require.NoError(t, err)
 	intents.Name = "我的意图样本"
 	intents.Samples[0].Approved = true
@@ -105,4 +105,39 @@ func TestBuiltinInitializationRollsBackWhenQuotaIsExceeded(t *testing.T) {
 	require.Equal(t, 31, count, "失败时回滚全部初始化写入")
 	require.NoError(t, db.QueryRow(`SELECT count(*) FROM semantic_builtin_initializations`).Scan(&count))
 	require.Zero(t, count)
+}
+
+func TestBuiltinUpgradeDoesNotBlockFullExistingLibrary(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "datasets.db")
+	s, err := New(path, &testEmbedder{})
+	require.NoError(t, err)
+	ctx := context.Background()
+	// 模拟旧版本已有 v2 和安全模板，并已用完 32 个配额。
+	_, err = s.db.Exec(`DELETE FROM semantic_datasets WHERE id=?`, RecommendedIntentDatasetID)
+	require.NoError(t, err)
+	_, err = s.db.Exec(`DELETE FROM semantic_builtin_initializations WHERE id=?`, RecommendedIntentDatasetID)
+	require.NoError(t, err)
+	for i := 0; i < 31; i++ {
+		d := testDataset()
+		d.ID = fmt.Sprintf("old-%d", i)
+		if i == 0 {
+			d.ID = "starter-intents-v2"
+		}
+		d.Revision = 1
+		data, err := json.Marshal(d)
+		require.NoError(t, err)
+		_, err = s.db.ExecContext(ctx, `INSERT INTO semantic_datasets(id,data) VALUES(?,?)`, d.ID, data)
+		require.NoError(t, err)
+	}
+	require.NoError(t, s.Close())
+	s, err = New(path, &testEmbedder{})
+	require.NoError(t, err)
+	defer s.Close()
+	items, err := s.List(ctx)
+	require.NoError(t, err)
+	require.Len(t, items, 32)
+	_, err = s.Get("starter-intents-v2")
+	require.NoError(t, err)
+	_, err = s.Get(RecommendedIntentDatasetID)
+	require.ErrorIs(t, err, ErrNotFound)
 }

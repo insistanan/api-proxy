@@ -34,13 +34,19 @@ func (p *OpenAIProvider) HandleStreamResponseCtx(ctx context.Context, body io.Re
 		scanner := pump.newScanner(body)
 
 		for scanner.Scan() {
-			for _, event := range state.ProcessLine(scanner.Text()) {
+			line, err := scanner.DataLine()
+			if err != nil {
+				fail(err)
+				return
+			}
+			for _, event := range state.ProcessLine(line) {
 				if !send(event) {
 					return
 				}
 			}
 			// [DONE] 已完成收尾，立即关闭上游；不能等 EOF 再发一次终止事件。
 			if state.messageStopEmitted {
+				p.rememberStreamReasoning(state)
 				return
 			}
 			if state.Failed() || state.doneSeen {
@@ -63,6 +69,8 @@ func (p *OpenAIProvider) HandleStreamResponseCtx(ctx context.Context, body io.Re
 		}
 		if state.Failed() {
 			fail(state.streamError)
+		} else {
+			p.rememberStreamReasoning(state)
 		}
 	}()
 
@@ -189,3 +197,12 @@ func processToolUsePart(id, name string, input interface{}, index int) []string 
 }
 
 // 辅助函数
+
+func (p *OpenAIProvider) rememberStreamReasoning(state *chatToClaudeStreamState) {
+	if state.reasoningDeltaBuffer.Len() == 0 {
+		return
+	}
+	p.cacheLease.Store(func() {
+		storeReasoningForAssistantMessage(types.OpenAIMessage{Role: "assistant", Content: state.assistantTextBuffer.String(), ToolCalls: snapshotChatAssistantToolCalls(state.assistantToolCalls)}, state.reasoningDeltaBuffer.String(), p.reasoningScope)
+	})
+}

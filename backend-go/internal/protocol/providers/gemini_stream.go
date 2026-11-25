@@ -4,7 +4,6 @@ import (
 	"context"
 	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"io"
-	"strings"
 )
 
 // HandleStreamResponseCtx 处理流式响应（支持客户端断连中止）。
@@ -28,7 +27,11 @@ func (p *GeminiProvider) HandleStreamResponseCtx(ctx context.Context, body io.Re
 		scanner := pump.newScanner(body)
 
 		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
+			line, err := scanner.DataLine()
+			if err != nil {
+				fail(err)
+				return
+			}
 			if payload, isData := codec.ParseSSEDataLine(line); isData && payload == codec.SSEDoneMarker {
 				break
 			}
@@ -52,11 +55,17 @@ func (p *GeminiProvider) HandleStreamResponseCtx(ctx context.Context, body io.Re
 		if !pump.finishRead(state.pendingStopReason != "", scanner.Err()) {
 			return
 		}
-		for _, event := range state.Finish(shadowProviderID, shadowSessionID) {
+		for _, event := range state.Finish() {
 			if !send(event) {
 				return
 			}
 		}
+		if len(state.shadowParts) > 0 {
+			p.cacheLease.Store(func() {
+				defaultGeminiShadowStore.Record(shadowProviderID, shadowSessionID, GeminiShadowTurn{AssistantContent: map[string]interface{}{"parts": state.shadowParts}, ToolCalls: state.shadowToolCalls})
+			})
+		}
+
 	}()
 
 	return eventChan, errChan, nil

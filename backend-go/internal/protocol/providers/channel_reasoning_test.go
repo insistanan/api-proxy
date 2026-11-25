@@ -87,9 +87,9 @@ func TestChannelReasoningPreservesNativeHistoryAndUnrelatedOptions(t *testing.T)
 	manager, err := session.NewPersistentSessionManager(filepath.Join(t.TempDir(), "responses.db"), time.Hour, 0, 0)
 	require.NoError(t, err)
 	t.Cleanup(manager.Stop)
-	sess, err := manager.GetOrCreateSessionForConversation("", "conv-owner")
+	sess, err := manager.GetOrCreateSessionForConversation(context.Background(), "", "conv-owner")
 	require.NoError(t, err)
-	require.NoError(t, manager.CommitTurn(sess.ID, []types.ResponsesItem{
+	require.NoError(t, commitFixtureTurn(manager, sess, []types.ResponsesItem{
 		{Type: "text", Content: "first question"},
 		{Type: "message", Role: "assistant", Content: "first answer"},
 		{Type: "text", Content: "second question"},

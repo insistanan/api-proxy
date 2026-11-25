@@ -1,6 +1,7 @@
 package proxycore
 
 import (
+	"context"
 	"log"
 
 	"github.com/gin-gonic/gin"
@@ -18,7 +19,7 @@ func ExtractConversationID(c *gin.Context, bodyBytes []byte) string {
 // 主请求经过 ObserveConversationRequest 后，调度器使用的是内部记录 ID；compact 等控制面
 // 请求不能直接把外部 ID 当作内部 ID，否则亲和性会分裂。未找到已有记录时返回空，避免
 // 控制面请求创建孤儿亲和记录或误合并并行客户端窗口。
-func ResolveExistingConversationID(
+func ResolveExistingConversationID(ctx context.Context,
 	channelScheduler *scheduler.ChannelScheduler,
 	kind scheduler.ChannelKind,
 	identity conversation.Identity,
@@ -30,10 +31,10 @@ func ResolveExistingConversationID(
 	if registry == nil {
 		return identity.ExplicitID, nil
 	}
-	return registry.ResolveExistingRecordIDWithError(string(kind), identity)
+	return registry.ResolveExistingRecordIDWithError(ctx, string(kind), identity)
 }
 
-func ObserveConversationRequest(
+func ObserveConversationRequest(ctx context.Context,
 	channelScheduler *scheduler.ChannelScheduler,
 	kind scheduler.ChannelKind,
 	identity conversation.Identity,
@@ -55,7 +56,7 @@ func ObserveConversationRequest(
 	if len(prompts) > 0 {
 		firstPrompt = prompts[0]
 	}
-	record, err := registry.ObserveRequestWithError(conversation.Observation{
+	record, err := registry.ObserveRequestWithError(ctx, conversation.Observation{
 		APIKind:           string(kind),
 		Model:             model,
 		Stream:            stream,

@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func TestConvertResponsesPassthroughRequest_ModelMappingPreservesBody(t *testing.T) {
@@ -102,7 +104,7 @@ func TestExtractUsageMetrics_GeminiCachedAndThoughtsTogether(t *testing.T) {
 
 // ============== OpenAI 转换器测试 ==============
 
-func TestOpenAIChatConverter_WithMessageType(t *testing.T) {
+func TestResponsesToChatDispatcher_WithMessageType(t *testing.T) {
 	converter := &chatDispatcherFixture{}
 	sess := &types.Session{
 		ID:       "sess_test",
@@ -195,46 +197,23 @@ func TestOpenAIChatResponseToResponses_WithReasoningAndToolCalls(t *testing.T) {
 	}
 }
 
-func TestResponsesToOpenAIChatMessages_CollapseSystemAndCustomToolReplay(t *testing.T) {
-	sess := &types.Session{
-		ID: "sess_test",
-		Messages: []types.ResponsesItem{
-			{Type: "message", Role: "system", Content: "历史系统提示"},
-			{Type: "custom_tool_call", CallID: "call_exec", Name: "code_exec", Content: "print('history')"},
-			{Type: "custom_tool_call_output", CallID: "call_exec", Content: "done"},
-		},
-	}
-
-	messages, err := ResponsesToOpenAIChatMessages(sess, []interface{}{
-		map[string]interface{}{"type": "message", "role": "system", "content": "本次系统提示"},
-	}, "顶层指令")
-	if err != nil {
-		t.Fatalf("转换失败: %v", err)
-	}
-
-	if len(messages) != 3 {
-		t.Fatalf("期望 3 条消息，实际为 %d", len(messages))
-	}
-	if messages[0]["role"] != "system" {
-		t.Fatalf("第一条应为 system，实际为 %v", messages[0]["role"])
-	}
-	systemContent, _ := messages[0]["content"].(string)
-	if systemContent != "顶层指令\n\n历史系统提示\n\n本次系统提示" {
-		t.Fatalf("system 折叠结果不匹配，实际为 %q", systemContent)
-	}
-
-	toolCalls, ok := messages[1]["tool_calls"].([]map[string]interface{})
-	if !ok || len(toolCalls) != 1 {
-		t.Fatalf("第二条消息应包含 1 个 tool_call")
-	}
-	args, _ := toolCalls[0]["function"].(map[string]interface{})["arguments"].(string)
-	if args != "{\"input\":\"print('history')\"}" {
-		t.Fatalf("custom_tool_call 回放参数不匹配，实际为 %s", args)
-	}
-
-	if messages[2]["role"] != "tool" {
-		t.Fatalf("第三条消息应为 tool，实际为 %v", messages[2]["role"])
-	}
+func TestResponsesToChatDispatcher_SystemAndCustomHistory(t *testing.T) {
+	sess := &types.Session{Messages: []types.ResponsesItem{
+		{Type: "message", Role: "system", Content: "历史系统提示"},
+		{Type: "custom_tool_call", CallID: "call_exec", Name: "code_exec", Content: "print('history')"},
+		{Type: "custom_tool_call_output", CallID: "call_exec", Content: "done"},
+	}}
+	body := []byte(`{"model":"m","instructions":"顶层指令","input":"下一轮"}`)
+	var request types.ResponsesRequest
+	require.NoError(t, json.Unmarshal(body, &request))
+	converted, err := ConvertResponsesRequestToUpstream("openai", "m", body, false, sess, &request, nil)
+	require.NoError(t, err)
+	messages := gjson.GetBytes(converted, "messages")
+	require.Len(t, messages.Array(), 5)
+	require.Contains(t, messages.Get("0.content").String(), "顶层指令")
+	require.Contains(t, messages.Get("1.content").String(), "历史系统提示")
+	require.JSONEq(t, `{"input":"print('history')"}`, messages.Get("2.tool_calls.0.function.arguments").String())
+	require.Equal(t, "done", messages.Get("3.content").String())
 }
 
 func TestClaudeConverter_InvalidFunctionCallArguments(t *testing.T) {
@@ -409,35 +388,14 @@ func TestClaudeConverter_CustomToolCompatible(t *testing.T) {
 	}
 }
 
-func TestResponsesToOpenAIChatMessages_CustomToolOutputReplay(t *testing.T) {
-	messages, err := ResponsesToOpenAIChatMessages(nil, []interface{}{
-		map[string]interface{}{
-			"type":    "custom_tool_call_output",
-			"call_id": "call_exec",
-			"output":  "done",
-		},
-	}, "")
-	if err != nil {
-		t.Fatalf("转换失败: %v", err)
-	}
-	if len(messages) != 1 {
-		t.Fatalf("期望 1 条消息，实际为 %d", len(messages))
-	}
-	if messages[0]["role"] != "tool" {
-		t.Fatalf("应转换为 tool 消息，实际为 %v", messages[0]["role"])
-	}
-	if messages[0]["content"] != "done" {
-		t.Fatalf("tool 输出内容不匹配，实际为 %#v", messages[0]["content"])
-	}
+func TestResponsesToChatDispatcher_CustomToolOutputReplay(t *testing.T) {
+	converted, err := dispatchRequest(t, "openai", `{"model":"m","input":[{"type":"custom_tool_call_output","call_id":"call_exec","output":"done"}]}`, nil)
+	require.NoError(t, err)
+	require.Equal(t, "tool", gjson.GetBytes(converted, "messages.0.role").String())
+	require.Equal(t, "done", gjson.GetBytes(converted, "messages.0.content").String())
 }
 
-// ============== Claude 转换器测试 ==============
-
-// ============== 工厂模式测试 ==============
-
-// ============== 会话历史测试 ==============
-
-func TestOpenAIChatConverter_WithSessionHistory(t *testing.T) {
+func TestResponsesToChatDispatcher_WithSessionHistory(t *testing.T) {
 	converter := &chatDispatcherFixture{}
 	sess := &types.Session{
 		ID: "sess_test",
@@ -487,7 +445,7 @@ func TestOpenAIChatConverter_WithSessionHistory(t *testing.T) {
 
 // ============== FinishReason 映射测试 ==============
 
-func TestOpenAIChatConverter_ForwardsPromptCacheKey(t *testing.T) {
+func TestResponsesToChatDispatcher_ForwardsPromptCacheKey(t *testing.T) {
 	converter := &chatDispatcherFixture{}
 	sess := &types.Session{
 		ID:       "sess_cache",

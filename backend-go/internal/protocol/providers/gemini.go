@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
+	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
 	"io"
 	"net/http"
 	"strings"
@@ -14,12 +12,15 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"github.com/insistanan/api-proxy/internal/protocol/converters"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 )
 
 // GeminiProvider Gemini 提供商
 type GeminiProvider struct {
+	cacheLease                  *conversation.RequestLease
 	shadowProviderID            string
 	shadowSessionID             string
 	shadowSnapshot              GeminiShadowSnapshot
@@ -53,6 +54,7 @@ func (p *GeminiProvider) ConvertToProviderRequest(c *gin.Context, upstream *conf
 
 // BuildRequest 以显式输入构造 Gemini 请求（R4-a 主实现，不依赖 gin）。
 func (p *GeminiProvider) buildRequest(input RequestInput, upstream *config.UpstreamConfig, apiKey string) (*RequestOutcome, error) {
+	p.cacheLease = conversation.RequestLeaseFrom(input.Ctx)
 	originalBodyBytes := input.Body
 	if err := converters.ValidateClaudeConversion(input.Body, "gemini"); err != nil {
 		return nil, err
@@ -68,9 +70,6 @@ func (p *GeminiProvider) buildRequest(input RequestInput, upstream *config.Upstr
 		p.shadowProviderID = upstream.RequestIdentity(apiKey).Fingerprint() + "|" + config.ResolveUpstreamModel(claudeReq.Model, upstream)
 	}
 	p.shadowSessionID = input.ConversationID
-	if p.shadowSessionID == "" {
-		p.shadowSessionID = buildGeminiShadowSessionID(input.Header, &claudeReq)
-	}
 	p.shadowSnapshot = defaultGeminiShadowStore.Get(p.shadowProviderID, p.shadowSessionID)
 	p.stripThoughtSignature = false
 	p.injectDummyThoughtSignature = false
@@ -139,42 +138,6 @@ func buildGeminiGenerateContentURL(baseURL string, model string, stream bool, us
 
 	// "#"后缀与版本前缀约定见 upstreamreq.BuildUpstreamURL；Gemini 默认版本段为 /v1beta
 	return upstreamreq.BuildUpstreamURL(baseURL, "/v1beta", fmt.Sprintf("/%s:%s", modelPath, action), useFullURL...)
-}
-
-func buildGeminiShadowSessionID(header http.Header, claudeReq *types.ClaudeRequest) string {
-	if claudeReq != nil && len(claudeReq.Metadata) > 0 {
-		if sessionID := extractGeminiSessionIDFromMetadata(claudeReq.Metadata); sessionID != "" {
-			return sessionID
-		}
-	}
-	if header != nil {
-		if sessionID := strings.TrimSpace(header.Get("X-Claude-Code-Session-Id")); sessionID != "" {
-			return sessionID
-		}
-	}
-	return ""
-}
-
-func extractGeminiSessionIDFromMetadata(metadata map[string]interface{}) string {
-	raw, ok := metadata["user_id"]
-	if !ok {
-		return ""
-	}
-	if rawString, ok := raw.(string); ok {
-		var decoded map[string]interface{}
-		if err := json.Unmarshal([]byte(rawString), &decoded); err == nil {
-			if sessionID, _ := decoded["session_id"].(string); strings.TrimSpace(sessionID) != "" {
-				return strings.TrimSpace(sessionID)
-			}
-		}
-		return strings.TrimSpace(rawString)
-	}
-	if rawMap, ok := raw.(map[string]interface{}); ok {
-		if sessionID, _ := rawMap["session_id"].(string); strings.TrimSpace(sessionID) != "" {
-			return strings.TrimSpace(sessionID)
-		}
-	}
-	return ""
 }
 
 // convertToGeminiRequest 转换为 Gemini 请求体
@@ -260,7 +223,10 @@ func (p *GeminiProvider) convertToGeminiRequest(claudeReq *types.ClaudeRequest, 
 // effort 解析复用 resolveClaudeReasoningEffort（与 Chat/Responses 上游同判据），
 // 档位映射复用 converters.ResponsesReasoningToGeminiThinking。
 func geminiThinkingConfigFromClaude(claudeReq *types.ClaudeRequest) (*types.GeminiThinkingConfig, error) {
-	effort := resolveClaudeReasoningEffort(claudeReq)
+	effort, err := resolveClaudeReasoningEffort(claudeReq)
+	if err != nil {
+		return nil, err
+	}
 	if effort == "" {
 		return nil, nil
 	}
@@ -308,7 +274,7 @@ func (p *GeminiProvider) convertMessages(claudeMessages []types.ClaudeMessage, s
 	messages := make([]map[string]interface{}, 0, len(claudeMessages))
 	names := buildClaudeToolNameMap(claudeMessages)
 	for _, message := range claudeMessages {
-		converted, err := p.convertMessage(message, names, nil)
+		converted, err := p.convertMessage(message, names)
 		if err != nil {
 			return nil, err
 		}
@@ -344,29 +310,16 @@ func buildClaudeToolNameMap(messages []types.ClaudeMessage) map[string]string {
 	return toolNameByID
 }
 
-func extractAssistantToolUseKeys(content interface{}) (map[string]bool, map[string]bool) {
+func extractAssistantToolUseIDs(content interface{}) map[string]bool {
 	ids := map[string]bool{}
-	names := map[string]bool{}
 	for _, block := range visionmedia.NormalizeContentBlocks(content) {
-		if blockType, _ := block["type"].(string); blockType != "tool_use" {
-			continue
-		}
-		if id, _ := block["id"].(string); id != "" {
-			ids[id] = true
-		}
-		if name, _ := block["name"].(string); name != "" {
-			names[name] = true
-			names[normalizeGeminiToolName(name)] = true
+		if block["type"] == "tool_use" {
+			if id, _ := block["id"].(string); id != "" {
+				ids[id] = true
+			}
 		}
 	}
-	return ids, names
-}
-
-func normalizeGeminiToolName(name string) string {
-	if idx := strings.LastIndex(name, ":"); idx >= 0 && idx+1 < len(name) {
-		return name[idx+1:]
-	}
-	return name
+	return ids
 }
 
 func geminiShadowReplayParts(content map[string]interface{}, stripThoughtSignature bool, injectDummyThoughtSignature bool) []interface{} {
@@ -404,7 +357,7 @@ func geminiShadowReplayParts(content map[string]interface{}, stripThoughtSignatu
 }
 
 // convertMessage 转换单个消息
-func (p *GeminiProvider) convertMessage(msg types.ClaudeMessage, toolNameByID map[string]string, thoughtSignatureByID map[string]string) (map[string]interface{}, error) {
+func (p *GeminiProvider) convertMessage(msg types.ClaudeMessage, toolNameByID map[string]string) (map[string]interface{}, error) {
 	role := strings.ToLower(msg.Role)
 	if role == "assistant" {
 		role = "model"
@@ -416,7 +369,7 @@ func (p *GeminiProvider) convertMessage(msg types.ClaudeMessage, toolNameByID ma
 
 	// 处理字符串内容
 	if str, ok := msg.Content.(string); ok {
-		parts = append(parts, map[string]string{
+		parts = append(parts, map[string]interface{}{
 			"text": str,
 		})
 		return map[string]interface{}{
@@ -439,7 +392,7 @@ func (p *GeminiProvider) convertMessage(msg types.ClaudeMessage, toolNameByID ma
 
 		case "text":
 			if text, ok := content["text"].(string); ok {
-				parts = append(parts, map[string]string{
+				parts = append(parts, map[string]interface{}{
 					"text": text,
 				})
 			}
@@ -468,9 +421,6 @@ func (p *GeminiProvider) convertMessage(msg types.ClaudeMessage, toolNameByID ma
 				functionCall["id"] = id
 			}
 			part := map[string]interface{}{"functionCall": functionCall}
-			if sig := thoughtSignatureByID[id]; sig != "" {
-				part["thoughtSignature"] = sig
-			}
 			applyGeminiThoughtSignaturePolicy(part, p.stripThoughtSignature, p.injectDummyThoughtSignature)
 
 			parts = append(parts, part)
@@ -603,12 +553,6 @@ func synthesizeGeminiToolCallID() string {
 // geminiFunctionCallKey 只用于同一条流内的去重。Gemini 原生流通常只发送一次
 // 完整 functionCall，但兼容网关可能在后续 chunk 重复发送相同对象；没有稳定 id
 // 时用名称和参数的规范表示识别它。不同参数仍视为不同调用，避免吞掉真实调用。
-func geminiFunctionCallKey(functionCall map[string]interface{}, name string, args interface{}) string {
-	if id, _ := functionCall["id"].(string); strings.TrimSpace(id) != "" {
-		return "id:" + strings.TrimSpace(id)
-	}
-	return "value:" + strings.TrimSpace(name) + ":" + codec.CanonicalJSON(args)
-}
 
 func rectifyGeminiFunctionCallIDs(parts []interface{}) {
 	for _, rawPart := range parts {
@@ -712,15 +656,15 @@ func extractGeminiThoughtSignature(part map[string]interface{}) string {
 }
 
 func applyGeminiThoughtSignaturePolicy(part map[string]interface{}, strip bool, injectDummy bool) {
-	fc, ok := part["functionCall"].(map[string]interface{})
-	if !ok {
-		return
-	}
+	fc, _ := part["functionCall"].(map[string]interface{})
 	if strip {
 		delete(part, "thoughtSignature")
 		delete(part, "thought_signature")
 		delete(fc, "thoughtSignature")
 		delete(fc, "thought_signature")
+		return
+	}
+	if fc == nil {
 		return
 	}
 	if _, exists := part["thoughtSignature"]; !exists {
@@ -742,66 +686,11 @@ func applyGeminiThoughtSignaturePolicy(part map[string]interface{}, strip bool, 
 }
 
 func claudeBlockToGeminiInlineData(block map[string]interface{}) (map[string]interface{}, bool) {
-	source, _ := block["source"].(map[string]interface{})
-	if source != nil {
-		sourceType, _ := source["type"].(string)
-		if sourceType == "base64" {
-			data, _ := source["data"].(string)
-			mimeType, _ := source["media_type"].(string)
-			if data == "" {
-				return nil, false
-			}
-			if mimeType == "" {
-				mimeType = visionmedia.DefaultImageMediaType
-			}
-			return map[string]interface{}{
-				"inlineData": map[string]interface{}{
-					"mimeType": mimeType,
-					"data":     data,
-				},
-			}, true
-		}
+	part, ok := visionmedia.ToGeminiImagePart(block, false)
+	if !ok {
+		return nil, false
 	}
-
-	if mediaType, data, ok := extractGeminiInlineBase64(block); ok {
-		return map[string]interface{}{
-			"inlineData": map[string]interface{}{
-				"mimeType": mediaType,
-				"data":     data,
-			},
-		}, true
-	}
-	return nil, false
-}
-
-func extractGeminiInlineBase64(block map[string]interface{}) (string, string, bool) {
-	mediaType, _ := block["media_type"].(string)
-	data, _ := block["data"].(string)
-	if data == "" {
-		if nested, ok := block["image_url"].(map[string]interface{}); ok {
-			url, _ := nested["url"].(string)
-			if mt, payload, ok := visionmedia.ParseImageDataURL(url); ok {
-				return mt, payload, true
-			}
-		}
-		if url, _ := block["image_url"].(string); url != "" {
-			if mt, payload, ok := visionmedia.ParseImageDataURL(url); ok {
-				return mt, payload, true
-			}
-		}
-		if url, _ := block["url"].(string); url != "" {
-			if mt, payload, ok := visionmedia.ParseImageDataURL(url); ok {
-				return mt, payload, true
-			}
-		}
-	}
-	if data == "" {
-		return "", "", false
-	}
-	if mediaType == "" {
-		mediaType = visionmedia.DefaultImageMediaType
-	}
-	return mediaType, data, true
+	return map[string]interface{}{"inlineData": part.InlineData}, true
 }
 
 // convertTools 转换工具

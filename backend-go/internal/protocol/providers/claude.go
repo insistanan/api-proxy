@@ -173,83 +173,39 @@ func (p *ClaudeProvider) HandleStreamResponseCtx(ctx context.Context, body io.Re
 		defer close(errChan)
 		defer codec.BindStreamBody(ctx, body)()
 
-		trySend := pump.send
-
 		scanner := pump.newScanner(body)
-
-		// 注意：为了让下游的 token 注入/修补逻辑保持正确，这里必须按「完整 SSE 事件」转发。
-		// 上游以空行分隔事件：event/data/id/retry/... + "\n"，空行 => 事件结束。
-		var eventBuf strings.Builder
-
-		flushEvent := func() bool {
-			if eventBuf.Len() == 0 {
-				return true
-			}
-			event := eventBuf.String()
-			eventBuf.Reset()
-			if !strings.HasSuffix(event, "\n\n") {
-				event += "\n"
-			}
-			terminal := false
-			errorEvent := false
-			for _, line := range strings.Split(event, "\n") {
-				if name, ok := strings.CutPrefix(line, "event:"); ok && strings.TrimSpace(name) == "error" {
-					errorEvent = true
-				}
-				payload, isData := codec.SSEDataJSON(line)
-				if !isData {
-					continue
-				}
-				var data struct {
-					Type  string          `json:"type"`
-					Error json.RawMessage `json:"error"`
-				}
-				if json.Unmarshal([]byte(payload), &data) != nil {
-					continue
-				}
-				if data.Type == "error" || (len(data.Error) > 0 && string(data.Error) != "null") {
-					pump.fail(NewUpstreamStreamFailedError(proxycoreIsModelCapacity(payload), payload))
-					return false
-				}
-				terminal = terminal || data.Type == "message_stop"
-			}
-			if errorEvent {
-				pump.fail(NewUpstreamStreamFailedError(proxycoreIsModelCapacity(event), event))
-				return false
-			}
-
-			// 收到完整终止事件即结束读取；随后上游关闭连接不属于流处理失败。
-			return trySend(event) && !terminal
-		}
-
 		for scanner.Scan() {
-			// 客户端断连：即使上游仍在产出，也立即中止，避免泄漏
-			select {
-			case <-ctx.Done():
+			event := scanner.Event()
+			line, err := scanner.DataLine()
+			if err != nil {
+				pump.fail(err)
 				return
-			default:
 			}
-
-			line := scanner.Text()
-
-			// 透传所有 SSE 字段（包括注释、id、retry 等）
-			eventBuf.WriteString(line)
-			eventBuf.WriteString("\n")
-
-			// 空行表示一个 SSE event 结束
-			if line == "" {
-				if !flushEvent() {
+			payload, _ := codec.SSEDataJSON(line)
+			var data struct {
+				Type  string          `json:"type"`
+				Error json.RawMessage `json:"error"`
+			}
+			if payload != "" {
+				if err := json.Unmarshal([]byte(payload), &data); err != nil {
+					pump.fail(err)
 					return
 				}
 			}
+			if event.Name == "error" || data.Type == "error" || (len(data.Error) > 0 && string(data.Error) != "null") {
+				pump.fail(NewUpstreamStreamFailedError(proxycoreIsModelCapacity(payload), payload))
+				return
+			}
+			// 下游安全与用量钩子共享单载荷事件；未知 JSON 字段保持原样。
+			output, err := event.Normalized()
+			if err != nil {
+				pump.fail(err)
+				return
+			}
+			if !pump.send(output) || data.Type == "message_stop" {
+				return
+			}
 		}
-
-		// 若上游未以空行结尾，仍尝试把最后的残留事件发出去
-		if !flushEvent() {
-			return
-		}
-
-		// 完整 message_stop 已在 flushEvent 中结束读取；到这里说明缺少完成事件。
 		pump.finishRead(false, scanner.Err())
 	}()
 

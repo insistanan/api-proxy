@@ -149,9 +149,9 @@ func TestPrepareRequest_KnownImageFailureIsReturned(t *testing.T) {
 		{ID: "vision", Name: "vision", BaseURL: server.URL, APIKeys: []string{"key"}},
 	})
 	registry := conversation.NewRegistry()
-	t.Cleanup(registry.Stop)
+	t.Cleanup(func() { registry.Stop() })
 	sch.SetConversationRegistry(registry)
-	record, err := registry.ObserveRequestWithError(conversation.Observation{
+	record, err := registry.ObserveRequestWithError(context.Background(), conversation.Observation{
 		APIKind: "messages", ConversationID: t.Name(), ImageFingerprints: []string{images[0].fingerprint},
 	})
 	require.NoError(t, err)
@@ -217,9 +217,9 @@ func TestVisionCache_ReadFailureReleasesEarlierClaims(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	registry, err := conversation.NewPersistentRegistryWithDB(db)
 	require.NoError(t, err)
-	t.Cleanup(registry.Stop)
+	t.Cleanup(func() { registry.Stop() })
 	sch.SetConversationRegistry(registry)
-	record, err := registry.ObserveRequestWithError(conversation.Observation{APIKind: "messages", ConversationID: t.Name()})
+	record, err := registry.ObserveRequestWithError(context.Background(), conversation.Observation{APIKind: "messages", ConversationID: t.Name()})
 	require.NoError(t, err)
 	t.Cleanup(func() { ClearConversationCache(record.ID) })
 	selection, err := sch.SelectVisionChannel(ctx.Request.Context(), scheduler.ChannelKindMessages, "vision", config.DefaultChannelPoolID)

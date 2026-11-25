@@ -17,7 +17,7 @@
             </th>
             <td>
               <span class="capability-mobile-label">适合的任务</span>
-              <UiSelect searchable creatable :model-value="row.tasks" :items="tasks" item-title="name" item-value="id" :return-object="false" multiple chips inline-chips closable-chips clearable placeholder="选择任务…" :aria-label="row.name + '适合的任务'" :disabled="disabled" :error-messages="row.tiers.length && !row.tasks.length ? '请选择适合的任务，或清空难度以停用' : []" hide-details="auto" @update:model-value="update(row.poolId, { tasks: $event ?? [] })" />
+              <UiSelect searchable :creatable="allowCustom" :model-value="row.tasks" :items="tasks" item-title="name" item-value="id" :return-object="false" multiple chips inline-chips closable-chips clearable placeholder="选择任务…" :aria-label="row.name + '适合的任务'" :disabled="disabled" :error-messages="row.tiers.length && !row.tasks.length ? '请选择适合的任务，或清空难度以停用' : []" hide-details="auto" @update:model-value="update(row.poolId, { tasks: $event ?? [] })" />
             </td>
             <td>
               <span class="capability-mobile-label">处理难度</span>
@@ -44,7 +44,7 @@ import UiSelect from '@/shared/ui/select/Select.vue'
 import { computed } from 'vue'
 import type { IntentGroupCapability, IntentTask } from '@/features/channels/services/intent'
 import EmptyState from '@/shared/components/feedback/EmptyState.vue'
-const props = defineProps<{ pools: { id: string; name: string }[]; tasks: IntentTask[]; disabled: boolean; useFeedback: boolean }>()
+const props = defineProps<{ pools: { id: string; name: string }[]; tasks: IntentTask[]; disabled: boolean; useFeedback: boolean; allowCustom?: boolean }>()
 const model = defineModel<IntentGroupCapability[]>({ required: true })
 const tiers = [{ title: '简单', value: 0 }, { title: '常规', value: 1 }, { title: '复杂', value: 2 }]
 // 列表来自现有渠道分组；能力配置只保存用户填写的内容，不另建分组清单。

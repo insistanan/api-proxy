@@ -242,7 +242,7 @@ func TestCacheClaudeResponseReasoning_ScopedToolCall(t *testing.T) {
 	clearReasoningContentCacheForTest()
 	defer clearReasoningContentCacheForTest()
 
-	CacheClaudeResponseReasoning(&types.ClaudeResponse{
+	CacheClaudeResponseReasoning(context.Background(), &types.ClaudeResponse{
 		Role: "assistant",
 		Content: []types.ClaudeContent{
 			{Type: "thinking", Thinking: "reasoning from another provider"},

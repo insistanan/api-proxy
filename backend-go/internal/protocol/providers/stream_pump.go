@@ -49,9 +49,9 @@ func (p *streamPump) fail(err error) {
 	}
 }
 
-// newScanner 共用可取消的逐行读取器，大小由实际事件决定。
-func (p *streamPump) newScanner(body io.Reader) *codec.SSELineReader {
-	return codec.NewSSELineReader(p.ctx, body)
+// newScanner 共用完整 SSE 事件读取器，大小由实际事件决定。
+func (p *streamPump) newScanner(body io.Reader) *codec.SSEEventReader {
+	return codec.NewSSEEventReader(p.ctx, body)
 }
 
 // finishRead 验证协议完成状态；取消不伪造成功，也不记录上游故障。

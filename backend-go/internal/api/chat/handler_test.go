@@ -38,29 +38,12 @@ func TestApplyChatModelMapping_RejectsAsymmetricCustomTool(t *testing.T) {
 	}
 }
 
-func TestApplyChatModelMapping_PrunesToolControlsWithoutTools(t *testing.T) {
-	input := []byte(`{
-		"model":"gpt-4o",
-		"messages":[{"role":"user","content":"hi"}],
-		"tool_choice":{"type":"function","name":"lookup"},
-		"parallel_tool_calls":true
-	}`)
-
-	out, err := applyChatModelMapping(input, &config.UpstreamConfig{})
-	if err != nil {
-		t.Fatalf("applyChatModelMapping 不应报错: %v", err)
-	}
-
-	var payload map[string]interface{}
-	if err := json.Unmarshal(out, &payload); err != nil {
-		t.Fatalf("解析结果失败: %v", err)
-	}
-
-	if _, exists := payload["tool_choice"]; exists {
-		t.Fatalf("没有 tools 时应移除 tool_choice: %#v", payload["tool_choice"])
-	}
-	if _, exists := payload["parallel_tool_calls"]; exists {
-		t.Fatalf("没有 tools 时应移除 parallel_tool_calls: %#v", payload["parallel_tool_calls"])
+func TestApplyChatModelMapping_RejectsForcedToolWithoutDeclaration(t *testing.T) {
+	for _, choice := range []string{`"required"`, `{"type":"function","name":"lookup"}`} {
+		_, err := applyChatModelMapping([]byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],"tool_choice":`+choice+`}`), &config.UpstreamConfig{})
+		if _, ok := err.(*types.InvalidRequestError); !ok {
+			t.Fatalf("未声明工具的强制约束应为请求错误: %v", err)
+		}
 	}
 }
 

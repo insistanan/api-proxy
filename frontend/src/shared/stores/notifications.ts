@@ -1,4 +1,4 @@
-import { computed, ref } from 'vue'
+import { computed, onScopeDispose, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { ToastType } from '@/shared/composables/useToast'
 
@@ -15,6 +15,7 @@ export interface AppNotification {
   readAt: number | null
   key?: string
   link?: string
+  route?: string
 }
 
 const STORAGE_KEY = 'api-proxy-notifications'
@@ -111,17 +112,21 @@ export const useNotificationStore = defineStore('notifications', () => {
   }
 
   function pruneRead(now = Date.now()) {
+    reload()
     const retained = storedMessages.value.filter(item => item.readAt === null || now - item.readAt < READ_RETENTION_MS)
     if (retained.length === storedMessages.value.length) return
     storedMessages.value = retained
     persist()
   }
 
-  function addMessage(message: string, type: ToastType, options: { source?: string; key?: string; link?: string; level: NotificationLevel }) {
+  function addMessage(message: string, type: ToastType, options: { source?: string; key?: string; link?: string; route?: string; createdAt?: number; level: NotificationLevel }) {
     pruneRead()
     if (options.key) {
       const existing = messages.value.find(item => item.key === options.key && item.message === message && item.type === type)
-      if (existing) return existing.id
+      if (existing) {
+        if (writeError.value) persist()
+        return existing.id
+      }
     }
     const item: AppNotification = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, message, type,
@@ -143,6 +148,7 @@ export const useNotificationStore = defineStore('notifications', () => {
   }
 
   function setRead(id: string, read: boolean) {
+    reload()
     const item = messages.value.find(message => message.id === id)
     if (!item) return
     item.readAt = read ? (item.readAt ?? Date.now()) : null
@@ -150,32 +156,47 @@ export const useNotificationStore = defineStore('notifications', () => {
   }
 
   function markAllRead() {
+    reload()
     const now = Date.now()
     messages.value.forEach(item => { item.readAt ??= now })
     persist()
   }
 
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) {
-      const parsed: unknown = JSON.parse(raw)
-      if (!Array.isArray(parsed) || !parsed.every((item: unknown) => {
-        if (!item || typeof item !== 'object') return false
-        const row = item as Record<string, unknown>
-        return typeof row.id === 'string' && typeof row.message === 'string' && typeof row.source === 'string'
-          && typeof row.createdAt === 'number' && Number.isFinite(row.createdAt)
-          && (row.readAt === null || (typeof row.readAt === 'number' && Number.isFinite(row.readAt)))
-          && ['success', 'error', 'warning', 'info'].includes(String(row.type))
-          && (row.level === undefined || row.level === 'notice' || row.level === 'warning')
-          && (row.key === undefined || typeof row.key === 'string')
-          && (row.link === undefined || typeof row.link === 'string')
-      })) throw new Error('本地消息记录格式无效')
-      storedMessages.value = parsed as AppNotification[]
-      pruneRead()
+  function reload() {
+    // 写入失败的消息仍留在当前页，不能被其他标签页的旧快照覆盖。
+    if (writeError.value) return
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY)
+      if (raw) {
+        const parsed: unknown = JSON.parse(raw)
+        if (!Array.isArray(parsed) || !parsed.every((item: unknown) => {
+          if (!item || typeof item !== 'object') return false
+          const row = item as Record<string, unknown>
+          return typeof row.id === 'string' && typeof row.message === 'string' && typeof row.source === 'string'
+            && typeof row.createdAt === 'number' && Number.isFinite(row.createdAt)
+            && (row.readAt === null || (typeof row.readAt === 'number' && Number.isFinite(row.readAt)))
+            && ['success', 'error', 'warning', 'info'].includes(String(row.type))
+            && (row.level === undefined || row.level === 'notice' || row.level === 'warning')
+            && (row.key === undefined || typeof row.key === 'string')
+            && (row.link === undefined || typeof row.link === 'string')
+            && (row.route === undefined || (typeof row.route === 'string' && row.route.startsWith('/') && !row.route.startsWith('//')))
+        })) throw new Error('本地消息记录格式无效')
+        storedMessages.value = parsed as AppNotification[]
+      } else {
+        storedMessages.value = []
+      }
+      readError.value = ''
+    } catch (error) {
+      readError.value = `消息记录读取失败：${describeError(error)}`
     }
-  } catch (error) {
-    readError.value = `消息记录读取失败：${describeError(error)}`
   }
+
+  function storageChanged(event: StorageEvent) {
+    if (event.key === STORAGE_KEY || event.key === null) reload()
+  }
+  pruneRead()
+  window.addEventListener('storage', storageChanged)
+  onScopeDispose(() => window.removeEventListener('storage', storageChanged))
 
   return { messages, storageError, unreadCount, addMessage, setRead, markAllRead, pruneRead, desktopMode, desktopError, setDesktopMode, testDesktopNotification }
 })

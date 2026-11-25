@@ -36,7 +36,7 @@ func Finish(protocol, reason string) (Completion, error) {
 		case "", "STOP":
 		case "MAX_TOKENS":
 			result = Completion{"incomplete", "max_output_tokens"}
-		case "SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "IMAGE_SAFETY":
+		case "SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT", "MODEL_ARMOR":
 			result = Completion{"incomplete", "content_filter"}
 		default:
 			return Completion{}, fmt.Errorf("Gemini 停止原因无法转换: %q", reason)
@@ -52,4 +52,27 @@ func (c Completion) Apply(response map[string]interface{}) {
 	if c.Reason != "" {
 		response["incomplete_details"] = map[string]interface{}{"reason": c.Reason}
 	}
+}
+
+func ResponsesCompletion(status, reason string) (Completion, error) {
+	if status == "completed" {
+		return Completion{Status: status}, nil
+	}
+	if status == "incomplete" && (reason == "max_output_tokens" || reason == "content_filter") {
+		return Completion{Status: status, Reason: reason}, nil
+	}
+	return Completion{}, fmt.Errorf("Responses 终态无法转换: status=%q reason=%q", status, reason)
+}
+
+func (c Completion) ClaudeStopReason(hasTools bool) string {
+	switch c.Reason {
+	case "max_output_tokens":
+		return "max_tokens"
+	case "content_filter":
+		return "refusal"
+	}
+	if hasTools {
+		return "tool_use"
+	}
+	return "end_turn"
 }

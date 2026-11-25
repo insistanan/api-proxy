@@ -30,9 +30,10 @@ type ResponseChainState struct {
 
 // ResponseChainManager 按 conversationID 保存最近一次成功的 Responses 链状态。
 type ResponseChainManager struct {
-	mu    sync.RWMutex
-	items map[string]*ResponseChainState
-	ttl   time.Duration
+	mu     sync.RWMutex
+	items  map[string]*ResponseChainState
+	ttl    time.Duration
+	timers map[string]*time.Timer
 }
 
 var defaultResponseChainManager = NewResponseChainManager(30 * time.Minute)
@@ -48,8 +49,9 @@ func NewResponseChainManager(ttl time.Duration) *ResponseChainManager {
 		ttl = 30 * time.Minute
 	}
 	return &ResponseChainManager{
-		items: make(map[string]*ResponseChainState),
-		ttl:   ttl,
+		items:  make(map[string]*ResponseChainState),
+		timers: make(map[string]*time.Timer),
+		ttl:    ttl,
 	}
 }
 
@@ -58,13 +60,14 @@ func (manager *ResponseChainManager) Get(conversationID string) (*ResponseChainS
 	if manager == nil || conversationID == "" {
 		return nil, false
 	}
-	manager.mu.RLock()
-	defer manager.mu.RUnlock()
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
 	state, exists := manager.items[conversationID]
 	if !exists || state == nil {
 		return nil, false
 	}
 	if time.Since(state.UpdatedAt) > manager.ttl {
+		manager.clearLocked(conversationID)
 		return nil, false
 	}
 	copied := *state
@@ -78,7 +81,26 @@ func (manager *ResponseChainManager) Set(conversationID string, state ResponseCh
 	}
 	state.UpdatedAt = time.Now()
 	manager.mu.Lock()
+	manager.clearLocked(conversationID)
+	// 缓存均可由完整请求重建，容量压力只淘汰优化状态。
+	if len(manager.items) >= 1024 {
+		oldestID := ""
+		var oldest time.Time
+		for id, entry := range manager.items {
+			if oldestID == "" || entry.UpdatedAt.Before(oldest) {
+				oldestID, oldest = id, entry.UpdatedAt
+			}
+		}
+		manager.clearLocked(oldestID)
+	}
 	manager.items[conversationID] = &state
+	manager.timers[conversationID] = time.AfterFunc(manager.ttl, func() {
+		manager.mu.Lock()
+		defer manager.mu.Unlock()
+		if manager.items[conversationID] == &state {
+			manager.clearLocked(conversationID)
+		}
+	})
 	manager.mu.Unlock()
 }
 
@@ -88,7 +110,7 @@ func (manager *ResponseChainManager) Clear(conversationID string) {
 		return
 	}
 	manager.mu.Lock()
-	delete(manager.items, conversationID)
+	manager.clearLocked(conversationID)
 	manager.mu.Unlock()
 }
 
@@ -98,6 +120,17 @@ func (manager *ResponseChainManager) ClearAll() {
 		return
 	}
 	manager.mu.Lock()
+	for id := range manager.items {
+		manager.clearLocked(id)
+	}
 	manager.items = make(map[string]*ResponseChainState)
 	manager.mu.Unlock()
+}
+
+func (manager *ResponseChainManager) clearLocked(id string) {
+	if timer := manager.timers[id]; timer != nil {
+		timer.Stop()
+		delete(manager.timers, id)
+	}
+	delete(manager.items, id)
 }

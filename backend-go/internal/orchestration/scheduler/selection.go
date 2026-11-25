@@ -80,7 +80,7 @@ func (s *ChannelScheduler) SelectChannel(
 		routedChannels = append(routedChannels, channelsByPool[pool.ID]...)
 	}
 
-	if selected, hasOverride, err := s.selectConversationRouteOverride(conversationID, kind, routedChannels, failedChannels, registry); err != nil {
+	if selected, hasOverride, err := s.selectConversationRouteOverride(ctx, conversationID, kind, routedChannels, failedChannels, registry); err != nil {
 		return nil, err
 	} else if hasOverride {
 		result, err := s.reserveAndReturn(selected, kind)
@@ -130,6 +130,7 @@ func (s *ChannelScheduler) SelectChannel(
 }
 
 func (s *ChannelScheduler) selectConversationRouteOverride(
+	ctx context.Context,
 	conversationID string,
 	kind ChannelKind,
 	routedChannels []ChannelInfo,
@@ -139,7 +140,7 @@ func (s *ChannelScheduler) selectConversationRouteOverride(
 	if conversationID == "" || registry == nil {
 		return nil, false, nil
 	}
-	override, err := registry.LookupRouteOverride(conversationID)
+	override, err := registry.LookupRouteOverride(ctx, conversationID)
 	if err != nil {
 		return nil, true, fmt.Errorf("读取对话固定渠道失败: %w", err)
 	}

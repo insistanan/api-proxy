@@ -1,4 +1,4 @@
-package converters
+package togemini
 
 import (
 	"encoding/json"
@@ -9,8 +9,8 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// GeminiNativeRequest 只修改明确配置的签名字段，其他原生字段完整保留。
-func GeminiNativeRequest(req *types.GeminiRequest, stripSignature, injectSignature bool) ([]byte, error) {
+// NativeRequest 只修改明确配置的签名字段，其他原生字段完整保留。
+func NativeRequest(req *types.GeminiRequest, stripSignature, injectSignature bool) ([]byte, error) {
 	body := req.RawJSON
 	if len(body) == 0 {
 		var err error
@@ -33,7 +33,7 @@ func GeminiNativeRequest(req *types.GeminiRequest, stripSignature, injectSignatu
 						return nil, err
 					}
 				}
-			} else if part.Get("functionCall").Exists() && !part.Get("thoughtSignature").Exists() && !part.Get("thought_signature").Exists() {
+			} else if part.Get("functionCall").Exists() && !part.Get("thoughtSignature").Exists() && !part.Get("thought_signature").Exists() && !part.Get("functionCall.thoughtSignature").Exists() && !part.Get("functionCall.thought_signature").Exists() {
 				body, err = sjson.SetBytes(body, path+".thoughtSignature", types.DummyThoughtSignature)
 				if err != nil {
 					return nil, err

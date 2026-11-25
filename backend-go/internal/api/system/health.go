@@ -1,6 +1,7 @@
 package system
 
 import (
+	"runtime"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -19,6 +20,10 @@ func HealthCheck(envCfg *config.EnvConfig, cfgManager *config.ConfigManager) gin
 			"mode":      envCfg.Env,
 			"port":      envCfg.Port,
 			"version":   getVersion(),
+			"platform": gin.H{
+				"os":   runtime.GOOS,
+				"arch": runtime.GOARCH,
+			},
 			"config": gin.H{
 				"upstreamCount":        len(config.Upstream),
 				"loadBalance":          config.LoadBalance,

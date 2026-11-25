@@ -28,7 +28,7 @@ func TestInitializeProfiles_RejectsMissingProtocolMetrics(t *testing.T) {
 		}
 	}
 	sch := NewChannelScheduler(manager, managers, nil, nil)
-	t.Cleanup(sch.Stop)
+	t.Cleanup(func() { sch.Stop() })
 	sch.SetProfileManager(metrics.NewProfileManager())
 	require.ErrorContains(t, sch.InitializeProfiles(), "decisions")
 	sch.metricsManagers[ChannelKindDecisions] = metrics.NewMetricsManager()
@@ -352,12 +352,15 @@ func TestSelectChannel_ConversationOverridePrecedesPromotion(t *testing.T) {
 
 	registry := conversation.NewRegistry()
 	defer registry.Stop()
-	record := registry.ObserveRequest(conversation.Observation{
+	record, observeErr := registry.ObserveRequestWithError(context.Background(), conversation.Observation{
 		APIKind:        string(ChannelKindMessages),
 		ConversationID: "override-before-promotion",
 	})
-	if _, err := registry.SetRouteOverride(record.ID, string(ChannelKindMessages), 0, "override-channel"); err != nil {
-		t.Fatalf("SetRouteOverride() error = %v", err)
+	if observeErr != nil {
+		t.Fatal(observeErr)
+	}
+	if _, err := registry.SetRouteOverride(context.Background(), record.ID, string(ChannelKindMessages), 0, "override-channel"); err != nil {
+		t.Fatalf("SetRouteOverride(context.Background(), ) error = %v", err)
 	}
 	scheduler.SetConversationRegistry(registry)
 

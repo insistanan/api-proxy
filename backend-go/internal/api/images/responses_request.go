@@ -5,17 +5,17 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/protocol/contract"
-	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"mime"
 	"net/http"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/contract"
+	"github.com/insistanan/api-proxy/internal/protocol/converters/toimages"
+	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/insistanan/api-proxy/internal/proxycore"
 )
 
@@ -31,7 +31,9 @@ func buildImagesResponsesRequest(c *gin.Context, upstream *config.UpstreamConfig
 	}
 	converted, err := convertImagesRequestToResponses(payload, upstream, endpoint == "/images/edits")
 	if err != nil {
-		if types.IsUnsupportedProtocol(err) { return nil, err }
+		if types.IsUnsupportedProtocol(err) {
+			return nil, err
+		}
 		return nil, &proxycore.RequestValidationError{Err: err}
 	}
 	encoded, err := codec.MarshalJSONNoEscape(converted)
@@ -139,156 +141,17 @@ func multipartImageReference(part codec.MultipartPart) (map[string]interface{}, 
 }
 
 func convertImagesRequestToResponses(payload map[string]interface{}, upstream *config.UpstreamConfig, isEdit bool) (map[string]interface{}, error) {
+	if upstream == nil {
+		return nil, fmt.Errorf("Responses 图片渠道配置缺失")
+	}
 	applyImagesOutputConfig(payload, upstream)
 	model, _ := payload["model"].(string)
-	prompt, _ := payload["prompt"].(string)
-	resolvedModel, modelChanged := resolveImagesUpstreamModel(model, upstream)
-	if resolvedModel == "" || strings.TrimSpace(prompt) == "" {
-		return nil, fmt.Errorf("Responses 图片渠道要求 Images 请求包含 model 和 prompt")
-	}
-	if modelChanged {
+	resolvedModel, changed := resolveImagesUpstreamModel(model, upstream)
+	if changed {
 		logImagesModelMapping(model, resolvedModel)
 	}
-	if format, exists := payload["response_format"]; exists && format != "b64_json" {
-		return nil, contract.Unsupported("Responses 图片渠道只能返回 b64_json，无法生成托管图片 URL")
-	}
-	if stream, exists := payload["stream"]; exists {
-		if _, ok := stream.(bool); !ok {
-			return nil, fmt.Errorf("Images 参数 stream 必须是布尔值")
-		}
-	}
-	if n, exists := payload["n"]; exists && n != nil {
-		count, err := imagesIntegerParameter("n", n)
-		if err != nil {
-			return nil, err
-		}
-		if count != 1 {
-			return nil, contract.Unsupported("Responses 图片渠道只支持 n=1；多图生成请使用 Images API 渠道")
-		}
-	}
-	// 顶层 model 是 Responses 主模型。真正的生图模型只写进 image_generation 工具。
-	// 渠道自定义参数不注入这条路径，未知字段会被上游拒绝。
-	forceNonStream := upstream != nil && upstream.ImagesForceNonStream
-	tool := map[string]interface{}{"type": "image_generation", "model": resolvedModel}
-	for key, value := range payload {
-		switch key {
-		case "size", "quality", "background", "output_format", "moderation", "input_fidelity", "output_compression", "complexity", "frame_count", "frame_duration_ms", "svg":
-			if value != nil {
-				tool[key] = value
-			}
-		case "partial_images":
-			if !forceNonStream {
-				tool[key] = value
-			}
-		case "model", "prompt", "stream", "response_format", "images", "image", "mask", "user", "metadata", "safety_identifier", "n":
-			// 通用字段在下方分别写入 Responses 请求。
-		default:
-			return nil, contract.Unsupported("Images 参数 %q 无法转换为 Responses 图片请求", key)
-		}
-	}
-	content := []interface{}{map[string]interface{}{"type": "input_text", "text": prompt}}
-	var references []interface{}
-	if raw, exists := payload["images"]; exists {
-		var ok bool
-		references, ok = raw.([]interface{})
-		if !ok {
-			return nil, fmt.Errorf("Images 参数 images 必须是图片数组")
-		}
-	}
-	if raw, exists := payload["image"]; exists {
-		if len(references) > 0 {
-			return nil, fmt.Errorf("Images 请求不能同时包含 image 和 images")
-		}
-		if list, ok := raw.([]interface{}); ok {
-			references = list
-		} else {
-			references = []interface{}{raw}
-		}
-	}
-	if isEdit && len(references) == 0 {
-		return nil, fmt.Errorf("Images 编辑请求至少需要一张参考图")
-	}
-	if !isEdit && len(references) > 0 {
-		return nil, fmt.Errorf("带参考图的请求请使用 /v1/images/edits")
-	}
-	for _, reference := range references {
-		image, err := responsesImageReference(reference)
-		if err != nil {
-			return nil, err
-		}
-		image["type"] = "input_image"
-		content = append(content, image)
-	}
-	if mask, exists := payload["mask"]; exists {
-		if !isEdit {
-			return nil, fmt.Errorf("Images 蒙版只能用于编辑请求")
-		}
-		converted, err := responsesImageReference(mask)
-		if err != nil {
-			return nil, fmt.Errorf("Images 蒙版无效: %w", err)
-		}
-		tool["input_image_mask"] = converted
-	}
-	if isEdit {
-		tool["action"] = "edit"
-	} else {
-		tool["action"] = "generate"
-	}
-	if err := validateImagesOutputParameters(tool, true); err != nil {
-		return nil, err
-	}
-	result := map[string]interface{}{
-		"model": upstream.ResponsesModel,
-		"input": []interface{}{map[string]interface{}{"role": "user", "content": content}},
-		"tools": []interface{}{tool}, "tool_choice": map[string]interface{}{"type": "image_generation"},
-	}
-	if forceNonStream {
-		result["stream"] = false
-	} else if value, exists := payload["stream"]; exists {
-		result["stream"] = value
-	}
-	if value, exists := payload["user"]; exists {
-		result["user"] = value
-	}
-	if value, exists := payload["safety_identifier"]; exists {
-		if value != nil {
-			identifier, ok := value.(string)
-			if !ok || utf8.RuneCountInString(identifier) > 128 {
-				return nil, fmt.Errorf("Images safety_identifier 必须是长度不超过 128 的字符串")
-			}
-		}
-		result["safety_identifier"] = value
-	}
-	if raw, exists := payload["metadata"]; exists {
-		metadata, ok := raw.(map[string]interface{})
-		if !ok {
-			return nil, fmt.Errorf("Images metadata 必须是对象")
-		}
-		forwarded := make(map[string]interface{})
-		for key, value := range metadata {
-			if key != "channel_index" && key != "purpose" {
-				forwarded[key] = value
-			}
-		}
-		if len(forwarded) > 0 {
-			result["metadata"] = forwarded
-		}
-	}
-	return result, nil
-}
-
-func responsesImageReference(raw interface{}) (map[string]interface{}, error) {
-	if text, ok := raw.(string); ok {
-		raw = map[string]interface{}{"image_url": text}
-	}
-	image, ok := raw.(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("Images 参考图必须是 URL、data URL 或包含 image_url/file_id 的对象")
-	}
-	for _, key := range []string{"image_url", "file_id"} {
-		if value, ok := image[key].(string); ok && strings.TrimSpace(value) != "" {
-			return map[string]interface{}{key: value}, nil
-		}
-	}
-	return nil, fmt.Errorf("Images 参考图缺少有效的 image_url 或 file_id")
+	return toimages.ResponsesRequest(payload, toimages.ResponsesRequestOptions{
+		ImageModel: resolvedModel, ResponsesModel: upstream.ResponsesModel,
+		ForceNonStream: upstream.ImagesForceNonStream, IsEdit: isEdit,
+	})
 }

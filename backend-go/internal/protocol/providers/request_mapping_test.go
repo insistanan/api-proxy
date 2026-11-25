@@ -105,7 +105,7 @@ func TestConvertToProviderRequest_ResponsesUpstreamPassesTopPAndStop(t *testing.
 		TopP:          floatPointer(0.3),
 		StopSequences: []string{"DONE"},
 	}
-	req, err := claudeRequestToResponsesRequest(claudeReq, upstream, "conv-1")
+	req, err := claudeRequestToResponsesRequest(claudeReq, upstream, "conv-1", upstream.RequestIdentity("test-key"))
 	if err != nil {
 		t.Fatalf("claudeRequestToResponsesRequest() err = %v", err)
 	}

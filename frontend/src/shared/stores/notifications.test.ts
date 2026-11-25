@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createPinia, setActivePinia } from 'pinia'
+import { createPinia, disposePinia, setActivePinia } from 'pinia'
 import { useNotificationStore } from '@/shared/stores/notifications'
 import { useToast } from '@/shared/composables/useToast'
 
@@ -50,10 +50,9 @@ describe('消息中心', () => {
 
   it('从标记已读起计时满 7 天移除，未读消息保留', () => {
     const store = useNotificationStore()
-    const first = store.addMessage('很早的未读消息', 'info', { level: 'notice' })
-    const second = store.addMessage('稍后阅读的消息', 'info', { level: 'notice' })
-    const now = Date.now()
-    store.messages.forEach(item => { item.createdAt = now - 30 * 24 * 60 * 60 * 1000 })
+    const createdAt = Date.now() - 30 * 24 * 60 * 60 * 1000
+    const first = store.addMessage('很早的未读消息', 'info', { level: 'notice', createdAt })
+    const second = store.addMessage('稍后阅读的消息', 'info', { level: 'notice', createdAt })
     store.setRead(second, true)
     const readAt = store.messages.find(item => item.id === second)!.readAt!
     store.pruneRead(readAt + 7 * 24 * 60 * 60 * 1000 - 1)
@@ -130,5 +129,37 @@ describe('消息中心', () => {
     store.addMessage('待确认', 'warning', { level: 'warning', source: '命令审核', key: 'gate:1' })
     store.addMessage('已决定', 'success', { level: 'notice', source: '命令审核', key: 'gate-decision:1:block' })
     expect(notify).toHaveBeenCalledTimes(1)
+  })
+
+  it('来自另一个标签页的消息不会被当前页的已读操作覆盖', () => {
+    const firstPinia = createPinia(), secondPinia = createPinia()
+    try {
+      const first = useNotificationStore(firstPinia)
+      const id = first.addMessage('先到的来信', 'info', { level: 'notice', key: 'first' })
+      const second = useNotificationStore(secondPinia)
+      second.addMessage('新树长大了', 'success', { level: 'notice', key: 'tree:1', route: '/usage-journal?tab=forest&event=island%3A1', createdAt: 1234567890 })
+      first.setRead(id, true)
+      const saved = JSON.parse(localStorage.getItem('api-proxy-notifications')!)
+      expect(saved).toHaveLength(2)
+      expect(saved.find((item: { key: string }) => item.key === 'tree:1')).toMatchObject({ route: '/usage-journal?tab=forest&event=island%3A1', createdAt: 1234567890, readAt: null })
+      window.dispatchEvent(new StorageEvent('storage', { key: 'api-proxy-notifications' }))
+      expect(second.unreadCount).toBe(1)
+      expect(second.messages.find(item => item.id === id)?.readAt).not.toBeNull()
+    } finally {
+      disposePinia(firstPinia)
+      disposePinia(secondPinia)
+    }
+  })
+
+  it('写入失败后重复投递会补存原消息，不重复创建', () => {
+    const store = useNotificationStore()
+    const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('暂时不可写') })
+    const options = { level: 'notice' as const, key: 'forest:achievement:first', route: '/usage-journal?tab=achievements&event=achievement%3Afirst' }
+    const id = store.addMessage('一粒种子的远行', 'success', options)
+    expect(store.storageError).not.toBe('')
+    write.mockRestore()
+    expect(store.addMessage('一粒种子的远行', 'success', options)).toBe(id)
+    expect(store.storageError).toBe('')
+    expect(JSON.parse(localStorage.getItem('api-proxy-notifications')!)).toHaveLength(1)
   })
 })

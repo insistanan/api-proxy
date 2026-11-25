@@ -30,6 +30,9 @@ func (p *OpenAIProvider) ConvertToClaudeResponse(providerResp *types.ProviderRes
 		}
 		return responsesResponseToClaude(&responsesResp)
 	}
+	if err := contract.ValidateResponse("openai", providerResp.Body); err != nil {
+		return nil, err
+	}
 
 	var openaiResp types.OpenAIResponse
 	if err := json.Unmarshal(providerResp.Body, &openaiResp); err != nil {
@@ -78,7 +81,7 @@ func (p *OpenAIProvider) ConvertToClaudeResponse(providerResp *types.ProviderRes
 		if thinkingContent != "" {
 			cacheMessage := msg
 			cacheMessage.Content = visibleContent
-			storeReasoningForAssistantMessage(cacheMessage, thinkingContent, p.reasoningScope)
+			p.cacheLease.Store(func() { storeReasoningForAssistantMessage(cacheMessage, thinkingContent, p.reasoningScope) })
 			if !p.hideReasoning {
 				claudeResp.Content = append(claudeResp.Content, types.ClaudeContent{
 					Type:     "thinking",
@@ -111,15 +114,11 @@ func (p *OpenAIProvider) ConvertToClaudeResponse(providerResp *types.ProviderRes
 		}
 
 		// 设置停止原因
-		if choice.FinishReason == "length" {
-			claudeResp.StopReason = "max_tokens"
-		} else if choice.FinishReason == "content_filter" {
-			claudeResp.StopReason = "refusal"
-		} else if len(msg.ToolCalls) > 0 {
-			claudeResp.StopReason = "tool_use"
-		} else {
-			claudeResp.StopReason = "end_turn"
+		completion, err := contract.Finish("openai", choice.FinishReason)
+		if err != nil {
+			return nil, err
 		}
+		claudeResp.StopReason = completion.ClaudeStopReason(len(msg.ToolCalls) > 0)
 	}
 
 	// 添加使用统计

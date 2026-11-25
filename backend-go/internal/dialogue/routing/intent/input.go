@@ -80,7 +80,10 @@ func ParseInput(body []byte) (Input, error) {
 func normalizeInput(text string) (string, bool) {
 	chars := []rune(strings.TrimSpace(text))
 	if len(chars) > 4000 {
-		return string(chars[:4000]), true
+		// 长日志和材料后经常附有真正的任务要求，同时保留首尾并明确标记省略。
+		const marker = "\n[中间材料已省略]\n"
+		tail := 1500
+		return string(chars[:4000-tail-len([]rune(marker))]) + marker + string(chars[len(chars)-tail:]), true
 	}
 	return string(chars), false
 }

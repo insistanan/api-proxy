@@ -97,7 +97,7 @@ func GetLogConversations(store *logger.Store, registry *conversation.Registry) g
 				if group.Latest.ConversationID == "" {
 					continue
 				}
-				record, err := registry.Lookup(group.Latest.ConversationID)
+				record, err := registry.Lookup(c.Request.Context(), group.Latest.ConversationID)
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 					return

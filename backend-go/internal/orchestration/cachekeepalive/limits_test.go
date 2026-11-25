@@ -23,6 +23,39 @@ func TestKeepalive_RejectsUnboundedPolicyBeforeRetainingBody(t *testing.T) {
 	require.Equal(t, "stopped", m.Status("channel-test")[0].State)
 }
 
+func TestKeepalive_ActiveChannelsExcludeRoundsThatCannotSend(t *testing.T) {
+	for _, scenario := range []string{"deadline", "count", "expired-cache", "config-change", "new-request", "manual-stop", "no-next-heartbeat"} {
+		t.Run(scenario, func(t *testing.T) {
+			m, now, revision := fixture(t)
+			reads := 0
+			source := sampleSource(sampleBody, "attempt", &reads)
+			if scenario == "no-next-heartbeat" {
+				source.Upstream.CacheKeepalive.MaxIdleMinutes = 2
+			}
+			finishReal(m.Begin("session"), source)
+			*now = now.Add(time.Minute)
+			runDue(t, m)
+			switch scenario {
+			case "deadline":
+				*now = m.entries["session"].deadline
+			case "count":
+				m.entries["session"].status.Attempts = source.Upstream.CacheKeepalive.MaxAttempts
+			case "expired-cache":
+				*now = now.Add(5 * time.Minute)
+			case "config-change":
+				(*revision)++
+			case "new-request":
+				m.Begin("session")
+			case "manual-stop":
+				m.StopChannel("channel-test", "session")
+			case "no-next-heartbeat":
+				require.Zero(t, m.Status("channel-test")[0].NextHeartbeatAt, "检查期限不应展示为心跳时间")
+			}
+			require.Empty(t, m.ActiveChannels(), "没有可执行保活的会话时应隐藏图标")
+		})
+	}
+}
+
 func TestKeepalive_RechecksDeadlineImmediatelyBeforeSending(t *testing.T) {
 	m, now, _ := fixture(t)
 	reads := 0

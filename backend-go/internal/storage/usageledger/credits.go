@@ -8,7 +8,7 @@ import (
 )
 
 func (s *Store) Credits(ctx context.Context, after int64) ([]tokenusage.Credit, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT seq, input + output + creation + cache_read
+	rows, err := s.db.QueryContext(ctx, `SELECT seq, input + output + creation + cache_read, at_ms
 FROM usage_facts WHERE seq > ? AND source = 'upstream' ORDER BY seq LIMIT 256`, after)
 	if err != nil {
 		return nil, err
@@ -17,12 +17,28 @@ FROM usage_facts WHERE seq > ? AND source = 'upstream' ORDER BY seq LIMIT 256`, 
 	var credits []tokenusage.Credit
 	for rows.Next() {
 		var item tokenusage.Credit
-		if err := rows.Scan(&item.Cursor, &item.Tokens); err != nil {
+		if err := rows.Scan(&item.Cursor, &item.Tokens, &item.At); err != nil {
 			return nil, err
 		}
 		credits = append(credits, item)
 	}
 	return credits, rows.Err()
+}
+
+// LatestGrowthUsage 用于回访时核对尚未被森林消费的用量，避免把消费延迟误判为闲置。
+func (s *Store) LatestGrowthUsage(ctx context.Context) (int64, error) {
+	var at int64
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(at_ms),0) FROM usage_facts
+WHERE source='upstream' AND input + output + creation + cache_read > 0`).Scan(&at)
+	return at, err
+}
+
+// PreviousGrowthUsage 按实际时间查找前一次用量，不受森林消费分页和事实入账顺序影响。
+func (s *Store) PreviousGrowthUsage(ctx context.Context, before int64) (int64, error) {
+	var at int64
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(at_ms),0) FROM usage_facts
+WHERE at_ms<? AND source='upstream' AND input + output + creation + cache_read > 0`, before).Scan(&at)
+	return at, err
 }
 
 func (s *Store) GrowthDate(now time.Time) string {

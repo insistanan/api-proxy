@@ -4,6 +4,7 @@
 package messages
 
 import (
+	"context"
 	"encoding/json"
 	"sort"
 
@@ -72,9 +73,9 @@ func (ctx *Context) captureReasoningContext(data map[string]interface{}) {
 	}
 }
 
-func (ctx *Context) cacheClaudeReasoning() {
+func (ctx *Context) cacheClaudeReasoning(requestCtx context.Context) error {
 	if ctx == nil || ctx.Reasoning.Len() == 0 {
-		return
+		return nil
 	}
 	indexes := make([]int, 0, len(ctx.ToolCalls))
 	for index := range ctx.ToolCalls {
@@ -93,7 +94,9 @@ func (ctx *Context) cacheClaudeReasoning() {
 		}
 		var input interface{} = map[string]interface{}{}
 		if call.Arguments.Len() > 0 {
-			_ = json.Unmarshal([]byte(call.Arguments.String()), &input)
+			if err := json.Unmarshal([]byte(call.Arguments.String()), &input); err != nil {
+				return err
+			}
 		}
 		content = append(content, types.ClaudeContent{
 			Type:  "tool_use",
@@ -102,5 +105,5 @@ func (ctx *Context) cacheClaudeReasoning() {
 			Input: input,
 		})
 	}
-	providers.CacheClaudeResponseReasoning(&types.ClaudeResponse{Role: "assistant", Content: content}, ctx.ReasoningScope)
+	return providers.CacheClaudeResponseReasoning(requestCtx, &types.ClaudeResponse{Role: "assistant", Content: content}, ctx.ReasoningScope)
 }

@@ -62,6 +62,12 @@ type persistedState struct {
 }
 
 type Service struct {
+	preparationMu      sync.Mutex
+	preparation        Preparation
+	preparationCancel  context.CancelFunc
+	preparationDone    chan struct{}
+	preparationClosing bool
+
 	Cfg      *config.ConfigManager
 	Caller   *llmgate.Caller
 	Local    *LocalRuntime
@@ -87,7 +93,9 @@ func New(cfg *config.ConfigManager, caller *llmgate.Caller, path string, local *
 	return s, nil
 }
 
-func (s *Service) Close() error { return errors.Join(s.Datasets.Close(), s.store.db.Close()) }
+func (s *Service) Close() error {
+	return errors.Join(s.StopPreparation(), s.Datasets.Close(), s.store.db.Close())
+}
 
 type serviceKey struct{}
 type turnKey struct{}

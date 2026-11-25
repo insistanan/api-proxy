@@ -8,7 +8,7 @@ import (
 // helper：模拟一次完整的失败请求生命周期
 func observeAndFail(t *testing.T, registry *Registry, obs Observation) *Record {
 	t.Helper()
-	rec := registry.ObserveRequest(obs)
+	rec := mustObserve(t, registry, obs)
 	if rec == nil {
 		t.Fatal("ObserveRequest returned nil")
 	}
@@ -20,7 +20,7 @@ func observeAndFail(t *testing.T, registry *Registry, obs Observation) *Record {
 // helper：模拟一次完整的成功请求生命周期
 func observeAndSucceed(t *testing.T, registry *Registry, obs Observation) *Record {
 	t.Helper()
-	rec := registry.ObserveRequest(obs)
+	rec := mustObserve(t, registry, obs)
 	if rec == nil {
 		t.Fatal("ObserveRequest returned nil")
 	}
@@ -51,7 +51,7 @@ func TestRetryMatchMergesFailedDepth2(t *testing.T) {
 	})
 
 	// 重试第二轮：同 depth、同 frontier，上次失败 → 应合并
-	retry := registry.ObserveRequest(Observation{
+	retry := mustObserve(t, registry, Observation{
 		APIKind:    "messages",
 		Identity:   identity,
 		Transcript: Transcript{PrefixHashes: []string{"h1", "h2", "h3"}},
@@ -83,7 +83,7 @@ func TestRetryMatchMergesFailedDepth1WithScope(t *testing.T) {
 	})
 
 	// 重试首条：同 depth=1、有 scope、上次失败 → 应合并
-	retry := registry.ObserveRequest(Observation{
+	retry := mustObserve(t, registry, Observation{
 		APIKind:    "messages",
 		Identity:   identity,
 		Transcript: Transcript{PrefixHashes: []string{"h1"}},
@@ -112,7 +112,7 @@ func TestRetryMatchDoesNotMergeDepth1WithoutScope(t *testing.T) {
 	})
 
 	// 重试首条：depth=1 无 scope → 不合并
-	retry := registry.ObserveRequest(Observation{
+	retry := mustObserve(t, registry, Observation{
 		APIKind:    "messages",
 		Identity:   identity,
 		Transcript: Transcript{PrefixHashes: []string{"h1"}},
@@ -138,7 +138,7 @@ func TestRetryMatchDoesNotMergeAfterSuccess(t *testing.T) {
 	})
 
 	// 再次发同一条消息：上次成功（LastError=""）→ 不合并
-	duplicate := registry.ObserveRequest(Observation{
+	duplicate := mustObserve(t, registry, Observation{
 		APIKind:    "messages",
 		Identity:   identity,
 		Transcript: Transcript{PrefixHashes: []string{"h1"}},
@@ -172,7 +172,7 @@ func TestRetryMatchDoesNotMergeConcurrent(t *testing.T) {
 	registry.mu.Unlock()
 
 	// 重试：ActiveRequests > 0 → 不合并
-	retry := registry.ObserveRequest(Observation{
+	retry := mustObserve(t, registry, Observation{
 		APIKind:    "messages",
 		Identity:   identity,
 		Transcript: Transcript{PrefixHashes: []string{"h1"}},
@@ -206,7 +206,7 @@ func TestRetryMatchDoesNotMergeExpiredWindow(t *testing.T) {
 	registry.mu.Unlock()
 
 	// 重试：超时窗口 → 不合并
-	retry := registry.ObserveRequest(Observation{
+	retry := mustObserve(t, registry, Observation{
 		APIKind:    "messages",
 		Identity:   identity,
 		Transcript: Transcript{PrefixHashes: []string{"h1"}},
@@ -233,7 +233,7 @@ func TestRetryMatchDoesNotMergeDifferentScope(t *testing.T) {
 
 	// 用户 B 发同样内容：scope 不同 → 不合并
 	identityB := Identity{ClientFamily: "cursor", ScopeID: "user-b", LaneHash: "lane-main"}
-	retryB := registry.ObserveRequest(Observation{
+	retryB := mustObserve(t, registry, Observation{
 		APIKind:    "messages",
 		Identity:   identityB,
 		Transcript: Transcript{PrefixHashes: []string{"h1"}},
@@ -260,7 +260,7 @@ func TestRetryMatchDoesNotMergeDifferentLane(t *testing.T) {
 
 	// lane-sub 发同样内容：lane 不同 → 不合并
 	identitySub := Identity{ClientFamily: "cursor", ScopeID: "workspace-a", LaneHash: "lane-sub"}
-	retrySub := registry.ObserveRequest(Observation{
+	retrySub := mustObserve(t, registry, Observation{
 		APIKind:    "messages",
 		Identity:   identitySub,
 		Transcript: Transcript{PrefixHashes: []string{"h1"}},
@@ -295,7 +295,7 @@ func TestRetryMatchPrefersStrictExtensionOverRetry(t *testing.T) {
 
 	// 第三轮：depth=3，transcript=[h1,h2,h3,h4]
 	// 严格扩展会匹配 depth=2 的 frontier (h1,h2,h3) → 应走严格扩展
-	third := registry.ObserveRequest(Observation{
+	third := mustObserve(t, registry, Observation{
 		APIKind:    "messages",
 		Identity:   identity,
 		Transcript: Transcript{PrefixHashes: []string{"h1", "h2", "h3", "h4"}},
@@ -335,7 +335,7 @@ func TestRetryMatchMergesMultipleRetries(t *testing.T) {
 	}
 
 	// 第二次重试：同样应合并
-	retry2 := registry.ObserveRequest(Observation{
+	retry2 := mustObserve(t, registry, Observation{
 		APIKind:    "messages",
 		Identity:   identity,
 		Transcript: Transcript{PrefixHashes: []string{"h1"}},
@@ -363,7 +363,7 @@ func TestRetryMatchDoesNotMergeEmptyTranscript(t *testing.T) {
 	})
 
 	// 重试同样 depth=0 → frontierHash 为空，不合并
-	retry := registry.ObserveRequest(Observation{
+	retry := mustObserve(t, registry, Observation{
 		APIKind:    "messages",
 		Identity:   identity,
 		Transcript: Transcript{PrefixHashes: []string{}},

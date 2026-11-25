@@ -47,6 +47,8 @@ type PresetOption struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	SizeBytes   int64  `json:"sizeBytes"`
+	RuntimeURL  string `json:"runtimeUrl"`
+	ModelURL    string `json:"modelUrl"`
 }
 
 type PresetsStatus struct {
@@ -253,17 +255,36 @@ func (l *LocalRuntime) Presets(ctx context.Context) PresetsStatus {
 		result.Error = loadError
 	}
 	for _, preset := range manifest.Presets {
-		if _, ok := preset.Platforms[result.Platform]; ok {
-			result.Presets = append(result.Presets, PresetOption{preset.ID, preset.Name, preset.Description, preset.SizeBytes})
+		if entry, ok := preset.Platforms[result.Platform]; ok {
+			runtimeURL, modelURL := entry.RuntimeURL, entry.ModelURL
+			// 离线下载优先提供固定版本的上游链接，便于首次尚未发布资源附件时导入。
+			if len(entry.RuntimeMirrors) > 0 {
+				runtimeURL = entry.RuntimeMirrors[len(entry.RuntimeMirrors)-1]
+			}
+			if len(entry.ModelMirrors) > 0 {
+				modelURL = entry.ModelMirrors[len(entry.ModelMirrors)-1]
+			}
+			result.Presets = append(result.Presets, PresetOption{ID: preset.ID, Name: preset.Name, Description: preset.Description, SizeBytes: preset.SizeBytes, RuntimeURL: runtimeURL, ModelURL: modelURL})
 		}
 	}
 	return result
 }
 
 func (l *LocalRuntime) InstallPreset(ctx context.Context, id string) error {
-	manifest, err := l.presets.fetch(ctx)
+	entry, err := l.presetManifest(ctx, id)
 	if err != nil {
 		return err
+	}
+	if err := l.Install(ctx, entry); err != nil {
+		return fmt.Errorf("安装预设失败: %w", err)
+	}
+	return l.Start(ctx)
+}
+
+func (l *LocalRuntime) presetManifest(ctx context.Context, id string) (LocalManifest, error) {
+	manifest, err := l.presets.fetch(ctx)
+	if err != nil {
+		return LocalManifest{}, err
 	}
 	for _, preset := range manifest.Presets {
 		if preset.ID != id {
@@ -271,12 +292,9 @@ func (l *LocalRuntime) InstallPreset(ctx context.Context, id string) error {
 		}
 		entry, ok := preset.Platforms[runtime.GOOS+"/"+runtime.GOARCH]
 		if !ok {
-			return fmt.Errorf("预设 %q 不支持当前平台", id)
+			return LocalManifest{}, fmt.Errorf("预设 %q 不支持当前平台", id)
 		}
-		if err := l.Install(ctx, entry); err != nil {
-			return fmt.Errorf("安装预设失败: %w", err)
-		}
-		return l.Start(ctx)
+		return entry, nil
 	}
-	return fmt.Errorf("发布清单中没有预设 %q", id)
+	return LocalManifest{}, fmt.Errorf("发布清单中没有预设 %q", id)
 }

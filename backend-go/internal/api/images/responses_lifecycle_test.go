@@ -89,7 +89,6 @@ func TestResponsesImageRetryKeepsParentRequestBudget(t *testing.T) {
 
 func TestResponsesImageClientCloseDoesNotTurnTruncatedTailIntoSuccess(t *testing.T) {
 	c, recorder := imageStreamContext()
-	flushed := notifyImagesFlush(c, recorder)
 	ctx, cancel := context.WithCancel(c.Request.Context())
 	defer cancel()
 	c.Request = c.Request.WithContext(ctx)
@@ -102,16 +101,13 @@ func TestResponsesImageClientCloseDoesNotTurnTruncatedTailIntoSuccess(t *testing
 	}()
 	_, err := io.WriteString(writer, "event: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"img\",\"type\":\"image_generation_call\",\"result\":\"AQID\"}}\n\n")
 	require.NoError(t, err)
-	select {
-	case <-flushed:
-	case <-time.After(2 * time.Second):
-		t.Fatal("完整图片没有写出")
-	}
+
 	cancel()
 	require.NoError(t, writer.Close())
 	select {
 	case err := <-result:
-		require.ErrorContains(t, err, "未收到 response.completed")
+		require.ErrorIs(t, err, context.Canceled)
+		require.NotContains(t, recorder.Body.String(), "image_generation.completed")
 	case <-time.After(2 * time.Second):
 		t.Fatal("上游截断后未返回错误")
 	}
@@ -200,10 +196,11 @@ func TestImagesResponsesBlockedBodyStopsOnCancellationAndDeadline(t *testing.T) 
 	}
 }
 
-func TestResponsesImageUsageDrainTimeoutIsExplicit(t *testing.T) {
+func TestResponsesImageWaitingForFinalMetadataHonorsDeadline(t *testing.T) {
 	c, recorder := imageStreamContext()
-	flushed := notifyImagesFlush(c, recorder)
-	lifecycle := responsesLifecycle(c)
+	parent, cancel := context.WithTimeout(c.Request.Context(), 30*time.Millisecond)
+	defer cancel()
+	c.Request = c.Request.WithContext(parent)
 	reader, writer := io.Pipe()
 	defer writer.Close()
 	result := make(chan error, 1)
@@ -214,20 +211,10 @@ func TestResponsesImageUsageDrainTimeoutIsExplicit(t *testing.T) {
 	_, err := io.WriteString(writer, "event: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"img\",\"type\":\"image_generation_call\",\"result\":\"AQID\"}}\n\n")
 	require.NoError(t, err)
 	select {
-	case <-flushed:
-	case <-time.After(2 * time.Second):
-		t.Fatal("图片未写出")
-	}
-	// 缩短同一计时器，验证生产超时回调与阻塞读取关闭，而不等待 15 秒。
-	lifecycle.mu.Lock()
-	require.NotNil(t, lifecycle.drainTimer)
-	lifecycle.drainTimer.Reset(20 * time.Millisecond)
-	lifecycle.mu.Unlock()
-	select {
 	case err := <-result:
-		require.ErrorIs(t, err, errResponsesImageUsageDrainTimeout)
-		require.Contains(t, recorder.Body.String(), "event: error")
+		require.ErrorIs(t, err, context.DeadlineExceeded)
 	case <-time.After(2 * time.Second):
-		t.Fatal("图片交付后上游等待无界")
+		t.Fatal("等待最终图片元数据不能忽略 deadline")
 	}
+	require.NotContains(t, recorder.Body.String(), "image_generation.completed")
 }

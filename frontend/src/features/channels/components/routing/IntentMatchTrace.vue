@@ -14,7 +14,7 @@
         <article ref="inputNode" class="trace-node trace-input">
           <h4 class="text-sm font-medium">本轮用户输入</h4>
           <p class="trace-input-text">{{ trace.input || '本轮没有新的用户文本' }}</p>
-          <span class="text-xs text-muted-foreground">已隐藏可识别凭据与脱敏占位符{{ trace.truncated ? ' · 输入已截取至 4000 字符' : '' }}</span>
+          <span class="text-xs text-muted-foreground">已隐藏可识别凭据与脱敏占位符{{ trace.truncated ? ' · 长输入保留首尾，共 4000 字符' : '' }}</span>
         </article>
         <article ref="classifierNode" class="trace-node trace-classifier">
           <h4 class="text-sm font-medium">{{ trace.classified ? '识别与筛选' : '路由保护' }}</h4>

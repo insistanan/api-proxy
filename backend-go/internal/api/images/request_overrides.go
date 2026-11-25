@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"io"
 	"log"
 	"mime"
@@ -14,6 +13,8 @@ import (
 	"strings"
 
 	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/converters/toimages"
 )
 
 // resolveImagesUpstreamModel 解析真正发给上游的生图模型。
@@ -89,7 +90,7 @@ func applyImagesJSONOverrides(contentType string, bodyBytes []byte, payload map[
 	if forceNonStream && applyImagesForceNonStreamJSON(payload) {
 		changed = true
 	}
-	if err := validateImagesOutputParameters(payload, false); err != nil {
+	if err := toimages.ValidateOutputParameters(payload, false); err != nil {
 		return nil, "", err
 	}
 	if !changed {

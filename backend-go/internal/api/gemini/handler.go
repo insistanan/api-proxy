@@ -5,9 +5,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
 	"io"
 	"log"
 	"net/http"
@@ -18,8 +15,13 @@ import (
 	"github.com/insistanan/api-proxy/internal/dialogue/prompt/cacheinject"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/infra/middleware"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/contract"
 	"github.com/insistanan/api-proxy/internal/protocol/converters"
+	"github.com/insistanan/api-proxy/internal/protocol/converters/togemini"
+	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/insistanan/api-proxy/internal/proxycore"
 	"github.com/insistanan/api-proxy/internal/safety/pipeline"
@@ -72,12 +74,8 @@ func Handler(
 			prompts := proxycore.ExtractPromptsFromGemini(geminiReq.Contents)
 			return model, isStream, prompts, true
 		},
-		PreRoute: nil,
-		BuildUpstreamRequest: func(c *gin.Context, up *config.UpstreamConfig, apiKey string, body []byte) (*http.Request, error) {
-			geminiReq := c.MustGet("__gemini_req").(*types.GeminiRequest)
-			model, action := parseModelAction(c.Param("modelAction"))
-			return buildProviderRequest(c, up, up.GetEffectiveBaseURL(), apiKey, geminiReq, model, action)
-		},
+		PreRoute:             nil,
+		BuildUpstreamRequest: buildPreparedProviderRequest,
 		HandleSuccess: func(c *gin.Context, resp *http.Response, up *config.UpstreamConfig, apiKey string, body []byte, startTime time.Time) (*types.Usage, error) {
 			geminiReq := c.MustGet("__gemini_req").(*types.GeminiRequest)
 			model, action := parseModelAction(c.Param("modelAction"))
@@ -243,6 +241,16 @@ func cloneGeminiRequest(req *types.GeminiRequest) *types.GeminiRequest {
 // buildProviderRequest 构建上游请求。
 // action 必须是 ParseRequest 已放行的对话方法（generateContent / streamGenerateContent），
 // 直接用于上游 URL，不再由流式标记反推，避免再次出现「静默改写方法」的问题。
+func buildPreparedProviderRequest(c *gin.Context, upstream *config.UpstreamConfig, apiKey string, body []byte) (*http.Request, error) {
+	// 编排与安全管线可能更新正文，原生 RawJSON 和跨协议 DTO 必须来自同一份最终输入。
+	var request types.GeminiRequest
+	if err := json.Unmarshal(body, &request); err != nil {
+		return nil, fmt.Errorf("解析待转发 Gemini 请求失败: %w", err)
+	}
+	model, action := parseModelAction(c.Param("modelAction"))
+	return buildProviderRequest(c, upstream, upstream.GetEffectiveBaseURL(), apiKey, &request, model, action)
+}
+
 func buildProviderRequest(
 	c *gin.Context,
 	upstream *config.UpstreamConfig,
@@ -302,7 +310,7 @@ func buildProviderRequest(
 		url = upstreamreq.BuildUpstreamURL(baseURL, "/v1", "/chat/completions", upstream.UseFullURL)
 
 	default:
-		requestBody, err = converters.GeminiNativeRequest(geminiReq, upstream.StripThoughtSignature, upstream.InjectDummyThoughtSignature)
+		requestBody, err = togemini.NativeRequest(geminiReq, upstream.StripThoughtSignature, upstream.InjectDummyThoughtSignature)
 		if err != nil {
 			return nil, err
 		}
@@ -413,6 +421,11 @@ func handleSuccess(
 	// 根据上游类型转换响应
 	var geminiResp *types.GeminiResponse
 
+	if upstreamType != "gemini" {
+		if err := contract.ValidateResponse(upstreamType, bodyBytes); err != nil {
+			return nil, err
+		}
+	}
 	switch upstreamType {
 	case "gemini":
 		root := gjson.ParseBytes(bodyBytes)
@@ -433,7 +446,7 @@ func handleSuccess(
 		if err := json.Unmarshal(bodyBytes, &claudeResp); err != nil {
 			return nil, fmt.Errorf("转换 %s 响应失败: %w", upstreamType, err)
 		}
-		geminiResp, err = converters.ClaudeResponseToGemini(claudeResp)
+		geminiResp, err = togemini.ClaudeResponse(claudeResp)
 		if err != nil {
 			return nil, fmt.Errorf("转换 %s 响应失败: %w", upstreamType, err)
 		}
@@ -444,7 +457,7 @@ func handleSuccess(
 		if err := json.Unmarshal(bodyBytes, &openaiResp); err != nil {
 			return nil, fmt.Errorf("转换 %s 响应失败: %w", upstreamType, err)
 		}
-		geminiResp, err = converters.OpenAIResponseToGemini(openaiResp)
+		geminiResp, err = togemini.ChatResponse(openaiResp)
 		if err != nil {
 			return nil, fmt.Errorf("转换 %s 响应失败: %w", upstreamType, err)
 		}

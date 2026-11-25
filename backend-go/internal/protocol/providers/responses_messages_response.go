@@ -2,19 +2,28 @@
 package providers
 
 import (
+	"encoding/json"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/protocol/contract"
-	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 	"strings"
 
+	"github.com/insistanan/api-proxy/internal/protocol/contract"
 	"github.com/insistanan/api-proxy/internal/protocol/converters"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 )
 
 func responsesResponseToClaude(resp *types.ResponsesResponse) (*types.ClaudeResponse, error) {
 	if resp == nil || (resp.Status != "completed" && resp.Status != "incomplete") {
 		return nil, fmt.Errorf("Responses 上游没有返回 completed 或 incomplete 响应")
 	}
+	body, err := json.Marshal(resp)
+	if err != nil {
+		return nil, err
+	}
+	if err := contract.ResponseContent("responses", body); err != nil {
+		return nil, err
+	}
+	refused := false
 	claudeResp := &types.ClaudeResponse{
 		ID:      generateID(),
 		Type:    "message",
@@ -27,6 +36,12 @@ func responsesResponseToClaude(resp *types.ResponsesResponse) (*types.ClaudeResp
 		switch item.Type {
 		case "message":
 			for _, block := range visionmedia.NormalizeContentBlocks(item.Content) {
+				if block["type"] == "refusal" {
+					text, _ := block["refusal"].(string)
+					textParts = append(textParts, text)
+					refused = true
+					continue
+				}
 				if text, ok := visionmedia.ExtractTextFromBlock(block); ok && text != "" {
 					textParts = append(textParts, text)
 				}
@@ -71,7 +86,6 @@ func responsesResponseToClaude(resp *types.ResponsesResponse) (*types.ClaudeResp
 		// 的历史回灌默认会跳过 thinking，因此下发它不会把思考重复塞回
 		// Responses 上游上下文；内部缓存仍保留给严格 Chat 渠道补回。
 		claudeResp.Content = append(append([]types.ClaudeContent{}, thinkingParts...), claudeResp.Content...)
-		CacheClaudeResponseReasoning(claudeResp)
 	}
 	claudeResp.StopReason = "end_turn"
 	for _, content := range claudeResp.Content {
@@ -81,7 +95,15 @@ func responsesResponseToClaude(resp *types.ResponsesResponse) (*types.ClaudeResp
 		}
 	}
 	if resp.Status == "incomplete" {
-		claudeResp.StopReason = "max_tokens"
+		reason, _ := resp.IncompleteDetails["reason"].(string)
+		completion, err := contract.ResponsesCompletion(resp.Status, reason)
+		if err != nil {
+			return nil, err
+		}
+		claudeResp.StopReason = completion.ClaudeStopReason(false)
+	}
+	if refused {
+		claudeResp.StopReason = "refusal"
 	}
 	cacheReadTokens := resp.Usage.CacheReadInputTokens
 	if cacheReadTokens == 0 && resp.Usage.InputTokensDetails != nil {

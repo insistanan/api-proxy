@@ -48,6 +48,7 @@
         本次服务运行期间，全局已有 {{ capacityRejections }} 次请求因会话容量已满而跳过建立保活候选。
       </UiAlert>
       <p v-if="!loadError && !loading && !sessions.length" class="mt-2 text-xs text-muted-foreground">暂无保活记录。保存配置后，需要新的带会话 ID 的成功请求。</p>
+      <p v-if="sessions.length" class="mt-2 text-xs text-muted-foreground">心跳次数、下次时间和停止原因显示在这里；渠道请求日志只统计真实请求。</p>
       <div v-for="session in sessions" :key="session.id" class="mt-3 rounded-control border border-border p-3 text-xs">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <span class="break-all font-mono">{{ session.conversationId }}</span>
@@ -63,8 +64,10 @@
           <span v-if="session.attempts && session.cacheMode !== 'explicit'">最近覆盖率 {{ session.cacheHitPercent.toFixed(1) }}%</span>
           <span v-if="session.cacheMode !== 'explicit'">原请求缓存占比 {{ session.baselineCacheHitPercent.toFixed(1) }}%</span>
           <span v-if="session.lastAt">最近处理 {{ formatDateTime(session.lastAt) }}</span>
+          <span v-if="session.snapshotAt">最近记录上下文 {{ formatDateTime(session.snapshotAt) }}</span>
           <span v-if="session.expiresAt">资源到期 {{ formatDateTime(session.expiresAt) }}</span>
-          <span v-if="session.nextAt">下次处理 {{ formatDateTime(session.nextAt) }}</span>
+          <span v-if="session.nextHeartbeatAt">下次心跳 {{ formatDateTime(session.nextHeartbeatAt) }}</span>
+          <span v-else-if="session.nextAt">下次检查 {{ formatDateTime(session.nextAt) }}</span>
         </div>
         <p v-if="session.reason" class="mt-2 text-muted-foreground">{{ session.reason }}</p>
       </div>
@@ -83,7 +86,7 @@ import UiButton from '@/shared/ui/button/Button.vue'
 import { apiRequest } from '@/shared/services/http'
 import { formatDateTime } from '@/shared/utils/datetime'
 import type { CacheKeepaliveStatus } from '@/types/channel'
-import { validateCacheKeepalive, type CacheKeepaliveDraft } from '@/features/channels/utils/cacheKeepalive'
+import { cacheKeepaliveStateLabels as stateNames, validateCacheKeepalive, type CacheKeepaliveDraft } from '@/features/channels/utils/cacheKeepalive'
 
 const draft = defineModel<CacheKeepaliveDraft>({ required: true })
 const props = defineProps<{ channelId?: string; serviceType: string }>()
@@ -106,11 +109,6 @@ let controller: AbortController | undefined
 let stopController: AbortController | undefined
 let refreshTimer: ReturnType<typeof setInterval> | undefined
 const modeNames = { prefix: '缓存断点', implicit: '隐式缓存', explicit: '缓存资源续期' }
-
-const stateNames: Record<CacheKeepaliveStatus['state'], string> = {
-  active: '真实请求处理中', waiting: '等待空闲满一分钟', preparing: '准备快照',
-  ready: '等待下一次心跳', sending: '心跳发送中', stopped: '已停止'
-}
 
 function totalTokens(session: CacheKeepaliveStatus) {
   return session.inputTokens + session.cacheReadTokens + session.cacheCreationTokens + session.outputTokens

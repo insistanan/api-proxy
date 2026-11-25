@@ -16,25 +16,6 @@ import (
 // 正在发送中，或最近 30 分钟内有过请求的会话。
 const activeConversationWindow = 30 * time.Minute
 
-// activeConversationIDs 返回当前活跃的会话 ID 集（发送中或窗口内有请求）。
-// registry 为 nil 时返回 nil（调用方按"不筛选"处理）。
-func activeConversationIDs(registry *conversation.Registry) []string {
-	if registry == nil {
-		return nil
-	}
-	now := time.Now()
-	ids := make([]string, 0)
-	for _, record := range registry.List() {
-		if record == nil {
-			continue
-		}
-		if record.IsSending || now.Sub(record.LastRequestAt) < activeConversationWindow {
-			ids = append(ids, record.ID)
-		}
-	}
-	return ids
-}
-
 // GetBlockedLogs 分页查询拦截记录。
 // registry 用于「活跃会话」筛选（activeOnly=true），可为 nil（不筛选）。
 func GetBlockedLogs(store *sensitive.BlockedStore, registry *conversation.Registry) gin.HandlerFunc {
@@ -140,7 +121,15 @@ func parseBlockedLogListOptions(c *gin.Context, registry *conversation.Registry)
 			return sensitive.BlockedLogListOptions{}, false
 		}
 		// 活跃会话为空时传入空切片，store 侧按"匹配不到任何记录"处理。
-		ids := activeConversationIDs(registry)
+		if registry == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "对话记录未初始化"})
+			return sensitive.BlockedLogListOptions{}, false
+		}
+		ids, err := registry.ActiveIDs(c.Request.Context(), time.Now().Add(-activeConversationWindow))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "查询活跃会话失败"})
+			return sensitive.BlockedLogListOptions{}, false
+		}
 		if ids == nil {
 			ids = []string{}
 		}

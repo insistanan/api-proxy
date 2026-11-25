@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS usage_buckets (
   attempts INTEGER NOT NULL, updated INTEGER NOT NULL,
   PRIMARY KEY(day, hour_ms, model, source)
 );
+CREATE INDEX IF NOT EXISTS usage_activity ON usage_facts(at_ms)
+ WHERE source='upstream' AND input + output + creation + cache_read > 0;
 CREATE TABLE IF NOT EXISTS usage_gaps (
   start_day TEXT NOT NULL, end_day TEXT NOT NULL, PRIMARY KEY(start_day, end_day)
 );`

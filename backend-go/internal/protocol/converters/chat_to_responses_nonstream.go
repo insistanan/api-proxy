@@ -7,52 +7,27 @@ import (
 	"strings"
 	"time"
 
+	"github.com/insistanan/api-proxy/internal/protocol/contract"
+	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
 
-func extractCustomToolContextFromRawRequest(raw []byte) map[string]customToolSpec {
-	return buildResponseToolContextFromRawRequest(raw)
-}
-
 func classifyChatToolCall(name string, callID string, arguments string, toolContext map[string]customToolSpec) (string, string, string, string, string, interface{}) {
-	itemID := fmt.Sprintf("fc_%s", callID)
-	itemType := "function_call"
-	itemName := name
-	namespace := ""
-	execution := ""
-	argumentValue := interface{}(arguments)
-
-	if spec, ok := toolContext[name]; ok {
-		switch spec.Kind {
-		case responseToolKindCustom:
-			return fmt.Sprintf("ctc_%s", callID), "custom_tool_call", spec.OriginalNameOr(name), "", "", extractCustomToolInput(arguments)
-		case responseToolKindToolSearch:
-			return fmt.Sprintf("tsc_%s", callID), "tool_search_call", "", "", spec.ExecutionOrDefault(), parseToolSearchArguments(arguments)
-		case responseToolKindFunction:
-			return itemID, itemType, spec.OriginalNameOr(name), spec.Namespace, "", argumentValue
-		}
+	item := restoreResponseToolIdentity(types.ResponsesItem{Type: "function_call", Name: name}, toolContext)
+	var argumentValue interface{} = arguments
+	prefix := "fc_"
+	switch item.Type {
+	case "custom_tool_call":
+		prefix, argumentValue = "ctc_", gjson.Get(arguments, "input").String()
+	case "tool_search_call":
+		prefix, argumentValue = "tsc_", gjson.Parse(arguments).Value()
 	}
-
-	if name == openAIChatToolSearchName {
-		return fmt.Sprintf("tsc_%s", callID), "tool_search_call", "", "", "client", parseToolSearchArguments(arguments)
-	}
-
-	return itemID, itemType, itemName, namespace, execution, argumentValue
+	return prefix + callID, item.Type, item.Name, item.Namespace, item.Execution, argumentValue
 }
 
 func buildChatToolCallOutputItem(callID string, name string, arguments string, toolContext map[string]customToolSpec) map[string]interface{} {
-	return buildChatToolCallOutputItemWithLock(callID, name, arguments, toolContext, false)
-}
-
-// buildChatToolCallOutputItemWithLock forceFunction=true 时无视分类结果一律按
-// function_call 输出（流式锁定类型的退化场景：completed 的 item 类型必须与
-// 流中事件一致，否则内容安全流式检查按"参数类型变化"中断响应）。
-func buildChatToolCallOutputItemWithLock(callID string, name string, arguments string, toolContext map[string]customToolSpec, forceFunction bool) map[string]interface{} {
 	itemID, itemType, itemName, namespace, execution, argumentValue := classifyChatToolCall(name, callID, arguments, toolContext)
-	if forceFunction && itemType == "custom_tool_call" {
-		itemID, itemType, itemName, namespace, execution, argumentValue = fmt.Sprintf("fc_%s", callID), "function_call", name, "", "", interface{}(arguments)
-	}
 	item := map[string]interface{}{
 		"id":      itemID,
 		"type":    itemType,
@@ -79,9 +54,12 @@ func buildChatToolCallOutputItemWithLock(callID string, name string, arguments s
 }
 
 // ConvertOpenAIChatToResponsesNonStream 将 OpenAI Chat Completions 响应转换为 Responses 格式（非流式）
-func ConvertOpenAIChatToResponsesNonStream(_ context.Context, _ string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, _ *any) string {
+func ConvertOpenAIChatToResponsesNonStream(_ context.Context, _ string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, _ *any, toolContexts ...*ResponseToolContext) (string, error) {
+	if err := contract.ValidateResponse("openai", rawJSON); err != nil {
+		return "", err
+	}
 	root := gjson.ParseBytes(rawJSON)
-	toolContext := extractCustomToolContextFromRawRequest(originalRequestRawJSON)
+	toolContext := responseTools(originalRequestRawJSON, toolContexts...)
 
 	// 基础响应模板
 	out := `{"id":"","object":"response","created_at":0,"status":"completed","background":false,"error":null,"incomplete_details":null,"output":[],"usage":{"input_tokens":0,"input_tokens_details":{"cached_tokens":0},"output_tokens":0,"output_tokens_details":{},"total_tokens":0}}`
@@ -139,9 +117,6 @@ func ConvertOpenAIChatToResponsesNonStream(_ context.Context, _ string, original
 
 	// 解析 choices
 	choices := root.Get("choices")
-	if !choices.Exists() || !choices.IsArray() || len(choices.Array()) == 0 {
-		return out
-	}
 
 	var outputs []interface{}
 	var textBuf strings.Builder
@@ -173,8 +148,8 @@ func ConvertOpenAIChatToResponsesNonStream(_ context.Context, _ string, original
 				}
 				funcName := tc.Get("function.name").String()
 				funcArgs := tc.Get("function.arguments").String()
-				if funcArgs == "" {
-					funcArgs = "{}"
+				if _, err := restoreResponseToolItem(types.ResponsesItem{Type: "function_call", Name: funcName, CallID: callID, Arguments: funcArgs}, toolContext); err != nil {
+					return "", err
 				}
 				outputs = append(outputs, buildChatToolCallOutputItem(callID, funcName, funcArgs, toolContext))
 			}
@@ -359,5 +334,5 @@ func ConvertOpenAIChatToResponsesNonStream(_ context.Context, _ string, original
 		}
 	}
 
-	return out
+	return out, nil
 }

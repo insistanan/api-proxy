@@ -1,7 +1,7 @@
-package images
+package toimages
 
 // 终态只覆盖实际提供的字段；图片仅在早期事件出现时仍保留其内容。
-func mergeFinalImageItem(previous, final responsesImageItem) responsesImageItem {
+func MergeFinalItem(previous, final ImageItem) ImageItem {
 	if final.ResultJSON == "" {
 		final.ResultJSON = previous.ResultJSON
 	}

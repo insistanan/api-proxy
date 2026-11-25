@@ -71,9 +71,12 @@ func TestSelection_ExplicitTargetsShareCircuitAdmission(t *testing.T) {
 			}})
 			t.Cleanup(cleanup)
 			registry := conversation.NewRegistry()
-			t.Cleanup(registry.Stop)
-			record := registry.ObserveRequest(conversation.Observation{APIKind: "messages", ConversationID: "fixed-admission"})
-			_, err := registry.SetRouteOverride(record.ID, "messages", 0, "primary")
+			t.Cleanup(func() { registry.Stop() })
+			record, observeErr := registry.ObserveRequestWithError(context.Background(), conversation.Observation{APIKind: "messages", ConversationID: "fixed-admission"})
+			if observeErr != nil {
+				t.Fatal(observeErr)
+			}
+			_, err := registry.SetRouteOverride(context.Background(), record.ID, "messages", 0, "primary")
 			require.NoError(t, err)
 			sch.SetConversationRegistry(registry)
 			selectTarget := func() (*SelectionResult, error) {

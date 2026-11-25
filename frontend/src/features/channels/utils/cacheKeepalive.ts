@@ -1,4 +1,13 @@
-import type { CacheKeepaliveConfig } from '@/types/channel'
+import type { CacheKeepaliveConfig, CacheKeepaliveStatus } from '@/types/channel'
+
+export const cacheKeepaliveStateLabels: Record<CacheKeepaliveStatus['state'], string> = {
+  active: '真实请求处理中',
+  waiting: '等待空闲满一分钟',
+  preparing: '正在保存上下文',
+  ready: '等待下一次心跳',
+  sending: '正在保活',
+  stopped: '已停止'
+}
 
 type NumericField = Exclude<keyof CacheKeepaliveConfig, 'enabled' | 'prompt'>
 export type CacheKeepaliveDraft = Pick<CacheKeepaliveConfig, 'enabled' | 'prompt'> & Record<NumericField, number | string | null>

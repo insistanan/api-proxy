@@ -45,10 +45,21 @@ func previewModelRoute(cm *config.ConfigManager, kind string, cfg config.IntentR
 		for i, actual := range models {
 			name := up.Name
 			if i < len(channels) && channels[i] != "" {
+				found := false
 				for _, redirected := range upstreams {
 					if redirected.ID == channels[i] {
+						found = true
+						if target != "" && redirected.PoolID != target {
+							return nil, fmt.Errorf("渠道 %s 的模型映射指向分组外渠道 %s，实际请求会被意图约束阻止；请调整映射", up.Name, redirected.Name)
+						}
+						if config.GetChannelStatus(&redirected) != config.ChannelStatusActive || redirected.ExcludeFromConversation {
+							return nil, fmt.Errorf("模型映射目标 %s 未启用或不能处理对话", redirected.Name)
+						}
 						name = redirected.Name
 					}
+				}
+				if !found {
+					return nil, fmt.Errorf("模型映射目标渠道 %s 已不存在", channels[i])
 				}
 			}
 			candidates = append(candidates, gin.H{"channel": name, "model": actual})

@@ -346,6 +346,7 @@ func GetChannelDashboard(cfgManager *config.ConfigManager, sch *scheduler.Channe
 
 		// 2. 构建 metrics 数据
 		circuitSnapshots := sch.GetCircuitSnapshotForKind(kind)
+		keepaliveCounts := sch.CacheKeepalive().ActiveChannels()
 		metricsResult := make([]gin.H, 0, len(upstreams))
 		for i, upstream := range upstreams {
 			if config.GetChannelStatus(&upstream) == config.ChannelStatusDeleted {
@@ -367,6 +368,7 @@ func GetChannelDashboard(cfgManager *config.ConfigManager, sch *scheduler.Channe
 				"keyMetrics":                      resp.KeyMetrics,
 				"timeWindows":                     resp.TimeWindows,
 				"activeConversations":             activity.Conversations,
+				"activeKeepaliveSessions":         keepaliveCounts[upstream.ID],
 				"activeBranches":                  activity.Branches,
 				"unidentifiedBranchConversations": activity.UnidentifiedConversations,
 			}

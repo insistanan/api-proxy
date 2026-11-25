@@ -426,7 +426,7 @@ func TestCallFailoverAcrossChannels(t *testing.T) {
 	t.Cleanup(broken.Close)
 	working := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"chatcmpl_ok","choices":[{"message":{"role":"assistant","content":"pong"}}]}`))
+		_, _ = w.Write([]byte(`{"id":"chatcmpl_ok","choices":[{"message":{"role":"assistant","content":"pong"},"finish_reason":"stop"}]}`))
 	}))
 	t.Cleanup(working.Close)
 

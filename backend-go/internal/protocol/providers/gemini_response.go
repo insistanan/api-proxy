@@ -5,11 +5,15 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/insistanan/api-proxy/internal/protocol/contract"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
 // ConvertToClaudeResponse 转换为 Claude 响应
 func (p *GeminiProvider) ConvertToClaudeResponse(providerResp *types.ProviderResponse) (*types.ClaudeResponse, error) {
+	if err := contract.ValidateResponse("gemini", providerResp.Body); err != nil {
+		return nil, err
+	}
 	var geminiResp map[string]interface{}
 	if err := json.Unmarshal(providerResp.Body, &geminiResp); err != nil {
 		return nil, err
@@ -22,15 +26,9 @@ func (p *GeminiProvider) ConvertToClaudeResponse(providerResp *types.ProviderRes
 		Content: []types.ClaudeContent{},
 	}
 
-	candidates, ok := geminiResp["candidates"].([]interface{})
-	if !ok || len(candidates) == 0 {
-		return claudeResp, nil
-	}
-
-	candidate, ok := candidates[0].(map[string]interface{})
-	if !ok {
-		return claudeResp, nil
-	}
+	// 完整响应已通过公共契约校验，候选结构不再用空成功响应兜底。
+	candidates := geminiResp["candidates"].([]interface{})
+	candidate := candidates[0].(map[string]interface{})
 	finishReason, _ := candidate["finishReason"].(string)
 	stopReason, err := geminiStopReasonFromFinish(finishReason, false)
 	if err != nil {
@@ -38,23 +36,16 @@ func (p *GeminiProvider) ConvertToClaudeResponse(providerResp *types.ProviderRes
 	}
 	claudeResp.StopReason = stopReason
 
-	content, ok := candidate["content"].(map[string]interface{})
-	if !ok {
-		return claudeResp, nil
-	}
-
-	parts, ok := content["parts"].([]interface{})
-	if !ok {
-		return claudeResp, nil
-	}
+	// 安全拒绝可不带正文，仍要处理终态与用量。
+	content, _ := candidate["content"].(map[string]interface{})
+	parts, _ := content["parts"].([]interface{})
 
 	rectifyGeminiFunctionCallIDs(parts)
 	shadowTurn := buildGeminiShadowTurnFromParts(parts)
 	if geminiShadowTurnHasParts(shadowTurn) {
-		defaultGeminiShadowStore.Record(p.shadowProviderID, p.shadowSessionID, shadowTurn)
+		p.cacheLease.Store(func() { defaultGeminiShadowStore.Record(p.shadowProviderID, p.shadowSessionID, shadowTurn) })
 	}
 
-	thinkingParts := make([]types.ClaudeContent, 0)
 	textParts := make([]string, 0)
 	toolUseParts := make([]types.ClaudeContent, 0)
 
@@ -66,12 +57,6 @@ func (p *GeminiProvider) ConvertToClaudeResponse(providerResp *types.ProviderRes
 		}
 
 		if isGeminiThoughtPart(part) {
-			if thought, _ := part["text"].(string); thought != "" {
-				thinkingParts = append(thinkingParts, types.ClaudeContent{
-					Type:     "thinking",
-					Thinking: thought,
-				})
-			}
 			continue
 		}
 
@@ -101,15 +86,6 @@ func (p *GeminiProvider) ConvertToClaudeResponse(providerResp *types.ProviderRes
 		})
 	}
 	claudeResp.Content = append(claudeResp.Content, toolUseParts...)
-	// Gemini 的 thought 是上游内部推理，不应转换成 Claude thinking 下发。
-	// Cursor 会把客户端收到的 thinking 原样写回下一轮 input；下发它会让
-	// reasoning 变成可重放的普通上下文。只在代理内部登记，供切换到严格
-	// reasoning_content 的 Chat 渠道时恢复。
-	if len(thinkingParts) > 0 {
-		cacheResp := *claudeResp
-		cacheResp.Content = append(append([]types.ClaudeContent{}, thinkingParts...), claudeResp.Content...)
-		CacheClaudeResponseReasoning(&cacheResp)
-	}
 
 	// 只有正常结束才能改为工具交付；工具内容不能掩盖截断或审核拒绝。
 	if claudeResp.StopReason == "end_turn" {

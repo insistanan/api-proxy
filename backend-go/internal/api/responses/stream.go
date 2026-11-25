@@ -7,10 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/protocol/items"
-	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 	"io"
 	"log"
 	"net/http"
@@ -21,8 +17,12 @@ import (
 	"github.com/insistanan/api-proxy/internal/api/common"
 	"github.com/insistanan/api-proxy/internal/dialogue/session"
 	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"github.com/insistanan/api-proxy/internal/protocol/converters"
+	"github.com/insistanan/api-proxy/internal/protocol/items"
+	"github.com/insistanan/api-proxy/internal/protocol/providers"
 	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/insistanan/api-proxy/internal/proxycore"
@@ -51,7 +51,8 @@ func hasResponsesContent(event string) bool {
 			}
 		}
 		switch eventType {
-		case "response.output_text.delta",
+		case "response.image_generation_call.partial_image",
+			"response.output_text.delta",
 			"response.function_call_arguments.delta",
 			"response.custom_tool_call_input.delta",
 			"response.reasoning_summary_text.delta",
@@ -98,31 +99,6 @@ func responsesStreamEventError(event string) error {
 		return fmt.Errorf("upstream stream failed: %s", payload)
 	}
 	return nil
-}
-
-// hasDeliveredResponsesToolCall 判断事件是否已完整交付一个客户端可执行的工具调用。
-// Codex 收到 output_item.done 后会立即进入工具执行阶段，并可能主动结束当前 SSE 连接；
-// 这种终止代表本轮代理目标已经完成，不应记为普通客户端取消。
-func hasDeliveredResponsesToolCall(event string) bool {
-	for _, line := range strings.Split(event, "\n") {
-		payload, isData := codec.SSEDataJSON(line)
-		if !isData {
-			continue
-		}
-		var data map[string]interface{}
-		if err := json.Unmarshal([]byte(payload), &data); err != nil {
-			continue
-		}
-		if eventType, _ := data["type"].(string); eventType != "response.output_item.done" {
-			continue
-		}
-		item, _ := data["item"].(map[string]interface{})
-		itemType, _ := item["type"].(string)
-		if (itemType == "function_call" || itemType == "custom_tool_call") && item["status"] == "completed" {
-			return true
-		}
-	}
-	return false
 }
 
 // handleStreamSuccess 处理流式响应。
@@ -221,6 +197,43 @@ func handleStreamSuccess(
 	var streamWriteErr error
 	var streamResponseID string
 
+	committed := false
+	commitStream := func(delivered bool) error {
+		if originalReq == nil || committed {
+			return nil
+		}
+		if err := sessionCollector.Err(); err != nil {
+			return &sessionCommitError{Err: err}
+		}
+		sessionTokens := upstreamUsage.TotalTokens
+		if sessionTokens <= 0 {
+			sessionTokens = upstreamUsage.InputTokens + upstreamUsage.OutputTokens
+		}
+		if !hasUsage {
+			sessionTokens = collectedUsage.TotalTokens
+		}
+		outputItems := sessionCollector.Items()
+		if err := sessionCollector.Err(); err != nil {
+			return &sessionCommitError{Err: err}
+		}
+		if delivered {
+			hasTool := false
+			for _, item := range outputItems {
+				if item.Type == "function_call" || item.Type == "custom_tool_call" {
+					hasTool = true
+				}
+			}
+			if !hasTool {
+				return &sessionCommitError{Err: fmt.Errorf("已交付工具前仍有未完成条目，无法提交完整历史前缀")}
+			}
+		}
+		if err := commitResponsesTurn(c, sessionManager, originalReq, originalRequestJSON, outputItems, sessionTokens, streamResponseID, responseUpstreamOwner(resp), false, delivered); err != nil {
+			return err
+		}
+		committed = true
+		return nil
+	}
+
 	// ---- 空响应检测：缓冲阶段 ----
 	// 在收到第一个包含实际内容的事件前，所有事件暂存到 bufferedEvents，
 	// 不调用 c.Writer.Write / flusher.Flush，确保 c.Writer.Written() == false。
@@ -248,6 +261,9 @@ func handleStreamSuccess(
 			}
 			return false
 		}
+		if !isResponsesTerminalEvent(event) {
+			sessionCollector.consumeEvent(event)
+		}
 		return true
 	}
 	flushBufferedEvents := func() {
@@ -271,7 +287,18 @@ func handleStreamSuccess(
 		var rawLine []byte
 		readErr := streamReadErr
 		if readErr == nil {
-			rawLine, readErr = reader.ReadBytes('\n')
+			var event codec.SSEEvent
+			event, readErr = codec.ReadSSEEvent(c.Request.Context(), reader)
+			line, err := event.DataLine()
+			if err != nil {
+				return nil, err
+			}
+			if event.Raw != "" {
+				rawLine = []byte(line)
+			}
+			if event.Raw != "" && line == "" && readErr == nil {
+				continue
+			}
 		}
 		if err := pipeline.AttachedStreamVetoError(c); err != nil {
 			return nil, err
@@ -311,6 +338,7 @@ func handleStreamSuccess(
 		} else {
 			events, err = converters.ConvertUpstreamStreamLineToResponses(
 				c.Request.Context(), upstreamType, originalReq.Model, originalRequestJSON, []byte(line), &converterState,
+				providers.ResponseToolsForRequest(c),
 			)
 		}
 		if err != nil {
@@ -346,7 +374,11 @@ func handleStreamSuccess(
 				// 不能把 reasoning/function-call/audio 的 SSE delta 与完整
 				// response.completed JSON envelope 混成普通文本，否则无 usage
 				// 的上游会把 envelope 字段也算进输出，且大响应会额外占用内存。
-				estimatedOutputTokens := estimateResponsesOutputFromItems(sessionCollector.Items())
+				snapshot, err := sessionCollector.output.Snapshot()
+				if err != nil {
+					return nil, err
+				}
+				estimatedOutputTokens := estimateResponsesOutputFromItems(snapshot)
 				eventToSend = finalizeResponsesCompletedUsage(
 					eventToSend, usageRequestJSON, estimatedOutputTokens, &collectedUsage,
 					hasUsage, needTokenPatch, upstreamType == converters.ResponsesUpstreamResponses, envCfg,
@@ -386,7 +418,6 @@ func handleStreamSuccess(
 			}
 			// 会话持久化保存客户端可见的已还原内容；下一轮即使只携带
 			// previous_response_id，也会重新经过上行脱敏而不会遗留旧占位符。
-			sessionCollector.consumeEvent(eventToSend)
 
 			// ---- 缓冲阶段逻辑 ----
 			if buffering {
@@ -422,9 +453,15 @@ func handleStreamSuccess(
 				}
 			}
 
+			if isResponsesTerminalEvent(eventToSend) {
+				sessionCollector.consumeEvent(eventToSend)
+				if err := commitStream(false); err != nil {
+					return upstreamUsage.snapshot(false), err
+				}
+			}
 			// 正常（已退出缓冲阶段）转发给客户端
 			if writeEvent(eventToSend) {
-				if hasDeliveredResponsesToolCall(eventToSend) {
+				if sessionCollector.output.HasCompletedTool() {
 					toolCallDelivered = true
 				}
 				if isResponsesTerminalEvent(event) {
@@ -521,67 +558,11 @@ func handleStreamSuccess(
 		}
 	}
 
-	// 即使客户端向上游声明 store=false，本代理仍需保存会话链，保证重启后可继续。
-	if originalReq != nil {
-		sessionLookupPreviousResponseID := originalReq.PreviousResponseID
-		if c.GetBool(upstreamreq.ContextKeyResponsesHistoryBoundary) {
-			// 当前 input 已成为新的历史根，按 conversation 找到旧 session
-			// 后替换它；不能再用旧 response ID 恢复旧边界。
-			sessionLookupPreviousResponseID = ""
-		}
-		if sess, err := sessionManager.GetOrCreateSessionForConversation(sessionLookupPreviousResponseID, conversationID); err == nil {
-			if collectorErr := sessionCollector.Err(); collectorErr != nil {
-				log.Printf("[Session] Responses 流式 output 不完整，跳过本轮会话持久化: %v", collectorErr)
-			} else if !sessionCollector.Completed() &&
-				!(toolCallDelivered && sessionCollector.CompletedToolCall()) {
-				// 正常文本流必须以 response.completed 收尾。客户端在收到
-				// response.output_item.done 后为执行工具而主动断开是唯一
-				// 可接受的例外；其余 EOF/取消都可能只是半截响应，不能写入
-				// session，否则下一轮会把不完整正文或参数当成真实历史。
-				log.Printf("[Session] Responses 流未收到完整完成事件，跳过本轮会话持久化")
-			} else {
-				inputItems, parseErr := parseInputToItems(originalReq.Input)
-				if parseErr != nil {
-					log.Printf("[Session] 保存 Responses 流式输入历史失败: %v", parseErr)
-				} else {
-					outputItems := sessionCollector.Items()
-					turnItems := respitems.ResponsesTurnItems(inputItems, outputItems)
-					compactionRoot := respitems.ResponsesItemsContainCompaction(turnItems)
-					sessionTokens := upstreamUsage.TotalTokens
-					if sessionTokens <= 0 {
-						if hasUsage {
-							sessionTokens = upstreamUsage.InputTokens + upstreamUsage.OutputTokens
-						} else {
-							sessionTokens = collectedUsage.TotalTokens
-						}
-					}
-					var commitErr error
-					if compactionRoot {
-						// 与非流式相同，完整压缩窗口成为新的历史根。
-						commitErr = sessionManager.CommitTurn(sess.ID, turnItems, sessionTokens,
-							visionmedia.DetectImageContent(originalRequestJSON), streamResponseID, responseUpstreamOwner(resp))
-					} else if c.GetBool(upstreamreq.ContextKeyResponsesHistoryBoundary) {
-						commitErr = sessionManager.ReplaceSessionAfterBoundary(sess.ID, turnItems,
-							visionmedia.DetectImageContent(originalRequestJSON), streamResponseID, responseUpstreamOwner(resp))
-					} else {
-						commitErr = sessionManager.CommitTurn(sess.ID, turnItems, sessionTokens,
-							visionmedia.DetectImageContent(originalRequestJSON), streamResponseID, responseUpstreamOwner(resp))
-					}
-					if err := commitErr; err != nil {
-						log.Printf("[Session] 持久化 Responses 流式会话轮次失败: %v", err)
-					} else if compactionRoot ||
-						c.GetBool(upstreamreq.ContextKeyResponsesHistoryBoundary) {
-						// 压缩或客户端历史替换已建立新的本地历史根，清理旧的
-						// Messages→Responses 链，避免下一轮复用旧服务端上下文。
-						session.DefaultResponseChainManager().Clear(conversationID)
-					}
-				}
-			}
-		} else {
-			log.Printf("[Session] 保存 Responses 流式会话失败: %v", err)
+	if !committed && toolCallCompletedCancellation {
+		if err := commitStream(true); err != nil {
+			return nil, err
 		}
 	}
-	proxycore.AssociateConversationExternalID(channelScheduler, conversationID, scheduler.ChannelKindResponses, streamResponseID)
 
 	// 返回上游 usage 快照；仅在上游完全没有 usage 时返回受限的本地补全值。
 	if hasUsage {
@@ -749,6 +730,7 @@ func extractResponsesStreamResponseID(event string) string {
 	return extractResponsesStreamResponseIDForTypes(event, map[string]bool{
 		"response.created":     true,
 		"response.in_progress": true,
+		"response.incomplete":  true,
 		"response.completed":   true,
 	})
 }

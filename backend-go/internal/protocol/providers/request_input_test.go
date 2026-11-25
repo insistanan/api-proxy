@@ -147,11 +147,11 @@ func TestNativeResponseHistoryCredentialOwnership(t *testing.T) {
 	manager, err := session.NewPersistentSessionManager(filepath.Join(t.TempDir(), "responses.db"), time.Hour, 0, 0)
 	require.NoError(t, err)
 	t.Cleanup(manager.Stop)
-	sess, err := manager.GetOrCreateSessionForConversation("", "conv-owner")
+	sess, err := manager.GetOrCreateSessionForConversation(context.Background(), "", "conv-owner")
 	require.NoError(t, err)
 	upstream := &config.UpstreamConfig{BaseURL: "https://example.com/", ServiceType: "responses"}
 	owner := upstream.RequestIdentity("first-key").Fingerprint()
-	require.NoError(t, manager.CommitTurn(sess.ID, []types.ResponsesItem{
+	require.NoError(t, commitFixtureTurn(manager, sess, []types.ResponsesItem{
 		{Type: "text", Content: "第一轮问题"},
 		{Type: "message", Role: "assistant", Content: "第一轮回答"},
 	}, 10, false, "resp-owned", owner))
@@ -159,11 +159,11 @@ func TestNativeResponseHistoryCredentialOwnership(t *testing.T) {
 
 	// 末尾斜杠规范化必须与发送端一致，否则同一 Key 会被误判为换凭据。
 	upstream.BaseURL = "https://example.com"
-	kept, err := PrepareNativeResponseHistory(manager, "conv-owner", body, upstream.RequestIdentity("first-key").Fingerprint())
+	kept, err := PrepareNativeResponseHistory(context.Background(), manager, "conv-owner", body, upstream.RequestIdentity("first-key").Fingerprint(), nil)
 	require.NoError(t, err)
 	require.JSONEq(t, string(body), string(kept))
 
-	restored, err := PrepareNativeResponseHistory(manager, "conv-owner", body, upstream.RequestIdentity("second-key").Fingerprint())
+	restored, err := PrepareNativeResponseHistory(context.Background(), manager, "conv-owner", body, upstream.RequestIdentity("second-key").Fingerprint(), nil)
 	require.NoError(t, err)
 	require.False(t, gjson.GetBytes(restored, "previous_response_id").Exists())
 	require.Len(t, gjson.GetBytes(restored, "input").Array(), 3)
@@ -171,18 +171,18 @@ func TestNativeResponseHistoryCredentialOwnership(t *testing.T) {
 	require.Equal(t, "user", gjson.GetBytes(restored, "input.0.role").String())
 	require.Contains(t, string(restored), "第一轮回答")
 
-	_, err = PrepareNativeResponseHistory(manager, "", []byte(`{"previous_response_id":"unknown-id","input":"后缀"}`), owner)
-	var historyErr *ResponseHistoryError
+	_, err = PrepareNativeResponseHistory(context.Background(), manager, "", []byte(`{"previous_response_id":"unknown-id","input":"后缀"}`), owner, nil)
+	var historyErr interface{ ClientRequestError() bool }
 	require.ErrorAs(t, err, &historyErr)
 	require.True(t, historyErr.ClientRequestError())
 
 	// 生产请求带有 conversation ID；不存在的历史必须保持客户端错误分类。
-	_, err = PrepareNativeResponseHistory(manager, "conv-owner", []byte(`{"previous_response_id":"missing-id","input":"后缀"}`), owner)
+	_, err = PrepareNativeResponseHistory(context.Background(), manager, "conv-owner", []byte(`{"previous_response_id":"missing-id","input":"后缀"}`), owner, nil)
 	var clientErr interface{ ClientRequestError() bool }
 	require.ErrorAs(t, err, &clientErr)
 	require.True(t, clientErr.ClientRequestError())
 
-	require.NoError(t, manager.CommitTurn(sess.ID, []types.ResponsesItem{
+	require.NoError(t, commitFixtureTurn(manager, sess, []types.ResponsesItem{
 		{Type: "text", Content: "第二轮问题"},
 		{Type: "message", Role: "assistant", Content: "第二轮回答"},
 	}, 10, false, "resp-newer", owner))
@@ -197,11 +197,8 @@ func TestNativeResponseHistoryCredentialOwnership(t *testing.T) {
 		}
 		fullHistory := []byte(`{"model":"m","previous_response_id":"resp-owned","input":[{"role":"user","content":[{"type":"input_text","text":"第一轮问题"}]},{"role":"assistant","content":[{"type":"output_text","text":"第一轮回答"}]},{"role":"user","content":[{"type":"input_text","text":"新的分支"}]}]}`)
 		outcome, err := provider.BuildRequest(RequestInput{Ctx: context.Background(), Body: fullHistory, ConversationID: "conv-owner"}, upstream, "second-key")
-		require.NoError(t, err)
-		require.True(t, outcome.HistoryBoundary)
-		builtBody, err := io.ReadAll(outcome.Request.Body)
-		require.NoError(t, err)
-		require.NoError(t, outcome.Request.Body.Close())
-		require.NotContains(t, string(builtBody), "第二轮回答")
+		require.ErrorAs(t, err, &historyErr)
+		require.Nil(t, outcome.Request)
+
 	}
 }

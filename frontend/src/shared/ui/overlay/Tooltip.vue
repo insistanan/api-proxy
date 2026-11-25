@@ -1,6 +1,6 @@
 <template>
   <TooltipProvider :delay-duration="Number(openDelay ?? 300)"
-    ><TooltipRoot :disabled="disabled"
+    ><TooltipRoot :disabled="disabled" @update:open="emit('update:open', $event)"
       ><TooltipTrigger as-child><slot name="activator" :props="{}"></slot></TooltipTrigger
       ><TooltipPortal
         ><TooltipContent
@@ -22,6 +22,7 @@
 import { computed } from 'vue'
 import { TooltipProvider, TooltipRoot, TooltipTrigger, TooltipPortal, TooltipContent } from 'reka-ui'
 import { cn } from '@/shared/utils/classes'
+const emit = defineEmits<{ (_event: 'update:open', _open: boolean): void }>()
 const props = defineProps<{
   text?: string
   disabled?: boolean

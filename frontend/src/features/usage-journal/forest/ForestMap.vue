@@ -1,7 +1,23 @@
 <template>
   <div ref="frame" class="forest-map relative min-w-0 overflow-hidden rounded-card">
-    <canvas ref="canvas" class="block size-full touch-none" role="img" :aria-label="caption" @pointerdown="down" @pointermove="move" @pointerup="up" @pointercancel="cancel" @wheel="wheel"></canvas>
-    <p v-if="spriteError && view === 'island'" class="map-tools absolute bottom-3 left-3 max-w-32 rounded-control px-2 py-1 text-xs" role="status">素材读取失败，已显示简化树形。</p>
+    <canvas
+      ref="canvas"
+      class="block size-full touch-none"
+      role="img"
+      :aria-label="caption"
+      @pointerdown="down"
+      @pointermove="move"
+      @pointerup="up"
+      @pointercancel="cancel"
+      @wheel="wheel"
+    ></canvas>
+    <p
+      v-if="spriteError && view === 'island'"
+      class="map-tools absolute bottom-3 left-3 max-w-32 rounded-control px-2 py-1 text-xs"
+      role="status"
+    >
+      素材读取失败，已显示简化树形。
+    </p>
     <div class="map-tools absolute bottom-3 right-3 flex gap-1 rounded-control p-1">
       <UiButton size="small" variant="text" aria-label="缩小地图" @click="zoom(0.8)">−</UiButton>
       <UiButton size="small" variant="text" aria-label="放大地图" @click="zoom(1.25)">＋</UiButton>
@@ -14,7 +30,19 @@
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import UiButton from '@/shared/ui/button/Button.vue'
 import type { ForestTree, TreeKind } from '@/types/forest'
-import { capacity, drawLandmark, drawTree, ellipse, island, landmark, plotPositions, treePosition, type Mark, type Point, type View } from './map'
+import {
+  capacity,
+  drawLandmark,
+  drawTree,
+  ellipse,
+  island,
+  landmark,
+  plotPositions,
+  treePosition,
+  type Mark,
+  type Point,
+  type View
+} from './map'
 import sprites from './trees.webp'
 
 const props = defineProps<{
@@ -69,12 +97,20 @@ function draw() {
         if (!blocked.has(slot)) ellipse(ctx, point.x, point.y, 4, 2.5, '#fff3af')
       })
     }
-    const sorted = [...props.trees].sort((a,b) => treePosition(a).y - treePosition(b).y)
+    const sorted = [...props.trees].sort((a, b) => treePosition(a).y - treePosition(b).y)
     const now = performance.now()
     for (const tree of sorted) {
       if (!inFrame(treePosition(tree), 48)) continue
       const progress = animation.id === tree.id ? Math.max(0, animation.until - now) / 420 : 0
-      drawTree(ctx, tree, sprite, props.selected?.id === tree.id, Boolean(props.filter && props.filter !== tree.kind), progress, animation.enter)
+      drawTree(
+        ctx,
+        tree,
+        sprite,
+        props.selected?.id === tree.id,
+        Boolean(props.filter && props.filter !== tree.kind),
+        progress,
+        animation.enter
+      )
     }
     if (now < animation.until && !reducedMotion.matches) schedule()
   } else {
@@ -83,8 +119,15 @@ function draw() {
   ctx.restore()
 }
 
-function paintIsland(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, count: number, detailed = false) {
-  const density = Math.min(26, Math.ceil(count / 4))
+function paintIsland(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+  count: number,
+  detailed = false
+) {
+  const density = Math.max(0, Math.min(26, Math.ceil(count / 4)))
   const features = detailed ? props.ornaments : []
   const resolution = detailed ? (scale > 2 ? 3 : 2) : 1
   const key = detailed ? `detail:${resolution}:${features.join(',')}` : `canopy:${density}`
@@ -107,15 +150,17 @@ function paintIsland(ctx: CanvasRenderingContext2D, x: number, y: number, size: 
 }
 
 function inFrame(point: Point, radius: number) {
-  return Math.abs(point.x - center.x) < width / scale / 2 + radius &&
+  return (
+    Math.abs(point.x - center.x) < width / scale / 2 + radius &&
     Math.abs(point.y - center.y) < height / scale / 2 + radius
+  )
 }
 
 function drawMarks(ctx: CanvasRenderingContext2D) {
   const marks = props.marks.filter(mark => inFrame(mark, mark.radius))
   if (props.view === 'group') {
     ctx.beginPath()
-    props.marks.forEach((mark, index) => index ? ctx.lineTo(mark.x, mark.y) : ctx.moveTo(mark.x, mark.y))
+    props.marks.forEach((mark, index) => (index ? ctx.lineTo(mark.x, mark.y) : ctx.moveTo(mark.x, mark.y)))
     ctx.strokeStyle = '#edf6ce'
     ctx.lineWidth = 2 / scale
     ctx.setLineDash([5 / scale, 6 / scale])
@@ -126,34 +171,53 @@ function drawMarks(ctx: CanvasRenderingContext2D) {
     if (props.view === 'group') {
       const size = mark.radius / 190
       paintIsland(ctx, mark.x, mark.y, size, mark.trees)
-      if (mark.lighthouse) drawLandmark(ctx, mark.x + 110 * size, mark.y + 10 * size, Math.max(size, 0.58 / scale), 'lighthouse')
+      if (mark.lighthouse)
+        drawLandmark(ctx, mark.x + 110 * size, mark.y + 10 * size, Math.max(size, 0.58 / scale), 'lighthouse')
       if (mark.monument) drawLandmark(ctx, mark.x - 114 * size, mark.y + size, Math.max(size, 0.58 / scale), 'monument')
     } else {
-      const projection = mark.radius / 520
-      const size = mark.radius / 950
+      const positions = Array.from({ length: mark.count }, (_, i) => landmark(i, 'group'))
+      const islandSize = mark.count === 1 ? 1 : 0.42
+      const left = Math.min(...positions.map(p => p.x)) - 190 * islandSize
+      const right = Math.max(...positions.map(p => p.x)) + 190 * islandSize
+      const top = Math.min(...positions.map(p => p.y)) - 125 * islandSize
+      const bottom = Math.max(...positions.map(p => p.y)) + 125 * islandSize
+      const projection = (mark.radius * 1.8) / Math.max(right - left, bottom - top)
+      const size = projection * islandSize
       for (let i = 0; i < mark.count; i++) {
-        const position = landmark(i, 'group')
-        const x = mark.x + position.x * projection
-        const y = mark.y + position.y * projection
-        paintIsland(ctx, x, y, size, Math.min(capacity, mark.trees - i * capacity))
+        const position = positions[i]
+        const x = mark.x + (position.x - (left + right) / 2) * projection
+        const y = mark.y + (position.y - (top + bottom) / 2) * projection
+        const planted = mark.trees + mark.destroyed
+        const livingShare = planted ? mark.trees / planted : 0
+        paintIsland(ctx, x, y, size, Math.min(capacity, planted - i * capacity) * livingShare)
         if (i === 0 && mark.lighthouse) drawLandmark(ctx, x + 110 * size, y, Math.max(size, 0.48 / scale), 'lighthouse')
-        if (i === mark.count - 1 && mark.monument) drawLandmark(ctx, x - 114 * size, y, Math.max(size, 0.48 / scale), 'monument')
+        if (i === 0 && mark.monument) drawLandmark(ctx, x - 114 * size, y, Math.max(size, 0.48 / scale), 'monument')
       }
     }
-    if (mark.favorite) ellipse(ctx, mark.x - mark.radius * 0.46, mark.y - mark.radius * 0.28, 3 / scale, 3 / scale, '#ffe190')
+    if (mark.favorite)
+      ellipse(ctx, mark.x - mark.radius * 0.46, mark.y - mark.radius * 0.28, 3 / scale, 3 / scale, '#ffe190')
     const textSize = 12 / scale
     if (mark.radius * scale < 16) continue
     ctx.font = `600 ${textSize}px system-ui, sans-serif`
     ctx.textAlign = 'center'
     ctx.fillStyle = '#18382c'
     const labelWidth = Math.min(ctx.measureText(mark.label).width, mark.radius * 2) + 16 / scale
-    const y = mark.y + mark.radius * 0.64 + textSize
+    const y = mark.y + mark.radius * 0.83 + textSize
     ctx.beginPath()
     ctx.roundRect(mark.x - labelWidth / 2, y - textSize, labelWidth, textSize * 1.45, 5 / scale)
     ctx.fillStyle = '#f1f5de'
     ctx.fill()
     ctx.fillStyle = '#18382c'
     ctx.fillText(mark.label, mark.x, y + 1 / scale, mark.radius * 2)
+    if (mark.damaged || mark.destroyed) {
+      ctx.font = `${10 / scale}px system-ui, sans-serif`
+      const note = `${mark.damaged + mark.destroyed} 处待照料`
+      const noteWidth = ctx.measureText(note).width + 12 / scale
+      ctx.fillStyle = '#fff1d7'
+      ctx.fillRect(mark.x - noteWidth / 2, y + 8 / scale, noteWidth, 15 / scale)
+      ctx.fillStyle = '#91472f'
+      ctx.fillText(note, mark.x, y + 19 / scale)
+    }
   }
 }
 
@@ -169,7 +233,7 @@ function reset(useSelection = false) {
   if (width <= 1 || height <= 32) return
   if (props.view === 'island') {
     const tree = useSelection ? props.selected : undefined
-    if (tree || props.trees.length <= 3) {
+    if (tree || (props.trees.length <= 3 && !props.moving)) {
       const point = tree ? treePosition(tree) : { x: -16, y: 30 }
       const subjects = tree ? [point] : props.trees.map(treePosition)
       if (!subjects.length) subjects.push(point)
@@ -184,10 +248,10 @@ function reset(useSelection = false) {
       scale = Math.min(width / 420, height / 278)
     }
   } else {
-    let left = -80
-    let right = 80
-    let top = -85
-    let bottom = 85
+    let left = props.marks.length ? Infinity : -80
+    let right = props.marks.length ? -Infinity : 80
+    let top = props.marks.length ? Infinity : -85
+    let bottom = props.marks.length ? -Infinity : 85
     for (const mark of props.marks) {
       left = Math.min(left, mark.x - mark.radius)
       right = Math.max(right, mark.x + mark.radius)
@@ -196,7 +260,7 @@ function reset(useSelection = false) {
     }
     center = { x: (left + right) / 2, y: (top + bottom) / 2 }
     const fit = Math.min(width / (right - left + 90), height / (bottom - top + 96))
-    scale = Math.min(fit, props.view === 'world' ? 2 : 2.75)
+    scale = Math.min(fit, 4)
   }
   hasCamera = true
   schedule()
@@ -214,12 +278,13 @@ function focusTree() {
   if (!props.selected) return
   if (hasCamera) islandCamera ??= { ...center, scale }
   adjusted = true
-  if (props.selected.kind === 'rest' && !reducedMotion.matches) animation = { id: props.selected.id, until: performance.now() + 420, enter: false }
+  if (props.selected.kind === 'rest' && !reducedMotion.matches)
+    animation = { id: props.selected.id, until: performance.now() + 420, enter: false }
   reset(true)
 }
 
 function restoreIsland() {
-  if (islandCamera) restore(islandCamera)
+  if (islandCamera && !props.moving) restore(islandCamera)
   else reset()
   islandCamera = undefined
 }
@@ -242,7 +307,6 @@ function world(point: Point) {
   return { x: center.x + (point.x - width / 2) / scale, y: center.y + (point.y - height / 2) / scale }
 }
 function wheel(event: WheelEvent) {
-  if (!event.ctrlKey) return
   event.preventDefault()
   zoom(Math.exp(-Math.max(-100, Math.min(100, event.deltaY)) / 320), screen(event))
 }
@@ -264,7 +328,11 @@ function move(event: PointerEvent) {
   const other = [...pointers].find(([id]) => id !== event.pointerId)?.[1]
   if (other) {
     const start = Math.hypot(other.x - previous.x, other.y - previous.y)
-    if (start > 0) zoom(Math.hypot(other.x - point.x, other.y - point.y) / start, { x: (other.x + point.x) / 2, y: (other.y + point.y) / 2 })
+    if (start > 0)
+      zoom(Math.hypot(other.x - point.x, other.y - point.y) / start, {
+        x: (other.x + point.x) / 2,
+        y: (other.y + point.y) / 2
+      })
   } else {
     if (Math.hypot(point.x - origin.x, point.y - origin.y) > 4) moved = true
     if (moved) {
@@ -280,45 +348,67 @@ function up(event: PointerEvent) {
   const p = world(screen(event))
   if (props.view !== 'island') {
     const marks = props.marks.map(mark => ({ mark, distance: Math.hypot(p.x - mark.x, p.y - mark.y) }))
-    const hit = marks.filter(({ mark, distance }) => distance <= Math.max(mark.radius * 0.67, 20 / scale)).sort((a,b) => a.distance - b.distance)[0]
-    if (hit) emit('mark',hit.mark.id)
+    const hit = marks
+      .filter(({ mark, distance }) => distance <= Math.max(mark.radius, 20 / scale))
+      .sort((a, b) => a.distance - b.distance)[0]
+    if (hit) emit('mark', hit.mark.id)
   } else if (props.moving) {
     const options = plotPositions.map((point, slot) => ({ slot, distance: Math.hypot(p.x - point.x, p.y - point.y) }))
-    const hit = options.filter(point => point.distance < 14 && !props.trees.some(tree => tree.slot === point.slot)).sort((a,b) => a.distance - b.distance)[0]
-    if (hit) emit('plot',hit.slot)
+    const hit = options
+      .filter(point => point.distance < 14 && !props.trees.some(tree => tree.slot === point.slot))
+      .sort((a, b) => a.distance - b.distance)[0]
+    if (hit) emit('plot', hit.slot)
   } else {
     const options = props.trees.map(tree => {
       const point = treePosition(tree)
       return { tree, distance: Math.hypot(p.x - point.x, (p.y - point.y + 18) * 0.75) }
     })
-    const hit = options.filter(point => point.distance < 19).sort((a,b) => a.distance - b.distance)[0]
-    if (hit) emit('tree',hit.tree)
+    const hit = options.filter(point => point.distance < 19).sort((a, b) => a.distance - b.distance)[0]
+    if (hit) emit('tree', hit.tree)
   }
 }
-function cancel(event: PointerEvent) { pointers.delete(event.pointerId) }
-function spriteFailed() { spriteError.value = true }
+function cancel(event: PointerEvent) {
+  pointers.delete(event.pointerId)
+}
+function spriteFailed() {
+  spriteError.value = true
+}
 
-watch(() => props.scene, (next, previous) => {
-  if (hasCamera) cameras.set(previous, islandCamera ?? { ...center, scale })
-  islandCamera = undefined
-  adjusted = false
-  const known = cameras.get(next)
-  if (known) restore(known)
-  else reset()
-})
-watch(() => [props.marks, props.trees, props.selected, props.filter, props.ornaments, props.moving], () => {
-  if (!adjusted && !props.selected) reset()
-  else schedule()
-})
-watch(() => props.trees, (trees, previous) => {
-  if (props.view !== 'island' || reducedMotion.matches) return
-  const old = previous[previous.length - 1]
-  const latest = trees[trees.length - 1]
-  if (latest && latest.id > (old?.id ?? 0) && (!old || old.island === latest.island) && Math.abs(Date.now() - latest.planted) < 45000) {
-    animation = { id: latest.id, until: performance.now() + 420, enter: true }
-    schedule()
+watch(
+  () => props.scene,
+  (next, previous) => {
+    if (hasCamera) cameras.set(previous, islandCamera ?? { ...center, scale })
+    islandCamera = undefined
+    adjusted = false
+    const known = cameras.get(next)
+    if (known) restore(known)
+    else reset()
   }
-})
+)
+watch(
+  () => [props.marks, props.trees, props.selected, props.filter, props.ornaments, props.moving],
+  () => {
+    if (!adjusted && !props.selected) reset()
+    else schedule()
+  }
+)
+watch(
+  () => props.trees,
+  (trees, previous) => {
+    if (props.view !== 'island' || reducedMotion.matches) return
+    const old = previous[previous.length - 1]
+    const latest = trees[trees.length - 1]
+    if (
+      latest &&
+      latest.id > (old?.id ?? 0) &&
+      (!old || old.island === latest.island) &&
+      Math.abs(Date.now() - latest.planted) < 45000
+    ) {
+      animation = { id: latest.id, until: performance.now() + 420, enter: true }
+      schedule()
+    }
+  }
+)
 onMounted(() => {
   if (!frame.value || !canvas.value) return
   sprite.addEventListener('load', schedule)
@@ -357,5 +447,7 @@ defineExpose({ focusTree, restoreIsland })
     repeating-radial-gradient(ellipse at 60% 20%, transparent, transparent 38px, #85b7a521 39px, transparent 41px),
     radial-gradient(ellipse at 22% 10%, #497b79, #315865 65%, #203b51);
 }
-.map-tools { background: var(--surface-bright); }
+.map-tools {
+  background: var(--surface-bright);
+}
 </style>

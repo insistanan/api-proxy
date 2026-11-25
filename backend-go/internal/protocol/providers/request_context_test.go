@@ -3,7 +3,6 @@ package providers
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -89,27 +88,10 @@ func TestConvertToProviderRequest_PropagatesContext(t *testing.T) {
 	})
 }
 
-func TestGeminiProvider_DropsToolConfigWithoutTools(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	c := newGinContext(http.MethodPost, "/v1/messages", []byte(`{
-		"model":"gemini-2.0-flash",
-		"tool_choice":"any",
-		"messages":[{"role":"user","content":"hi"}]
-	}`), nil)
-	upstream := &config.UpstreamConfig{BaseURL: "https://api.example.com", ServiceType: "gemini"}
-
-	p := &GeminiProvider{}
-	req, _, err := p.ConvertToProviderRequest(c, upstream, "AIza-test")
-	if err != nil {
-		t.Fatalf("ConvertToProviderRequest() err = %v", err)
-	}
-
-	var got map[string]interface{}
-	if err := json.NewDecoder(req.Body).Decode(&got); err != nil {
-		t.Fatalf("decode request body: %v", err)
-	}
-	if _, ok := got["toolConfig"]; ok {
-		t.Fatalf("toolConfig should be dropped when tools missing, got %#v", got["toolConfig"])
+func TestGeminiProviderRejectsForcedToolWithoutDeclaration(t *testing.T) {
+	c := newGinContext(http.MethodPost, "/v1/messages", []byte(`{"model":"gemini","tool_choice":"any","messages":[{"role":"user","content":"hi"}]}`), nil)
+	_, _, err := (&GeminiProvider{}).ConvertToProviderRequest(c, &config.UpstreamConfig{BaseURL: "https://example.test", ServiceType: "gemini"}, "key")
+	if err == nil {
+		t.Fatal("没有工具声明时必须拒绝强制调用约束")
 	}
 }

@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/insistanan/api-proxy/internal/protocol/types"
-
 	"github.com/tidwall/gjson"
 )
 
@@ -476,7 +475,10 @@ func TestConvertOpenAIChatToResponsesNonStream(t *testing.T) {
 
 	originalReq := []byte(`{"model":"gpt-4o","input":"Hi","instructions":"Be helpful"}`)
 
-	result := ConvertOpenAIChatToResponsesNonStream(ctx, "gpt-4o", originalReq, nil, []byte(chatResponse), nil)
+	result, convertErr := ConvertOpenAIChatToResponsesNonStream(ctx, "gpt-4o", originalReq, nil, []byte(chatResponse), nil)
+	if convertErr != nil {
+		t.Fatal(convertErr)
+	}
 
 	// 解析结果
 	var resp map[string]interface{}
@@ -548,7 +550,10 @@ func TestConvertOpenAIChatToResponsesNonStream_ToolCalls(t *testing.T) {
 
 	originalReq := []byte(`{"model":"gpt-4o","input":"Search for test"}`)
 
-	result := ConvertOpenAIChatToResponsesNonStream(ctx, "gpt-4o", originalReq, nil, []byte(chatResponse), nil)
+	result, convertErr := ConvertOpenAIChatToResponsesNonStream(ctx, "gpt-4o", originalReq, nil, []byte(chatResponse), nil)
+	if convertErr != nil {
+		t.Fatal(convertErr)
+	}
 
 	var resp map[string]interface{}
 	if err := json.Unmarshal([]byte(result), &resp); err != nil {
@@ -612,7 +617,10 @@ func TestConvertOpenAIChatToResponsesNonStream_CustomToolCalls(t *testing.T) {
 
 	originalReq := []byte(`{"model":"gpt-4o","input":"Run code","tools":[{"type":"custom","name":"code_exec","description":"Execute code"}]}`)
 
-	result := ConvertOpenAIChatToResponsesNonStream(ctx, "gpt-4o", originalReq, nil, []byte(chatResponse), nil)
+	result, convertErr := ConvertOpenAIChatToResponsesNonStream(ctx, "gpt-4o", originalReq, nil, []byte(chatResponse), nil)
+	if convertErr != nil {
+		t.Fatal(convertErr)
+	}
 
 	root := gjson.Parse(result)
 	if root.Get("output.0.type").String() != "custom_tool_call" {
@@ -782,10 +790,13 @@ func chatUsageToResponsesInput(t *testing.T, usageJSON string) (int64, int64) {
 	chatResponse := `{"id":"chatcmpl-usage","object":"chat.completion","created":1,"model":"gpt-4o",` +
 		`"choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],` +
 		`"usage":` + usageJSON + `}`
-	result := ConvertOpenAIChatToResponsesNonStream(
+	result, convertErr := ConvertOpenAIChatToResponsesNonStream(
 		context.Background(), "gpt-4o",
 		[]byte(`{"model":"gpt-4o","input":"Hi"}`), nil, []byte(chatResponse), nil,
 	)
+	if convertErr != nil {
+		t.Fatal(convertErr)
+	}
 	root := gjson.Parse(result)
 	return root.Get("usage.input_tokens").Int(), root.Get("usage.input_tokens_details.cached_tokens").Int()
 }
@@ -884,10 +895,8 @@ func TestConvertOpenAIChatToResponses_CustomToolCallEventConsistency(t *testing.
 	}
 }
 
-func TestConvertOpenAIChatToResponses_LateToolNameLocksFunctionType(t *testing.T) {
-	// 退化场景：首个 tool_calls 增量未携带工具名（锁定为 function_call），
-	// 名称在后续增量才到且实为自定义工具——全链路必须保持 function_call，
-	// 不能在收尾阶段混发 custom_tool_call 事件。
+func TestConvertOpenAIChatToResponses_LateToolNamePreservesCustomType(t *testing.T) {
+	// 等待后到的名称后再创建条目，完整保留 custom 身份。
 	ctx := context.Background()
 
 	sseLines := []string{
@@ -907,12 +916,12 @@ func TestConvertOpenAIChatToResponses_LateToolNameLocksFunctionType(t *testing.T
 	}
 
 	for _, ev := range allEvents {
-		if strings.Contains(ev, "custom_tool_call") {
-			t.Errorf("锁定 function_call 后不应再出现 custom_tool_call 事件，事件: %s", ev)
+		if strings.Contains(ev, "function_call") {
+			t.Errorf("custom 工具不应先按 function_call 交付，事件: %s", ev)
 		}
 	}
-	if !hasEvent(allEvents, "response.function_call_arguments.done") {
-		t.Error("锁定 function_call 后应以 function_call_arguments.done 收尾")
+	if !hasEvent(allEvents, "response.custom_tool_call_input.done") {
+		t.Error("后到名称的 custom 工具应以 custom_tool_call_input.done 收尾")
 	}
 }
 

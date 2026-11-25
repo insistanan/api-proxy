@@ -17,12 +17,13 @@ package providers
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"log"
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/contract"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
@@ -162,6 +163,10 @@ func (s *geminiToClaudeStreamState) emitMessageDelta(stopReason string) string {
 
 // ProcessChunk 处理一个上游 SSE data JSON，返回要发给客户端的 Claude SSE 事件。
 func (s *geminiToClaudeStreamState) ProcessChunk(jsonStr string) []string {
+	if err := contract.ResponseContent("gemini", []byte(jsonStr)); err != nil {
+		s.streamError = err
+		return nil
+	}
 	if s.streamError != nil || s.messageStopped {
 		return nil
 	}
@@ -336,8 +341,8 @@ func (s *geminiToClaudeStreamState) ProcessChunk(jsonStr string) []string {
 	return out
 }
 
-// Finish 流结束时的统一收尾：关块、shadow 登记、reasoning 缓存、usage 留痕。
-func (s *geminiToClaudeStreamState) Finish(shadowProviderID, shadowSessionID string) []string {
+// Finish 只负责流终态与关块，缓存登记由 provider 在交付后处理。
+func (s *geminiToClaudeStreamState) Finish() []string {
 	if s.streamError != nil || s.pendingStopReason == "" || s.messageStopped {
 		return nil
 	}
@@ -351,34 +356,6 @@ func (s *geminiToClaudeStreamState) Finish(shadowProviderID, shadowSessionID str
 	switch {
 	case !s.usageSeen:
 		log.Printf("[Gemini-Stream-Token] 警告: 上游整条流未提供 usageMetadata, usage 记为 0")
-	}
-
-	if len(s.shadowParts) > 0 {
-		defaultGeminiShadowStore.Record(shadowProviderID, shadowSessionID, GeminiShadowTurn{
-			AssistantContent: map[string]interface{}{"parts": cloneInterface(s.shadowParts)},
-			ToolCalls:        s.shadowToolCalls,
-		})
-	}
-
-	if s.reasoningText.Len() > 0 {
-		// 流式响应只有正常读完后才登记 reasoning，避免把断流产生的
-		// 不完整思考绑定到下一轮 assistant 消息。
-		cacheContent := make([]types.ClaudeContent, 0, len(s.toolUseParts)+2)
-		cacheContent = append(cacheContent, types.ClaudeContent{
-			Type:     "thinking",
-			Thinking: s.reasoningText.String(),
-		})
-		if s.assistantText.Len() > 0 {
-			cacheContent = append(cacheContent, types.ClaudeContent{
-				Type: "text",
-				Text: s.assistantText.String(),
-			})
-		}
-		cacheContent = append(cacheContent, s.toolUseParts...)
-		CacheClaudeResponseReasoning(&types.ClaudeResponse{
-			Role:    "assistant",
-			Content: cacheContent,
-		})
 	}
 
 	out = append(out, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")

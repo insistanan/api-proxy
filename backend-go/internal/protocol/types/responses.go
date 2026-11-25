@@ -2,7 +2,6 @@ package types
 
 import (
 	"encoding/json"
-	"fmt"
 )
 
 // ============== Responses API 类型定义 ==============
@@ -38,177 +37,6 @@ type ResponsesRequest struct {
 	TransformerMetadata map[string]interface{} `json:"-"`
 }
 
-// ResponsesItem Responses API 消息项
-type ResponsesItem struct {
-	ID        string      `json:"id,omitempty"`
-	Type      string      `json:"type"` // message, text, function_call, tool_call, tool_result
-	Status    string      `json:"status,omitempty"`
-	Role      string      `json:"role,omitempty"` // user, assistant (用于 type=message)
-	Content   interface{} `json:"content,omitempty"`
-	Summary   interface{} `json:"summary,omitempty"`
-	ToolUse   *ToolUse    `json:"tool_use,omitempty"`
-	CallID    string      `json:"call_id,omitempty"`
-	Name      string      `json:"name,omitempty"`
-	Arguments string      `json:"arguments,omitempty"`
-	Tools     interface{} `json:"tools,omitempty"`
-	Namespace string      `json:"namespace,omitempty"`
-	Execution string      `json:"execution,omitempty"`
-	// Responses reasoning/tool item 可能携带不透明的完整性材料，必须在会话持久化
-	// 和客户端重放匹配过程中保留。
-	EncryptedContent interface{} `json:"encrypted_content,omitempty"`
-	Signature        string      `json:"signature,omitempty"`
-	// 原生 web_search_call 的搜索、打开页面或页内查找动作须完整保留。
-	Action interface{} `json:"action,omitempty"`
-}
-
-// UnmarshalJSON 保留 Responses 扩展 item 的真实字段形态。
-// 尤其是 custom_tool_call 的 input 与 function_call_output 的 output，不能
-// 只依赖 content；否则响应转 Claude/Chat 及 previous_response 指纹都会把
-// 工具参数或工具结果变成空值。
-func (i *ResponsesItem) UnmarshalJSON(data []byte) error {
-	if i == nil {
-		return fmt.Errorf("ResponsesItem 不能为空")
-	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	*i = ResponsesItem{}
-	decodeString := func(key string, target *string) {
-		if value, ok := raw[key]; ok {
-			_ = json.Unmarshal(value, target)
-		}
-	}
-	decodeValue := func(key string) interface{} {
-		value, ok := raw[key]
-		if !ok || string(value) == "null" {
-			return nil
-		}
-		var decoded interface{}
-		if json.Unmarshal(value, &decoded) != nil {
-			return nil
-		}
-		return decoded
-	}
-	decodeString("id", &i.ID)
-	decodeString("type", &i.Type)
-	decodeString("status", &i.Status)
-	decodeString("role", &i.Role)
-	decodeString("call_id", &i.CallID)
-	decodeString("name", &i.Name)
-	decodeString("namespace", &i.Namespace)
-	decodeString("execution", &i.Execution)
-	decodeString("signature", &i.Signature)
-	i.Content = decodeValue("content")
-	i.Summary = decodeValue("summary")
-	i.Tools = decodeValue("tools")
-	i.EncryptedContent = decodeValue("encrypted_content")
-	i.Action = decodeValue("action")
-	if i.Content == nil {
-		if i.Type == "custom_tool_call" {
-			i.Content = decodeValue("input")
-		} else {
-			i.Content = decodeValue("output")
-		}
-	}
-	if value, ok := raw["arguments"]; ok && string(value) != "null" {
-		if err := json.Unmarshal(value, &i.Arguments); err != nil {
-			i.Arguments = string(value)
-		}
-	}
-	if value, ok := raw["tool_use"]; ok && string(value) != "null" {
-		var toolUse ToolUse
-		if err := json.Unmarshal(value, &toolUse); err != nil {
-			return err
-		}
-		i.ToolUse = &toolUse
-	}
-	return nil
-}
-
-func (i ResponsesItem) MarshalJSON() ([]byte, error) {
-	out := map[string]interface{}{
-		"type": i.Type,
-	}
-	if i.ID != "" {
-		out["id"] = i.ID
-	}
-	if i.Status != "" {
-		out["status"] = i.Status
-	}
-	if i.Role != "" {
-		out["role"] = i.Role
-	}
-	if i.Content != nil && i.Type != "custom_tool_call" && !responsesItemUsesOutputField(i.Type) {
-		out["content"] = i.Content
-	}
-	if i.Summary != nil {
-		out["summary"] = i.Summary
-	}
-	if i.ToolUse != nil {
-		out["tool_use"] = i.ToolUse
-	}
-	if i.CallID != "" {
-		out["call_id"] = i.CallID
-	}
-	if i.Name != "" && i.Type != "tool_search_call" {
-		out["name"] = i.Name
-	}
-	if i.Tools != nil {
-		out["tools"] = i.Tools
-	}
-	if i.Namespace != "" {
-		out["namespace"] = i.Namespace
-	}
-	if i.Execution != "" {
-		out["execution"] = i.Execution
-	}
-	if i.EncryptedContent != nil {
-		out["encrypted_content"] = i.EncryptedContent
-	}
-	if i.Signature != "" {
-		out["signature"] = i.Signature
-	}
-	if i.Action != nil {
-		out["action"] = i.Action
-	}
-
-	switch i.Type {
-	case "custom_tool_call":
-		if i.Content != nil {
-			out["input"] = i.Content
-		}
-	case "function_call_output", "custom_tool_call_output", "tool_search_output", "tool_result":
-		if i.Content != nil {
-			out["output"] = i.Content
-		}
-	case "tool_search_call":
-		if i.Arguments != "" {
-			var parsed interface{}
-			if err := json.Unmarshal([]byte(i.Arguments), &parsed); err == nil {
-				out["arguments"] = parsed
-			} else {
-				out["arguments"] = i.Arguments
-			}
-		}
-	default:
-		if i.Arguments != "" {
-			out["arguments"] = i.Arguments
-		}
-	}
-
-	return json.Marshal(out)
-}
-
-func responsesItemUsesOutputField(itemType string) bool {
-	switch itemType {
-	case "function_call_output", "custom_tool_call_output", "tool_search_output", "tool_result":
-		return true
-	default:
-		return false
-	}
-}
-
 // ContentBlock 内容块（用于嵌套 content 数组）
 type ContentBlock struct {
 	Type string `json:"type"` // input_text, output_text
@@ -236,6 +64,7 @@ type ResponsesResponse struct {
 	CreatedAt          int64                  `json:"created_at,omitempty"`
 	Extra              map[string]interface{} `json:"-"`
 	UsagePresent       bool                   `json:"-"`
+	IncompleteDetails  map[string]interface{} `json:"incomplete_details,omitempty"`
 }
 
 func (r ResponsesResponse) MarshalJSON() ([]byte, error) {
@@ -251,12 +80,16 @@ func (r ResponsesResponse) MarshalJSON() ([]byte, error) {
 			Usage:              r.Usage,
 			Created:            r.Created,
 			CreatedAt:          r.CreatedAt,
+			IncompleteDetails:  r.IncompleteDetails,
 		})
 	}
 
 	out := make(map[string]interface{}, len(r.Extra)+8)
 	for k, v := range r.Extra {
 		out[k] = v
+	}
+	if r.IncompleteDetails != nil {
+		out["incomplete_details"] = r.IncompleteDetails
 	}
 	if r.ID != "" {
 		out["id"] = r.ID
@@ -268,10 +101,8 @@ func (r ResponsesResponse) MarshalJSON() ([]byte, error) {
 		out["model"] = r.Model
 	}
 	if r.Output != nil {
-		_, exists := out["output"]
-		if !exists {
-			out["output"] = r.Output
-		}
+		// 已解析的输出是唯一事实来源，安全处理或字段修改不能被旧原文覆盖。
+		out["output"] = r.Output
 	}
 	if r.Status != "" {
 		out["status"] = r.Status
@@ -295,16 +126,37 @@ func (r ResponsesResponse) MarshalJSON() ([]byte, error) {
 }
 
 type responsesResponseWire struct {
-	ID                 string          `json:"id"`
-	Object             string          `json:"object,omitempty"`
-	Model              string          `json:"model"`
-	Output             []ResponsesItem `json:"output"`
-	Status             string          `json:"status"`
-	PreviousID         string          `json:"previous_id,omitempty"`
-	PreviousResponseID string          `json:"previous_response_id,omitempty"`
-	Usage              ResponsesUsage  `json:"usage"`
-	Created            int64           `json:"created,omitempty"`
-	CreatedAt          int64           `json:"created_at,omitempty"`
+	IncompleteDetails  map[string]interface{} `json:"incomplete_details,omitempty"`
+	ID                 string                 `json:"id"`
+	Object             string                 `json:"object,omitempty"`
+	Model              string                 `json:"model"`
+	Output             []ResponsesItem        `json:"output"`
+	Status             string                 `json:"status"`
+	PreviousID         string                 `json:"previous_id,omitempty"`
+	PreviousResponseID string                 `json:"previous_response_id,omitempty"`
+	Usage              ResponsesUsage         `json:"usage"`
+	Created            int64                  `json:"created,omitempty"`
+	CreatedAt          int64                  `json:"created_at,omitempty"`
+}
+
+// UnmarshalJSON 每次整体替换响应，避免复用对象时留下安全处理前的扩展字段。
+func (r *ResponsesResponse) UnmarshalJSON(data []byte) error {
+	var wire responsesResponseWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	var extra map[string]interface{}
+	if err := json.Unmarshal(data, &extra); err != nil {
+		return err
+	}
+	_, usagePresent := extra["usage"]
+	for _, key := range []string{"id", "object", "model", "output", "status", "previous_id", "previous_response_id", "usage", "created", "created_at", "incomplete_details"} {
+		delete(extra, key)
+	}
+	*r = ResponsesResponse{ID: wire.ID, Object: wire.Object, Model: wire.Model, Output: wire.Output, Status: wire.Status,
+		PreviousID: wire.PreviousID, PreviousResponseID: wire.PreviousResponseID, Usage: wire.Usage,
+		Created: wire.Created, CreatedAt: wire.CreatedAt, IncompleteDetails: wire.IncompleteDetails, Extra: extra, UsagePresent: usagePresent}
+	return nil
 }
 
 func responsesUsageEmpty(usage ResponsesUsage) bool {

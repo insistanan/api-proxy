@@ -47,6 +47,8 @@ type Status struct {
 	EntryProtocol    string  `json:"entryProtocol"`
 	UpstreamProtocol string  `json:"upstreamProtocol"`
 	CacheMode        string  `json:"cacheMode,omitempty"`
+	SnapshotAt       int64   `json:"snapshotAt,omitempty"`
+	NextHeartbeatAt  int64   `json:"nextHeartbeatAt,omitempty"`
 	LastAt           int64   `json:"lastAt,omitempty"`
 	ExpiresAt        int64   `json:"expiresAt,omitempty"`
 	ConversationID   string  `json:"conversationId"`
@@ -345,6 +347,18 @@ func (t *Turn) End() {
 func (m *Manager) schedule(e *entry, at time.Time) {
 	e.due = at
 	e.status.NextAt, e.status.UpdatedAt = at.UnixMilli(), m.now().UnixMilli()
+	e.status.NextHeartbeatAt = 0
+	if s := e.snapshot; s != nil {
+		heartbeatAt := at
+		if s.body == nil {
+			heartbeatAt = e.updated.Add(time.Duration(s.policy.IntervalSeconds) * time.Second)
+		}
+		// 准备快照、达到期限和发送心跳是不同事件，不能把清理期限展示为心跳时间。
+		if (e.deadline.IsZero() || heartbeatAt.Before(e.deadline)) &&
+			(s.ttl == 0 || heartbeatAt.Before(s.lastSent.Add(s.ttl-expiryMargin))) {
+			e.status.NextHeartbeatAt = heartbeatAt.UnixMilli()
+		}
+	}
 	if e.index < 0 {
 		heap.Push(&m.queue, e)
 	} else {
@@ -374,6 +388,7 @@ func (m *Manager) clearSnapshot(e *entry) {
 	m.release(e.snapshot)
 	e.snapshot = nil
 	e.status.NextAt = 0
+	e.status.NextHeartbeatAt = 0
 }
 
 func (m *Manager) stopEntry(e *entry, reason string) {
@@ -428,6 +443,32 @@ func (m *Manager) Status(channelID string) []Status {
 		}
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].UpdatedAt > result[j].UpdatedAt })
+	return result
+}
+
+// ActiveChannels 供仪表盘一次读取所有渠道的保活会话数，不复制正文或逐渠道扫描。
+func (m *Manager) ActiveChannels() map[string]int {
+	if m == nil {
+		return nil
+	}
+	enabled, revision := m.state()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !enabled || m.stopped {
+		return nil
+	}
+	result := make(map[string]int)
+	now := m.now()
+	for _, e := range m.entries {
+		if e.active != 0 || e.revision != revision || e.snapshot == nil || e.snapshot.body == nil ||
+			!e.deadline.IsZero() && !now.Before(e.deadline) {
+			continue
+		}
+		if e.status.State == "ready" && e.status.NextHeartbeatAt > 0 && stopReason(e, now) == "" ||
+			e.status.State == "sending" {
+			result[e.status.ChannelID]++
+		}
+	}
 	return result
 }
 

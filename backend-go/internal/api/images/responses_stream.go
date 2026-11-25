@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/converters/toimages"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
 )
@@ -30,9 +31,9 @@ func convertResponsesImageStream(c *gin.Context, reader io.Reader, headers http.
 	buffered := bufio.NewReaderSize(reader, 32*1024)
 	readContext := lifecycle.ctx
 	seen := make(map[string]int)
-	var pending []responsesImageItem
+	var pending []toimages.ImageItem
 	var pendingBytes int64
-	collect := func(item responsesImageItem, created int64) error {
+	collect := func(item toimages.ImageItem, created int64) error {
 		if item.Type != "image_generation_call" {
 			return nil
 		}
@@ -41,7 +42,7 @@ func convertResponsesImageStream(c *gin.Context, reader io.Reader, headers http.
 		}
 		key := imageStreamItemKey(item)
 		if index, exists := seen[key]; exists {
-			item = mergeFinalImageItem(pending[index], item)
+			item = toimages.MergeFinalItem(pending[index], item)
 			pendingBytes -= int64(len(pending[index].ResultJSON))
 			pendingBytes += int64(len(item.ResultJSON))
 			pending[index] = item
@@ -117,7 +118,7 @@ func convertResponsesImageStream(c *gin.Context, reader io.Reader, headers http.
 					}
 				}
 				if !requestedStream {
-					result, err := convertResponsesImageResponse(responsesImageResponse{CreatedAt: created, Status: "completed", Output: pending})
+					result, err := toimages.ConvertResponse(toimages.ResponsesResponse{CreatedAt: created, Status: "completed", Output: pending})
 					if err != nil {
 						return usage, err
 					}
@@ -136,7 +137,7 @@ func convertResponsesImageStream(c *gin.Context, reader io.Reader, headers http.
 					failure = event.Response.Get("error")
 				}
 				if failure.Exists() && failure.Type != gjson.Null {
-					return usage, writer.failure(errors.Join(responsesImageError(json.RawMessage(failure.Raw)), usageErr))
+					return usage, writer.failure(errors.Join(toimages.ResponseError(json.RawMessage(failure.Raw)), usageErr))
 				}
 				return usage, writer.failure(errors.Join(fmt.Errorf("Responses 图片流失败（%s）: %s", event.Type, event.Message), usageErr))
 			}

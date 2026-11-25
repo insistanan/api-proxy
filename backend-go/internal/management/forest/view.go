@@ -11,28 +11,35 @@ import (
 )
 
 type Island struct {
-	ID       int64  `json:"id"`
-	Name     string `json:"name"`
-	Favorite bool   `json:"favorite"`
-	Count    int64  `json:"count"`
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	Favorite  bool   `json:"favorite"`
+	Count     int64  `json:"count"`
+	Damaged   int64  `json:"damaged"`
+	Destroyed int64  `json:"destroyed"`
 }
 
 type Group struct {
-	ID      int64 `json:"id"`
-	Islands int64 `json:"islands"`
-	Trees   int64 `json:"trees"`
+	ID        int64 `json:"id"`
+	Islands   int64 `json:"islands"`
+	Trees     int64 `json:"trees"`
+	Damaged   int64 `json:"damaged"`
+	Destroyed int64 `json:"destroyed"`
 }
 
 type Tree struct {
-	ID           int64  `json:"id"`
-	Kind         string `json:"kind"`
-	Style        int    `json:"style"`
-	Name         string `json:"name"`
-	Island       int64  `json:"island"`
-	Slot         int    `json:"slot"`
-	Variant      int64  `json:"variant"`
-	Planted      int64  `json:"planted"`
-	AssetVersion int    `json:"assetVersion"`
+	ID                int64  `json:"id"`
+	Kind              string `json:"kind"`
+	Style             int    `json:"style"`
+	Name              string `json:"name"`
+	Island            int64  `json:"island"`
+	Slot              int    `json:"slot"`
+	Variant           int64  `json:"variant"`
+	Planted           int64  `json:"planted"`
+	AssetVersion      int    `json:"assetVersion"`
+	Accessory         string `json:"accessory"`
+	Condition         string `json:"condition"`
+	ConditionRevision int64  `json:"conditionRevision"`
 }
 
 type Discovery struct {
@@ -42,24 +49,41 @@ type Discovery struct {
 }
 
 type Event struct {
-	ID     string `json:"id"`
-	Island int64  `json:"island"`
-	Title  string `json:"title"`
-	Story  string `json:"story"`
+	Sequence int64          `json:"sequence"`
+	ID       string         `json:"id"`
+	Island   int64          `json:"island"`
+	TreeID   int64          `json:"treeId"`
+	At       int64          `json:"at"`
+	Title    string         `json:"title"`
+	Story    string         `json:"story"`
+	Effects  EventEffects   `json:"effects"`
+	Affected []AffectedTree `json:"affected,omitempty"`
 }
 
 type Ornament struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	Price int64  `json:"price"`
-	Level int64  `json:"level"`
-	Owned bool   `json:"owned"`
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Price       int64     `json:"price"`
+	Level       int64     `json:"level"`
+	Owned       bool      `json:"owned"`
+	Category    string    `json:"category"`
+	Description string    `json:"description"`
+	Rarity      string    `json:"rarity"`
+	Cost        Resources `json:"cost"`
+	Kind        string    `json:"kind,omitempty"`
+	Style       int       `json:"style"`
 }
 
 var catalog = []Ornament{
-	{ID: "trail", Name: "林间踏石", Price: 10, Level: 10},
-	{ID: "lantern", Name: "海湾灯塔", Price: 50, Level: 20},
-	{ID: "monument", Name: "群岛纪念碑", Price: 150, Level: 50},
+	{ID: "trail", Name: "林间踏石", Price: 15, Level: 3, Category: "landscape", Description: "把一串月白色石头铺向海边。", Rarity: "精巧", Cost: Resources{Wood: 8}},
+	{ID: "lantern", Name: "海湾灯塔", Price: 80, Level: 8, Category: "landscape", Description: "每片群岛的第一座岛，都有一盏等你回来的灯。", Rarity: "珍藏", Cost: Resources{Wood: 25, Seeds: 3}},
+	{ID: "monument", Name: "星海纪念碑", Price: 240, Level: 15, Category: "landscape", Description: "在每片群岛的起点，为走过的旅程留一枚星光。", Rarity: "传说", Cost: Resources{Wood: 60, Dew: 6}},
+	{ID: "maple", Name: "枫糖树", Price: 45, Level: 5, Category: "species", Description: "像一簇温暖的小火焰，秋天也舍不得熄灭。", Rarity: "珍藏", Cost: Resources{Seeds: 3}, Kind: "usage", Style: 4},
+	{ID: "willow", Name: "星垂柳", Price: 90, Level: 8, Category: "species", Description: "枝梢垂下细碎星光，风一吹就亮起来。", Rarity: "稀有", Cost: Resources{Seeds: 5, Dew: 2}, Kind: "usage", Style: 5},
+	{ID: "moon", Name: "月灯树", Price: 60, Level: 6, Category: "species", Description: "把安静的时光，结成一颗小小的月亮。", Rarity: "稀有", Cost: Resources{Seeds: 3, Dew: 2}, Kind: "focus", Style: 4},
+	{ID: "donut", Name: "甜甜圈树", Price: 50, Level: 4, Category: "species", Description: "树冠中间少了一口。它坚持说是海鸥干的。", Rarity: "珍藏", Cost: Resources{Seeds: 2, Dew: 4}, Kind: "rest", Style: 4},
+	{ID: "ribbon", Name: "风的蝴蝶结", Price: 20, Level: 2, Category: "accessory", Description: "给喜欢的树系一枚珊瑚色蝴蝶结。", Rarity: "精巧", Cost: Resources{Wood: 4}},
+	{ID: "fireflies", Name: "萤火星环", Price: 70, Level: 7, Category: "accessory", Description: "一圈不会熄灭的小星星，围着树冠打转。", Rarity: "稀有", Cost: Resources{Seeds: 2, Dew: 3}},
 }
 
 type World struct {
@@ -84,15 +108,18 @@ type World struct {
 	Milestones    []Event          `json:"milestones"`
 	CatchingUp    bool             `json:"catchingUp"`
 	SyncIssue     bool             `json:"syncIssue"`
+	Resources     Resources        `json:"resources"`
+	Achievements  []Achievement    `json:"achievements"`
+	Ecology       Ecology          `json:"ecology"`
 }
 
-const treeColumns = `id,kind,style,name,island,slot,variant,planted,asset_version`
+const treeColumns = `id,kind,style,name,island,slot,variant,planted,asset_version,COALESCE((SELECT item FROM tree_accessories WHERE tree_id=trees.id),''),` + conditionSchemaColumn + `,COALESCE((SELECT revision FROM tree_condition WHERE tree_id=trees.id),0)`
 
 type scanner interface{ Scan(...any) error }
 
 func scanTree(row scanner) (Tree, error) {
 	var t Tree
-	err := row.Scan(&t.ID, &t.Kind, &t.Style, &t.Name, &t.Island, &t.Slot, &t.Variant, &t.Planted, &t.AssetVersion)
+	err := row.Scan(&t.ID, &t.Kind, &t.Style, &t.Name, &t.Island, &t.Slot, &t.Variant, &t.Planted, &t.AssetVersion, &t.Accessory, &t.Condition, &t.ConditionRevision)
 	return t, err
 }
 
@@ -126,7 +153,7 @@ func (s *Store) World(ctx context.Context, now time.Time) (World, error) {
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return w, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT kind,COUNT(*) FROM trees GROUP BY kind`)
+	rows, err := tx.QueryContext(ctx, `SELECT kind,COUNT(*) FROM trees WHERE `+conditionSchemaColumn+`!='destroyed' GROUP BY kind`)
 	if err != nil {
 		return w, err
 	}
@@ -159,6 +186,18 @@ func (s *Store) World(ctx context.Context, now time.Time) (World, error) {
 	if err != nil {
 		return w, err
 	}
+	w.Resources, err = readResources(ctx, tx)
+	if err != nil {
+		return w, err
+	}
+	w.Achievements, err = readAchievements(ctx, tx)
+	if err != nil {
+		return w, err
+	}
+	w.Ecology, err = readEcology(ctx, tx)
+	if err != nil {
+		return w, err
+	}
 	return w, tx.Commit()
 }
 
@@ -184,8 +223,10 @@ func queryDiscoveries(ctx context.Context, db listReader) ([]Discovery, error) {
 }
 
 func queryIslands(ctx context.Context, db listReader, condition string, args ...any) ([]Island, error) {
-	rows, err := db.QueryContext(ctx, `SELECT islands.id,islands.name,islands.favorite,COUNT(trees.id)
-FROM islands LEFT JOIN trees ON trees.island=islands.id `+condition+` GROUP BY islands.id ORDER BY islands.id`, args...)
+	rows, err := db.QueryContext(ctx, `SELECT islands.id,islands.name,islands.favorite,
+COUNT(trees.id)-COALESCE(SUM(tree_condition.state='destroyed'),0),
+COALESCE(SUM(tree_condition.state='damaged'),0),COALESCE(SUM(tree_condition.state='destroyed'),0)
+FROM islands LEFT JOIN trees ON trees.island=islands.id LEFT JOIN tree_condition ON tree_condition.tree_id=trees.id `+condition+` GROUP BY islands.id ORDER BY islands.id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +234,7 @@ FROM islands LEFT JOIN trees ON trees.island=islands.id `+condition+` GROUP BY i
 	result := []Island{}
 	for rows.Next() {
 		var i Island
-		if err := rows.Scan(&i.ID, &i.Name, &i.Favorite, &i.Count); err != nil {
+		if err := rows.Scan(&i.ID, &i.Name, &i.Favorite, &i.Count, &i.Damaged, &i.Destroyed); err != nil {
 			return nil, err
 		}
 		result = append(result, i)
@@ -202,8 +243,9 @@ FROM islands LEFT JOIN trees ON trees.island=islands.id `+condition+` GROUP BY i
 }
 
 func (s *Store) Groups(ctx context.Context) ([]Group, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT (islands.id-1)/? AS area,COUNT(DISTINCT islands.id),COUNT(trees.id)
-FROM islands LEFT JOIN trees ON trees.island=islands.id GROUP BY area ORDER BY area`, GroupCapacity)
+	rows, err := s.db.QueryContext(ctx, `SELECT (islands.id-1)/? AS area,COUNT(DISTINCT islands.id),
+COUNT(trees.id)-COALESCE(SUM(tree_condition.state='destroyed'),0),COALESCE(SUM(tree_condition.state='damaged'),0),COALESCE(SUM(tree_condition.state='destroyed'),0)
+FROM islands LEFT JOIN trees ON trees.island=islands.id LEFT JOIN tree_condition ON tree_condition.tree_id=trees.id GROUP BY area ORDER BY area`, GroupCapacity)
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +253,7 @@ FROM islands LEFT JOIN trees ON trees.island=islands.id GROUP BY area ORDER BY a
 	result := []Group{}
 	for rows.Next() {
 		var g Group
-		if err := rows.Scan(&g.ID, &g.Islands, &g.Trees); err != nil {
+		if err := rows.Scan(&g.ID, &g.Islands, &g.Trees, &g.Damaged, &g.Destroyed); err != nil {
 			return nil, err
 		}
 		result = append(result, g)
@@ -278,7 +320,7 @@ func queryTrees(ctx context.Context, db listReader, where string, args ...any) (
 }
 
 func queryEvents(ctx context.Context, db listReader, where string, args ...any) ([]Event, error) {
-	rows, err := db.QueryContext(ctx, `SELECT key,island,title,story FROM forest_events `+where+` ORDER BY at_ms DESC,rowid DESC LIMIT 20`, args...)
+	rows, err := db.QueryContext(ctx, `SELECT `+eventColumns+` FROM forest_events `+where+` ORDER BY rowid DESC LIMIT 20`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -286,7 +328,7 @@ func queryEvents(ctx context.Context, db listReader, where string, args ...any) 
 	events := []Event{}
 	for rows.Next() {
 		var e Event
-		if err := rows.Scan(&e.ID, &e.Island, &e.Title, &e.Story); err != nil {
+		if err := scanEvent(rows, &e); err != nil {
 			return nil, err
 		}
 		events = append(events, e)
@@ -338,9 +380,10 @@ func (s *Store) Day(ctx context.Context, day string, after int64) (DayView, erro
 }
 
 type TreeEdit struct {
-	Name  *string `json:"name"`
-	Style *int    `json:"style"`
-	Slot  *int    `json:"slot"`
+	Name      *string `json:"name"`
+	Style     *int    `json:"style"`
+	Slot      *int    `json:"slot"`
+	Accessory *string `json:"accessory"`
 }
 
 func (s *Store) EditTree(ctx context.Context, id int64, edit TreeEdit) error {
@@ -363,10 +406,24 @@ func (s *Store) EditTree(ctx context.Context, id int64, edit TreeEdit) error {
 		}
 	}
 	if edit.Style != nil {
-		if *edit.Style < 0 || *edit.Style > 3 {
+		if *edit.Style < 0 || *edit.Style > 5 || (t.Kind != "usage" && *edit.Style > 4) {
 			return ErrInvalid
 		}
-		if t.Kind == "usage" {
+		if *edit.Style >= 4 {
+			var itemID string
+			for _, item := range catalog {
+				if item.Category == "species" && item.Kind == t.Kind && item.Style == *edit.Style {
+					itemID = item.ID
+				}
+			}
+			var owned bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM rewards WHERE key=?)`, "ornament:"+itemID).Scan(&owned); err != nil {
+				return err
+			}
+			if itemID == "" || !owned {
+				return ErrInvalid
+			}
+		} else if t.Kind == "usage" {
 			g, err := readGrowth(ctx, tx)
 			if err != nil {
 				return err
@@ -376,6 +433,25 @@ func (s *Store) EditTree(ctx context.Context, id int64, edit TreeEdit) error {
 			}
 		}
 		t.Style = *edit.Style
+	}
+	if edit.Accessory != nil {
+		if *edit.Accessory != "" {
+			var valid, owned bool
+			for _, item := range catalog {
+				if item.ID == *edit.Accessory && item.Category == "accessory" {
+					valid = true
+				}
+			}
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM rewards WHERE key=?)`, "ornament:"+*edit.Accessory).Scan(&owned); err != nil {
+				return err
+			}
+			if !valid || !owned {
+				return ErrInvalid
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO tree_accessories VALUES(?,?) ON CONFLICT(tree_id) DO UPDATE SET item=excluded.item`, id, *edit.Accessory); err != nil {
+			return err
+		}
 	}
 	if edit.Slot != nil {
 		if *edit.Slot < 0 || *edit.Slot >= IslandCapacity {
@@ -392,6 +468,11 @@ func (s *Store) EditTree(ctx context.Context, id int64, edit TreeEdit) error {
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE trees SET name=?,style=?,slot=? WHERE id=?`, t.Name, t.Style, t.Slot, id); err != nil {
 		return err
+	}
+	if edit.Style != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO discoveries VALUES(?,?,?) ON CONFLICT DO NOTHING`, t.Kind, t.Style, time.Now().UnixMilli()); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -439,7 +520,17 @@ func (s *Store) Redeem(ctx context.Context, id string, now time.Time) error {
 		return tx.Commit()
 	}
 	if level < item.Level || balance < item.Price {
-		return ErrInvalid
+		return fmt.Errorf("%w：等级或成就点不足", ErrInvalid)
+	}
+	resources, err := readResources(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if resources.Wood < item.Cost.Wood || resources.Seeds < item.Cost.Seeds || resources.Dew < item.Cost.Dew {
+		return fmt.Errorf("%w：材料不足", ErrInvalid)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO forest_resources VALUES(?,?,?,?)`, key, -item.Cost.Wood, -item.Cost.Seeds, -item.Cost.Dew); err != nil {
+		return err
 	}
 	if err := reward(ctx, tx, key, -item.Price); err != nil {
 		return err

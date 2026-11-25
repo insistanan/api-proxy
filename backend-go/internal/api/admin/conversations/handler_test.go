@@ -18,7 +18,7 @@ func TestDeleteConversationReadFailureIsNotNotFound(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	registry, err := conversation.NewPersistentRegistryWithDB(db)
 	require.NoError(t, err)
-	t.Cleanup(registry.Stop)
+	t.Cleanup(func() { registry.Stop() })
 	router := gin.New()
 	router.DELETE("/conversations/:id", DeleteConversation(registry, nil))
 

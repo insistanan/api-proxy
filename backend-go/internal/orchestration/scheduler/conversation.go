@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/insistanan/api-proxy/internal/orchestration/urlhealth"
@@ -56,7 +57,7 @@ func (s *ChannelScheduler) ConsumePromotionCount(channelIndex int, kind ChannelK
 	s.configManager.ConsumePromotionCount(channelIndex, string(kind))
 }
 
-func (s *ChannelScheduler) ValidateFixedChannel(conversationID string, kind ChannelKind, channelIndex int) error {
+func (s *ChannelScheduler) ValidateFixedChannel(ctx context.Context, conversationID string, kind ChannelKind, channelIndex int) error {
 	if conversationID == "" || s == nil {
 		return nil
 	}
@@ -66,7 +67,7 @@ func (s *ChannelScheduler) ValidateFixedChannel(conversationID string, kind Chan
 	if registry == nil {
 		return nil
 	}
-	override, err := registry.LookupRouteOverride(conversationID)
+	override, err := registry.LookupRouteOverride(ctx, conversationID)
 	if err != nil {
 		return fmt.Errorf("读取对话固定渠道失败: %w", err)
 	}

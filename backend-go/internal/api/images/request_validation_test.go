@@ -11,6 +11,7 @@ import (
 
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/infra/httpclient"
+	"github.com/insistanan/api-proxy/internal/protocol/converters/toimages"
 	"github.com/stretchr/testify/require"
 )
 
@@ -42,7 +43,7 @@ func TestImagesNewOutputFormatsAndConstraints(t *testing.T) {
 		t.Run(example.name, func(t *testing.T) {
 			payload, err := readImagesPayload("application/json", []byte(example.body))
 			require.NoError(t, err)
-			err = validateImagesOutputParameters(payload, example.responses)
+			err = toimages.ValidateOutputParameters(payload, example.responses)
 			if example.failure == "" {
 				require.NoError(t, err)
 			} else {

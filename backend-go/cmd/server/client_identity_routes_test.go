@@ -12,10 +12,12 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
 	"github.com/insistanan/api-proxy/internal/dialogue/session"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/infra/httpclient"
 	"github.com/insistanan/api-proxy/internal/safety/pipeline"
+	"github.com/insistanan/api-proxy/internal/storage/sqlitedb"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -39,7 +41,7 @@ func TestConvertedRequestIdentityFollowsUpstream(t *testing.T) {
 				r, app := newChannelAdminTestRouter(t)
 				require.NoError(t, app.cfgManager.SetFuzzyModeEnabled(false))
 				target, upstream, sourceUA := "messages", "claude", "codex_cli_rs/fixture"
-				body := `{"model":"fixture","input":"hello"}`
+				body := `{"model":"fixture","input":"hello","max_output_tokens":128}`
 				if entry == "messages" {
 					target, upstream, sourceUA = "responses", "responses", "claude-cli/2.1.0"
 					body = `{"model":"fixture","max_tokens":128,"messages":[{"role":"user","content":"hello"}]}`
@@ -51,9 +53,17 @@ func TestConvertedRequestIdentityFollowsUpstream(t *testing.T) {
 					target, upstream, mode.identity), http.StatusOK)
 				app.envCfg = &config.EnvConfig{ProxyAccessKey: "test-admin", LogLevel: "error", MaxRequestBodySize: 1024 * 1024, RequestTimeout: 5502, ResponseHeaderTimeout: 5}
 				app.contentSafetyPipeline = pipeline.NewContentSafetyPipeline(app.cfgManager)
-				manager, err := session.NewPersistentSessionManager(filepath.Join(t.TempDir(), "sessions.db"), time.Hour, 0, 0)
+				db, err := sqlitedb.Open(filepath.Join(t.TempDir(), "conversations.db"))
 				require.NoError(t, err)
-				t.Cleanup(manager.Stop)
+				t.Cleanup(func() { require.NoError(t, db.Close()) })
+				registry, err := conversation.NewPersistentRegistryWithDB(db)
+				require.NoError(t, err)
+				t.Cleanup(func() { registry.Stop() })
+				app.conversationRegistry = registry
+				app.channelScheduler.SetConversationRegistry(registry)
+				manager, err := session.NewPersistentSessionManagerWithDB(db, time.Hour, 0, 0)
+				require.NoError(t, err)
+				t.Cleanup(func() { manager.Stop() })
 				app.sessionManager = manager
 				app.setupProxyEndpoints(r)
 				client, err := httpclient.GetManager().GetClient(httpclient.ClientOptions{Timeout: 5502 * time.Millisecond, ResponseHeaderTimeout: 5 * time.Second})
@@ -111,7 +121,7 @@ func TestConvertedRequestIdentityFollowsUpstream(t *testing.T) {
 				w := httptest.NewRecorder()
 				r.ServeHTTP(w, req)
 				require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
-				require.Equal(t, 1, calls)
+				require.Equal(t, 1, calls, w.Body.String())
 			})
 		}
 	}

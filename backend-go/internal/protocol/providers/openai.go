@@ -1,21 +1,23 @@
 package providers
 
 import (
-	"github.com/insistanan/api-proxy/internal/protocol/converters"
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
 	"io"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	"github.com/insistanan/api-proxy/internal/protocol/converters"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
 // OpenAIProvider OpenAI 提供商
 type OpenAIProvider struct {
+	cacheLease             *conversation.RequestLease
 	hideReasoning          bool
 	parseEmbeddedReasoning bool
 	reasoningScope         string
@@ -47,6 +49,7 @@ func (p *OpenAIProvider) ConvertToProviderRequest(c *gin.Context, upstream *conf
 
 // BuildRequest 以显式输入构造 OpenAI Chat 请求（R4-a 主实现，不依赖 gin）。
 func (p *OpenAIProvider) buildRequest(input RequestInput, upstream *config.UpstreamConfig, apiKey string) (*RequestOutcome, error) {
+	p.cacheLease = conversation.RequestLeaseFrom(input.Ctx)
 	originalBodyBytes := input.Body
 	if err := converters.ValidateClaudeConversion(input.Body, "openai"); err != nil {
 		return nil, err
@@ -105,7 +108,9 @@ func (p *OpenAIProvider) buildRequest(input RequestInput, upstream *config.Upstr
 
 	// 转换 thinking / output_config.effort → reasoning_effort
 	// "auto" 在 OpenAI Chat Completions 无等价字段：省略即交由上游默认策略，避免硬塞无效值触发 400。
-	if effort := resolveClaudeReasoningEffort(&claudeReq); effort != "" && effort != "auto" {
+	if effort, err := resolveClaudeReasoningEffort(&claudeReq); err != nil {
+		return nil, err
+	} else if effort != "" && effort != "auto" {
 		openaiReq.ReasoningEffort = effort
 	}
 	// 稳定 prompt_cache_key：提升 OpenAI/兼容网关的缓存亲和；不支持端通常忽略。

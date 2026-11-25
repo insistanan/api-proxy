@@ -8,6 +8,7 @@ import "time"
 // 低层→高层反向依赖。session 包通过类型别名 `session.Session` 保持
 // 既有引用兼容。
 type Session struct {
+	Version          int64           // 历史版本，仅成功提交递增；访问时间不改变版本。
 	ID               string          // sess_xxxxx
 	ConversationID   string          // 对话注册表中的 conv_xxxxx
 	Messages         []ResponsesItem // 完整对话历史

@@ -1,8 +1,9 @@
 package converters
 
 import (
-	"strings"
+	"math"
 
+	"github.com/insistanan/api-proxy/internal/protocol/contract"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
@@ -17,131 +18,64 @@ func (rc ReasoningConfig) IsEnabled() bool {
 	return rc.Effort != "" && rc.Effort != "none"
 }
 
-// ExtractReasoningFromClaude 从 Claude Messages 请求提取思考配置
-func ExtractReasoningFromClaude(claudeReq *types.ClaudeRequest) ReasoningConfig {
-	if claudeReq == nil {
-		return ReasoningConfig{}
+// ExtractReasoningFromClaude 区分缺省、关闭、自适应和非法设置，不修补错误输入。
+func ExtractReasoningFromClaude(req *types.ClaudeRequest) (ReasoningConfig, error) {
+	if req == nil {
+		return ReasoningConfig{}, nil
 	}
-	// 明确关闭优先于遗留 effort，避免 disabled 被 output_config.effort 重新开启。
-	if thinking, ok := claudeReq.Thinking.(map[string]interface{}); ok {
-		if typ, _ := thinking["type"].(string); strings.EqualFold(typ, "disabled") {
-			return ReasoningConfig{Effort: "none"}
+	var effort string
+	if raw, exists := req.OutputConfig["effort"]; exists {
+		value, ok := raw.(string)
+		if !ok {
+			return ReasoningConfig{}, contract.Invalid("output_config.effort 必须为字符串")
+		}
+		var err error
+		effort, err = NormalizeReasoningEffortForConstrainedUpstream(value)
+		if err != nil {
+			return ReasoningConfig{}, contract.Invalid("%v", err)
 		}
 	}
-
-	// 优先检查 output_config.effort
-	if claudeReq.OutputConfig != nil {
-		if rawEffort, ok := claudeReq.OutputConfig["effort"].(string); ok && rawEffort != "" {
-			normEffort, err := NormalizeReasoningEffortForConstrainedUpstream(strings.ToLower(strings.TrimSpace(rawEffort)))
-			if err == nil && normEffort != "" {
-				return ReasoningConfig{
-					Effort:       normEffort,
-					BudgetTokens: ReasoningBudgetTokens(normEffort, claudeReq.MaxTokens),
-				}
-			}
-		}
+	cfg := ReasoningConfig{Effort: effort, BudgetTokens: ReasoningBudgetTokens(effort, req.MaxTokens)}
+	if req.Thinking == nil {
+		return cfg, nil
 	}
-
-	// 检查 thinking 字段
-	if claudeReq.Thinking == nil {
-		return ReasoningConfig{}
-	}
-
-	obj, ok := claudeReq.Thinking.(map[string]interface{})
+	thinking, ok := req.Thinking.(map[string]interface{})
 	if !ok {
-		return ReasoningConfig{}
+		return ReasoningConfig{}, contract.Invalid("thinking 必须是对象")
 	}
-
-	typ, _ := obj["type"].(string)
-	switch strings.ToLower(typ) {
-	case "", "disabled":
-		return ReasoningConfig{Effort: "none", BudgetTokens: 0}
+	switch thinking["type"] {
+	case "disabled":
+		return ReasoningConfig{Effort: "none"}, nil
 	case "adaptive":
-		return ReasoningConfig{Effort: "auto", BudgetTokens: 0}
+		if effort != "" {
+			return cfg, nil
+		}
+		return ReasoningConfig{Effort: "auto"}, nil
 	case "enabled":
-		budget, ok := numericBudgetTokens(obj["budget_tokens"])
-		if !ok || budget <= 0 {
-			return ReasoningConfig{Effort: "high", BudgetTokens: reasoningBudgetHigh}
+		budget, ok := numericBudgetTokens(thinking["budget_tokens"])
+		if !ok || budget < 1024 || (req.MaxTokens > 0 && budget >= req.MaxTokens) {
+			return ReasoningConfig{}, contract.Invalid("thinking.budget_tokens 必须是至少 1024 且小于 max_tokens 的整数")
 		}
-		effort := EffortFromReasoningBudget(budget)
-		return ReasoningConfig{Effort: effort, BudgetTokens: budget}
+		if effort != "" {
+			return cfg, nil
+		}
+		return ReasoningConfig{Effort: EffortFromReasoningBudget(budget), BudgetTokens: budget}, nil
 	default:
-		return ReasoningConfig{}
-	}
-}
-
-// ExtractReasoningFromOpenAIChat 从 OpenAI Chat Completions 请求提取思考配置
-func ExtractReasoningFromOpenAIChat(payload map[string]interface{}) ReasoningConfig {
-	if payload == nil {
-		return ReasoningConfig{}
-	}
-
-	// 检查 reasoning_effort
-	if raw, exists := payload["reasoning_effort"]; exists {
-		if str, ok := raw.(string); ok && str != "" {
-			norm, err := NormalizeReasoningEffortForConstrainedUpstream(strings.ToLower(strings.TrimSpace(str)))
-			if err == nil && norm != "" {
-				return ReasoningConfig{
-					Effort:       norm,
-					BudgetTokens: ReasoningBudgetTokens(norm, 0),
-				}
-			}
-		}
-	}
-
-	// 检查兼容性 thinking 字段（某些第三方客户端或兼容网关可能传入 thinking）
-	if rawThinking, exists := payload["thinking"]; exists {
-		if obj, ok := rawThinking.(map[string]interface{}); ok {
-			typ, _ := obj["type"].(string)
-			if typ == "enabled" {
-				budget, _ := numericBudgetTokens(obj["budget_tokens"])
-				effort := "high"
-				if budget > 0 {
-					effort = EffortFromReasoningBudget(budget)
-				}
-				return ReasoningConfig{Effort: effort, BudgetTokens: budget}
-			} else if typ == "adaptive" {
-				return ReasoningConfig{Effort: "auto", BudgetTokens: 0}
-			} else if typ == "disabled" {
-				return ReasoningConfig{Effort: "none", BudgetTokens: 0}
-			}
-		}
-	}
-
-	return ReasoningConfig{}
-}
-
-// ExtractReasoningFromResponses 从 Responses API 请求提取思考配置
-func ExtractReasoningFromResponses(reasoningRaw interface{}) ReasoningConfig {
-	if reasoningRaw == nil {
-		return ReasoningConfig{}
-	}
-	obj, ok := reasoningRaw.(map[string]interface{})
-	if !ok {
-		return ReasoningConfig{}
-	}
-	effort, _ := obj["effort"].(string)
-	if effort == "" {
-		return ReasoningConfig{}
-	}
-	norm, err := NormalizeReasoningEffortForConstrainedUpstream(strings.ToLower(strings.TrimSpace(effort)))
-	if err != nil || norm == "" {
-		return ReasoningConfig{}
-	}
-	return ReasoningConfig{
-		Effort:       norm,
-		BudgetTokens: ReasoningBudgetTokens(norm, 0),
+		return ReasoningConfig{}, contract.Invalid("thinking.type 无效: %v", thinking["type"])
 	}
 }
 
 // ExtractReasoningFromGemini 从 Gemini GenerationConfig.ThinkingConfig 提取思考配置
-func ExtractReasoningFromGemini(cfg *types.GeminiThinkingConfig, maxOutputTokens int) ReasoningConfig {
+func ExtractReasoningFromGemini(cfg *types.GeminiThinkingConfig, maxOutputTokens int) (ReasoningConfig, error) {
 	if cfg == nil {
-		return ReasoningConfig{}
+		return ReasoningConfig{}, nil
 	}
-	effort := EffortFromGeminiThinkingConfig(cfg)
+	effort, err := EffortFromGeminiThinkingConfig(cfg)
+	if err != nil {
+		return ReasoningConfig{}, err
+	}
 	if effort == "" {
-		return ReasoningConfig{}
+		return ReasoningConfig{}, nil
 	}
 	budget := 0
 	if cfg.ThinkingBudget != nil && *cfg.ThinkingBudget > 0 {
@@ -152,7 +86,7 @@ func ExtractReasoningFromGemini(cfg *types.GeminiThinkingConfig, maxOutputTokens
 	return ReasoningConfig{
 		Effort:       effort,
 		BudgetTokens: budget,
-	}
+	}, nil
 }
 
 // ApplyReasoningToClaude 将统一思考配置应用到 Claude 请求字典
@@ -173,9 +107,7 @@ func ApplyReasoningToClaude(config ReasoningConfig, claudePayload map[string]int
 	budget := config.BudgetTokens
 	if budget <= 0 {
 		limit := maxOutputTokens
-		if limit <= 0 {
-			limit = 65536
-		}
+
 		budget = ReasoningBudgetTokens(config.Effort, limit)
 	}
 	if budget > 0 {
@@ -237,6 +169,9 @@ func numericBudgetTokens(v interface{}) (int, bool) {
 	case int64:
 		return int(n), true
 	case float64:
+		if math.IsNaN(n) || math.IsInf(n, 0) || n != math.Trunc(n) || n >= float64(math.MaxInt) || n < float64(math.MinInt) {
+			return 0, false
+		}
 		return int(n), true
 	default:
 		return 0, false

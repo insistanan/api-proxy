@@ -3,7 +3,6 @@ package images
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -17,6 +16,7 @@ import (
 	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
 	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/converters/toimages"
 	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/insistanan/api-proxy/internal/proxycore"
@@ -83,12 +83,6 @@ func buildImagesUpstreamRequest(c *gin.Context, upstream *config.UpstreamConfig,
 	if err := validateNativeImagesMultipartOutput(c.GetHeader("Content-Type"), originalBody); err != nil {
 		return nil, &proxycore.RequestValidationError{Err: err}
 	}
-	_, _, outputNonStream := imagesOutputOverrides(upstream)
-	if (upstream.ImagesForceNonStream || outputNonStream) && extractImagesRequestMetadata(c.GetHeader("Content-Type"), originalBody).Stream {
-		if err := validateImagesStreamFormat(c.GetHeader("Content-Type"), originalBody); err != nil {
-			return nil, err
-		}
-	}
 	bodyBytes, contentType, err := applyImagesModelMapping(c.GetHeader("Content-Type"), originalBody, upstream)
 	if err != nil {
 		var configErr *config.ConfigError
@@ -96,6 +90,12 @@ func buildImagesUpstreamRequest(c *gin.Context, upstream *config.UpstreamConfig,
 			return nil, err
 		}
 		return nil, &proxycore.RequestValidationError{Err: err}
+	}
+	_, _, outputNonStream := imagesOutputOverrides(upstream)
+	if (upstream.ImagesForceNonStream || outputNonStream) && extractImagesRequestMetadata(c.GetHeader("Content-Type"), originalBody).Stream {
+		if err := validateImagesStreamFormat(contentType, bodyBytes); err != nil {
+			return nil, err
+		}
 	}
 	if err := validateNativeImagesMultipartOutput(contentType, bodyBytes); err != nil {
 		return nil, &proxycore.RequestValidationError{Err: err}
@@ -184,7 +184,7 @@ func extractImagesRequestMetadata(contentType string, bodyBytes []byte) imagesRe
 			return metadata
 		}
 		metadata.Model = strings.TrimSpace(values["model"])
-		metadata.Stream = parseImagesStreamValue(strings.TrimSpace(values["stream"]))
+		metadata.Stream = toimages.ParseStreamValue(strings.TrimSpace(values["stream"]))
 		return metadata
 	}
 
@@ -197,7 +197,7 @@ func extractImagesRequestMetadata(contentType string, bodyBytes []byte) imagesRe
 	if model, ok := payload["model"].(string); ok {
 		metadata.Model = strings.TrimSpace(model)
 	}
-	metadata.Stream = parseImagesStreamValue(payload["stream"])
+	metadata.Stream = toimages.ParseStreamValue(payload["stream"])
 	return metadata
 }
 
@@ -214,21 +214,4 @@ func extractImagesPrompts(contentType string, bodyBytes []byte) []string {
 		return proxycore.NormalizePromptTexts(values["prompt"])
 	}
 	return proxycore.ExtractPromptJSONFieldPrompts(bodyBytes, "prompt")
-}
-
-func parseImagesStreamValue(value interface{}) bool {
-	switch typed := value.(type) {
-	case bool:
-		return typed
-	case string:
-		switch strings.ToLower(strings.TrimSpace(typed)) {
-		case "true", "1", "yes", "on":
-			return true
-		}
-	case json.Number:
-		return typed.String() == "1"
-	case float64:
-		return typed == 1
-	}
-	return false
 }

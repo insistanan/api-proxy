@@ -3,13 +3,13 @@ package converters
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
+
 	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"github.com/insistanan/api-proxy/internal/protocol/contract"
 	"github.com/insistanan/api-proxy/internal/protocol/items"
-	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
-	"strings"
-
 	"github.com/insistanan/api-proxy/internal/protocol/types"
+	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 )
 
 func ConvertResponsesToGeminiRequest(model string, sess *types.Session, req *types.ResponsesRequest) ([]byte, error) {
@@ -44,7 +44,11 @@ func ConvertResponsesToGeminiRequest(model string, sess *types.Session, req *typ
 			geminiReq.Contents = append(geminiReq.Contents, content)
 		}
 	}
-	if tools, err := responsesToolsToGeminiTools(req.Tools); err != nil {
+	definitions, err := collectResponsesToolDefinitions(req.Tools, items)
+	if err != nil {
+		return nil, err
+	}
+	if tools, err := responsesToolsToGeminiTools(definitions); err != nil {
 		return nil, err
 	} else if len(tools) > 0 {
 		geminiReq.Tools = tools
@@ -85,7 +89,7 @@ func ConvertResponsesToGeminiRequest(model string, sess *types.Session, req *typ
 	return codec.MarshalJSONNoEscape(geminiReq)
 }
 
-func ConvertGeminiResponseToResponses(originalRequestJSON []byte, upstreamResponseJSON []byte) (*types.ResponsesResponse, error) {
+func ConvertGeminiResponseToResponses(originalRequestJSON []byte, upstreamResponseJSON []byte, toolContexts ...*ResponseToolContext) (*types.ResponsesResponse, error) {
 	var geminiResp types.GeminiResponse
 	if err := json.Unmarshal(upstreamResponseJSON, &geminiResp); err != nil {
 		return nil, fmt.Errorf("解析 Gemini 响应失败: %w", err)
@@ -93,7 +97,7 @@ func ConvertGeminiResponseToResponses(originalRequestJSON []byte, upstreamRespon
 	if len(geminiResp.Candidates) != 1 {
 		return nil, fmt.Errorf("Gemini → Responses 需要恰好一个 candidate")
 	}
-	customTools := extractCustomToolContextFromRawRequest(originalRequestJSON)
+	customTools := responseTools(originalRequestJSON, toolContexts...)
 
 	resp := &types.ResponsesResponse{
 		ID:     generateResponseID(),
@@ -135,7 +139,10 @@ func ConvertGeminiResponseToResponses(originalRequestJSON []byte, upstreamRespon
 			}
 			if part.FunctionCall != nil {
 				args, _ := json.Marshal(part.FunctionCall.Args)
-				callID := fmt.Sprintf("call_%d_%d", candidateIndex, idx)
+				callID := part.FunctionCall.ID
+				if callID == "" {
+					callID = fmt.Sprintf("call_%d_%d", candidateIndex, idx)
+				}
 				item := types.ResponsesItem{
 					ID:        fmt.Sprintf("fc_%s", callID),
 					Type:      "function_call",
@@ -144,17 +151,9 @@ func ConvertGeminiResponseToResponses(originalRequestJSON []byte, upstreamRespon
 					Name:      part.FunctionCall.Name,
 					Arguments: string(args),
 				}
-				if customTools != nil {
-					if spec, ok := customTools[part.FunctionCall.Name]; ok {
-						item = types.ResponsesItem{
-							ID:      fmt.Sprintf("ctc_%s", callID),
-							Type:    "custom_tool_call",
-							Status:  "completed",
-							CallID:  callID,
-							Name:    spec.OriginalName,
-							Content: extractCustomToolInput(string(args)),
-						}
-					}
+				item, err := restoreResponseToolItem(item, customTools)
+				if err != nil {
+					return nil, err
 				}
 				resp.Output = append(resp.Output, item)
 			}
@@ -182,36 +181,29 @@ func ConvertGeminiResponseToResponses(originalRequestJSON []byte, upstreamRespon
 	return resp, nil
 }
 
-func responsesToolsToGeminiTools(raw interface{}) (_ []types.GeminiTool, err error) {
-	defer func() {
-		if err != nil && !types.IsUnsupportedProtocol(err) {
-			err = &types.InvalidRequestError{Err: err}
-		}
-	}()
-	items, err := interfaceSlice(raw)
-	if err != nil || len(items) == 0 {
+func responsesToolsToGeminiTools(raw interface{}) ([]types.GeminiTool, error) {
+	definitions, err := collectResponsesToolDefinitions(raw)
+	if err != nil {
 		return nil, err
 	}
-	decls := make([]types.GeminiFunctionDeclaration, 0, len(items))
-	for _, item := range items {
-		m, ok := item.(map[string]interface{})
-		if !ok {
-			return nil, fmt.Errorf("Responses tools 项必须是对象")
-		}
-		spec := normalizeResponsesToolDefinition(m)
-		if spec.ToolType != "" && spec.ToolType != "function" && spec.ToolType != "custom" {
-			return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("Gemini 上游无法等价执行 Responses tool type %q；内置搜索需原生 Responses 渠道", spec.ToolType)}
-		}
-		if spec.Name == "" {
-			return nil, fmt.Errorf("Responses function tool 缺少 name")
-		}
-		decls = append(decls, types.GeminiFunctionDeclaration{
-			Name:                 spec.Name,
-			Description:          spec.Description,
-			ParametersJSONSchema: spec.Parameters,
-		})
+	if err := validateToolIdentities(definitions, "gemini"); err != nil {
+		return nil, err
 	}
-	return []types.GeminiTool{{FunctionDeclarations: decls}}, nil
+	chatTools, err := responsesToolDefinitionsToOpenAIChatTools(definitions)
+	if err != nil {
+		return nil, err
+	}
+	declarations := make([]types.GeminiFunctionDeclaration, 0, len(chatTools))
+	for _, tool := range chatTools {
+		function := tool["function"].(map[string]interface{})
+		name, _ := function["name"].(string)
+		description, _ := function["description"].(string)
+		declarations = append(declarations, types.GeminiFunctionDeclaration{Name: name, Description: description, ParametersJSONSchema: function["parameters"]})
+	}
+	if len(declarations) == 0 {
+		return nil, nil
+	}
+	return []types.GeminiTool{{FunctionDeclarations: declarations}}, nil
 }
 
 func responsesToolChoiceToGemini(raw interface{}) (_ *types.GeminiToolConfig, err error) {
@@ -240,7 +232,7 @@ func responsesToolChoiceToGemini(raw interface{}) (_ *types.GeminiToolConfig, er
 	case map[string]interface{}:
 		typ, _ := v["type"].(string)
 		switch typ {
-		case "", "function", "custom":
+		case "", "function", "custom", "tool_search":
 		case "auto":
 			cfg.Mode = "AUTO"
 			return &types.GeminiToolConfig{FunctionCallingConfig: cfg}, nil
@@ -254,6 +246,12 @@ func responsesToolChoiceToGemini(raw interface{}) (_ *types.GeminiToolConfig, er
 			return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("Gemini 上游暂不支持 tool_choice type %q", typ)}
 		}
 		name := extractNamedToolChoice(v)
+		if typ == "tool_search" {
+			name = openAIChatToolSearchName
+		}
+		if namespace, _ := v["namespace"].(string); namespace != "" {
+			name = flattenNamespaceToolName(namespace, name)
+		}
 		if name == "" {
 			return nil, fmt.Errorf("function tool_choice 缺少 name")
 		}
@@ -354,12 +352,14 @@ func responsesItemToGeminiContent(item types.ResponsesItem, callNames map[string
 			return types.GeminiContent{}, false, err
 		}
 		content.Parts = parts
-	case "function_call", "custom_tool_call":
+	case "function_call", "custom_tool_call", "tool_search_call":
 		var args map[string]interface{}
 		if item.Type == "custom_tool_call" {
-			if err := json.Unmarshal([]byte(customToolArgumentsJSON(item)), &args); err != nil {
-				return types.GeminiContent{}, false, fmt.Errorf("custom_tool_call input 不是合法 JSON: %w", err)
+			input, ok := item.Content.(string)
+			if !ok {
+				return types.GeminiContent{}, false, contract.Invalid("custom_tool_call input 必须是字符串")
 			}
+			args = map[string]interface{}{"input": input}
 		} else if item.Arguments != "" {
 			if err := json.Unmarshal([]byte(item.Arguments), &args); err != nil {
 				return types.GeminiContent{}, false, fmt.Errorf("function_call arguments 不是合法 JSON: %w", err)
@@ -369,7 +369,11 @@ func responsesItemToGeminiContent(item types.ResponsesItem, callNames map[string
 			args = map[string]interface{}{}
 		}
 		content.Role = "model"
-		content.Parts = []types.GeminiPart{{FunctionCall: &types.GeminiFunctionCall{Name: item.Name, Args: args}}}
+		name := flattenNamespaceToolName(item.Namespace, item.Name)
+		if item.Type == "tool_search_call" {
+			name = openAIChatToolSearchName
+		}
+		content.Parts = []types.GeminiPart{{FunctionCall: &types.GeminiFunctionCall{ID: item.CallID, Name: name, Args: args}}}
 	default:
 		if !isResponsesToolOutputType(item.Type) {
 			return types.GeminiContent{}, false, nil
@@ -383,7 +387,7 @@ func responsesItemToGeminiContent(item types.ResponsesItem, callNames map[string
 		}
 		response := map[string]interface{}{"result": item.Content}
 		content.Role = "user"
-		content.Parts = []types.GeminiPart{{FunctionResponse: &types.GeminiFunctionResponse{Name: name, Response: response}}}
+		content.Parts = []types.GeminiPart{{FunctionResponse: &types.GeminiFunctionResponse{ID: item.CallID, Name: name, Response: response}}}
 	case "reasoning":
 		return types.GeminiContent{}, false, nil
 	}
@@ -404,90 +408,32 @@ func responsesContentToGeminiParts(content interface{}) ([]types.GeminiPart, err
 			parts = append(parts, types.GeminiPart{Text: text})
 			continue
 		}
-		if inline, ok := geminiInlineDataFromBlock(block); ok {
-			parts = append(parts, types.GeminiPart{InlineData: inline})
-			continue
+		part, ok := visionmedia.ToGeminiImagePart(block, true)
+		if !ok {
+			return nil, contract.Invalid("Gemini 图片内容缺少有效数据或 URL")
 		}
-		if fileData, ok := geminiFileDataFromBlock(block); ok {
-			parts = append(parts, types.GeminiPart{FileData: fileData})
-		}
+		parts = append(parts, part)
 	}
 	return parts, nil
-}
-
-func geminiInlineDataFromBlock(block map[string]interface{}) (*types.GeminiInlineData, bool) {
-	typeVal, _ := block["type"].(string)
-	if typeVal != "image" && typeVal != "image_url" && typeVal != "input_image" {
-		return nil, false
-	}
-	if source, ok := block["source"].(map[string]interface{}); ok {
-		if data, ok := source["data"].(string); ok && data != "" {
-			mime, _ := source["media_type"].(string)
-			if mime == "" {
-				mime = visionmedia.DefaultImageMediaType
-			}
-			return &types.GeminiInlineData{MimeType: mime, Data: data}, true
-		}
-	}
-	if mime, data, ok := visionmedia.ParseImageDataURL(imageURIFromBlock(block)); ok {
-		return &types.GeminiInlineData{MimeType: mime, Data: data}, true
-	}
-	return nil, false
-}
-
-func geminiFileDataFromBlock(block map[string]interface{}) (*types.GeminiFileData, bool) {
-	typeVal, _ := block["type"].(string)
-	if typeVal != "image" && typeVal != "image_url" && typeVal != "input_image" {
-		return nil, false
-	}
-
-	uri := imageURIFromBlock(block)
-	mime := visionmedia.DefaultImageMediaType
-	if source, ok := block["source"].(map[string]interface{}); ok {
-		if mediaType, _ := source["media_type"].(string); mediaType != "" {
-			mime = mediaType
-		}
-	}
-	if uri == "" || strings.HasPrefix(uri, "data:") {
-		return nil, false
-	}
-	return &types.GeminiFileData{MimeType: mime, FileURI: uri}, true
-}
-
-func imageURIFromBlock(block map[string]interface{}) string {
-	if source, ok := block["source"].(map[string]interface{}); ok {
-		sourceType, _ := source["type"].(string)
-		if sourceType == "url" {
-			if uri, _ := source["url"].(string); uri != "" {
-				return uri
-			}
-		}
-	}
-	if nested, ok := block["image_url"].(map[string]interface{}); ok {
-		if uri, _ := nested["url"].(string); uri != "" {
-			return uri
-		}
-	}
-	if uri, ok := block["image_url"].(string); ok && uri != "" {
-		return uri
-	}
-	if uri, ok := block["url"].(string); ok && uri != "" {
-		return uri
-	}
-	return ""
 }
 
 func buildFunctionCallNameMap(items []types.ResponsesItem) map[string]string {
 	names := map[string]string{}
 	for _, item := range items {
-		if (item.Type != "function_call" && item.Type != "custom_tool_call") || item.Name == "" {
+		var name string
+		switch item.Type {
+		case "function_call", "custom_tool_call":
+			name = flattenNamespaceToolName(item.Namespace, item.Name)
+		case "tool_search_call":
+			name = openAIChatToolSearchName
+		default:
 			continue
 		}
 		if item.CallID != "" {
-			names[item.CallID] = item.Name
+			names[item.CallID] = name
 		}
 		if item.ID != "" {
-			names[item.ID] = item.Name
+			names[item.ID] = name
 		}
 	}
 	return names

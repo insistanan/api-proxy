@@ -11,6 +11,7 @@ import (
 	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"github.com/insistanan/api-proxy/internal/infra/utils"
 	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/converters/toimages"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/insistanan/api-proxy/internal/proxycore"
 )
@@ -99,7 +100,7 @@ func (writer *imagesStreamWriter) imageEvent(name, quotedBase64 string, metadata
 	return nil
 }
 
-func (writer *imagesStreamWriter) completed(item responsesImageItem, created int64) error {
+func (writer *imagesStreamWriter) completed(item toimages.ImageItem, created int64) error {
 	name := writer.prefix + ".completed"
 	payload := map[string]interface{}{"created_at": created}
 	for key, value := range map[string]string{

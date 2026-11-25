@@ -11,6 +11,63 @@ import (
 	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
 )
 
+func TestGrowthUsage_OnlyPositiveUpstreamFactsSetActivityTime(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(filepath.Join(t.TempDir(), "usage.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	start := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	if err := store.Enable(ctx, time.UTC, start); err != nil {
+		t.Fatal(err)
+	}
+	if at, err := store.LatestGrowthUsage(ctx); err != nil || at != 0 {
+		t.Fatalf("空账本不应产生活跃时间: %d, %v", at, err)
+	}
+	facts := []tokenusage.Fact{
+		{AttemptID: "缓存命中", At: start.Add(time.Hour), Source: tokenusage.SourceUpstream, CacheRead: 100},
+		{AttemptID: "零用量", At: start.Add(2 * time.Hour), Source: tokenusage.SourceUpstream},
+		{AttemptID: "估算", At: start.Add(3 * time.Hour), Source: tokenusage.SourceEstimated, Input: 200},
+		{AttemptID: "缺失", At: start.Add(4 * time.Hour), Source: tokenusage.SourceMissing},
+	}
+	if err := store.flush(ctx, time.UTC, facts, nil, start.Add(5*time.Hour), false, false); err != nil {
+		t.Fatal(err)
+	}
+	want := facts[0].At.UnixMilli()
+	if at, err := store.LatestGrowthUsage(ctx); err != nil || at != want {
+		t.Fatalf("缓存读取应计入活跃时间，零用量与估算不能重置时间: %d, %v", at, err)
+	}
+	credits, err := store.Credits(ctx, 0)
+	if err != nil || len(credits) != 2 {
+		t.Fatalf("成长用量来源不符: %+v, %v", credits, err)
+	}
+	if credits[0].Tokens != 100 || credits[0].At != want || credits[1].Tokens != 0 || credits[1].At != facts[1].At.UnixMilli() {
+		t.Fatalf("增量没有保留实际发生时间: %+v", credits)
+	}
+	late := tokenusage.Fact{AttemptID: "迟到用量", At: start.Add(30 * time.Minute), Source: tokenusage.SourceUpstream, Output: 5}
+	if err := store.flush(ctx, time.UTC, []tokenusage.Fact{late, late}, nil, start.AddDate(0, 0, 2), false, false); err != nil {
+		t.Fatal(err)
+	}
+	if at, err := store.LatestGrowthUsage(ctx); err != nil || at != want {
+		t.Fatalf("迟到补记不应改变最新实际用量时间: %d, %v", at, err)
+	}
+	if at, err := store.PreviousGrowthUsage(ctx, want); err != nil || at != late.At.UnixMilli() {
+		t.Fatalf("前一次实际用量应包含尚未消费的迟到事实: %d, %v", at, err)
+	}
+	if at, err := store.PreviousGrowthUsage(ctx, facts[3].At.UnixMilli()); err != nil || at != want {
+		t.Fatalf("零用量和估算不应被当成上一次活动: %d, %v", at, err)
+	}
+	next, err := store.Credits(ctx, credits[1].Cursor)
+	if err != nil || len(next) != 1 || next[0].Tokens != 5 || next[0].At != late.At.UnixMilli() {
+		t.Fatalf("补记未去重或消费时间替代了事实时间: %+v, %v", next, err)
+	}
+}
+
 func TestCoverageRestoresUnavailableIntervalAfterCleanShutdown(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "usage.db")

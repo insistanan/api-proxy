@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 )
@@ -12,9 +11,9 @@ import (
 // Identity 描述客户端提供的会话身份。ExplicitID 只有在字段语义明确为
 // conversation/thread/composer/session 时才填写；ScopeID 仅用于缩小历史匹配范围。
 type Identity struct {
-	ClientFamily  string
-	ExplicitID    string
-	ScopeID       string
+	ClientFamily string
+	ExplicitID   string
+	ScopeID      string
 	// ThreadID 与 BranchID 仅细分并发观测；不覆盖已有的会话归组与授权身份。
 	ThreadID      string
 	BranchID      string
@@ -153,11 +152,7 @@ func (r *Registry) resolveExplicitParentLocked(obs Observation) string {
 		return ""
 	}
 	parentAgentID := strings.TrimSpace(obs.Identity.ParentAgentID)
-	parentValue := rootID
-	if parentAgentID != "" {
-		parentValue += "|agent:" + parentAgentID
-	}
-	if recordID, ok := r.identityIndex[explicitIdentityKey(obs.APIKind, parentValue)]; ok {
+	if recordID, ok := r.identityIndex[encodeExplicitIdentity(obs.APIKind, rootID, parentAgentID)]; ok {
 		return recordID
 	}
 	return ""
@@ -256,15 +251,8 @@ func (r *Registry) matchRetryLocked(obs Observation, incomingDepth int, clientFa
 		}
 		candidates = append(candidates, rec)
 	}
-	// frontierIndex 是 map，不能依赖遍历顺序决定并发失败记录的归并对象。
-	// 优先最近完成的记录；时间相同时用稳定 ID 打破平局，保证重启前后结果可复现。
-	sort.Slice(candidates, func(i, j int) bool {
-		if !candidates[i].LastCompletedAt.Equal(candidates[j].LastCompletedAt) {
-			return candidates[i].LastCompletedAt.After(candidates[j].LastCompletedAt)
-		}
-		return candidates[i].ID < candidates[j].ID
-	})
-	if len(candidates) == 0 {
+	// 多个失败请求无法证明属于哪一条历史，歧义时由调用方新建会话。
+	if len(candidates) != 1 {
 		return nil
 	}
 	return candidates[0]

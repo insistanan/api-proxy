@@ -1,6 +1,7 @@
 package conversation
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -32,8 +33,8 @@ func (s *lineageScanner) Scan(dest ...any) error {
 		&l.LaneHash, &l.FrontierHash, &l.FrontierDepth, &l.ParentConversationID, &s.updated)...)
 }
 
-func (s *SQLiteStore) loadRecords(where string, args ...any) ([]*Record, error) {
-	rows, err := s.db.Query(`SELECT `+storedColumns+`,
+func (s *SQLiteStore) loadRecords(ctx context.Context, where string, args ...any) ([]*Record, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+storedColumns+`,
  COALESCE(l.client_family, ''), COALESCE(l.identity_source, ''), COALESCE(l.scope_hash, ''),
  COALESCE(l.lane_hash, ''), COALESCE(l.frontier_hash, ''), COALESCE(l.frontier_depth, 0),
  COALESCE(l.parent_conversation_id, ''), COALESCE(l.updated_at, 0)
@@ -67,12 +68,12 @@ func observationKeys(obs Observation) []string {
 	root := firstNonEmpty(obs.Identity.ExplicitID, obs.ConversationID)
 	keys := []string{key, key + "|lane:" + shortIdentityHash(obs.Identity.LaneHash), explicitIdentityKey(obs.APIKind, root)}
 	if obs.Identity.ParentAgentID != "" {
-		keys = append(keys, explicitIdentityKey(obs.APIKind, root+"|agent:"+obs.Identity.ParentAgentID))
+		keys = append(keys, encodeExplicitIdentity(obs.APIKind, root, obs.Identity.ParentAgentID))
 	}
 	return keys
 }
 
-func (r *Registry) prepareObservationLocked(obs Observation) error {
+func (r *Registry) prepareObservationLocked(ctx context.Context, obs Observation) error {
 	if r.store == nil {
 		return nil
 	}
@@ -95,14 +96,14 @@ func (r *Registry) prepareObservationLocked(obs Observation) error {
  ON cl.frontier_depth = CAST(p.key AS INTEGER) + 1 AND cl.frontier_hash = p.value
  WHERE cl.client_family = ?
  ) AND c.api_kind = ?`
-	records, err := r.store.loadRecords(where, string(keys), string(keys), string(hashes), normalizeClientFamily(obs.Identity.ClientFamily), firstNonEmpty(obs.APIKind, "unknown"))
+	records, err := r.store.loadRecords(ctx, where, string(keys), string(keys), string(hashes), normalizeClientFamily(obs.Identity.ClientFamily), firstNonEmpty(obs.APIKind, "unknown"))
 	if err != nil {
 		return err
 	}
 	for _, rec := range records {
 		r.cacheRecordLocked(rec)
 	}
-	rows, err := r.store.db.Query(`SELECT alias_key, conversation_id FROM conversation_aliases WHERE alias_key IN (SELECT value FROM json_each(?))`, string(keys))
+	rows, err := r.store.db.QueryContext(ctx, `SELECT alias_key, conversation_id FROM conversation_aliases WHERE alias_key IN (SELECT value FROM json_each(?))`, string(keys))
 	if err != nil {
 		return fmt.Errorf("读取对话别名失败: %w", err)
 	}
@@ -128,14 +129,14 @@ func (r *Registry) cacheRecordLocked(rec *Record) {
 	r.indexLineageLocked(rec)
 }
 
-func (r *Registry) loadRecordLocked(id string) (*Record, error) {
+func (r *Registry) loadRecordLocked(ctx context.Context, id string) (*Record, error) {
 	if rec := r.records[id]; rec != nil {
 		return rec, nil
 	}
 	if r.store == nil {
 		return nil, nil
 	}
-	records, err := r.store.loadRecords("WHERE c.id = ?", id)
+	records, err := r.store.loadRecords(ctx, "WHERE c.id = ?", id)
 	if err != nil {
 		return nil, err
 	}
@@ -201,43 +202,6 @@ func (r *Registry) trimCacheLocked() {
 	}
 }
 
-// purgeExpired 删除过期正文和附属索引，不把历史载入 Go 内存；活跃记录由调用方排除。
-func (s *SQLiteStore) purgeExpired(cutoff time.Time, activeIDs []string) error {
-	if activeIDs == nil {
-		activeIDs = []string{}
-	}
-	active, err := json.Marshal(activeIDs)
-	if err != nil {
-		return err
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.Exec(`CREATE TEMP TABLE IF NOT EXISTS expired_conversation_ids (id TEXT PRIMARY KEY)`); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`DELETE FROM expired_conversation_ids`); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`INSERT INTO expired_conversation_ids SELECT id FROM conversations WHERE last_seen_at < ? AND id NOT IN (SELECT value FROM json_each(?))`, cutoff.Unix(), string(active)); err != nil {
-		return err
-	}
-	for _, table := range []string{"conversation_aliases", "conversation_image_understandings", "conversation_lineages"} {
-		if _, err := tx.Exec(`DELETE FROM ` + table + ` WHERE conversation_id IN (SELECT id FROM expired_conversation_ids)`); err != nil {
-			return err
-		}
-	}
-	if _, err := tx.Exec(`UPDATE conversation_lineages SET parent_conversation_id = '' WHERE parent_conversation_id IN (SELECT id FROM expired_conversation_ids)`); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`DELETE FROM conversations WHERE id IN (SELECT id FROM expired_conversation_ids)`); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
 // 保持独立构造入口与共享连接入口的生命周期一致。
 func NewPersistentRegistryWithDB(db *sql.DB) (*Registry, error) {
 	store, err := newSQLiteStore(db)
@@ -248,7 +212,9 @@ func NewPersistentRegistryWithDB(db *sql.DB) (*Registry, error) {
 }
 
 func newPersistentRegistry(store *SQLiteStore) (*Registry, error) {
-	if err := store.purgeExpired(time.Now().Add(-defaultMaxIdle), nil); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := store.purgeExpired(ctx, time.Now().Add(-defaultMaxIdle), nil, nil); err != nil {
 		return nil, fmt.Errorf("清理过期对话失败: %w", err)
 	}
 	return newRegistry(store), nil

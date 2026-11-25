@@ -1,15 +1,18 @@
 <template>
   <UiButton :variant="saved?.enabled ? 'tonal' : 'outlined'" :color="saved?.enabled ? 'primary' : undefined" :loading="loading" :aria-pressed="!!saved?.enabled" aria-label="配置当前协议的意图匹配" @click="open">
     <UiIcon start size="18">mdi-server-network</UiIcon>
-    意图匹配 <span class="ml-2 text-xs">{{ saved ? saved.enabled ? '开' : '关' : '未知' }}</span>
+    意图匹配 <span class="ml-2 text-xs" :title="runtimeStatus?.reason">{{ saved ? saved.enabled ? runtimeStatus?.state === 'error' ? '异常' : runtimeStatus?.state === 'preparing' ? '准备中' : runtimeStatus?.state === 'ready' ? '就绪' : '检查中' : '关' : '未知' }}</span>
   </UiButton>
-  <AppDialog v-model="show" :title="protocol + ' · 意图匹配'" size="lg" :busy="saving || indexing || localBusy">
+  <AppDialog v-model="show" :title="protocol + ' · 意图匹配'" size="lg" :busy="saving">
     <UiAlert v-if="error" type="error" variant="tonal" class="mb-5">{{ error }}</UiAlert>
-    <UiForm v-if="draft" :disabled="saving || indexing" @submit.prevent>
+    <UiAlert v-if="saved?.enabled && runtimeStatus?.state === 'error'" type="warning" variant="tonal" class="mb-4">当前已保存配置运行异常：{{ runtimeStatus.reason }}</UiAlert>
+    <UiAlert v-if="preparation?.running" type="info" variant="tonal" class="mb-4">{{ preparationTitle }}。可关闭页面，后台任务会继续；准备完成后再保存启用。<span v-if="localStatus?.totalBytes">本阶段已下载 {{ ((localStatus.downloadedBytes ?? 0) / 1024 / 1024).toFixed(1) }} / {{ (localStatus.totalBytes / 1024 / 1024).toFixed(1) }} MiB。</span><UiButton size="small" variant="text" @click="cancelPreparation">取消准备</UiButton></UiAlert>
+    <UiAlert v-else-if="preparation?.protocol === protocol && preparation.config && appliedPreparation !== preparation.id" type="info" variant="tonal" class="mb-4">发现已完成的准备结果。<UiButton variant="text" size="small" @click="applyPreparation">用于当前草稿</UiButton></UiAlert>
+    <UiForm v-if="draft" :disabled="saving || indexing || preparing" @submit.prevent>
       <div class="intent-layout">
         <div class="intent-enable">
           <span class="text-sm font-medium">意图分流</span>
-          <UiSwitch v-model="draft.enabled" color="primary" aria-label="启用意图分流" :label="draft.enabled ? '已启用' : '未启用'" />
+          <UiSwitch v-model="draft.enabled" color="primary" aria-label="启用意图分流" :label="draft.enabled ? '保存后启用' : '保存后关闭'" />
         </div>
         <section class="intent-stack" aria-labelledby="intent-step-routing">
           <div class="intent-section-heading">
@@ -18,7 +21,7 @@
           <div class="intent-strategies" role="radiogroup" aria-labelledby="intent-step-routing">
             <label v-for="mode in simpleModes" :key="mode.value" class="intent-strategy" :class="{ 'intent-strategy-selected': simpleMode === mode.value }">
               <input type="radio" :name="modeGroupId" :value="mode.value" :checked="simpleMode === mode.value" :disabled="saving || indexing" class="size-4 shrink-0 accent-primary" @change="chooseMode(mode.value)" />
-              <span>{{ mode.title }}</span>
+              <span><span class="block">{{ mode.title }}</span><span class="mt-1 block text-xs text-muted-foreground">{{ mode.description }}</span></span>
             </label>
           </div>
           <div v-if="simpleMode === 'hybrid' || usesEmbedding || usesAssistant || simpleMode === 'custom'" class="intent-model-settings">
@@ -28,15 +31,15 @@
             <template v-if="usesEmbedding">
               <UiSelect :model-value="draft.embeddingSource" :items="[{ title: '一键下载本地模型', value: 'local' }, { title: '使用已配置的 Embeddings 渠道', value: 'remote' }]" label="向量模型来源" @update:model-value="selectEmbeddingSource" />
               <template v-if="draft.embeddingSource === 'local'">
-                <LocalEmbeddingSettings @status="updateLocalStatus" @busy="localBusy = $event" />
-                <UiButton v-if="localStatus?.ready && draft.embeddingModel !== localStatus.manifest.modelName" variant="tonal" @click="useLocalEmbedding">使用已安装的模型 {{ localStatus.manifest.modelName }}</UiButton>
-                <p v-if="draft.embeddingModel" class="text-sm">当前向量模型：{{ draft.embeddingModel }}</p>
+                <p class="text-sm">{{ localStatus?.platform }} · {{ localStatus?.ready ? '本地模型已就绪' : '需要准备本地模型' }}<span v-if="draft.embeddingModel"> · {{ draft.embeddingModel }}</span></p>
+                <UiAccordion variant="accordion"><UiAccordionItem title="模型管理与下载设置"><div class="p-4"><LocalEmbeddingSettings @status="updateLocalStatus" @busy="localBusy = $event" /></div></UiAccordionItem></UiAccordion>
               </template>
               <ChannelPicker v-else v-model="draft.embeddingChannel" v-model:selected-model="draft.embeddingModel" :options="embeddingOptions" show-model model-label="向量模型" :disabled="saving || indexing" />
               <p v-if="vectorReason" class="text-sm text-warning">{{ vectorReason }}</p>
-              <DatasetPicker v-model="draft.datasetIds" kind="intent" :multiple="false" :profile="embeddingProfile" :refresh-key="datasetRefresh" />
+              <p class="text-xs text-muted-foreground">{{ draft.datasetIds?.length ? '将使用所选数据集，仅已批准的样本参与索引。' : '准备操作将采用内置意图样本 v3，并完成模型下载、预热和索引构建；工具风险样本需另行审核。' }}</p>
+              <UiAccordion variant="accordion"><UiAccordionItem title="选择自定义数据集"><div class="p-4"><DatasetPicker v-model="draft.datasetIds" kind="intent" :multiple="false" :profile="embeddingProfile" :refresh-key="datasetRefresh" /></div></UiAccordionItem></UiAccordion>
               <UiAlert v-if="indexError" type="warning" variant="tonal">{{ indexError }}</UiAlert>
-              <div><UiButton variant="tonal" :loading="indexing" :disabled="indexing || localBusy || !!vectorReason" @click="prepareSemanticIndex">{{ draft.datasetIds?.length ? '重新构建索引' : '使用内置样本并构建索引' }}</UiButton></div>
+              <div><UiButton variant="tonal" :loading="preparing || indexing" :disabled="preparing || indexing || localBusy || (draft.embeddingSource === 'remote' && !!vectorReason)" @click="prepareSemanticIndex">{{ draft.embeddingSource === 'local' ? '准备本地模型和意图索引' : '准备意图样本和索引' }}</UiButton></div>
             </template>
             <template v-if="usesAssistant">
               <UiSelect :model-value="draft.classifier" :items="assistantClassifiers" label="判断类型" @update:model-value="selectClassifier" />
@@ -56,7 +59,10 @@
             <h3 id="intent-step-groups">分组能力</h3>
             <span class="text-xs text-muted-foreground">已配置 {{ configuredGroups }} / {{ pools.length }}</span>
           </div>
-          <IntentGroupCapabilities v-model="groups" :pools="pools" :tasks="options.tasks ?? []" :disabled="saving || indexing" :use-feedback="!!draft.useFeedback" />
+          <IntentGroupCapabilities v-model="groups" :pools="pools" :tasks="options.tasks ?? []" :disabled="saving || indexing || preparing" :use-feedback="!!draft.useFeedback" :allow-custom="simpleMode === 'custom'" />
+          <p v-if="simpleMode === 'custom'" class="text-xs text-muted-foreground">自定义类别 ID 使用英文、数字、下划线或连字符，并配置对应数据集样本或辅助模型类别；内置规则不会自动识别新类别。</p>
+          <p v-if="!configuredGroups" class="text-sm text-warning">先为至少一个分组选择适合的任务，再启用分流。</p>
+          <p v-for="notice in coverageNotices" :key="notice" class="text-xs text-muted-foreground">{{ notice }}</p>
         </section>
         <UiAccordion variant="accordion" class="intent-accordion">
           <UiAccordionItem title="测试匹配">
@@ -74,6 +80,15 @@
               <p v-if="decision?.trace?.stages?.length" class="text-sm">{{ decision.trace.stages.map(stage => `${stageTitles[stage.stage] ?? stage.stage}：${stage.matched ? '已识别' : '未可靠识别'}`).join(' → ') }}</p>
               <IntentMatchTrace v-if="decision" :decision="decision" :tasks="options.tasks ?? []" preview />
             </section>
+          </UiAccordionItem>
+          <UiAccordionItem v-if="draft.strategy === 'auto'" title="独立样本路由评测">
+            <div class="intent-stack p-4">
+              <p class="text-xs text-muted-foreground">使用已批准的 eval 样本，按当前草稿执行与真实新任务相同的识别、难度判断和分组选择；不模拟会话驻留或调用任务模型。向量与辅助模型会产生实际调用。</p>
+              <DatasetPicker v-model="evaluationDatasets" kind="intent" :multiple="false" :refresh-key="datasetRefresh" />
+              <UiButton variant="tonal" :loading="evaluating" :disabled="evaluating || !evaluationDatasets.length || !!vectorReason || !!classifierReason || !!indexError || indexChecking || preparing" @click="evaluateRouting">评测当前路由方案</UiButton>
+              <UiAlert v-if="evaluation" type="info" variant="tonal">类别正确 {{ evaluation.correct }} / {{ evaluation.total }}；未选组 {{ evaluation.unmatched }}；类别错误且已选组 {{ evaluation.wrongRoutes }}；调用失败 {{ evaluation.failures }}；总耗时 {{ evaluation.durationMs }} ms。未选组包含拒识和能力未覆盖。</UiAlert>
+              <details v-if="evaluation"><summary>查看各样本结果</summary><ul class="mt-3 space-y-2 text-xs"><li v-for="item in evaluation.cases" :key="item.id">{{ item.id }}：预期 {{ taskName(item.expected) || '拒识' }} → {{ taskName(item.actual) || '未识别' }}；{{ poolName(item.poolId) }}；{{ tierName(item.tier) }}；{{ item.durationMs }} ms<span v-if="item.error" class="text-destructive">；{{ item.error }}</span></li></ul></details>
+            </div>
           </UiAccordionItem>
           <UiAccordionItem title="高级设置">
             <div class="px-4 pt-3 pb-4">
@@ -159,6 +174,15 @@
                 <UiButton size="small" variant="text" :disabled="feedbackBusy" @click="feedback(event, false)">效果不满意</UiButton>
               </div>
               <span v-else-if="event.feedback !== undefined" class="text-xs">已记录：{{ event.feedback ? '满意' : '不满意' }}</span>
+              <details v-if="event.decision.trace?.input && !event.decision.trace.truncated && !event.control" class="mt-2">
+                <summary class="cursor-pointer text-xs">纠正任务类别</summary>
+                <div class="intent-stack mt-3">
+                  <UiSelect v-model="correctionTasks[event.requestId]" :items="correctionOptions" item-title="name" item-value="id" label="实际任务" />
+                  <p class="text-xs text-muted-foreground">仅保存脱敏后的输入为待审核样本。到数据集页审核、调整用途并重新发布索引后才影响匹配；满意反馈只影响分组排序。</p>
+                  <UiButton size="small" variant="tonal" :disabled="!correctionTasks[event.requestId] || feedbackBusy" @click="correctTask(event)">保存待审核纠正样本</UiButton>
+                  <span v-if="correctionSaved[event.requestId]" class="text-xs">已保存到 {{ correctionSaved[event.requestId] }}，请到数据集页审核。</span>
+                </div>
+              </details>
             </div>
           </section>
           </div></UiAccordionItem>
@@ -179,8 +203,8 @@
     </UiForm>
     <template #actions>
       <span v-if="vectorReason || classifierReason || indexError" class="text-xs text-destructive mr-auto" role="status">{{ vectorReason || classifierReason || indexError }}</span>
-      <UiButton :disabled="saving || indexing || localBusy" @click="show = false">取消</UiButton>
-      <UiButton color="primary" variant="flat" :loading="saving" :disabled="!draft || indexing || localBusy || (draft.enabled && (!!vectorReason || !!classifierReason || !!indexError || indexChecking))" @click="save">保存当前协议</UiButton>
+      <UiButton :disabled="saving" @click="show = false">{{ preparing ? '关闭，后台继续' : '取消' }}</UiButton>
+      <UiButton color="primary" variant="flat" :loading="saving" :disabled="!draft || indexing || localBusy || preparing || (draft.enabled && (!!vectorReason || !!classifierReason || !!indexError || indexChecking || (draft.strategy === 'auto' && !configuredGroups)))" @click="save">{{ draft?.enabled ? '保存并启用当前协议' : '保存当前协议' }}</UiButton>
     </template>
   </AppDialog>
   <AppDialog v-if="simpleMode === 'custom'" v-model="vectorGuide" title="先准备向量模型" size="md" :busy="localBusy">
@@ -219,7 +243,7 @@ import { useToast } from '@/shared/composables/useToast'
 import { intentApi, intentErrorText, intentPreviewFailure, type IntentConfig, type IntentDecision, type IntentEvent, type IntentGroupCapability, type IntentOptions, type IntentProtocol, type LocalStatus } from '@/features/channels/services/intent'
 import type { EmbeddingProfile } from '@/types'
 import LocalEmbeddingSettings from '@/features/channels/components/routing/LocalEmbeddingSettings.vue'
-import { datasetsApi } from '@/features/extensions/datasets'
+import type { IntentEvaluation, IntentPreparation, IntentRuntimeStatus } from '@/features/channels/services/intent'
 import { DatasetPicker, EmbeddingProfileFields } from '@/features/extensions/datasets/ui'
 import IntentGroupCapabilities from '@/features/channels/components/routing/IntentGroupCapabilities.vue'
 import IntentMatchTrace from '@/features/channels/components/routing/IntentMatchTrace.vue'
@@ -238,6 +262,78 @@ const modeGroupId = useId()
 const groupsSection = ref<HTMLElement>()
 const vectorGuide = ref(false)
 const datasetRefresh = ref(0)
+const preparation = ref<IntentPreparation>()
+const runtimeStatus = ref<IntentRuntimeStatus>()
+const preparing = computed(() => !!preparation.value?.running)
+const appliedPreparation = ref('')
+const activePreparation = ref('')
+const preparationPhases: Record<string, string> = { queued: '任务已排队', preparing_model: '正在下载、启动并预热模型', preparing_samples: '正在准备意图样本', indexing: '正在构建意图索引' }
+const preparationTitle = computed(() => preparationPhases[preparation.value?.phase ?? ''] ?? '正在准备')
+const evaluationDatasets = ref<string[]>([])
+const evaluating = ref(false)
+const evaluation = ref<IntentEvaluation>()
+const correctionTasks = ref<Record<string, string>>({})
+const correctionSaved = ref<Record<string, string>>({})
+const correctionOptions = computed(() => {
+  const tasks = (options.value.tasks ?? []).map(task => ({ id: task.id, name: task.name }))
+  for (const group of saved.value?.groups ?? []) {
+    for (const id of group.tasks) if (!tasks.some(task => task.id === id)) tasks.push({ id, name: `自定义：${id}` })
+  }
+  return [...tasks, { id: 'unmatched', name: '无法确定或多个独立任务' }]
+})
+async function evaluateRouting() {
+  if (!draft.value || !evaluationDatasets.value[0] || evaluating.value || !validateGroups()) return
+  const protocol = props.protocol
+  const snapshot = JSON.stringify(draft.value)
+  evaluating.value = true
+  error.value = ''
+  try { const result = await intentApi.evaluate(protocol, draft.value, evaluationDatasets.value[0]); if (protocol === props.protocol && snapshot === JSON.stringify(draft.value)) evaluation.value = result }
+  catch (cause) { report(cause) }
+  finally { evaluating.value = false }
+}
+async function correctTask(event: IntentEvent) {
+  const task = correctionTasks.value[event.requestId]
+  if (!task || feedbackBusy.value) return
+  feedbackBusy.value = true
+  try { const result = await intentApi.correctTask(event.protocol, event.requestId, task); correctionSaved.value[event.requestId] = result.datasetId; datasetRefresh.value++ }
+  catch (cause) { report(cause) }
+  finally { feedbackBusy.value = false }
+}
+let refreshingPreparation = false
+async function refreshPreparation() {
+  if (refreshingPreparation) return
+  refreshingPreparation = true
+  try {
+    preparation.value = await intentApi.preparation()
+    if (preparation.value.protocol === props.protocol && preparation.value.running) activePreparation.value = preparation.value.id
+    if (preparation.value.protocol === props.protocol && preparation.value.id === activePreparation.value && !preparation.value.running) {
+      if (preparation.value.error) error.value = preparation.value.error
+      else if (preparation.value.config && appliedPreparation.value !== preparation.value.id && draft.value) await applyPreparation()
+    }
+  } catch (cause) { error.value = intentErrorText(cause) }
+  finally { refreshingPreparation = false }
+}
+async function applyPreparation() {
+  const result = preparation.value
+  if (!draft.value || !result?.config || result.protocol !== props.protocol || result.running || result.error) return
+  const source = result.config
+  Object.assign(draft.value, { embeddingSource: source.embeddingSource, embeddingChannel: source.embeddingChannel, embeddingModel: source.embeddingModel, embeddingVersion: source.embeddingVersion, queryPrefix: source.queryPrefix, examplePrefix: source.examplePrefix, datasetIds: source.datasetIds })
+  appliedPreparation.value = result.id
+  evaluationDatasets.value = [...(source.datasetIds ?? [])]
+  datasetRefresh.value++
+  await checkVector()
+  await checkIndex()
+  showToast('模型和索引已准备好，请配置分组并保存启用', 'success')
+}
+async function cancelPreparation() {
+  try { preparation.value = await intentApi.cancelPreparation(); await checkVector() }
+  catch (cause) { report(cause) }
+}
+async function checkRuntime() {
+  const protocol = props.protocol
+  try { const status = await intentApi.status(protocol); if (props.protocol === protocol) runtimeStatus.value = status }
+  catch (cause) { if (props.protocol === protocol) runtimeStatus.value = { state: 'error', reason: intentErrorText(cause) } }
+}
 const localStatus = ref<LocalStatus>()
 const vectorChecking = ref(false)
 const vectorLoadError = ref('')
@@ -308,7 +404,11 @@ const hybridCombinations = [
   { title: '向量匹配 + 辅助模型', value: 'semantic,assistant' }
 ]
 const hybridCombination = computed(() => draft.value?.hybridMatchers?.join(',') ?? '')
-function chooseMode(mode: RecognitionMode) { if (!saving.value && !indexing.value && mode !== simpleMode.value) simpleMode.value = mode }
+function chooseMode(mode: RecognitionMode) {
+  if (saving.value || indexing.value || preparing.value || mode === simpleMode.value) return
+  simpleMode.value = mode
+  if (usesEmbedding.value && !draft.value?.embeddingModel && !draft.value?.embeddingChannel) selectEmbeddingSource('local')
+}
 function syncRecognition() {
   if (!draft.value) return
   draft.value.taskMatcher = recognitionStages.value.includes('semantic') ? 'semantic' : 'builtin'
@@ -340,6 +440,20 @@ const classifierOptions = computed(() => options.value.classifiers
     return { ...option, id, kind, name: option.builtin && option.sharedKey === 'kilo' ? 'Kilo 免费池（四个入口共享）' : option.name }
   }))
 const configuredGroups = computed(() => groups.value.filter(group => group.tasks.length && group.tiers.length).length)
+const coverageNotices = computed(() => {
+  const notices: string[] = []
+  const missing: string[] = []
+  for (const task of options.value.tasks ?? []) {
+    const matches = groups.value.filter(group => group.tasks.includes(task.id))
+    if (!matches.length) missing.push(task.name)
+    else if (matches.length > 1) notices.push(`${task.name}：多个分组参与，按难度筛选后${draft.value?.useFeedback ? '参考反馈和成本' : '按分组顺序选择'}。`)
+  }
+  if (missing.length) notices.push(`尚未覆盖：${missing.join('、')}；识别后按未命中设置处理。`)
+  for (const group of groups.value) {
+    if (options.value.groups?.[props.protocol]?.find(pool => pool.id === group.poolId)?.activeChannels === 0) notices.push(`${poolName(group.poolId)} 当前没有可用对话渠道，请先启用渠道。`)
+  }
+  return notices
+})
 const vectorReason = computed(() => {
   if (!usesEmbedding.value || !draft.value) return ''
   if (vectorChecking.value && !localStatus.value) return '正在检查向量模型状态'
@@ -395,6 +509,7 @@ function useRemoteEmbedding() {
 function updateLocalStatus(status: LocalStatus) {
   localStatus.value = status
   vectorLoadError.value = ''
+  if (draft.value?.embeddingSource === 'local' && !draft.value.embeddingModel && status.ready) useLocalEmbedding()
 }
 function useLocalEmbedding() {
   if (!draft.value || !localStatus.value?.ready) return
@@ -417,20 +532,12 @@ async function continueWithRemoteEmbedding() {
   await prepareSemanticIndex()
 }
 async function prepareSemanticIndex() {
-  if (!draft.value || indexing.value || vectorReason.value) return
+  if (!draft.value || indexing.value || preparing.value || (draft.value.embeddingSource === 'remote' && vectorReason.value)) return
   indexing.value = true
   error.value = ''
   try {
-    if (!draft.value.datasetIds?.length) {
-      const existing = (await datasetsApi.list()).find(item => item.id === 'starter-intents-v2' && item.kind === 'intent')
-      if (!existing) throw new Error('未找到内置意图数据集，请到数据集页面新建数据集，并在此选择。')
-      if (!existing.approved) throw new Error('内置意图样本尚未审核，请到数据集页面审核并保存后再构建索引。')
-      draft.value.datasetIds = [existing.id]
-    }
-    await intentApi.buildIndex(props.protocol, draft.value)
-    await checkIndex()
-    datasetRefresh.value++
-    showToast('意图样本索引已发布，请保存路由配置', 'success')
+    preparation.value = await intentApi.prepare(props.protocol, draft.value, !draft.value.datasetIds?.length)
+    activePreparation.value = preparation.value.id
   } catch (cause) { report(cause) }
   finally { indexing.value = false }
 }
@@ -439,7 +546,7 @@ async function checkVector(refreshChannels = false) {
   vectorChecking.value = true
   const results = await Promise.allSettled([intentApi.local(), ...(refreshChannels ? [intentApi.options()] : [])])
   const local = results[0]!
-  if (local.status === 'fulfilled') { localStatus.value = local.value as LocalStatus; vectorLoadError.value = '' }
+  if (local.status === 'fulfilled') { localStatus.value = local.value as LocalStatus; localBusy.value = localStatus.value.busy; vectorLoadError.value = '' }
   else vectorLoadError.value = intentErrorText(local.reason)
   if (refreshChannels) {
     const channels = results[1]!
@@ -469,6 +576,7 @@ function orderGroups(value: IntentGroupCapability[]) {
 }
 function validateGroups() {
   if (draft.value?.strategy !== 'auto') return true
+  if (draft.value.enabled && !configuredGroups.value) { error.value = '请先为至少一个分组选择适合的任务'; return false }
   const incomplete = groups.value.find(group => !group.tasks.length || !group.tiers.length)
   if (!incomplete) return true
   error.value = `请为“${poolName(incomplete.poolId)}”同时选择任务和难度，或将两项清空。`
@@ -479,12 +587,14 @@ function validateGroups() {
 async function load() {
   const protocol = props.protocol
   loading.value = true
-  try { await store.load(protocol) }
+  try { await store.load(protocol); await checkRuntime() }
   catch (cause) { if (protocol === props.protocol) report(cause) }
   finally { if (protocol === props.protocol) loading.value = false }
 }
 async function open() {
   draft.value = undefined
+  appliedPreparation.value = ''
+  activePreparation.value = ''
   show.value = true
   vectorGuide.value = false
   error.value = ''
@@ -512,18 +622,20 @@ async function open() {
       }
     }
     draft.value = copy
+    evaluationDatasets.value = [...(copy.datasetIds ?? [])]
     options.value = choices
     await checkVector()
+    await refreshPreparation()
   } catch (cause) { if (protocol === props.protocol && show.value) report(cause) }
 }
 function addRoute() {
   draft.value?.routes.push({ id: 'task_' + Date.now(), poolId: '', description: '', patterns: [], examples: [], tier: 1, cost: 0 })
 }
 async function save() {
-  if (!draft.value || saving.value || indexing.value || (draft.value.enabled && (vectorReason.value || classifierReason.value || indexError.value || indexChecking.value)) || !validateGroups()) return
+  if (!draft.value || saving.value || indexing.value || preparing.value || (draft.value.enabled && (vectorReason.value || classifierReason.value || indexError.value || indexChecking.value)) || !validateGroups()) return
   saving.value = true
   error.value = ''
-  try { await store.save(props.protocol, { ...draft.value, groups: groups.value }); showToast(props.protocol + ' 意图匹配配置已保存', 'success'); show.value = false }
+  try { await store.save(props.protocol, { ...draft.value, groups: groups.value }); await checkRuntime(); showToast(props.protocol + ' 意图匹配配置已保存', 'success'); show.value = false }
   catch (cause) { report(cause) }
   finally { saving.value = false }
 }
@@ -573,14 +685,14 @@ let indexRequest = 0
 async function checkIndex() {
   const request = ++indexRequest
   if (!draft.value || !usesEmbedding.value || !show.value) { indexError.value = ''; indexChecking.value = false; return }
-  if (!draft.value.datasetIds?.length) { indexError.value = '请选用数据集，或采用内置样本并构建索引'; indexChecking.value = false; return }
+  if (!draft.value.datasetIds?.length) { indexError.value = '点击准备按钮即可采用内置意图样本并构建索引'; indexChecking.value = false; return }
   if (vectorReason.value) { indexError.value = ''; indexChecking.value = false; return }
   indexChecking.value = true
   try { await intentApi.indexStatus(props.protocol, draft.value); if (request === indexRequest) indexError.value = '' }
   catch (cause) { if (request === indexRequest) indexError.value = intentErrorText(cause) }
   finally { if (request === indexRequest) indexChecking.value = false }
 }
-onMounted(() => { statusTimer = setInterval(() => { if (show.value && usesEmbedding.value) void checkVector() }, 3000) })
+onMounted(() => { statusTimer = setInterval(() => { if (show.value && usesEmbedding.value) { void checkVector(); void refreshPreparation() }; if (saved.value?.enabled) void checkRuntime() }, 3000) })
 onUnmounted(() => { clearInterval(statusTimer) })
 watch(usesEmbedding, async needed => {
   if (!needed || !show.value) return
@@ -588,8 +700,8 @@ watch(usesEmbedding, async needed => {
 })
 watch(show, visible => { if (!visible) vectorGuide.value = false })
 watch(vectorGuide, visible => { if (visible) void checkVector(true) })
-watch(() => props.protocol, () => { show.value = false; draft.value = undefined; events.value = []; expandedEvents.value.clear(); void load() }, { immediate: true })
-watch([draft, previewText, previewModel], () => { decision.value = undefined }, { deep: true })
+watch(() => props.protocol, () => { show.value = false; draft.value = undefined; runtimeStatus.value = undefined; activePreparation.value = ''; appliedPreparation.value = ''; events.value = []; expandedEvents.value.clear(); void load() }, { immediate: true })
+watch([draft, previewText, previewModel], () => { decision.value = undefined; evaluation.value = undefined }, { deep: true })
 watch([() => draft.value ? embeddingProfile.value : undefined, () => draft.value?.datasetIds, usesEmbedding, vectorReason], () => { void checkIndex() }, { deep: true })
 </script>
 

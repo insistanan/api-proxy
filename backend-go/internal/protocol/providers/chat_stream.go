@@ -15,12 +15,13 @@ package providers
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"sort"
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/contract"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
 
@@ -93,6 +94,10 @@ func (s *chatToClaudeStreamState) ProcessLine(line string) []string {
 		return s.Finish()
 	}
 
+	if err := contract.ResponseContent("openai", []byte(jsonStr)); err != nil {
+		s.streamFailed, s.streamError = true, err
+		return nil
+	}
 	var chunk map[string]interface{}
 	if err := json.Unmarshal([]byte(jsonStr), &chunk); err != nil {
 		s.streamFailed = true
@@ -263,16 +268,6 @@ func (s *chatToClaudeStreamState) Finish() []string {
 		return nil
 	}
 	s.messageStopEmitted = true
-
-	// 缓存本轮完整 assistant 消息。工具调用回合通常没有文本，仍需用其
-	// 工具调用内容关联 reasoning_content，供 Claude Code 下一轮回传时补回。
-	if s.reasoningDeltaBuffer.Len() > 0 {
-		storeReasoningForAssistantMessage(types.OpenAIMessage{
-			Role:      "assistant",
-			Content:   s.assistantTextBuffer.String(),
-			ToolCalls: snapshotChatAssistantToolCalls(s.assistantToolCalls),
-		}, s.reasoningDeltaBuffer.String(), s.reasoningScope)
-	}
 
 	out = append(out, s.closeTextBlock()...)
 	out = append(out, s.closeThinkingBlock()...)

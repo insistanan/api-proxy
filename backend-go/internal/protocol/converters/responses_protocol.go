@@ -6,13 +6,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
-	"github.com/insistanan/api-proxy/internal/protocol/contract"
-	"github.com/insistanan/api-proxy/internal/protocol/items"
 	"strings"
 
 	"github.com/insistanan/api-proxy/internal/dialogue/prompt/cacheinject"
 	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
+	"github.com/insistanan/api-proxy/internal/protocol/contract"
+	"github.com/insistanan/api-proxy/internal/protocol/items"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -29,7 +29,7 @@ const (
 // upstream may be nil (tests); when set it drives history-thinking and prompt_cache_key options.
 func ConvertResponsesRequestToUpstream(serviceType string, model string, bodyBytes []byte, stream bool, sess *types.Session, req *types.ResponsesRequest, upstream *config.UpstreamConfig) ([]byte, error) {
 	if serviceType != ResponsesUpstreamResponses && req != nil &&
-		(ResponsesInputCarriesOwnHistory(req.Input) || ResponsesInputRerootsSession(sess, req.Input)) {
+		respitems.ResponsesItemsContainCompactionFromInput(req.Input) {
 		// 非原生 Responses 上游没有 previous_response_id 语义。当前 input
 		// 已经是客户端提供的新历史根时，禁止任何协议转换器再把旧 session
 		// 追加到它前面；provider 会同步删除请求中的旧链字段。
@@ -58,20 +58,30 @@ func ConvertResponsesRequestToUpstream(serviceType string, model string, bodyByt
 }
 
 // ConvertUpstreamResponseToResponses 将上游非流式响应转换为 Responses 响应。
-func ConvertUpstreamResponseToResponses(serviceType string, originalRequestJSON []byte, upstreamResponseJSON []byte, sessionID string) (*types.ResponsesResponse, error) {
-	if err := validateUpstreamResponse(serviceType, upstreamResponseJSON); err != nil {
+func ConvertUpstreamResponseToResponses(serviceType string, originalRequestJSON []byte, upstreamResponseJSON []byte, sessionID string, toolContexts ...*ResponseToolContext) (*types.ResponsesResponse, error) {
+	if err := contract.ValidateResponse(serviceType, upstreamResponseJSON); err != nil {
 		return nil, err
 	}
 	switch serviceType {
 	case ResponsesUpstreamResponses:
-		respMap, err := JSONToMap(upstreamResponseJSON)
-		if err != nil {
+		var response types.ResponsesResponse
+		if err := json.Unmarshal(upstreamResponseJSON, &response); err != nil {
 			return nil, fmt.Errorf("解析 Responses 响应失败: %w", err)
 		}
-		converter := &ResponsesPassthroughConverter{}
-		return converter.FromProviderResponse(respMap, sessionID)
+		// 只把用量映射到统一口径，未知输出字段保留原始 JSON 数字精度。
+		var usage struct {
+			Usage map[string]interface{} `json:"usage"`
+		}
+		if err := json.Unmarshal(upstreamResponseJSON, &usage); err != nil {
+			return nil, err
+		}
+		response.Usage = ExtractUsageMetrics(usage.Usage)
+		return &response, nil
 	case ResponsesUpstreamOpenAI:
-		converted := ConvertOpenAIChatToResponsesNonStream(context.Background(), "", originalRequestJSON, nil, upstreamResponseJSON, nil)
+		converted, err := ConvertOpenAIChatToResponsesNonStream(context.Background(), "", originalRequestJSON, nil, upstreamResponseJSON, nil, toolContexts...)
+		if err != nil {
+			return nil, err
+		}
 		var resp types.ResponsesResponse
 		if err := json.Unmarshal([]byte(converted), &resp); err != nil {
 			return nil, fmt.Errorf("转换 OpenAI Chat 响应失败: %w", err)
@@ -98,7 +108,7 @@ func ConvertUpstreamResponseToResponses(serviceType string, originalRequestJSON 
 		if err != nil {
 			return nil, err
 		}
-		context := buildResponseToolContextFromRawRequest(originalRequestJSON)
+		context := responseTools(originalRequestJSON, toolContexts...)
 		for i, item := range resp.Output {
 			restored, err := restoreResponseToolItem(item, context)
 			if err != nil {
@@ -113,18 +123,23 @@ func ConvertUpstreamResponseToResponses(serviceType string, originalRequestJSON 
 		applyResponseCompletion(resp, completion)
 		return resp, nil
 	case ResponsesUpstreamGemini:
-		return ConvertGeminiResponseToResponses(originalRequestJSON, upstreamResponseJSON)
+		return ConvertGeminiResponseToResponses(originalRequestJSON, upstreamResponseJSON, toolContexts...)
 	default:
 		return nil, fmt.Errorf("Responses 上游 serviceType %q 不支持", serviceType)
 	}
 }
 
 // ConvertUpstreamStreamLineToResponses 将单行上游 SSE 转换为 Responses SSE。
-func ConvertUpstreamStreamLineToResponses(ctx context.Context, serviceType string, model string, originalRequestJSON []byte, line []byte, state *any) ([]string, error) {
+func ConvertUpstreamStreamLineToResponses(ctx context.Context, serviceType string, model string, originalRequestJSON []byte, line []byte, state *any, toolContexts ...*ResponseToolContext) ([]string, error) {
 	if payload, isData := codec.ParseSSEDataLineBytes(line); isData && len(payload) > 0 && string(payload) != codec.SSEDoneMarker {
 		root := gjson.ParseBytes(payload)
 		if !gjson.ValidBytes(payload) || !root.IsObject() {
 			return nil, fmt.Errorf("上游 %s SSE 数据不是有效 JSON 对象", serviceType)
+		}
+		if serviceType != ResponsesUpstreamResponses {
+			if err := contract.ResponseContent(serviceType, payload); err != nil {
+				return nil, err
+			}
 		}
 		if serviceType != ResponsesUpstreamResponses && (root.Get("type").String() == "error" ||
 			(root.Get("error").Exists() && root.Get("error").Type != gjson.Null)) {
@@ -137,15 +152,15 @@ func ConvertUpstreamStreamLineToResponses(ctx context.Context, serviceType strin
 	case ResponsesUpstreamResponses:
 		return []string{string(line) + "\n"}, nil
 	case ResponsesUpstreamOpenAI:
-		out := ConvertOpenAIChatToResponses(ctx, model, originalRequestJSON, nil, line, state)
+		out := ConvertOpenAIChatToResponses(ctx, model, originalRequestJSON, nil, line, state, toolContexts...)
 		if st, ok := (*state).(*chatToResponsesState); ok && st.Err != nil {
 			return nil, st.Err
 		}
 		return out, nil
 	case ResponsesUpstreamClaude:
-		return ConvertClaudeStreamToResponses(ctx, model, originalRequestJSON, line, state)
+		return ConvertClaudeStreamToResponses(ctx, model, originalRequestJSON, line, state, toolContexts...)
 	case ResponsesUpstreamGemini:
-		return ConvertGeminiStreamToResponses(ctx, model, originalRequestJSON, line, state)
+		return ConvertGeminiStreamToResponses(ctx, model, originalRequestJSON, line, state, toolContexts...)
 	default:
 		return nil, fmt.Errorf("Responses 上游 serviceType %q 不支持", serviceType)
 	}
@@ -176,57 +191,6 @@ func FinishUpstreamStreamToResponses(serviceType string, originalRequestJSON []b
 
 func convertResponsesPassthroughRequest(model string, bodyBytes []byte, upstream *config.UpstreamConfig) ([]byte, error) {
 	return convertResponsesPassthroughRequestWithSession(model, bodyBytes, upstream, nil, nil)
-}
-
-// ResponsesInputCarriesOwnHistory 判断客户端 input 是否已经包含新的历史根。
-// 该信息由 provider 在查找本地 session 前使用：一旦客户端重放了自己的
-// 历史，就不能先加载旧 session 再把两份历史交给转换器合并。
-func ResponsesInputCarriesOwnHistory(input interface{}) bool {
-	rawItems, ok := responsesInputRawItems(input)
-	if !ok {
-		return false
-	}
-	return responsesRawItemsCarryOwnHistory(rawItems)
-}
-
-// ResponsesInputRerootsSession 判断客户端 input 是否已经把会话换到了新的历史根。
-//
-// 与 ResponsesInputCarriesOwnHistory 互补：后者只看 input 自身形态（有会话根消息，
-// 或从 user 开头且带 assistant 产出），识别不了客户端自己压缩上下文后的形态——摘要成
-// 一条新的 user 根、再重发最近几轮。这里改用与本地会话的重叠来判断：合法增量只发
-// 服务端链上还不存在的 item，重发链上已有的 item 就说明历史被重写了。
-//
-// 前缀能对齐时说明 input 是本地历史的严格延伸，属于正常续接，不算换根。
-func ResponsesInputRerootsSession(sess *types.Session, input interface{}) bool {
-	if sess == nil || len(sess.Messages) == 0 {
-		return false
-	}
-	rawItems, ok := responsesInputRawItems(input)
-	if !ok {
-		return false
-	}
-	if prefixEnd, matched := respitems.ResponsesItemsPrefixMatchRaw(sess.Messages, rawItems); matched && prefixEnd > 0 {
-		return false
-	}
-	return respitems.ResponsesRawItemsReplayHistory(sess.Messages, rawItems)
-}
-
-// responsesInputRawItems 把 ResponsesRequest.Input 还原成原始 item 数组。
-// 原始 item 必须保持原样：内部 ResponsesItem 结构只覆盖代理需要转换的字段，
-// 用它来做形态判断会丢掉 encrypted_content 等扩展字段。
-func responsesInputRawItems(input interface{}) ([]json.RawMessage, bool) {
-	if input == nil {
-		return nil, false
-	}
-	encodedInput, err := json.Marshal(input)
-	if err != nil {
-		return nil, false
-	}
-	var rawItems []json.RawMessage
-	if err := json.Unmarshal(encodedInput, &rawItems); err != nil {
-		return nil, false
-	}
-	return rawItems, len(rawItems) > 0
 }
 
 // convertResponsesPassthroughRequestWithSession 保留 Responses 原始 item 的全部扩展
@@ -308,51 +272,11 @@ func trimResponsesPassthroughInput(bodyBytes []byte, req *types.ResponsesRequest
 		return trimmed, nil
 	}
 	if sess == nil || len(sess.Messages) == 0 {
-		// 本地 session 为空时无从比对前缀：进程重启、TTL 过期、LRU 驱逐或首次代理
-		// 该会话都会走到这里。此时若 input 自带完整历史，继续携带 previous_response_id
-		// 会让同一段历史被上游按两次语义纳入，只能按客户端给出的完整历史建立新边界。
-		return dropPreviousResponseIDIfSelfContained(bodyBytes, rawItems)
+		return bodyBytes, nil
 	}
-
-	parsedInput, err := parseResponsesInput(req.Input)
-	if err != nil {
-		return nil, fmt.Errorf("透传模式下解析 input item 失败: %w", err)
-	}
-	// 内部解析器无法完整识别某个扩展 item 时，禁止按错位下标裁剪原始数组——保留原
-	// 请求比误删工具结果更安全，也让上游返回明确的协议错误。但删链只依赖 item 形态、
-	// 不依赖下标对齐，仍然要做，否则重复历史照样被算两次。
-	if len(parsedInput) != len(rawItems) {
-		return dropPreviousResponseIDIfSelfContained(bodyBytes, rawItems)
-	}
-
 	prefixEnd, ok := respitems.ResponsesItemsPrefixMatchRaw(sess.Messages, rawItems)
-	if !ok || prefixEnd <= 0 || prefixEnd > len(rawItems) {
-		// 前缀无法确认时，不能把“看起来像完整历史”的 input 与旧服务端
-		// 链同时发送。那会让同一轮历史被计费两次，并把 Cursor 的上下文
-		// 迅速推满。只有明显是新增工具结果后缀时才保留 previous_response_id；
-		// 其余长 input 去掉旧链，按客户端给出的完整历史建立新边界。
-		if looksLikeResponsesFullReplay(sess.Messages, rawItems) {
-			trimmed, err := sjson.DeleteBytes(bodyBytes, "previous_response_id")
-			if err != nil {
-				return nil, fmt.Errorf("透传模式下删除无法确认历史的 previous_response_id 失败: %w", err)
-			}
-			return trimmed, nil
-		}
-		// 按历史条数的判断只覆盖“input 不短于本地历史”的重放。客户端自己压缩上下文
-		// （摘要成新根 + 重发最近几轮）时 input 比本地历史更短，条数比较必然漏判，
-		// 而重叠不会：合法增量只发链上还没有的 item。漏掉这里会让压缩后的请求继续
-		// 携带旧链，上游把压缩前的服务端历史整段前置，上下文立刻回到压缩前的规模，
-		// 客户端读到的 usage 不降反升，于是压缩后立刻又要压缩。
-		if respitems.ResponsesRawItemsReplayHistory(sess.Messages, rawItems) {
-			trimmed, err := sjson.DeleteBytes(bodyBytes, "previous_response_id")
-			if err != nil {
-				return nil, fmt.Errorf("透传模式下删除被重写历史的 previous_response_id 失败: %w", err)
-			}
-			return trimmed, nil
-		}
-		// 按历史条数的判断没命中时，再按 input 自身形态兜一次：本地 session 可能只
-		// 保存了会话的一小段（例如刚驱逐后重建），条数比较会漏判自带完整历史的 input。
-		return dropPreviousResponseIDIfSelfContained(bodyBytes, rawItems)
+	if !ok {
+		return bodyBytes, nil
 	}
 
 	suffix := rawItems[prefixEnd:]
@@ -368,93 +292,6 @@ func trimResponsesPassthroughInput(bodyBytes []byte, req *types.ResponsesRequest
 		return nil, fmt.Errorf("透传模式下裁剪重复 input 失败: %w", err)
 	}
 	return trimmed, nil
-}
-
-func looksLikeResponsesFullReplay(history []types.ResponsesItem, rawItems []json.RawMessage) bool {
-	visibleHistoryCount := 0
-	for _, item := range history {
-		if strings.EqualFold(strings.TrimSpace(item.Type), "reasoning") {
-			continue
-		}
-		visibleHistoryCount++
-	}
-	if visibleHistoryCount == 0 || len(rawItems) < visibleHistoryCount || len(rawItems) == 0 {
-		return false
-	}
-	var first map[string]interface{}
-	if err := json.Unmarshal(rawItems[0], &first); err != nil {
-		return false
-	}
-	itemType, _ := first["type"].(string)
-	// Responses 的增量工具回合通常从 function_call_output 开始；这类
-	// 后缀不能因为 item 数量刚好较多而被误判成完整历史。
-	switch strings.ToLower(strings.TrimSpace(itemType)) {
-	case "function_call_output", "custom_tool_call_output", "tool_result":
-		return false
-	default:
-		return true
-	}
-}
-
-// dropPreviousResponseIDIfSelfContained 在无法用本地 session 确认前缀关系时，按 input
-// 自身形态决定是否切断服务端链。只有确认 input 自带完整历史才删链；否则原样返回，
-// 行为与该判断引入前一致（保留 previous_response_id，把 input 当增量后缀）。
-func dropPreviousResponseIDIfSelfContained(bodyBytes []byte, rawItems []json.RawMessage) ([]byte, error) {
-	if !responsesRawItemsCarryOwnHistory(rawItems) {
-		return bodyBytes, nil
-	}
-	trimmed, err := sjson.DeleteBytes(bodyBytes, "previous_response_id")
-	if err != nil {
-		return nil, fmt.Errorf("透传模式下删除与完整历史重复的 previous_response_id 失败: %w", err)
-	}
-	return trimmed, nil
-}
-
-// responsesRawItemsCarryOwnHistory 判断一份 input 是否自成一份完整历史。判定只看 item
-// 形态，不依赖本地 session——session 恰好为空（进程重启 / TTL 过期 / LRU 驱逐）正是最
-// 需要这个判断的时刻。
-//
-// Responses 只承认两种合法续接：完整历史作为 input，或只发新增输入并用
-// previous_response_id 链接。两者同时出现时，同一段历史会被上游按两次语义纳入，
-// 上下文规模和计费都会翻倍。
-//
-// 判据故意保守：漏判只是退回原行为（保留链，input 里可能有重复），误判则会删掉链而
-// input 其实只是后缀，把整段上下文丢掉。两个充分条件：
-//   - 出现 developer / system 消息：这是会话根，增量后缀不会重发它。
-//   - 首项是 user 消息，且后面还有 assistant 侧产出：说明客户端从对话开头重放。
-//     只带一条新 user 消息是正常的增量输入，不满足。
-func responsesRawItemsCarryOwnHistory(rawItems []json.RawMessage) bool {
-	if len(rawItems) == 0 {
-		return false
-	}
-	firstIsUser := false
-	hasAssistantOutput := false
-	for index, rawItem := range rawItems {
-		var item struct {
-			Type string `json:"type"`
-			Role string `json:"role"`
-		}
-		if err := json.Unmarshal(rawItem, &item); err != nil {
-			continue
-		}
-		role := strings.ToLower(strings.TrimSpace(item.Role))
-		if role == "developer" || role == "system" {
-			return true
-		}
-		if index == 0 && role == "user" {
-			firstIsUser = true
-		}
-		if role == "assistant" {
-			hasAssistantOutput = true
-			continue
-		}
-		itemType := strings.ToLower(strings.TrimSpace(item.Type))
-		if itemType == "reasoning" || itemType == "function_call" ||
-			itemType == "custom_tool_call" || itemType == "tool_search_call" || itemType == "tool_use" {
-			hasAssistantOutput = true
-		}
-	}
-	return firstIsUser && hasAssistantOutput
 }
 
 func convertResponsesRequestToOpenAIChat(model string, bodyBytes []byte, stream bool, sess *types.Session, req *types.ResponsesRequest, upstream *config.UpstreamConfig) ([]byte, error) {

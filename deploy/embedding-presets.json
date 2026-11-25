@@ -5,17 +5,102 @@
     {
       "id": "bge-small-zh-v15-q8",
       "name": "BGE small 中文 v1.5（推荐）",
-      "description": "中文优先的轻量向量模型，512 维，Q8_0 量化约 25 MiB；搭配 llama.cpp CPU 运行时，适合意图匹配和命令风险检索。英文与代码语义弱于多语言模型。",
+      "description": "中文优先的轻量向量模型，512 维，模型约 25 MiB，另需下载当前平台运行时。英文与代码混合任务需结合独立样本评测；Linux 使用官方 Ubuntu 运行时。",
       "sizeBytes": 51597241,
       "platforms": {
         "windows/amd64": {
-          "runtimeUrl": "https://github.com/ggml-org/llama.cpp/releases/download/b12383/llama-b12383-bin-win-cpu-x64.zip",
+          "runtimeUrl": "https://github.com/insistanan/api-proxy/releases/latest/download/embedding-runtime-ad5bf0d826ea1f39aaf9721b7e26fde9be0bef5d9b69b9ba88c2d083b9a3bca7.zip",
           "runtimeSha256": "ad5bf0d826ea1f39aaf9721b7e26fde9be0bef5d9b69b9ba88c2d083b9a3bca7",
           "executable": "llama-server.exe",
-          "modelUrl": "https://huggingface.co/CompendiumLabs/bge-small-zh-v1.5-gguf/resolve/5bf683e6a1bd454bbb60ba051088c50731d63fcb/bge-small-zh-v1.5-q8_0.gguf",
+          "modelUrl": "https://github.com/insistanan/api-proxy/releases/latest/download/embedding-model-5a88d266870fbd27c6f329df60de80e2d4cf3bbd5e6f080bd5c1b2e5abb12039.gguf",
           "modelSha256": "5a88d266870fbd27c6f329df60de80e2d4cf3bbd5e6f080bd5c1b2e5abb12039",
           "modelName": "bge-small-zh-v1.5",
-          "pooling": "cls"
+          "pooling": "cls",
+          "runtimeMirrors": [
+            "https://github.com/ggml-org/llama.cpp/releases/download/b12383/llama-b12383-bin-win-cpu-x64.zip"
+          ],
+          "modelMirrors": [
+            "https://huggingface.co/CompendiumLabs/bge-small-zh-v1.5-gguf/resolve/5bf683e6a1bd454bbb60ba051088c50731d63fcb/bge-small-zh-v1.5-q8_0.gguf"
+          ]
+        },
+        "windows/arm64": {
+          "runtimeUrl": "https://github.com/insistanan/api-proxy/releases/latest/download/embedding-runtime-a4397cb8045c6ffdf355205686f5cb7674143499ccd0d1d74baaf137a321229b.zip",
+          "runtimeSha256": "a4397cb8045c6ffdf355205686f5cb7674143499ccd0d1d74baaf137a321229b",
+          "executable": "llama-server.exe",
+          "modelUrl": "https://github.com/insistanan/api-proxy/releases/latest/download/embedding-model-5a88d266870fbd27c6f329df60de80e2d4cf3bbd5e6f080bd5c1b2e5abb12039.gguf",
+          "modelSha256": "5a88d266870fbd27c6f329df60de80e2d4cf3bbd5e6f080bd5c1b2e5abb12039",
+          "modelName": "bge-small-zh-v1.5",
+          "pooling": "cls",
+          "runtimeMirrors": [
+            "https://github.com/ggml-org/llama.cpp/releases/download/b12383/llama-b12383-bin-win-cpu-arm64.zip"
+          ],
+          "modelMirrors": [
+            "https://huggingface.co/CompendiumLabs/bge-small-zh-v1.5-gguf/resolve/5bf683e6a1bd454bbb60ba051088c50731d63fcb/bge-small-zh-v1.5-q8_0.gguf"
+          ]
+        },
+        "linux/amd64": {
+          "runtimeUrl": "https://github.com/insistanan/api-proxy/releases/latest/download/embedding-runtime-8e1d9d147d7f0dd2399fb32381de126ebc926d452225ef3b19e1675a55e0c794.tar.gz",
+          "runtimeSha256": "8e1d9d147d7f0dd2399fb32381de126ebc926d452225ef3b19e1675a55e0c794",
+          "runtimeFormat": "tar.gz",
+          "executable": "llama-server",
+          "modelUrl": "https://github.com/insistanan/api-proxy/releases/latest/download/embedding-model-5a88d266870fbd27c6f329df60de80e2d4cf3bbd5e6f080bd5c1b2e5abb12039.gguf",
+          "modelSha256": "5a88d266870fbd27c6f329df60de80e2d4cf3bbd5e6f080bd5c1b2e5abb12039",
+          "modelName": "bge-small-zh-v1.5",
+          "pooling": "cls",
+          "runtimeMirrors": [
+            "https://github.com/ggml-org/llama.cpp/releases/download/b12383/llama-b12383-bin-ubuntu-x64.tar.gz"
+          ],
+          "modelMirrors": [
+            "https://huggingface.co/CompendiumLabs/bge-small-zh-v1.5-gguf/resolve/5bf683e6a1bd454bbb60ba051088c50731d63fcb/bge-small-zh-v1.5-q8_0.gguf"
+          ]
+        },
+        "linux/arm64": {
+          "runtimeUrl": "https://github.com/insistanan/api-proxy/releases/latest/download/embedding-runtime-87484f4667c1bd68804d12e4242817504c35c19d3793a62778484988c7ea7441.tar.gz",
+          "runtimeSha256": "87484f4667c1bd68804d12e4242817504c35c19d3793a62778484988c7ea7441",
+          "runtimeFormat": "tar.gz",
+          "executable": "llama-server",
+          "modelUrl": "https://github.com/insistanan/api-proxy/releases/latest/download/embedding-model-5a88d266870fbd27c6f329df60de80e2d4cf3bbd5e6f080bd5c1b2e5abb12039.gguf",
+          "modelSha256": "5a88d266870fbd27c6f329df60de80e2d4cf3bbd5e6f080bd5c1b2e5abb12039",
+          "modelName": "bge-small-zh-v1.5",
+          "pooling": "cls",
+          "runtimeMirrors": [
+            "https://github.com/ggml-org/llama.cpp/releases/download/b12383/llama-b12383-bin-ubuntu-arm64.tar.gz"
+          ],
+          "modelMirrors": [
+            "https://huggingface.co/CompendiumLabs/bge-small-zh-v1.5-gguf/resolve/5bf683e6a1bd454bbb60ba051088c50731d63fcb/bge-small-zh-v1.5-q8_0.gguf"
+          ]
+        },
+        "darwin/amd64": {
+          "runtimeUrl": "https://github.com/insistanan/api-proxy/releases/latest/download/embedding-runtime-2aaf514be8f996248dfa63d1d3ac854bbca16fe0eed29315cbc4d2a244b6654d.tar.gz",
+          "runtimeSha256": "2aaf514be8f996248dfa63d1d3ac854bbca16fe0eed29315cbc4d2a244b6654d",
+          "runtimeFormat": "tar.gz",
+          "executable": "llama-server",
+          "modelUrl": "https://github.com/insistanan/api-proxy/releases/latest/download/embedding-model-5a88d266870fbd27c6f329df60de80e2d4cf3bbd5e6f080bd5c1b2e5abb12039.gguf",
+          "modelSha256": "5a88d266870fbd27c6f329df60de80e2d4cf3bbd5e6f080bd5c1b2e5abb12039",
+          "modelName": "bge-small-zh-v1.5",
+          "pooling": "cls",
+          "runtimeMirrors": [
+            "https://github.com/ggml-org/llama.cpp/releases/download/b12383/llama-b12383-bin-macos-x64.tar.gz"
+          ],
+          "modelMirrors": [
+            "https://huggingface.co/CompendiumLabs/bge-small-zh-v1.5-gguf/resolve/5bf683e6a1bd454bbb60ba051088c50731d63fcb/bge-small-zh-v1.5-q8_0.gguf"
+          ]
+        },
+        "darwin/arm64": {
+          "runtimeUrl": "https://github.com/insistanan/api-proxy/releases/latest/download/embedding-runtime-ef4758c83e3075f7aa4dd159c6d154712c89c6e009386910e8bc8c4e7e35558c.tar.gz",
+          "runtimeSha256": "ef4758c83e3075f7aa4dd159c6d154712c89c6e009386910e8bc8c4e7e35558c",
+          "runtimeFormat": "tar.gz",
+          "executable": "llama-server",
+          "modelUrl": "https://github.com/insistanan/api-proxy/releases/latest/download/embedding-model-5a88d266870fbd27c6f329df60de80e2d4cf3bbd5e6f080bd5c1b2e5abb12039.gguf",
+          "modelSha256": "5a88d266870fbd27c6f329df60de80e2d4cf3bbd5e6f080bd5c1b2e5abb12039",
+          "modelName": "bge-small-zh-v1.5",
+          "pooling": "cls",
+          "runtimeMirrors": [
+            "https://github.com/ggml-org/llama.cpp/releases/download/b12383/llama-b12383-bin-macos-arm64.tar.gz"
+          ],
+          "modelMirrors": [
+            "https://huggingface.co/CompendiumLabs/bge-small-zh-v1.5-gguf/resolve/5bf683e6a1bd454bbb60ba051088c50731d63fcb/bge-small-zh-v1.5-q8_0.gguf"
+          ]
         }
       }
     }

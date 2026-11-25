@@ -46,6 +46,8 @@ export interface ChannelMetrics {
   lastFailureAt?: string
   /** 仪表盘快照中，该渠道正在处理的独立对话数。 */
   activeConversations?: number
+  /** 已保存上下文且仍在等待或执行心跳的会话数。 */
+  activeKeepaliveSessions?: number
   /** 按会话与稳定线程、分支、Agent 标识去重；无标识的会话至少计一个。 */
   activeBranches?: number
   /** 有请求缺少稳定分支标识的活跃会话数，此时分支统计可能不完整。 */
@@ -140,6 +142,8 @@ export interface CacheKeepaliveStatus {
   entryProtocol: string
   upstreamProtocol: string
   cacheMode?: 'prefix' | 'implicit' | 'explicit'
+  snapshotAt?: number
+  nextHeartbeatAt?: number
   lastAt?: number
   expiresAt?: number
   conversationId: string

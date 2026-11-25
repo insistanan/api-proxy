@@ -15,7 +15,7 @@ func TestResponsesStream_ResponseFailedDoesNotFakeMessageStop(t *testing.T) {
 		`data: {"type":"response.output_text.delta","delta":"partial"}`,
 		`data: {"type":"response.failed","response":{"error":{"code":"server_error","message":"boom"}}}`,
 		``,
-	}, "\n")
+	}, "\n\n")
 
 	p := &MessagesResponsesProvider{}
 	eventChan, errChan, err := p.HandleStreamResponseCtx(context.Background(), io.NopCloser(strings.NewReader(body)))

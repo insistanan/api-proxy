@@ -5,8 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
-	"github.com/insistanan/api-proxy/internal/protocol/items"
 	"io"
 	"net/http"
 	"strings"
@@ -14,7 +12,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/insistanan/api-proxy/internal/dialogue/session"
 	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"github.com/insistanan/api-proxy/internal/protocol/converters"
+	"github.com/insistanan/api-proxy/internal/protocol/items"
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -37,6 +37,7 @@ func (p *ResponsesProvider) ConvertToProviderRequest(
 	// “已移除 previous_response_id”状态污染后续候选。
 	c.Set(upstreamreq.ContextKeyResponsesPreviousIDDropped, false)
 	c.Set(upstreamreq.ContextKeyResponsesHistoryBoundary, false)
+	c.Set(responseToolContextKey, (*converters.ResponseToolContext)(nil))
 	// 读取原始请求体
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -56,6 +57,7 @@ func (p *ResponsesProvider) ConvertToProviderRequest(
 		Header:             c.Request.Header,
 		Body:               bodyBytes,
 		ConversationID:     conversationID,
+		ResponseSession:    ResponseSessionForRequest(c),
 		CodexDisguise:      c.GetBool(upstreamreq.ContextKeyCodexDisguise),
 		ClaudeCodeDisguise: c.GetBool(upstreamreq.ContextKeyClaudeCodeDisguise),
 	}, upstream, apiKey)
@@ -68,6 +70,7 @@ func (p *ResponsesProvider) ConvertToProviderRequest(
 	}
 	c.Set(upstreamreq.ContextKeyResponsesPreviousIDDropped, outcome.PreviousIDDropped)
 	c.Set(upstreamreq.ContextKeyResponsesHistoryBoundary, outcome.HistoryBoundary)
+	c.Set(responseToolContextKey, outcome.ResponseTools)
 	return outcome.Request, outcome.OriginalBody, nil
 }
 
@@ -104,16 +107,16 @@ func (p *ResponsesProvider) buildRequest(input RequestInput, upstream *config.Up
 			}
 		}
 		conversationID := input.ConversationID
-		var sess *session.Session
+		sess := input.ResponseSession
 		var err error
-		if p.SessionManager != nil && strings.TrimSpace(effectiveRequest.PreviousResponseID) != "" {
-			sess, err = p.SessionManager.GetOrCreateSessionForConversation(effectiveRequest.PreviousResponseID, conversationID)
+		if sess == nil && p.SessionManager != nil && strings.TrimSpace(effectiveRequest.PreviousResponseID) != "" {
+			sess, err = p.SessionManager.GetOrCreateSessionForConversation(input.Ctx, effectiveRequest.PreviousResponseID, conversationID)
 			if err != nil {
 				return outcome, fmt.Errorf("获取 Responses 透传会话失败: %w", err)
 			}
 		}
 		owner := upstream.RequestIdentity(apiKey).Fingerprint()
-		restoredBody, restored, restoreErr := restoreNativeResponseHistory(p.SessionManager, sess, &effectiveRequest, effectiveBody, owner)
+		restoredBody, restored, restoreErr := restoreNativeResponseHistory(input.Ctx, p.SessionManager, sess, &effectiveRequest, effectiveBody, owner)
 		if restoreErr != nil {
 			return outcome, restoreErr
 		}
@@ -157,34 +160,23 @@ func (p *ResponsesProvider) buildRequest(input RequestInput, upstream *config.Up
 			}
 		}
 		// 获取或创建会话
-		var sess *session.Session
+		sess := input.ResponseSession
 		if p.SessionManager == nil {
 			return outcome, fmt.Errorf("Responses 会话管理器未初始化")
 		}
 		var err error
-		sess, err = p.SessionManager.GetOrCreateSessionForConversation(effectiveRequest.PreviousResponseID, conversationID)
-		if err != nil {
-			return outcome, fmt.Errorf("获取会话失败: %w", err)
+		if sess == nil {
+			sess, err = p.SessionManager.GetOrCreateSessionForConversation(input.Ctx, effectiveRequest.PreviousResponseID, conversationID)
+			if err != nil {
+				return outcome, fmt.Errorf("获取会话失败: %w", err)
+			}
 		}
 		if historyBoundary {
 			// 当前 input 已经是客户端提供的新历史根；旧 session 只用于
 			// 响应完成后替换本地状态，不能参与本次上游请求转换。
 			sess = nil
-		} else if converters.ResponsesInputRerootsSession(sess, effectiveRequest.Input) {
-			// input 形态判断不了客户端自己压缩上下文后的形态（摘要成新根 + 重发最近
-			// 几轮），只有与本地会话的重叠能认出来，而这个判断必须等 session 载入后
-			// 才能做。漏掉这里会让转换器把压缩前的整段历史重新前置到新根之前。
-			outcome.HistoryBoundary = true
-			if strings.TrimSpace(effectiveRequest.PreviousResponseID) != "" {
-				outcome.PreviousIDDropped = true
-			}
-			effectiveRequest.PreviousResponseID = ""
-			effectiveBody, err = removeResponsesPreviousResponseID(effectiveBody)
-			if err != nil {
-				return outcome, err
-			}
-			sess = nil
 		}
+
 		if err := validateResponseHistoryBoundary(sess, effectiveRequest.PreviousResponseID); err != nil {
 			return outcome, err
 		}
@@ -194,6 +186,10 @@ func (p *ResponsesProvider) buildRequest(input RequestInput, upstream *config.Up
 		targetModel = effectiveRequest.Model
 
 		reqBody, err = converters.ConvertResponsesRequestToUpstream(upstream.ServiceType, effectiveRequest.Model, effectiveBody, effectiveRequest.Stream, sess, &effectiveRequest, upstream)
+		if err != nil {
+			return outcome, err
+		}
+		outcome.ResponseTools, err = converters.NewResponseToolContext(&effectiveRequest, sess)
 		if err != nil {
 			return outcome, err
 		}
@@ -252,8 +248,7 @@ func responsesRequestStartsNewHistoryBoundary(req *types.ResponsesRequest) bool 
 	if req == nil {
 		return false
 	}
-	return respitems.ResponsesItemsContainCompactionFromInput(req.Input) ||
-		converters.ResponsesInputCarriesOwnHistory(req.Input)
+	return respitems.ResponsesItemsContainCompactionFromInput(req.Input)
 }
 
 func removeResponsesPreviousResponseID(bodyBytes []byte) ([]byte, error) {

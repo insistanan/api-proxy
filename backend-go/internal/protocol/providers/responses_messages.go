@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
 	"github.com/insistanan/api-proxy/internal/infra/upstreamreq"
 	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"github.com/insistanan/api-proxy/internal/protocol/converters"
@@ -21,6 +22,7 @@ import (
 // MessagesResponsesProvider 将 Claude Messages 入口请求转换为 OpenAI Responses 上游协议。
 // 字段仅在单次请求生命周期内使用（handler 内同一实例会串联 Convert/Stream）。
 type MessagesResponsesProvider struct {
+	cacheLease     *conversation.RequestLease
 	conversationID string
 	claudeReq      *types.ClaudeRequest
 	upstream       *config.UpstreamConfig
@@ -87,14 +89,9 @@ func (p *MessagesResponsesProvider) buildRequest(input RequestInput, upstream *c
 		return nil, fmt.Errorf("解析Claude请求体失败: %w", err)
 	}
 
-	// 主流程已经把经过 registry 解析的内部 conversation ID 写入输入。
-	// Responses 链必须使用这个稳定 ID：compact 清理、渠道路由和链状态才能
-	// 指向同一条会话。只有直接调用 provider 的旧测试/内部调用没有该值时，
-	// 才回退到请求里的外部会话标识。
+	p.cacheLease = conversation.RequestLeaseFrom(input.Ctx)
+	// 链缓存与删除共用内部会话 ID；不自行从客户端字段猜测第二套身份。
 	conversationID := strings.TrimSpace(input.ConversationID)
-	if conversationID == "" {
-		conversationID = extractMessagesConversationIDFromInput(input.Header, input.Query, &claudeReq)
-	}
 	p.conversationID = conversationID
 	p.claudeReq = &claudeReq
 	p.upstream = upstream
@@ -133,7 +130,9 @@ func (p *MessagesResponsesProvider) ConvertToClaudeResponse(providerResp *types.
 		return nil, err
 	}
 	if p != nil && p.enableChain && p.claudeReq != nil {
-		rememberResponsesChainFromBody(p.conversationID, p.claudeReq, p.upstream, p.resolvedModel, providerResp.Body, p.chainIdentity)
+		p.cacheLease.Store(func() {
+			rememberResponsesChainFromBody(p.conversationID, p.claudeReq, p.upstream, p.resolvedModel, providerResp.Body, p.chainIdentity)
+		})
 	}
 	return responsesResponseToClaude(&responsesResp)
 }
@@ -166,7 +165,11 @@ func (p *MessagesResponsesProvider) HandleStreamResponseCtx(ctx context.Context,
 				return
 			default:
 			}
-			line := strings.TrimSpace(scanner.Text())
+			line, err := scanner.DataLine()
+			if err != nil {
+				fail(err)
+				return
+			}
 			if payload, isData := codec.ParseSSEDataLine(line); isData && payload == codec.SSEDoneMarker {
 				break
 			}
@@ -196,13 +199,12 @@ func (p *MessagesResponsesProvider) HandleStreamResponseCtx(ctx context.Context,
 				return
 			}
 		}
-		// 思考内容按 Claude Messages 契约下发；下一轮转换默认跳过历史
-		// thinking，因此不会把它再次送入 Responses 上游。成功完成的本轮
-		// 仍登记到代理内部缓存，供故障转移到严格 Chat 渠道时补回。
-		state.cacheReasoning()
+
 		if enableChain && state.completed && claudeReq != nil && state.upstreamResponseID != "" {
-			rememberResponsesChain(conversationID, claudeReq, upstream, resolvedModel,
-				state.upstreamResponseID, state.outputFingerprint(), chainIdentity)
+			p.cacheLease.Store(func() {
+				rememberResponsesChain(conversationID, claudeReq, upstream, resolvedModel,
+					state.upstreamResponseID, state.outputFingerprint(), chainIdentity)
+			})
 		}
 	}()
 

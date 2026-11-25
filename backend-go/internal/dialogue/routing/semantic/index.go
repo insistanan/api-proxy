@@ -306,13 +306,22 @@ type EvaluationCase struct {
 	Correct  bool    `json:"correct"`
 }
 
-func (s *Service) Evaluate(ctx context.Context, id string, profile config.SemanticEmbeddingConfig, threshold, margin float64) (Evaluation, error) {
+// ReserveEvaluation 让业务路由评测与数据集评测共用构建互斥，避免评测中途换索引。
+func (s *Service) ReserveEvaluation() (func(), error) {
 	select {
 	case s.buildSlot <- struct{}{}:
-		defer func() { <-s.buildSlot }()
+		return func() { <-s.buildSlot }, nil
 	default:
-		return Evaluation{}, fmt.Errorf("已有构建或评测正在运行")
+		return nil, fmt.Errorf("已有构建或评测正在运行")
 	}
+}
+
+func (s *Service) Evaluate(ctx context.Context, id string, profile config.SemanticEmbeddingConfig, threshold, margin float64) (Evaluation, error) {
+	release, err := s.ReserveEvaluation()
+	if err != nil {
+		return Evaluation{}, err
+	}
+	defer release()
 	d, err := s.Get(id)
 	if err != nil {
 		return Evaluation{}, err
@@ -340,21 +349,18 @@ func (s *Service) Evaluate(ctx context.Context, id string, profile config.Semant
 			return Evaluation{}, err
 		}
 		actual, score := "", 0.0
-		for _, hit := range result.Hits {
-			if hit.Sample.Negative || hit.Score < threshold {
-				continue
+		if d.Kind == "intent" {
+			if hit, matched := SelectIntent(result, threshold, margin); matched {
+				actual, score = hit.Sample.Label, hit.Score
 			}
-			negative := -1.0
-			for _, other := range result.Hits {
-				if other.Sample.Label == hit.Sample.Label && other.Sample.Negative {
-					negative = other.Score
+		} else {
+			for _, hit := range result.Hits {
+				if hit.Sample.Negative || hit.Score < threshold {
+					continue
 				}
+				actual, score = hit.Sample.Label, hit.Score
+				break
 			}
-			if d.Kind == "intent" && hit.Score-negative < margin {
-				continue
-			}
-			actual, score = hit.Sample.Label, hit.Score
-			break
 		}
 		expected := row.Label
 		if row.Negative {
@@ -402,4 +408,33 @@ func PositiveLabels(result Result, threshold, margin float64) []Hit {
 		}
 	}
 	return slices.Clone(positive)
+}
+
+// SelectIntent 是路由与检索评测共用的拒识规则。次佳类别即便低于阈值仍参与差值判断。
+// 反例否决所属类别，unmatched 反例否决所有类别；反例不会被当作新的意图。
+func SelectIntent(result Result, threshold, margin float64) (Hit, bool) {
+	var best Hit
+	bestScore, runnerUp := -2.0, -2.0
+	for _, hit := range result.Hits {
+		if hit.Sample.Negative {
+			continue
+		}
+		if hit.Score > bestScore {
+			if best.Sample.Label != hit.Sample.Label {
+				runnerUp = bestScore
+			}
+			best, bestScore = hit, hit.Score
+		} else if hit.Sample.Label != best.Sample.Label && hit.Score > runnerUp {
+			runnerUp = hit.Score
+		}
+	}
+	if best.Sample.Label == "" || bestScore < threshold || bestScore <= runnerUp || bestScore-runnerUp < margin {
+		return best, false
+	}
+	for _, hit := range result.Hits {
+		if hit.Sample.Negative && (hit.Sample.Label == best.Sample.Label || hit.Sample.Label == "unmatched") && (bestScore <= hit.Score || bestScore-hit.Score < margin) {
+			return best, false
+		}
+	}
+	return best, true
 }

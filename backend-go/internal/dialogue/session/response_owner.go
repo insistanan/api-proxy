@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 )
@@ -12,8 +13,10 @@ func (e *HistoryError) Error() string            { return e.Message }
 func (e *HistoryError) ClientRequestError() bool { return true }
 
 // ResponseOwner 按 response ID 查询生成它的凭据组合；旧记录无归属时不得复用链。
-func (sm *SessionManager) ResponseOwner(responseID string) (string, bool, error) {
-	sm.mu.RLock()
+func (sm *SessionManager) ResponseOwner(ctx context.Context, responseID string) (string, bool, error) {
+	if err := sm.mu.RLockContext(ctx); err != nil {
+		return "", false, err
+	}
 	defer sm.mu.RUnlock()
 	if sm.store == nil {
 		if _, exists := sm.responseMapping[responseID]; !exists {
@@ -23,7 +26,7 @@ func (sm *SessionManager) ResponseOwner(responseID string) (string, bool, error)
 		return owner, owner != "", nil
 	}
 	var owner string
-	err := sm.store.db.QueryRow(`SELECT upstream_identity FROM response_session_mappings WHERE response_id = ?`, responseID).Scan(&owner)
+	err := sm.store.db.QueryRowContext(ctx, `SELECT upstream_identity FROM response_session_mappings WHERE response_id = ?`, responseID).Scan(&owner)
 	if err == sql.ErrNoRows {
 		return "", false, nil
 	}
@@ -33,20 +36,7 @@ func (sm *SessionManager) ResponseOwner(responseID string) (string, bool, error)
 	return owner, owner != "", nil
 }
 
-func (sm *SessionManager) rememberResponseOwnerLocked(responseID string, owner []string) {
-	if sm.store == nil && responseID != "" && len(owner) > 0 {
-		sm.responseOwners[responseID] = owner[0]
-	}
-}
-
 func (sm *SessionManager) forgetResponseMappingLocked(responseID string) {
 	delete(sm.responseMapping, responseID)
 	delete(sm.responseOwners, responseID)
-}
-
-func responseOwnerValue(owner []string) string {
-	if len(owner) > 0 {
-		return owner[0]
-	}
-	return ""
 }

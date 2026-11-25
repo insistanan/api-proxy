@@ -48,10 +48,14 @@ func prepareBody(s *snapshot) ([]byte, string, time.Duration, error) {
 	if model == "" || !messages.IsArray() || len(messages.Array()) == 0 {
 		return nil, "", 0, errors.New("保活候选缺少完整模型和消息上下文")
 	}
-	for _, field := range []string{"mcp_servers", "container", "context_management"} {
-		if root.Get(field).Exists() {
-			return nil, "", 0, errors.New("包含服务端工具或上下文管理的请求暂不支持自动保活")
-		}
+	if servers := root.Get("mcp_servers"); servers.Exists() && servers.Type != gjson.Null && (!servers.IsArray() || len(servers.Array()) > 0) {
+		return nil, "", 0, errors.New("原请求配置了远程 MCP 服务，心跳可能额外执行工具，停止保活")
+	}
+	if container := root.Get("container"); container.Exists() && container.Type != gjson.Null {
+		return nil, "", 0, errors.New("原请求配置了服务端执行容器，心跳可能改变容器状态，停止保活")
+	}
+	if err := checkClaudeKeepaliveContext(root.Get("context_management")); err != nil {
+		return nil, "", 0, err
 	}
 	for _, tool := range root.Get("tools").Array() {
 		kind := tool.Get("type").String()
@@ -87,6 +91,50 @@ func prepareBody(s *snapshot) ([]byte, string, time.Duration, error) {
 		}
 	}
 	return body, model, ttl, nil
+}
+
+// Claude Code 的 keep: all 只要求保留思考历史，不会清理缓存前缀。
+// 原样保留这些配置；真正清理或压缩历史的策略仍不能用于固定前缀的心跳。
+func checkClaudeKeepaliveContext(value gjson.Result) error {
+	if !value.Exists() || value.Type == gjson.Null {
+		return nil
+	}
+	if !value.IsObject() {
+		return errors.New("context_management 格式无效，无法确认心跳是否保留历史")
+	}
+	for field := range value.Map() {
+		if field != "edits" {
+			return errors.New("context_management 包含未知选项，无法确认心跳是否保留历史")
+		}
+	}
+	edits := value.Get("edits")
+	if !edits.Exists() {
+		return nil
+	}
+	if !edits.IsArray() {
+		return errors.New("context_management.edits 不是数组，无法确认心跳是否保留历史")
+	}
+	for _, edit := range edits.Array() {
+		switch edit.Get("type").String() {
+		case "clear_thinking_20251015":
+			keep := edit.Get("keep")
+			all := keep.Type == gjson.String && keep.String() == "all" ||
+				keep.IsObject() && len(keep.Map()) == 1 && keep.Get("type").String() == "all"
+			if !all {
+				return errors.New("原请求要求清理历史思考，可能改变缓存前缀；仅保留全部思考（keep: all）时支持保活")
+			}
+			if len(edit.Map()) != 2 {
+				return errors.New("历史思考保留策略包含未知选项，无法确认心跳是否保留历史")
+			}
+		case "clear_tool_uses_20250919":
+			return errors.New("原请求要求清理历史工具记录，可能改变缓存前缀，停止保活")
+		case "compact_20260112":
+			return errors.New("原请求启用了服务端历史压缩，可能改变缓存前缀，停止保活")
+		default:
+			return errors.New("原请求包含无法识别的历史处理策略，无法确认心跳是否保留历史")
+		}
+	}
+	return nil
 }
 
 func cacheTTL(root gjson.Result) (time.Duration, error) {

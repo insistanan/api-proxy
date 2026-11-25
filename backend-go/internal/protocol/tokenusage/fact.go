@@ -30,6 +30,7 @@ type Fact struct {
 type Credit struct {
 	Cursor int64
 	Tokens int64
+	At     int64 // 实际用量时间（毫秒），不以补记或消费时间代替。
 }
 
 // UnattributedCacheInput 保留本次输入总量，供账本排除无法作为输入子集的缓存值。

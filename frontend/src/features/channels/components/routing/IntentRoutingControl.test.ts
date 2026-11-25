@@ -2,15 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createSSRApp, type Ref, type SetupContext } from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import IntentRoutingControl from '@/features/channels/components/routing/IntentRoutingControl.vue'
-import type { IntentConfig, IntentOptions, LocalStatus } from '@/features/channels/services/intent'
-import type { Dataset, EmbeddingProfile } from '@/types'
+import type { IntentConfig, IntentOptions, IntentPreparation, LocalStatus } from '@/features/channels/services/intent'
+import type { EmbeddingProfile } from '@/types'
 
-const mocks = vi.hoisted(() => ({ load: vi.fn(), save: vi.fn(), options: vi.fn(), local: vi.fn(), preview: vi.fn(), feedback: vi.fn(), buildIndex: vi.fn(), indexStatus: vi.fn(), datasetList: vi.fn(), datasetBuiltin: vi.fn(), datasetSave: vi.fn() }))
+const mocks = vi.hoisted(() => ({ load: vi.fn(), save: vi.fn(), options: vi.fn(), local: vi.fn(), preview: vi.fn(), feedback: vi.fn(), buildIndex: vi.fn(), indexStatus: vi.fn(), status: vi.fn(), preparation: vi.fn(), prepare: vi.fn(), cancelPreparation: vi.fn() }))
 vi.mock('@/shared/stores/auth', () => ({ useAuthStore: () => ({ apiKey: null, clearAuth: vi.fn() }) }))
 vi.mock('@/features/channels/stores/channel', () => ({ useChannelStore: () => ({ channelPoolsMap: { responses: [{ id: 'language', name: '语言组' }, { id: 'code', name: '代码组' }, { id: 'builtin-free', name: '免费分组' }] } }) }))
 vi.mock('@/features/channels/stores/intent', () => ({ useIntentStore: () => ({ configs: {}, load: mocks.load, save: mocks.save }) }))
-vi.mock('@/features/channels/services/intent', () => ({ intentApi: { options: mocks.options, local: mocks.local, preview: mocks.preview, feedback: mocks.feedback, buildIndex: mocks.buildIndex, indexStatus: mocks.indexStatus }, intentErrorText: (error: Error) => error.message, intentPreviewFailure: () => undefined }))
-vi.mock('@/features/extensions/datasets', () => ({ datasetsApi: { list: mocks.datasetList, builtin: mocks.datasetBuiltin, save: mocks.datasetSave } }))
+vi.mock('@/features/channels/services/intent', () => ({ intentApi: mocks, intentErrorText: (error: Error) => error.message, intentPreviewFailure: () => undefined }))
 vi.mock('@/shared/composables/useToast', () => ({ useToast: () => ({ showToast: vi.fn() }) }))
 
 const config = (): IntentConfig => ({ enabled: false, strategy: 'regex', classifier: 'heuristic', classifierChannel: '', classifierModel: '', embeddingChannel: '', embeddingModel: '', embeddingSource: 'remote', queryPrefix: '', examplePrefix: '', threshold: 0.75, timeoutMs: 2000, minResidenceSeconds: 300, minTurns: 4, switchMargin: 0.15, unmatched: 'original', fallbackPoolId: '', failurePolicy: 'error', observeOnly: true, routes: [] })
@@ -31,9 +30,8 @@ beforeEach(() => {
   mocks.local.mockResolvedValue(localStatus())
   mocks.buildIndex.mockResolvedValue(undefined)
   mocks.indexStatus.mockResolvedValue({ ready: true })
-  mocks.datasetList.mockResolvedValue([])
-  mocks.datasetBuiltin.mockResolvedValue([])
-  mocks.datasetSave.mockImplementation(async (dataset: Dataset) => ({ ...dataset, revision: 1 }))
+  mocks.status.mockResolvedValue({ state: 'disabled', reason: '未启用' })
+  mocks.preparation.mockResolvedValue({ id: '', protocol: '', running: false, phase: '', error: '' })
   mocks.save.mockResolvedValue(undefined)
 })
 
@@ -81,6 +79,7 @@ describe('意图匹配编辑器', () => {
   it('本地向量模型未就绪时阻断启用，就绪且索引匹配后允许保存', async () => {
     const original = config()
     Object.assign(original, { enabled: true, strategy: 'auto', taskMatcher: 'semantic', embeddingSource: 'local', embeddingModel: 'vector', datasetIds: ['intent'] })
+    original.groups = [{ poolId: 'language', tasks: ['translation'], tiers: [0, 1, 2], cost: 0 }]
     mocks.load.mockResolvedValue(original)
     const state = await setup()
     expect(value<boolean>(state, 'vectorGuide')).toBe(false)
@@ -98,36 +97,28 @@ describe('意图匹配编辑器', () => {
     expect(original.embeddingModel).toBe('vector')
   })
 
-  it('内置数据集审核、删除和重新建索引时不自动批准或覆盖新模型', async () => {
+  it('明确采用内置样本后后台准备，完成时只合并依赖字段并保留分组草稿', async () => {
     const original = config()
     Object.assign(original, { strategy: 'auto', taskMatcher: 'semantic', embeddingChannel: 'vector', embeddingModel: 'new-model' })
     mocks.load.mockResolvedValue(original)
     mocks.options.mockResolvedValue({ classifiers: [], embeddings: [{ id: 'vector', name: '向量渠道', defaultModel: 'embed-model' }], tasks: [] } satisfies IntentOptions)
-    mocks.datasetList.mockResolvedValue([{ id: 'starter-intents-v2', kind: 'intent', approved: 0 }])
     const state = await setup()
+    const pending: IntentPreparation = { id: 'job-1', protocol: 'responses', running: true, phase: 'indexing', error: '' }
+    mocks.prepare.mockResolvedValue(pending)
     await (state.prepareSemanticIndex as () => Promise<void>)()
-    expect(value<string>(state, 'error')).toContain('审核并保存')
-    expect(mocks.datasetBuiltin).not.toHaveBeenCalled()
-    expect(mocks.datasetSave).not.toHaveBeenCalled()
-    expect(mocks.buildIndex).not.toHaveBeenCalled()
-
-    mocks.datasetList.mockResolvedValue([{ id: 'starter-intents-v2', kind: 'intent', approved: 144, indexes: [{ profile: { model: 'old-model', source: 'remote', channel: 'old-channel' } }] }])
-    await (state.prepareSemanticIndex as () => Promise<void>)()
-    expect(mocks.buildIndex).toHaveBeenCalledWith('responses', expect.objectContaining({ embeddingModel: 'new-model', embeddingChannel: 'vector', datasetIds: ['starter-intents-v2'] }))
+    expect(mocks.prepare).toHaveBeenCalledWith('responses', expect.objectContaining({ embeddingModel: 'new-model', embeddingChannel: 'vector' }), true)
+    expect(value<boolean>(state, 'preparing')).toBe(true)
+    expect(mocks.save).not.toHaveBeenCalled()
+    value<IntentConfig>(state, 'draft').groups = [{ poolId: 'language', tasks: ['writing'], tiers: [1], cost: 0 }]
+    mocks.preparation.mockResolvedValue({ ...pending, running: false, phase: 'ready', config: { ...original, datasetIds: ['starter-intents-v3'] } })
+    await (state.refreshPreparation as () => Promise<void>)()
+    expect(value<IntentConfig>(state, 'draft').datasetIds).toEqual(['starter-intents-v3'])
+    expect(value<IntentConfig>(state, 'draft').groups).toEqual([{ poolId: 'language', tasks: ['writing'], tiers: [1], cost: 0 }])
     expect(value<IntentConfig>(state, 'draft').embeddingModel).toBe('new-model')
-
-    vi.resetAllMocks()
-    mocks.load.mockResolvedValue(original)
-    mocks.options.mockResolvedValue({ classifiers: [], embeddings: [{ id: 'vector', name: '向量渠道' }], tasks: [] } satisfies IntentOptions)
-    mocks.datasetList.mockResolvedValue([])
-    mocks.local.mockResolvedValue(localStatus())
-    mocks.save.mockResolvedValue(undefined)
-    const missing = await setup()
-    await (missing.prepareSemanticIndex as () => Promise<void>)()
-    expect(value<string>(missing, 'error')).toContain('未找到内置意图数据集')
-    expect(mocks.datasetBuiltin).not.toHaveBeenCalled()
-    expect(mocks.datasetSave).not.toHaveBeenCalled()
-    expect(mocks.buildIndex).not.toHaveBeenCalled()
+    expect(original.datasetIds).toBeUndefined()
+    expect(mocks.save).not.toHaveBeenCalled()
+    await (state.prepareSemanticIndex as () => Promise<void>)()
+    expect(mocks.prepare).toHaveBeenLastCalledWith('responses', expect.objectContaining({ datasetIds: ['starter-intents-v3'] }), false)
   })
 
   it('Embeddings 默认模型和 Decisions 渠道约束阻止无效配置', async () => {
@@ -144,7 +135,7 @@ describe('意图匹配编辑器', () => {
     await (state.save as () => Promise<void>)()
     expect(mocks.save).not.toHaveBeenCalled()
 
-    vi.resetAllMocks()
+    vi.clearAllMocks()
     const decisionConfig = config()
     Object.assign(decisionConfig, { enabled: true, strategy: 'auto', classifier: 'decisions', classifierModel: 'decision-model' })
     mocks.load.mockResolvedValue(decisionConfig)

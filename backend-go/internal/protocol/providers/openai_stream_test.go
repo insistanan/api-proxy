@@ -313,7 +313,7 @@ func TestChatStream_ToolCallsFinishDoesNotDropTrailingUsage(t *testing.T) {
 		`data: {"id":"c","model":"gpt-4o","choices":[],"usage":{"prompt_tokens":100,"completion_tokens":5}}`,
 		`data: [DONE]`,
 		``,
-	}, "\n")
+	}, "\n\n")
 
 	p := &OpenAIProvider{}
 	eventChan, _, err := p.HandleStreamResponseCtx(context.Background(), io.NopCloser(strings.NewReader(body)))
@@ -341,7 +341,7 @@ func TestChatStream_UpstreamErrorDoesNotFakeMessageStop(t *testing.T) {
 		`data: {"id":"c","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"partial"},"finish_reason":null}]}`,
 		`data: {"error":{"message":"internal","type":"server_error","code":"internal"}}`,
 		``,
-	}, "\n")
+	}, "\n\n")
 
 	p := &OpenAIProvider{}
 	eventChan, errChan, err := p.HandleStreamResponseCtx(context.Background(), io.NopCloser(strings.NewReader(body)))
