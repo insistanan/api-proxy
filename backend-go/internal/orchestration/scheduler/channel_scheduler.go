@@ -7,6 +7,7 @@ import (
 	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
 	"github.com/insistanan/api-proxy/internal/dialogue/session"
 	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/orchestration/cachekeepalive"
 	"github.com/insistanan/api-proxy/internal/orchestration/circuit"
 	"github.com/insistanan/api-proxy/internal/orchestration/urlhealth"
 	"github.com/insistanan/api-proxy/internal/storage/metrics"
@@ -14,6 +15,7 @@ import (
 
 // ChannelScheduler 多渠道调度器
 type ChannelScheduler struct {
+	cacheKeepalive       *cachekeepalive.Manager
 	mu                   sync.RWMutex
 	configManager        *config.ConfigManager
 	metricsManagers      map[ChannelKind]*metrics.MetricsManager // 各渠道类型对应的指标管理器

@@ -362,6 +362,9 @@ v-model="form.defaultModel" searchable
         </div>
       </DisclosureSection>
     </div>
+    <div v-if="supportsCacheKeepalive(channelType, form.serviceType) && !channel?.builtinProvider" class="min-w-0 col-span-12">
+      <ChannelCacheKeepaliveFields v-model="form.cacheKeepalive" :service-type="form.serviceType" :channel-id="isEditing ? channel?.id : undefined" />
+    </div>
     <div v-if="supportsConversationFeatures" class="min-w-0 col-span-12" >
       <DisclosureSection v-model="detailedSections.compatibility" title="图片理解与对话兼容" :description="compatibilitySummary" icon="mdi-image-search-outline" data-form-section="compatibility">
         <div class="grid grid-cols-12 gap-4 pt-3">
@@ -602,6 +605,8 @@ import type { useChannelModal } from '@/features/channels/composables/useChannel
 import ModelMappingEditor from '@/features/channels/components/form/ModelMappingEditor.vue'
 import ImagesChannelProtocolFields from '@/features/channels/components/form/ImagesChannelProtocolFields.vue'
 import ImagesOutputFields from '@/features/channels/components/form/ImagesOutputFields.vue'
+import ChannelCacheKeepaliveFields from '@/features/channels/components/form/ChannelCacheKeepaliveFields.vue'
+import { supportsCacheKeepalive } from '@/features/channels/utils/cacheKeepalive'
 import { validateEmbeddingsDimensions } from '@/features/channels/composables/useChannelEditor'
 import { isConversationProtocol } from '@/features/channels/services/channel-api'
 

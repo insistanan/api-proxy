@@ -35,6 +35,7 @@ func newAllowlistTestSnapshot(t testing.TB, settings config.ContentSafetyConfig)
 // allowlistTestSettings 返回 mask 模式 + 启用 api_key 与 ip_address 规则的设置。
 func allowlistTestSettings() config.ContentSafetyConfig {
 	safety := config.DefaultContentSafetyConfig()
+	safety.Enabled = true
 	safety.SensitiveData.Mode = config.ContentSafetyModeMask
 	safety.Credential.Enabled = true
 	safety.Credential.EnabledRules = []string{config.CredentialRuleAPIKey}

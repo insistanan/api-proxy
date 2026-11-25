@@ -119,6 +119,7 @@ func TestContentSafetyVerificationSurfaceEndToEnd(t *testing.T) {
 
 	t.Run("关闭赌博分类后对应敏感词不再拦截", func(t *testing.T) {
 		settings := cfgManager.GetSettings()
+		settings.ContentSafety.Enabled = true
 		settings.ContentSafety.SensitiveWord.GamblingEnabled = false
 		settings.ContentSafety.SensitiveWord.Enabled = false
 		if err := cfgManager.UpdateSettings(settings); err != nil {
@@ -199,6 +200,8 @@ func newContentSafetyTestRouter(t *testing.T) (*gin.Engine, *config.ConfigManage
 	t.Cleanup(upstream.Close)
 
 	settings := config.DefaultContentSafetyConfig()
+
+	settings.Enabled = true
 	settings.SensitiveData.Mode = config.ContentSafetyModeMask
 	settings.SensitiveWord.Enabled = true
 	settings.SensitiveWord.GamblingEnabled = true

@@ -146,7 +146,9 @@ func TestChannelAdminRouteContract(t *testing.T) {
 	require.True(t, actual["DELETE /api/channels/:id/fingerprint/:taskId"])
 	require.True(t, actual["POST /api/channels/:id/fingerprint/:taskId/samples/:sampleIndex/retry"])
 	require.True(t, actual["POST /api/channels/:id/fingerprint/:taskId/retry"])
-	require.Len(t, actual, len(common)*len(channelAdminKinds)+7)
+	require.True(t, actual["GET /api/channels/:id/cache-keepalive"])
+	require.True(t, actual["POST /api/channels/:id/cache-keepalive/stop"])
+	require.Len(t, actual, len(common)*len(channelAdminKinds)+9)
 }
 
 func TestChannelDeletionImpactRoutesAndCrossProtocolDetach(t *testing.T) {

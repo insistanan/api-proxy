@@ -68,6 +68,7 @@ func TestRunProxyRequestMasksBeforeRoutingAndUpstreamBuild(t *testing.T) {
 	server := newRecordingUpstreamServer(t, nil)
 	addTestUpstream(t, env, "ch-0", server.URL(), "key-a")
 	settings := env.cfgManager.GetSettings()
+	settings.ContentSafety.Enabled = true
 	settings.ContentSafety.SensitiveData.Mode = config.ContentSafetyModeMask
 	settings.ContentSafety.SensitiveInfo.Enabled = true
 	settings.ContentSafety.SensitiveInfo.EnabledRules = []string{config.SensitiveInfoRulePhone}
@@ -108,6 +109,7 @@ func TestRunProxyRequestMasksBeforeRoutingAndUpstreamBuild(t *testing.T) {
 func TestRunProxyRequestRecordsRequestAndConversationIDs(t *testing.T) {
 	env := newRunProxyTestEnv(t)
 	settings := env.cfgManager.GetSettings()
+	settings.ContentSafety.Enabled = true
 	settings.ContentSafety.SensitiveWord.Enabled = true
 	settings.ContentSafety.SensitiveWord.CustomWords = []string{"仅用于代理入口归组测试的禁词"}
 	if err := env.cfgManager.UpdateSettings(settings); err != nil {

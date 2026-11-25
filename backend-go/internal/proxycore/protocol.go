@@ -134,6 +134,8 @@ func RunProxyRequest(
 		c.Set(upstreamreq.ContextKeyCodexDisguise, cfgManager.GetCodexDisguiseEnabled())
 	}
 	identity := ResolveConversationIdentity(c, bodyBytes)
+	keepaliveTurn := beginCacheKeepalive(c, channelScheduler, spec.Kind, identity, envCfg.Current().ProxyAccessKey, IsQuickTestRequest(c, bodyBytes))
+	defer keepaliveTurn.End()
 	requestState.ClientFamily = identity.ClientFamily
 	requestState.IdentitySource = identity.Source
 	requestState.Model = model
@@ -201,6 +203,7 @@ func RunProxyRequest(
 		return
 	}
 	defer MarkConversationComplete(channelScheduler, conversationID, spec.Kind)
+	keepaliveTurn.BindConversation(conversationID)
 	// 会话记录 ID 写入请求上下文，供协议回调（如 HandleSuccess）取用。
 	c.Set(upstreamreq.ContextKeyConversationUserID, conversationID)
 	if err := pipeline.AssignAttachedConversation(c.Request.Context(), c, conversationID); err != nil {

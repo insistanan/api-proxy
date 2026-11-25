@@ -110,24 +110,20 @@ func (e *ContentSafetyError) Code() string {
 const contentSafetyPipelineKey = "__content_safety_hook_pipeline"
 
 type attachedHookPipeline struct {
-	pipeline            *Pipeline
-	vault               *sensitive.Vault
-	metadataMu          sync.RWMutex
-	metadata            HookContext
-	streamMu            sync.Mutex
-	stream              *sensitive.StreamCmdScanner
-	toolArgs            map[string]*streamToolArgumentState
-	toolArgBytes        int
-	toolDelivery        []string
-	toolDeliveryBytes   int
-	restorers           map[string]*sensitive.StreamRestorer
-	restorePending      map[string]streamRestoreTemplate
-	restorePendingBytes int
-	restoreEventBytes   int
-	restoreErr          error
-	vetoGuard           *StreamVetoGuard
-	lifecycleCtx        context.Context
-	lifecycleCancel     context.CancelFunc
+	pipeline        *Pipeline
+	vault           *sensitive.Vault
+	metadataMu      sync.RWMutex
+	metadata        HookContext
+	streamMu        sync.Mutex
+	stream          *sensitive.StreamCmdScanner
+	toolArgs        map[string]*streamToolArgumentState
+	toolDelivery    []string
+	restorers       map[string]*sensitive.StreamRestorer
+	restorePending  map[string]streamRestoreTemplate
+	restoreErr      error
+	vetoGuard       *StreamVetoGuard
+	lifecycleCtx    context.Context
+	lifecycleCancel context.CancelFunc
 	// allowedCommands 记录本请求中已放行的完整命令身份（streamMu 保护），
 	// 避免同一完整脚本的多条规则重复送审和注册否决窗口。
 	allowedCommands map[string]struct{}
@@ -206,14 +202,29 @@ func (a *attachedHookPipeline) preparePreRequest() (bool, error) {
 }
 
 func (s *contentSafetySnapshot) requestEnabled() bool {
-	return s.settings.SensitiveWord.Enabled || s.settings.SensitiveInfo.Enabled || s.settings.Credential.Enabled ||
-		s.settings.SensitiveData.Mode == config.ContentSafetyModeMask
+	return s.settings.Enabled && (s.settings.SensitiveWord.Enabled || s.settings.SensitiveInfo.Enabled || s.settings.Credential.Enabled ||
+		reversibleRedactionEnabled(s.settings))
+}
+
+// 处置模式只决定命中后的行为，不能代替个人信息、凭据或自定义规则的启用开关。
+func reversibleRedactionEnabled(settings config.ContentSafetyConfig) bool {
+	return settings.Enabled && settings.SensitiveData.Mode == config.ContentSafetyModeMask &&
+		(settings.SensitiveInfo.Enabled || settings.Credential.Enabled || settings.CustomRules.Enabled)
 }
 
 // AttachHookPipeline 将内容安全 Hook 管道绑定到当前请求。入口解析请求后调用，
 // 请求前检查会在最终上游载荷生成后、Vision 处理前后各执行一次。
 func AttachHookPipeline(c requestContextSetter, pipeline *Pipeline, metadata HookContext) {
 	if c == nil || pipeline == nil {
+		return
+	}
+	if hook := pipeline.preRequest; hook != nil && hook.cfgManager != nil {
+		settings := hook.cfgManager.GetContentSafetyConfig()
+		metadata.safetySettings = &settings
+	}
+	if metadata.safetySettings != nil && !metadata.safetySettings.Enabled {
+		// 关闭时不创建请求级安全状态，所有绑定钩子直接透传，规则草稿保持不变。
+		c.Set(contentSafetyPipelineKey, nil)
 		return
 	}
 	if metadata.eventDeduper == nil {
@@ -224,10 +235,6 @@ func AttachHookPipeline(c requestContextSetter, pipeline *Pipeline, metadata Hoo
 		requestCtx = attachedRequestContext(getter)
 	}
 	lifecycleCtx, lifecycleCancel := context.WithCancel(requestCtx)
-	if hook := pipeline.preRequest; hook != nil && hook.cfgManager != nil {
-		settings := hook.cfgManager.GetContentSafetyConfig()
-		metadata.safetySettings = &settings
-	}
 	attached := &attachedHookPipeline{
 		pipeline:        pipeline,
 		metadata:        metadata,
@@ -236,7 +243,7 @@ func AttachHookPipeline(c requestContextSetter, pipeline *Pipeline, metadata Hoo
 		lifecycleCancel: lifecycleCancel,
 	}
 	// 模式与映射库由同一请求快照决定，后续热更新只影响新请求。
-	if metadata.safetySettings != nil && metadata.safetySettings.SensitiveData.Mode == config.ContentSafetyModeMask && pipeline.mappingStore != nil {
+	if metadata.safetySettings != nil && reversibleRedactionEnabled(*metadata.safetySettings) && pipeline.mappingStore != nil {
 		attached.vault = pipeline.mappingStore.NewScopedVault(lifecycleCtx, metadata.RedactionScope, attached.recordRestoreMiss)
 	} else {
 		attached.vault = sensitive.NewVaultWithContext(lifecycleCtx)
@@ -486,6 +493,10 @@ func RestoreAttachedResponseBody(c requestContextGetter, body []byte) ([]byte, e
 	if err != nil || attached == nil || attached.vault == nil {
 		return body, err
 	}
+	settings := attached.currentMetadata().safetySettings
+	if settings != nil && !reversibleRedactionEnabled(*settings) && !attached.vault.CanRestore() {
+		return body, nil
+	}
 	return attached.vault.RestoreJSON(body)
 }
 
@@ -543,13 +554,9 @@ func ClearAttachedSensitiveData(c requestContextGetter) {
 	attached.streamMu.Lock()
 	attached.restorers = nil
 	attached.restorePending = nil
-	attached.restorePendingBytes = 0
-	attached.restoreEventBytes = 0
 	attached.restoreErr = nil
 	attached.toolArgs = nil
-	attached.toolArgBytes = 0
 	attached.toolDelivery = nil
-	attached.toolDeliveryBytes = 0
 	attached.stream = nil
 	attached.streamCredential = nil
 	attached.streamMaskMode = ""
@@ -575,13 +582,9 @@ func ResetAttachedStreamRestoration(c requestContextGetter) error {
 	attached.streamMu.Lock()
 	attached.restorers = nil
 	attached.restorePending = nil
-	attached.restorePendingBytes = 0
-	attached.restoreEventBytes = 0
 	attached.restoreErr = nil
 	attached.toolArgs = nil
-	attached.toolArgBytes = 0
 	attached.toolDelivery = nil
-	attached.toolDeliveryBytes = 0
 	attached.stream = nil
 	attached.streamDetector = nil
 	attached.streamCredential = nil
@@ -686,7 +689,8 @@ func (h *contentSafetyPreRequestHook) Run(ctx context.Context, metadata HookCont
 	if len(result.RequestBody) == 0 || result.UpstreamRequest == nil {
 		return result, nil
 	}
-	if metadata.redactionVault != nil {
+	segmentsPreReserved := reversibleRedactionEnabled(snapshot.settings) && metadata.redactionVault != nil
+	if segmentsPreReserved {
 		metadata.redactionVault.ReserveText(string(result.RequestBody))
 		if err := metadata.redactionVault.Err(); err != nil {
 			return result, err
@@ -729,7 +733,6 @@ func (h *contentSafetyPreRequestHook) Run(ctx context.Context, metadata HookCont
 	// JSON 路径在解码前已对完整请求体做过一次全量 ReserveText（见上方
 	// redactionVault 分支），段文本是请求体的子串，无需逐段重复扫描；
 	// vault 为空时全量登记被跳过，仍由 applyContentSafetySegments 逐段补。
-	segmentsPreReserved := metadata.redactionVault != nil
 	changed, err := applyContentSafetySegments(ctx, metadata, segments, snapshot, h.recorder, &prompts, segmentsPreReserved)
 	if err != nil {
 		return result, err
@@ -756,6 +759,9 @@ func (h *contentSafetyPreRequestHook) currentSnapshot(requestSettings *config.Co
 		settings = *requestSettings
 	} else {
 		settings = h.cfgManager.GetContentSafetyConfig()
+	}
+	if !settings.Enabled {
+		return &contentSafetySnapshot{settings: settings}, nil
 	}
 	current := h.snapshot.Load()
 	if current != nil && reflect.DeepEqual(current.settings, settings) {

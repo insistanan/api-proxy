@@ -94,6 +94,13 @@ func TestCredentialDetectorIgnoresPlaceholdersAndNormalConfiguration(t *testing.
 	if matches := detector.FindAll(text); len(matches) != 0 {
 		t.Fatalf("正常配置不应被命中: %+v", matches)
 	}
+	// 只排除完整的示例字面量，不能因相似前缀放过实际凭据。
+	for _, value := range []string{"your-real-api-key-012345", "your-api-key-here-012345"} {
+		matches := detector.FindAll("API_KEY=" + value)
+		if len(matches) != 1 || matches[0].Original != value {
+			t.Fatalf("与示例值相似的实际凭据应被识别: %+v", matches)
+		}
+	}
 }
 
 func TestCredentialDetectorDetectsConnectionAssignmentsWithPasswords(t *testing.T) {

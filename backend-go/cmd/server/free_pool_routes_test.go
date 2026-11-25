@@ -50,7 +50,7 @@ func TestFreePoolRoutesAllProtocolsThroughChat(t *testing.T) {
 		{"chat", "/v1/chat/completions", `{"model":"%s","messages":[{"role":"user","content":"hi"}]}`},
 		{"gemini", "/v1beta/models/%s:generateContent", `{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`},
 	} {
-		for _, mode := range []string{"health", "fallback", "explicit", "explicit-fallback", "limit", "invalid", "committed", "cooling", "health-unavailable"} {
+		for _, mode := range []string{"health", "fallback", "explicit", "explicit-fallback", "limit", "invalid", "committed", "cooling", "historical-cooling", "health-unavailable"} {
 			t.Run(protocol.kind+"/"+mode, func(t *testing.T) {
 				r, app := newChannelAdminTestRouter(t)
 				require.NoError(t, app.cfgManager.EnsureFreeChannels())
@@ -84,12 +84,16 @@ func TestFreePoolRoutesAllProtocolsThroughChat(t *testing.T) {
 					}
 					require.NoError(t, store.Flush())
 				}
-				if mode == "cooling" {
+				if mode == "cooling" || mode == "historical-cooling" {
 					up := app.cfgManager.GetConfig().ChatUpstream[0]
+					reason := ""
+					if mode == "cooling" {
+						reason = availability.ModelCapacity
+					}
 					for _, model := range up.ModelMapping[config.FreeModelID] {
 						require.NoError(t, store.RecordRequest(logger.RequestLogRecord{Payload: []byte(`{}`),
 							Availability: &availability.Sample{Kind: protocol.kind, ChannelID: "builtin-kilo-" + protocol.kind,
-								Model: model, CandidateID: up.RequestIdentity("").Fingerprint(), Outcome: availability.RateLimited,
+								Model: model, CandidateID: up.RequestIdentity("").Fingerprint(), Outcome: availability.RateLimited, Reason: reason,
 								CooldownUntil: time.Now().Add(time.Minute).UnixMilli()}}))
 					}
 					require.NoError(t, store.Flush())
@@ -168,6 +172,8 @@ func TestFreePoolRoutesAllProtocolsThroughChat(t *testing.T) {
 				switch mode {
 				case "health":
 					require.Equal(t, []string{"good"}, sentModels)
+				case "historical-cooling":
+					require.Equal(t, []string{"bad"}, sentModels, "历史估算不能重新建立共享冷却或排除全部模型")
 				case "fallback":
 					require.Equal(t, []string{"bad", "good"}, sentModels)
 				case "explicit":

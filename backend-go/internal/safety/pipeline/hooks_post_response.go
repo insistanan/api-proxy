@@ -44,7 +44,7 @@ func (h *contentSafetyPostResponseHook) Run(ctx context.Context, metadata HookCo
 	if err != nil {
 		return result, err
 	}
-	if !snapshot.settings.DangerousCmd.Enabled && !snapshot.settings.Credential.Enabled {
+	if !snapshot.settings.Enabled || !snapshot.settings.DangerousCmd.Enabled && !snapshot.settings.Credential.Enabled {
 		return result, nil
 	}
 	if snapshot.detector == nil || len(result.ResponseBody) == 0 {
@@ -144,7 +144,7 @@ func (h *contentSafetyPostResponseHook) Run(ctx context.Context, metadata HookCo
 // AI 放行后响应立即返回，事后否决无法收回当前响应（onVeto 传 nil），
 // 但否决写入的会话黑名单对同对话后续命令生效。
 func (h *contentSafetyPostResponseHook) reviewDangerousMatch(ctx context.Context, metadata HookContext, match sensitive.CommandMatch) *ContentSafetyError {
-	if h.gate == nil || !h.gate.Enabled() {
+	if h.gate == nil || !h.gate.enabledForRequest(metadata) {
 		return dangerousCommandError(match)
 	}
 	verdict := h.gate.Review(ctx, metadata, match, nil)
@@ -175,6 +175,9 @@ func (h *contentSafetyPostResponseHook) currentSnapshot(requestSettings *config.
 		settings = *requestSettings
 	} else {
 		settings = h.cfgManager.GetContentSafetyConfig()
+	}
+	if !settings.Enabled {
+		return &dangerousCmdSnapshot{settings: settings}, nil
 	}
 	current := h.snapshot.Load()
 	if current != nil && reflect.DeepEqual(current.settings, settings) {
@@ -241,9 +244,6 @@ func collectResponseToolCommands(value interface{}, vault *sensitive.Vault, scan
 			}
 			encoded = string(body)
 		}
-		if len(encoded) > sensitive.MaxCommandBytes {
-			return arguments, nil // 超限参数由检测器明确拦截，不继续还原大对象。
-		}
 		restored, err := vault.RestoreToolJSON([]byte(encoded))
 		if err != nil {
 			return nil, fmt.Errorf("还原待审核工具参数失败: %w", err)
@@ -273,7 +273,7 @@ func collectResponseToolCommands(value interface{}, vault *sensitive.Vault, scan
 					return
 				}
 				if input, ok := typed["input"].(string); ok {
-					if vault != nil && vault.CanRestore() && len(input) <= sensitive.MaxCommandBytes {
+					if vault != nil && vault.CanRestore() {
 						input = vault.Restore(input)
 						if err := vault.Err(); err != nil {
 							restoreErr = fmt.Errorf("还原待审核工具输入失败: %w", err)

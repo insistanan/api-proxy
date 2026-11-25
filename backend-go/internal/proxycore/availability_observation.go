@@ -60,7 +60,10 @@ func (a UpstreamAttempt) observeAvailabilityRequest(req *http.Request) *http.Req
 	if observation == nil {
 		return req
 	}
-	ctx := httpclient.WithSendObserver(req.Context(), func() { observation.sent = true })
+	ctx := httpclient.WithSendObserver(req.Context(), func() {
+		observation.sent = true
+		a.captureCacheKeepalive(req, observation)
+	})
 	ctx = httpclient.WithResponseHeadersObserver(ctx, func(elapsed time.Duration) {
 		milliseconds := elapsed.Milliseconds()
 		observation.responseHeadersMs = &milliseconds

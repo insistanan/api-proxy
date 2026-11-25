@@ -20,7 +20,8 @@ import (
 
 // UpstreamConfig 上游配置
 type UpstreamConfig struct {
-	BuiltinProvider string `json:"builtinProvider,omitempty"`
+	CacheKeepalive  CacheKeepaliveConfig `json:"cacheKeepalive,omitempty"`
+	BuiltinProvider string               `json:"builtinProvider,omitempty"`
 	// MaxConcurrency 保存用户设置的并发上限。生效上限和实际上游协议
 	// 在发布配置时计算，不写入配置文件。
 	MaxConcurrency       int                         `json:"maxConcurrency"`               // URL、协议、Key 相同的配置共享最小上限
@@ -143,21 +144,22 @@ func ValidateReasoningOptions(upstream *UpstreamConfig) error {
 
 // UpstreamUpdate 用于部分更新 UpstreamConfig
 type UpstreamUpdate struct {
-	MaxConcurrency     *int                `json:"maxConcurrency"`
-	ClientIdentityMode *string             `json:"clientIdentityMode"`
-	Name               *string             `json:"name"`
-	PoolID             *string             `json:"poolId"`
-	ServiceType        *string             `json:"serviceType"`
-	BaseURL            *string             `json:"baseUrl"`
-	BaseURLs           []string            `json:"baseUrls"`
-	UseFullURL         *bool               `json:"useFullUrl"`
-	APIKeys            []string            `json:"apiKeys"`
-	Description        *string             `json:"description"`
-	Website            *string             `json:"website"`
-	InsecureSkipVerify *bool               `json:"insecureSkipVerify"`
-	ProxyMode          *string             `json:"proxyMode"`
-	ProxyURL           *string             `json:"proxyUrl"`
-	ModelMapping       map[string][]string `json:"modelMapping"` // 支持一对多映射
+	CacheKeepalive     *CacheKeepaliveConfig `json:"cacheKeepalive"`
+	MaxConcurrency     *int                  `json:"maxConcurrency"`
+	ClientIdentityMode *string               `json:"clientIdentityMode"`
+	Name               *string               `json:"name"`
+	PoolID             *string               `json:"poolId"`
+	ServiceType        *string               `json:"serviceType"`
+	BaseURL            *string               `json:"baseUrl"`
+	BaseURLs           []string              `json:"baseUrls"`
+	UseFullURL         *bool                 `json:"useFullUrl"`
+	APIKeys            []string              `json:"apiKeys"`
+	Description        *string               `json:"description"`
+	Website            *string               `json:"website"`
+	InsecureSkipVerify *bool                 `json:"insecureSkipVerify"`
+	ProxyMode          *string               `json:"proxyMode"`
+	ProxyURL           *string               `json:"proxyUrl"`
+	ModelMapping       map[string][]string   `json:"modelMapping"` // 支持一对多映射
 	// ModelMappingChannels 与 ModelMapping 同步更新：传入即整体替换，并按新的 ModelMapping 修剪失效条目。
 	ModelMappingChannels map[string]map[string]string `json:"modelMappingChannels"`
 	DefaultModel         *string                      `json:"defaultModel"`
@@ -317,6 +319,7 @@ type NetworkSettings struct {
 
 // ContentSafetyConfig 内容安全相关设置。
 type ContentSafetyConfig struct {
+	Enabled       bool                `json:"enabled"`
 	SensitiveData SensitiveDataConfig `json:"sensitiveData"`
 	SensitiveWord SensitiveWordConfig `json:"sensitiveWord"`
 	SensitiveInfo SensitiveInfoConfig `json:"sensitiveInfo"`
@@ -460,6 +463,7 @@ const (
 // DefaultContentSafetyConfig 返回开箱即用的内容安全默认设置。
 func DefaultContentSafetyConfig() ContentSafetyConfig {
 	return ContentSafetyConfig{
+		Enabled: false,
 		SensitiveData: SensitiveDataConfig{
 			Mode: ContentSafetyModeBlock,
 		},
@@ -573,19 +577,22 @@ type FailedKey struct {
 
 // ConfigManager 配置管理器
 type ConfigManager struct {
-	admission       *upstreamcontrol.Controller
-	mu              sync.RWMutex
-	config          Config
-	configFile      string
-	watcher         *fsnotify.Watcher
-	disguiseChanges chan struct{}
-	failedKeysCache map[string]*FailedKey
-	keyRecoveryTime time.Duration
-	maxFailureCount int
-	stopChan        chan struct{} // 用于通知 goroutine 停止
-	closeOnce       sync.Once     // 确保 Close 只执行一次
-	closeErr        error
-	workers         sync.WaitGroup
+	keepaliveEnabled  bool
+	keepaliveRevision uint64
+	keepaliveChanges  chan struct{}
+	admission         *upstreamcontrol.Controller
+	mu                sync.RWMutex
+	config            Config
+	configFile        string
+	watcher           *fsnotify.Watcher
+	disguiseChanges   chan struct{}
+	failedKeysCache   map[string]*FailedKey
+	keyRecoveryTime   time.Duration
+	maxFailureCount   int
+	stopChan          chan struct{} // 用于通知 goroutine 停止
+	closeOnce         sync.Once     // 确保 Close 只执行一次
+	closeErr          error
+	workers           sync.WaitGroup
 
 	// persistedDigest 是当前已持久化配置的内容摘要（R3）。
 	// 仅用于 watcher 重载去重（避免自身提交触发“保存→重载→再保存”循环），

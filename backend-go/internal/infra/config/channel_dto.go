@@ -22,6 +22,7 @@ func ChannelToDTO(up *UpstreamConfig, index int) map[string]interface{} {
 		reasoningEffort = "inherit"
 	}
 	return map[string]interface{}{
+		"cacheKeepalive":              up.CacheKeepalive,
 		"maxConcurrency":              up.MaxConcurrency,
 		"effectiveConcurrency":        up.EffectiveConcurrency,
 		"clientIdentityMode":          up.ClientIdentityMode,

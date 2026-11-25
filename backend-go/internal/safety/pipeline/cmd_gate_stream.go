@@ -100,7 +100,7 @@ func HandleAttachedStreamVeto(_ *gin.Context) error {
 // 调用方持有 attached.streamMu：完整脚本命中多条规则时只审核一次，
 // 同一请求内复用完全相同的命令身份，事后否决仍优先终止整个请求。
 func gateReviewDangerousCommand(ctx context.Context, c requestContextGetter, attached *attachedHookPipeline, metadata HookContext, match sensitive.CommandMatch) *ContentSafetyError {
-	if attached == nil || attached.pipeline == nil || attached.pipeline.cmdGate == nil || !attached.pipeline.cmdGate.Enabled() {
+	if attached == nil || attached.pipeline == nil || attached.pipeline.cmdGate == nil || !attached.pipeline.cmdGate.enabledForRequest(metadata) {
 		return dangerousCommandError(match)
 	}
 	if err := AttachedStreamVetoError(c); err != nil {
@@ -109,13 +109,6 @@ func gateReviewDangerousCommand(ctx context.Context, c requestContextGetter, att
 	commandHash := sensitive.CommandIdentity(match)
 	if _, allowed := attached.allowedCommands[commandHash]; allowed {
 		return nil
-	}
-	if len(attached.allowedCommands) >= 256 {
-		return &ContentSafetyError{
-			BlockType: sensitive.BlockTypeDangerousCmdAI,
-			RuleName:  "command_count_limit",
-			Snippet:   "单次响应的危险命令超过 256 条检查上限",
-		}
 	}
 	// 只捕获本请求独立 guard；请求结束后 Gin Context 会被池复用。
 	guard := attached.vetoGuard

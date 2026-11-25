@@ -41,6 +41,7 @@ func newContentSafetySnapshotForTest(t *testing.T, settings config.ContentSafety
 // 助手历史同样脱敏，且只有改写后的用户文本进入观测 prompts。
 func TestSafetySegmentsMaskUserTextAcrossProtocols(t *testing.T) {
 	settings := config.DefaultContentSafetyConfig()
+	settings.Enabled = true
 	settings.SensitiveWord.Enabled = false
 	settings.SensitiveInfo.Enabled = true
 	settings.SensitiveData.Mode = config.ContentSafetyModeMask
@@ -121,6 +122,7 @@ func TestSafetySegmentsMaskUserTextAcrossProtocols(t *testing.T) {
 // 助手历史里出现敏感词是既有上下文，拦下来等于让整段会话无法继续。
 func TestSafetySegmentsBlockOnlyUserSensitiveWord(t *testing.T) {
 	settings := config.DefaultContentSafetyConfig()
+	settings.Enabled = true
 	settings.SensitiveWord.Enabled = true
 	settings.SensitiveWord.CustomWords = []string{"危险词"}
 	settings.SensitiveInfo.Enabled = false
@@ -191,6 +193,7 @@ func TestExtractSafetySegmentsFindsToolResultsInAllProtocols(t *testing.T) {
 
 func TestToolResultCredentialIsBlockedWithoutMutatingPayload(t *testing.T) {
 	settings := config.DefaultContentSafetyConfig()
+	settings.Enabled = true
 	settings.Credential.Enabled = true
 	settings.Credential.EnabledRules = []string{config.CredentialRuleAPIKey, config.CredentialRuleNamedSecret}
 	settings.Credential.UserInputMode = config.ContentSafetyModeMask
@@ -293,6 +296,7 @@ func TestContentSafetyPipelineReplacesRequestBodyAndHonorsSettings(t *testing.T)
 	defer configManager.Close()
 
 	settings := configManager.GetSettings()
+	settings.ContentSafety.Enabled = true
 	settings.ContentSafety.SensitiveWord.Enabled = false
 	settings.ContentSafety.SensitiveInfo.Enabled = true
 	settings.ContentSafety.SensitiveData.Mode = config.ContentSafetyModeMask
@@ -489,6 +493,7 @@ func TestContentSafetyPostResponseHonorsDisabledSetting(t *testing.T) {
 	}
 	defer configManager.Close()
 	settings := configManager.GetSettings()
+	settings.ContentSafety.Enabled = true
 	settings.ContentSafety.DangerousCmd.Enabled = false
 	if err := configManager.UpdateSettings(settings); err != nil {
 		t.Fatalf("关闭危险命令检测失败: %v", err)
@@ -626,6 +631,7 @@ func TestContentSafetyPipelineRecordsPreResponseAndStreamBlocks(t *testing.T) {
 	}
 	defer configManager.Close()
 	settings := configManager.GetSettings()
+	settings.ContentSafety.Enabled = true
 	settings.ContentSafety.SensitiveWord.Enabled = true
 	settings.ContentSafety.SensitiveWord.CustomWords = []string{"仅用于记录测试的禁词"}
 	settings.ContentSafety.DangerousCmd.Enabled = true
@@ -758,6 +764,7 @@ func assertBlockedLogMetadata(t *testing.T, entry sensitive.BlockedLog, apiType,
 
 func TestExtractSafetySegmentsCoversImagesJSONPrompt(t *testing.T) {
 	settings := config.DefaultContentSafetyConfig()
+	settings.Enabled = true
 	settings.SensitiveWord.Enabled = false
 	settings.SensitiveInfo.Enabled = true
 	settings.SensitiveData.Mode = config.ContentSafetyModeMask
@@ -812,6 +819,7 @@ func TestExtractSafetySegmentsCoversImagesJSONPrompt(t *testing.T) {
 func enableDangerousCmdForTest(t *testing.T, configManager *config.ConfigManager) {
 	t.Helper()
 	settings := configManager.GetSettings()
+	settings.ContentSafety.Enabled = true
 	settings.ContentSafety.DangerousCmd.Enabled = true
 	settings.ContentSafety.DangerousCmd.EnabledRules = allDangerousCmdRulesForTest()
 	if err := configManager.UpdateSettings(settings); err != nil {

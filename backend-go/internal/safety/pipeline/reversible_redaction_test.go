@@ -39,6 +39,7 @@ func TestReversibleRedactionCoversAllRequestProtocolsAndResponseFields(t *testin
 			}
 			defer configManager.Close()
 			settings := configManager.GetSettings()
+			settings.ContentSafety.Enabled = true
 			settings.ContentSafety.SensitiveData.Mode = config.ContentSafetyModeMask
 			settings.ContentSafety.SensitiveInfo.Enabled = true
 			settings.ContentSafety.SensitiveInfo.EnabledRules = []string{
@@ -97,6 +98,7 @@ func TestPersistentRedaction_ModeChangeUsesRequestSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	settings := manager.GetSettings()
+	settings.ContentSafety.Enabled = true
 	settings.ContentSafety.SensitiveInfo.Enabled = true
 	settings.ContentSafety.SensitiveInfo.EnabledRules = []string{config.SensitiveInfoRulePhone}
 	settings.ContentSafety.SensitiveData.Mode = config.ContentSafetyModeBlock
@@ -156,7 +158,10 @@ func TestPersistentRedaction_RestoreMissUsesRequestIdentity(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, manager.Close()) })
 	settings := manager.GetSettings()
+	settings.ContentSafety.Enabled = true
 	settings.ContentSafety.SensitiveData.Mode = config.ContentSafetyModeMask
+	settings.ContentSafety.SensitiveInfo.Enabled = true
+	settings.ContentSafety.SensitiveInfo.EnabledRules = []string{config.SensitiveInfoRulePhone}
 	require.NoError(t, manager.UpdateSettings(settings))
 	dir := t.TempDir()
 	store, err := sensitive.NewMappingStore(filepath.Join(dir, "mappings.db"), filepath.Join(dir, "master-key"))

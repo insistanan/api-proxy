@@ -93,6 +93,26 @@ func (cm *ConfigManager) publishConfigLocked(candidate Config) {
 	}
 	cm.admission.Reconcile(rules)
 	previousDisguise := cm.config.Settings.Disguise
+	keepaliveEnabled := false
+	for _, set := range candidate.channelSets() {
+		for _, upstream := range *set.upstreams {
+			if upstream.CacheKeepalive.Enabled && SupportsCacheKeepalive(set.kind, upstream.ServiceType) && GetChannelStatus(&upstream) == ChannelStatusActive {
+				keepaliveEnabled = true
+				break
+			}
+		}
+	}
+	// 有效配置更新后旧请求不再用于付费重放；忽略促销计数等运行字段。
+	if (cm.keepaliveEnabled || keepaliveEnabled) && cacheKeepaliveConfigChanged(cm.config, candidate) {
+		cm.keepaliveRevision++
+		if cm.keepaliveChanges != nil {
+			select {
+			case cm.keepaliveChanges <- struct{}{}:
+			default:
+			}
+		}
+	}
+	cm.keepaliveEnabled = keepaliveEnabled
 	cm.config = candidate
 	disguise := candidate.Settings.Disguise
 	upstreamreq.SetDisguiseSettings(disguise.ClaudeCodeVersion, disguise.CodexVersion, disguise.AutoUpdateFromRegistry)

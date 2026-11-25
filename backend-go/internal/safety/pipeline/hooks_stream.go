@@ -13,9 +13,6 @@ import (
 	"github.com/insistanan/api-proxy/internal/safety/sensitive"
 )
 
-const maxStreamToolArgumentWindow = sensitive.MaxCommandBytes
-const maxStreamToolArgumentBytes = 4 << 20
-const maxStreamToolArguments = 128
 const defaultStreamToolArgumentKey = "default"
 
 type streamToolArgumentState struct {
@@ -68,9 +65,6 @@ func (s *streamToolArgumentState) append(fragment string) error {
 		case '"':
 			s.inString = true
 		case '{', '[':
-			if len(s.stack) >= 128 {
-				return fmt.Errorf("工具参数 JSON 嵌套超过 128 层上限")
-			}
 			s.stack = append(s.stack, current)
 		case '}', ']':
 			if len(s.stack) == 0 || current == '}' && s.stack[len(s.stack)-1] != '{' || current == ']' && s.stack[len(s.stack)-1] != '[' {
@@ -134,7 +128,11 @@ func feedAttachedStreamToolArguments(c requestContextGetter, key, fragment strin
 	if err := ensureAttachedStreamScanner(attached); err != nil {
 		return wrapContentSafetyHookError(err)
 	}
-	if !attached.streamSettings.DangerousCmd.Enabled && !attached.streamSettings.Credential.Enabled && attached.streamMaskMode != config.ContentSafetyModeMask {
+	if !attached.streamSettings.Enabled {
+		return nil
+	}
+	redactionEnabled := reversibleRedactionEnabled(attached.streamSettings)
+	if !attached.streamSettings.DangerousCmd.Enabled && !attached.streamSettings.Credential.Enabled && !redactionEnabled {
 		return nil
 	}
 	if len(toolNames) > 1 {
@@ -144,43 +142,30 @@ func feedAttachedStreamToolArguments(c requestContextGetter, key, fragment strin
 	if key == "" {
 		key = defaultStreamToolArgumentKey
 	}
-	if len(key) > 512 {
-		return wrapContentSafetyHookError(fmt.Errorf("工具调用标识超过长度上限"))
-	}
 	if attached.toolArgs == nil {
 		attached.toolArgs = make(map[string]*streamToolArgumentState)
 	}
 	state := attached.toolArgs[key]
 	if state == nil {
-		if len(attached.toolArgs) >= maxStreamToolArguments {
-			return wrapContentSafetyHookError(fmt.Errorf("单次响应工具调用超过 %d 个上限", maxStreamToolArguments))
-		}
 		state = &streamToolArgumentState{rawInput: rawInput}
 		attached.toolArgs[key] = state
 	} else if state.rawInput != rawInput {
 		return wrapContentSafetyHookError(fmt.Errorf("同一工具调用的参数类型发生变化"))
 	}
 	if len(toolNames) == 1 && toolNames[0] != "" {
-		if len(toolNames[0]) > 256 {
-			return wrapContentSafetyHookError(fmt.Errorf("工具名超过 256 字节上限"))
-		}
 		if (state.name != "" || state.scanned) && state.name != toolNames[0] {
 			return wrapContentSafetyHookError(fmt.Errorf("同一工具调用的工具名发生变化"))
 		}
 		state.name = toolNames[0]
 	}
-	if state.name != "" && !sensitive.IsExecutionTool(state.name) && !attached.streamSettings.Credential.Enabled && attached.streamMaskMode != config.ContentSafetyModeMask {
+	if state.name != "" && !sensitive.IsExecutionTool(state.name) && !attached.streamSettings.Credential.Enabled && !redactionEnabled {
 		// 非执行工具没有响应凭据策略时只保留身份，文件内容无需累积或解析。
 		state.ignored = true
 		state.finished = true
-		attached.toolArgBytes -= state.body.Len()
 		state.body.Reset()
 	}
 	if state.ignored {
 		return nil
-	}
-	if len(fragment) > maxStreamToolArgumentWindow {
-		return wrapContentSafetyHookError(fmt.Errorf("工具参数超过 %d 字节检查上限", maxStreamToolArgumentWindow))
 	}
 	if snapshot && state.scanned {
 		digest, err := streamToolArgumentDigest(fragment, state.rawInput)
@@ -204,13 +189,9 @@ func feedAttachedStreamToolArguments(c requestContextGetter, key, fragment strin
 		}
 		fragment = fragment[state.body.Len():]
 	}
-	if len(fragment) > maxStreamToolArgumentWindow-state.body.Len() || len(fragment) > maxStreamToolArgumentBytes-attached.toolArgBytes {
-		return wrapContentSafetyHookError(fmt.Errorf("工具参数缓冲超过检查容量上限"))
-	}
 	if err := state.append(fragment); err != nil {
 		return wrapContentSafetyHookError(err)
 	}
-	attached.toolArgBytes += len(fragment)
 	if state.closed || snapshot {
 		if err := attached.scanStreamToolArguments(c, key); err != nil {
 			return err
@@ -250,11 +231,11 @@ func (a *attachedHookPipeline) scanStreamToolArguments(c requestContextGetter, k
 		if err := state.append("{}"); err != nil {
 			return wrapContentSafetyHookError(err)
 		}
-		a.toolArgBytes += 2
 	}
 	toolArgs := state.body.String()
 	reviewArgs := toolArgs
-	if a.streamMaskMode == config.ContentSafetyModeMask && a.vault != nil {
+	redactionEnabled := reversibleRedactionEnabled(a.streamSettings)
+	if redactionEnabled && a.vault != nil {
 		var err error
 		if state.rawInput {
 			err = a.vault.ValidateToolText(toolArgs)
@@ -282,7 +263,7 @@ func (a *attachedHookPipeline) scanStreamToolArguments(c requestContextGetter, k
 			return wrapContentSafetyHookError(err)
 		}
 	}
-	if a.streamSettings.DangerousCmd.Enabled && sensitive.IsExecutionTool(state.name) && a.streamMaskMode != config.ContentSafetyModeMask && a.vault != nil && a.vault.CanRestore() {
+	if a.streamSettings.DangerousCmd.Enabled && sensitive.IsExecutionTool(state.name) && !redactionEnabled && a.vault != nil && a.vault.CanRestore() {
 		if state.rawInput {
 			reviewArgs = a.vault.Restore(toolArgs)
 			if err := a.vault.Err(); err != nil {
@@ -346,7 +327,6 @@ func (a *attachedHookPipeline) scanStreamToolArguments(c requestContextGetter, k
 	}
 	state.digest = digest
 	state.scanned = true
-	a.toolArgBytes -= state.body.Len()
 	state.body.Reset()
 	return nil
 }

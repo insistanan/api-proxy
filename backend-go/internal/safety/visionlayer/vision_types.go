@@ -9,7 +9,8 @@ import (
 )
 
 const (
-	visionPromptVersion  = "vision-layer-v4"
+	visionPromptVersion  = "vision-layer-v5"
+	visionCacheVersion   = "vision-cache-v3"
 	visionCacheTTL       = 15 * time.Minute
 	maxVisionBatchImages = 10
 )
@@ -26,26 +27,25 @@ type visionImage struct {
 	cacheKey    string
 	memoryKey   string
 	call        *visionInflightCall
-	nonBlocking bool // 已在对话中出现过但缓存未命中（之前解析失败），失败时用占位文本替代而非阻塞请求
 }
 
 // visionAnalysisProfile 保存模型自行理解任务所需的受控上下文。
 // 图片中的内容不会参与上下文提取，避免图片内提示影响内部处理流程。
 type visionAnalysisProfile struct {
-	intentFingerprint string
-	userIntent        string
+	userIntent string
 }
 
-type visionWaiter struct {
-	fingerprint string
-	call        *visionInflightCall
+type visionAnalysisResult struct {
+	result        string
+	err           error
+	retryable     bool
+	ownerCanceled bool
 }
 
 type visionInflightCall struct {
-	done   chan struct{}
-	once   sync.Once
-	result string
-	err    error
+	done chan struct{}
+	once sync.Once
+	visionAnalysisResult
 }
 
 type requestError struct {
@@ -87,6 +87,7 @@ type visionBatchItem struct {
 }
 
 var (
+	visionJSONArrayPattern     = regexp.MustCompile(`^\[\s*(?:\{|\[|"|\]|-|\d|true\b|false\b|null\b|$)`)
 	visionNamedSectionPattern  = regexp.MustCompile(`(?i)^\s*(?:#{1,6}\s*)?(?:\[\s*)?(?:image|图片)[_\s-]*(\d+)(?:\s*\])?\s*(?:[:：-]\s*)?(.*)$`)
 	visionNumberSectionPattern = regexp.MustCompile(`^\s*(\d+)\s*[\.、\):：-]\s*(.*)$`)
 )

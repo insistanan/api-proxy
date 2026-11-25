@@ -31,6 +31,7 @@ func newPostResponseHookForTest(t *testing.T, safety config.ContentSafetyConfig)
 // responseCredentialSettings 返回启用 api_key 规则的响应方向内容安全设置。
 func responseCredentialSettings(mode string) config.ContentSafetyConfig {
 	safety := config.DefaultContentSafetyConfig()
+	safety.Enabled = true
 	safety.Credential.Enabled = true
 	safety.Credential.EnabledRules = []string{config.CredentialRuleAPIKey}
 	safety.SensitiveData.Mode = mode

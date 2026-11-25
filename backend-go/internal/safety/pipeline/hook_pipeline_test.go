@@ -79,6 +79,7 @@ func TestHookPipelineCancellationPreservesInputAndErrorCause(t *testing.T) {
 
 func TestHookPipelineKeepsRequestAndResponsePoliciesSeparate(t *testing.T) {
 	safety := config.DefaultContentSafetyConfig()
+	safety.Enabled = true
 	safety.SensitiveWord.Enabled = true
 	safety.SensitiveWord.CustomWords = []string{"测试禁词"}
 	safety.SensitiveInfo.Enabled = false

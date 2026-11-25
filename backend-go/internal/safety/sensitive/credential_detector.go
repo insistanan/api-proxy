@@ -571,7 +571,7 @@ func isCredentialPlaceholder(value string) bool {
 		return true
 	}
 	switch lower {
-	case "null", "none", "redacted", "changeme", "change-me", "example", "placeholder", "password", "secret":
+	case "null", "none", "redacted", "changeme", "change-me", "example", "placeholder", "password", "secret", "your-api-key-here":
 		return true
 	}
 	return strings.Trim(trimmed, "*xX-_") == ""

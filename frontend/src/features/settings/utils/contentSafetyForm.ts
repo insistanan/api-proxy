@@ -3,6 +3,7 @@ import type { ContentSafetySettings, CustomRuleItem, SensitiveInfoRule } from '@
 import { defaultSemanticSafety } from '@/features/extensions/datasets/config'
 
 export const defaultContentSafety = (): ContentSafetySettings => ({
+  enabled: false,
   sensitiveData: {
     mode: 'block'
   },
@@ -73,6 +74,7 @@ export const normalizeContentSafety = (
   const normalizedInfoRules = rawInfoRules.filter(rule => rule !== 'api_key') as SensitiveInfoRule[]
 
   return {
+    enabled: settings.enabled,
     sensitiveData: {
       mode: settings.sensitiveData?.mode === 'mask' ? 'mask' : 'block'
     },

@@ -44,13 +44,11 @@ type CmdGate struct {
 }
 
 const (
-	maxAIReviewEntries  = 1024
-	gateReviewTTL       = 5 * time.Minute
-	gateStoreTimeout    = 2 * time.Second
-	gateModelTimeout    = 10 * time.Second
-	maxGateWaiters      = 64
-	maxGateCommandBytes = 16 << 10
-	maxGateContextBytes = 32 << 10
+	maxAIReviewEntries = 1024
+	gateReviewTTL      = 5 * time.Minute
+	gateStoreTimeout   = 2 * time.Second
+	gateModelTimeout   = 10 * time.Second
+	maxGateWaiters     = 64
 )
 
 type cachedGateReview struct {
@@ -104,13 +102,20 @@ func (g *CmdGate) gateSettings() config.DangerousCmdAIGateConfig {
 	return g.cfgManager.GetContentSafetyConfig().DangerousCmd.AIGate
 }
 
-// Enabled 报告闸门是否启用（危险命令检测本体 + AI 闸门都开着）。
+// Enabled 报告当前总开关、危险命令检测与 AI 闸门是否同时启用。
 func (g *CmdGate) Enabled() bool {
 	if g == nil || g.cfgManager == nil {
 		return false
 	}
-	settings := g.cfgManager.GetContentSafetyConfig().DangerousCmd
-	return settings.Enabled && settings.AIGate.Enabled
+	settings := g.cfgManager.GetContentSafetyConfig()
+	return settings.Enabled && settings.DangerousCmd.Enabled && settings.DangerousCmd.AIGate.Enabled
+}
+
+func (g *CmdGate) enabledForRequest(metadata HookContext) bool {
+	if settings := metadata.safetySettings; settings != nil {
+		return g != nil && settings.Enabled && settings.DangerousCmd.Enabled && settings.DangerousCmd.AIGate.Enabled
+	}
+	return g.Enabled()
 }
 
 // ChannelOptions 返回审批配置可选的渠道。
@@ -169,13 +174,13 @@ func (g *CmdGate) review(ctx context.Context, metadata HookContext, match sensit
 	if err := ctx.Err(); err != nil {
 		return GateVerdict{BlockType: sensitive.BlockTypeDangerousCmdAI, Reason: "命令审核已取消"}
 	}
-	if g == nil || !g.Enabled() || g.caller == nil || g.store == nil {
+	if g == nil || !g.enabledForRequest(metadata) || g.caller == nil || g.store == nil {
 		// 闸门未启用或基础设施缺失：调用方不会走到这里（接线处先判 Enabled），
 		// 兜底返回拦截，绝不静默放行。
 		return GateVerdict{Allow: false, BlockType: sensitive.BlockTypeDangerousCmd, Reason: "闸门不可用"}
 	}
-	if match.Rule == "command_size_limit" || match.Rule == "command_count_limit" || match.Rule == "invalid_tool_arguments" || strings.TrimSpace(match.Command) == "" || len(match.Command) > maxGateCommandBytes || len(match.Command)+len(match.ExecutionContext) > maxGateContextBytes {
-		return GateVerdict{BlockType: sensitive.BlockTypeDangerousCmdAI, Reason: "命令或工具参数不完整，或超过审核输入上限"}
+	if match.Rule == "invalid_tool_arguments" || strings.TrimSpace(match.Command) == "" {
+		return GateVerdict{BlockType: sensitive.BlockTypeDangerousCmdAI, Reason: "命令或工具参数不完整"}
 	}
 	commandHash := sensitive.CommandIdentity(match)
 	decision, ok, err := g.latestDecision(ctx, metadata.ConversationID, commandHash)

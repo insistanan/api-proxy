@@ -9,6 +9,7 @@ import (
 	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
 	"github.com/insistanan/api-proxy/internal/dialogue/session"
 	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/orchestration/cachekeepalive"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
 	"github.com/insistanan/api-proxy/internal/safety/visionlayer"
 )
@@ -130,7 +131,7 @@ func SetConversationName(registry *conversation.Registry) gin.HandlerFunc {
 	}
 }
 
-func DeleteConversation(registry *conversation.Registry, sessionManager *session.SessionManager) gin.HandlerFunc {
+func DeleteConversation(registry *conversation.Registry, sessionManager *session.SessionManager, keepalive ...*cachekeepalive.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if registry == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "conversation registry is not initialized"})
@@ -161,12 +162,15 @@ func DeleteConversation(registry *conversation.Registry, sessionManager *session
 		}
 		session.DefaultResponseChainManager().Clear(conversationID)
 		visionlayer.ClearConversationCache(conversationID)
+		for _, manager := range keepalive {
+			manager.Forget(conversationID)
+		}
 		c.Status(http.StatusNoContent)
 	}
 }
 
 // DeleteAllConversations 删除全部对话、图片理解结果和 Responses 会话链。
-func DeleteAllConversations(registry *conversation.Registry, sessionManager *session.SessionManager) gin.HandlerFunc {
+func DeleteAllConversations(registry *conversation.Registry, sessionManager *session.SessionManager, keepalive ...*cachekeepalive.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if registry == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "conversation registry is not initialized"})
@@ -186,6 +190,9 @@ func DeleteAllConversations(registry *conversation.Registry, sessionManager *ses
 		}
 		session.DefaultResponseChainManager().ClearAll()
 		visionlayer.ClearCache()
+		for _, manager := range keepalive {
+			manager.Forget("")
+		}
 		c.Status(http.StatusNoContent)
 	}
 }

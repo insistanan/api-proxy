@@ -50,6 +50,7 @@ func newImagesSafetyContext(t *testing.T, mutate func(*config.SettingsConfig)) *
 	t.Cleanup(func() { configManager.Close() })
 
 	settings := configManager.GetSettings()
+	settings.ContentSafety.Enabled = true
 	mutate(&settings)
 	if err := configManager.UpdateSettings(settings); err != nil {
 		t.Fatalf("更新内容安全设置失败: %v", err)

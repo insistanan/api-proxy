@@ -3,7 +3,6 @@ package scheduler
 import (
 	"fmt"
 
-	"github.com/insistanan/api-proxy/internal/dialogue/conversation"
 	"github.com/insistanan/api-proxy/internal/orchestration/urlhealth"
 )
 
@@ -11,21 +10,6 @@ func (s *ChannelScheduler) SetTraceAffinityForKind(kind ChannelKind, conversatio
 	if s != nil && s.traceAffinity != nil && conversationID != "" {
 		s.traceAffinity.SetPreferredChannelForKind(string(kind), conversationID, channelIndex)
 	}
-}
-
-// GetConversationLastResolved 返回对话最近成功/尝试命中的渠道（对话级粘滞依据）。
-// 调度选渠时若命中该渠道且其负载未过载，则沿用；否则放行给负载均衡处理。
-func (s *ChannelScheduler) GetConversationLastResolved(conversationID string) (*conversation.ChannelRef, bool) {
-	if conversationID == "" || s == nil {
-		return nil, false
-	}
-	s.mu.RLock()
-	registry := s.conversationRegistry
-	s.mu.RUnlock()
-	if registry == nil {
-		return nil, false
-	}
-	return registry.GetLastResolved(conversationID)
 }
 
 // GetPreferredBaseURL 获取会话粘滞的 BaseURL（用于 prompt cache 亲和）。

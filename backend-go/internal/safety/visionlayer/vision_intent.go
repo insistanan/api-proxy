@@ -1,9 +1,8 @@
 package visionlayer
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/insistanan/api-proxy/internal/protocol/types"
 )
@@ -13,7 +12,12 @@ func extractUserText(value interface{}) string {
 	collectText(value, &parts)
 	result := strings.TrimSpace(strings.Join(parts, "\n"))
 	if len(result) > 2000 {
-		return result[len(result)-2000:]
+		start := len(result) - 2000
+		// 保留原有字节预算，从完整字符的起点截取，避免切断中文或 emoji。
+		for start < len(result) && !utf8.RuneStart(result[start]) {
+			start++
+		}
+		return result[start:]
 	}
 	return result
 }
@@ -23,20 +27,7 @@ func resolveVisionAnalysisProfile(userText string) visionAnalysisProfile {
 	if userIntent == "" {
 		userIntent = "用户未提供文字问题，请根据图片内容进行可靠观察。"
 	}
-	return visionAnalysisProfile{
-		intentFingerprint: visionIntentFingerprint(userIntent),
-		userIntent:        userIntent,
-	}
-}
-
-func visionIntentFingerprint(userText string) string {
-	normalized := strings.ToLower(strings.Join(strings.Fields(userText), " "))
-	runes := []rune(normalized)
-	if len(runes) > 600 {
-		normalized = string(runes[:600])
-	}
-	sum := sha256.Sum256([]byte(normalized))
-	return hex.EncodeToString(sum[:])
+	return visionAnalysisProfile{userIntent: userIntent}
 }
 
 func collectText(value interface{}, parts *[]string) {

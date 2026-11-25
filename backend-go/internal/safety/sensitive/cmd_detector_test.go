@@ -170,7 +170,7 @@ func TestStreamCmdScannerHandlesSplitCommandsAndFence(t *testing.T) {
 	}
 }
 
-func TestStreamCmdScannerKeepsCompleteBoundedContext(t *testing.T) {
+func TestStreamCmdScannerKeepsCompleteLargeContext(t *testing.T) {
 	detector, err := NewCmdDetector(defaultDangerousCmdSettings())
 	if err != nil {
 		t.Fatalf("创建检测器失败: %v", err)
@@ -184,13 +184,14 @@ func TestStreamCmdScannerKeepsCompleteBoundedContext(t *testing.T) {
 	if !ok || match == nil || match.Command != context {
 		t.Fatal("流结束应审核完整代码块，不能丢弃早期内容")
 	}
-	if len(scanner.window) > maxCommandWindow {
-		t.Fatalf("窗口超过上限: %d", len(scanner.window))
-	}
 	oversized := NewStreamCmdScanner(detector)
-	oversized.Feed("```" + strings.Repeat("x", maxCommandWindow+1))
-	if oversized.Err() == nil {
-		t.Fatal("超长代码块必须显式报错，不能截断后放行")
+	largeContext := strings.Repeat("echo safe\n", 40000) + "rm -rf /\n"
+	if _, blocked := oversized.Feed("```sh\n" + largeContext); blocked {
+		t.Fatal("代码块未结束时不能提前审核")
+	}
+	match, blocked := oversized.Feed("```")
+	if !blocked || match == nil || !strings.Contains(match.Command, largeContext) {
+		t.Fatal("超过旧 256 KiB 限制后仍须检查完整上下文，不能遗漏尾部危险命令")
 	}
 }
 

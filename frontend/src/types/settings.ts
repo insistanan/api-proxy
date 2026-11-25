@@ -124,6 +124,7 @@ export interface ClientDisguiseStatus {
 }
 
 export interface ContentSafetySettings {
+  enabled: boolean
   sensitiveData: {
     mode: 'block' | 'mask'
   }

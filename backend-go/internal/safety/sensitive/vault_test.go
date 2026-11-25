@@ -6,6 +6,18 @@ import (
 	"testing"
 )
 
+func TestVault_LargeSensitiveValueRemainsReversible(t *testing.T) {
+	vault := NewVault()
+	original := strings.Repeat("private-value", 700000)
+	masked, err := vault.Mask(original, []RedactionMatch{{Type: "CUSTOM", Rule: "large", Original: original, Start: 0, End: len(original)}})
+	if err != nil {
+		t.Fatalf("超过旧 8 MiB 映射限制的值应正常脱敏: %v", err)
+	}
+	if masked == original || vault.Restore(masked) != original {
+		t.Fatal("大值必须完整脱敏和还原，不能截断或绕过")
+	}
+}
+
 func TestVaultMasksReusesAndRestoresExactValues(t *testing.T) {
 	vault := NewVault()
 	original := `p@ss"word`

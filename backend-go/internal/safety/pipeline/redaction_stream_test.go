@@ -2,14 +2,54 @@ package pipeline
 
 import (
 	"encoding/json"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"github.com/insistanan/api-proxy/internal/safety/sensitive"
+	"github.com/stretchr/testify/require"
 )
+
+func TestToolDelivery_LargeOutputWaitsForReviewAndPreservesOrder(t *testing.T) {
+	for _, limit := range []string{"bytes", "events"} {
+		t.Run(limit, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			settings := config.DefaultContentSafetyConfig()
+			settings.Enabled = true
+			settings.SensitiveData.Mode = config.ContentSafetyModeMask
+			settings.SensitiveInfo.Enabled = true
+			tool := &streamToolArgumentState{name: "lookup", scanned: true}
+			attached := &attachedHookPipeline{
+				pipeline: NewPipeline(), stream: sensitive.NewStreamCmdScanner(nil),
+				streamSettings: settings, streamMaskMode: config.ContentSafetyModeMask,
+				toolArgs: map[string]*streamToolArgumentState{"messages.content_block.0": tool},
+			}
+			c.Set(contentSafetyPipelineKey, attached)
+			if limit == "bytes" {
+				attached.toolDelivery = []string{":" + strings.Repeat("x", (4<<20)+1) + "\n\n"}
+			} else {
+				attached.toolDelivery = make([]string, 8192)
+				for index := range attached.toolDelivery {
+					attached.toolDelivery[index] = ": pending\n\n"
+				}
+			}
+			buffered := strings.Join(attached.toolDelivery, "")
+			sent, err := RestoreAttachedSSEEvent(c, ": heartbeat\n\n")
+			require.Empty(t, sent, "仍待结束确认的工具不能提前交付")
+			require.NoError(t, err, "合法内容不能因超过旧容量阈值而失败")
+			buffered += ": heartbeat\n\n"
+			require.Equal(t, buffered, strings.Join(attached.toolDelivery, ""))
+			const stop = "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"
+			sent, err = RestoreAttachedSSEEvent(c, stop)
+			require.NoError(t, err)
+			require.Equal(t, buffered+stop, sent)
+			require.Empty(t, attached.toolDelivery)
+		})
+	}
+}
 
 func TestRestoreAttachedSSEEventAcrossChunksAndFlushesIncompletePrefix(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -155,12 +195,11 @@ func TestResetAttachedStreamRestorationKeepsVaultAndDropsAttemptFragments(t *tes
 		t.Fatalf("首次尝试的未完成前缀不应输出: %q", got)
 	}
 	attached.toolDelivery = []string{"data: stale-tool-event\n\n"}
-	attached.toolDeliveryBytes = len(attached.toolDelivery[0])
 	attached.toolArgs = map[string]*streamToolArgumentState{"old-tool": {name: "Bash"}}
 	if err := ResetAttachedStreamRestoration(c); err != nil {
 		t.Fatalf("重置流式还原状态失败: %v", err)
 	}
-	if len(attached.toolDelivery) != 0 || attached.toolDeliveryBytes != 0 || len(attached.toolArgs) != 0 {
+	if len(attached.toolDelivery) != 0 || len(attached.toolArgs) != 0 {
 		t.Fatal("重试必须清除上一轮未交付的工具事件和审核状态")
 	}
 

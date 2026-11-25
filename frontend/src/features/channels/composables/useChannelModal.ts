@@ -5,6 +5,7 @@ import { api, channelApiByType } from '@/api'
 import { imagesModelOptions, imagesProtocolLabel, isImagesServiceType, validateImagesOutputSettings } from '@/features/channels/utils/imagesChannelProtocol'
 import { useChannelEditor, buildImagesOutputSettings, EMBEDDINGS_DIMENSIONS_DEFAULT, validateEmbeddingsDimensions, supportsChannelClientIdentity, type ChannelFormState } from '@/features/channels/composables/useChannelEditor'
 import { compileImagesExtraParams } from '@/features/channels/utils/imagesExtraParams'
+import { supportsCacheKeepalive, validateCacheKeepalive } from '@/features/channels/utils/cacheKeepalive'
 
 import { useQuickChannelDraft } from '@/features/channels/composables/useQuickChannelDraft'
 import { useChannelModels } from '@/features/channels/composables/useChannelModels'
@@ -823,6 +824,13 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
     if (props.saving || !formRef.value) return
 
     submitError.value = ''
+    if (supportsCacheKeepalive(props.channelType, form.serviceType)) {
+      submitError.value = validateCacheKeepalive(form.cacheKeepalive)
+      if (!submitError.value && form.cacheKeepalive.enabled && form.lowQuality) {
+        submitError.value = '缓存保活需要真实上游用量，请先关闭低质量渠道标记'
+      }
+      if (submitError.value) return
+    }
     if (!form.apiKeys.length) apiKeyError.value = '请至少添加一个 API 密钥'
     const { valid } = await formRef.value.validate()
     if (!valid || !isFormValid.value) {
@@ -850,7 +858,11 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
       imagesExtraParams = compiled.params
     }
 
-    emit('save', buildPayload(isEditing.value, imagesExtraParams))
+    try {
+      emit('save', buildPayload(isEditing.value, imagesExtraParams))
+    } catch (error) {
+      submitError.value = error instanceof Error ? error.message : '渠道配置无法保存，请检查参数'
+    }
   }
 
   const handleCancel = () => {

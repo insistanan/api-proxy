@@ -50,6 +50,7 @@ func newGateTestHarness(t *testing.T, waitSeconds int) *gateTestHarness {
 	}
 	t.Cleanup(func() { _ = cfgManager.Close() })
 	settings := cfgManager.GetSettings()
+	settings.ContentSafety.Enabled = true
 	settings.ContentSafety.DangerousCmd.Enabled = true
 	settings.ContentSafety.DangerousCmd.EnabledRules = allDangerousCmdRulesForTest()
 	settings.ContentSafety.DangerousCmd.AIGate.Enabled = true
@@ -271,10 +272,31 @@ func TestGateAIFailureBlocks(t *testing.T) {
 	}
 }
 
+func TestGateMasterSwitchAndLargeReviewInput(t *testing.T) {
+	h := newGateTestHarness(t, 10)
+	h.aiVerdict.Store("allow")
+	match := h.match()
+	match.Command = strings.Repeat("echo safe\n", 40000) + "rm -rf /"
+	match.ExecutionContext = match.Command
+	verdict := h.gate.Review(context.Background(), h.metadata(), match, nil)
+	if !verdict.Allow || h.aiCalls.Load() != 1 {
+		t.Fatalf("大命令应进入完整 AI 审核，不能被本地输入阈值拒绝: %+v", verdict)
+	}
+	settings := h.cfgManager.GetSettings()
+	settings.ContentSafety.Enabled = false
+	if err := h.cfgManager.UpdateSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	if h.gate.Enabled() {
+		t.Fatal("关闭总开关后，子规则与 AI 配置仍开启也不能启用审批")
+	}
+}
+
 // TestGateDisabledWhenConfigOff 闸门关闭时 Enabled 为 false。
 func TestGateDisabledWhenConfigOff(t *testing.T) {
 	h := newGateTestHarness(t, 10)
 	settings := h.cfgManager.GetSettings()
+	settings.ContentSafety.Enabled = true
 	settings.ContentSafety.DangerousCmd.AIGate.Enabled = false
 	if err := h.cfgManager.UpdateSettings(settings); err != nil {
 		t.Fatalf("关闭闸门失败: %v", err)
@@ -460,6 +482,7 @@ func TestGateApprovalModelChangeInvalidatesReviewCache(t *testing.T) {
 		t.Fatalf("相同审批配置应复用审核: %+v %v", second, err)
 	}
 	settings := h.cfgManager.GetSettings()
+	settings.ContentSafety.Enabled = true
 	settings.ContentSafety.DangerousCmd.AIGate.Model = "new-review-model"
 	if err := h.cfgManager.UpdateSettings(settings); err != nil {
 		t.Fatal(err)

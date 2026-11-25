@@ -24,14 +24,14 @@ const (
 
 // Sample 不包含正文和明文凭据。CandidateID 是 URL、实际协议和 Key 的组合指纹。
 type Sample struct {
-	Kind          string `json:"kind"`
-	ChannelID     string `json:"channelId"`
-	Model         string `json:"model"`
-	CandidateID   string `json:"candidateId"`
-	Outcome       string `json:"outcome"`
-	Reason        string `json:"reason"`
+	Kind        string `json:"kind"`
+	ChannelID   string `json:"channelId"`
+	Model       string `json:"model"`
+	CandidateID string `json:"candidateId"`
+	Outcome     string `json:"outcome"`
+	Reason      string `json:"reason"`
 	// CooldownUntil 仅记录模型容量错误的显式截止时间；共享冷却读取准入控制器。
-	CooldownUntil int64  `json:"cooldownUntil,omitempty"`
+	CooldownUntil int64 `json:"cooldownUntil,omitempty"`
 }
 
 // Classify 优先使用错误阶段和明确错误码；普通 404/403 不推断模型不支持。

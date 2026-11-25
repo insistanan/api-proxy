@@ -43,18 +43,13 @@ func (s *ChannelScheduler) SelectMappedChannel(kind ChannelKind, channelID strin
 		return nil, fmt.Errorf("映射目标渠道 %q 没有可用 API 密钥", upstream.Name)
 	}
 
-	allow := s.CircuitAllow(kind, index, upstream.Name)
-	if !allow.Allowed {
-		return nil, fmt.Errorf("映射目标渠道 %q 处于熔断保护状态", upstream.Name)
-	}
-
-	s.ReserveChannel(kind, index)
-	permit := s.newChannelPermit(kind, index, allow, true)
-	return &SelectionResult{
+	result, err := s.reserveAndReturn(&SelectionResult{
 		Upstream:     upstream.Clone(),
 		ChannelIndex: index,
 		Reason:       "model_mapping_target",
-		Kind:         kind,
-		Permit:       permit,
-	}, nil
+	}, kind)
+	if err != nil {
+		return nil, fmt.Errorf("映射目标渠道 %q 暂不可准入: %w", upstream.Name, err)
+	}
+	return result, nil
 }

@@ -2,8 +2,10 @@ package visionlayer
 
 import (
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
+	"maps"
 	"strings"
+
+	"github.com/insistanan/api-proxy/internal/protocol/visionmedia"
 )
 
 type upstreamImageAdapter struct {
@@ -14,17 +16,11 @@ type upstreamImageAdapter struct {
 
 func imageAdapterForService(serviceType string) (upstreamImageAdapter, error) {
 	switch strings.ToLower(strings.TrimSpace(serviceType)) {
-	case "claude":
+	case "claude", "openai":
 		return upstreamImageAdapter{
 			rootKey:     "messages",
 			contentKey:  "content",
-			replacement: claudeVisionTextBlock,
-		}, nil
-	case "openai":
-		return upstreamImageAdapter{
-			rootKey:     "messages",
-			contentKey:  "content",
-			replacement: chatVisionTextBlock,
+			replacement: messageVisionTextBlock,
 		}, nil
 	case "responses":
 		return upstreamImageAdapter{
@@ -59,12 +55,12 @@ func collectImagesForUpstream(payload interface{}, serviceType string) ([]map[st
 
 	images := make([]map[string]interface{}, 0, 2)
 	for _, item := range items {
-		collectImagesFromConversationItem(item, adapter.contentKey, &images)
+		collectImagesFromConversationItem(item, adapter, &images)
 	}
 	return images, nil
 }
 
-func collectImagesFromConversationItem(value interface{}, contentKey string, images *[]map[string]interface{}) {
+func collectImagesFromConversationItem(value interface{}, adapter upstreamImageAdapter, images *[]map[string]interface{}) {
 	item, ok := value.(map[string]interface{})
 	if !ok {
 		return
@@ -72,6 +68,15 @@ func collectImagesFromConversationItem(value interface{}, contentKey string, ima
 	if isImageBlock(item) {
 		*images = append(*images, item)
 		return
+	}
+	contentKey := adapter.contentKey
+	if adapter.rootKey == "input" {
+		// Responses 的工具结果使用 output；普通消息仍使用 content。
+		// 只匹配协议条目类型，不能进入工具参数或任意业务 JSON 的 output。
+		switch item["type"] {
+		case "function_call_output", "custom_tool_call_output":
+			contentKey = "output"
+		}
 	}
 	content, exists := item[contentKey]
 	if !exists {
@@ -161,105 +166,26 @@ func transformImagesForUpstream(payload interface{}, serviceType string, descrip
 	if err != nil {
 		return nil, err
 	}
-	root, ok := payload.(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("图片理解层请求格式无效")
-	}
 	adapter, err := imageAdapterForService(serviceType)
 	if err != nil {
 		return nil, err
 	}
-	items, ok := root[adapter.rootKey].([]interface{})
-	if !ok {
-		return nil, fmt.Errorf("图片理解层无法定位目标协议的 %s 数组", adapter.rootKey)
-	}
-
-	replaced := 0
-	for index, item := range items {
-		transformed, count, err := transformConversationItem(item, adapter.contentKey, adapter.replacement, descriptions)
-		if err != nil {
-			return nil, err
+	// 先校验全部结果，再就地替换提取阶段定位的图片块。
+	// 提取和写回共用内容边界，避免两套递归同时漏字段却通过数量校验。
+	replacements := make([]map[string]interface{}, len(targets))
+	for index, image := range targets {
+		fingerprint := visionmedia.ImageFingerprintForBlock(image)
+		result, ok := descriptions[fingerprint]
+		if fingerprint == "" || !ok {
+			return nil, fmt.Errorf("未找到图片指纹对应的理解结果")
 		}
-		items[index] = transformed
-		replaced += count
+		replacements[index] = adapter.replacement(result)
 	}
-	if replaced != len(targets) {
-		return nil, fmt.Errorf("图片理解结果写入不完整: 已写入 %d/%d 张", replaced, len(targets))
+	for index, image := range targets {
+		clear(image)
+		maps.Copy(image, replacements[index])
 	}
-	return root, nil
-}
-
-func transformConversationItem(
-	value interface{},
-	contentKey string,
-	replacement func(string) map[string]interface{},
-	descriptions map[string]string,
-) (interface{}, int, error) {
-	item, ok := value.(map[string]interface{})
-	if !ok {
-		return value, 0, nil
-	}
-	if isImageBlock(item) {
-		return replaceImageBlock(item, replacement, descriptions)
-	}
-	content, exists := item[contentKey]
-	if !exists {
-		return item, 0, nil
-	}
-	transformed, count, err := transformContent(content, replacement, descriptions)
-	if err != nil {
-		return value, count, err
-	}
-	item[contentKey] = transformed
-	return item, count, nil
-}
-
-func transformContent(
-	value interface{},
-	replacement func(string) map[string]interface{},
-	descriptions map[string]string,
-) (interface{}, int, error) {
-	switch current := value.(type) {
-	case map[string]interface{}:
-		if isImageBlock(current) {
-			return replaceImageBlock(current, replacement, descriptions)
-		}
-		if nested, ok := current["content"]; ok {
-			transformed, count, err := transformContent(nested, replacement, descriptions)
-			if err != nil {
-				return value, count, err
-			}
-			current["content"] = transformed
-			return current, count, nil
-		}
-		return current, 0, nil
-	case []interface{}:
-		count := 0
-		for index, child := range current {
-			transformed, childCount, err := transformContent(child, replacement, descriptions)
-			if err != nil {
-				return value, count, err
-			}
-			current[index] = transformed
-			count += childCount
-		}
-		return current, count, nil
-	default:
-		return value, 0, nil
-	}
-}
-
-func replaceImageBlock(
-	image map[string]interface{},
-	replacement func(string) map[string]interface{},
-	descriptions map[string]string,
-) (interface{}, int, error) {
-	fingerprint := visionmedia.ImageFingerprintForBlock(image)
-	result, ok := descriptions[fingerprint]
-	if fingerprint == "" || !ok {
-		return image, 0, fmt.Errorf("未找到图片指纹对应的理解结果")
-	}
-	return replacement(result), 1, nil
+	return payload, nil
 }
 
 func visionResultText(result string) string {
@@ -268,11 +194,7 @@ func visionResultText(result string) string {
 		strings.TrimSpace(result) + "\n[/独立图片理解结果]"
 }
 
-func claudeVisionTextBlock(result string) map[string]interface{} {
-	return map[string]interface{}{"type": "text", "text": visionResultText(result)}
-}
-
-func chatVisionTextBlock(result string) map[string]interface{} {
+func messageVisionTextBlock(result string) map[string]interface{} {
 	return map[string]interface{}{"type": "text", "text": visionResultText(result)}
 }
 

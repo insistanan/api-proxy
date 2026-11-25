@@ -26,6 +26,7 @@ func applyContentSafetySegments(
 	prompts *[]string,
 	segmentsPreReserved bool,
 ) (changed bool, resultErr error) {
+	redactionEnabled := reversibleRedactionEnabled(snapshot.settings)
 	if recorder != nil {
 		metadata.auditBatch = &safetyAuditBatch{recorder: recorder, deduper: metadata.eventDeduper}
 		defer func() {
@@ -41,7 +42,7 @@ func applyContentSafetySegments(
 	}
 	// JSON 转义可能把占位符隐藏在原始字节中，解码后的文本仍需冲突登记。
 	for index := range segments {
-		if !segmentsPreReserved || strings.Contains(segments[index].Text, "MASKED_") {
+		if redactionEnabled && (!segmentsPreReserved || strings.Contains(segments[index].Text, "MASKED_")) {
 			vault.ReserveText(segments[index].Text)
 		}
 	}
@@ -170,7 +171,7 @@ func applyContentSafetySegments(
 		// 之后执行——内置规则先占住各自区间，自定义规则只处理剩余文本；且它是最后的
 		// 掩码步骤，宽正则不会把已生成的占位符再包一层（R1-e：改写后不再复检）。
 		// 放行字面量过滤同样生效（命中原文与条目相等则丢弃）。
-		if snapshot.settings.SensitiveData.Mode == config.ContentSafetyModeMask && snapshot.custom != nil && snapshot.custom.Enabled() {
+		if redactionEnabled && snapshot.custom != nil && snapshot.custom.Enabled() {
 			customSource := segment.Text
 			customMatches := snapshot.customMatches(segment.Text)
 			customMatches = filterAllowlistedCustomMatches(customMatches, snapshot.settings.Allowlist)
@@ -191,7 +192,7 @@ func applyContentSafetySegments(
 			}
 		}
 
-		if snapshot.settings.SensitiveData.Mode == config.ContentSafetyModeMask && !infoChecked {
+		if redactionEnabled && !infoChecked {
 			// 未分类来源没有经过前面的个人信息检测，保留原有末尾校验；
 			// 已改写片段不再复检（R1-e：脱敏输出假定可信，避免整段二次扫描）。
 			// 校验同样过放行字面量过滤：被放行的值（如 localhost）本来就应留在
@@ -214,7 +215,7 @@ func applyContentSafetySegments(
 	// 此步骤不缓存，后续轮次新识别出的秘密也必须重新保护旧历史。
 	for index := range segments {
 		segment := &segments[index]
-		if !skipped[index] && snapshot.settings.SensitiveData.Mode == config.ContentSafetyModeMask {
+		if !skipped[index] && redactionEnabled {
 			masked := vault.MaskKnown(originals[index])
 			if err := vault.ValidateRequestPlaceholders(masked); err != nil {
 				return changed, err

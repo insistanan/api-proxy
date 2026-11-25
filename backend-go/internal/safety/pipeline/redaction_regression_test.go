@@ -10,6 +10,7 @@ import (
 
 func TestSafetySegmentsRetainVerificationForUnclassifiedSource(t *testing.T) {
 	settings := config.DefaultContentSafetyConfig()
+	settings.Enabled = true
 	settings.SensitiveData.Mode = config.ContentSafetyModeMask
 	settings.SensitiveInfo.Enabled = true
 	settings.SensitiveInfo.EnabledRules = []string{config.SensitiveInfoRuleEmail}

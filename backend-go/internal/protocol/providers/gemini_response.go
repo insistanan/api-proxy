@@ -2,6 +2,7 @@ package providers
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/insistanan/api-proxy/internal/protocol/types"
@@ -30,6 +31,12 @@ func (p *GeminiProvider) ConvertToClaudeResponse(providerResp *types.ProviderRes
 	if !ok {
 		return claudeResp, nil
 	}
+	finishReason, _ := candidate["finishReason"].(string)
+	stopReason, err := geminiStopReasonFromFinish(finishReason, false)
+	if err != nil {
+		return nil, err
+	}
+	claudeResp.StopReason = stopReason
 
 	content, ok := candidate["content"].(map[string]interface{})
 	if !ok {
@@ -104,25 +111,14 @@ func (p *GeminiProvider) ConvertToClaudeResponse(providerResp *types.ProviderRes
 		CacheClaudeResponseReasoning(&cacheResp)
 	}
 
-	// 设置停止原因
-	finishReason, _ := candidate["finishReason"].(string)
-	if strings.Contains(strings.ToLower(finishReason), "stop") {
-		// 检查是否有工具调用
-		hasToolCall := false
-		for _, c := range claudeResp.Content {
-			if c.Type == "tool_use" {
-				hasToolCall = true
+	// 只有正常结束才能改为工具交付；工具内容不能掩盖截断或审核拒绝。
+	if claudeResp.StopReason == "end_turn" {
+		for _, block := range claudeResp.Content {
+			if block.Type == "tool_use" {
+				claudeResp.StopReason = "tool_use"
 				break
 			}
 		}
-
-		if hasToolCall {
-			claudeResp.StopReason = "tool_use"
-		} else {
-			claudeResp.StopReason = "end_turn"
-		}
-	} else if strings.Contains(strings.ToLower(finishReason), "length") {
-		claudeResp.StopReason = "max_tokens"
 	}
 
 	// 使用统计
@@ -160,4 +156,23 @@ func (p *GeminiProvider) ConvertToClaudeResponse(providerResp *types.ProviderRes
 	}
 
 	return claudeResp, nil
+}
+
+// Gemini 的 MAX_TOKENS 必须在工具交付前判断，流式与非流式共用同一映射。
+func geminiStopReasonFromFinish(finishReason string, hasToolCall bool) (string, error) {
+	switch strings.ToUpper(strings.TrimSpace(finishReason)) {
+	case "":
+		return "", nil
+	case "STOP":
+		if hasToolCall {
+			return "tool_use", nil
+		}
+		return "end_turn", nil
+	case "MAX_TOKENS", "LENGTH":
+		return "max_tokens", nil
+	case "SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT", "MODEL_ARMOR":
+		return "refusal", nil
+	default:
+		return "", fmt.Errorf("Gemini 响应未正常完成，finishReason=%q", finishReason)
+	}
 }

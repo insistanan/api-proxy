@@ -11,11 +11,6 @@ import (
 	"github.com/insistanan/api-proxy/internal/infra/config"
 )
 
-const maxCommandWindow = 256 << 10
-
-// MaxCommandBytes 限制规则检测的完整上下文；AI 闸门另设更小的输入上限。
-const MaxCommandBytes = maxCommandWindow
-
 // CommandMatch 描述一次可执行上下文中的危险命令命中。
 type CommandMatch struct {
 	Rule             string `json:"rule"`
@@ -107,9 +102,6 @@ func ExtractToolCommands(toolName string, value any, raw bool) []CommandMatch {
 		if !ok {
 			return []CommandMatch{{Rule: "invalid_tool_arguments", Context: "tool", ToolName: toolName}}
 		}
-		if len(text) > MaxCommandBytes {
-			return []CommandMatch{{Rule: "command_size_limit", Context: "tool", ToolName: toolName}}
-		}
 		return []CommandMatch{{Context: "tool", ToolName: toolName, Command: text, ExecutionContext: "raw_input:\n" + text}}
 	}
 	return collectToolCommands(toolName, value, func(command string) []CommandMatch {
@@ -119,9 +111,6 @@ func ExtractToolCommands(toolName string, value any, raw bool) []CommandMatch {
 
 func collectToolCommands(toolName string, value any, scan func(string) []CommandMatch) []CommandMatch {
 	if encoded, ok := value.(string); ok {
-		if len(encoded) > MaxCommandBytes {
-			return []CommandMatch{{Rule: "command_size_limit", Context: "tool", ToolName: toolName, Command: "工具执行上下文超过检查容量上限"}}
-		}
 		if strings.TrimSpace(encoded) == "" {
 			encoded = "{}"
 		}
@@ -141,21 +130,13 @@ func collectToolCommands(toolName string, value any, scan func(string) []Command
 	if err != nil {
 		return []CommandMatch{{Rule: "invalid_tool_arguments", Context: "tool", ToolName: toolName}}
 	}
-	if len(encodedContext) > MaxCommandBytes {
-		return []CommandMatch{{Rule: "command_size_limit", Context: "tool", ToolName: toolName, Command: "工具执行上下文超过检查容量上限"}}
-	}
 	matches := make([]CommandMatch, 0)
-	limited := false
 	var walk func(any, bool)
 	walk = func(current any, commandField bool) {
-		if limited {
-			return
-		}
 		switch typed := current.(type) {
 		case string:
 			if commandField {
 				matches = append(matches, scan(typed)...)
-				limited = len(matches) > 256
 			}
 		case []any:
 			for _, item := range typed {
@@ -178,9 +159,6 @@ func collectToolCommands(toolName string, value any, scan func(string) []Command
 		}
 	}
 	walk(value, true)
-	if limited {
-		return []CommandMatch{{Rule: "command_count_limit", Context: "tool", ToolName: toolName, Command: "工具参数中的危险命令超过 256 条检查上限"}}
-	}
 	executionContext := string(encodedContext)
 	for index := range matches {
 		matches[index].ToolName = toolName
@@ -193,9 +171,6 @@ func collectToolCommands(toolName string, value any, scan func(string) []Command
 func (d *CmdDetector) FindInRawToolInput(toolName, input string) []CommandMatch {
 	if d == nil || !d.enabled || len(d.rules) == 0 || !IsExecutionTool(toolName) {
 		return nil
-	}
-	if len(input) > MaxCommandBytes {
-		return []CommandMatch{{Rule: "command_size_limit", Context: "tool", ToolName: toolName, Command: "工具执行上下文超过检查容量上限"}}
 	}
 	matches := d.findInSegment(input, "tool", 0)
 	executionContext := "raw_input:\n" + input
@@ -232,9 +207,6 @@ func (d *CmdDetector) Contains(text string) bool {
 }
 
 func (d *CmdDetector) findInSegment(segment, context string, base int) []CommandMatch {
-	if len(segment) > MaxCommandBytes {
-		return []CommandMatch{{Rule: "command_size_limit", Context: context, Command: "命令上下文超过检查容量上限"}}
-	}
 	matches := make([]CommandMatch, 0)
 	lower := strings.ToLower(segment)
 	for _, rule := range d.rules {
@@ -319,7 +291,6 @@ type StreamCmdScanner struct {
 	queued   []CommandMatch
 	seen     map[string]struct{}
 	buffer   strings.Builder
-	err      error
 }
 
 // NewStreamCmdScanner 创建流式危险命令扫描器。
@@ -403,7 +374,7 @@ func (s *StreamCmdScanner) Flush() (*CommandMatch, bool) {
 	return s.nextMatch()
 }
 
-// BufferedBytes 返回尚未完成代码块的暂存大小，供请求级总量限制使用。
+// BufferedBytes 返回尚未完成代码块的暂存大小。
 func (s *StreamCmdScanner) BufferedBytes() int {
 	if s == nil {
 		return 0
@@ -412,13 +383,6 @@ func (s *StreamCmdScanner) BufferedBytes() int {
 }
 
 func (s *StreamCmdScanner) appendCode(fragment string, final bool) {
-	if s.err != nil {
-		return
-	}
-	if len(fragment) > maxCommandWindow-s.buffer.Len() {
-		s.err = fmt.Errorf("流式代码块超过 %d 字节检查上限", maxCommandWindow)
-		return
-	}
 	s.buffer.WriteString(fragment)
 	s.window = s.buffer.String()
 	if !final {
@@ -432,20 +396,9 @@ func (s *StreamCmdScanner) appendCode(fragment string, final bool) {
 		if s.seen == nil {
 			s.seen = make(map[string]struct{})
 		}
-		if len(s.seen) >= 256 {
-			s.err = fmt.Errorf("单次响应的危险命令超过 256 条检查上限")
-			return
-		}
 		s.seen[key] = struct{}{}
 		s.queued = append(s.queued, match)
 	}
-}
-
-func (s *StreamCmdScanner) Err() error {
-	if s == nil {
-		return nil
-	}
-	return s.err
 }
 
 func splitFenceSuffix(input string) (string, string) {

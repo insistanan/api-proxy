@@ -20,6 +20,7 @@ const StripThoughtSignatureMarker = "__STRIP_THOUGHT_SIGNATURE__"
 
 // GeminiRequest Gemini API 请求
 type GeminiRequest struct {
+	CachedContent     string                  `json:"cachedContent,omitempty"`
 	Contents          []GeminiContent         `json:"contents"`
 	SystemInstruction *GeminiContent          `json:"systemInstruction,omitempty"`
 	Tools             []GeminiTool            `json:"tools,omitempty"`

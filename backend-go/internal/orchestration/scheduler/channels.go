@@ -14,37 +14,12 @@ type ChannelInfo struct {
 	Name     string
 	Priority int
 	Status   string
-	Score    float64 // 基于失败率的展示分数，不参与选渠排序
-	Promoted bool    // 促销仅临时调整所在分组的顺序，健康检查与熔断准入照常执行
+	Promoted bool // 促销仅临时调整所在分组的顺序，健康检查与熔断准入照常执行
 
 	upstream *config.UpstreamConfig // 本轮候选快照，筛选时不重复读取配置
 }
 
-// calculateChannelScore 计算展示分数：100 × (1 - 失败率)，不足 5 次请求时给 100 分。
-// 缺少渠道或 Key 时返回 0；分数不改变故障转移顺序。
-func (s *ChannelScheduler) calculateChannelScore(upstream *config.UpstreamConfig, channelIndex int, kind ChannelKind) float64 {
-	if upstream == nil || len(upstream.APIKeys) == 0 {
-		return 0
-	}
-
-	metricsManager := s.getMetricsManager(kind)
-	failureRate := metricsManager.CalculateChannelFailureRate(upstream.BaseURL, upstream.APIKeys, channelIndex)
-
-	// 计算基础分数：100 * (1 - failureRate)
-	baseScore := 100 * (1 - failureRate)
-
-	// 检查请求数，如果请求数小于 5，给予新渠道奖励（避免因样本不足被低估）
-	requestCount := metricsManager.GetChannelRequestCount(upstream.BaseURL, upstream.APIKeys, channelIndex)
-	if requestCount < 5 {
-		// 新渠道给予满分
-		return 100
-	}
-
-	return baseScore
-}
-
 // getActiveChannels 获取故障转移序列（按配置优先级排序）。
-// 动态分数只用于指标展示，不能改变用户配置的 failover 顺序。
 func (s *ChannelScheduler) getActiveChannels(kind ChannelKind, poolIDs ...string) []ChannelInfo {
 	channelsByPool := s.getActiveChannelsByPool(kind, poolIDs)
 	if len(poolIDs) == 0 {
@@ -105,14 +80,11 @@ func (s *ChannelScheduler) getActiveChannelsByPool(kind ChannelKind, poolIDs []s
 			priority = i + 1
 		}
 
-		// 计算渠道动态分数
-		score := s.calculateChannelScore(&upstream, i, kind)
 		channel := ChannelInfo{
 			Index:    i,
 			Name:     upstream.Name,
 			Priority: priority,
 			Status:   status,
-			Score:    score,
 			Promoted: config.IsChannelInPromotion(&upstream),
 			upstream: &upstreams[i],
 		}
@@ -125,7 +97,7 @@ func (s *ChannelScheduler) getActiveChannelsByPool(kind ChannelKind, poolIDs []s
 
 	for poolID := range channelsByPool {
 		channels := channelsByPool[poolID]
-		// 健康促销渠道临时优先，其余按配置优先级和索引排列；动态分数只用于展示。
+		// 健康促销渠道临时优先，其余按配置优先级和索引排列。
 		sort.Slice(channels, func(i, j int) bool {
 			if channels[i].Promoted != channels[j].Promoted {
 				return channels[i].Promoted

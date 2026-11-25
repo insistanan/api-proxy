@@ -58,21 +58,17 @@ func (d *safetyEventDeduper) contains(key string) bool {
 	return exists
 }
 
-func (d *safetyEventDeduper) mark(key string, unassigned bool) error {
+func (d *safetyEventDeduper) mark(key string, unassigned bool) {
 	if d == nil {
-		return nil
+		return
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	hash := sha256.Sum256([]byte(key))
-	if _, exists := d.seen[hash]; !exists && len(d.seen) >= 8192 {
-		return fmt.Errorf("单次请求的内容安全审计事件超过 8192 条上限")
-	}
 	d.seen[hash] = struct{}{}
 	if unassigned {
 		d.unassigned = true
 	}
-	return nil
 }
 
 func (d *safetyEventDeduper) hasUnassigned() bool {

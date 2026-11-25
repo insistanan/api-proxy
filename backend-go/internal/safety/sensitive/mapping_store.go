@@ -46,7 +46,7 @@ var (
 // MappingStore 是加密持久化的占位符↔原文映射库。
 type MappingStore struct {
 	db               *sql.DB
-	masterKeyPath     string
+	masterKeyPath    string
 	mu               sync.RWMutex
 	closed           bool
 	closeOnce        sync.Once

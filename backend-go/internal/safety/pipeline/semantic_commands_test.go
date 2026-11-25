@@ -129,6 +129,7 @@ func TestSemanticObservationReleasesReviewedStream(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, manager.Close()) })
 	cfg := manager.GetSettings()
+	cfg.ContentSafety.Enabled = true
 	cfg.ContentSafety.DangerousCmd = settings
 	require.NoError(t, manager.UpdateSettings(cfg))
 	recorder := &gateTestRecorder{}
@@ -191,6 +192,7 @@ func TestSemanticPipelineHoldsStreamAndPreservesExistingRules(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, manager.Close()) })
 	settings.AIGate.Enabled = true
 	cfg := manager.GetSettings()
+	cfg.ContentSafety.Enabled = true
 	cfg.ContentSafety.DangerousCmd = settings
 	require.NoError(t, manager.UpdateSettings(cfg))
 	pipeline := NewContentSafetyPipelineWithSemantic(manager, &gateTestRecorder{}, nil, s, nil)

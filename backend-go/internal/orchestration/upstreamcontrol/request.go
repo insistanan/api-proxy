@@ -70,7 +70,14 @@ func (s *Scope) acquire(ctx context.Context, candidate Candidate) (*Lease, time.
 		return nil, 0, ErrBudget
 	}
 	queueCtx, cancel := context.WithTimeout(ctx, remaining)
-	lease, waited, err := candidate.Controller.Acquire(queueCtx, candidate.Identity)
+	var lease *Lease
+	var waited time.Duration
+	var err error
+	if background, _ := ctx.Value(backgroundKey{}).(bool); background {
+		lease, waited, err = candidate.Controller.acquireBackground(queueCtx, candidate.Identity)
+	} else {
+		lease, waited, err = candidate.Controller.Acquire(queueCtx, candidate.Identity)
+	}
 	cancel()
 	s.mu.Lock()
 	defer s.mu.Unlock()

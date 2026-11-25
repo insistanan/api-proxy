@@ -83,10 +83,10 @@ func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
 	apiGroup.GET("/conversations/route-options", adminconversations.GetConversationRouteOptions(a.cfgManager))
 	// 会话注册表直接注入。
 	apiGroup.GET("/conversations", adminconversations.ListConversations(a.conversationRegistry))
-	apiGroup.DELETE("/conversations", adminconversations.DeleteAllConversations(a.conversationRegistry, a.sessionManager))
+	apiGroup.DELETE("/conversations", adminconversations.DeleteAllConversations(a.conversationRegistry, a.sessionManager, a.cacheKeepalive))
 	apiGroup.GET("/conversations/:id", adminconversations.GetConversation(a.conversationRegistry))
 	apiGroup.PUT("/conversations/:id/name", adminconversations.SetConversationName(a.conversationRegistry))
-	apiGroup.DELETE("/conversations/:id", adminconversations.DeleteConversation(a.conversationRegistry, a.sessionManager))
+	apiGroup.DELETE("/conversations/:id", adminconversations.DeleteConversation(a.conversationRegistry, a.sessionManager, a.cacheKeepalive))
 	apiGroup.PUT("/conversations/:id/route", adminconversations.SetConversationRouteOverride(a.conversationRegistry, a.cfgManager))
 	apiGroup.DELETE("/conversations/:id/route", adminconversations.ClearConversationRouteOverride(a.conversationRegistry))
 
@@ -156,6 +156,8 @@ func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
 
 // setupChannelAdminAPI 装配各协议渠道管理路由，沿用调用方路由组的鉴权。
 func (a *app) setupChannelAdminAPI(apiGroup *gin.RouterGroup) {
+	apiGroup.GET("/channels/:id/cache-keepalive", channels.GetCacheKeepalive(a.cfgManager, a.cacheKeepalive))
+	apiGroup.POST("/channels/:id/cache-keepalive/stop", channels.StopCacheKeepalive(a.cfgManager, a.cacheKeepalive))
 	a.registerWorker("指纹检测任务", channels.RegisterModelFingerprintRoutes(apiGroup, a.cfgManager))
 	channelDeps := channels.ChannelRouteDeps{
 		Cfg:       a.cfgManager,

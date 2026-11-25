@@ -5,9 +5,35 @@ import (
 	"testing"
 )
 
+func TestContentSafetyMasterSwitch_DefaultAndSerialization(t *testing.T) {
+	settings := DefaultContentSafetyConfig()
+	if settings.Enabled {
+		t.Fatal("内容安全总开关应默认关闭")
+	}
+	if err := json.Unmarshal([]byte(`{"sensitiveInfo":{"enabled":true}}`), &settings); err != nil {
+		t.Fatal(err)
+	}
+	if settings.Enabled {
+		t.Fatal("缺少总开关字段不能根据子规则推断为开启")
+	}
+	settings.Enabled = true
+	body, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored ContentSafetyConfig
+	if err := json.Unmarshal(body, &restored); err != nil {
+		t.Fatal(err)
+	}
+	if !restored.Enabled || !restored.SensitiveInfo.Enabled {
+		t.Fatal("序列化必须保留总开关及子规则的独立状态")
+	}
+}
+
 func TestValidateContentSafetyRejectsUnknownSensitiveDataMode(t *testing.T) {
 	for _, mode := range []string{"", "fallback", "MASK"} {
 		settings := DefaultContentSafetyConfig()
+		settings.Enabled = true
 		settings.SensitiveData.Mode = mode
 		if err := ValidateContentSafetyConfig(settings); err == nil {
 			t.Fatalf("无效敏感数据处置模式 %q 应显式报错", mode)
@@ -69,6 +95,7 @@ func TestValidateContentSafetyRejectsEnabledGroupWithoutRules(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			settings := DefaultContentSafetyConfig()
+			settings.Enabled = true
 			test.mutate(&settings)
 			if err := ValidateContentSafetyConfig(settings); err == nil {
 				t.Fatal("启用但未选择规则应返回错误")

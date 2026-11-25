@@ -19,9 +19,12 @@ import (
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/infra/httpclient"
 	"github.com/insistanan/api-proxy/internal/management/forest"
+	"github.com/insistanan/api-proxy/internal/orchestration/cachekeepalive"
 	"github.com/insistanan/api-proxy/internal/orchestration/circuit"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
 	"github.com/insistanan/api-proxy/internal/orchestration/urlhealth"
+	"github.com/insistanan/api-proxy/internal/protocol/tokenusage"
+	"github.com/insistanan/api-proxy/internal/proxycore"
 	"github.com/insistanan/api-proxy/internal/safety/llmgate"
 	"github.com/insistanan/api-proxy/internal/safety/pipeline"
 	"github.com/insistanan/api-proxy/internal/safety/sensitive"
@@ -51,6 +54,7 @@ type app struct {
 	metricsStore          *metrics.SQLiteStore
 	metricsByKind         map[scheduler.ChannelKind]*metrics.MetricsManager
 	channelScheduler      *scheduler.ChannelScheduler
+	cacheKeepalive        *cachekeepalive.Manager
 	profileManager        *metrics.ProfileManager
 	piAgentAPI            *clients.PiAgentAPI
 	skillsAPI             *clients.SkillsAPI
@@ -99,6 +103,13 @@ func newApp() (_ *app, err error) {
 	if err := a.initSafety(gateCaller); err != nil {
 		return nil, err
 	}
+	a.cacheKeepalive = cachekeepalive.New(a.cfgManager, proxycore.CheckCacheKeepalivePrompt(a.contentSafetyPipeline), func(fact tokenusage.Fact) {
+		if a.usageLedger != nil {
+			a.usageLedger.Record(fact)
+		}
+	})
+	a.channelScheduler.SetCacheKeepalive(a.cacheKeepalive)
+	a.registerWorker("缓存保活", func() error { a.cacheKeepalive.Stop(); return nil })
 	if err := a.initClients(gateCaller); err != nil {
 		return nil, err
 	}

@@ -62,6 +62,7 @@ func finishAttempt(
 	if attemptID == "" {
 		attemptID = nextAttemptLogID("attempt")
 	}
+	currentCacheKeepalive(c).Result(attemptID, success, usage)
 	recordAttemptUsage(c, observation, attemptID, finishedAt, usage)
 	if logCtx.LogStore == nil && logCtx.RequestLogStore == nil {
 		return

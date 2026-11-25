@@ -124,5 +124,6 @@ func recordSemanticObservation(ctx context.Context, recorder BlockedLogRecorder,
 	if err != nil {
 		return fmt.Errorf("记录语义观察结果失败: %w", err)
 	}
-	return metadata.eventDeduper.mark(key, metadata.ConversationID == "")
+	metadata.eventDeduper.mark(key, metadata.ConversationID == "")
+	return nil
 }

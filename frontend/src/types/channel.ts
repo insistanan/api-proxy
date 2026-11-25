@@ -60,6 +60,7 @@ export interface ChannelMetrics {
 }
 
 export interface Channel {
+  cacheKeepalive?: CacheKeepaliveConfig
   builtinProvider?: 'kilo'
   maxConcurrency?: number // 每个 URL、实际协议、Key 组合的配置并发，默认 5
   effectiveConcurrency?: { baseUrl: string; protocol: string; keyIndex: number; maxConcurrency: number }[]
@@ -117,6 +118,40 @@ export interface Channel {
   deprecatedAt?: string // 移入弃用池时间
   injectDummyThoughtSignature?: boolean // Gemini 特定：为 functionCall 注入 dummy thought_signature（兼容第三方 API）
   stripThoughtSignature?: boolean // Gemini 特定：移除 thought_signature 字段（兼容旧版 Gemini API）
+}
+
+export interface CacheKeepaliveConfig {
+  enabled: boolean
+  intervalSeconds: number
+  maxAttempts: number
+  maxIdleMinutes: number
+  prompt: string
+  minCacheHitPercent: number
+  maxOutputTokens: number
+  maxTotalTokens: number
+}
+
+export interface CacheKeepaliveStatus {
+  id: string
+  entryProtocol: string
+  upstreamProtocol: string
+  cacheMode?: 'prefix' | 'implicit' | 'explicit'
+  lastAt?: number
+  expiresAt?: number
+  conversationId: string
+  channelId: string
+  model: string
+  state: 'active' | 'waiting' | 'preparing' | 'ready' | 'sending' | 'stopped'
+  reason?: string
+  attempts: number
+  inputTokens: number
+  cacheReadTokens: number
+  cacheCreationTokens: number
+  outputTokens: number
+  cacheHitPercent: number
+  baselineCacheHitPercent: number
+  nextAt?: number
+  updatedAt: number
 }
 
 export interface ChannelPool {

@@ -162,17 +162,6 @@ func (s *geminiToClaudeStreamState) emitMessageDelta(stopReason string) string {
 	return fmt.Sprintf("event: message_delta\ndata: %s\n\n", deltaJSON)
 }
 
-// geminiStopReasonFromFinish 只认 finishReason；length 语义按子串匹配。
-func geminiStopReasonFromFinish(finishReason string, hasToolCall bool) string {
-	stopReason := "end_turn"
-	if hasToolCall {
-		stopReason = "tool_use"
-	} else if strings.Contains(strings.ToLower(finishReason), "length") {
-		stopReason = "max_tokens"
-	}
-	return stopReason
-}
-
 // ProcessChunk 处理一个上游 SSE data JSON，返回要发给客户端的 Claude SSE 事件。
 func (s *geminiToClaudeStreamState) ProcessChunk(jsonStr string) []string {
 	if s.streamError != nil || s.messageStopped {
@@ -344,8 +333,13 @@ func (s *geminiToClaudeStreamState) ProcessChunk(jsonStr string) []string {
 
 	// 处理结束原因
 	if finishReason, ok := candidate["finishReason"].(string); ok && finishReason != "" {
+		stopReason, err := geminiStopReasonFromFinish(finishReason, s.hasToolCall)
+		if err != nil {
+			s.streamError = err
+			return nil
+		}
 		out = append(out, s.closeTextBlock()...)
-		s.pendingStopReason = geminiStopReasonFromFinish(finishReason, s.hasToolCall)
+		s.pendingStopReason = stopReason
 	}
 
 	return out

@@ -96,6 +96,7 @@ export default [
         TextDecoder: 'readonly',
         TextEncoder: 'readonly',
         Notification: 'readonly',
+        NotificationOptions: 'readonly',
         AudioContext: 'readonly',
         requestAnimationFrame: 'readonly',
         cancelAnimationFrame: 'readonly',

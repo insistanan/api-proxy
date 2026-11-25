@@ -19,11 +19,7 @@ import (
 var reservedPlaceholderPattern = regexp.MustCompile(`\bMASKED_[A-Z0-9_]+_[A-Z2-7]{13}_(?:END|PRESERVE_EXACTLY)\b`)
 var placeholderTokenPattern = regexp.MustCompile(`MASKED_[A-Z0-9_]+_[A-Z2-7]{13}_(?:END|PRESERVE_EXACTLY)`)
 
-const (
-	maxVaultMappings    = 8192
-	maxVaultBytes       = 8 << 20
-	maxPlaceholderBytes = 256
-)
+const maxPlaceholderBytes = 256
 
 // 密钥状态随映射库实例存活；请求持有固定状态，不受配置热切换影响。
 type placeholderKeyState struct {
@@ -196,7 +192,7 @@ func (v *Vault) ReserveText(text string) {
 	if v == nil || !strings.Contains(text, "MASKED_") {
 		return
 	}
-	placeholders := reservedPlaceholderPattern.FindAllString(text, maxVaultMappings+1)
+	placeholders := reservedPlaceholderPattern.FindAllString(text, -1)
 	if len(placeholders) == 0 {
 		return
 	}
@@ -209,10 +205,6 @@ func (v *Vault) ReserveText(text string) {
 		}
 		if _, exists := v.reserved[placeholder]; exists {
 			continue
-		}
-		if len(v.reserved) >= maxVaultMappings {
-			v.err = fmt.Errorf("请求中的保留占位符超过 %d 个上限", maxVaultMappings)
-			return
 		}
 		v.reserved[strings.Clone(placeholder)] = struct{}{}
 	}
@@ -371,7 +363,7 @@ func (v *Vault) preloadOriginals(matches []RedactionMatch) error {
 	if v.err != nil {
 		return v.err
 	}
-	originals := make([]string, 0, min(len(matches), maxVaultMappings))
+	originals := make([]string, 0, len(matches))
 	seen := make(map[string]struct{}, cap(originals))
 	for _, match := range matches {
 		if _, known := v.byOriginal[match.Original]; known {
@@ -379,10 +371,6 @@ func (v *Vault) preloadOriginals(matches []RedactionMatch) error {
 		}
 		if _, duplicate := seen[match.Original]; duplicate {
 			continue
-		}
-		if len(v.byPlaceholder)+len(originals) >= maxVaultMappings {
-			v.err = fmt.Errorf("请求脱敏映射超过容量上限（%d 条或 %d 字节）", maxVaultMappings, maxVaultBytes)
-			return v.err
 		}
 		seen[match.Original] = struct{}{}
 		originals = append(originals, match.Original)
@@ -436,9 +424,6 @@ func (v *Vault) placeholder(kind, original, source string) (string, error) {
 		if _, exists := v.byPlaceholder[placeholder]; exists {
 			continue
 		}
-		if err := v.checkMappingCapacityLocked(original, placeholder); err != nil {
-			return "", err
-		}
 		// 持久库写入（写失败返回错误——fail-closed，映射写不进不转发）。
 		if store != nil {
 			stored, err := store.putMapping(v.ctx, original, kind, placeholder)
@@ -470,14 +455,6 @@ func (s *placeholderKeyState) getKey() ([]byte, error) {
 	return s.key, s.err
 }
 
-func (v *Vault) checkMappingCapacityLocked(original, placeholder string) error {
-	if len(v.byPlaceholder) >= maxVaultMappings || v.bytes+len(original)+len(placeholder) > maxVaultBytes {
-		v.err = fmt.Errorf("请求脱敏映射超过容量上限（%d 条或 %d 字节）", maxVaultMappings, maxVaultBytes)
-		return v.err
-	}
-	return nil
-}
-
 func (v *Vault) addMappingLocked(original, placeholder string) error {
 	if existing, ok := v.byPlaceholder[placeholder]; ok {
 		if existing != original {
@@ -485,9 +462,6 @@ func (v *Vault) addMappingLocked(original, placeholder string) error {
 			return v.err
 		}
 		return nil
-	}
-	if err := v.checkMappingCapacityLocked(original, placeholder); err != nil {
-		return err
 	}
 	original, placeholder = strings.Clone(original), strings.Clone(placeholder)
 	v.byOriginal[original] = placeholder
@@ -531,7 +505,7 @@ func (v *Vault) PreloadPersistent(text string) error {
 	if v == nil {
 		return nil
 	}
-	for _, placeholder := range reservedPlaceholderPattern.FindAllString(text, maxVaultMappings+1) {
+	for _, placeholder := range reservedPlaceholderPattern.FindAllString(text, -1) {
 		if len(placeholder) > maxPlaceholderBytes {
 			v.mu.Lock()
 			v.err = fmt.Errorf("请求中的占位符超过 %d 字节上限", maxPlaceholderBytes)
@@ -557,11 +531,6 @@ func (v *Vault) lookupPlaceholder(placeholder string) (string, bool) {
 		return "", false
 	}
 	// 不能凭模型返回的占位符解密全库；只有本次识别或已加载的会话映射可恢复。
-	if len(v.missing) >= maxVaultMappings {
-		v.err = fmt.Errorf("请求中的未知占位符超过 %d 个上限", maxVaultMappings)
-		v.mu.Unlock()
-		return "", false
-	}
 	v.missing[strings.Clone(placeholder)] = struct{}{}
 	v.mu.Unlock()
 	if v.restoreMiss != nil {

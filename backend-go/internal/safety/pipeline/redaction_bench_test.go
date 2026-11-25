@@ -19,6 +19,7 @@ func (c benchmarkHookContext) Get(key string) (any, bool) {
 
 func BenchmarkContentSafetyCleanHistory(b *testing.B) {
 	settings := config.DefaultContentSafetyConfig()
+	settings.Enabled = true
 	settings.SensitiveData.Mode = config.ContentSafetyModeMask
 	settings.Credential.Enabled = true
 	settings.Credential.EnabledRules = []string{
@@ -53,6 +54,7 @@ func BenchmarkContentSafetyCleanHistory(b *testing.B) {
 // 旧 IPv6 宽正则对这类文本的候选数与文本长度成正比，是此前的主要开销点。
 func BenchmarkContentSafetyCodeLikeHistory(b *testing.B) {
 	settings := config.DefaultContentSafetyConfig()
+	settings.Enabled = true
 	settings.SensitiveData.Mode = config.ContentSafetyModeMask
 	settings.Credential.Enabled = true
 	settings.Credential.EnabledRules = []string{

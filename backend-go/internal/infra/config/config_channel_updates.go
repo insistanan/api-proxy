@@ -10,6 +10,9 @@ import (
 // applyCommonUpdates 应用通用的 UpstreamUpdate 字段到上游配置
 // 返回 shouldResetMetrics 标识是否需要重置指标
 func applyCommonUpdates(upstream *UpstreamConfig, index int, updates UpstreamUpdate, label string) (bool, error) {
+	if updates.CacheKeepalive != nil {
+		upstream.CacheKeepalive = *updates.CacheKeepalive
+	}
 	if updates.MaxConcurrency != nil {
 		if *updates.MaxConcurrency < 1 {
 			return false, fmt.Errorf("最大并发必须是正整数")

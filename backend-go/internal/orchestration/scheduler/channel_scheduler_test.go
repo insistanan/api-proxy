@@ -162,7 +162,7 @@ func TestChannelSelectionKeepsCandidateSnapshot(t *testing.T) {
 
 	selectFrom := func(channels []ChannelInfo) *config.UpstreamConfig {
 		t.Helper()
-		result := s.selectPriorityChannel(channels, nil, ChannelKindMessages, "", s.MetricsManager(ChannelKindMessages))
+		result := s.selectPriorityChannel(channels, nil, ChannelKindMessages, s.MetricsManager(ChannelKindMessages))
 		if result == nil || result.Upstream == nil {
 			t.Fatal("预期选中渠道")
 		}

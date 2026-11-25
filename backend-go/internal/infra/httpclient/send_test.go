@@ -20,7 +20,7 @@ func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error)
 func TestShouldForceIdentityEncoding(t *testing.T) {
 	for _, tc := range []struct {
 		name, path, accept string
-		stream, expected  bool
+		stream, expected   bool
 	}{
 		{"流式请求", "/v1/chat/completions", "", true, true},
 		{"Gemini 流式端点", "/v1beta/models/model:streamGenerateContent?alt=sse", "", false, true},

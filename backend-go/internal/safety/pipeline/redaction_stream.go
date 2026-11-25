@@ -3,11 +3,11 @@ package pipeline
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"sort"
 	"strings"
 
 	"github.com/insistanan/api-proxy/internal/infra/config"
+	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"github.com/insistanan/api-proxy/internal/safety/sensitive"
 )
 
@@ -24,7 +24,6 @@ type streamRestoreTemplate struct {
 	value     interface{}
 	path      []streamPathStep
 	eventName string
-	bytes     int
 }
 
 // RestoreAttachedSSEEvent 对已完成协议转换、即将写给客户端的 SSE 事件执行
@@ -44,11 +43,8 @@ func RestoreAttachedSSEEvent(c requestContextGetter, event string) (string, erro
 		attached.streamMu.Unlock()
 		return restoreAttachedSSEEvent(c, event, boundary)
 	}
-	events, err := attached.prepareToolDelivery(event)
+	events := attached.prepareToolDelivery(event)
 	attached.streamMu.Unlock()
-	if err != nil {
-		return "", wrapContentSafetyHookError(err)
-	}
 	if len(events) == 0 {
 		return "", nil
 	}
@@ -67,32 +63,25 @@ func RestoreAttachedSSEEvent(c requestContextGetter, event string) (string, erro
 }
 
 // prepareToolDelivery 由 streamMu 保护。保持事件顺序，避免工具结束事件先于其参数交付。
-func (a *attachedHookPipeline) prepareToolDelivery(event string) ([]string, error) {
+func (a *attachedHookPipeline) prepareToolDelivery(event string) []string {
 	pending := false
 	for _, state := range a.toolArgs {
 		needsReview := a.streamSettings.DangerousCmd.Enabled && sensitive.IsExecutionTool(state.name) ||
 			a.streamSettings.Credential.Enabled && a.streamMaskMode == config.ContentSafetyModeBlock ||
-			a.streamMaskMode == config.ContentSafetyModeMask
+			reversibleRedactionEnabled(a.streamSettings)
 		if needsReview && !state.finished {
 			pending = true
 			break
 		}
 	}
-	if !pending && len(a.toolDelivery) == 0 {
-		return []string{event}, nil
-	}
-	if len(event) > maxStreamToolArgumentBytes-a.toolDeliveryBytes || len(a.toolDelivery) >= 8192 {
-		return nil, fmt.Errorf("待审核工具的流式交付缓冲超过容量上限")
+	if !pending {
+		// 审核结束后按原顺序释放，不能提前交付尚未完整检查的工具参数。
+		events := append(a.toolDelivery, event)
+		a.toolDelivery = nil
+		return events
 	}
 	a.toolDelivery = append(a.toolDelivery, event)
-	a.toolDeliveryBytes += len(event)
-	if pending {
-		return nil, nil
-	}
-	events := a.toolDelivery
-	a.toolDelivery = nil
-	a.toolDeliveryBytes = 0
-	return events, nil
+	return nil
 }
 
 func restoreAttachedSSEEvent(c requestContextGetter, event string, boundary streamSafetyBoundary) (string, error) {
@@ -105,8 +94,6 @@ func restoreAttachedSSEEvent(c requestContextGetter, event string, boundary stre
 	if err := attached.vault.Err(); err != nil {
 		return "", wrapContentSafetyHookError(err)
 	}
-
-	attached.restoreEventBytes = len(event)
 
 	prefix := ""
 	terminal := boundary.terminal
@@ -213,9 +200,6 @@ func restoreStreamValue(attached *attachedHookPipeline, root, value interface{},
 				} else {
 					restorer = attached.restorer(stateKey, jsonEncoded)
 				}
-				if restorer == nil {
-					return changed
-				}
 				restored := restorer.Feed(text)
 				if childComplete {
 					restored += restorer.Flush()
@@ -225,7 +209,7 @@ func restoreStreamValue(attached *attachedHookPipeline, root, value interface{},
 					changed = true
 				}
 				if restorer.Pending() {
-					attached.setRestorePending(stateKey, streamRestoreTemplate{value: root, path: childPath, eventName: eventName, bytes: attached.restoreEventBytes})
+					attached.restorePending[stateKey] = streamRestoreTemplate{value: root, path: childPath, eventName: eventName}
 				} else {
 					attached.deleteRestorePending(stateKey)
 				}
@@ -255,7 +239,7 @@ func restoreStreamValue(attached *attachedHookPipeline, root, value interface{},
 					changed = true
 				}
 				if restorer.Pending() {
-					attached.setRestorePending(stateKey, streamRestoreTemplate{value: root, path: childPath, eventName: eventName, bytes: attached.restoreEventBytes})
+					attached.restorePending[stateKey] = streamRestoreTemplate{value: root, path: childPath, eventName: eventName}
 				} else {
 					attached.deleteRestorePending(stateKey)
 				}
@@ -304,10 +288,6 @@ func (a *attachedHookPipeline) restorer(key string, jsonEncoded ...bool) *sensit
 	if current := a.restorers[key]; current != nil {
 		return current
 	}
-	if len(a.restorers) >= 2048 {
-		a.restoreErr = fmt.Errorf("流式还原字段超过 2048 个上限")
-		return nil
-	}
 	current := sensitive.NewStreamRestorer(a.vault)
 	if len(jsonEncoded) > 0 && jsonEncoded[0] {
 		current = sensitive.NewJSONStreamRestorer(a.vault)
@@ -316,18 +296,7 @@ func (a *attachedHookPipeline) restorer(key string, jsonEncoded ...bool) *sensit
 	return current
 }
 
-func (a *attachedHookPipeline) setRestorePending(key string, template streamRestoreTemplate) {
-	previous := a.restorePending[key]
-	if a.restorePendingBytes-previous.bytes+template.bytes > 4<<20 {
-		a.restoreErr = fmt.Errorf("流式还原暂存模板超过 4 MiB 上限")
-		return
-	}
-	a.restorePendingBytes += template.bytes - previous.bytes
-	a.restorePending[key] = template
-}
-
 func (a *attachedHookPipeline) deleteRestorePending(key string) {
-	a.restorePendingBytes -= a.restorePending[key].bytes
 	delete(a.restorePending, key)
 }
 
@@ -343,7 +312,6 @@ func DrainAttachedStreamRestoration(c requestContextGetter) ([]string, error) {
 	attached.streamMu.Lock()
 	pending := attached.toolDelivery
 	attached.toolDelivery = nil
-	attached.toolDeliveryBytes = 0
 	attached.streamMu.Unlock()
 	result := make([]string, 0, len(pending)+1)
 	for _, event := range pending {

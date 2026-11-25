@@ -170,6 +170,10 @@ func (cm *ConfigManager) UpdateNetworkSettings(settings NetworkSettings) error {
 
 // ValidateContentSafetyConfig 校验内容安全规则选择，拒绝未知、空白或重复配置。
 func ValidateContentSafetyConfig(settings ContentSafetyConfig) error {
+	if !settings.Enabled {
+		// 关闭时只保存规则草稿；再次启用前完整校验。
+		return nil
+	}
 	if err := validateSensitiveDataMode(settings.SensitiveData.Mode); err != nil {
 		return err
 	}

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/insistanan/api-proxy/internal/dialogue/prompt/cacheinject"
 	"github.com/insistanan/api-proxy/internal/infra/config"
 	"github.com/insistanan/api-proxy/internal/infra/middleware"
 	"github.com/insistanan/api-proxy/internal/orchestration/scheduler"
@@ -251,6 +252,9 @@ func buildProviderRequest(
 	model string,
 	action string,
 ) (*http.Request, error) {
+	if geminiReq.CachedContent != "" && upstream.ServiceType != "gemini" && upstream.ServiceType != "" {
+		return nil, &types.InvalidRequestError{Err: fmt.Errorf("Gemini cachedContent 引用不能转换到 %s；请提供完整上下文或选择 Gemini 上游", upstream.ServiceType)}
+	}
 	// 应用模型映射
 	mappedModel := config.ResolveUpstreamModel(model, upstream)
 	if converters.HasChannelReasoningOverride(upstream) {
@@ -328,6 +332,9 @@ func buildProviderRequest(
 	requestBody, err = converters.ApplyChannelReasoningOverride(requestBody, upstream, mappedModel)
 	if err != nil {
 		return nil, err
+	}
+	if upstream.ServiceType == "claude" && !upstream.DisablePromptCacheInjection {
+		requestBody, _, _ = cacheinject.InjectPromptCacheBreakpoints(requestBody)
 	}
 	req, err := http.NewRequestWithContext(c.Request.Context(), "POST", url, bytes.NewReader(requestBody))
 	if err != nil {
@@ -466,6 +473,10 @@ func handleSuccess(
 	if err := writeResponse(respBytes); err != nil {
 		return nil, err
 	}
+	if upstreamType == "claude" || upstreamType == "openai" {
+		// Gemini 响应格式没有缓存写入字段；内部记账和保活基线必须使用实际上游用量。
+		return tokenusage.ExtractJSONUsage(bodyBytes), nil
+	}
 
 	// 提取 usage 统计
 	var usage *types.Usage
@@ -486,9 +497,10 @@ func handleSuccess(
 		// 原生客户端按 candidatesTokenCount + thoughtsTokenCount 自行求和。
 		thoughtsTokens := geminiResp.UsageMetadata.ThoughtsTokenCount
 		usage = &types.Usage{
-			InputTokens:          actualInputTokens,
-			OutputTokens:         geminiResp.UsageMetadata.CandidatesTokenCount + thoughtsTokens,
-			CacheReadInputTokens: geminiResp.UsageMetadata.CachedContentTokenCount,
+			UnattributedCacheInput: tokenusage.UnattributedCacheInput(geminiResp.UsageMetadata.PromptTokenCount, geminiResp.UsageMetadata.CachedContentTokenCount),
+			InputTokens:            actualInputTokens,
+			OutputTokens:           geminiResp.UsageMetadata.CandidatesTokenCount + thoughtsTokens,
+			CacheReadInputTokens:   geminiResp.UsageMetadata.CachedContentTokenCount,
 		}
 		if thoughtsTokens > 0 {
 			usage.OutputTokensDetails = &types.ClaudeOutputTokensDetails{ThinkingTokens: thoughtsTokens}

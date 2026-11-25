@@ -8,9 +8,11 @@ import { rowsFromImagesExtraParams, type ImagesExtraParamRow } from '@/features/
 import type { ApiTab, ImagesOutputFormat } from '@/types/channel'
 import { isConversationProtocol } from '@/features/channels/services/channel-api'
 import { imagesGIFDefaults } from '@/features/channels/utils/imagesChannelProtocol'
+import { buildCacheKeepalive, defaultCacheKeepalive, supportsCacheKeepalive, type CacheKeepaliveDraft } from '@/features/channels/utils/cacheKeepalive'
 
 /** 表单草稿：AddChannelModal 的唯一可编辑状态本体。 */
 export type ChannelFormState = {
+  cacheKeepalive: CacheKeepaliveDraft
   maxConcurrency: number | string | null
   clientIdentityMode: 'inherit' | 'api' | 'compatibility'
   name: string
@@ -79,6 +81,7 @@ export function supportsChannelClientIdentity(channelType: string, serviceType: 
 /** 新渠道的默认草稿。responses 协议默认启用图片理解（历史行为）。 */
 export function defaultChannelForm(channelType: string): ChannelFormState {
   return {
+    cacheKeepalive: defaultCacheKeepalive(),
     maxConcurrency: 5,
     clientIdentityMode: 'inherit',
     name: '',
@@ -212,6 +215,7 @@ export function buildChannelPayload(
   const urls = deduplicateBaseUrls(form)
   const mapping = isChat ? {} : cloneModelMapping(form.modelMapping)
   const channel: Omit<Channel, 'id' | 'index' | 'latency'> = {
+    cacheKeepalive: buildCacheKeepalive(form.cacheKeepalive, supportsCacheKeepalive(channelType, form.serviceType)),
     maxConcurrency: Number(form.maxConcurrency),
     clientIdentityMode: supportsClientIdentity ? form.clientIdentityMode : 'inherit',
     name: form.name.trim(),
@@ -274,6 +278,8 @@ export function useChannelEditor(channelType: MaybeRefOrGetter<string>) {
     const currentChannelType = toValue(channelType)
     const supportsConversationFeatures =
       currentChannelType !== 'images' && currentChannelType !== 'embeddings' && currentChannelType !== 'decisions'
+    form.cacheKeepalive = channel.cacheKeepalive?.intervalSeconds
+      ? { ...channel.cacheKeepalive } : defaultCacheKeepalive()
     form.maxConcurrency = channel.maxConcurrency ?? 5
     form.name = channel.name
     form.serviceType = channel.serviceType
@@ -340,6 +346,7 @@ export function useChannelEditor(channelType: MaybeRefOrGetter<string>) {
       .map(([source, targets]) => [source, targets.filter(target => !channel.modelMappingChannels?.[source]?.[target])] as const)
       .filter(([, targets]) => targets.length > 0))
     Object.assign(form, {
+      cacheKeepalive: defaults.cacheKeepalive,
       visionCapable: defaults.visionCapable,
       excludeFromConversation: defaults.excludeFromConversation,
       visionLayerEnabled: defaults.visionLayerEnabled,
