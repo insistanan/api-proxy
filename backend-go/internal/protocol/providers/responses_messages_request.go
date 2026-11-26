@@ -129,6 +129,14 @@ func claudeMessagesToResponsesInput(messages []types.ClaudeMessage, includeHisto
 	items := make([]interface{}, 0, len(messages))
 	for _, msg := range messages {
 		switch msg.Role {
+		case "system":
+			items = append(items, map[string]interface{}{
+				"type": "message",
+				"role": "developer",
+				"content": []interface{}{map[string]interface{}{
+					"type": "input_text", "text": extractSystemText(msg.Content),
+				}},
+			})
 		case "assistant":
 			items = append(items, claudeAssistantMessageToResponsesItems(msg, includeHistoryThinking)...)
 		case "tool":

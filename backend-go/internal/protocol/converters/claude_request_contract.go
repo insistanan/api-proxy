@@ -30,7 +30,14 @@ func ValidateClaudeConversion(body []byte, target string) error {
 	}
 	for _, message := range root.Get("messages").Array() {
 		role := message.Get("role").String()
-		if role != "user" && role != "assistant" {
+		switch role {
+		case "system":
+			if err := validateClaudeSystemMessage(message, target); err != nil {
+				return err
+			}
+			continue
+		case "user", "assistant":
+		default:
 			return contract.Invalid("Messages 消息 role 无效: %q", role)
 		}
 		if err := validateContentBlocks(message.Get("content"), target, true); err != nil {
@@ -53,6 +60,37 @@ func ValidateClaudeConversion(body []byte, target string) error {
 		return err
 	}
 	return ValidateClaudeReasoning(body)
+}
+
+func validateClaudeSystemMessage(message gjson.Result, target string) error {
+	for field := range message.Map() {
+		if field != "role" && field != "content" {
+			return contract.Unsupported("Messages → %s 尚不支持 system 消息字段 %q", target, field)
+		}
+	}
+	content := message.Get("content")
+	if content.Type == gjson.String {
+		return nil
+	}
+	if !content.IsArray() {
+		return contract.Invalid("Messages system 消息的 content 必须是字符串或文本块数组")
+	}
+	for _, block := range content.Array() {
+		if block.Get("type").String() != "text" {
+			return contract.Unsupported("Messages → %s 尚不支持 system 消息中的内容块 %q", target, block.Get("type").String())
+		}
+		if block.Get("text").Type != gjson.String {
+			return contract.Invalid("Messages system 消息的文本块必须包含字符串 text")
+		}
+		for field := range block.Map() {
+			switch field {
+			case "type", "text", "cache_control":
+			default:
+				return contract.Unsupported("Messages → %s 尚不支持 system 文本块字段 %q", target, field)
+			}
+		}
+	}
+	return nil
 }
 
 func validateContentBlocks(content gjson.Result, target string, claude bool) error {

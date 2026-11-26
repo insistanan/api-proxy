@@ -114,6 +114,26 @@ func TestUnsupportedConversionAndInvalidReasoningRemainExplicit(t *testing.T) {
 	require.True(t, types.IsUnsupportedProtocol(err))
 }
 
+func TestMessagesSystemRoleRejectsUnsupportedContent(t *testing.T) {
+	for _, suffix := range []string{
+		`"content":[{"type":"tool_result","tool_use_id":"x","content":"text"}]`,
+		`"content":"text","future_control":true`,
+		`"content":[{"type":"text","text":"text","future_control":true}]`,
+	} {
+		err := ValidateClaudeConversion([]byte(`{"messages":[{"role":"system",`+suffix+`}]}`), "gemini")
+		require.True(t, types.IsUnsupportedProtocol(err), "%v", err)
+	}
+	for _, message := range []string{
+		`{"role":"developer","content":"text"}`,
+		`{"role":"system","content":null}`,
+		`{"role":"system","content":[{"type":"text","text":42}]}`,
+	} {
+		err := ValidateClaudeConversion([]byte(`{"messages":[`+message+`]}`), "gemini")
+		var invalid *types.InvalidRequestError
+		require.ErrorAs(t, err, &invalid)
+	}
+}
+
 func TestHistoryToolArgumentsAreClientErrorsAcrossTargets(t *testing.T) {
 	for _, target := range []string{"openai", "claude", "gemini"} {
 		for _, args := range []string{`{bad-json`, `null`, `[]`, `"scalar"`, `{}`} {

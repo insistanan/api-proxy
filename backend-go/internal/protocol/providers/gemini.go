@@ -254,31 +254,14 @@ func buildGeminiSystemInstructionText(claudeReq *types.ClaudeRequest) string {
 		}
 	}
 	for _, msg := range claudeReq.Messages {
-		if strings.ToLower(msg.Role) != "system" {
+		if msg.Role != "system" {
 			continue
 		}
-		if text := extractClaudeMessageText(msg.Content); text != "" {
+		if text := extractSystemText(msg.Content); text != "" {
 			parts = append(parts, text)
 		}
 	}
 	return strings.Join(parts, "\n\n")
-}
-
-func extractClaudeMessageText(content interface{}) string {
-	if str, ok := content.(string); ok {
-		return str
-	}
-	blocks := visionmedia.NormalizeContentBlocks(content)
-	if len(blocks) == 0 {
-		return ""
-	}
-	texts := make([]string, 0, len(blocks))
-	for _, block := range blocks {
-		if text, ok := visionmedia.ExtractTextFromBlock(block); ok {
-			texts = append(texts, text)
-		}
-	}
-	return strings.Join(texts, "\n")
 }
 
 // convertMessages 转换消息
@@ -286,6 +269,10 @@ func (p *GeminiProvider) convertMessages(claudeMessages []types.ClaudeMessage, s
 	messages := make([]map[string]interface{}, 0, len(claudeMessages))
 	names := buildClaudeToolNameMap(claudeMessages)
 	for _, message := range claudeMessages {
+		// Gemini 的系统指令已写入 systemInstruction，不能再作为 user 重复发送。
+		if message.Role == "system" {
+			continue
+		}
 		converted, err := p.convertMessage(message, names)
 		if err != nil {
 			return nil, err

@@ -31,6 +31,10 @@ func (p *OpenAIProvider) convertMessages(claudeReq *types.ClaudeRequest, forceRe
 	}
 
 	for index, msg := range claudeReq.Messages {
+		if msg.Role == "system" {
+			messages = append(messages, types.OpenAIMessage{Role: "system", Content: extractSystemText(msg.Content)})
+			continue
+		}
 		openaiMsg := p.convertMessage(msg)
 		requiresOriginal := forceReasoningContent
 		for _, block := range visionmedia.NormalizeContentBlocks(msg.Content) {

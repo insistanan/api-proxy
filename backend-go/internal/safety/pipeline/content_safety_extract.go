@@ -47,6 +47,12 @@ func extractMessagesSafetySegments(root map[string]interface{}) []SafetySegment 
 			continue
 		}
 		path := fmt.Sprintf("messages[%d].content", messageIndex)
+		if role == "system" {
+			appendKnownTextContent(&segments, "messages", safetySourceSystem, path, content, func(value string) {
+				message["content"] = value
+			})
+			continue
+		}
 		if role == "assistant" {
 			blocks, _ := content.([]interface{})
 			for blockIndex, rawBlock := range blocks {

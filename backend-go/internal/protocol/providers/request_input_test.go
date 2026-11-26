@@ -20,6 +20,48 @@ import (
 
 const sampleClaudeBody = `{"model":"claude-3-5-sonnet","max_tokens":128,"stream":false,"system":"你是测试","messages":[{"role":"user","content":"ping"}]}`
 
+func TestMessagesBuildRequest_InlineSystemMessage(t *testing.T) {
+	body := []byte(`{"model":"claude","max_tokens":4096,"stream":true,"system":[{"type":"text","text":"基础指令"}],"messages":[{"role":"user","content":"问题"},{"role":"system","content":[{"type":"text","text":"环境指令","cache_control":{"type":"ephemeral"}}]},{"role":"assistant","content":"历史回复"},{"role":"user","content":"追问"},{"role":"system","content":"更新指令"}]}`)
+	for _, tc := range []struct {
+		target string
+		paths  map[string]string
+	}{
+		{"claude", map[string]string{
+			"system.0.text": "基础指令", "messages.0.role": "user", "messages.1.role": "system",
+			"messages.1.content.0.text": "环境指令", "messages.1.content.0.cache_control.type": "ephemeral",
+			"messages.4.content": "更新指令",
+		}},
+		{"openai", map[string]string{
+			"messages.0.content": "基础指令", "messages.1.role": "user", "messages.2.role": "system",
+			"messages.2.content": "环境指令", "messages.3.role": "assistant", "messages.5.content": "更新指令",
+		}},
+		{"responses", map[string]string{
+			"instructions": "基础指令", "input.0.role": "user", "input.1.role": "developer",
+			"input.1.content.0.text": "环境指令", "input.2.role": "assistant",
+			"input.4.role": "developer", "input.4.content.0.text": "更新指令",
+		}},
+		{"gemini", map[string]string{
+			"systemInstruction.parts.0.text": "基础指令\n\n环境指令\n\n更新指令",
+			"contents.#":                     "3", "contents.0.parts.0.text": "问题", "contents.1.role": "model",
+			"contents.2.parts.0.text": "追问",
+		}},
+	} {
+		t.Run(tc.target, func(t *testing.T) {
+			upstream := &config.UpstreamConfig{
+				BaseURL: "https://upstream.example.com", ServiceType: tc.target, DisablePromptCacheInjection: true,
+			}
+			outcome, err := GetProvider(tc.target).BuildRequest(RequestInput{
+				Ctx: context.Background(), Method: http.MethodPost, Path: "/v1/messages", Body: body,
+			}, upstream, "fixture")
+			require.NoError(t, err)
+			sent := assertRequestBodyReplay(t, outcome.Request)
+			for path, expected := range tc.paths {
+				require.Equal(t, expected, gjson.GetBytes(sent, path).String(), path)
+			}
+		})
+	}
+}
+
 // 工具结果合并会改变载荷长度；首次发送及多次重放必须使用合并后的同一份内容。
 func TestClaudeProviderBuildRequest_FinalBodyIsReplayable(t *testing.T) {
 	toolBody := `{"model":"claude-3-5-sonnet","max_tokens":128,"stream":true,"safeguards":{"enabled":true},"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"tool-1","name":"read_file","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"输出"},{"type":"text","text":"补充文本"}]}]}`
