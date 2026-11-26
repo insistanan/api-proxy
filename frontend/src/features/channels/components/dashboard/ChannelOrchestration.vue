@@ -6,6 +6,7 @@
       :channel-type="channelType"
       :shared-vision-channels="visionChannels"
       @add-channel="$emit('addChannel', $event)"
+      @add-preset-channel="$emit('addChannelPreset', $event)"
       @edit="$emit('edit', $event)"
       @delete="handlePoolDelete"
       @error="$emit('error', $event)"
@@ -226,6 +227,7 @@ import { useChannelActivity } from '@/features/channels/composables/useChannelAc
 import { useClipboard } from '@/shared/composables/useClipboard'
 import { defineLazyChart } from '@/shared/utils/lazyChart'
 import { channelServiceLabel } from '@/features/channels/utils/imagesChannelProtocol'
+import type { ChannelDraftPreset } from '@/features/channels/utils/channelDraftPreset'
 import {
   getLatencyColor,
   isLatencyValid,
@@ -264,6 +266,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (_e: 'addChannel', _poolId: string): void
+  (_e: 'addChannelPreset', _preset: ChannelDraftPreset): void
   (_e: 'edit', _channel: Channel): void
   (_e: 'duplicate', _channel: Channel): void
   (_e: 'delete', _channelId: number, _kind?: ApiTab): void

@@ -105,6 +105,7 @@ import { findNavigation } from '@/router/navigation'
 import { API_TABS, API_TAB_LABELS, type ApiTab } from '@/features/channels/services/channel-api'
 import { isPresetProtocol } from '@/features/channels/utils/channelPresets'
 import { useChannelModal } from '@/features/channels/composables/useChannelModal'
+import type { ChannelDraftPreset } from '@/features/channels/utils/channelDraftPreset'
 import ChannelQuickForm from '@/features/channels/components/form/ChannelQuickForm.vue'
 import ChannelDetailedForm from '@/features/channels/components/form/ChannelDetailedForm.vue'
 import ChannelProviderDrawer from '@/features/channels/components/form/ChannelProviderDrawer.vue'
@@ -118,6 +119,7 @@ interface Props {
   channelType?: ApiTab
   initialPoolId?: string
   allowProtocolChange?: boolean
+  draftPreset?: ChannelDraftPreset | null
 }
 
 const props = withDefaults(defineProps<Props>(), {

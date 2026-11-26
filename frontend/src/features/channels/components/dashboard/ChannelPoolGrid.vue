@@ -128,7 +128,18 @@
         <span class="text-sm font-medium">公用纯图片理解池</span>
         <UiBadge size="x-small">{{ visionChannels.length }}</UiBadge>
       </div>
-      <span class="section-inline-label">图片理解渠道</span>
+      <div class="flex items-center gap-2">
+        <span class="section-inline-label">图片理解渠道</span>
+        <UiButton
+          icon="mdi-plus"
+          size="x-small"
+          color="primary"
+          variant="tonal"
+          title="添加图片理解渠道"
+          aria-label="添加图片理解渠道"
+          @click="emit('addPresetChannel', 'vision')"
+        />
+      </div>
     </header>
     <div class="vision-channel-list">
       <div v-for="channel in visionChannels" :id="channel.id ? channelAnchorId(channel.kind ?? channelType, channel.id) : undefined" :key="`${channel.kind ?? channelType}-${channel.index}`" class="vision-channel-row" tabindex="-1" @click="emit('edit', channel)">
@@ -161,7 +172,7 @@
           </UiButton>
         </div>
       </div>
-      <EmptyState v-if="visionChannels.length === 0" variant="inline" icon="mdi-image-multiple-outline" title="暂无公用图片理解渠道" description="在渠道的编排设置中把它加入公用池后，会显示在这里。" />
+      <EmptyState v-if="visionChannels.length === 0" variant="inline" icon="mdi-image-multiple-outline" title="暂无公用图片理解渠道" description="点击右上角 + 新建，或在渠道的编排设置中把它加入公用池。" />
     </div>
   </section>
 
@@ -171,7 +182,18 @@
         <span class="text-sm font-medium">文本摘要池</span>
         <UiBadge size="x-small">{{ summaryChannels.length }}</UiBadge>
       </div>
-      <span class="section-inline-label">{{ protocolLabel(channelType) }} 入口 · 独立摘要</span>
+      <div class="flex items-center gap-2">
+        <span class="section-inline-label">{{ protocolLabel(channelType) }} 入口 · 独立摘要</span>
+        <UiButton
+          icon="mdi-plus"
+          size="x-small"
+          color="primary"
+          variant="tonal"
+          title="添加文本摘要渠道"
+          aria-label="添加文本摘要渠道"
+          @click="emit('addPresetChannel', 'summary')"
+        />
+      </div>
     </header>
     <div class="vision-channel-list">
       <div v-for="channel in summaryChannels" :id="channel.id && !channel.visionCapable ? channelAnchorId(channelType, channel.id) : undefined" :key="channel.id ?? channel.index" class="vision-channel-row" tabindex="-1">
@@ -185,7 +207,7 @@
         <UiButton size="x-small" variant="text" @click="emit('edit', channel)">配置</UiButton>
         <UiButton size="x-small" color="error" variant="text" @click="emit('delete', channel.index, channel.kind)">删除</UiButton>
       </div>
-      <EmptyState v-if="summaryChannels.length === 0" variant="inline" icon="mdi-chat-outline" title="暂无文本摘要渠道" description="在渠道的上下文压缩设置中加入摘要池并指定模型，再为主渠道开启委托。" />
+      <EmptyState v-if="summaryChannels.length === 0" variant="inline" icon="mdi-chat-outline" title="暂无文本摘要渠道" description="点击右上角 + 新建，或在渠道的上下文压缩设置中加入摘要池并指定模型。" />
     </div>
   </section>
 
@@ -234,6 +256,7 @@ import { API_TAB_LABELS, isConversationProtocol, type ApiTab } from '@/features/
 import { useChannelStore } from '@/features/channels/stores/channel'
 import { FREE_POOL_ID } from '@/features/channels/services/free-channels'
 import { channelAnchorId } from '@/features/channels/utils/channelSearch'
+import type { ChannelDraftPreset } from '@/features/channels/utils/channelDraftPreset'
 import FreeChannelPool from '@/features/channels/components/dashboard/FreeChannelPool.vue'
 import AppDialog from '@/shared/components/overlay/AppDialog.vue'
 import EmptyState from '@/shared/components/feedback/EmptyState.vue'
@@ -247,6 +270,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   addChannel: [poolId: string]
+  addPresetChannel: [preset: ChannelDraftPreset]
   edit: [channel: Channel]
   delete: [channelId: number, kind?: ApiTab]
   error: [message: string]

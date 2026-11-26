@@ -61,6 +61,9 @@ export type ChannelFormState = {
 /** 新建 Embeddings 渠道的默认输出维度，与常用的 1024 维向量模型一致。 */
 export const EMBEDDINGS_DIMENSIONS_DEFAULT = 1024
 
+/** 独立出站代理的默认地址：切换到“使用独立代理”时直接填入，而不是只显示占位提示。 */
+export const DEFAULT_CUSTOM_PROXY_URL = 'http://localhost:7897'
+
 export const defaultCompaction = (): CompactionConfig => ({
   summaryPool: false, summaryCapable: false, summaryModel: '', detectClientPrompts: false,
   nativeSourceModel: '', nativeModel: '', nativeCompatibilityConfirmed: false
@@ -102,7 +105,7 @@ export function defaultChannelForm(channelType: string): ChannelFormState {
     useFullUrl: false,
     website: '',
     insecureSkipVerify: false,
-    proxyMode: 'inherit',
+    proxyMode: 'direct',
     proxyUrl: '',
     lowQuality: false,
     visionCapable: channelType === 'responses',

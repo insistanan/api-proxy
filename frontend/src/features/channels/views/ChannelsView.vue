@@ -81,6 +81,7 @@
       :dashboard-recent-activity="channelStore.currentDashboardRecentActivity"
       :vision-channels="sharedVisionChannels"
       @add-channel="openAddChannel"
+      @add-channel-preset="openAddChannelPreset"
       @edit="editChannel"
       @duplicate="copyChannel"
       @delete="handleDeleteChannel"
@@ -123,6 +124,7 @@ import ConfirmDialog from '@/shared/components/overlay/ConfirmDialog.vue'
 import { useConfirm } from '@/shared/composables/useConfirm'
 import { deletionImpactWarning } from '@/features/channels/utils/deletionImpact'
 import { channelAnchorId } from '@/features/channels/utils/channelSearch'
+import type { ChannelDraftPreset } from '@/features/channels/utils/channelDraftPreset'
 import PageHeader from '@/shared/components/layout/PageHeader.vue'
 import EmptyState from '@/shared/components/feedback/EmptyState.vue'
 import DisclosureSection from '@/shared/components/layout/DisclosureSection.vue'
@@ -218,6 +220,9 @@ async function locateChannel(request: NonNullable<typeof channelStore.locateRequ
 }
 
 const openAddChannel = (poolId = 'default') => dialogStore.openAddChannelModal(channelType.value, poolId)
+// 公用池的新建入口：带上池子的渠道身份，建完直接出现在对应池中。
+const openAddChannelPreset = (preset: ChannelDraftPreset) =>
+  dialogStore.openAddChannelModal(channelType.value, 'default', false, preset)
 const editChannel = (channel: Channel) => dialogStore.openEditChannelModal(channel, channel.kind ?? channelType.value)
 const copyChannel = (channel: Channel) => dialogStore.openCopyChannelModal(channel, channel.kind ?? channelType.value)
 const handleDeleteChannel = async (channelId: number, kind?: ApiTab) => {

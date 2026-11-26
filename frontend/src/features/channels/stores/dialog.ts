@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { ApiTab, Channel } from '@/types'
+import type { ChannelDraftPreset } from '@/features/channels/utils/channelDraftPreset'
 
 /**
  * 对话框状态管理 Store
@@ -20,16 +21,24 @@ export const useDialogStore = defineStore('dialog', () => {
   const channelType = ref<ApiTab>('messages')
   const initialPoolId = ref('default')
   const allowProtocolChange = ref(false)
+  // 从公用池的“添加”入口新建时携带的渠道身份预设。
+  const draftPreset = ref<ChannelDraftPreset | null>(null)
 
   // ===== 操作方法 =====
 
   /**
    * 打开添加渠道对话框
    */
-  function openAddChannelModal(type: ApiTab, poolId = 'default', selectableProtocol = false) {
+  function openAddChannelModal(
+    type: ApiTab,
+    poolId = 'default',
+    selectableProtocol = false,
+    preset: ChannelDraftPreset | null = null
+  ) {
     channelType.value = type
     initialPoolId.value = poolId
     allowProtocolChange.value = selectableProtocol
+    draftPreset.value = preset
     editingChannel.value = null
     copyingChannel.value = null
     showAddChannelModal.value = true
@@ -42,6 +51,7 @@ export const useDialogStore = defineStore('dialog', () => {
     channelType.value = type
     initialPoolId.value = 'default'
     allowProtocolChange.value = false
+    draftPreset.value = null
     editingChannel.value = channel
     copyingChannel.value = null
     showAddChannelModal.value = true
@@ -53,6 +63,7 @@ export const useDialogStore = defineStore('dialog', () => {
     copySourceType.value = type
     initialPoolId.value = 'default'
     allowProtocolChange.value = false
+    draftPreset.value = null
     editingChannel.value = null
     copyingChannel.value = channel
     showAddChannelModal.value = true
@@ -67,6 +78,7 @@ export const useDialogStore = defineStore('dialog', () => {
     copyingChannel.value = null
     initialPoolId.value = 'default'
     allowProtocolChange.value = false
+    draftPreset.value = null
   }
 
   /**
@@ -85,6 +97,7 @@ export const useDialogStore = defineStore('dialog', () => {
     channelType,
     initialPoolId,
     allowProtocolChange,
+    draftPreset,
 
     // 方法
     openAddChannelModal,

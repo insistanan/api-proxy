@@ -92,6 +92,10 @@
               <div v-for="url in detectedBaseUrls" :key="url" class="base-url-item">
                 <div class="text-xs text-success">{{ url }}</div>
               </div>
+              <div v-if="endpointPreviews.length" class="flex flex-col gap-1">
+                <div class="text-xs text-muted-foreground">最终请求地址</div>
+                <div v-for="url in endpointPreviews" :key="url" class="text-xs text-muted-foreground break-all">{{ url }}</div>
+              </div>
             </div>
           </div>
           <UiBadge v-if="detectedBaseUrls.length > 0" size="x-small" color="success" variant="tonal">
@@ -165,6 +169,7 @@ import type { useChannelModal } from '@/features/channels/composables/useChannel
 import { findNavigation } from '@/router/navigation'
 import ImagesChannelProtocolFields from '@/features/channels/components/form/ImagesChannelProtocolFields.vue'
 import ImagesOutputFields from '@/features/channels/components/form/ImagesOutputFields.vue'
+import { buildEndpointPreviews } from '@/features/channels/utils/upstreamEndpointPreview'
 
 const props = defineProps<{ editor: ReturnType<typeof useChannelModal> }>()
 const {
@@ -198,6 +203,14 @@ const channelTypeLabel = computed(() => findNavigation(`/channels/${channelType.
 const upstreamLabel = computed(() => channelType.value === 'images'
   ? imagesProtocolLabel(quickServiceType.value)
   : serviceTypeOptions.value.find(option => option.value === quickServiceType.value)?.title || quickServiceType.value)
+// 快速模式同样预览网关补全后的最终地址，帮助核对 BaseURL 是否多写或少写版本号。
+const endpointPreviews = computed(() => buildEndpointPreviews({
+  baseUrls: detectedBaseUrls.value,
+  channelType: channelType.value,
+  serviceType: quickServiceType.value,
+  model: form.defaultModel,
+  useFullUrl: form.useFullUrl
+}))
 </script>
 
 <style scoped src="@/features/channels/styles/channel-modal.css"></style>

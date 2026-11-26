@@ -4,12 +4,13 @@ import type { Channel, ChannelPool, ChannelStatus } from '@/api'
 import { api, channelApiByType } from '@/api'
 import { DEFAULT_BRANCH_CONCURRENCY, isPositiveInteger } from '@/features/channels/utils/branchConcurrency'
 import { imagesModelOptions, imagesProtocolLabel, isImagesServiceType, validateImagesOutputSettings } from '@/features/channels/utils/imagesChannelProtocol'
-import { useChannelEditor, buildImagesOutputSettings, EMBEDDINGS_DIMENSIONS_DEFAULT, validateEmbeddingsDimensions, supportsChannelClientIdentity, type ChannelFormState } from '@/features/channels/composables/useChannelEditor'
+import { useChannelEditor, buildImagesOutputSettings, EMBEDDINGS_DIMENSIONS_DEFAULT, DEFAULT_CUSTOM_PROXY_URL, validateEmbeddingsDimensions, supportsChannelClientIdentity, type ChannelFormState } from '@/features/channels/composables/useChannelEditor'
 import { compileImagesExtraParams } from '@/features/channels/utils/imagesExtraParams'
 import { supportsCacheKeepalive, validateCacheKeepalive } from '@/features/channels/utils/cacheKeepalive'
 
 import { useQuickChannelDraft } from '@/features/channels/composables/useQuickChannelDraft'
 import { useChannelModels } from '@/features/channels/composables/useChannelModels'
+import { applyChannelDraftPreset, type ChannelDraftPreset } from '@/features/channels/utils/channelDraftPreset'
 import { API_TAB_LABELS, isConversationProtocol, type ApiTab } from '@/features/channels/services/channel-api'
 import { resolveChannelPreset, type ChannelPreset, type ChannelPresetEndpoint } from '@/features/channels/utils/channelPresets'
 import { useClipboard } from '@/shared/composables/useClipboard'
@@ -23,6 +24,7 @@ export interface ChannelModalProps {
   channelType: ApiTab
   initialPoolId?: string
   allowProtocolChange?: boolean
+  draftPreset?: ChannelDraftPreset | null
 }
 
 export interface ChannelModalEmit {
@@ -147,7 +149,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
       excludeFromConversation: false,
       visionLayerEnabled: false,
       disablePromptCacheKey: false,
-      proxyMode: 'inherit' as const,
+      proxyMode: 'direct' as const,
       proxyUrl: ''
     }
 
@@ -316,6 +318,12 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
       isQuickMode.value = false
     } else {
       isQuickMode.value = true
+      // 从公用池的新建入口进入时直接落到详细表单，并展开承载渠道身份的兼容分区。
+      if (props.draftPreset) {
+        applyChannelDraftPreset(form, props.draftPreset)
+        isQuickMode.value = false
+        detailedSections.compatibility = true
+      }
     }
     draftType = props.channelType
   }
@@ -441,6 +449,11 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
     { title: '强制直连', value: 'direct' },
     { title: '使用独立代理', value: 'custom' }
   ]
+
+  // 切到独立代理时填入真实默认地址，避免输入框只靠占位提示且校验立即报错。
+  const handleProxyModeChange = (mode: string) => {
+    if (mode === 'custom' && !form.proxyUrl.trim()) form.proxyUrl = DEFAULT_CUSTOM_PROXY_URL
+  }
 
   // 多 BaseURL 文本输入（独立变量，保留用户输入的换行）
   const baseUrlsText = ref('')
@@ -1015,6 +1028,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
     addApiKey,
     channelStatusOptions,
     proxyModeOptions,
+    handleProxyModeChange,
     baseUrlsText,
     newApiKey,
     apiKeyError,

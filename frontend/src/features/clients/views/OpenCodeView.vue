@@ -207,6 +207,10 @@
                     <div  class="min-w-0 col-span-12 p-0 mt-4">
                       <JsonPreviewTrigger :data="model.optionsText" title="OpenCode 模型选项"><UiTextarea v-model="model.optionsText" label="模型高级 options JSON" variant="outlined" density="comfortable" rows="3" auto-grow placeholder='{ "key": "value" }' /></JsonPreviewTrigger>
                     </div>
+
+                    <div class="flex justify-end mt-2">
+                      <UiButton size="small" color="error" variant="text" prepend-icon="mdi-delete" @click="removeModel(selectedProvider, model.localId)">删除模型</UiButton>
+                    </div>
                   </div>
                 </UiAccordionItem>
               </UiAccordion>

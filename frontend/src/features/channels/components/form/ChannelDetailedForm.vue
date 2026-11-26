@@ -13,7 +13,7 @@
     <div class="min-w-0 col-span-12 md:col-span-6"  >
       <UiInput
         v-model="form.name"
-        label="渠道名称 *"
+        label="渠道名称"
         placeholder="例如：GPT-4 渠道"
         prepend-inner-icon="mdi-tag"
         variant="outlined"
@@ -51,7 +51,14 @@
     <!-- 基础URL -->
     <div class="min-w-0 col-span-12" >
       <div class="flex items-center justify-between flex-wrap gap-2 mb-2">
-        <span class="text-sm font-medium">请求地址</span>
+        <div class="flex min-w-0 flex-1 items-center gap-3">
+          <span class="text-sm font-medium shrink-0">请求地址</span>
+          <code
+            v-if="endpointPreviewSummary"
+            class="min-w-0 truncate text-xs text-muted-foreground"
+            :title="endpointPreviews.join('\n')"
+          >{{ endpointPreviewSummary }}</code>
+        </div>
         <UiSwitch
           v-model="autoCompleteUrl"
           label="自动补全请求地址"
@@ -65,7 +72,7 @@
       <UiTextarea
         v-model="baseUrlsText"
         :label="form.useFullUrl ? '完整请求地址 *' : '基础URL *'"
-        :placeholder="form.useFullUrl ? '每行一个完整请求地址，包含接口路径和所需查询参数' : '每行一个 URL，支持多个 BaseURL\n例如：\nhttps://api.openai.com/v1\nhttps://api2.openai.com/v1'"
+        :placeholder="form.useFullUrl ? '每行一个完整请求地址，包含接口路径和所需查询参数' : '每行一个 URL，支持多个 BaseURL\n例如：https://api.openai.com/v1\nhttps://api2.openai.com/v1'"
         prepend-inner-icon="mdi-web"
         variant="outlined"
         density="comfortable"
@@ -77,6 +84,9 @@
         hide-details="auto"
       />
       <div class="text-xs text-muted-foreground mt-2">{{ form.useFullUrl ? '按填写的完整地址请求，不再追加版本号或接口路径。' : '填写上游基础地址，每行一个；网关自动补全对应接口路径。' }}</div>
+      <div v-if="endpointPreviews.length > 1" class="mt-1 flex flex-col gap-1">
+        <div v-for="url in endpointPreviews" :key="url" class="break-all text-xs text-muted-foreground">{{ url }}</div>
+      </div>
 
     </div>
 
@@ -354,6 +364,7 @@ v-model="form.defaultModel" searchable
               prepend-inner-icon="mdi-web"
               variant="outlined"
               density="comfortable"
+              @update:model-value="handleProxyModeChange"
             />
           </div>
 
@@ -361,7 +372,7 @@ v-model="form.defaultModel" searchable
             <UiInput
               v-model="form.proxyUrl"
               label="独立代理地址 *"
-              placeholder="http://127.0.0.1:7897"
+              placeholder="http://localhost:7897"
               prepend-inner-icon="mdi-web"
               variant="outlined"
               density="comfortable"
@@ -628,6 +639,7 @@ import ChannelCacheKeepaliveFields from '@/features/channels/components/form/Cha
 import ChannelCompactionFields from '@/features/channels/components/form/ChannelCompactionFields.vue'
 import { supportsCacheKeepalive } from '@/features/channels/utils/cacheKeepalive'
 import { validateEmbeddingsDimensions } from '@/features/channels/composables/useChannelEditor'
+import { buildEndpointPreviews } from '@/features/channels/utils/upstreamEndpointPreview'
 import { isConversationProtocol } from '@/features/channels/services/channel-api'
 
 const props = defineProps<{ editor: ReturnType<typeof useChannelModal> }>()
@@ -648,6 +660,7 @@ const {
   removeImagesExtraParam,
   channelStatusOptions,
   proxyModeOptions,
+  handleProxyModeChange,
   baseUrlsText,
   errors,
   rules,
@@ -699,6 +712,18 @@ const reasoningEffortHint = computed(() => {
         : '覆盖请求等级；模型须支持所选等级。'
   }
 })
+
+// 自动补全开启时展示网关实际请求的最终地址，规则与后端 URL 拼接一致。
+const endpointPreviews = computed(() => buildEndpointPreviews({
+  baseUrls: baseUrlsText.value.split('\n'),
+  channelType: channelType.value,
+  serviceType: form.serviceType,
+  model: form.defaultModel,
+  useFullUrl: form.useFullUrl
+}))
+const endpointPreviewSummary = computed(() => endpointPreviews.value.length > 1
+  ? `${endpointPreviews.value.length} 个最终地址`
+  : endpointPreviews.value[0] ?? '')
 
 // 摘要读取当前草稿，让收起的分区仍能表达已选择的策略，不额外维护状态。
 const connectionSummary = computed(() => {

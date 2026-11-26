@@ -7,6 +7,7 @@
     :copy-source-type="dialogStore.copySourceType"
     :initial-pool-id="dialogStore.initialPoolId"
     :allow-protocol-change="dialogStore.allowProtocolChange"
+    :draft-preset="dialogStore.draftPreset"
     :saving="channelStore.isSavingChannel || channelStore.isDeletingChannel"
     @update:show="visible => { if (!visible) dialogStore.closeAddChannelModal() }"
     @save="handleSaveChannel"
