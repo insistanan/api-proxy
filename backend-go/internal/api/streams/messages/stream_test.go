@@ -71,6 +71,7 @@ func TestProcessStreamErrorClosesDeliveredReasoningAndText(t *testing.T) {
 				c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 				envCfg := &config.EnvConfig{} // 关闭日志时也必须跟踪块生命周期。
 				ctx := NewStreamContext(context.Background(), envCfg)
+				require.NoError(t, ProcessStreamEvent(c, c.Writer, c.Writer, "data: {\"type\":\"message_start\",\"message\":{}}\n\n", ctx, envCfg, nil))
 				start := fmt.Sprintf("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":3,\"content_block\":{\"type\":%q}}\n\n", blockType)
 				require.NoError(t, ProcessStreamEvent(c, c.Writer, c.Writer, start, ctx, envCfg, nil))
 				stop := "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":3}\n\n"
@@ -105,7 +106,8 @@ func TestProcessStreamEventsClosedErrorChannelPreservesEvents(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
-	events := make(chan string, 1)
+	events := make(chan string, 2)
+	events <- "data: {\"type\":\"message_start\",\"message\":{}}\n\n"
 	events <- "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"正常回复\"}}\n\n"
 	close(events)
 	failures := make(chan error)

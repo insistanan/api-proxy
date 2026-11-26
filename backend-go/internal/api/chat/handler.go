@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"insistanan/api-proxy/internal/api/common"
 	"insistanan/api-proxy/internal/infra/config"
 	"insistanan/api-proxy/internal/management/modelcatalog"
 	"insistanan/api-proxy/internal/orchestration/scheduler"
@@ -218,8 +219,8 @@ func handleSuccess(c *gin.Context, resp *http.Response, envCfg *config.EnvConfig
 	}
 	decompressedBytes, wasDecoded, decompressErr := codec.DecompressResponseBodyIfNeeded(resp, bodyBytes, envCfg.Current().MaxRequestBodySize)
 	if decompressErr != nil {
-		log.Printf("[Chat-Response] 错误: 解压响应体超过大小限制: %v", decompressErr)
-		c.JSON(http.StatusBadGateway, gin.H{"error": "Decompressed response body too large"})
+		log.Printf("[Chat-Response] 错误: 解码上游响应体失败: %v", decompressErr)
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to decode upstream response"})
 		return nil, decompressErr
 	}
 	if wasDecoded {
@@ -251,6 +252,5 @@ func handleSuccess(c *gin.Context, resp *http.Response, envCfg *config.EnvConfig
 
 	upstreamreq.ForwardResponseHeaders(resp.Header, c.Writer)
 	proxycore.MarkRequestLogFirstToken(c)
-	c.Data(resp.StatusCode, "application/json", bodyBytes)
-	return usage, nil
+	return usage, common.WriteJSONResponse(c, resp.StatusCode, bodyBytes)
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"insistanan/api-proxy/internal/dialogue/session"
 	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/protocol/codec"
 	"insistanan/api-proxy/internal/protocol/converters"
 	"insistanan/api-proxy/internal/protocol/types"
 )
@@ -70,6 +71,13 @@ func TestResponsesStreamLifecycle(t *testing.T) {
 					require.NoError(t, err)
 					require.Equal(t, 8, usage.OutputTokens)
 					require.True(t, strings.HasSuffix(recorder.Body.String(), "\n\n"))
+					reader := codec.NewSSEEventReader(c.Request.Context(), strings.NewReader(recorder.Body.String()))
+					require.True(t, reader.Scan())
+					require.JSONEq(t, `{"type":"response.output_text.delta","delta":"hello"}`, reader.Event().Data)
+					require.True(t, reader.Scan())
+					require.Regexp(t, `"type"\s*:\s*"response\.(completed|incomplete)"`, reader.Event().Data)
+					require.False(t, reader.Scan())
+					require.NoError(t, reader.Err())
 				} else {
 					require.Error(t, err)
 					require.Equal(t, 1, strings.Count(recorder.Body.String(), "event: error\n"))

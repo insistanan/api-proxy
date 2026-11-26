@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"insistanan/api-proxy/internal/api/common"
 	messagestreams "insistanan/api-proxy/internal/api/streams/messages"
 	"insistanan/api-proxy/internal/infra/config"
 	"insistanan/api-proxy/internal/infra/middleware"
@@ -110,6 +111,10 @@ func handleNormalResponse(
 	if decompressErr != nil && errors.Is(decompressErr, codec.ErrDecompressedBodyTooLarge) {
 		log.Printf("[Messages-Response] 错误: 解压响应体超过大小限制: %v", decompressErr)
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Decompressed response body too large"})
+		return nil, decompressErr
+	}
+	if decompressErr != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to decode upstream response"})
 		return nil, decompressErr
 	}
 	if wasDecoded {
@@ -284,8 +289,11 @@ func handleNormalResponse(
 
 	upstreamreq.ForwardResponseHeaders(resp.Header, c.Writer)
 	proxycore.MarkRequestLogFirstToken(c)
-	c.Data(http.StatusOK, "application/json", clientBody)
+	writeErr := common.WriteJSONResponse(c, http.StatusOK, clientBody)
 	close(responded) // 响应已写出，解除断连监听 goroutine 的等待条件
+	if writeErr != nil {
+		return metricsUsage, writeErr
+	}
 
 	if envCfg.Current().EnableResponseLogs {
 		responseTime := time.Since(startTime).Milliseconds()

@@ -150,7 +150,7 @@ func ConvertUpstreamStreamLineToResponses(ctx context.Context, serviceType strin
 	}
 	switch serviceType {
 	case ResponsesUpstreamResponses:
-		return []string{string(line) + "\n"}, nil
+		return []string{strings.TrimRight(string(line), "\r\n") + "\n\n"}, nil
 	case ResponsesUpstreamOpenAI:
 		out := ConvertOpenAIChatToResponses(ctx, model, originalRequestJSON, nil, line, state, toolContexts...)
 		if st, ok := (*state).(*chatToResponsesState); ok && st.Err != nil {

@@ -183,6 +183,17 @@ func (s *geminiToClaudeStreamState) ProcessChunk(jsonStr string) []string {
 		s.streamError = NewUpstreamStreamFailedError(upstreamreq.IsUpstreamModelCapacityErrorBody([]byte(jsonStr)), jsonStr)
 		return nil
 	}
+	if candidates, ok := chunk["candidates"].([]interface{}); ok && len(candidates) > 0 {
+		if len(candidates) != 1 {
+			s.streamError = fmt.Errorf("Gemini 转 Messages 不支持多个 candidate")
+			return nil
+		}
+		candidate, ok := candidates[0].(map[string]interface{})
+		if !ok || (candidate["index"] != nil && candidate["index"] != float64(0)) {
+			s.streamError = fmt.Errorf("Gemini 转 Messages 只支持 index 为 0 的 candidate")
+			return nil
+		}
+	}
 	// 定稿后仍可接收纯 usage 尾包，不再接收正文或工具调用。
 	if s.pendingStopReason != "" {
 		s.captureUsage(chunk)
@@ -229,6 +240,10 @@ func (s *geminiToClaudeStreamState) ProcessChunk(jsonStr string) []string {
 
 	content, _ := candidate["content"].(map[string]interface{})
 	parts, _ := content["parts"].([]interface{})
+	if err := preserveGeminiToolArguments([]byte(jsonStr), parts); err != nil {
+		s.streamError = err
+		return nil
+	}
 
 	for _, p := range parts {
 		part, ok := p.(map[string]interface{})

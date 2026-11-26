@@ -85,7 +85,7 @@ func (writer *imagesStreamWriter) imageEvent(name, quotedBase64 string, metadata
 
 		quotedBase64 = quotedBase64[n:]
 	}
-	writeTail := func() error { return common.WriteStream(writer.context.Writer, nil, []byte("}\n\n")) }
+	writeTail := func() error { return common.WriteStream(writer.context.Writer, writer.context.Writer, []byte("}\n\n")) }
 	finish := writeTail
 	if name == writer.prefix+".completed" {
 		if value, exists := writer.context.Get(responsesImageLifecycleKey); exists {
@@ -93,11 +93,7 @@ func (writer *imagesStreamWriter) imageEvent(name, quotedBase64 string, metadata
 			finish = func() error { return lifecycle.finishDelivery(writeTail) }
 		}
 	}
-	if err := finish(); err != nil {
-		return err
-	}
-	writer.context.Writer.Flush()
-	return nil
+	return finish()
 }
 
 func (writer *imagesStreamWriter) completed(item toimages.ImageItem, created int64) error {

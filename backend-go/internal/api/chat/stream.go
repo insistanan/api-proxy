@@ -1,11 +1,8 @@
 package chat
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
-	"insistanan/api-proxy/internal/infra/upstreamreq"
-	"insistanan/api-proxy/internal/protocol/codec"
 	"log"
 	"net/http"
 	"strings"
@@ -14,6 +11,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"insistanan/api-proxy/internal/api/common"
 	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
+	"insistanan/api-proxy/internal/protocol/codec"
 	"insistanan/api-proxy/internal/protocol/types"
 	"insistanan/api-proxy/internal/proxycore"
 	"insistanan/api-proxy/internal/safety/pipeline"
@@ -55,31 +54,25 @@ func handleStreamSuccess(c *gin.Context, resp *http.Response, envCfg *config.Env
 	}
 
 	flusher, _ := c.Writer.(http.Flusher)
-	reader := bufio.NewReaderSize(resp.Body, 64*1024)
+	reader := codec.NewSSEEventReader(c.Request.Context(), resp.Body)
 	var streamUsage *types.Usage
 	completion := chatStreamCompletion{choices: make(map[int]bool)}
-	var streamReadErr error
-	var trailingEventOpen, trailingLineTerminated bool
 
-	for {
+	for reader.Scan() {
 		// 危险命令 AI 闸门的事后否决：非阻塞检查，用户在否决窗口内加黑名单即终止当前流。
 		select {
 		case <-pipeline.AttachedStreamVetoDone(c):
 			return streamUsage, pipeline.HandleAttachedStreamVeto(c)
 		default:
 		}
-		rawLine, readErr := reader.ReadBytes('\n')
 		if err := pipeline.AttachedStreamVetoError(c); err != nil {
 			return streamUsage, err
 		}
-		if len(rawLine) == 0 && readErr != nil {
-			streamReadErr = readErr
-			break
+		event := reader.Event()
+		line, err := reader.DataLine()
+		if err != nil {
+			return streamUsage, err
 		}
-
-		line := strings.TrimSuffix(strings.TrimSuffix(string(rawLine), "\n"), "\r")
-		trailingEventOpen = line != ""
-		trailingLineTerminated = strings.HasSuffix(string(rawLine), "\n")
 		if usage := extractChatUsageFromSSELine(line); usage != nil {
 			streamUsage = mergeChatUsage(streamUsage, usage)
 		}
@@ -97,49 +90,28 @@ func handleStreamSuccess(c *gin.Context, resp *http.Response, envCfg *config.Env
 				return streamUsage, err
 			}
 		}
-		restoredLine, err := pipeline.RestoreAttachedSSEEvent(c, string(rawLine))
+		wire, err := pipeline.RestoreAttachedSSEEvent(c, event.WithDataLine(line))
 		if err != nil {
 			return streamUsage, err
 		}
-		if restoredLine == "" {
-			if readErr != nil {
-				streamReadErr = readErr
-				break
-			}
+		if wire == "" {
 			continue
 		}
-		proxycore.MarkRequestLogFirstToken(c)
-		if err := common.WriteStream(c.Writer, flusher, []byte(restoredLine)); err != nil {
+		if line != "" {
+			proxycore.MarkRequestLogFirstToken(c)
+		}
+		if err := common.WriteStream(c.Writer, flusher, []byte(wire)); err != nil {
 			return streamUsage, err
 		}
 		if completion.done {
-			// 不再读取 [DONE] 后的连接；补齐事件分隔符供 SSE 客户端分派。
-			separator := "\n"
-			if !strings.HasSuffix(string(rawLine), "\n") {
-				separator = "\n\n"
-			}
-			if err := common.WriteStream(c.Writer, flusher, []byte(separator)); err != nil {
-				return streamUsage, err
-			}
-			break
-		}
-
-		if readErr != nil {
-			streamReadErr = readErr
 			break
 		}
 	}
-	if err := codec.CheckStreamCompletion(c.Request.Context(), completion.completed(), streamReadErr); err != nil {
+	if err := pipeline.AttachedStreamVetoError(c); err != nil {
 		return streamUsage, err
 	}
-	if trailingEventOpen && !completion.done {
-		separator := "\n"
-		if !trailingLineTerminated {
-			separator = "\n\n"
-		}
-		if err := common.WriteStream(c.Writer, flusher, []byte(separator)); err != nil {
-			return streamUsage, err
-		}
+	if err := codec.CheckStreamCompletion(c.Request.Context(), completion.completed(), reader.Err()); err != nil {
+		return streamUsage, err
 	}
 	remaining, err := pipeline.DrainAttachedStreamRestoration(c)
 	if err != nil {

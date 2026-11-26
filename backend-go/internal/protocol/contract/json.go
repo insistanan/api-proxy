@@ -2,6 +2,7 @@
 package contract
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -30,7 +31,20 @@ func Object(data []byte, label string) (map[string]interface{}, error) {
 
 // Arguments 区分合法空对象和缺失、损坏、数组或标量参数。
 func Arguments(raw, callID string) (map[string]interface{}, error) {
-	return Object([]byte(raw), "工具 "+callID+" 的参数")
+	data := []byte(raw)
+	if !json.Valid(data) {
+		return nil, fmt.Errorf("工具 %s 的参数不是有效 JSON 对象", callID)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var value map[string]interface{}
+	if err := decoder.Decode(&value); err != nil {
+		return nil, fmt.Errorf("工具 %s 的参数不是有效 JSON 对象: %w", callID, err)
+	}
+	if value == nil {
+		return nil, fmt.Errorf("工具 %s 的参数不能为 null", callID)
+	}
+	return value, nil
 }
 
 func RequestToolCall(callID, name, raw string) error {

@@ -181,6 +181,8 @@ func cloneInterface(in interface{}) interface{} {
 	switch v := in.(type) {
 	case nil:
 		return nil
+	case json.Number:
+		return v
 	case map[string]interface{}:
 		out := make(map[string]interface{}, len(v))
 		for key, value := range v {

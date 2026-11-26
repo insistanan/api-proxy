@@ -23,7 +23,7 @@ type streamPump struct {
 func newStreamPump(ctx context.Context) *streamPump {
 	return &streamPump{
 		ctx:       ctx,
-		eventChan: make(chan string, 100),
+		eventChan: make(chan string),
 		errChan:   make(chan error, 1),
 	}
 }

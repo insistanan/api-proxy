@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/tidwall/gjson"
 	"insistanan/api-proxy/internal/protocol/contract"
 	"insistanan/api-proxy/internal/protocol/types"
 )
@@ -39,6 +40,9 @@ func (p *GeminiProvider) ConvertToClaudeResponse(providerResp *types.ProviderRes
 	// 安全拒绝可不带正文，仍要处理终态与用量。
 	content, _ := candidate["content"].(map[string]interface{})
 	parts, _ := content["parts"].([]interface{})
+	if err := preserveGeminiToolArguments(providerResp.Body, parts); err != nil {
+		return nil, err
+	}
 
 	rectifyGeminiFunctionCallIDs(parts)
 	shadowTurn := buildGeminiShadowTurnFromParts(parts)
@@ -134,6 +138,34 @@ func (p *GeminiProvider) ConvertToClaudeResponse(providerResp *types.ProviderRes
 	}
 
 	return claudeResp, nil
+}
+
+func preserveGeminiToolArguments(body []byte, parts []interface{}) error {
+	rawParts := gjson.GetBytes(body, "candidates.0.content.parts").Array()
+	for i, rawPart := range rawParts {
+		if i >= len(parts) {
+			break
+		}
+		rawArgs := rawPart.Get("functionCall.args")
+		if !rawArgs.Exists() {
+			continue
+		}
+		part, ok := parts[i].(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("Gemini 内容块必须是对象")
+		}
+		call, ok := part["functionCall"].(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("Gemini functionCall 必须是对象")
+		}
+		name, _ := call["name"].(string)
+		args, err := contract.Arguments(rawArgs.Raw, name)
+		if err != nil {
+			return err
+		}
+		call["args"] = args
+	}
+	return nil
 }
 
 // Gemini 的 MAX_TOKENS 必须在工具交付前判断，流式与非流式共用同一映射。

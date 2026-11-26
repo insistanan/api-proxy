@@ -25,6 +25,7 @@ func TestStreamLogBudgetDoesNotLimitDelivery(t *testing.T) {
 			c.Request = httptest.NewRequest("POST", "/v1/messages", nil).WithContext(requestCtx)
 			text := strings.Repeat("完整输出", 1024)
 			for _, event := range []string{
+				`{"type":"message_start","message":{}}`,
 				`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
 				fmt.Sprintf(`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":%q}}`, text),
 				`{"type":"content_block_stop","index":0}`,

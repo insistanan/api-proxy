@@ -1,11 +1,10 @@
 // 本文件负责把估算/补齐后的 usage "写回" SSE 事件：token 字段修补、message_start 的
-// input_tokens 校验、message_delta 形态的 usage 事件构造，以及异常 usage 元组的重建。
+// input_tokens 校验，以及异常 usage 元组的重建。
 // 读取（检测）侧在 stream_usage_detect.go。
 package messages
 
 import (
 	"encoding/json"
-	"fmt"
 	"insistanan/api-proxy/internal/protocol/codec"
 	"insistanan/api-proxy/internal/protocol/tokenusage"
 	"log"
@@ -88,21 +87,6 @@ func patchUsageFieldsWithLog(usage map[string]interface{}, estimatedInput, estim
 				location, originalInput, usage["input_tokens"], originalOutput, usage["output_tokens"])
 		}
 	}
-}
-
-// BuildUsageEvent 构建带 usage 的 message_delta SSE 事件
-func BuildUsageEvent(outputTokens int) string {
-	inputTokens := 0 // 上游未提供输入量，不把全量历史估算写给客户端。
-
-	event := map[string]interface{}{
-		"type": "message_delta",
-		"usage": map[string]int{
-			"input_tokens":  inputTokens,
-			"output_tokens": outputTokens,
-		},
-	}
-	eventJSON, _ := json.Marshal(event)
-	return fmt.Sprintf("event: message_delta\ndata: %s\n\n", eventJSON)
 }
 
 // sanityCheckMessageStreamInputTokens 校验 message_start.message.usage 与顶层 usage 中的

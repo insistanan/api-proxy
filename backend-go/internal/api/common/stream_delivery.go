@@ -12,7 +12,7 @@ import (
 	"insistanan/api-proxy/internal/safety/pipeline"
 )
 
-// WriteStream 将所有写回分支的错误标记为下游故障，包括短写。
+// WriteStream 将写入、短写和可获取的刷新错误标记为下游故障。
 func WriteStream(w io.Writer, flusher http.Flusher, body []byte) error {
 	n, err := w.Write(body)
 	if err == nil && n != len(body) {
@@ -22,9 +22,29 @@ func WriteStream(w io.Writer, flusher http.Flusher, body []byte) error {
 		return &types.DownstreamWriteError{Err: err}
 	}
 	if flusher != nil {
-		flusher.Flush()
+		responseWriter, ok := w.(http.ResponseWriter)
+		if !ok {
+			flusher.Flush()
+			return nil
+		}
+		// Gin 的 Flush 不返回错误，使用其底层 writer 获取传输错误。
+		if ginWriter, ok := responseWriter.(gin.ResponseWriter); ok {
+			if unwrapper, ok := ginWriter.(interface{ Unwrap() http.ResponseWriter }); ok {
+				responseWriter = unwrapper.Unwrap()
+			}
+		}
+		if err := http.NewResponseController(responseWriter).Flush(); err != nil {
+			return &types.DownstreamWriteError{Err: err}
+		}
 	}
 	return nil
+}
+
+// WriteJSONResponse 保留普通响应交付失败，供编排层记录下游故障。
+func WriteJSONResponse(c *gin.Context, status int, body []byte) error {
+	c.Header("Content-Type", "application/json; charset=utf-8")
+	c.Status(status)
+	return WriteStream(c.Writer, nil, body)
 }
 
 // ReportStreamFailure 只为已经开始交付的流发送一次失败事件。

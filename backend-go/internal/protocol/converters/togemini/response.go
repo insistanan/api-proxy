@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/tidwall/gjson"
 	"insistanan/api-proxy/internal/protocol/contract"
 	"insistanan/api-proxy/internal/protocol/tokenusage"
 	"insistanan/api-proxy/internal/protocol/types"
@@ -117,6 +118,17 @@ func ChatResponse(openaiResp map[string]interface{}) (*types.GeminiResponse, err
 		return nil, fmt.Errorf("Chat choice 缺少 message 对象")
 	}
 	if message, ok := choice["message"].(map[string]interface{}); ok {
+		messageJSON, err := json.Marshal(message)
+		if err != nil {
+			return nil, err
+		}
+		thought, err := chatReasoning(gjson.ParseBytes(messageJSON))
+		if err != nil {
+			return nil, err
+		}
+		if thought != "" {
+			parts = append(parts, types.GeminiPart{Text: thought, Thought: true})
+		}
 		// 文本内容
 		if content, ok := message["content"].(string); ok && content != "" {
 			parts = append(parts, types.GeminiPart{

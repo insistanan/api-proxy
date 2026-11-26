@@ -121,6 +121,19 @@ func (s *chatToClaudeStreamState) ProcessLine(line string) []string {
 		s.streamError = NewUpstreamStreamFailedError(upstreamreq.IsUpstreamModelCapacityErrorBody([]byte(jsonStr)), jsonStr)
 		return nil
 	}
+	if choices, ok := chunk["choices"].([]interface{}); ok && len(choices) > 0 {
+		if len(choices) != 1 {
+			s.streamFailed = true
+			s.streamError = fmt.Errorf("Chat 转 Messages 不支持多个 choice")
+			return nil
+		}
+		choice, ok := choices[0].(map[string]interface{})
+		if !ok || (choice["index"] != nil && choice["index"] != float64(0)) {
+			s.streamFailed = true
+			s.streamError = fmt.Errorf("Chat 转 Messages 只支持 index 为 0 的 choice")
+			return nil
+		}
+	}
 	// finish_reason 后只吸收 usage，不能重新打开正文或工具块。
 	if s.pendingStopReason != "" {
 		return nil

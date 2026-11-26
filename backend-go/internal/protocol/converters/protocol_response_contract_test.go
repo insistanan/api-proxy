@@ -208,11 +208,11 @@ func TestGeminiStreamToolsKeepsParallelCallsAndInitialInput(t *testing.T) {
 	parts, err := state.Feed("openai", []byte(`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"a","function":{"name":"f","arguments":"{\"q\":"}},{"index":1,"id":"b","function":{"name":"f","arguments":"{\"q\":"}}]}}]}`))
 	require.NoError(t, err)
 	require.Empty(t, parts)
-	parts, err = state.Feed("openai", []byte(`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"2}"}},{"index":0,"function":{"arguments":"1}"}}]},"finish_reason":"tool_calls"}]}`))
+	parts, err = state.Feed("openai", []byte(`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"9007199254740993}"}},{"index":0,"function":{"arguments":"1}"}}]},"finish_reason":"tool_calls"}]}`))
 	require.NoError(t, err)
 	require.Len(t, parts, 2)
 	require.Equal(t, "a", parts[0].FunctionCall.ID)
-	require.Equal(t, float64(2), parts[1].FunctionCall.Args["q"])
+	require.Equal(t, json.Number("9007199254740993"), parts[1].FunctionCall.Args["q"])
 	require.NoError(t, state.CheckComplete())
 	var claude togemini.StreamTools
 	_, err = claude.Feed("claude", []byte(`{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"c","name":"run","input":{"x":1}}}`))
@@ -220,7 +220,7 @@ func TestGeminiStreamToolsKeepsParallelCallsAndInitialInput(t *testing.T) {
 	parts, err = claude.Feed("claude", []byte(`{"type":"content_block_stop","index":1}`))
 	require.NoError(t, err)
 	require.Len(t, parts, 1)
-	require.Equal(t, float64(1), parts[0].FunctionCall.Args["x"])
+	require.Equal(t, json.Number("1"), parts[0].FunctionCall.Args["x"])
 }
 
 func TestClaudeToolInitialArgumentsCannotBeOverwrittenByDelta(t *testing.T) {

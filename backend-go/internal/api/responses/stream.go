@@ -286,18 +286,18 @@ func handleStreamSuccess(
 		default:
 		}
 		var rawLine []byte
+		var upstreamEvent codec.SSEEvent
 		readErr := streamReadErr
 		if readErr == nil {
-			var event codec.SSEEvent
-			event, readErr = codec.ReadSSEEvent(c.Request.Context(), reader)
-			line, err := event.DataLine()
+			upstreamEvent, readErr = codec.ReadSSEEvent(c.Request.Context(), reader)
+			line, err := upstreamEvent.DataLine()
 			if err != nil {
 				return nil, err
 			}
-			if event.Raw != "" {
+			if upstreamEvent.Raw != "" {
 				rawLine = []byte(line)
 			}
-			if event.Raw != "" && line == "" && readErr == nil {
+			if upstreamEvent.Raw != "" && line == "" && readErr == nil && upstreamType != converters.ResponsesUpstreamResponses {
 				continue
 			}
 		}
@@ -325,7 +325,7 @@ func handleStreamSuccess(
 		}
 
 		if streamLoggingEnabled {
-			logBuffer.Write(rawLine)
+			logBuffer.WriteString(upstreamEvent.Raw)
 			if synthesizer != nil {
 				synthesizer.ProcessLine(line)
 			}
@@ -334,9 +334,12 @@ func handleStreamSuccess(
 		// 正常读取与流尾定稿共用下面的事件处理链，避免两套 usage/安全/会话逻辑。
 		var events []string
 		var err error
-		if finalizing {
+		switch {
+		case finalizing:
 			events, err = converters.FinishUpstreamStreamToResponses(upstreamType, originalRequestJSON, &converterState)
-		} else {
+		case upstreamType == converters.ResponsesUpstreamResponses:
+			events = []string{upstreamEvent.WithDataLine(line)}
+		default:
 			events, err = converters.ConvertUpstreamStreamLineToResponses(
 				c.Request.Context(), upstreamType, originalReq.Model, originalRequestJSON, []byte(line), &converterState,
 				providers.ResponseToolsForRequest(c),
@@ -366,10 +369,6 @@ func handleStreamSuccess(
 
 			// 在 response.completed 事件前注入/修补 usage
 			eventToSend := event
-			if upstreamType == converters.ResponsesUpstreamResponses && isResponsesTerminalEvent(event) {
-				// 原生终止行提前收尾时也必须形成完整 SSE 事件。
-				eventToSend = strings.TrimRight(eventToSend, "\n") + "\n\n"
-			}
 			if isResponsesTerminalEvent(event) {
 				// 仅按 Responses output item 的语义字段估算 output_tokens。
 				// 不能把 reasoning/function-call/audio 的 SSE delta 与完整

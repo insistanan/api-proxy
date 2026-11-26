@@ -39,6 +39,11 @@ func (e SSEEvent) Normalized() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return e.WithDataLine(data), nil
+}
+
+// WithDataLine 用已校验的规范 data 行重建完整事件。
+func (e SSEEvent) WithDataLine(data string) string {
 	var lines []string
 	written := false
 	for _, line := range strings.Split(strings.TrimRight(e.Raw, "\r\n"), "\n") {
@@ -46,13 +51,15 @@ func (e SSEEvent) Normalized() (string, error) {
 		if _, ok := ParseSSEDataLine(line); ok {
 			if !written && data != "" {
 				lines = append(lines, data)
+			} else if !written {
+				lines = append(lines, "data:")
 			}
 			written = true
 		} else {
 			lines = append(lines, line)
 		}
 	}
-	return strings.Join(lines, "\n") + "\n\n", nil
+	return strings.Join(lines, "\n") + "\n\n"
 }
 
 // SSEEventReader 保留与最终事件同时出现的读取错误，交由协议终态判定处理。

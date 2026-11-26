@@ -44,3 +44,21 @@ func TestSSEEventReadingIsIndependentOfTransportChunks(t *testing.T) {
 		require.NoError(t, scanner.Err())
 	}
 }
+
+func TestNormalizedEventsRemainSeparate(t *testing.T) {
+	reader := NewSSEEventReader(context.Background(), strings.NewReader("event: first\ndata: {\ndata: \"x\":1}\n\nevent: second\ndata: {}\n\n"))
+	var wire strings.Builder
+	for reader.Scan() {
+		event, err := reader.Event().Normalized()
+		require.NoError(t, err)
+		wire.WriteString(event)
+	}
+	require.NoError(t, reader.Err())
+	parsed := NewSSEEventReader(context.Background(), strings.NewReader(wire.String()))
+	require.True(t, parsed.Scan())
+	require.Equal(t, "first", parsed.Event().Name)
+	require.JSONEq(t, `{"x":1}`, parsed.Event().Data)
+	require.True(t, parsed.Scan())
+	require.Equal(t, "second", parsed.Event().Name)
+	require.False(t, parsed.Scan())
+}

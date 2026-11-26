@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
+	"insistanan/api-proxy/internal/api/common"
 	"insistanan/api-proxy/internal/dialogue/prompt/cacheinject"
 	"insistanan/api-proxy/internal/infra/config"
 	"insistanan/api-proxy/internal/infra/middleware"
@@ -388,11 +389,11 @@ func handleSuccess(
 
 	decompressedBytes, wasDecoded, decompressErr := codec.DecompressResponseBodyIfNeeded(resp, bodyBytes, envCfg.Current().MaxRequestBodySize)
 	if decompressErr != nil {
-		log.Printf("[Gemini-Response] 错误: 解压响应体超过大小限制: %v", decompressErr)
+		log.Printf("[Gemini-Response] 错误: 解码上游响应体失败: %v", decompressErr)
 		c.JSON(http.StatusBadGateway, types.GeminiError{
 			Error: types.GeminiErrorDetail{
 				Code:    502,
-				Message: "Decompressed response body too large",
+				Message: "Failed to decode upstream response",
 				Status:  "UNAVAILABLE",
 			},
 		})
@@ -414,8 +415,7 @@ func handleSuccess(
 			return err
 		}
 		proxycore.MarkRequestLogFirstToken(c)
-		c.Data(resp.StatusCode, "application/json", checkedBody)
-		return nil
+		return common.WriteJSONResponse(c, resp.StatusCode, checkedBody)
 	}
 
 	// 根据上游类型转换响应
@@ -443,7 +443,9 @@ func handleSuccess(
 	case "claude":
 		// 转换 Claude 响应为 Gemini 格式
 		var claudeResp map[string]interface{}
-		if err := json.Unmarshal(bodyBytes, &claudeResp); err != nil {
+		decoder := json.NewDecoder(bytes.NewReader(bodyBytes))
+		decoder.UseNumber()
+		if err := decoder.Decode(&claudeResp); err != nil {
 			return nil, fmt.Errorf("转换 %s 响应失败: %w", upstreamType, err)
 		}
 		geminiResp, err = togemini.ClaudeResponse(claudeResp)

@@ -1,6 +1,20 @@
 package contract
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
+
+func TestArgumentsPreserveLargeIntegers(t *testing.T) {
+	arguments, err := Arguments(`{"value":9007199254740993}`, "call")
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(arguments)
+	if err != nil || string(encoded) != `{"value":9007199254740993}` {
+		t.Fatalf("工具参数未保留: %s, %v", encoded, err)
+	}
+}
 
 func TestCompleteResponseRequiresExplicitFinish(t *testing.T) {
 	for _, tc := range []struct{ protocol, body string }{

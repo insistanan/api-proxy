@@ -43,8 +43,6 @@ func TestMessagesDelivery_WriteFailureStopsEveryOutputBranch(t *testing.T) {
 		started             bool
 	}{
 		{"正文", `{"type":"content_block_delta","delta":{"type":"text_delta","text":"hello"}}`, "hello", true},
-		{"合成开始", `{"type":"content_block_start","index":0,"content_block":{"type":"text"}}`, "message_start", false},
-		{"估算usage", `{"type":"message_stop"}`, "message_delta", true},
 		{"正常结束", `{"type":"message_stop"}`, "message_stop", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -61,6 +59,27 @@ func TestMessagesDelivery_WriteFailureStopsEveryOutputBranch(t *testing.T) {
 			require.NoError(t, c.Request.Context().Err())
 		})
 	}
+}
+
+func TestMessagesDelivery_DoesNotInjectMissingUsage(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	ctx := NewStreamContext(context.Background(), &config.EnvConfig{})
+	ctx.SeenMessageStart = true
+	event := "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+	require.NoError(t, ProcessStreamEvent(c, c.Writer, c.Writer, event, ctx, &config.EnvConfig{}, nil))
+	require.Equal(t, event, recorder.Body.String())
+	require.Nil(t, ctx.upstreamUsageSnapshot())
+}
+
+func TestMessagesDelivery_RequiresMessageStart(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	ctx := NewStreamContext(context.Background(), &config.EnvConfig{})
+	err := ProcessStreamEvent(c, c.Writer, c.Writer, "data: {\"type\":\"content_block_start\"}\n\n", ctx, &config.EnvConfig{}, nil)
+	require.ErrorContains(t, err, "message_start")
+	require.False(t, c.Writer.Written())
 }
 
 func TestMessagesDelivery_CancelAfterTerminalRemainsSuccessful(t *testing.T) {
@@ -122,6 +141,7 @@ func TestMessagesEvent_ErrorNameRequiresExactSSEField(t *testing.T) {
 		c, _ := gin.CreateTestContext(recorder)
 		c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 		ctx := NewStreamContext(context.Background(), &config.EnvConfig{})
+		ctx.SeenMessageStart = true
 		require.NoError(t, ProcessStreamEvent(c, c.Writer, c.Writer, event, ctx, &config.EnvConfig{}, nil))
 		require.Equal(t, event, recorder.Body.String())
 	}

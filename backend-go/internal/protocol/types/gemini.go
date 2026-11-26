@@ -1,6 +1,9 @@
 package types
 
-import "encoding/json"
+import (
+	"bytes"
+	"encoding/json"
+)
 
 // ============================================================================
 // Gemini API 常量
@@ -62,7 +65,9 @@ func (p *GeminiPart) UnmarshalJSON(data []byte) error {
 		ThoughtSignatureCamel string `json:"thoughtSignature,omitempty"`
 		ThoughtSignatureSnake string `json:"thought_signature,omitempty"`
 	}
-	if err := json.Unmarshal(data, &raw); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&raw); err != nil {
 		return err
 	}
 

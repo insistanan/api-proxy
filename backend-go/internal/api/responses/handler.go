@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"insistanan/api-proxy/internal/api/common"
 	"insistanan/api-proxy/internal/dialogue/session"
 	"insistanan/api-proxy/internal/infra/config"
 	"insistanan/api-proxy/internal/infra/upstreamreq"
@@ -146,6 +147,10 @@ func handleSuccess(
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Decompressed response body too large"})
 		return nil, decompressErr
 	}
+	if decompressErr != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to decode upstream response"})
+		return nil, decompressErr
+	}
 	if wasDecoded {
 		bodyBytes = decompressedBytes
 		upstreamreq.StripEntityHeadersForRebuiltBody(resp.Header)
@@ -248,7 +253,13 @@ func handleSuccess(
 
 	upstreamreq.ForwardResponseHeaders(resp.Header, c.Writer)
 	proxycore.MarkRequestLogFirstToken(c)
-	c.JSON(200, responsesResp)
+	body, err := json.Marshal(responsesResp)
+	if err != nil {
+		return &metricsUsage, fmt.Errorf("编码 Responses 响应失败: %w", err)
+	}
+	if err := common.WriteJSONResponse(c, http.StatusOK, body); err != nil {
+		return &metricsUsage, err
+	}
 
 	// 返回 usage 数据用于指标记录（上游原值快照，不受下发侧校正影响）
 	return &metricsUsage, nil

@@ -219,8 +219,7 @@ func DecompressResponseBodyIfNeeded(response *http.Response, bodyBytes []byte, m
 	}
 
 	if !IsSupportedContentEncoding(encoding) {
-		log.Printf("[Gzip-Warning] 不支持的上游响应 content-encoding: %s，保留原始数据透传", encoding)
-		return bodyBytes, false, nil
+		return nil, false, fmt.Errorf("%w: %s", ErrUnsupportedContentEncoding, encoding)
 	}
 
 	decompressedResult, decodedSuccessfully, decompressErr := DecompressBodyWithLimit(encoding, bodyBytes, maximumBytes)
@@ -229,7 +228,7 @@ func DecompressResponseBodyIfNeeded(response *http.Response, bodyBytes []byte, m
 			log.Printf("[Gzip-Limit] 上游响应体解压输出超过限制 (%d 字节): %v", maximumBytes, decompressErr)
 			return nil, false, decompressErr
 		}
-		log.Printf("[Gzip-Warning] 解压上游响应体失败 (%s): %v，使用原始数据", encoding, decompressErr)
+		log.Printf("[Gzip-Warning] 解压上游响应体失败 (%s): %v", encoding, decompressErr)
 		return bodyBytes, false, decompressErr
 	}
 

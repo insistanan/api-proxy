@@ -401,6 +401,13 @@ func ProcessStreamEvent(
 	}
 
 	eventData, hasEventData := ParseSSEEventData(event)
+	if hasEventData && !ctx.SeenMessageStart {
+		eventType, _ := eventData["type"].(string)
+		switch eventType {
+		case "content_block_start", "content_block_delta", "content_block_stop", "message_delta", "message_stop":
+			return fmt.Errorf("Messages 流在 message_start 前收到 %s", eventType)
+		}
+	}
 	if hasEventData {
 		ctx.captureReasoningContext(eventData)
 		text, toolArguments := streamSafetyFragments(eventData)
@@ -468,34 +475,9 @@ func ProcessStreamEvent(
 		}
 	}
 
-	// 在 message_stop 前注入 usage（上游完全没有 usage 的情况）
-	if !ctx.HasUsage && !ctx.ClientGone && IsMessageStopEvent(event) && !preserveCompactionUsage {
-		usageEvent := BuildUsageEvent(ctx.OutputEstimate.Tokens())
-		if envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug") {
-			log.Printf("[Messages-Stream-Token] 上游无usage, 注入本地估算事件")
-		}
-		if err := ctx.writeEvent(c, w, flusher, usageEvent); err != nil {
-			return err
-		}
-		ctx.HasUsage = true
-	}
-
 	// 修补 token
 	eventToSend := event
 
-	// 兜底注入：如果第一个事件不是 message_start，自动注入
-	if !ctx.SeenMessageStart && !IsMessageStartEvent(event) {
-		if IsContentBlockStartEvent(event) || IsMessageDeltaEvent(event) || IsMessageStopEvent(event) {
-			syntheticStart := BuildMessageStartEvent(ctx.RequestModel)
-			if envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug") {
-				log.Printf("[Messages-Stream-Patch] 上游缺少 message_start，自动注入")
-			}
-			if err := ctx.writeEvent(c, w, flusher, syntheticStart); err != nil {
-				return err
-			}
-			ctx.SeenMessageStart = true
-		}
-	}
 	if IsMessageStartEvent(event) {
 		ctx.SeenMessageStart = true
 	}
