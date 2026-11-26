@@ -62,12 +62,13 @@ export interface SearchResult {
 }
 
 export interface Evaluation {
+  mode: 'intent' | 'safety_retrieval'
   total: number
   correct: number
   falsePositive: number
   falseNegative: number
   durationMs: number
-  cases: { id: string; expected: string; actual: string; score: number; correct: boolean }[]
+  cases: { id: string; expected: string; actual: string; score: number; correct: boolean; blockEligible: boolean }[]
 }
 
 export interface SemanticSafetyConfig {

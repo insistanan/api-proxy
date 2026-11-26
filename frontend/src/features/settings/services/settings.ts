@@ -74,10 +74,10 @@ export const settingsApi = {
     return apiRequest('/extensions/git/pull', { method: 'POST' })
   },
 
-  async pushExtensionsGit(message?: string): Promise<ExtensionsGitSyncResponse> {
+  async pushExtensionsGit(message: string, exportRevision: string): Promise<ExtensionsGitSyncResponse> {
     return apiRequest('/extensions/git/push', {
       method: 'POST',
-      body: JSON.stringify({ message: message ?? '' })
+      body: JSON.stringify({ message, exportRevision })
     })
   }
 }

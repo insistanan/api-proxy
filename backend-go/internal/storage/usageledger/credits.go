@@ -9,7 +9,7 @@ import (
 
 func (s *Store) Credits(ctx context.Context, after int64) ([]tokenusage.Credit, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT seq, input + output + creation + cache_read, at_ms
-FROM usage_facts WHERE seq > ? AND source = 'upstream' ORDER BY seq LIMIT 256`, after)
+FROM usage_facts WHERE seq > ? AND source = 'upstream' ORDER BY seq LIMIT ?`, after, tokenusage.GrowthCreditBatchSize)
 	if err != nil {
 		return nil, err
 	}

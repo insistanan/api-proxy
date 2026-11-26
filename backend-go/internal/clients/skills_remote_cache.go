@@ -1,6 +1,7 @@
 package clients
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -25,6 +26,46 @@ type remoteSkillCache struct {
 	mu         sync.Mutex
 	entries    map[string]remoteSkillCacheEntry
 	totalBytes int64
+	flights    map[string]*remoteSkillFlight
+}
+
+type remoteSkillFlight struct {
+	done chan struct{}
+	pkg  *remoteSkillPackage
+	err  error
+}
+
+// 首个请求拥有下载 Context；等待者可独立取消。任务结束即删除进行中记录。
+func (c *remoteSkillCache) load(ctx context.Context, key string, fetch func() (*remoteSkillPackage, error)) (*remoteSkillPackage, error) {
+	c.mu.Lock()
+	if c.flights == nil {
+		c.flights = make(map[string]*remoteSkillFlight)
+	}
+	if pending, ok := c.flights[key]; ok {
+		c.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-pending.done:
+			return pending.pkg, pending.err
+		}
+	}
+	pending := &remoteSkillFlight{done: make(chan struct{})}
+	c.flights[key] = pending
+	c.mu.Unlock()
+	if cached, ok := c.get(key); ok {
+		pending.pkg = cached
+	} else {
+		pending.pkg, pending.err = fetch()
+		if pending.err == nil {
+			c.put(key, pending.pkg)
+		}
+	}
+	c.mu.Lock()
+	delete(c.flights, key)
+	close(pending.done)
+	c.mu.Unlock()
+	return pending.pkg, pending.err
 }
 
 func (c *remoteSkillCache) get(key string) (*remoteSkillPackage, bool) {

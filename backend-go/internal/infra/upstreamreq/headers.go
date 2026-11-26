@@ -126,7 +126,7 @@ func PrepareUpstreamHeaders(c *gin.Context, targetHost string) http.Header {
 }
 
 // PrepareUpstreamHeadersFromHeader 以显式请求头准备上游请求头
-// （R4-a：providers 的显式输入构造路径不经 gin context）。
+// （providers 的显式输入构造路径不经 gin context）。
 // 未知业务头保留，浏览器凭据、逐跳头、代理控制头和来源信息在此统一清除。
 func PrepareUpstreamHeadersFromHeader(source http.Header, targetHost string) http.Header {
 	var headers http.Header

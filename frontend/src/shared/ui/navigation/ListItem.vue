@@ -18,7 +18,7 @@
 <script setup lang="ts">
 import { computed, inject } from 'vue'
 import { DropdownMenuItem } from 'reka-ui'
-import { listKey } from './context'
+import { listKey } from '@/shared/ui/navigation/context'
 import { menuKey } from '@/shared/ui/overlay/context'
 import Icon from '@/shared/ui/icon/Icon.vue'
 import { colorClass } from '@/shared/ui/variants'

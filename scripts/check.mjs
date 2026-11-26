@@ -114,7 +114,8 @@ function checkInternalModuleDocs() {
         problems.push(`${docPath} 仍登记已删除模块 ${name}/`);
       }
     }
-    for (const match of text.matchAll(/internal\/([a-z][a-z0-9_-]*)/g)) {
+    // 只识别 module 根下的 internal，避免把 dialogue/internal 等嵌套包当成顶层模块。
+    for (const match of text.matchAll(/(?<![\w/])(?:backend-go\/)?internal\/([a-z][a-z0-9_-]*)/g)) {
       const name = match[1];
       if (!actual.has(name)) {
         problems.push(`${docPath} 登记了不存在的模块 internal/${name}/`);

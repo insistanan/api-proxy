@@ -26,6 +26,7 @@
 </template>
 
 <script setup lang="ts">
+import { apiErrorText } from '@/shared/services/http'
 import UiAccordion from '@/shared/ui/disclosure/Accordion.vue'
 import UiAccordionItem from '@/shared/ui/disclosure/AccordionItem.vue'
 import UiInput from '@/shared/ui/field/Input.vue'
@@ -34,7 +35,7 @@ import { onMounted, ref } from 'vue'
 import type { EmbeddingProfile } from '@/types'
 import type { ChannelSelectionOption } from '@/types/channel-selection'
 import ChannelPicker from '@/shared/components/domain/ChannelPicker.vue'
-import { intentApi, intentErrorText } from '@/features/channels'
+import { intentApi } from '@/features/channels'
 const props = defineProps<{ hideTimeout?: boolean; hideSource?: boolean; compact?: boolean }>()
 const model = defineModel<EmbeddingProfile>({ required: true })
 function update<K extends keyof EmbeddingProfile>(key: K, value: EmbeddingProfile[K]) { model.value = { ...model.value, [key]: value } }
@@ -48,7 +49,7 @@ onMounted(async () => {
   if (props.hideSource) return
   loading.value = true
   try { channels.value = (await intentApi.options()).embeddings.map(option => ({ ...option, kind: 'embeddings' })) }
-  catch (cause) { error.value = intentErrorText(cause) }
+  catch (cause) { error.value = apiErrorText(cause) }
   finally { loading.value = false }
 })
 </script>

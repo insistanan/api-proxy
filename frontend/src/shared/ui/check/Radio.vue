@@ -10,7 +10,7 @@
 </template>
 <script setup lang="ts">
 import { inject } from 'vue'
-import { radioKey } from './context'
+import { radioKey } from '@/shared/ui/check/context'
 defineProps<{ value: unknown; label?: string }>()
 const group = inject(radioKey)
 if (!group) throw new Error('Radio 必须放在 RadioGroup 内')

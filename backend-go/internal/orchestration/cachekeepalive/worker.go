@@ -32,7 +32,7 @@ func (m *Manager) invalidate() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, e := range m.entries {
-		if e.revision != revision && e.snapshot != nil {
+		if e.snapshot != nil && !m.matchesRevision(e, revision) {
 			m.stopEntry(e, "配置已更新，等待新的真实请求")
 		}
 	}
@@ -71,7 +71,7 @@ func (m *Manager) dispatch() {
 		if m.stopped || s == nil || e.active != 0 {
 			continue
 		}
-		if e.revision != revision {
+		if !m.matchesRevision(e, revision) {
 			m.stopEntry(e, "配置已更新，等待新的真实请求")
 			continue
 		}
@@ -141,7 +141,23 @@ func (m *Manager) worker() {
 func (m *Manager) validWork(job work, revision uint64) bool {
 	e := job.entry
 	return !m.stopped && m.entries[e.key] == e && e.generation == job.generation &&
-		e.revision == revision && e.snapshot == job.snapshot && e.active == 0
+		m.matchesRevision(e, revision) && e.snapshot == job.snapshot && e.active == 0
+}
+
+// 全局版本仅作为快速失效通知；实际保活资格由本目标及安全策略决定。
+func (m *Manager) matchesRevision(e *entry, revision uint64) bool {
+	if e.revision == revision {
+		return true
+	}
+	if m.targetDigest == nil || e.snapshot == nil || e.snapshot.configDigest == "" {
+		return false
+	}
+	digest, current := m.targetDigest(e.snapshot.source.Kind, e.snapshot.source.Upstream.ID)
+	if digest != e.snapshot.configDigest || current != revision {
+		return false
+	}
+	e.revision = revision
+	return true
 }
 
 func (m *Manager) run(job work) {

@@ -1,5 +1,5 @@
-import { DEFAULT_THEME, THEME_OPTIONS } from './catalog'
-import type { ThemeSettings } from './types'
+import { DEFAULT_THEME, THEME_OPTIONS } from '@/shared/theme/catalog'
+import type { ThemeSettings } from '@/shared/theme/types'
 
 export const THEME_STORAGE_KEY = 'api-proxy-theme'
 

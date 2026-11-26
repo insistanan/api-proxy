@@ -10,12 +10,12 @@ func TestParseResponse_RequiresTrustedUsageAndPreservesCreationBreakdown(t *test
 		creation int64
 		invalid  bool
 	}{
-		{"原生分档", `{"type":"message","usage":{"input_tokens":10,"output_tokens":1,"cache_read_input_tokens":1000,"cache_creation":{"ephemeral_5m_input_tokens":20,"ephemeral_1h_input_tokens":30}}}`, 200, 50, false},
-		{"兼容分档", `{"type":"message","usage":{"input_tokens":10,"output_tokens":1,"cache_read_input_tokens":1000,"cache_creation_5m_input_tokens":20,"cache_creation_1h_input_tokens":30}}`, 200, 50, false},
-		{"完整命中", `{"type":"message","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":1000}}`, 200, 0, false},
-		{"缺少输出", `{"type":"message","usage":{"input_tokens":0,"cache_read_input_tokens":1000}}`, 200, 0, true},
-		{"缺少缓存读取", `{"type":"message","usage":{"input_tokens":1000,"output_tokens":1}}`, 200, 0, true},
-		{"负用量", `{"type":"message","usage":{"input_tokens":-1,"output_tokens":1,"cache_read_input_tokens":1000}}`, 200, 0, true},
+		{"原生分档", `{"type":"message","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":1,"cache_read_input_tokens":1000,"cache_creation":{"ephemeral_5m_input_tokens":20,"ephemeral_1h_input_tokens":30}}}`, 200, 50, false},
+		{"兼容分档", `{"type":"message","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":1,"cache_read_input_tokens":1000,"cache_creation_5m_input_tokens":20,"cache_creation_1h_input_tokens":30}}`, 200, 50, false},
+		{"完整命中", `{"type":"message","stop_reason":"end_turn","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":1000}}`, 200, 0, false},
+		{"缺少输出", `{"type":"message","stop_reason":"end_turn","usage":{"input_tokens":0,"cache_read_input_tokens":1000}}`, 200, 0, true},
+		{"缺少缓存读取", `{"type":"message","stop_reason":"end_turn","usage":{"input_tokens":1000,"output_tokens":1}}`, 200, 0, true},
+		{"负用量", `{"type":"message","stop_reason":"end_turn","usage":{"input_tokens":-1,"output_tokens":1,"cache_read_input_tokens":1000}}`, 200, 0, true},
 		{"缺少用量", `{"type":"message"}`, 200, 0, true},
 		{"错误信封", `{"type":"error","error":{"type":"overloaded_error"}}`, 200, 0, true},
 		{"上游拒绝", `{"type":"error","error":{"type":"rate_limit_error"}}`, 429, 0, true},

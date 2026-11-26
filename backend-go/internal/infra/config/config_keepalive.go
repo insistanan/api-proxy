@@ -1,6 +1,9 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"slices"
@@ -85,6 +88,10 @@ func cacheKeepaliveConfigChanged(previous, candidate Config) bool {
 	// 促销消耗会随每次真实请求保存；它和历史 Key 同步均不改变冻结请求。
 	// 仅浅拷贝渠道列表以屏蔽这些运行字段，不复制模型映射或其他配置内容。
 	for _, value := range []*Config{&previous, &candidate} {
+		value.Settings.Gateway = GatewaySettings{}
+		value.Settings.Prompts = PromptSettings{}
+		value.Settings.Extensions = ExtensionsSettings{}
+		value.Settings.Disguise.AutoUpdateFromRegistry = false
 		value.HistoricalKeysPending = false
 		for _, set := range value.channelSets() {
 			list := slices.Clone(*set.upstreams)
@@ -97,4 +104,37 @@ func cacheKeepaliveConfigChanged(previous, candidate Config) bool {
 		}
 	}
 	return !reflect.DeepEqual(previous, candidate)
+}
+
+// CacheKeepaliveTargetDigest 在同一配置锁内读取目标及版本；无关渠道更新不失效此目标。
+func (cm *ConfigManager) CacheKeepaliveTargetDigest(kind, id string) (string, uint64) {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	for _, set := range cm.config.channelSets() {
+		if set.kind != kind {
+			continue
+		}
+		for _, upstream := range *set.upstreams {
+			if upstream.ID != id {
+				continue
+			}
+			upstream.PromotionCount, upstream.PromotionUntil, upstream.HistoricalAPIKeys = 0, nil, nil
+			upstream.Priority = 0
+			data, err := json.Marshal(struct {
+				Upstream                    UpstreamConfig
+				Safety                      ContentSafetyConfig
+				Network                     NetworkSettings
+				Claude, Codex               bool
+				ClaudeVersion, CodexVersion string
+			}{upstream, cm.config.Settings.ContentSafety, cm.config.Settings.Network,
+				cm.config.ClaudeCodeDisguiseEnabled, cm.config.CodexDisguiseEnabled,
+				cm.config.Settings.Disguise.ClaudeCodeVersion, cm.config.Settings.Disguise.CodexVersion})
+			if err != nil {
+				return "", cm.keepaliveRevision
+			}
+			digest := sha256.Sum256(data)
+			return hex.EncodeToString(digest[:]), cm.keepaliveRevision
+		}
+	}
+	return "", cm.keepaliveRevision
 }

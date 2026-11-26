@@ -1,6 +1,14 @@
 // 技能管理 API：复用统一 HTTP 基础层，保留端点与返回契约。
 import { apiRequest } from '@/shared/services/http'
-import type { RemoteSkillPreview, SkillBackup, SkillLanguage, SkillSearchResponse, SkillSyncReport, SkillTranslationTask, SkillsResponse } from '@/types'
+import type {
+  RemoteSkillPreview,
+  SkillBackup,
+  SkillLanguage,
+  SkillSearchResponse,
+  SkillSyncReport,
+  SkillTranslationTask,
+  SkillsResponse
+} from '@/types'
 
 export const skillsApi = {
   // ============== 本机 Skills 管理 API ==============
@@ -8,7 +16,10 @@ export const skillsApi = {
     return apiRequest('/skills')
   },
 
-  async getSkillContent(locationKey: string, name: string): Promise<{ content: string; path: string; language: SkillLanguage }> {
+  async getSkillContent(
+    locationKey: string,
+    name: string
+  ): Promise<{ content: string; path: string; language: SkillLanguage }> {
     return apiRequest('/skills/content', { method: 'POST', body: JSON.stringify({ locationKey, name }) })
   },
 
@@ -45,9 +56,10 @@ export const skillsApi = {
 
   async installRemoteSkill(
     id: string,
-    targets: string[]
+    targets: string[],
+    commit: string
   ): Promise<{ success: boolean; name: string; source: string; repositoryUrl: string; commit: string }> {
-    return apiRequest('/skills/remote/install', { method: 'POST', body: JSON.stringify({ id, targets }) })
+    return apiRequest('/skills/remote/install', { method: 'POST', body: JSON.stringify({ id, targets, commit }) })
   },
 
   async copySkill(
@@ -81,7 +93,15 @@ export const skillsApi = {
     return apiRequest('/skills/translation')
   },
 
-  async startSkillTranslation(payload: { channelId: string; protocol: string; model: string }): Promise<{ task: SkillTranslationTask }> {
+  async cancelSkillTranslation(taskId: string): Promise<{ task: SkillTranslationTask }> {
+    return apiRequest(`/skills/translation/${encodeURIComponent(taskId)}`, { method: 'DELETE' })
+  },
+
+  async startSkillTranslation(payload: {
+    channelId: string
+    protocol: string
+    model: string
+  }): Promise<{ task: SkillTranslationTask }> {
     return apiRequest('/skills/translation', { method: 'POST', body: JSON.stringify(payload) })
   },
 
@@ -93,7 +113,13 @@ export const skillsApi = {
     model?: string
     channelName?: string
     automatic?: boolean
-  }): Promise<{ success: boolean; path: string; translatedName: string; translatedDescription: string; translationLanguage: SkillLanguage }> {
+  }): Promise<{
+    success: boolean
+    path: string
+    translatedName: string
+    translatedDescription: string
+    translationLanguage: SkillLanguage
+  }> {
     return apiRequest('/skills/backup', { method: 'POST', body: JSON.stringify(payload) })
-  },
+  }
 }

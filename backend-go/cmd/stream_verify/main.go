@@ -7,12 +7,13 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/insistanan/api-proxy/internal/protocol/codec"
 	"io"
 	"net/http"
 	"os"
 	"strings"
 	"time"
+
+	"insistanan/api-proxy/internal/protocol/codec"
 )
 
 type UsageInfo struct {

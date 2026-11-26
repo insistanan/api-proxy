@@ -57,7 +57,10 @@ func (r *Registry) ResolveExistingRecordIDWithError(ctx context.Context, apiKind
 	return "", nil
 }
 
-func (r *Registry) SetRouteOverride(ctx context.Context, recordID string, kind string, channelIndex int, channelName string) (*Record, error) {
+func (r *Registry) SetRouteOverride(ctx context.Context, recordID string, kind string, channelIndex int, channelName string, channelID string) (*Record, error) {
+	if strings.TrimSpace(channelID) == "" {
+		return nil, fmt.Errorf("固定渠道缺少稳定 ID，请重新选择渠道")
+	}
 	now := time.Now()
 
 	if err := r.mu.LockContext(ctx); err != nil {
@@ -76,6 +79,7 @@ func (r *Registry) SetRouteOverride(ctx context.Context, recordID string, kind s
 
 	rec = cloneRecord(rec)
 	rec.RouteOverride = &RouteOverride{
+		ChannelID:    channelID,
 		Kind:         strings.TrimSpace(kind),
 		ChannelIndex: channelIndex,
 		ChannelName:  strings.TrimSpace(channelName),

@@ -76,7 +76,8 @@ func TestToggleAgentAndSyncManifest(t *testing.T) {
 	report, err := SyncManifestToAgents(opts)
 	require.NoError(t, err)
 	require.Equal(t, 0, report.Synced)
-	require.Equal(t, 1, report.Removed) // codex 的 demo-skill 应被清理
+	require.Equal(t, 0, report.Removed) // 同名但未托管的 codex 副本必须保留。
+	require.FileExists(t, filepath.Join(codexDir, "demo-skill", "SKILL.md"))
 
 	info, err := os.Stat(claudeSkillFile)
 	require.NoError(t, err)
@@ -119,11 +120,63 @@ func TestSyncManifestSkipsMissingProjectSkillWithoutDeletingAgentCopies(t *testi
 
 	report, err := SyncManifestToAgents(opts)
 	require.NoError(t, err)
-	require.Equal(t, 1, report.Skipped)
+	require.Len(t, report.Errors, 1)
+	require.Contains(t, report.Errors[0], "项目 Skill 不存在")
 	require.Equal(t, 0, report.Removed)
 
 	_, err = os.Stat(filepath.Join(claudeCopy, "SKILL.md"))
 	require.NoError(t, err)
 	_, err = os.Stat(filepath.Join(codexCopy, "SKILL.md"))
 	require.NoError(t, err)
+}
+
+func TestManagedImportUpdatesEnabledTargetsAndPreservesLocalEdits(t *testing.T) {
+	projectDir, homeDir, opts := setupSkillsTestEnv(t)
+	locations, err := BaseLocations(opts)
+	require.NoError(t, err)
+	var selected []Location
+	var project Location
+	for _, location := range locations {
+		if location.Key == "project" {
+			project = location
+		}
+		if location.Key == "claude-code" || location.Key == "pi" {
+			selected = append(selected, location)
+		}
+	}
+	files := map[string][]byte{"SKILL.md": []byte("---\nname: demo\ndescription: demo\n---\nv1")}
+	require.NoError(t, InstallManaged(opts, selected, "demo", files, nil))
+	files["SKILL.md"] = []byte("---\nname: demo\ndescription: demo\n---\nv2")
+	require.NoError(t, InstallManaged(opts, []Location{project}, "demo", files, nil))
+	claudePath := filepath.Join(homeDir, ".claude", "skills", "demo", "SKILL.md")
+	piPath := filepath.Join(homeDir, ".pi", "agent", "skills", "demo", "SKILL.md")
+	for _, path := range []string{claudePath, piPath, filepath.Join(projectDir, "demo", "SKILL.md")} {
+		raw, err := os.ReadFile(path)
+		require.NoError(t, err)
+		require.Equal(t, files["SKILL.md"], raw)
+	}
+	local := []byte("---\nname: demo\ndescription: local\n---\nlocal edit")
+	require.NoError(t, os.WriteFile(claudePath, local, 0600))
+	report, err := SyncManifestToAgents(opts)
+	require.NoError(t, err)
+	require.Len(t, report.Errors, 1)
+	require.Contains(t, report.Errors[0], "已被本地修改")
+	raw, err := os.ReadFile(claudePath)
+	require.NoError(t, err)
+	require.Equal(t, local, raw)
+}
+
+func TestManifestRejectsCorruptionWithoutRewriting(t *testing.T) {
+	for _, raw := range []string{"null", "", `{"version":0,"skills":{}}`, `{"version":1,"skills":{"demo":["typo"]}}`} {
+		t.Run(raw, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, manifestFileName)
+			require.NoError(t, os.WriteFile(path, []byte(raw), 0600))
+			_, err := ReadManifest(root)
+			require.Error(t, err)
+			actual, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.Equal(t, raw, string(actual))
+		})
+	}
 }

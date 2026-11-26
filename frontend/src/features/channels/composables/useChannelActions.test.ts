@@ -52,6 +52,7 @@ describe('渠道操作提交阶段', () => {
     const pending = env.actions.saveChannel(channel)
     await env.actions.saveChannel(channel)
     expect(env.update).toHaveBeenCalledTimes(1)
+    expect(env.update).toHaveBeenCalledWith(0, channel, 'stable')
     expect(env.factory).toHaveBeenCalledWith('messages')
     expect(env.store.isSavingChannel).toBe(true)
     write.resolve(undefined)
@@ -120,6 +121,42 @@ describe('渠道操作提交阶段', () => {
 })
 
 describe('渠道刷新与稳定身份', () => {
+  it('注销清空后旧读取不回填，也不阻塞新会话刷新', async () => {
+    const store = useChannelStore()
+    const old = deferred<ChannelDashboardResponse>()
+    vi.spyOn(api, 'getChannelDashboard').mockReturnValueOnce(old.promise).mockResolvedValue(dashboard())
+    const pending = store.refreshChannels('messages')
+    await Promise.resolve()
+    store.clearChannels()
+    await store.refreshChannels('messages')
+    old.resolve(dashboard([channel]))
+    await pending
+    expect(store.channelsDataMap.messages.channels).toEqual([])
+  })
+
+  it('自动刷新停止再启动后，旧 tick 不再安排定时器', async () => {
+    vi.useFakeTimers()
+    const store = useChannelStore()
+    const old = deferred<ChannelDashboardResponse>()
+    const refresh = vi.spyOn(api, 'getChannelDashboard').mockReturnValueOnce(old.promise).mockResolvedValue(dashboard())
+    try {
+      store.startAutoRefresh()
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(refresh).toHaveBeenCalledTimes(1)
+      store.stopAutoRefresh()
+      store.startAutoRefresh()
+      old.resolve(dashboard())
+      await vi.advanceTimersByTimeAsync(0)
+      expect(vi.getTimerCount()).toBe(1)
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(refresh).toHaveBeenCalledTimes(2)
+      expect(vi.getTimerCount()).toBe(1)
+    } finally {
+      store.stopAutoRefresh()
+      vi.useRealTimers()
+    }
+  })
+
   it('同协议在刷新进行中再次请求，会补一次刷新并合并排队请求', async () => {
     const store = useChannelStore()
     const first = deferred<ChannelDashboardResponse>()

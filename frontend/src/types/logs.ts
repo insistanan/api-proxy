@@ -1,6 +1,6 @@
 // 日志类型：渠道日志、请求日志与内容安全拦截日志。
 
-import type { ConversationKind } from './conversation'
+import type { ConversationKind } from '@/types/conversation'
 
 export type LogAPIType = ConversationKind | 'cmd_gate' | 'llmgate'
 

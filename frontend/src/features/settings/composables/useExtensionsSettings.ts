@@ -1,10 +1,11 @@
+import { ApiError, apiErrorText } from '@/shared/services/http'
 // extensions 设置与 Git 同步的草稿与操作编排。
 import { computed, ref, watch, type Ref } from 'vue'
 import { api } from '@/api'
 import type { ExtensionsGitStatus, ExtensionsGitSyncResponse } from '@/types'
 import type { SettingsNotice as Notice, SettingsSection } from '@/features/settings/composables/types'
 
-export function useExtensionsSettings(saving: Ref<boolean>, activeSection: Ref<SettingsSection>) {
+export function useExtensionsSettings(saving: Ref<boolean>, reloadRequired: Ref<boolean>, activeSection: Ref<SettingsSection>) {
   const extensionsFormRef = ref()
   const skillsDir = ref('')
   const skillsRepoUrl = ref('')
@@ -78,19 +79,21 @@ export function useExtensionsSettings(saving: Ref<boolean>, activeSection: Ref<S
   )
 
   const saveExtensionsSettings = async () => {
-    const { valid } = await extensionsFormRef.value.validate()
-    if (!valid) return
+    if (saving.value || reloadRequired.value) return
     extensionsNotice.value = null
     saving.value = true
     const dirChanged = skillsDir.value.trim() !== savedSkillsDir.value
     try {
+      const { valid } = await extensionsFormRef.value.validate()
+      if (!valid) return
       const settings = await api.updateSettings({
         extensions: {
           skillsDir: skillsDir.value.trim(),
           skillsRepoUrl: skillsRepoUrl.value.trim()
         }
       })
-      const saved = settings.extensions ?? { skillsDir: '', skillsRepoUrl: '' }
+      if (!settings.extensions) throw new ApiError('服务端未返回扩展设置', 200, undefined, 'INVALID_RESPONSE', true)
+      const saved = settings.extensions
       savedSkillsDir.value = saved.skillsDir
       savedSkillsRepoUrl.value = saved.skillsRepoUrl
       skillsDir.value = saved.skillsDir
@@ -101,9 +104,10 @@ export function useExtensionsSettings(saving: Ref<boolean>, activeSection: Ref<S
       }
       await loadGitStatus()
     } catch (error) {
+      if (error instanceof ApiError && error.committed) reloadRequired.value = true
       extensionsNotice.value = {
-        type: 'error',
-        message: error instanceof Error ? error.message : '保存扩展目录设置失败'
+        type: reloadRequired.value ? 'warning' : 'error',
+        message: apiErrorText(error)
       }
     } finally {
       saving.value = false
@@ -163,7 +167,7 @@ export function useExtensionsSettings(saving: Ref<boolean>, activeSection: Ref<S
   const pullGitRepo = () => runGitAction('pull', () => api.pullExtensionsGit())
 
   const pushGitRepo = () =>
-    runGitAction('push', () => api.pushExtensionsGit(commitMessage.value.trim()))
+    runGitAction('push', () => api.pushExtensionsGit(commitMessage.value.trim(), gitStatus.value?.exportRevision || ''))
 
   return {
     extensionsFormRef,

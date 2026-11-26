@@ -303,8 +303,8 @@ func TestOpenAIProviderHandleStreamResponse_StreamsToolCallArguments(t *testing.
 	}
 }
 
-// 反证切片 2 的结构性修复：finish_reason=tool_calls 不再提前结束流，
-// 其后到达的 usage chunk 必须被纳入 message_delta（旧实现提前 return 丢 usage）。
+// finish_reason=tool_calls 不再提前结束流，
+// 其后到达的 usage chunk 必须被纳入 message_delta。
 func TestChatStream_ToolCallsFinishDoesNotDropTrailingUsage(t *testing.T) {
 	body := strings.Join([]string{
 		`data: {"id":"c","model":"gpt-4o","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"edit_file","arguments":"{\"path\":"}}]},"finish_reason":null}]}`,
@@ -334,7 +334,7 @@ func TestChatStream_ToolCallsFinishDoesNotDropTrailingUsage(t *testing.T) {
 	}
 }
 
-// 反证切片 2 的结构性修复：上游 error 事件不再伪造 message_stop，
+// 上游 error 事件不再伪造 message_stop，
 // 流失败时客户端不应收到成功终止序列。
 func TestChatStream_UpstreamErrorDoesNotFakeMessageStop(t *testing.T) {
 	body := strings.Join([]string{

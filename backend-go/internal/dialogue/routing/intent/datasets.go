@@ -78,6 +78,7 @@ func (s *Service) BuildIndex(ctx context.Context, cfg config.IntentRoutingConfig
 			return err
 		}
 		ids = []string{d.ID}
+		recordPreparation(ctx, "数据集："+d.ID)
 	}
 	for _, id := range ids {
 		d, err := s.Datasets.Get(id)
@@ -90,6 +91,7 @@ func (s *Service) BuildIndex(ctx context.Context, cfg config.IntentRoutingConfig
 		if _, err = s.Datasets.Build(ctx, id, d.Revision, embeddingProfile(cfg)); err != nil {
 			return err
 		}
+		recordPreparation(ctx, fmt.Sprintf("索引：%s@%d", id, d.Revision))
 	}
 	return nil
 }

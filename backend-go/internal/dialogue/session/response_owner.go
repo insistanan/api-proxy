@@ -22,7 +22,7 @@ func (sm *SessionManager) ResponseOwner(ctx context.Context, responseID string) 
 		if _, exists := sm.responseMapping[responseID]; !exists {
 			return "", false, nil
 		}
-		owner := sm.responseOwners[responseID]
+		owner := sm.responseMapping[responseID].Owner
 		return owner, owner != "", nil
 	}
 	var owner string
@@ -38,5 +38,4 @@ func (sm *SessionManager) ResponseOwner(ctx context.Context, responseID string) 
 
 func (sm *SessionManager) forgetResponseMappingLocked(responseID string) {
 	delete(sm.responseMapping, responseID)
-	delete(sm.responseOwners, responseID)
 }

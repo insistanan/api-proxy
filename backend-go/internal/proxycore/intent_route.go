@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"insistanan/api-proxy/internal/dialogue/routing/intent"
@@ -35,9 +36,23 @@ func prepareIntentRoute(c *gin.Context, cfg *config.ConfigManager, sched *schedu
 			if override.Kind != string(kind) {
 				return func() {}, fmt.Errorf("人工固定渠道的协议与当前请求不一致")
 			}
-			up, _, err := ResolveRequestedUpstream(cfg, kind, override.ChannelIndex)
+			upstreams, _, err := cfg.GetChannelConfig(string(kind))
 			if err != nil {
 				return func() {}, err
+			}
+			index := -1
+			for i := range upstreams {
+				if override.ChannelID != "" && upstreams[i].ID == override.ChannelID {
+					index = i
+					break
+				}
+			}
+			if index < 0 {
+				return func() {}, fmt.Errorf("固定渠道已不存在或缺少稳定身份，请重新选择")
+			}
+			up := &upstreams[index]
+			if config.GetChannelStatus(up) == config.ChannelStatusDeleted || up.ExcludeFromConversation || strings.TrimSpace(up.GetEffectiveBaseURL()) == "" {
+				return func() {}, fmt.Errorf("固定渠道已删除、不参与对话或未配置 BaseURL，请重新选择")
 			}
 			manualPool = up.PoolID
 			manualChannel = up.ID

@@ -77,7 +77,7 @@ func (p *MessagesResponsesProvider) ConvertToProviderRequest(c *gin.Context, ups
 	return outcome.Request, outcome.OriginalBody, nil
 }
 
-// BuildRequest 以显式输入构造 Responses 上游请求（R4-a 主实现，不依赖 gin）。
+// BuildRequest 以显式输入构造 Responses 上游请求（不依赖 Gin）。
 func (p *MessagesResponsesProvider) buildRequest(input RequestInput, upstream *config.UpstreamConfig, apiKey string) (*RequestOutcome, error) {
 	originalBodyBytes := input.Body
 	if err := converters.ValidateClaudeConversion(input.Body, "responses"); err != nil {

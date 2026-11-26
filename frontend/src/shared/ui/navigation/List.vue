@@ -3,7 +3,7 @@
 </template>
 <script setup lang="ts" generic="T">
 import { computed, provide } from 'vue'
-import { listKey } from './context'
+import { listKey } from '@/shared/ui/navigation/context'
 const props = defineProps<{ selected?: T[]; nav?: boolean; mandatory?: boolean; density?: string; bgColor?: string }>()
 const emit = defineEmits<{ 'update:selected': [value: T[]] }>()
 provide(listKey, {

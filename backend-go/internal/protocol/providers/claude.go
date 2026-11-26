@@ -53,7 +53,7 @@ func redirectModelInBody(bodyBytes []byte, upstream *config.UpstreamConfig) []by
 }
 
 // ConvertToProviderRequest 转换为 Claude 请求（实现真正的透传）。
-// R4-a：解析 gin 后委托显式实现 BuildRequest（薄壳）。
+// 解析入站请求后交给 BuildRequest。
 func (p *ClaudeProvider) ConvertToProviderRequest(c *gin.Context, upstream *config.UpstreamConfig, apiKey string) (*http.Request, []byte, error) {
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -77,7 +77,7 @@ func (p *ClaudeProvider) ConvertToProviderRequest(c *gin.Context, upstream *conf
 	return outcome.Request, outcome.OriginalBody, nil
 }
 
-// BuildRequest 以显式输入构造 Claude 透传请求（R4-a 主实现，不依赖 gin）。
+// BuildRequest 以显式输入构造 Claude 透传请求（不依赖 Gin）。
 func (p *ClaudeProvider) buildRequest(input RequestInput, upstream *config.UpstreamConfig, apiKey string) (*RequestOutcome, error) {
 	bodyBytes := input.Body
 

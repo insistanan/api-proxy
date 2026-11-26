@@ -422,7 +422,7 @@ import AppDialog from '@/shared/components/overlay/AppDialog.vue'
 import ConfirmDialog from '@/shared/components/overlay/ConfirmDialog.vue'
 import EmptyState from '@/shared/components/feedback/EmptyState.vue'
 import { formatDateTime } from '@/shared/utils/datetime'
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import {
   blockedLogSnippetPreview as snippetPreview,
   groupRepeatedBlockedLogs,
@@ -530,6 +530,11 @@ const selectedLog = ref<BlockedLogEntry | null>(null)
 const deleteDialog = ref(false)
 const deletingLog = ref<BlockedLogEntry | null>(null)
 const clearDialog = ref(false)
+let listRevision = 0
+let detailRevision = 0
+let disposed = false
+watch(detailDialog, open => { if (!open) { detailRevision++; detailLoading.value = false } }, { flush: 'sync' })
+onUnmounted(() => { disposed = true; listRevision++; detailRevision++ })
 
 const pageCount = computed(() => Math.max(1, Math.ceil(totalGroups.value / pageSize.value)))
 const hasFilters = computed(() =>
@@ -539,6 +544,7 @@ const hasFilters = computed(() =>
 const asRFC3339 = (value: string) => (value ? new Date(value).toISOString() : '')
 
 const loadLogs = async () => {
+  const revision = ++listRevision
   loading.value = true
   error.value = ''
   try {
@@ -553,6 +559,7 @@ const loadLogs = async () => {
       pageSize: pageSize.value,
       groupBy: 'conversation'
     })
+    if (disposed || revision !== listRevision) return
     groups.value = response.groups || []
     expandedRepeats.value = new Set()
     total.value = response.total || 0
@@ -573,12 +580,13 @@ const loadLogs = async () => {
       page.value = pageCount.value
     }
   } catch (err) {
+    if (disposed || revision !== listRevision) return
     error.value = err instanceof Error ? err.message : '加载拦截记录失败'
     groups.value = []
     total.value = 0
     totalGroups.value = 0
   } finally {
-    loading.value = false
+    if (revision === listRevision) loading.value = false
   }
 }
 
@@ -602,16 +610,20 @@ const resetFilters = () => {
 }
 
 const openDetail = async (id: number) => {
+  const revision = ++detailRevision
   detailDialog.value = true
   detailLoading.value = true
   selectedLog.value = null
   try {
-    selectedLog.value = await api.getBlockedLog(id)
+    const detail = await api.getBlockedLog(id)
+    if (disposed || revision !== detailRevision) return
+    selectedLog.value = detail
   } catch (err) {
+    if (disposed || revision !== detailRevision) return
     detailDialog.value = false
     error.value = err instanceof Error ? err.message : '加载拦截详情失败'
   } finally {
-    detailLoading.value = false
+    if (revision === detailRevision) detailLoading.value = false
   }
 }
 
@@ -626,6 +638,9 @@ const confirmDelete = async () => {
   error.value = ''
   try {
     await api.deleteBlockedLog(deletingLog.value.id)
+    listRevision++
+    detailRevision++
+    detailDialog.value = false
     deleteDialog.value = false
     deletingLog.value = null
     await loadLogs()
@@ -641,6 +656,9 @@ const confirmClear = async () => {
   error.value = ''
   try {
     await api.clearBlockedLogs()
+    listRevision++
+    detailRevision++
+    detailDialog.value = false
     clearDialog.value = false
     if (page.value === 1) await loadLogs()
     else page.value = 1

@@ -114,10 +114,10 @@ export const clientConfigApi = {
   },
 
   /** 整体替换指定智能体的全局提示词文件；后端会先备份原文件再原子写入 */
-  async saveAgentPrompt(agent: AgentPromptAgent, content: string): Promise<{ success: boolean; path: string; sizeBytes: number }> {
+  async saveAgentPrompt(agent: AgentPromptAgent, content: string, revision: string): Promise<{ success: boolean; path: string; sizeBytes: number }> {
     return apiRequest(`/settings/agent-prompt/${encodeURIComponent(agent)}`, {
       method: 'PUT',
-      body: JSON.stringify({ content })
+      body: JSON.stringify({ content, revision })
     })
   },
 

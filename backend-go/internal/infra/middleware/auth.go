@@ -53,14 +53,7 @@ func WebAuthMiddleware(envCfg *config.EnvConfig, cfgManager *config.ConfigManage
 			return
 		}
 
-		// 管理路由的鉴权由 AdminAuthMiddleware 在路由组上显式完成。
-		// 这里对 /api、/admin 打上标记后放行：若该路由组漏绑管理鉴权，
-		// 在测试与审计中可通过该标记发现。
-		if strings.HasPrefix(path, "/api") || strings.HasPrefix(path, "/admin") {
-			c.Set(contextKeyAdminRoute, true)
-			log.Printf("[Auth-Warn] 管理路由 %s 未绑定管理鉴权中间件，请检查路由注册", path)
-		}
-
+		// 管理鉴权由后续路由组中间件执行，注册完整性由路由测试覆盖。
 		c.Next()
 	}
 }
@@ -122,11 +115,6 @@ func isPollingEndpoint(path string) bool {
 	}
 	return false
 }
-
-// contextKeyAdminRoute 标记请求命中 /api 或 /admin 管理路由。
-// WebAuthMiddleware 不再放行/拦截管理业务，仅打标记：路由组必须显式
-// 绑定 AdminAuthMiddleware，漏绑可通过该标记与警告日志发现。
-const contextKeyAdminRoute = "auth.adminRoute"
 
 // isFrontendStaticResource 判断是否为已注册的前端静态资源路径。
 // 只放行确定的资源位置：嵌入前端的 /assets/、入口 index.html 与常见

@@ -41,6 +41,11 @@ type CmdGate struct {
 	inflight    map[gateReviewKey]*inflightGateReview
 	reviewSlots chan struct{}
 	activeSlots chan struct{}
+	lifecycleMu sync.Mutex
+	lifecycle   context.Context
+	stop        context.CancelFunc
+	closed      bool
+	workers     sync.WaitGroup
 }
 
 const (
@@ -81,7 +86,10 @@ type GateVerdict struct {
 
 // NewCmdGate 创建闸门。caller / store 为 nil 时闸门不可用（Review 一律拦截）。
 func NewCmdGate(cfgManager *config.ConfigManager, caller *llmgate.Caller, store *sensitive.GateStore, recorder BlockedLogRecorder) *CmdGate {
+	lifecycle, stop := context.WithCancel(context.Background())
 	return &CmdGate{
+		lifecycle:   lifecycle,
+		stop:        stop,
 		cfgManager:  cfgManager,
 		caller:      caller,
 		store:       store,
@@ -386,6 +394,16 @@ func (g *CmdGate) createPending(ctx context.Context, metadata HookContext, match
 
 // armVetoWindow 的监听与原请求共同结束；非流式只保留供后续同命令生效的记录。
 func (g *CmdGate) armVetoWindow(ctx context.Context, metadata HookContext, match sensitive.CommandMatch, aiReason string, onVeto func()) error {
+	ctx, finish, err := g.beginTask(ctx)
+	if err != nil {
+		return err
+	}
+	dispatched := false
+	defer func() {
+		if !dispatched {
+			finish()
+		}
+	}()
 	pending, decisionCh, err := g.createPending(ctx, metadata, match, sensitive.GateDecisionAllow, aiReason, onVeto != nil)
 	if err != nil {
 		return err
@@ -403,7 +421,9 @@ func (g *CmdGate) armVetoWindow(ctx context.Context, metadata HookContext, match
 	if onVeto == nil {
 		return nil
 	}
+	dispatched = true
 	go func() {
+		defer finish()
 		timer := time.NewTimer(time.Until(pending.ExpiresAt))
 		defer timer.Stop()
 		defer g.unregisterWaiter(pending.ID)
@@ -556,7 +576,13 @@ func (g *CmdGate) reviewWithCache(ctx context.Context, metadata HookContext, mat
 	}
 	// 同组请求共同拥有模型调用；单个客户端取消只退出自己的等待。
 	// 最后一个等待者离开时取消共享调用；模型审批含排队和重试最多等待 10 秒。
-	callCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), gateModelTimeout)
+	taskCtx, finish, err := g.beginTask(context.WithoutCancel(ctx))
+	if err != nil {
+		<-g.reviewSlots
+		g.aiReviewMu.Unlock()
+		return sensitive.CommandAIReview{}, err
+	}
+	callCtx, cancel := context.WithTimeout(taskCtx, gateModelTimeout)
 	flight := &inflightGateReview{done: make(chan struct{}), cancel: cancel, waiters: 1, cacheable: conversationID != ""}
 	g.inflight[flightKey] = flight
 	g.aiReviewMu.Unlock()
@@ -566,6 +592,7 @@ func (g *CmdGate) reviewWithCache(ctx context.Context, metadata HookContext, mat
 	metadata.redactionVault = nil
 	metadata.preRequestSnapshot = nil
 	go func() {
+		defer finish()
 		defer cancel()
 		review, callErr := g.askModel(callCtx, metadata, match, settings)
 		<-g.reviewSlots

@@ -11,5 +11,6 @@ export const useDatasetsStore = defineStore('datasets', () => {
     const value = await datasetsApi.list()
     if (revision === current) items.value = value
   }
-  return { items, load }
+  function reset() { revision++; items.value = [] }
+  return { items, load, reset }
 })

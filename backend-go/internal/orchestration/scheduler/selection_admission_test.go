@@ -76,7 +76,7 @@ func TestSelection_ExplicitTargetsShareCircuitAdmission(t *testing.T) {
 			if observeErr != nil {
 				t.Fatal(observeErr)
 			}
-			_, err := registry.SetRouteOverride(context.Background(), record.ID, "messages", 0, "primary")
+			_, err := registry.SetRouteOverride(context.Background(), record.ID, "messages", 0, "primary", "primary")
 			require.NoError(t, err)
 			sch.SetConversationRegistry(registry)
 			selectTarget := func() (*SelectionResult, error) {

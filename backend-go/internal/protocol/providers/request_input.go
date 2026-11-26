@@ -1,7 +1,3 @@
-// request_input.go 定义 Provider 构造上游请求时使用的输入和返回结果（R4-a）。
-//
-// llmgate 和 visionlayer 直接通过 RequestInput 传入参数，无需构造 Gin 上下文。
-// 协议 handler 则通过 ConvertToProviderRequest 解析入站请求，再交给 BuildRequest 构造。
 package providers
 
 import (
@@ -13,9 +9,7 @@ import (
 	"insistanan/api-proxy/internal/protocol/types"
 )
 
-// RequestInput 保存一次协议转换所需的请求参数。
-// 参数由 HTTP handler 或内部调用方解析后传入，不携带 Gin context；
-// 请求取消和截止时间通过 Ctx 传播。
+// RequestInput 供 HTTP 入口、命令审核和图片理解共享请求构建，不依赖 Gin。
 type RequestInput struct {
 	// Ctx 取消与截止时间（对应入站请求的 context）。
 	Ctx context.Context
@@ -62,7 +56,7 @@ type RequestOutcome struct {
 	HistoryBoundary bool
 }
 
-// BuildUpstreamRequest 以显式输入构造上游请求（R4-a 主入口）。
+// BuildUpstreamRequest 以显式输入构造上游请求。
 // 调用方负责关闭失败时返回的 Request.Body（如有）。
 func BuildUpstreamRequest(provider Provider, input RequestInput, upstream *config.UpstreamConfig, apiKey string) (*RequestOutcome, error) {
 	if provider == nil {

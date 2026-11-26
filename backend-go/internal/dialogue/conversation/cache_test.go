@@ -27,7 +27,7 @@ func TestCacheEvictionPreservesHistoryAliasesAndRouting(t *testing.T) {
 	r.MarkComplete(first.ID, "responses")
 	_, err = r.SetName(context.Background(), first.ID, "保留历史")
 	require.NoError(t, err)
-	_, err = r.SetRouteOverride(context.Background(), first.ID, "responses", 3, "固定渠道")
+	_, err = r.SetRouteOverride(context.Background(), first.ID, "responses", 3, "固定渠道", "stable")
 	require.NoError(t, err)
 	require.NoError(t, r.AssociateExternalID(first.ID, "responses", "resp-old"))
 	for i := 0; i < 8; i++ {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { compareMetric, formatStatMs } from './statsFormat'
+import { compareMetric, formatStatMs } from '@/features/observability/utils/statsFormat'
 import type { RequestStatsSummary } from '@/types/metrics'
 
 const summary = (values: Partial<RequestStatsSummary>): RequestStatsSummary => ({

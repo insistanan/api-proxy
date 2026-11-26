@@ -14,7 +14,7 @@
 import UiButton from '@/shared/ui/button/Button.vue'
 // 原始正文视图：大正文先懒载入，再由 ClampText 统一做限高预览与展开。
 import { computed, ref, watch } from 'vue'
-import ClampText from './ClampText.vue'
+import ClampText from '@/features/observability/components/common/ClampText.vue'
 import JsonPreviewTrigger from '@/shared/components/data/JsonPreviewTrigger.vue'
 
 const LARGE_BODY_CHARS = 64 * 1024

@@ -21,7 +21,7 @@
 | `orchestration/` | scheduler、circuit、upstreamcontrol、availability、cachekeepalive（会话缓存保活）、proxy、ratelimit、urlhealth |
 | `protocol/` | converters、providers、contract、schema、codec、items、tokenusage、visionmedia、types |
 | `safety/` | sensitive、llmgate、pipeline、bodyfilter、mediasanitizer、visionlayer |
-| `dialogue/` | session、conversation、prompt、routing（intent / semantic）、internal/syncstate（仅会话内部的可取消状态锁） |
+| `dialogue/` | session、conversation、prompt、routing（intent / semantic）、dialogue/internal/syncstate（仅会话内部的可取消状态锁） |
 | `storage/` | logger、logbody、metrics、sqlitedb、atomicfile、usageledger |
 | `infra/` | config、httpclient、upstreamreq、middleware、cli、utils |
 
@@ -64,7 +64,7 @@
 | `dialogue/conversation/image_store.go` | 带请求 Context 的对话内图片理解结果存取 |
 | `dialogue/internal/syncstate` | 可取消状态锁，保持 Registry → Session 锁序 |
 
-`clients/` 子包：`clients/piagent` 处理 pi-agent 配置，`clients/mcpsync` 同步 MCP，`clients/skills` 管理 Skill 文件，`clients/extensions` 负责 Skills / MCP 统一目录迁移。
+`clients/` 子包：`clients/filetxn` 统一真实路径身份、版本校验、备份及文件提交结果；`clients/piagent` 处理 pi-agent 配置，`clients/mcpsync` 通过适配器条目接口和持久托管记录同步 MCP，`clients/skills` 管理 Skill 安装计划与目标所有权，`clients/extensions` 负责 Skills / MCP 统一目录迁移及恢复阶段。顶层各客户端的 `*_edit.go` 编排配置保存，HTTP handler 适配输入和结果。
 
 ## 依赖边界
 
@@ -72,7 +72,7 @@
 - 通用编排留在 proxycore，协议转换留在 protocol；安全管线不反向依赖 api 或 proxycore。
 - API 负责 HTTP 读取、取消、安全检查、还原和写回；转换器只接收协议数据与明确选项，返回内容、用量、终态或错误，不依赖 Gin、渠道配置和交付副作用。
 - JSON、SSE 等编解码工具放 protocol/codec；用量、Responses 条目和上游请求分别放对应包，避免重新堆入 utils。
-- clients 顶层包含 HTTP 配置接口；其 piagent / mcpsync / skills / extensions 子包不依赖 HTTP，供接口层调用。
+- clients 顶层包含 HTTP 配置接口；其 filetxn / piagent / mcpsync / skills / extensions 子包不依赖 HTTP，供接口层调用。
 
 ## 维护命令
 

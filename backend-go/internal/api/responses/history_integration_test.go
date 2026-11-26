@@ -220,3 +220,75 @@ func TestHTTPTruncationDoesNotPublishRecoverableHistory(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, known)
 }
+
+func TestConcurrentResponsesStaySuccessfulAndRestoreTheirOwnBranches(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprint(stream), func(t *testing.T) {
+			var arrived atomic.Int64
+			release := make(chan struct{})
+			requests := make(chan string, 8)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				requests <- string(body)
+				input := gjson.GetBytes(body, "input").String()
+				if input == "A" || input == "B" {
+					if arrived.Add(1) == 2 {
+						close(release)
+					}
+					select {
+					case <-release:
+					case <-r.Context().Done():
+						return
+					}
+				}
+				id := input
+				if gjson.GetBytes(body, "input").IsArray() {
+					id = fmt.Sprint("continued-", gjson.GetBytes(body, "input.3.content.0.text").String())
+				}
+				response := fmt.Sprintf(`{"id":%q,"model":"m","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":%q}]}],"usage":{"input_tokens":10,"output_tokens":5}}`, id, "answer-"+id)
+				if gjson.GetBytes(body, "stream").Bool() {
+					w.Header().Set("Content-Type", "text/event-stream")
+					fmt.Fprintf(w, "data: {\"type\":\"response.completed\",\"response\":%s}\n\n", response)
+				} else {
+					w.Header().Set("Content-Type", "application/json")
+					io.WriteString(w, response)
+				}
+			}))
+			defer server.Close()
+			path := filepath.Join(t.TempDir(), "history.db")
+			first := newHistoryRouteFixture(t, path, server.URL, "first-key")
+			seed := sendHistoryRequest(first.router, `{"model":"m","input":"parent"}`)
+			require.Equal(t, 200, seed.Code, seed.Body.String())
+			<-requests
+			results := make(chan *httptest.ResponseRecorder, 2)
+			for _, input := range []string{"A", "B"} {
+				go func() {
+					results <- sendHistoryRequest(first.router, fmt.Sprintf(`{"model":"m","previous_response_id":"parent","input":%q,"stream":%t}`, input, stream))
+				}()
+			}
+			for range 2 {
+				response := <-results
+				require.Equal(t, 200, response.Code, response.Body.String())
+				require.NotContains(t, response.Body.String(), "保存 Responses 历史失败")
+				require.Contains(t, response.Body.String(), `"status":"completed"`)
+				<-requests
+			}
+			require.Equal(t, int64(2), arrived.Load())
+			first.close()
+			second := newHistoryRouteFixture(t, path, server.URL, "new-key")
+			for _, id := range []string{"A", "B"} {
+				response := sendHistoryRequest(second.router, fmt.Sprintf(`{"model":"m","previous_response_id":%q,"input":"继续"}`, id))
+				require.Equal(t, 200, response.Code, response.Body.String())
+				body := <-requests
+				require.Contains(t, body, "answer-parent")
+				require.Contains(t, body, "answer-"+id)
+				other := map[string]string{"A": "B", "B": "A"}[id]
+				require.NotContains(t, body, "answer-"+other)
+			}
+		})
+	}
+}

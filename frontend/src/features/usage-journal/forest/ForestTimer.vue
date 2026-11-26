@@ -50,7 +50,7 @@ import { storeToRefs } from 'pinia'
 import UiButton from '@/shared/ui/button/Button.vue'
 import { ApiError } from '@/shared/services/http'
 import { useNotificationStore } from '@/shared/stores/notifications'
-import { useForest } from './store'
+import { useForest } from '@/features/usage-journal/forest/store'
 
 const forest = useForest()
 const notifications = useNotificationStore()

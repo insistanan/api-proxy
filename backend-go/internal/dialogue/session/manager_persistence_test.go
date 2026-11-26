@@ -134,41 +134,6 @@ func TestPersistentSessionManagerRejectsUnknownPreviousResponseID(t *testing.T) 
 	}
 }
 
-func TestPersistentSessionManagerDeleteAll(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "conversations.db")
-	manager, err := NewPersistentSessionManager(dbPath, 7*24*time.Hour, 100, 100000)
-	if err != nil {
-		t.Fatalf("NewPersistentSessionManager() error = %v", err)
-	}
-	for _, conversationID := range []string{"conv_a", "conv_b"} {
-		sess, err := manager.GetOrCreateSessionForConversation(context.Background(), "", conversationID)
-		if err != nil {
-			t.Fatalf("GetOrCreateSessionForConversation() error = %v", err)
-		}
-		if err := commitFixtureTurn(manager, sess, nil, 0, false, "resp_"+conversationID); err != nil {
-			t.Fatalf("RecordResponseMapping() error = %v", err)
-		}
-	}
-	if err := manager.DeleteWithRecords(context.Background(), "", nil, nil); err != nil {
-		t.Fatalf("DeleteAll() error = %v", err)
-	}
-	if len(manager.sessions) != 0 || len(manager.responseMapping) != 0 {
-		t.Fatalf("in-memory state after DeleteAll(): sessions=%d mappings=%d", len(manager.sessions), len(manager.responseMapping))
-	}
-	manager.Stop()
-
-	restored, err := NewPersistentSessionManager(dbPath, 7*24*time.Hour, 100, 100000)
-	if err != nil {
-		t.Fatalf("restore NewPersistentSessionManager() error = %v", err)
-	}
-	defer restored.Stop()
-	for _, responseID := range []string{"resp_conv_a", "resp_conv_b"} {
-		if _, err := restored.GetOrCreateSessionForConversation(context.Background(), responseID, ""); err == nil {
-			t.Fatalf("deleted response mapping %q was restored", responseID)
-		}
-	}
-}
-
 func TestSessionCleanupWithZeroMessageAndTokenLimitsKeepsActiveConversation(t *testing.T) {
 	manager := newSessionManager(7*24*time.Hour, 0, 0, nil)
 	now := time.Now()

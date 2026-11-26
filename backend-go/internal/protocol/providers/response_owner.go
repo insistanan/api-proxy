@@ -15,10 +15,10 @@ type ResponseHistoryError struct{ Message string }
 func (e *ResponseHistoryError) Error() string            { return e.Message }
 func (e *ResponseHistoryError) ClientRequestError() bool { return true }
 
-// 本地只存会话最新正文，无法按旧 response ID 截断，也不能把旧分支追加到最新会话。
+// 转换必须使用客户端指定响应的历史快照，不能误用其他分支。
 func validateResponseHistoryBoundary(sess *session.Session, previousID string) error {
 	if previousID != "" && sess != nil && len(sess.Messages) > 0 && sess.LastResponseID != previousID {
-		return &ResponseHistoryError{Message: "previous_response_id 不是本地最新历史边界，无法准确恢复该分支；请发送完整对话重新建立会话"}
+		return &ResponseHistoryError{Message: "previous_response_id 与本次历史快照不一致，无法恢复该分支"}
 	}
 	return nil
 }

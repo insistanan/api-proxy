@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
+
+	"insistanan/api-proxy/internal/clients/filetxn"
 )
 
 // setCodexDefaultModel 将 config.toml 根级 model / model_catalog_json / model_reasoning_effort
@@ -17,7 +19,7 @@ import (
 //   - 目标在 catalog 中：正常写入；顺带补齐缺失的内置条目（替换语义下不补则内置模型失效）
 //   - 目标是内置模型且 catalog 非空：把内置条目并入 catalog 后写入
 //   - 目标是内置模型且 catalog 为空：只写 model 键并移除 model_catalog_json（Codex 直接用内置清单）
-func setCodexDefaultModel(ctx context.Context, configPath, modelsPath, slug, reasoningEffort string, clearReasoningEffort bool) error {
+func setCodexDefaultModel(ctx context.Context, configPath, modelsPath, slug, reasoningEffort string, clearReasoningEffort bool, revision string) error {
 	catalog, err := readCodexModelCatalog(modelsPath)
 	if err != nil {
 		return err
@@ -49,20 +51,12 @@ func setCodexDefaultModel(ctx context.Context, configPath, modelsPath, slug, rea
 		return newCodexInputError("模型 %s 不支持推理档位 %q", slug, reasoningEffort)
 	}
 
-	if catalogChanged {
-		encoded, err := catalog.encode()
-		if err != nil {
-			return fmt.Errorf("编码 models.json 失败: %w", err)
-		}
-		// 先落盘 models.json，再写 config.toml，保证 model_catalog_json 指向的文件先就绪。
-		if err := writeCodexFile(modelsPath, catalog.raw, encoded, ".codex-models-*.tmp"); err != nil {
-			return fmt.Errorf("保存 models.json 失败: %w", err)
-		}
-	}
-
 	_, configRaw, _, err := readCodexConfig(configPath)
 	if err != nil {
 		return err
+	}
+	if revision != filetxn.RevisionSet(configRaw, catalog.raw) {
+		return filetxn.ErrConflict
 	}
 	updatedConfig := configRaw
 	model := slug
@@ -87,10 +81,17 @@ func setCodexDefaultModel(ctx context.Context, configPath, modelsPath, slug, rea
 			return err
 		}
 	}
-	if !bytes.Equal(configRaw, updatedConfig) {
-		if err := writeCodexFile(configPath, configRaw, updatedConfig, ".codex-config-*.tmp"); err != nil {
-			return fmt.Errorf("保存 Codex config.toml 失败: %w", err)
+	changes := []filetxn.Change{}
+	if catalogChanged {
+		encoded, err := catalog.encode()
+		if err != nil {
+			return err
 		}
+		changes = append(changes, filetxn.Change{Path: modelsPath, Previous: catalog.raw, Next: encoded})
+	}
+	changes = append(changes, filetxn.Change{Path: configPath, Previous: configRaw, Next: updatedConfig})
+	if err := filetxn.Commit(changes...); err != nil {
+		return err
 	}
 	return nil
 }
@@ -98,32 +99,32 @@ func setCodexDefaultModel(ctx context.Context, configPath, modelsPath, slug, rea
 // cleanupCodexConfigAfterModelDelete 在删除条目后回退 config.toml：
 //   - 目录删空：移除 model_catalog_json（空目录会让 Codex 拒绝启动，回退后使用内置清单）
 //   - 被删模型是当前默认模型：移除 model 与 model_reasoning_effort（指向不存在的模型会让 Codex 启动失败）
-func cleanupCodexConfigAfterModelDelete(configPath, slug string, catalogEmpty bool) error {
-	config, configRaw, exists, err := readCodexConfig(configPath)
-	if err != nil {
-		return err
+func cleanupCodexConfigAfterModelDelete(configRaw []byte, slug string, catalogEmpty bool) ([]byte, error) {
+	if configRaw == nil {
+		return nil, nil
 	}
-	if !exists {
-		return nil
+	var config struct {
+		Model string `toml:"model"`
 	}
+	if err := toml.Unmarshal(configRaw, &config); err != nil {
+		return nil, err
+	}
+	var err error
 	updated := configRaw
 	if catalogEmpty {
 		if updated, err = mergeCodexRootKey(updated, codexRootKeyModelCatalog, nil); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if strings.TrimSpace(config.Model) == slug {
 		if updated, err = mergeCodexRootKey(updated, codexRootKeyModel, nil); err != nil {
-			return err
+			return nil, err
 		}
 		if updated, err = mergeCodexRootKey(updated, codexRootKeyReasoningLevel, nil); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	if bytes.Equal(configRaw, updated) {
-		return nil
-	}
-	return writeCodexFile(configPath, configRaw, updated, ".codex-config-*.tmp")
+	return updated, nil
 }
 
 // mergeCodexRootKey 定点修改 config.toml 根级键（仅限白名单键），保留其余内容与格式。
@@ -138,19 +139,26 @@ func mergeCodexRootKey(raw []byte, key string, value *string) ([]byte, error) {
 	}
 	text := strings.ReplaceAll(string(raw), "\r\n", "\n")
 	lines := strings.Split(text, "\n")
+	code := tomlCodeLines(lines)
 
 	firstTable := len(lines)
 	for index, line := range lines {
+		if !code[index] {
+			continue
+		}
 		if isTOMLTableHeader(line) {
 			firstTable = index
 			break
 		}
 	}
 
-	keyPattern := regexp.MustCompile(`^(\s*)` + regexp.QuoteMeta(key) + `\s*=`)
+	keyPattern := regexp.MustCompile(`^(\s*)(?:` + regexp.QuoteMeta(key) + `|"` + regexp.QuoteMeta(key) + `"|'` + regexp.QuoteMeta(key) + `')\s*=`)
 	keyIndex := -1
 	indent := ""
 	for index := 0; index < firstTable; index++ {
+		if !code[index] {
+			continue
+		}
 		if match := keyPattern.FindStringSubmatch(lines[index]); match != nil {
 			keyIndex = index
 			indent = match[1]
@@ -185,6 +193,9 @@ func mergeCodexRootKey(raw []byte, key string, value *string) ([]byte, error) {
 	var validation map[string]interface{}
 	if err := toml.Unmarshal(result, &validation); err != nil {
 		return nil, fmt.Errorf("更新后的 config.toml 无效: %w", err)
+	}
+	if err := verifyCodexEdit(raw, result, []string{key}, value); err != nil {
+		return nil, err
 	}
 	return result, nil
 }

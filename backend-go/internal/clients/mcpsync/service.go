@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"insistanan/api-proxy/internal/storage/atomicfile"
+	"insistanan/api-proxy/internal/clients/filetxn"
 )
 
 // 调用方可通过 errors.Is 区分失败类别，以映射到不同的 HTTP 状态码。
@@ -97,7 +97,7 @@ func (s *Service) MigrateLegacy(legacyPath string) (bool, error) {
 	if _, err := decodeStoreFile(raw); err != nil {
 		return false, fmt.Errorf("校验旧 MCP 列表失败: %w", err)
 	}
-	if err := atomicfile.Write(targetPath, raw, atomicfile.Options{TempPrefix: ".mcp-"}); err != nil && !atomicfile.IsCommitted(err) {
+	if err := filetxn.Replace(targetPath, nil, raw, "", 0600); err != nil {
 		return false, fmt.Errorf("写入迁移后的 MCP 列表失败: %w", err)
 	}
 	migratedPath := legacyPath + ".migrated"
@@ -105,7 +105,7 @@ func (s *Service) MigrateLegacy(legacyPath string) (bool, error) {
 		migratedPath = legacyPath + "." + time.Now().Format("20060102-150405") + ".migrated"
 	}
 	if err := os.Rename(legacyPath, migratedPath); err != nil {
-		log.Printf("[MCP-Migrate] 已复制到 %s，但重命名旧文件 %s 失败: %v", targetPath, legacyPath, err)
+		return true, &filetxn.CommitError{Files: []string{targetPath}, Err: fmt.Errorf("重命名旧 MCP 列表失败: %w", err)}
 	}
 	return true, nil
 }
@@ -135,7 +135,7 @@ func (s *Service) SyncToAgents() ([]AgentResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(raw) == 0 {
+	if raw == nil {
 		return nil, nil
 	}
 	file, err := decodeStoreFile(raw)
@@ -150,6 +150,7 @@ func (s *Service) SyncToAgents() ([]AgentResult, error) {
 		if err != nil {
 			res.OK = false
 			res.Error = err.Error()
+			res.Committed = filetxn.Committed(err)
 			results = append(results, res)
 			continue
 		}
@@ -165,30 +166,22 @@ func (s *Service) SyncToAgents() ([]AgentResult, error) {
 		if err != nil {
 			res.OK = false
 			res.Error = err.Error()
+			res.Committed = filetxn.Committed(err)
 			results = append(results, res)
 			continue
 		}
 
 		desired := DesiredFor(file.Servers, adapter.Key())
-		managed := make(map[string]struct{}, len(desired))
-		for name := range desired {
-			managed[name] = struct{}{}
+		managed := managedEntries(file, adapter.Key(), desired)
+		if err := checkOwnership(file, adapter, path, current, managed, desired, nil); err != nil {
+			res.OK, res.Error = false, err.Error()
+			results = append(results, res)
+			continue
 		}
-		// 若 mcp.json 中某条服务在当前智能体已停用，且智能体文件中存在同配置条目（此前同步产生），
-		// 将其纳入 managed 以便清理，同时不误删用户本地同名的独立配置。
 		entryByName := make(map[string]DetectedServer, len(entries))
 		for _, entry := range entries {
 			entryByName[entry.Name] = entry
 		}
-		for _, srv := range file.Servers {
-			if _, enabled := desired[srv.Name]; enabled {
-				continue
-			}
-			if existing, ok := entryByName[srv.Name]; ok && existing.Server != nil && sameConfig(*existing.Server, srv) {
-				managed[srv.Name] = struct{}{}
-			}
-		}
-
 		base := current
 		for _, saved := range file.Disabled {
 			if saved.Agent != adapter.Key() {
@@ -204,12 +197,14 @@ func (s *Service) SyncToAgents() ([]AgentResult, error) {
 			if err != nil {
 				res.OK = false
 				res.Error = err.Error()
+				res.Committed = filetxn.Committed(err)
 				break
 			}
 			base, _, err = replaceEntry(adapter, base, saved.Name, entry)
 			if err != nil {
 				res.OK = false
 				res.Error = err.Error()
+				res.Committed = filetxn.Committed(err)
 				break
 			}
 		}
@@ -222,14 +217,28 @@ func (s *Service) SyncToAgents() ([]AgentResult, error) {
 		if err != nil {
 			res.OK = false
 			res.Error = err.Error()
+			res.Committed = filetxn.Committed(err)
 			results = append(results, res)
 			continue
+		}
+		if err := trackOwnership(&file, adapter, path, current, next, managed); err != nil {
+			return results, err
+		}
+		if _, err := s.store.writeFile(&file); err != nil {
+			return results, err
 		}
 		if !bytes.Equal(current, next) {
 			if err := writeAgentFile(path, current, next); err != nil {
 				log.Printf("[MCP-Sync] 自动同步写入 %s 配置失败: %v", adapter.Name(), err)
 				res.OK = false
 				res.Error = err.Error()
+				res.Committed = filetxn.Committed(err)
+			}
+		}
+		if res.OK {
+			confirmOwnership(&file, adapter.Key())
+			if _, err := s.store.writeFile(&file); err != nil {
+				return results, &filetxn.CommitError{Files: []string{path}, Err: err}
 			}
 		}
 		results = append(results, res)
@@ -258,13 +267,14 @@ type State struct {
 }
 
 // AgentResult 描述一次保存中某个智能体的写入结果。
-// OK=false 时统一列表已保存，但该智能体的配置文件未更新。
+// OK=false 时需结合 Committed 判断文件是否已替换，刷新后核对实际状态。
 type AgentResult struct {
-	Key   AgentKey `json:"key"`
-	Name  string   `json:"name"`
-	Path  string   `json:"path"`
-	OK    bool     `json:"ok"`
-	Error string   `json:"error,omitempty"`
+	Committed bool     `json:"committed,omitempty"`
+	Key       AgentKey `json:"key"`
+	Name      string   `json:"name"`
+	Path      string   `json:"path"`
+	OK        bool     `json:"ok"`
+	Error     string   `json:"error,omitempty"`
 }
 
 // SaveResult 是保存成功后的结果。
@@ -397,7 +407,6 @@ func (s *Service) Save(revision string, servers []Server, adoptions ...Adoption)
 	if err != nil {
 		return SaveResult{}, err
 	}
-	previous := file.Servers
 
 	type plan struct {
 		adapter Adapter
@@ -417,7 +426,7 @@ func (s *Service) Save(revision string, servers []Server, adoptions ...Adoption)
 			return SaveResult{}, fmt.Errorf("%w: 读取 %s 配置失败: %w", ErrAgentPrepare, adapter.Name(), err)
 		}
 		desired := DesiredFor(servers, adapter.Key())
-		prior := DesiredFor(previous, adapter.Key())
+		prior := make(map[string]Server)
 		base, adopted, err := prepareAdoptions(adapter, current, &file, adoptions, servers)
 		if err != nil {
 			return SaveResult{}, fmt.Errorf("处理 %s 编辑失败: %w", adapter.Name(), err)
@@ -426,7 +435,7 @@ func (s *Service) Save(revision string, servers []Server, adoptions ...Adoption)
 			prior[name] = original
 		}
 		// 每个应用独立计算托管范围，不能删除从未在该应用中接管过的同名条目。
-		managed := make(map[string]struct{}, len(prior)+len(desired))
+		managed := managedEntries(file, adapter.Key(), desired)
 		for name := range prior {
 			managed[name] = struct{}{}
 		}
@@ -437,12 +446,8 @@ func (s *Service) Save(revision string, servers []Server, adoptions ...Adoption)
 		if err != nil {
 			return SaveResult{}, fmt.Errorf("%w: %s: %w", ErrAgentPrepare, adapter.Name(), err)
 		}
-		for _, entry := range entries {
-			server, wanted := desired[entry.Name]
-			_, owned := prior[entry.Name]
-			if wanted && !owned && (entry.Server == nil || !sameConfig(*entry.Server, server)) {
-				return SaveResult{}, fmt.Errorf("%w: %s / %s，请更名或先在原应用中处理冲突", ErrAgentConflict, adapter.Name(), entry.Name)
-			}
+		if err := checkOwnership(file, adapter, path, current, managed, desired, adopted); err != nil {
+			return SaveResult{}, err
 		}
 		// 编辑列表后重新启用停用项时，同样恢复原应用附加设置。
 		for _, saved := range file.Disabled {
@@ -475,11 +480,17 @@ func (s *Service) Save(revision string, servers []Server, adoptions ...Adoption)
 		if err != nil {
 			return SaveResult{}, fmt.Errorf("%w: %s: %w", ErrAgentPrepare, adapter.Name(), err)
 		}
+		if err := trackOwnership(&file, adapter, path, current, next, managed); err != nil {
+			return SaveResult{}, err
+		}
 		plans = append(plans, plan{adapter: adapter, path: path, current: current, next: next, changed: !bytes.Equal(current, next)})
 	}
 
 	file.Servers = servers
-	newRaw, err := s.store.writeFile(file)
+	file.Disabled = slices.DeleteFunc(file.Disabled, func(saved DisabledEntry) bool {
+		return !slices.ContainsFunc(servers, func(server Server) bool { return server.Name == saved.Name })
+	})
+	newRaw, err := s.store.writeFile(&file)
 	if err != nil {
 		return SaveResult{}, err
 	}
@@ -492,9 +503,17 @@ func (s *Service) Save(revision string, servers []Server, adoptions ...Adoption)
 				log.Printf("[MCP-Sync] 写入 %s 配置失败: %v", p.adapter.Name(), err)
 				result.OK = false
 				result.Error = err.Error()
+				result.Committed = filetxn.Committed(err)
 			}
 		}
+		if result.OK {
+			confirmOwnership(&file, p.adapter.Key())
+		}
 		results = append(results, result)
+	}
+	newRaw, err = s.store.writeFile(&file)
+	if err != nil {
+		return SaveResult{Revision: Revision(newRaw), Agents: results}, &filetxn.CommitError{Files: []string{"MCP 列表与已成功分发的客户端文件"}, Err: err}
 	}
 	return SaveResult{Revision: Revision(newRaw), Agents: results}, nil
 }
@@ -512,25 +531,5 @@ func readOptional(path string) ([]byte, error) {
 // 外部工具（尤其是 Claude Code 自身）可能在准备与提交之间修改文件，因此替换前再次比较原始字节；
 // 已有内容时先保存带时间戳的备份，与 OpenCode 配置写入保持一致。
 func writeAgentFile(path string, previous, next []byte) error {
-	current, err := readOptional(path)
-	if err != nil {
-		return fmt.Errorf("检查配置版本失败: %w", err)
-	}
-	if !bytes.Equal(current, previous) {
-		return fmt.Errorf("配置文件已被外部修改，请刷新后重试")
-	}
-	if len(previous) > 0 {
-		backup := path + "." + time.Now().Format("20060102-150405") + ".bak"
-		if err := os.WriteFile(backup, previous, 0600); err != nil {
-			return fmt.Errorf("创建备份失败: %w", err)
-		}
-	}
-	if err := atomicfile.Write(path, next, atomicfile.Options{TempPrefix: ".mcp-"}); err != nil {
-		if atomicfile.IsCommitted(err) {
-			log.Printf("[MCP-Sync] %s 已写入但收尾失败: %v", path, err)
-			return nil
-		}
-		return err
-	}
-	return nil
+	return filetxn.Replace(path, previous, next, filepath.Dir(path), 0600)
 }

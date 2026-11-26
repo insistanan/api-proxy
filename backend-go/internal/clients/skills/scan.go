@@ -2,14 +2,20 @@ package skills
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"time"
+
+	"insistanan/api-proxy/internal/clients/filetxn"
 )
 
 func Scan(location Location, projectDir string) ([]Item, error) {
+	if location.Error != "" {
+		return nil, errors.New(location.Error)
+	}
 	entries, err := os.ReadDir(location.Path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
@@ -25,8 +31,11 @@ func Scan(location Location, projectDir string) ([]Item, error) {
 		path := filepath.Join(location.Path, entry.Name())
 		content, err := os.ReadFile(filepath.Join(path, "SKILL.md"))
 		item := Item{LocationKey: location.Key, Agent: location.Agent, Name: entry.Name(), Path: path, SourceType: location.SourceType, ReadOnly: location.ReadOnly}
+		var issues []error
 		if metadata, metadataErr := readGlobalMetadata(projectDir, item.Name); metadataErr == nil {
 			item.Note = metadata.Note
+		} else {
+			issues = append(issues, fmt.Errorf("读取备注失败: %w", metadataErr))
 		}
 		if err != nil {
 			item.Issue = "缺少或无法读取 SKILL.md"
@@ -39,13 +48,15 @@ func Scan(location Location, projectDir string) ([]Item, error) {
 				item.Valid = true
 				item.Language = ContentLanguage(content)
 				item.DisplayName = displayName(content, item.Language)
-				if backup, found, backupErr := LatestBackup(projectDir, item, content); backupErr == nil && found {
+				if backup, found, backupErr := LatestBackup(projectDir, item, content); backupErr != nil {
+					issues = append(issues, fmt.Errorf("读取译文失败: %w", backupErr))
+				} else if found {
 					item.HasTranslation = true
 					item.TranslatedName, item.TranslatedDescription, item.TranslationLanguage = backup.Presentation()
 				}
 			}
 		}
-		_ = filepath.WalkDir(path, func(current string, entry fs.DirEntry, walkErr error) error {
+		walkErr := filepath.WalkDir(path, func(current string, entry fs.DirEntry, walkErr error) error {
 			if walkErr != nil || entry.IsDir() {
 				return walkErr
 			}
@@ -54,9 +65,21 @@ func Scan(location Location, projectDir string) ([]Item, error) {
 				if info.ModTime().After(timeFromString(item.ModifiedAt)) {
 					item.ModifiedAt = info.ModTime().Format(time.RFC3339)
 				}
+			} else {
+				return err
 			}
 			return nil
 		})
+		if walkErr != nil {
+			issues = append(issues, fmt.Errorf("扫描资源失败: %w", walkErr))
+		}
+		if item.Issue != "" {
+			issues = append(issues, errors.New(item.Issue))
+		}
+		if err := errors.Join(issues...); err != nil {
+			item.Issue = err.Error()
+			item.Valid = false
+		}
 		items = append(items, item)
 	}
 	return items, nil
@@ -64,7 +87,13 @@ func Scan(location Location, projectDir string) ([]Item, error) {
 
 // RestoreProjectBackups 兼容早期仅保存 original.md 的翻译备份，
 // 使其成为项目目录中可查看、可复制的标准 Skill。
-func RestoreProjectBackups(root string) error {
+func RestoreProjectBackups(root string) (resultErr error) {
+	var restored []string
+	defer func() {
+		if resultErr != nil && len(restored) > 0 {
+			resultErr = &filetxn.CommitError{Files: restored, Err: resultErr}
+		}
+	}()
 	entries, err := os.ReadDir(root)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -89,15 +118,16 @@ func RestoreProjectBackups(root string) error {
 		for _, backupDir := range backupDirs {
 			original, err := os.ReadFile(filepath.Join(backupDir, "original.md"))
 			if err != nil {
-				continue
+				return fmt.Errorf("读取旧备份 %s 失败: %w", backupDir, err)
 			}
 			name, _, err := ParseFrontmatter(original)
 			if err != nil || name != entry.Name() {
 				continue
 			}
-			if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), original, 0600); err != nil {
+			if err := filetxn.Replace(filepath.Join(skillDir, "SKILL.md"), nil, original, "", 0600); err != nil {
 				return err
 			}
+			restored = append(restored, filepath.Join(skillDir, "SKILL.md"))
 			break
 		}
 	}

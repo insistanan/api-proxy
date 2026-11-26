@@ -90,8 +90,8 @@ describe('扩展与 Skill 同步 API', () => {
     expect(fetch.mock.calls[5][0]).toBe('/api/extensions/git/pull')
     expect(fetch.mock.calls[5][1].method).toBe('POST')
 
-    await api.pushExtensionsGit('sync skills')
+    await api.pushExtensionsGit('sync skills', 'preview-revision')
     expect(fetch.mock.calls[6][0]).toBe('/api/extensions/git/push')
-    expect(JSON.parse(fetch.mock.calls[6][1].body)).toEqual({ message: 'sync skills' })
+    expect(JSON.parse(fetch.mock.calls[6][1].body)).toEqual({ message: 'sync skills', exportRevision: 'preview-revision' })
   })
 })

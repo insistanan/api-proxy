@@ -194,7 +194,7 @@
         <UiBadge size="small" variant="tonal">{{ editingConversation?.apiKind }}</UiBadge>
       </div>
       <UiSelect
-        v-model="selectedChannelIndex"
+        v-model="selectedChannelId"
         :items="routeChannelItems"
         label="渠道"
         :error-messages="routeOptionsError"
@@ -488,7 +488,7 @@ const orderItems: Array<{ title: string; value: ConversationOrderMode }> = [
 ]
 type RouteSelectItem = {
   title: string
-  value: number
+  value: string
   channel: ConversationRouteOptionChannel
 }
 
@@ -507,7 +507,7 @@ const orderMode = ref<ConversationOrderMode>('created')
 const now = ref(Date.now())
 const routeDialog = ref(false)
 const editingConversation = ref<ConversationEntry | null>(null)
-const selectedChannelIndex = ref<number | null>(null)
+const selectedChannelId = ref<string | null>(null)
 const nameDialog = ref(false)
 const editingNameConversation = ref<ConversationEntry | null>(null)
 const conversationName = ref('')
@@ -549,6 +549,12 @@ const openTraceDialog = (item: ConversationEntry) => {
 }
 const displayConversationName = (item: ConversationEntry): string => item.name || item.firstPrompt || conversationPrompts(item)[0] || '未命名对话'
 
+// 所有写入统一使此前启动的轮询失效，已提交结果才可更新列表。
+const invalidateConversationReads = () => {
+  conversationRequestSequence++
+  loading.value = false
+}
+
 const updateConversation = (updated: ConversationEntry) => {
   conversations.value = conversations.value.map(item => item.id === updated.id ? updated : item)
   if (selectedConversation.value?.id === updated.id) {
@@ -567,8 +573,7 @@ const saveName = async () => {
   saving.value = true
   try {
     const updated = await api.setConversationName(editingNameConversation.value.id, conversationName.value.trim())
-    conversationRequestSequence++
-    loading.value = false
+    invalidateConversationReads()
     updateConversation(updated)
     if (selectedConversation.value?.id === updated.id) detailName.value = updated.name || ''
     nameDialog.value = false
@@ -586,8 +591,7 @@ const saveDetailName = async () => {
   savingName.value = true
   try {
     const updated = await api.setConversationName(target.id, name)
-    conversationRequestSequence++
-    loading.value = false
+    invalidateConversationReads()
     updateConversation(updated)
     if (selectedConversation.value?.id === target.id) detailName.value = updated.name || ''
   } catch (error) {
@@ -608,6 +612,7 @@ const deleteConversation = async () => {
   try {
     const id = deletingConversation.value.id
     await api.deleteConversation(id)
+    invalidateConversationReads()
     await loadConversations()
     if (selectedConversation.value?.id === id) {
       detailDialog.value = false
@@ -632,6 +637,7 @@ const deleteAllConversations = async () => {
   saving.value = true
   try {
     await api.deleteAllConversations()
+    invalidateConversationReads()
     conversations.value = []
     totalConversations.value = 0
     page.value = 1
@@ -698,7 +704,7 @@ const loadRouteOptions = async () => {
     for (const group of res.kinds) {
       next[group.kind] = group.channels.map(ch => ({
         title: formatRouteOptionTitle(ch),
-        value: ch.channelIndex,
+        value: ch.channelId,
         channel: ch
       }))
     }
@@ -740,19 +746,23 @@ const loadConversations = async (silent = false) => {
 
 const openRouteDialog = (item: ConversationEntry) => {
   editingConversation.value = item
-  selectedChannelIndex.value = item.routeOverride?.channelIndex ?? null
+  selectedChannelId.value = item.routeOverride?.channelId ?? null
   routeDialog.value = true
 }
 
 const saveRoute = async () => {
-  if (!editingConversation.value || selectedChannelIndex.value === null) return
+  if (!editingConversation.value || selectedChannelId.value === null) return
   saving.value = true
   try {
+    const target = routeChannelItems.value.find(item => item.value === selectedChannelId.value)?.channel
+    if (!target?.channelId) throw new Error('渠道选项缺少稳定 ID，请刷新后重新选择')
     const updated = await api.setConversationRoute(
       editingConversation.value.id,
       editingConversation.value.apiKind,
-      selectedChannelIndex.value
+      target.channelIndex,
+      target.channelId
     )
+    invalidateConversationReads()
     updateConversation(updated)
     routeDialog.value = false
   } catch (error) {
@@ -765,6 +775,7 @@ const saveRoute = async () => {
 const clearRoute = async (item: ConversationEntry) => {
   try {
     const updated = await api.clearConversationRoute(item.id)
+    invalidateConversationReads()
     updateConversation(updated)
   } catch (error) {
     showOperationError(error, '清除固定渠道失败')

@@ -11,10 +11,10 @@ import (
 	"strings"
 )
 
-// Locations 枚举当前运行用户的已知 Agent Skill 目录，避免把任意路径暴露为文件浏览器。
+// BaseLocations 枚举当前运行用户的基础 Agent Skill 目录，独立于插件发现。
 // opts 中的 OpenCodeSkillsDir / PiSkillsDir / ProjectDir 由调用方传入，未传时按默认规则回退；
 // 其余客户端目录（Claude Code / Codex / Cursor）本包按各自环境变量自行解析。
-func Locations(opts LocationOptions) ([]Location, error) {
+func BaseLocations(opts LocationOptions) ([]Location, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
@@ -49,18 +49,34 @@ func Locations(opts LocationOptions) ([]Location, error) {
 		{Key: "codex-system", Agent: "Codex 内置 Skill", Path: filepath.Join(codexHome, "skills", ".system"), SourceType: "codex-system", ReadOnly: true},
 	}
 
-	pluginLocations, err := discoverClaudePluginLocations(claudeHome)
-	if err != nil {
-		return nil, err
-	}
-	locations = append(locations, pluginLocations...)
 	for index := range locations {
 		_, statErr := os.Stat(locations[index].Path)
 		locations[index].Exists = statErr == nil
+		if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
+			locations[index].Error = statErr.Error()
+		}
 	}
 	return locations, nil
 }
 
+// Locations 供列表发现使用；插件错误作为独立位置返回，不阻断基础目录操作。
+func Locations(opts LocationOptions) ([]Location, error) {
+	locations, err := BaseLocations(opts)
+	if err != nil {
+		return nil, err
+	}
+	var claudeHome string
+	for _, location := range locations {
+		if location.Key == "claude-code" {
+			claudeHome = filepath.Dir(location.Path)
+		}
+	}
+	plugins, err := discoverClaudePluginLocations(claudeHome)
+	if err != nil {
+		locations = append(locations, Location{Key: "claude-plugin-error", Agent: "Claude 插件", ReadOnly: true, Error: err.Error()})
+	}
+	return append(locations, plugins...), nil
+}
 func discoverClaudePluginLocations(claudeHome string) ([]Location, error) {
 	type installedPlugin struct {
 		InstallPath string `json:"installPath"`
@@ -93,7 +109,8 @@ func discoverClaudePluginLocations(claudeHome string) ([]Location, error) {
 			if _, err := os.Stat(root); errors.Is(err, fs.ErrNotExist) {
 				continue
 			} else if err != nil {
-				return nil, err
+				locations = append(locations, Location{Key: "claude-plugin-cache:" + root, Agent: "Claude 插件 · " + pluginName, Path: root, ReadOnly: true, Error: err.Error()})
+				continue
 			}
 			err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 				if walkErr != nil {
@@ -116,12 +133,12 @@ func discoverClaudePluginLocations(claudeHome string) ([]Location, error) {
 				key := "claude-plugin-cache:" + filepath.ToSlash(root) + ":" + filepath.ToSlash(relative)
 				if _, exists := seen[key]; !exists {
 					seen[key] = struct{}{}
-					locations = append(locations, Location{Key: key, Agent: "Claude 插件 · " + pluginName, Path: path, SourceType: "claude-plugin-cache", ReadOnly: true})
+					locations = append(locations, Location{Key: key, Agent: "Claude 插件 · " + pluginName, Path: path, SourceType: "claude-plugin-cache", ReadOnly: true, Exists: true})
 				}
 				return fs.SkipDir
 			})
 			if err != nil {
-				return nil, err
+				locations = append(locations, Location{Key: "claude-plugin-error:" + root, Agent: "Claude 插件 · " + pluginName, Path: root, ReadOnly: true, Error: err.Error()})
 			}
 		}
 	}
@@ -166,7 +183,10 @@ func Resolve(locationKey, name string, opts LocationOptions) (Item, error) {
 	if !namePattern.MatchString(name) {
 		return Item{}, errors.New("Skill 名称必须为小写字母、数字和连字符")
 	}
-	locations, err := Locations(opts)
+	locations, err := BaseLocations(opts)
+	if strings.HasPrefix(locationKey, "claude-plugin-cache:") {
+		locations, err = Locations(opts)
+	}
 	if err != nil {
 		return Item{}, err
 	}
@@ -177,7 +197,7 @@ func Resolve(locationKey, name string, opts LocationOptions) (Item, error) {
 				return Item{}, errors.New("Skill 路径无效")
 			}
 			if _, err := os.Stat(filepath.Join(path, "SKILL.md")); err != nil {
-				return Item{}, fmt.Errorf("Skill 不存在: %s", name)
+				return Item{}, fmt.Errorf("读取 Skill %s 失败: %w", name, err)
 			}
 			return Item{LocationKey: location.Key, Agent: location.Agent, Name: name, Path: path, SourceType: location.SourceType, ReadOnly: location.ReadOnly}, nil
 		}

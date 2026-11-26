@@ -60,6 +60,7 @@ export const useForest = defineStore('usage-forest', () => {
   const syncError = ref('')
   const newsError = ref('')
   let request = 0
+  let lifetime = 0
   function acceptTimer(value: ForestTimer) {
     const old = timer.value
     if (
@@ -83,23 +84,35 @@ export const useForest = defineStore('usage-forest', () => {
   }
   async function command(action: string, minutes = 0) {
     if (!timer.value) throw new Error('计时状态尚未加载')
+    const generation = lifetime
     const value = await apiRequest<ForestTimer>('/forest/timer', {
       method: 'POST',
       body: JSON.stringify({ action, minutes, revision: timer.value.revision })
     })
-    acceptTimer(value)
+    if (generation === lifetime) acceptTimer(value)
   }
   async function refreshTimer() {
+    const generation = lifetime
     try {
-      acceptTimer(await apiRequest<ForestTimer>('/forest/timer'))
+      const value = await apiRequest<ForestTimer>('/forest/timer')
+      if (generation === lifetime) acceptTimer(value)
     } catch (cause) {
-      if (!(cause instanceof ApiError && cause.status === 503) || timer.value) {
+      if (generation === lifetime && (!(cause instanceof ApiError && cause.status === 503) || timer.value)) {
         syncError.value = `计时同步暂时不可用。 ${cause instanceof Error ? cause.message : String(cause)}`
       }
       throw cause
     }
   }
-  return { world, timer, receivedAt, syncError, newsError, load, command, refreshTimer }
+  function reset() {
+    lifetime++
+    request++
+    world.value = undefined
+    timer.value = undefined
+    receivedAt.value = 0
+    syncError.value = ''
+    newsError.value = ''
+  }
+  return { world, timer, receivedAt, syncError, newsError, load, command, refreshTimer, reset }
 })
 
 export const forestApi = {

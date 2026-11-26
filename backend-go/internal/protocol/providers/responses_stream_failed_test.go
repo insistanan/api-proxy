@@ -7,9 +7,7 @@ import (
 	"testing"
 )
 
-// 反证切片 4 修复：response.failed 事件必须经 errChan 上报且不伪造 message_stop。
-// 旧实现只查顶层 error 字段，response.failed（error 在 response.error 下）会走
-// finish() 正常收尾，客户端把失败当成功终止。
+// response.failed 事件必须经 errChan 上报且不伪造 message_stop。
 func TestResponsesStream_ResponseFailedDoesNotFakeMessageStop(t *testing.T) {
 	body := strings.Join([]string{
 		`data: {"type":"response.output_text.delta","delta":"partial"}`,

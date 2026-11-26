@@ -64,6 +64,9 @@ func (m *ModelConfig) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return err
 	}
+	if fields == nil {
+		return fmt.Errorf("model 必须是对象，不能为 null")
+	}
 	for _, key := range []string{"id", "name", "api", "baseUrl", "reasoning", "thinkingLevelMap", "input", "contextWindow", "maxTokens", "cost", "headers", "compat"} {
 		delete(fields, key)
 	}
@@ -92,6 +95,9 @@ func (p *ProviderConfig) UnmarshalJSON(data []byte) error {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return err
+	}
+	if fields == nil {
+		return fmt.Errorf("provider 必须是对象，不能为 null")
 	}
 	for _, key := range []string{"name", "baseUrl", "api", "apiKey", "authHeader", "headers", "compat", "models", "modelOverrides"} {
 		delete(fields, key)

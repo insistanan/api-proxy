@@ -77,7 +77,11 @@ func (s *ChannelScheduler) ValidateFixedChannel(ctx context.Context, conversatio
 	if override.Kind != string(kind) {
 		return fmt.Errorf("该对话已固定到 %s 渠道池，当前请求为 %s", override.Kind, kind)
 	}
-	if override.ChannelIndex != channelIndex {
+	upstreams, _, err := s.configManager.GetChannelConfig(string(kind))
+	if err != nil {
+		return err
+	}
+	if override.ChannelID == "" || channelIndex < 0 || channelIndex >= len(upstreams) || upstreams[channelIndex].ID != override.ChannelID {
 		return fmt.Errorf("该对话已固定到渠道 [%d]，当前命中的渠道为 [%d]", override.ChannelIndex, channelIndex)
 	}
 	return nil

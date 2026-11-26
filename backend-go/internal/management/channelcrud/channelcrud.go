@@ -2,6 +2,7 @@
 package channelcrud
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -119,6 +120,10 @@ func (h *Handlers) UpdateUpstream(c *gin.Context) {
 	}
 
 	shouldResetMetrics, err := h.cfg.UpdateChannel(string(h.kind), id, updates)
+	if errors.Is(err, config.ErrChannelIdentityConflict) {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "channel_identity_conflict"})
+		return
+	}
 	if shouldResetMetrics && (err == nil || config.IsCommittedError(err)) {
 		h.resetMetrics(id)
 	}

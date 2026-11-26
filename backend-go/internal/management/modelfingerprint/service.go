@@ -75,7 +75,7 @@ type Service struct {
 }
 
 func New(cfg *config.ConfigManager) *Service {
-	return &Service{cfg: cfg, loadGate: make(chan struct{}, 1), load: loadReference}
+	return &Service{cfg: cfg, loadGate: make(chan struct{}, 1), load: func(ctx context.Context) (analyzer, error) { return loadReference(ctx, cfg) }}
 }
 
 func (s *Service) Prepare(channelID string, input Request) (*Target, error) {
@@ -150,9 +150,6 @@ func (s *Service) Prepare(channelID string, input Request) (*Target, error) {
 }
 
 func (s *Service) restoreTarget(previous *Target) (*Target, error) {
-	if previous.upstream != nil {
-		return previous, nil
-	}
 	target, err := s.Prepare(previous.ChannelID, Request{Model: previous.Model, URLIndex: previous.URLIndex,
 		KeyIndex: previous.KeyIndex, Effort: previous.Effort})
 	if err != nil {
@@ -210,11 +207,6 @@ func (s *Service) Run(ctx context.Context, target *Target, emit func(Event)) {
 		samples[i] = sample
 	}
 	emitAnalysis(ctx, detector, samples, emit)
-}
-
-// Retry 复用原挑战和同一参考库，只重新请求指定失败样本，随后重新计算整轮结果。
-func (s *Service) Retry(ctx context.Context, target *Target, previous Task, index int, emit func(Event)) {
-	s.RetrySamples(ctx, target, previous, []int{index}, emit)
 }
 
 // RetrySamples 在同一个后台任务内补测所选失败样本，全部尝试后只评分一次。

@@ -63,6 +63,7 @@ func (a *app) shutdown() error {
 		for _, phase := range [][]appCleanup{a.workers, a.cleanups} {
 			for i := len(phase) - 1; i >= 0; i-- {
 				cleanup := phase[i]
+				log.Printf("[Server-Shutdown] 正在关闭%s", cleanup.name)
 				if err := cleanup.close(); err != nil {
 					a.shutdownErr = errors.Join(a.shutdownErr, fmt.Errorf("关闭%s失败: %w", cleanup.name, err))
 				}

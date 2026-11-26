@@ -1,3 +1,4 @@
+import { ApiError, apiErrorText } from '@/shared/services/http'
 // gateway 设置的草稿与操作编排；草稿仅供本设置页使用，保存以服务端响应回填。
 import { computed, ref, type Ref } from 'vue'
 import { api } from '@/api'
@@ -5,7 +6,7 @@ import type { GatewaySettings } from '@/types'
 import type { SettingsNotice as Notice } from '@/features/settings/composables/types'
 import { useLogsStore } from '@/features/observability'
 
-export function useGatewaySettings(saving: Ref<boolean>) {
+export function useGatewaySettings(saving: Ref<boolean>, reloadRequired: Ref<boolean>) {
   const logs = useLogsStore()
   // ===== 请求、日志与存储策略 =====
   const gatewayFormRef = ref()
@@ -32,27 +33,29 @@ export function useGatewaySettings(saving: Ref<boolean>) {
   const logBudgetRule = (value: unknown) => value !== '' && value !== null && (Number(value) === 0 || integerRangeRule(64, 1048576)(value) === true) || '请输入 0 或 64 至 1048576 之间的整数'
 
   const saveGatewaySettings = async () => {
+    if (saving.value || reloadRequired.value) return
     const current = gateway.value
     if (!current) {
       gatewayNotice.value = { type: 'error', message: '请求与日志设置尚未加载' }
       return
     }
-    const { valid } = await gatewayFormRef.value.validate()
-    if (!valid) {
-      gatewayNotice.value = { type: 'error', message: '请展开日志保留与容量或高级部署设置，检查标记的字段。' }
-      return
-    }
     saving.value = true
     gatewayNotice.value = null
     try {
+      const { valid } = await gatewayFormRef.value.validate()
+      if (!valid) {
+        gatewayNotice.value = { type: 'error', message: '请展开日志保留与容量或高级部署设置，检查标记的字段。' }
+        return
+      }
       const settings = await api.updateSettings({ gateway: { ...current } })
-      if (!settings.gateway) throw new Error('服务端未返回请求与日志设置，请刷新确认保存状态')
+      if (!settings.gateway) throw new ApiError('服务端未返回请求与日志设置', 200, undefined, 'INVALID_RESPONSE', true)
       gateway.value = settings.gateway
       savedGateway.value = JSON.stringify(settings.gateway)
       gatewayNotice.value = { type: 'success', message: '设置已保存；日志路径和指标持久化开关在重启后生效' }
-      void logs.loadStorageStatus()
+      void logs.loadStorageStatus().catch(error => { gatewayNotice.value = { type: 'warning', message: '设置已保存，但日志状态刷新失败：' + apiErrorText(error) } })
     } catch (error) {
-      gatewayNotice.value = { type: 'error', message: error instanceof Error ? error.message : '保存请求与日志设置失败' }
+      if (error instanceof ApiError && error.committed) reloadRequired.value = true
+      gatewayNotice.value = { type: reloadRequired.value ? 'warning' : 'error', message: apiErrorText(error) }
     } finally {
       saving.value = false
     }

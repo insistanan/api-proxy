@@ -7,10 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log"
 	"os"
 
-	"insistanan/api-proxy/internal/storage/atomicfile"
+	"insistanan/api-proxy/internal/clients/filetxn"
 )
 
 // storeVersion 是统一列表文件的格式版本。读取版本不匹配的文件时直接报错，不尝试猜测结构。
@@ -24,9 +23,11 @@ type Store struct {
 }
 
 type storeFile struct {
+	raw      []byte
 	Version  int             `json:"version"`
 	Servers  []Server        `json:"servers"`
 	Disabled []DisabledEntry `json:"disabled,omitempty"`
+	Applied  []AppliedEntry  `json:"applied,omitempty"`
 }
 
 // DisabledEntry 保存停用前的完整客户端条目，重新启用时恢复附加设置。
@@ -70,14 +71,8 @@ func (s *Store) ReadRaw() ([]byte, error) {
 	return raw, nil
 }
 
-// decodeStore 解析并校验列表内容。空字节视为尚未创建列表，返回空列表。
-func decodeStore(raw []byte) ([]Server, error) {
-	file, err := decodeStoreFile(raw)
-	return file.Servers, err
-}
-
 func decodeStoreFile(raw []byte) (storeFile, error) {
-	if len(raw) == 0 {
+	if raw == nil {
 		return storeFile{Version: storeVersion, Servers: []Server{}}, nil
 	}
 	var file storeFile
@@ -91,7 +86,7 @@ func decodeStoreFile(raw []byte) (storeFile, error) {
 		return storeFile{}, fmt.Errorf("MCP 列表文件内容无效: %w", err)
 	}
 	if file.Servers == nil {
-		file.Servers = []Server{}
+		return storeFile{}, errors.New("MCP 列表必须包含 servers 数组")
 	}
 	seen := map[string]bool{}
 	for _, entry := range file.Disabled {
@@ -101,11 +96,20 @@ func decodeStoreFile(raw []byte) (storeFile, error) {
 		}
 		seen[key] = true
 	}
+	seen = map[string]bool{}
+	for _, entry := range file.Applied {
+		key := string(entry.Agent) + ":" + entry.Name
+		if !IsKnownAgent(entry.Agent) || !namePattern.MatchString(entry.Name) || entry.Path == "" || seen[key] {
+			return storeFile{}, fmt.Errorf("MCP 托管记录无效或重复: %s", key)
+		}
+		seen[key] = true
+	}
+	file.raw = raw
 	return file, nil
 }
 
 // write 以原子方式替换列表文件，返回写入的原始字节。
-// 替换完成后的目录同步失败视为已提交：文件已是新内容，只记录日志，不返回错误。
+// 替换后的收尾错误保留已提交语义，调用方必须刷新核对。
 func (s *Store) write(servers []Server) ([]byte, error) {
 	raw, err := s.ReadRaw()
 	if err != nil {
@@ -116,10 +120,10 @@ func (s *Store) write(servers []Server) ([]byte, error) {
 		return nil, err
 	}
 	file.Servers = servers
-	return s.writeFile(file)
+	return s.writeFile(&file)
 }
 
-func (s *Store) writeFile(file storeFile) ([]byte, error) {
+func (s *Store) writeFile(file *storeFile) ([]byte, error) {
 	path, err := s.Path()
 	if err != nil {
 		return nil, fmt.Errorf("解析 MCP 列表路径失败: %w", err)
@@ -132,13 +136,10 @@ func (s *Store) writeFile(file storeFile) ([]byte, error) {
 		return nil, fmt.Errorf("序列化 MCP 列表失败: %w", err)
 	}
 	data = append(data, '\n')
-	if err := atomicfile.Write(path, data, atomicfile.Options{TempPrefix: ".mcp-"}); err != nil {
-		if atomicfile.IsCommitted(err) {
-			log.Printf("[MCP-Store] 列表已写入但收尾失败: %v", err)
-			return data, nil
-		}
-		return nil, fmt.Errorf("保存 MCP 列表失败: %w", err)
+	if err := filetxn.Replace(path, file.raw, data, "", 0600); err != nil {
+		return data, fmt.Errorf("保存 MCP 列表失败: %w", err)
 	}
+	file.raw = data
 	return data, nil
 }
 

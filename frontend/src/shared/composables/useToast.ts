@@ -38,5 +38,6 @@ export function useToast() {
     }, TOAST_DURATION_MS)
   }
 
-  return { toasts, showToast, TOAST_DURATION_MS }
+  const clearToasts = () => { toasts.value = [] }
+  return { toasts, showToast, clearToasts, TOAST_DURATION_MS }
 }

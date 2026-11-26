@@ -1,11 +1,15 @@
 package metrics
 
 // SyncToProfile 将现有指标同步到性能画像（用于初始化）
-func (m *MetricsManager) SyncToProfile(pm *ProfileManager, baseURL string, apiKeys []string, model string, channelIdx int) {
+func (m *MetricsManager) SyncToProfile(pm *ProfileManager, baseURL string, apiKeys []string, model string, identity ProfileIdentity) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	profile := pm.GetOrCreateProfile(baseURL, apiKeys, model, channelIdx)
+	channelIdx := identity.Index
+	profile := pm.GetOrCreateProfile(baseURL, apiKeys, model, identity)
+	if profile == nil {
+		return
+	}
 
 	var totalReq, totalSuccess int64
 	var recentSuccessCount int

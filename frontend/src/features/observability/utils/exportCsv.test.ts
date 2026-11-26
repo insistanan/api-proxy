@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createCsv } from './exportCsv'
+import { createCsv } from '@/features/observability/utils/exportCsv'
 
 describe('createCsv', () => {
   it('转义逗号、引号与换行，并保留空单元格', () => {

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"compress/gzip"
 	"compress/zlib"
-	"insistanan/api-proxy/internal/protocol/codec"
 	"io"
 	"mime/multipart"
 	"net/http"

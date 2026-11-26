@@ -1,6 +1,7 @@
 package clients
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,12 +9,15 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"insistanan/api-proxy/internal/clients/filetxn"
 	"insistanan/api-proxy/internal/clients/piagent"
 )
 
@@ -36,6 +40,10 @@ func NewPiAgentAPI() (*PiAgentAPI, error) {
 
 // piAgentError 将底层错误映射为 HTTP 状态码。
 func piAgentError(c *gin.Context, err error) {
+	if filetxn.Committed(err) || errors.Is(err, filetxn.ErrConflict) {
+		respondClientFileError(c, err)
+		return
+	}
 	switch {
 	case errors.Is(err, piagent.ErrLocked):
 		c.JSON(http.StatusLocked, gin.H{"error": err.Error()})
@@ -189,7 +197,7 @@ func (p *PiAgentAPI) CreateProvider() gin.HandlerFunc {
 		p.mu.Lock()
 		defer p.mu.Unlock()
 		store := p.store
-		release, err := store.LockAndCheck()
+		release, err := store.LockAndCheck(c.Request.Context())
 		if err != nil {
 			piAgentError(c, err)
 			return
@@ -235,7 +243,7 @@ func (p *PiAgentAPI) UpdateProvider() gin.HandlerFunc {
 		p.mu.Lock()
 		defer p.mu.Unlock()
 		store := p.store
-		release, err := store.LockAndCheck()
+		release, err := store.LockAndCheck(c.Request.Context())
 		if err != nil {
 			piAgentError(c, err)
 			return
@@ -273,7 +281,7 @@ func (p *PiAgentAPI) DeleteProvider() gin.HandlerFunc {
 		p.mu.Lock()
 		defer p.mu.Unlock()
 		store := p.store
-		release, err := store.LockAndCheck()
+		release, err := store.LockAndCheck(c.Request.Context())
 		if err != nil {
 			piAgentError(c, err)
 			return
@@ -388,9 +396,14 @@ func (p *PiAgentAPI) DiscoverModels() gin.HandlerFunc {
 		}
 		apiKey := req.APIKey
 		if apiKey == "" {
-			apiKey = p.apiKeyFor(id)
+			apiKey, err = p.apiKeyFor(id)
+			if err != nil {
+				piAgentError(c, err)
+				return
+			}
 		}
-		models, method, err := probeOpenAIModels(baseURL, apiKey)
+		provider.API = protocol
+		models, method, err := probeOpenAIModels(c.Request.Context(), baseURL, apiKey, provider)
 		if err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("模型探测失败: %v", err)})
 			return
@@ -429,11 +442,18 @@ func (p *PiAgentAPI) TestProvider() gin.HandlerFunc {
 		}
 		apiKey := req.APIKey
 		if apiKey == "" {
-			apiKey = p.apiKeyFor(id)
+			apiKey, err = p.apiKeyFor(id)
+			if err != nil {
+				piAgentError(c, err)
+				return
+			}
 		}
 
+		if req.API != "" {
+			provider.API = strings.TrimSpace(req.API)
+		}
 		start := time.Now()
-		statusCode, err := probeConnectivity(baseURL, apiKey)
+		statusCode, err := probeConnectivity(c.Request.Context(), baseURL, apiKey, provider)
 		latencyMs := time.Since(start).Milliseconds()
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{"success": false, "latencyMs": latencyMs, "error": err.Error()})
@@ -449,7 +469,7 @@ func (p *PiAgentAPI) TestProvider() gin.HandlerFunc {
 }
 
 // probeOpenAIModels 请求 OpenAI 兼容的 /models 端点并返回模型 ID 列表。
-func probeOpenAIModels(baseURL, apiKey string) ([]string, string, error) {
+func probeOpenAIModels(ctx context.Context, baseURL, apiKey string, provider piagent.ProviderConfig) ([]string, string, error) {
 	modelURL, err := appendURLPath(baseURL, "/models")
 	if err != nil {
 		return nil, "", err
@@ -459,12 +479,12 @@ func probeOpenAIModels(baseURL, apiKey string) ([]string, string, error) {
 		return nil, "", err
 	}
 	client := piAgentHTTPClient()
-	request, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, "", err
 	}
-	if apiKey != "" {
-		request.Header.Set("Authorization", "Bearer "+apiKey)
+	if err := applyPiProbeIdentity(request, provider, apiKey); err != nil {
+		return nil, "", err
 	}
 	request.Header.Set("Accept", "application/json")
 	response, err := client.Do(request)
@@ -472,9 +492,12 @@ func probeOpenAIModels(baseURL, apiKey string) ([]string, string, error) {
 		return nil, "", err
 	}
 	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	body, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
 	if err != nil {
 		return nil, "", err
+	}
+	if len(body) > 1<<20 {
+		return nil, "", errors.New("模型列表响应超过 1 MB")
 	}
 	if response.StatusCode != http.StatusOK {
 		return nil, "", fmt.Errorf("上游返回 HTTP %d", response.StatusCode)
@@ -508,25 +531,27 @@ func probeOpenAIModels(baseURL, apiKey string) ([]string, string, error) {
 }
 
 // probeConnectivity 对 baseUrl 发起受限的 HTTP GET 连通性探测。
-func probeConnectivity(baseURL, apiKey string) (int, error) {
+func probeConnectivity(ctx context.Context, baseURL, apiKey string, provider piagent.ProviderConfig) (int, error) {
 	endpoint, err := validateOutboundURL(baseURL)
 	if err != nil {
 		return 0, err
 	}
 	client := piAgentHTTPClient()
-	request, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return 0, err
 	}
-	if apiKey != "" {
-		request.Header.Set("Authorization", "Bearer "+apiKey)
+	if err := applyPiProbeIdentity(request, provider, apiKey); err != nil {
+		return 0, err
 	}
 	response, err := client.Do(request)
 	if err != nil {
 		return 0, err
 	}
 	defer response.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10))
+	if _, err := io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10)); err != nil {
+		return 0, err
+	}
 	return response.StatusCode, nil
 }
 
@@ -545,15 +570,8 @@ func validateOutboundURL(rawURL string) (string, error) {
 	if parsed.User != nil || parsed.Fragment != "" {
 		return "", errors.New("地址不能包含用户信息或片段")
 	}
-	host := parsed.Hostname()
-	ips, err := net.LookupIP(host)
-	if err != nil {
-		return "", fmt.Errorf("无法解析主机 %s: %w", host, err)
-	}
-	for _, ip := range ips {
-		if isBlockedMetadataAddress(ip) {
-			return "", fmt.Errorf("禁止访问云元数据地址: %s", ip)
-		}
+	if ip := net.ParseIP(parsed.Hostname()); ip != nil && isBlockedMetadataAddress(ip) {
+		return "", fmt.Errorf("禁止访问元数据地址")
 	}
 	return parsed.String(), nil
 }
@@ -575,7 +593,7 @@ func isBlockedMetadataAddress(ip net.IP) bool {
 			return true
 		}
 		// 阿里云元数据 100.100.100.200/201
-		if ip4[0] == 100 && ip4[1] == 100 && (ip4[2] == 100 || ip4[2] == 101) {
+		if ip4[0] == 100 && ip4[1] == 100 && ip4[2] == 100 && (ip4[3] == 200 || ip4[3] == 201) {
 			return true
 		}
 		// 本地模型需要访问 localhost/局域网，不做拦截。
@@ -596,46 +614,108 @@ func isBlockedMetadataAddress(ip net.IP) bool {
 // piAgentHTTPClient 返回受限的 HTTP 客户端：短超时、限制重定向、不跟随代理。
 func piAgentHTTPClient() *http.Client {
 	return &http.Client{
-		Timeout: 8 * time.Second,
-		CheckRedirect: func(request *http.Request, via []*http.Request) error {
-			if len(via) >= 3 {
-				return errors.New("重定向次数过多")
+		Timeout:       8 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
+		Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(address)
+			if err != nil {
+				return nil, err
 			}
-			if _, err := validateOutboundURL(request.URL.String()); err != nil {
-				return fmt.Errorf("重定向目标无效: %w", err)
+			addresses, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+			if err != nil {
+				return nil, fmt.Errorf("解析探测目标失败: %w", err)
 			}
-			return nil
-		},
-		Transport: &http.Transport{
-			Proxy: nil,
-			DialContext: (&net.Dialer{
-				Timeout: 5 * time.Second,
-			}).DialContext,
-		},
+			if len(addresses) == 0 {
+				return nil, fmt.Errorf("目标没有可用地址")
+			}
+			for _, address := range addresses {
+				if isBlockedMetadataAddress(address.IP) {
+					return nil, fmt.Errorf("禁止访问元数据地址")
+				}
+			}
+			var failures error
+			for _, address := range addresses {
+				dialer := net.Dialer{Timeout: 5 * time.Second}
+				connection, err := dialer.DialContext(ctx, network, net.JoinHostPort(address.String(), port))
+				if err == nil {
+					return connection, nil
+				}
+				failures = errors.Join(failures, err)
+			}
+			return nil, failures
+		}},
 	}
 }
 
-// piAgentAPIKeyFor 获取 provider 的 API key（仅用于探测请求，不落盘）。
-// 优先 auth.json 的 credential，其次 models.json 的 provider.apiKey。
-func (p *PiAgentAPI) apiKeyFor(providerID string) string {
-	store := p.store
-	root, _, _, err := store.ReadRawAuth()
-	if err == nil {
-		if raw, exists := root[providerID]; exists {
-			cred := make(map[string]interface{})
-			if err := json.Unmarshal(raw, &cred); err == nil {
-				if key, ok := cred["key"].(string); ok && key != "" {
-					return key
-				}
-			}
+// 探测不执行客户端的 shell 密钥命令；环境引用显式解析，缺失时报错。
+func piProbeValue(value string) (string, error) {
+	if strings.HasPrefix(value, "!") {
+		return "", fmt.Errorf("探测不执行密钥命令，请显式提供临时凭据")
+	}
+	if strings.HasPrefix(value, "{env:") && strings.HasSuffix(value, "}") {
+		name := strings.TrimSuffix(strings.TrimPrefix(value, "{env:"), "}")
+		resolved, exists := os.LookupEnv(name)
+		if !exists {
+			return "", fmt.Errorf("探测所需环境变量未设置: %s", name)
+		}
+		return resolved, nil
+	}
+	// pi-agent 也接受环境变量名作为值；存在时按实际环境解析。
+	if resolved, exists := os.LookupEnv(value); exists {
+		return resolved, nil
+	}
+	return value, nil
+}
+
+func applyPiProbeIdentity(request *http.Request, provider piagent.ProviderConfig, key string) error {
+	key, err := piProbeValue(key)
+	if err != nil {
+		return err
+	}
+	if key != "" && (provider.AuthHeader == nil || *provider.AuthHeader) {
+		switch provider.API {
+		case "anthropic-messages":
+			request.Header.Set("x-api-key", key)
+			request.Header.Set("anthropic-version", "2023-06-01")
+		case "google-generative-ai", "gemini-generate-content":
+			request.Header.Set("x-goog-api-key", key)
+		default:
+			request.Header.Set("Authorization", "Bearer "+key)
 		}
 	}
-	if providers, _, _, _, err := store.ReadProviders(); err == nil {
-		if provider, exists := providers[providerID]; exists && provider.APIKey != "" {
-			return provider.APIKey
+	for name, value := range provider.Headers {
+		resolved, err := piProbeValue(value)
+		if err != nil {
+			return fmt.Errorf("请求头 %s: %w", name, err)
 		}
+		request.Header.Set(name, resolved)
 	}
-	return ""
+	return nil
+}
+
+func (p *PiAgentAPI) apiKeyFor(providerID string) (string, error) {
+	root, _, _, err := p.store.ReadRawAuth()
+	if err != nil {
+		return "", fmt.Errorf("读取探测凭据失败: %w", err)
+	}
+	if raw, exists := root[providerID]; exists {
+		var credential struct {
+			Type string `json:"type"`
+			Key  string `json:"key"`
+		}
+		if err := json.Unmarshal(raw, &credential); err != nil {
+			return "", fmt.Errorf("解析探测凭据失败: %w", err)
+		}
+		if credential.Type != "api_key" || credential.Key == "" {
+			return "", fmt.Errorf("当前凭据不是可直接探测的 API Key，请提供临时凭据")
+		}
+		return piProbeValue(credential.Key)
+	}
+	providers, _, _, _, err := p.store.ReadProviders()
+	if err != nil {
+		return "", err
+	}
+	return piProbeValue(providers[providerID].APIKey)
 }
 
 // piAgentCredentialInfo 读取 auth.json 的脱敏凭据状态，key 为 provider ID。
@@ -733,7 +813,7 @@ func (p *PiAgentAPI) UpdateModelSettings() gin.HandlerFunc {
 		p.mu.Lock()
 		defer p.mu.Unlock()
 		store := p.store
-		release, err := store.LockAndCheck()
+		release, err := store.LockAndCheck(c.Request.Context())
 		if err != nil {
 			piAgentError(c, err)
 			return

@@ -88,3 +88,51 @@ func TestMigrateLegacyAndSyncToAgents(t *testing.T) {
 	require.Len(t, state.Servers, 1)
 	require.Equal(t, "demo", state.Servers[0].Name)
 }
+
+func TestRestartRetriesPersistedMCPDeletion(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "claude.json")
+	store := NewStore(filepath.Join(root, "mcp.json"))
+	adapter := NewClaudeCodeAdapter(func() (string, error) { return path, nil })
+	service := NewService(store, adapter)
+	server := Server{Name: "demo", Transport: TransportStdio, Command: "example", Agents: []AgentKey{AgentClaudeCode}}
+	result, err := service.Save("", []Server{server})
+	require.NoError(t, err)
+	require.True(t, result.Agents[0].OK)
+
+	// 模拟列表已持久化删除、客户端文件尚未来得及分发便退出。
+	raw, err := store.ReadRaw()
+	require.NoError(t, err)
+	file, err := decodeStoreFile(raw)
+	require.NoError(t, err)
+	file.Servers = []Server{}
+	_, err = store.writeFile(&file)
+	require.NoError(t, err)
+	results, err := NewService(store, adapter).SyncToAgents()
+	require.NoError(t, err)
+	require.True(t, results[0].OK)
+	current, err := os.ReadFile(path)
+	require.NoError(t, err)
+	entries, err := adapter.Read(current)
+	require.NoError(t, err)
+	require.Empty(t, entries)
+}
+
+func TestStartupSyncRejectsLocallyModifiedMCP(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "claude.json")
+	store := NewStore(filepath.Join(root, "mcp.json"))
+	adapter := NewClaudeCodeAdapter(func() (string, error) { return path, nil })
+	service := NewService(store, adapter)
+	_, err := service.Save("", []Server{{Name: "demo", Transport: TransportStdio, Command: "example", Agents: []AgentKey{AgentClaudeCode}}})
+	require.NoError(t, err)
+	local := []byte(`{"mcpServers":{"demo":{"command":"local-edit"}}}`)
+	require.NoError(t, os.WriteFile(path, local, 0600))
+	results, err := NewService(store, adapter).SyncToAgents()
+	require.NoError(t, err)
+	require.False(t, results[0].OK)
+	require.Contains(t, results[0].Error, "已在本地修改")
+	actual, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, local, actual)
+}

@@ -10,6 +10,8 @@ import (
 
 // channelPerformanceReport 是性能观测接口的展示数据，不参与渠道调度。
 type channelPerformanceReport struct {
+	ChannelID         string  `json:"channelId"`
+	Protocol          string  `json:"protocol"`
 	ChannelIndex      int     `json:"channelIndex"`
 	BaseURL           string  `json:"baseUrl"`
 	Model             string  `json:"model"`
@@ -39,6 +41,7 @@ func GetChannelPerformanceReport(profileManager *metrics.ProfileManager) gin.Han
 			reports = make([]channelPerformanceReport, len(profiles))
 			for i, p := range profiles {
 				reports[i] = channelPerformanceReport{
+					ChannelID: p.Identity.ID, Protocol: p.Identity.Kind,
 					ChannelIndex: p.ChannelIdx, BaseURL: p.BaseURL, Model: p.Model,
 					HealthScore: p.HealthScore, PerformanceTier: p.PerformanceTier,
 					ActiveRequests: p.ActiveRequests, RecentTPS: p.RecentTPS, Peak1MinTPS: p.Peak1MinTPS,

@@ -14,10 +14,28 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+
 	adminsettings "insistanan/api-proxy/internal/api/admin/settings"
 	"insistanan/api-proxy/internal/clients"
 	"insistanan/api-proxy/internal/infra/config"
 )
+
+func TestShareableExtensionPath(t *testing.T) {
+	for path, want := range map[string]bool{
+		"demo/SKILL.md":                            true,
+		"demo/assets/abcdefgh-ijklmn.txt":          true,
+		"demo/assets/20261126-120000.png":          true,
+		"demo/.backups/20261126-120000.1/SKILL.md": false,
+		"demo/20261126-120000.1/metadata.json":     false,
+		"mcp.json":                                 false,
+		"demo/auth.json":                           false,
+		".skill-metadata/demo.json":                false,
+	} {
+		t.Run(path, func(t *testing.T) {
+			require.Equal(t, want, shareableExtensionPath(path))
+		})
+	}
+}
 
 func setupExtensionsAdminTest(t *testing.T) (
 	root string,
@@ -81,6 +99,21 @@ func setupExtensionsAdminTest(t *testing.T) (
 
 func doJSONRequest(t *testing.T, router *gin.Engine, method, path string, body any) *httptest.ResponseRecorder {
 	t.Helper()
+	if path == "/extensions/git/push" {
+		payload := map[string]any{}
+		if body != nil {
+			raw, err := json.Marshal(body)
+			require.NoError(t, err)
+			require.NoError(t, json.Unmarshal(raw, &payload))
+		}
+		if _, provided := payload["exportRevision"]; !provided {
+			preview := doJSONRequest(t, router, http.MethodGet, "/extensions/git/status", nil)
+			var status ExtensionsGitStatus
+			require.NoError(t, json.Unmarshal(preview.Body.Bytes(), &status))
+			payload["exportRevision"] = status.ExportRevision
+		}
+		body = payload
+	}
 	var buf bytes.Buffer
 	if body != nil {
 		require.NoError(t, json.NewEncoder(&buf).Encode(body))
@@ -232,9 +265,8 @@ func TestExtensionsGitLifecycleInitPushClonePull(t *testing.T) {
 	claudeSkill, err := os.ReadFile(filepath.Join(homeDir, ".claude", "skills", "demo-skill", "SKILL.md"))
 	require.NoError(t, err)
 	require.Contains(t, string(claudeSkill), "v1")
-	claudeMCP, err := os.ReadFile(filepath.Join(homeDir, ".claude", ".claude.json"))
-	require.NoError(t, err)
-	require.Contains(t, string(claudeMCP), "demo-mcp")
+	require.NoFileExists(t, filepath.Join(cloneTarget, "mcp.json"), "MCP 凭据配置不得随 Skills 导出")
+	require.NoFileExists(t, filepath.Join(homeDir, ".claude", ".claude.json"))
 
 	// 保存地址与实际 origin 不一致时，初始化、拉取和推送均应拒绝，保留仓库配置和文件。
 	settings.Extensions.SkillsRepoURL = fileGitURL(filepath.Join(root, "other.git"))

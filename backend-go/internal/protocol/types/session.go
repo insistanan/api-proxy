@@ -2,11 +2,7 @@ package types
 
 import "time"
 
-// Session 会话数据结构（Responses API 多轮对话跟踪）。
-// 历史上定义在 session 包；因其是纯数据体且被 converters（纯转换层）
-// 按参数类型广泛引用，下沉到 types 以消除 converters → session 的
-// 低层→高层反向依赖。session 包通过类型别名 `session.Session` 保持
-// 既有引用兼容。
+// Session 是指定 Responses 历史边界的快照。
 type Session struct {
 	Version          int64           // 历史版本，仅成功提交递增；访问时间不改变版本。
 	ID               string          // sess_xxxxx

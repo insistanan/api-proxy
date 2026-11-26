@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -290,6 +291,7 @@ func (s *Service) search(ctx context.Context, ids []string, kind string, profile
 }
 
 type Evaluation struct {
+	Mode          string           `json:"mode"`
 	Total         int              `json:"total"`
 	Correct       int              `json:"correct"`
 	FalsePositive int              `json:"falsePositive"`
@@ -299,11 +301,12 @@ type Evaluation struct {
 }
 
 type EvaluationCase struct {
-	ID       string  `json:"id"`
-	Expected string  `json:"expected"`
-	Actual   string  `json:"actual"`
-	Score    float64 `json:"score"`
-	Correct  bool    `json:"correct"`
+	BlockEligible bool    `json:"blockEligible"`
+	ID            string  `json:"id"`
+	Expected      string  `json:"expected"`
+	Actual        string  `json:"actual"`
+	Score         float64 `json:"score"`
+	Correct       bool    `json:"correct"`
 }
 
 // ReserveEvaluation 让业务路由评测与数据集评测共用构建互斥，避免评测中途换索引。
@@ -334,7 +337,10 @@ func (s *Service) Evaluate(ctx context.Context, id string, profile config.Semant
 		return Evaluation{}, fmt.Errorf("评测前请先发布当前版本索引")
 	}
 	start := time.Now()
-	out := Evaluation{Cases: []EvaluationCase{}}
+	out := Evaluation{Mode: "intent", Cases: []EvaluationCase{}}
+	if d.Kind == "safety" {
+		out.Mode = "safety_retrieval"
+	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	for _, row := range d.Samples {
@@ -344,22 +350,33 @@ func (s *Service) Evaluate(ctx context.Context, id string, profile config.Semant
 		if out.Total >= 500 {
 			return Evaluation{}, fmt.Errorf("一次最多评测 500 条样本")
 		}
-		result, err := s.Search(ctx, []string{id}, d.Kind, profile, row.Text, "dataset-eval")
+		// 安全评测使用样本携带的工具作用域；评测当前数据集全部标签，不假设线上启用配置。
+		var filter func(Sample) bool
+		if d.Kind == "safety" {
+			filter = func(candidate Sample) bool {
+				return candidate.Tool == "" || strings.EqualFold(candidate.Tool, row.Tool)
+			}
+		}
+		result, err := s.search(ctx, []string{id}, d.Kind, profile, row.Text, "dataset-eval", filter)
 		if err != nil {
 			return Evaluation{}, err
 		}
 		actual, score := "", 0.0
+		blockEligible := false
 		if d.Kind == "intent" {
 			if hit, matched := SelectIntent(result, threshold, margin); matched {
 				actual, score = hit.Sample.Label, hit.Score
 			}
 		} else {
-			for _, hit := range result.Hits {
-				if hit.Sample.Negative || hit.Score < threshold {
-					continue
+			matches, err := AssessSafety(result, row.Text, threshold, margin)
+			if err != nil {
+				return Evaluation{}, err
+			}
+			for index, match := range matches {
+				if index == 0 {
+					actual, score = match.Hit.Sample.Label, match.Hit.Score
 				}
-				actual, score = hit.Sample.Label, hit.Score
-				break
+				blockEligible = blockEligible || match.BlockEligible
 			}
 		}
 		expected := row.Label
@@ -375,7 +392,7 @@ func (s *Service) Evaluate(ctx context.Context, id string, profile config.Semant
 		} else {
 			out.FalseNegative++
 		}
-		out.Cases = append(out.Cases, EvaluationCase{ID: row.ID, Expected: expected, Actual: actual, Score: score, Correct: correct})
+		out.Cases = append(out.Cases, EvaluationCase{ID: row.ID, Expected: expected, Actual: actual, Score: score, Correct: correct, BlockEligible: blockEligible})
 	}
 	if out.Total == 0 {
 		return Evaluation{}, fmt.Errorf("没有已批准的独立评测样本")
@@ -391,8 +408,15 @@ func (s *Service) Evaluate(ctx context.Context, id string, profile config.Semant
 	return out, nil
 }
 
-func PositiveLabels(result Result, threshold, margin float64) []Hit {
-	positive := []Hit{}
+type SafetyMatch struct {
+	Hit           Hit
+	NegativeScore float64
+	BlockEligible bool
+}
+
+// AssessSafety 共用风险召回与确定性核验规则；低差值或未命中 pattern 的候选仍需审核，不能作为放行依据。
+func AssessSafety(result Result, text string, threshold, margin float64) ([]SafetyMatch, error) {
+	matches := []SafetyMatch{}
 	for _, hit := range result.Hits {
 		if hit.Sample.Negative || hit.Score < threshold {
 			continue
@@ -400,14 +424,20 @@ func PositiveLabels(result Result, threshold, margin float64) []Hit {
 		negative := -1.0
 		for _, other := range result.Hits {
 			if other.Sample.Label == hit.Sample.Label && other.Sample.Negative {
-				negative = other.Score
+				negative = max(negative, other.Score)
 			}
 		}
-		if hit.Score-negative >= margin {
-			positive = append(positive, hit)
+		eligible := false
+		if hit.Sample.Pattern != "" && hit.Score-negative >= margin {
+			pattern, err := regexp.Compile(hit.Sample.Pattern)
+			if err != nil {
+				return nil, fmt.Errorf("语义核验规则无效: %w", err)
+			}
+			eligible = pattern.MatchString(text)
 		}
+		matches = append(matches, SafetyMatch{Hit: hit, NegativeScore: negative, BlockEligible: eligible})
 	}
-	return slices.Clone(positive)
+	return matches, nil
 }
 
 // SelectIntent 是路由与检索评测共用的拒识规则。次佳类别即便低于阈值仍参与差值判断。

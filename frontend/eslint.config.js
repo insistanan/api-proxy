@@ -71,6 +71,8 @@ export default [
         Blob: 'readonly',
         File: 'readonly',
         Event: 'readonly',
+        BeforeUnloadEvent: 'readonly',
+        ReadableStream: 'readonly',
         KeyboardEvent: 'readonly',
         MouseEvent: 'readonly',
         // DOM API（按 lint 实际使用补全，R6 环境声明修正）

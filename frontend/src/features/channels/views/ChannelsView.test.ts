@@ -68,7 +68,7 @@ describe('复制渠道保存', () => {
     dialog.channelType = 'chat'
     const save = vi.spyOn(store, 'saveChannel').mockResolvedValue({ message: '渠道添加成功' })
     await saveFromDialog(payload)
-    expect(save).toHaveBeenCalledExactlyOnceWith(payload, null, undefined, 'chat')
+    expect(save).toHaveBeenCalledExactlyOnceWith(payload, null, { expectedChannelId: undefined }, 'chat')
     expect(push).toHaveBeenCalledExactlyOnceWith('/channels/chat')
     expect(dialog.showAddChannelModal).toBe(false)
     expect(source.poolId).toBe('source-pool')
@@ -106,7 +106,7 @@ it('全局添加保存到选定协议后留在当前页面', async () => {
   const payload = { name: '向量渠道', serviceType: 'openai' as const, baseUrl: 'https://api.example.com/v1', apiKeys: ['fixture-key'] }
   const save = vi.spyOn(store, 'saveChannel').mockResolvedValue({ message: '渠道添加成功' })
   await saveFromDialog(payload)
-  expect(save).toHaveBeenCalledExactlyOnceWith(payload, null, undefined, 'embeddings')
+  expect(save).toHaveBeenCalledExactlyOnceWith(payload, null, { expectedChannelId: undefined }, 'embeddings')
   expect(dialog.showAddChannelModal).toBe(false)
   expect(push).not.toHaveBeenCalled()
 })

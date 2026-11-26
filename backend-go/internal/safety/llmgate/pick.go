@@ -102,7 +102,7 @@ type SelectedChannel struct {
 	Kind         scheduler.ChannelKind
 	Upstream     *config.UpstreamConfig
 	ChannelIndex int
-	// Permit 是本次选择取得的调度器许可（R2-b）：持有 in-flight 预留与
+	// Permit 是本次选择取得的调度器许可：持有 in-flight 预留与
 	// 可能的半开探测名额。调用方在整个内部调用（含全部重试）结束后必须
 	// RecordHealth + Release；仅探测可用性时应立即 Release（中性释放名额）。
 	// 可能为 nil（直查路径不经过选渠编排，无许可）。

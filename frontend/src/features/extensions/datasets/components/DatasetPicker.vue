@@ -5,12 +5,13 @@
   </div>
 </template>
 <script setup lang="ts">
+import { apiErrorText } from '@/shared/services/http'
 import UiButton from '@/shared/ui/button/Button.vue'
 import UiSelect from '@/shared/ui/select/Select.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import type { EmbeddingProfile } from '@/types'
 import { useDatasetsStore } from '@/features/extensions/datasets/stores/datasets'
-import { intentErrorText } from '@/features/channels'
+
 const props = withDefaults(defineProps<{ kind: 'intent' | 'safety'; multiple?: boolean; requirePublished?: boolean; refreshKey?: number; profile?: EmbeddingProfile }>(), { multiple: true, requirePublished: false, refreshKey: 0 })
 const emit = defineEmits<{ 'published-profile': [value: EmbeddingProfile | undefined] }>()
 const model = defineModel<string[]>({ default: () => [] })
@@ -35,7 +36,7 @@ const error = ref('')
 async function load() {
   loading.value = true
   error.value = ''
-  try { await store.load() } catch (cause) { error.value = intentErrorText(cause) }
+  try { await store.load() } catch (cause) { error.value = apiErrorText(cause) }
   finally { loading.value = false }
 }
 onMounted(load)

@@ -1,9 +1,11 @@
 <template>
   <div class="agent-config-page dsh-page">
+    <UiAlert v-if="reloadRequired" type="warning" class="mb-4">配置已写入，请点击刷新核对；刷新成功后才能继续编辑或保存。</UiAlert>
+    <DraftGuard :dirty="draftDirty || routeIdDraft !== selectedProviderKey || promptState.dirty" :busy="editorBusy || promptState.busy" />
     <AgentConfigHeader title="DSH 配置">
       <template #default>
-        <UiButton variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="loadSettings">刷新</UiButton>
-        <UiButton color="primary" prepend-icon="mdi-content-save" :loading="saving" :disabled="loading" @click="saveSettings">保存配置</UiButton>
+        <UiButton variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="editorBusy" @click="loadSettings()">刷新</UiButton>
+        <UiButton color="primary" prepend-icon="mdi-content-save" :loading="saving" :disabled="editorBusy || reloadRequired || !settings" @click="saveSettings">保存配置</UiButton>
       </template>
     </AgentConfigHeader>
 
@@ -21,7 +23,7 @@
       </AgentConfigLocation>
 
       <!-- 默认模型（置顶，方便快速选定启动模型） -->
-      <UiCard elevation="0" class="settings-card agent-config-panel mb-5">
+      <UiCard :inert="editorBusy || reloadRequired" elevation="0" class="settings-card agent-config-panel mb-5">
         <div class="agent-config-panel-header">
           <div>
             <div class="agent-config-panel-title">默认模型</div>
@@ -61,7 +63,7 @@
       <div class="grid grid-cols-12 gap-4 agent-provider-layout">
         <!-- 提供商列表 -->
         <div class="min-w-0 col-span-12 lg:col-span-4"  >
-          <UiCard class="provider-list-card" elevation="0">
+          <UiCard :inert="editorBusy || reloadRequired" class="provider-list-card" elevation="0">
             <div class="agent-config-panel-header">
               <div class="agent-config-panel-title">提供商</div>
               <UiButton icon="mdi-plus" size="small" variant="text" title="添加提供商" aria-label="添加提供商" @click="addProvider" />
@@ -91,7 +93,7 @@
 
         <!-- 提供商编辑器 -->
         <div class="min-w-0 col-span-12 lg:col-span-8"  >
-          <UiCard v-if="selectedProvider" elevation="0" class="provider-editor-card">
+          <UiCard v-if="selectedProvider" :inert="editorBusy || reloadRequired" elevation="0" class="provider-editor-card">
             <div class="agent-config-panel-header">
               <div>
                 <div class="agent-config-panel-title">{{ selectedProvider.displayName || selectedProviderKey || '新提供商' }}</div>
@@ -220,8 +222,8 @@
                     <!-- 输入模态 -->
                     <div class="flex items-center gap-4 mt-3 mb-3">
                       <span class="text-sm font-medium font-bold">输入模态</span>
-                      <UiCheckbox v-model="modelInputFlags[model.id || `__${idx}`].text" label="文本" density="compact" hide-details />
-                      <UiCheckbox v-model="modelInputFlags[model.id || `__${idx}`].image" label="图片" density="compact" hide-details />
+                      <UiCheckbox :model-value="model.input?.includes('text') ?? false" label="文本" density="compact" hide-details @update:model-value="setModelInput(model, 'text', !!$event)" />
+                      <UiCheckbox :model-value="model.input?.includes('image') ?? false" label="图片" density="compact" hide-details @update:model-value="setModelInput(model, 'image', !!$event)" />
                     </div>
 
                     <!-- 推理等级 -->
@@ -230,12 +232,12 @@
                         <div>
                           <div class="text-sm font-medium font-bold">推理等级 (Reasoning Efforts)</div>
                         </div>
-                        <UiSwitch v-model="modelReasoningEnabled[model.id || `__${idx}`]" color="primary" density="compact" hide-details :label="modelReasoningEnabled[model.id || `__${idx}`] ? '支持' : '不支持'" />
+                        <UiSwitch :model-value="!!model.reasoningEfforts" color="primary" density="compact" hide-details :label="model.reasoningEfforts ? '支持' : '不支持'" @update:model-value="setModelReasoning(model, !!$event)" />
                       </div>
                       <Transition name="ui-expand">
-                        <div v-show="modelReasoningEnabled[model.id || `__${idx}`]" class="reasoning-levels pl-1">
+                        <div v-show="!!model.reasoningEfforts" class="reasoning-levels pl-1">
                           <div v-for="level in reasoningLevels" :key="level.value" class="reasoning-row flex items-center gap-2 mb-2">
-                            <UiCheckbox v-model="modelReasoningFlags[model.id || `__${idx}`][level.value]" density="compact" hide-details class="grow-0" />
+                            <UiCheckbox :model-value="!!model.reasoningEfforts && level.value in model.reasoningEfforts" density="compact" hide-details class="grow-0" @update:model-value="setReasoningLevel(model, level.value, !!$event)" />
                             <UiBadge :color="level.color" size="small" label>{{ level.title }}</UiBadge>
                             <span class="text-xs text-muted-foreground">{{ level.description }}</span>
                           </div>
@@ -278,7 +280,7 @@
             </div>
           </UiCard>
 
-          <UiCard v-else elevation="0" class="empty-editor flex items-center justify-center text-center p-8">
+          <UiCard v-else :inert="editorBusy || reloadRequired" elevation="0" class="empty-editor flex items-center justify-center text-center p-8">
             <div>
               <UiIcon size="44" color="primary" class="mb-3">mdi-cog</UiIcon>
               <div class="text-base font-medium font-bold">选择或添加一个提供商</div>
@@ -289,7 +291,7 @@
       </div>
     </template>
 
-    <AgentPromptCard agent="dsh" class="mt-5" />
+    <AgentPromptCard agent="dsh" class="mt-5" @draft-state="promptState = $event" />
   </div>
   <ConfirmDialog
     :model-value="pendingConfirm !== null"
@@ -304,6 +306,9 @@
 </template>
 
 <script setup lang="ts">
+import DraftGuard from '@/shared/components/overlay/DraftGuard.vue'
+import { useDraftSnapshot } from '@/shared/composables/useDraftSnapshot'
+import { ApiError, apiErrorText } from '@/shared/services/http'
 import UiButton from '@/shared/ui/button/Button.vue'
 import UiCard from '@/shared/ui/card/Card.vue'
 import UiCheckbox from '@/shared/ui/check/Checkbox.vue'
@@ -366,8 +371,13 @@ const reasoningLevels = [
 
 // ---- 状态 ----
 
+const { dirty: draftDirty, markSaved } = useDraftSnapshot(() => [providers.value, providerKeys.value, defaultModelProvider.value, defaultModelModel.value])
 const loading = ref(false)
 const saving = ref(false)
+const importing = ref(false)
+const reloadRequired = ref(false)
+const editorBusy = computed(() => loading.value || saving.value || importing.value || protocolLoading.value)
+const promptState = ref({ dirty: false, busy: false })
 const error = ref('')
 const settings = ref<DSHSettings | null>(null)
 const providers = ref<Record<string, DSHProvider>>({})
@@ -376,12 +386,6 @@ const selectedProviderKey = ref('')
 const defaultModelProvider = ref('')
 const defaultModelModel = ref('')
 
-// 模型输入模态的临时状态（按 model id 索引）
-const modelInputFlags = ref<Record<string, { text: boolean; image: boolean }>>({})
-// 模型推理等级启用状态
-const modelReasoningEnabled = ref<Record<string, boolean>>({})
-// 模型各推理等级的勾选状态
-const modelReasoningFlags = ref<Record<string, Record<string, boolean>>>({})
 // 路由标识编辑草稿
 const routeIdDraft = ref('')
 
@@ -436,23 +440,24 @@ const applyProtocol = async (type: ApiTab, defaultBaseUrl: Promise<string>) => {
   }
 }
 
-const { selectedType: quickPickType, defaultBaseUrl } = useProxyProtocolPick(applyProtocol)
+const { selectedType: quickPickType, defaultBaseUrl, loading: protocolLoading } = useProxyProtocolPick(applyProtocol)
 
 // ---- 侦听器 ----
 
-// 当切换选中的 provider 时，同步模型的 UI 状态和路由标识草稿
+// 切换提供商只更新路由标识，模型草稿始终归各自提供商持有。
 watch(selectedProviderKey, () => {
   routeIdDraft.value = selectedProviderKey.value
-  syncModelFlags()
 })
 
 // ---- 方法 ----
 
 // 一键导入本代理模型（按所选协议分组，导入即替换）
 const importProxyModelsToProvider = async () => {
+  if (editorBusy.value || reloadRequired.value) return
   const provider = selectedProvider.value
   const type = quickPickType.value
   if (!provider || !type) return
+  importing.value = true
   try {
     const response = await api.getProxyModels(type)
     const modelIds = filterProxyModelsByKind(response.data, type)
@@ -463,45 +468,32 @@ const importProxyModelsToProvider = async () => {
     const count = importProxyModels(type, modelIds, buildDSHModel, (models) => {
       provider.models = models as DSHModel[]
     })
-    syncModelFlags()
     showToast(`已导入本代理 ${type} 分组的 ${count} 个模型（已替换原有模型）`, 'success')
   } catch (importError) {
     showToast(importError instanceof Error ? importError.message : '获取本代理模型列表失败', 'error')
+  } finally {
+    importing.value = false
   }
 }
 
-const syncModelFlags = () => {
-  const provider = selectedProvider.value
-  if (!provider?.models) return
-  for (const [idx, model] of provider.models.entries()) {
-    const key = model.id || `__${idx}`
-    // 输入模态
-    if (!modelInputFlags.value[key]) {
-      modelInputFlags.value[key] = { text: false, image: false }
-    }
-    modelInputFlags.value[key].text = model.input?.includes('text') ?? false
-    modelInputFlags.value[key].image = model.input?.includes('image') ?? false
-    // 推理等级
-    const efforts = model.reasoningEfforts
-    modelReasoningEnabled.value[key] = efforts !== false && efforts !== undefined
-    if (!modelReasoningFlags.value[key]) {
-      modelReasoningFlags.value[key] = {}
-    }
-    const flags: Record<string, boolean> = {}
-    if (efforts && typeof efforts === 'object') {
-      for (const level of reasoningLevels) {
-        flags[level.value] = level.value in efforts
-      }
-    } else {
-      // 默认勾选全部
-      for (const level of reasoningLevels) {
-        flags[level.value] = true
-      }
-    }
-    modelReasoningFlags.value[key] = flags
-  }
+// 直接编辑所属模型的草稿，避免同名模型跨提供商共享临时状态。
+const setModelInput = (model: DSHModel, type: string, enabled: boolean) => {
+  const values = new Set(model.input ?? [])
+  if (enabled) values.add(type)
+  else values.delete(type)
+  model.input = [...values]
 }
-
+const setModelReasoning = (model: DSHModel, enabled: boolean) => {
+  model.reasoningEfforts = enabled
+    ? Object.fromEntries(reasoningLevels.map(level => [level.value, level.value === 'off' ? null : level.value]))
+    : false
+}
+const setReasoningLevel = (model: DSHModel, level: string, enabled: boolean) => {
+  const efforts = model.reasoningEfforts || {}
+  if (enabled) efforts[level] = level === 'off' ? null : level
+  else delete efforts[level]
+  model.reasoningEfforts = efforts
+}
 // 从后端响应里安全取出 provider 集合与有序 key 列表。
 // 后端在某些异常路径下（如历史构建的 nil slice）会返回 null，
 // 直接 [...null] 会抛 "undefined is not iterable"，这里统一归一为 []。
@@ -514,7 +506,8 @@ const normalizeDSHSettings = (loaded: Partial<DSHSettings>) => {
   return { providerMap, providerKeys, credentials }
 }
 
-const loadSettings = async () => {
+const loadSettings = async (afterSave = false) => {
+  if (loading.value || (!afterSave && editorBusy.value)) return
   loading.value = true
   error.value = ''
   try {
@@ -539,8 +532,10 @@ const loadSettings = async () => {
     defaultModelModel.value = loaded.defaultModel?.model ?? ''
     selectedProviderKey.value = providerKeys.value[0] ?? ''
     routeIdDraft.value = selectedProviderKey.value
-    syncModelFlags()
+    markSaved()
+    reloadRequired.value = false
   } catch (loadError) {
+    if (afterSave) reloadRequired.value = true
     error.value = loadError instanceof Error ? loadError.message : '加载 DSH 配置失败'
   } finally {
     loading.value = false
@@ -590,7 +585,6 @@ const removeProvider = (key: string) => {
 const addModel = (provider: DSHProvider) => {
   if (!provider.models) provider.models = []
   provider.models.push({ id: '', name: '', input: ['text'] })
-  syncModelFlags()
 }
 
 const commitRouteId = () => {
@@ -619,7 +613,6 @@ const commitRouteId = () => {
 const removeModel = (provider: DSHProvider, idx: number) => {
   if (!provider.models) return
   provider.models.splice(idx, 1)
-  syncModelFlags()
 }
 
 // API Key 是写入型字段：GET 只带脱敏状态，输入框本身始终保持空白。
@@ -648,38 +641,14 @@ const normalizeModelNumber = (value: unknown): number | undefined => {
 }
 
 // 从 UI 状态收集模型配置
-const collectModelConfig = (model: DSHModel, idx: number): DSHModel => {
-  const key = model.id || `__${idx}`
-  const inputFlags = modelInputFlags.value[key] ?? { text: true, image: false }
-  const input: string[] = []
-  if (inputFlags.text) input.push('text')
-  if (inputFlags.image) input.push('image')
-
-  let reasoningEfforts: DSHModel['reasoningEfforts'] = undefined
-  if (modelReasoningEnabled.value[key]) {
-    const flags = modelReasoningFlags.value[key] ?? {}
-    const efforts: Record<string, string | null> = {}
-    for (const level of reasoningLevels) {
-      if (flags[level.value]) {
-        efforts[level.value] = level.value === 'off' ? null : level.value
-      }
-    }
-    reasoningEfforts = Object.keys(efforts).length > 0 ? efforts : undefined
-  } else {
-    reasoningEfforts = false
-  }
-
-  return {
-    id: model.id,
-    name: model.name || undefined,
-    input: input.length > 0 ? input : undefined,
-    reasoningEfforts,
-    contextWindow: normalizeModelNumber(model.contextWindow),
-    maxTokens: normalizeModelNumber(model.maxTokens)
-  }
-}
-
+const collectModelConfig = (model: DSHModel): DSHModel => ({
+  ...model,
+  name: model.name || undefined,
+  contextWindow: normalizeModelNumber(model.contextWindow),
+  maxTokens: normalizeModelNumber(model.maxTokens)
+})
 const saveSettings = async () => {
+  if (editorBusy.value || reloadRequired.value || !settings.value) return
   saving.value = true
   try {
     // 收集所有 provider 的模型配置。按 providerKeys 顺序构建，保证写出的
@@ -698,7 +667,7 @@ const saveSettings = async () => {
         api: provider.api || undefined,
         baseURL: provider.baseURL || undefined,
         displayName: provider.displayName || undefined,
-        models: (provider.models ?? []).map((m, i) => collectModelConfig(m, i))
+        models: (provider.models ?? []).map(m => collectModelConfig(m))
       }
       orderedKeys.push(key)
     }
@@ -719,6 +688,7 @@ const saveSettings = async () => {
     const hasCredentialUpdates = Object.keys(credentialUpdates).length > 0
 
     const response = await api.saveDSHSettings({
+      revision: settings.value?.revision ?? '',
       providers: providersPayload,
       providerKeys: orderedKeys,
       defaultModel,
@@ -730,12 +700,14 @@ const saveSettings = async () => {
         : `已保存到 ${response.path}`,
       'success',
     )
-    await loadSettings()
+    markSaved()
+    await loadSettings(true)
   } catch (saveError) {
-    showToast(saveError instanceof Error ? saveError.message : '保存 DSH 配置失败', 'error')
+    if (saveError instanceof ApiError && saveError.committed) { reloadRequired.value = true; markSaved() }
+    showToast(apiErrorText(saveError), saveError instanceof ApiError && saveError.committed ? 'warning' : 'error')
     // 原子写入已过提交点时，先重新读取两份文件的实际状态，避免页面继续展示旧快照。
-    if (typeof saveError === 'object' && saveError !== null && 'committed' in saveError && saveError.committed === true) {
-      await loadSettings()
+    if (saveError instanceof ApiError && saveError.committed) {
+      await loadSettings(true)
     }
   } finally {
     saving.value = false
@@ -753,7 +725,7 @@ const protocolColor = (protocol: string) => {
   return colors[protocol] ?? 'default'
 }
 
-onMounted(loadSettings)
+onMounted(() => loadSettings())
 </script>
 
 <style scoped>

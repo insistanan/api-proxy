@@ -12,6 +12,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"insistanan/api-proxy/internal/clients/filetxn"
 )
 
 // performAgentPromptRequest 对 /settings/agent-prompt/:agent 发起请求；
@@ -25,6 +27,21 @@ func performAgentPromptRequest(t *testing.T, method, agent, body string) *httpte
 	target := "/settings/agent-prompt/" + agent
 	var request *http.Request
 	if method == http.MethodPut {
+		if spec, exists := agentPromptSpecs[agent]; exists {
+			var payload map[string]any
+			if json.Unmarshal([]byte(body), &payload) == nil && payload != nil {
+				if _, provided := payload["revision"]; !provided {
+					path, err := spec.resolvePath()
+					require.NoError(t, err)
+					raw, err := filetxn.Read(path)
+					require.NoError(t, err)
+					payload["revision"] = filetxn.Revision(raw)
+					encoded, err := json.Marshal(payload)
+					require.NoError(t, err)
+					body = string(encoded)
+				}
+			}
+		}
 		request = httptest.NewRequest(http.MethodPut, target, strings.NewReader(body))
 		request.Header.Set("Content-Type", "application/json")
 	} else {

@@ -5,7 +5,7 @@
 </template>
 <script setup lang="ts">
 import { computed, provide } from 'vue'
-import { formKey } from './context'
+import { formKey } from '@/shared/ui/form/context'
 const props = defineProps<{ disabled?: boolean }>()
 const fields = new Set<() => Promise<boolean>>()
 provide(formKey, {

@@ -95,11 +95,12 @@ var ErrInvalid = errors.New("参数或操作无效")
 var ErrConflict = errors.New("状态已变化，请刷新后重试")
 
 type Store struct {
-	db        *sql.DB
-	usage     UsageSource
-	cancel    context.CancelFunc
-	done      chan struct{}
-	syncIssue atomic.Bool
+	db          *sql.DB
+	usage       UsageSource
+	cancel      context.CancelFunc
+	done        chan struct{}
+	syncIssue   atomic.Bool
+	syncPending atomic.Bool
 }
 
 func Open(path string, usage UsageSource) (*Store, error) {
@@ -124,20 +125,35 @@ func (s *Store) Close() error {
 
 func (s *Store) consume(ctx context.Context) {
 	defer close(s.done)
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
+	timer := time.NewTimer(0)
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case now := <-ticker.C:
-			err := errors.Join(s.advance(ctx, now), s.finishDueFocus(ctx, now))
+		case now := <-timer.C:
+			var more bool
+			var err error
+			deadline := time.Now().Add(250 * time.Millisecond)
+			for batch := 0; batch < 16 && ctx.Err() == nil; batch++ {
+				more, err = s.advanceBatch(ctx, now)
+				if err != nil || !more || time.Now().After(deadline) {
+					break
+				}
+			}
+			s.syncPending.Store(more)
+			err = errors.Join(err, s.finishDueFocus(ctx, now))
 			if err != nil && ctx.Err() == nil && !s.syncIssue.Swap(true) {
 				log.Printf("[Forest-Growth] 成长结算中断，将从已提交位置重试: %v", err)
 			}
 			if err == nil {
 				s.syncIssue.Store(false)
 			}
+			delay := 2 * time.Second
+			if more && err == nil {
+				delay = 10 * time.Millisecond
+			}
+			timer.Reset(delay)
 		}
 	}
 }
@@ -175,18 +191,23 @@ func (g growth) save(ctx context.Context, tx *sql.Tx) error {
 	return err
 }
 
+// advance 保留单次结算入口；后台消费使用 advanceBatch 判断是否需要继续追赶。
 func (s *Store) advance(ctx context.Context, now time.Time) error {
+	_, err := s.advanceBatch(ctx, now)
+	return err
+}
+func (s *Store) advanceBatch(ctx context.Context, now time.Time) (bool, error) {
 	day := s.usage.GrowthDate(now)
 	if day == "" {
-		return nil
+		return false, nil
 	}
 	g, err := readGrowth(ctx, s.db)
 	if err != nil {
-		return err
+		return false, err
 	}
 	credits, err := s.usage.Credits(ctx, g.cursor)
 	if err != nil {
-		return err
+		return false, err
 	}
 	refresh := now.UnixMilli()-g.baselineAt >= (7*24*time.Hour).Milliseconds() ||
 		(g.baseline == 0 && now.UnixMilli()-g.baselineAt >= (24*time.Hour).Milliseconds())
@@ -196,22 +217,22 @@ func (s *Store) advance(ctx context.Context, now time.Time) error {
 		baseline, refresh, baselineErr = s.usage.GrowthBaseline(ctx, now)
 	}
 	if len(credits) == 0 && g.seed < g.seedGoal && g.progress < g.goal && !refresh {
-		return baselineErr
+		return false, baselineErr
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer tx.Rollback()
 	g, err = readGrowth(ctx, tx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if refresh {
 		g.baseline, g.baselineAt = baseline, now.UnixMilli()
 	}
 	if err := s.recordActivity(ctx, tx, credits, g.cursor, now); err != nil {
-		return err
+		return false, err
 	}
 	for _, credit := range credits {
 		if credit.Cursor <= g.cursor {
@@ -224,18 +245,18 @@ func (s *Store) advance(ctx context.Context, now time.Time) error {
 	}
 	var todayTokens int64
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT tokens FROM growth_days WHERE day=?),0)`, day).Scan(&todayTokens); err != nil {
-		return err
+		return false, err
 	}
 	for i := 0; i < 128 && g.progress >= g.goal; i++ {
 		g.progress -= g.goal
 		g.level++
 		g.goal = levelGoal(g.level, g.baseline)
 		if err := reward(ctx, tx, fmt.Sprintf("level:%d", g.level), 3); err != nil {
-			return err
+			return false, err
 		}
 		if title := levelTitles[g.level]; title != "" {
 			if err := event(ctx, tx, fmt.Sprintf("level:%d", g.level), day, now, 0, title, "新的树种会在接下来的生长中出现，口袋里也多了 3 点成就。"); err != nil {
-				return err
+				return false, err
 			}
 		}
 	}
@@ -245,19 +266,19 @@ func (s *Store) advance(ctx context.Context, now time.Time) error {
 		todayTokens += g.seedGoal
 		g.seedGoal = max(250000, todayTokens/12, g.baseline/12)
 		if err := plant(ctx, tx, "usage", day, now, g.level); err != nil {
-			return err
+			return false, err
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO growth_days VALUES(?,?) ON CONFLICT(day) DO UPDATE SET tokens=excluded.tokens`, day, todayTokens); err != nil {
-		return err
+		return false, err
 	}
 	if err := g.save(ctx, tx); err != nil {
-		return err
+		return false, err
 	}
 	if err := settleAchievements(ctx, tx, day, now); err != nil {
-		return err
+		return false, err
 	}
-	return errors.Join(tx.Commit(), baselineErr)
+	return len(credits) >= tokenusage.GrowthCreditBatchSize, errors.Join(tx.Commit(), baselineErr)
 }
 
 var levelTitles = map[int64]string{5: "风里多了松针的香气", 15: "白桦在海边舒展", 30: "花期悄悄到了"}

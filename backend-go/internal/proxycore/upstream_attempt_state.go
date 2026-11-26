@@ -42,8 +42,8 @@ type requestActivityRecorder interface {
 // profileRecorder 是单次尝试所需的画像能力；收尾不再经调度器取回整个画像管理器。
 type profileRecorder interface {
 	RecordFirstByte(requestID uint64)
-	EndRequest(baseURL string, apiKeys []string, model string, channelIndex int, requestID uint64, success bool, outputTokens int64)
-	EndRequestNeutral(baseURL string, apiKeys []string, model string, channelIndex int, requestID uint64)
+	EndRequest(requestID uint64, success bool, outputTokens int64)
+	EndRequestNeutral(requestID uint64)
 }
 
 // attemptLifecycle 绑定单次候选尝试的观测身份和终结责任。
@@ -54,7 +54,6 @@ type attemptLifecycle struct {
 	metrics      *metrics.MetricsManager
 	kind         scheduler.ChannelKind
 	channelIndex int
-	apiKeys      []string
 	baseURL      string
 	apiKey       string
 	observation  attemptObservation
@@ -104,7 +103,7 @@ func (a UpstreamAttempt) startAttemptObservation(baseURL, apiKey string) attempt
 	resolvedModel := config.ResolveUpstreamModel(a.LogContext.Model, a.Upstream)
 	profileRequestID := nextProfileRequestID()
 	if pm := a.ChannelScheduler.GetProfileManager(); pm != nil {
-		pm.StartRequest(baseURL, a.Upstream.APIKeys, resolvedModel, a.LogContext.ChannelIndex, profileRequestID)
+		pm.StartRequest(baseURL, a.Upstream.APIKeys, resolvedModel, metrics.ProfileIdentity{Kind: string(a.Kind), ID: a.Upstream.ID, Index: a.LogContext.ChannelIndex}, profileRequestID)
 	}
 	requestID := a.MetricsManager.RecordRequestConnected(baseURL, apiKey, a.LogContext.ChannelIndex, a.LogContext.Model)
 	return attemptObservation{
@@ -126,7 +125,6 @@ func (a UpstreamAttempt) startAttemptLifecycle(baseURL, apiKey string) attemptLi
 		metrics:      a.MetricsManager,
 		kind:         a.Kind,
 		channelIndex: a.LogContext.ChannelIndex,
-		apiKeys:      a.Upstream.APIKeys,
 		baseURL:      baseURL,
 		apiKey:       apiKey,
 		observation:  a.startAttemptObservation(baseURL, apiKey),
@@ -137,7 +135,7 @@ func (l attemptLifecycle) finalizeNeutral() {
 	l.metrics.RecordRequestFinalizeNeutral(l.baseURL, l.apiKey, l.channelIndex, l.observation.RequestID)
 	l.activity.RecordRequestEnd(l.baseURL, l.apiKey, l.channelIndex, l.kind)
 	if pm := l.profiles; pm != nil {
-		pm.EndRequestNeutral(l.baseURL, l.apiKeys, l.observation.ResolvedModel, l.channelIndex, l.observation.ProfileRequestID)
+		pm.EndRequestNeutral(l.observation.ProfileRequestID)
 	}
 }
 
@@ -145,7 +143,7 @@ func (l attemptLifecycle) finalizeClientCancelled() {
 	l.metrics.RecordRequestFinalizeClientCancel(l.baseURL, l.apiKey, l.channelIndex, l.observation.RequestID)
 	l.activity.RecordRequestEnd(l.baseURL, l.apiKey, l.channelIndex, l.kind)
 	if pm := l.profiles; pm != nil {
-		pm.EndRequestNeutral(l.baseURL, l.apiKeys, l.observation.ResolvedModel, l.channelIndex, l.observation.ProfileRequestID)
+		pm.EndRequestNeutral(l.observation.ProfileRequestID)
 	}
 }
 
@@ -153,7 +151,7 @@ func (l attemptLifecycle) finalizeFailed() {
 	l.metrics.RecordRequestFinalizeFailure(l.baseURL, l.apiKey, l.channelIndex, l.observation.RequestID)
 	l.activity.RecordRequestEnd(l.baseURL, l.apiKey, l.channelIndex, l.kind)
 	if pm := l.profiles; pm != nil {
-		pm.EndRequest(l.baseURL, l.apiKeys, l.observation.ResolvedModel, l.channelIndex, l.observation.ProfileRequestID, false, 0)
+		pm.EndRequest(l.observation.ProfileRequestID, false, 0)
 	}
 }
 
@@ -165,6 +163,6 @@ func (l attemptLifecycle) finalizeSuccessful(usage *types.Usage) {
 		if usage != nil {
 			outputTokens = int64(usage.OutputTokens)
 		}
-		pm.EndRequest(l.baseURL, l.apiKeys, l.observation.ResolvedModel, l.channelIndex, l.observation.ProfileRequestID, true, outputTokens)
+		pm.EndRequest(l.observation.ProfileRequestID, true, outputTokens)
 	}
 }

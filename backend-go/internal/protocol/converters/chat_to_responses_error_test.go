@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// 反证切片 6：上游 Chat error chunk（无 choices）必须转成 response.failed，
+// 上游 Chat error chunk（无 choices）必须转成 response.failed，
 // 不再被静默丢弃后于 [DONE] 伪造 response.completed。
 func TestConvertOpenAIChatToResponses_UpstreamErrorBecomesResponseFailed(t *testing.T) {
 	var state any

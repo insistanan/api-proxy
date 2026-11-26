@@ -150,7 +150,10 @@ func (s *ChannelScheduler) selectConversationRouteOverride(
 		return nil, true, fmt.Errorf("该对话已固定到 %s 渠道池，当前请求为 %s", override.Kind, kind)
 	}
 	for _, ch := range routedChannels {
-		if ch.Index != override.ChannelIndex {
+		if override.ChannelID == "" {
+			return nil, true, fmt.Errorf("固定渠道缺少稳定身份，请重新选择")
+		}
+		if ch.upstream == nil || ch.upstream.ID != override.ChannelID {
 			continue
 		}
 		if failedChannels[ch.Index] {

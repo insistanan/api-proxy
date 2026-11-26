@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"insistanan/api-proxy/internal/storage/atomicfile"
 )
@@ -108,6 +109,11 @@ func (l *LocalRuntime) downloadResource(ctx context.Context, urls []string, expe
 		return fmt.Errorf("读取下载缓存失败: %w", err)
 	}
 	var failures []error
+	client, err := l.downloadClient(10 * time.Minute)
+	if err != nil {
+		return err
+	}
+	defer client.CloseIdleConnections()
 	for i, rawURL := range urls {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -118,7 +124,7 @@ func (l *LocalRuntime) downloadResource(ctx context.Context, urls []string, expe
 			l.mu.Unlock()
 		}
 		err := atomicfile.WriteFunc(path, func(w io.Writer) error {
-			return downloadVerified(ctx, rawURL, expected, limit, &downloadProgress{w, l}, magic)
+			return downloadVerified(ctx, client, rawURL, expected, limit, &downloadProgress{w, l}, magic)
 		}, atomicfile.Options{Mode: 0600})
 		if err == nil {
 			return nil

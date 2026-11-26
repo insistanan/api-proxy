@@ -1,3 +1,4 @@
+import { ApiError, apiErrorText } from '@/shared/services/http'
 // prompts 设置的草稿与操作编排；草稿仅供本设置页使用，保存以服务端响应回填。
 import { computed, ref, type Ref } from 'vue'
 import { api } from '@/api'
@@ -5,7 +6,7 @@ import type { PromptEntry } from '@/types'
 import type { SettingsNotice as Notice } from '@/features/settings/composables/types'
 import { formatDateTime } from '@/shared/utils/datetime'
 
-export function usePromptSettings(saving: Ref<boolean>) {
+export function usePromptSettings(saving: Ref<boolean>, reloadRequired: Ref<boolean>) {
   // ===== 通用提示词（版本库：各智能体配置页"一键配置提示词"的数据源） =====
 
   const promptEntries = ref<PromptEntry[]>([])
@@ -58,6 +59,7 @@ export function usePromptSettings(saving: Ref<boolean>) {
   }
 
   const savePromptSettings = async () => {
+    if (saving.value || reloadRequired.value) return
     promptNotice.value = null
     const validationError = validatePromptsForSave()
     if (validationError) {
@@ -69,7 +71,7 @@ export function usePromptSettings(saving: Ref<boolean>) {
       const settings = await api.updateSettings({
         prompts: { entries: promptEntries.value, activeVersion: promptActiveVersion.value }
       })
-      if (!settings.prompts) throw new Error('服务端未返回提示词设置，请刷新确认保存状态')
+      if (!settings.prompts) throw new ApiError('服务端未返回提示词设置', 200, undefined, 'INVALID_RESPONSE', true)
       // 后端保存时会归一化（trim + 刷新 UpdatedAt），以响应为准回填快照
       promptEntries.value = settings.prompts.entries
       promptActiveVersion.value = settings.prompts.activeVersion
@@ -79,7 +81,8 @@ export function usePromptSettings(saving: Ref<boolean>) {
       savedPromptsSnapshot.value = JSON.stringify(promptEntries.value)
       promptNotice.value = { type: 'success', message: '通用提示词已保存' }
     } catch (error) {
-      promptNotice.value = { type: 'error', message: error instanceof Error ? error.message : '保存通用提示词失败' }
+      if (error instanceof ApiError && error.committed) reloadRequired.value = true
+      promptNotice.value = { type: reloadRequired.value ? 'warning' : 'error', message: apiErrorText(error) }
     } finally {
       saving.value = false
     }

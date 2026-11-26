@@ -42,7 +42,7 @@ export const isConversationProtocol = (value: string): value is ConversationProt
 export interface ChannelApi {
   getChannels(): Promise<ChannelsResponse>
   addChannel(channel: Omit<Channel, 'id' | 'index' | 'latency' | 'status'>): Promise<CreatedChannelResponse>
-  updateChannel(id: number, channel: Partial<Channel>): Promise<void>
+  updateChannel(id: number, channel: Partial<Channel>, expectedChannelId?: string): Promise<void>
   deleteChannel(id: number): Promise<void>
   addKey(channelId: number, apiKey: string): Promise<void>
   removeKey(channelId: number, apiKey: string): Promise<void>

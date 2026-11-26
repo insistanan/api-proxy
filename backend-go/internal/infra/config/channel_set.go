@@ -1,11 +1,14 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"strings"
 	"time"
 )
+
+var ErrChannelIdentityConflict = errors.New("渠道身份已变化，请刷新后重新编辑")
 
 // channelSet 把"某一种渠道类型在 Config 里的存放位置"抽象出来，
 // 使 CRUD 逻辑不必为每种渠道类型复制一遍。
@@ -126,6 +129,9 @@ func (cm *ConfigManager) UpdateChannel(kind string, index int, updates UpstreamU
 		return false, fmt.Errorf("无效的 %s 上游索引: %d", cs.name, index)
 	}
 
+	if updates.ExpectedChannelID != nil && (*updates.ExpectedChannelID == "" || upstreams[index].ID != *updates.ExpectedChannelID) {
+		return false, ErrChannelIdentityConflict
+	}
 	shouldReset, err := applyCommonUpdatesToList(&candidate, cs, index, updates)
 	if err != nil {
 		return false, err

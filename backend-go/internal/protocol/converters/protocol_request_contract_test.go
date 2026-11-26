@@ -116,7 +116,7 @@ func TestUnsupportedConversionAndInvalidReasoningRemainExplicit(t *testing.T) {
 
 func TestHistoryToolArgumentsAreClientErrorsAcrossTargets(t *testing.T) {
 	for _, target := range []string{"openai", "claude", "gemini"} {
-		for _, args := range []string{`null`, `[]`, `"scalar"`, `{}`} {
+		for _, args := range []string{`{bad-json`, `null`, `[]`, `"scalar"`, `{}`} {
 			body, err := json.Marshal(map[string]interface{}{"model": "m", "max_output_tokens": 4096, "input": []interface{}{map[string]interface{}{"type": "function_call", "call_id": "c", "name": "run", "arguments": args}}})
 			require.NoError(t, err)
 			_, err = dispatchRequest(t, target, string(body), nil)

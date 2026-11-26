@@ -9,7 +9,6 @@ package clients
 import (
 	"bytes"
 	"fmt"
-	"insistanan/api-proxy/internal/protocol/codec"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -17,7 +16,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
-	"insistanan/api-proxy/internal/storage/atomicfile"
+
+	"insistanan/api-proxy/internal/protocol/codec"
 )
 
 const (
@@ -70,7 +70,6 @@ func validateDSHCredentialUpdates(updates map[string]dshCredentialUpdate, provid
 		routes = append(routes, route)
 	}
 	sort.Strings(routes)
-	seen := make(map[string]dshCredentialUpdate, len(routes))
 	for _, route := range routes {
 		provider, ok := providers[route]
 		if !ok {
@@ -99,11 +98,6 @@ func validateDSHCredentialUpdates(updates map[string]dshCredentialUpdate, provid
 			return fmt.Errorf("provider %s 的 DSH 凭据操作无效: %s", route, update.Action)
 		}
 
-		reference := strings.TrimSpace(provider.APIKeyEnv)
-		if previous, exists := seen[reference]; exists && (previous.Action != update.Action || strings.TrimSpace(previous.APIKey) != strings.TrimSpace(update.APIKey)) {
-			return fmt.Errorf("DSH 凭据引用 %s 在多个 provider 中收到冲突更新", reference)
-		}
-		seen[reference] = update
 	}
 	return nil
 }
@@ -111,7 +105,7 @@ func validateDSHCredentialUpdates(updates map[string]dshCredentialUpdate, provid
 // newDSHCredentialsDocument 创建当前官方格式的空凭据文档。
 func newDSHCredentialsDocument() *yaml.Node {
 	root := &yaml.Node{Kind: yaml.MappingNode}
-	addScalar(root, "version", 1)
+	appendDSHCredentialVersion(root)
 	root.Content = append(root.Content,
 		&yaml.Node{Kind: yaml.ScalarNode, Value: "refs"},
 		&yaml.Node{Kind: yaml.MappingNode},
@@ -241,12 +235,19 @@ func migrateLegacyDSHCredentials(root *yaml.Node) error {
 		legacyRefs.Content = append(legacyRefs.Content, key, value)
 	}
 	root.Content = nil
-	addScalar(root, "version", 1)
+	appendDSHCredentialVersion(root)
 	root.Content = append(root.Content,
 		&yaml.Node{Kind: yaml.ScalarNode, Value: "refs"},
 		legacyRefs,
 	)
 	return nil
+}
+
+func appendDSHCredentialVersion(root *yaml.Node) {
+	root.Content = append(root.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "version"},
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: "1"},
+	)
 }
 
 func dshCredentialsRefs(document *yaml.Node) (*yaml.Node, error) {
@@ -326,61 +327,6 @@ func marshalDSHCredentialsDocument(document *yaml.Node) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// prepareDSHCredentialDocument 只在有 replace/remove 操作时读取并生成新内容。
-// 返回 changed=false 时不写盘，避免无意义地触碰凭据文件时间戳。
-func prepareDSHCredentialDocument(path string, updates map[string]dshCredentialUpdate, providers map[string]DSHProvider) ([]byte, bool, error) {
-	if len(updates) == 0 {
-		return nil, false, nil
-	}
-	document, _, err := readDSHCredentialsDocument(path)
-	if err != nil {
-		return nil, false, err
-	}
-	refs, err := dshCredentialsRefs(document)
-	if err != nil {
-		return nil, false, err
-	}
-
-	routes := make([]string, 0, len(updates))
-	for route := range updates {
-		routes = append(routes, route)
-	}
-	sort.Strings(routes)
-	changed := false
-	for _, route := range routes {
-		provider := providers[route]
-		update := updates[route]
-		if update.Action == "" || update.Action == dshCredentialActionKeep {
-			continue
-		}
-		reference := strings.TrimSpace(provider.APIKeyEnv)
-		current, exists, err := dshCredentialValue(refs, reference)
-		if err != nil {
-			return nil, false, err
-		}
-		switch update.Action {
-		case dshCredentialActionReplace:
-			value := strings.TrimSpace(update.APIKey)
-			if !exists || current != value {
-				setDSHCredentialValue(refs, reference, value)
-				changed = true
-			}
-		case dshCredentialActionRemove:
-			if exists && deleteDSHCredentialValue(refs, reference) {
-				changed = true
-			}
-		}
-	}
-	if !changed {
-		return nil, false, nil
-	}
-	data, err := marshalDSHCredentialsDocument(document)
-	if err != nil {
-		return nil, false, err
-	}
-	return data, true, nil
-}
-
 func readDSHCredentialStatuses(path string, providers map[string]DSHProvider) (map[string]DSHCredentialStatus, error) {
 	statuses := make(map[string]DSHCredentialStatus, len(providers))
 	document, _, err := readDSHCredentialsDocument(path)
@@ -408,15 +354,4 @@ func readDSHCredentialStatuses(path string, providers map[string]DSHProvider) (m
 		statuses[route] = status
 	}
 	return statuses, nil
-}
-
-func writeDSHCredentials(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("创建 DSH 凭据目录失败: %w", err)
-	}
-	// 凭据文件不创建备份：备份同样包含明文密钥，容易扩大泄露面。
-	return atomicfile.Write(path, data, atomicfile.Options{
-		TempPrefix: ".dsh-credentials-",
-		Mode:       0o600,
-	})
 }

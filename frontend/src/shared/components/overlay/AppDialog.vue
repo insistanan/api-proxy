@@ -1,5 +1,5 @@
 <template>
-  <UiDialog :model-value="modelValue" :max-width="widths[size]" :title="title" :persistent="busy" scrollable @update:model-value="toggle">
+  <UiDialog :model-value="modelValue" :max-width="widths[size]" :title="title" :persistent="busy" @update:model-value="toggle">
     <UiCard class="app-dialog">
       <header class="app-dialog__head">
         <div class="app-dialog__heading">

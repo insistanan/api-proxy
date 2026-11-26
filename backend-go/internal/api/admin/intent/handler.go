@@ -46,10 +46,26 @@ func RegisterIntentAPI(api *gin.RouterGroup, service *intent.Service) {
 		c.JSON(http.StatusOK, gin.H{"classifiers": options, "embeddings": embeddings, "tasks": config.IntentTasks(), "groups": groups})
 	})
 	api.GET("/intent/local", func(c *gin.Context) { c.JSON(http.StatusOK, service.LocalStatus()) })
+	cacheHandler := func(cleanup bool) gin.HandlerFunc {
+		return func(c *gin.Context) {
+			result, err := service.Local.LocalCache(c.Request.Context(), cleanup)
+			if err != nil {
+				c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "committed": result.RemovedEntries > 0, "cache": result})
+				return
+			}
+			c.JSON(http.StatusOK, result)
+		}
+	}
+	api.GET("/intent/local/cache", cacheHandler(false))
+	api.DELETE("/intent/local/cache", cacheHandler(true))
 	api.GET("/intent/preparation", func(c *gin.Context) { c.JSON(http.StatusOK, service.PreparationStatus()) })
 	api.DELETE("/intent/preparation", func(c *gin.Context) {
-		service.CancelPreparation()
-		c.JSON(http.StatusOK, service.PreparationStatus())
+		task, err := service.CancelPreparation(c.Query("taskId"))
+		if err != nil {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusAccepted, task)
 	})
 	api.GET("/intent/local/presets", func(c *gin.Context) { c.JSON(http.StatusOK, service.Local.Presets(c.Request.Context())) })
 	api.POST("/intent/local/import", func(c *gin.Context) {
@@ -117,9 +133,8 @@ func RegisterIntentAPI(api *gin.RouterGroup, service *intent.Service) {
 		c.JSON(http.StatusAccepted, service.LocalStatus())
 	})
 	api.POST("/intent/local/stop", func(c *gin.Context) {
-		service.CancelPreparation()
-		if err := service.Local.Stop(); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		if err := service.StopLocal(); err != nil {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 			return
 		}
 		c.JSON(http.StatusOK, service.Local.Status())

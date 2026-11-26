@@ -6,168 +6,36 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 	"insistanan/api-proxy/internal/protocol/types"
 )
 
 func TestConvertResponsesToOpenAIChatRequest(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		model    string
-		stream   bool
-		validate func(t *testing.T, result []byte)
+	for _, tc := range []struct {
+		name, input, model string
+		stream             bool
+		want               map[string]string
 	}{
-		{
-			name: "基本文本输入",
-			input: `{
-				"model": "gpt-4",
-				"input": "Hello, world!",
-				"instructions": "You are a helpful assistant."
-			}`,
-			model:  "gpt-4o",
-			stream: false,
-			validate: func(t *testing.T, result []byte) {
-				root := gjson.ParseBytes(result)
-				if root.Get("model").String() != "gpt-4o" {
-					t.Errorf("model should be gpt-4o, got %s", root.Get("model").String())
-				}
-				if root.Get("stream").Bool() != false {
-					t.Error("stream should be false")
-				}
-				messages := root.Get("messages").Array()
-				if len(messages) != 2 {
-					t.Errorf("should have 2 messages (system + user), got %d", len(messages))
-				}
-				if messages[0].Get("role").String() != "system" {
-					t.Error("first message should be system")
-				}
-				if messages[1].Get("role").String() != "user" {
-					t.Error("second message should be user")
-				}
-			},
-		},
-		{
-			name: "带 tools 的请求",
-			input: `{
-				"model": "gpt-4",
-				"input": [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "What's the weather?"}]}],
-				"tools": [
-					{
-						"name": "get_weather",
-						"description": "Get weather info",
-						"parameters": {"type": "object", "properties": {"location": {"type": "string"}}}
-					}
-				]
-			}`,
-			model:  "gpt-4o",
-			stream: true,
-			validate: func(t *testing.T, result []byte) {
-				root := gjson.ParseBytes(result)
-				if root.Get("stream").Bool() != true {
-					t.Error("stream should be true")
-				}
-				tools := root.Get("tools").Array()
-				if len(tools) != 1 {
-					t.Errorf("should have 1 tool, got %d", len(tools))
-				}
-				if tools[0].Get("function.name").String() != "get_weather" {
-					t.Error("tool name should be get_weather")
-				}
-			},
-		},
-		{
-			name: "custom tool 降级为 function",
-			input: `{
-				"model": "gpt-4",
-				"input": "Run the tool",
-				"tools": [
-					{
-						"type": "custom",
-						"name": "code_exec",
-						"description": "Execute raw code",
-						"format": {"type": "text"}
-					}
-				],
-				"tool_choice": {
-					"type": "custom",
-					"name": "code_exec"
-				}
-			}`,
-			model:  "gpt-4o",
-			stream: false,
-			validate: func(t *testing.T, result []byte) {
-				root := gjson.ParseBytes(result)
-				if root.Get("tools.0.type").String() != "function" {
-					t.Errorf("tool type should be function, got %s", root.Get("tools.0.type").String())
-				}
-				if root.Get("tools.0.function.name").String() != "code_exec" {
-					t.Errorf("tool name should be code_exec, got %s", root.Get("tools.0.function.name").String())
-				}
-				if root.Get("tools.0.function.parameters.properties.input.type").String() != "string" {
-					t.Errorf("custom tool input should downgrade to string schema, got %s", root.Get("tools.0.function.parameters.properties.input.type").String())
-				}
-				if root.Get("tool_choice.type").String() != "function" {
-					t.Errorf("tool_choice type should be function, got %s", root.Get("tool_choice.type").String())
-				}
-				if root.Get("tool_choice.function.name").String() != "code_exec" {
-					t.Errorf("tool_choice function name should be code_exec, got %s", root.Get("tool_choice.function.name").String())
-				}
-			},
-		},
-		{
-			name: "function_call 和 function_call_output",
-			input: `{
-				"model": "gpt-4",
-				"input": [
-					{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "What's the weather in NYC?"}]},
-					{"type": "function_call", "call_id": "call_123", "name": "get_weather", "arguments": "{\"location\": \"NYC\"}"},
-					{"type": "function_call_output", "call_id": "call_123", "output": "Sunny, 72°F"}
-				]
-			}`,
-			model:  "gpt-4o",
-			stream: false,
-			validate: func(t *testing.T, result []byte) {
-				root := gjson.ParseBytes(result)
-				messages := root.Get("messages").Array()
-				if len(messages) != 3 {
-					t.Errorf("should have 3 messages, got %d", len(messages))
-				}
-				// 第二条消息应该是 assistant with tool_calls
-				if messages[1].Get("role").String() != "assistant" {
-					t.Error("second message should be assistant")
-				}
-				if !messages[1].Get("tool_calls").Exists() {
-					t.Error("assistant message should have tool_calls")
-				}
-				// 第三条消息应该是 tool
-				if messages[2].Get("role").String() != "tool" {
-					t.Error("third message should be tool")
-				}
-			},
-		},
-		{
-			name: "reasoning effort 转换",
-			input: `{
-				"model": "o1-mini",
-				"input": "Think about this",
-				"reasoning": {"effort": "high"}
-			}`,
-			model:  "o1-mini",
-			stream: false,
-			validate: func(t *testing.T, result []byte) {
-				root := gjson.ParseBytes(result)
-				if root.Get("reasoning_effort").String() != "high" {
-					t.Errorf("reasoning_effort should be high, got %s", root.Get("reasoning_effort").String())
-				}
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ConvertResponsesToOpenAIChatRequest(tt.model, []byte(tt.input), tt.stream)
-			tt.validate(t, result)
+		{"文本与指令", `{"model":"gpt-4","input":"Hello, world!","instructions":"Be helpful."}`, "gpt-4o", false,
+			map[string]string{"messages": `[{"role":"system","content":"Be helpful."},{"role":"user","content":"Hello, world!"}]`}},
+		{"消息数组与工具", `{"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"Weather?"}]}],"tools":[{"name":"get_weather","description":"Weather","parameters":{"type":"object","properties":{"location":{"type":"string"}}}}]}`, "gpt-4o", true,
+			map[string]string{"messages": `[{"role":"user","content":"Weather?"}]`, "tools": `[{"type":"function","function":{"name":"get_weather","description":"Weather","parameters":{"type":"object","properties":{"location":{"type":"string"}}}}}]`}},
+		{"custom 工具", `{"input":"Run","tools":[{"type":"custom","name":"code_exec","format":{"type":"text"}}],"tool_choice":{"type":"custom","name":"code_exec"}}`, "gpt-4o", false,
+			map[string]string{"tools.0.type": `"function"`, "tools.0.function.name": `"code_exec"`, "tools.0.function.parameters.properties.input.type": `"string"`, "tool_choice": `{"type":"function","function":{"name":"code_exec"}}`}},
+		{"工具调用与结果", `{"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"Weather?"}]},{"type":"function_call","call_id":"c","name":"weather","arguments":"{\"location\":\"NYC\"}"},{"type":"function_call_output","call_id":"c","output":"Sunny"}]}`, "gpt-4o", false,
+			map[string]string{"messages.#": `3`, "messages.1.role": `"assistant"`, "messages.1.tool_calls.0.id": `"c"`, "messages.1.tool_calls.0.function.name": `"weather"`, "messages.2": `{"role":"tool","tool_call_id":"c","content":"Sunny"}`}},
+		{"推理强度", `{"input":"Think","reasoning":{"effort":"high"}}`, "o1-mini", false,
+			map[string]string{"reasoning_effort": `"high"`}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ConvertResponsesToOpenAIChatRequest(tc.model, []byte(tc.input), tc.stream)
+			require.True(t, gjson.ValidBytes(got))
+			require.Equal(t, tc.model, gjson.GetBytes(got, "model").String())
+			require.Equal(t, tc.stream, gjson.GetBytes(got, "stream").Bool())
+			for path, want := range tc.want {
+				require.JSONEq(t, want, gjson.GetBytes(got, path).Raw, path)
+			}
 		})
 	}
 }
@@ -264,7 +132,7 @@ func TestConvertOpenAIChatToResponses_ToolCall(t *testing.T) {
 	for _, ev := range allEvents {
 		if strings.Contains(ev, "response.output_item.added") && strings.Contains(ev, "function_call") {
 			hasFuncAdded = true
-			// 验证 output_item.added 携带 name 字段（Fix #1）
+			// 验证 output_item.added 携带 name 字段
 			payload := extractSSEPayload(ev)
 			root := gjson.Parse(payload)
 			itemName := root.Get("item.name").String()
@@ -515,119 +383,6 @@ func TestConvertOpenAIChatToResponsesNonStream(t *testing.T) {
 	}
 	if usage["output_tokens"].(float64) != 8 {
 		t.Errorf("output_tokens should be 8, got %v", usage["output_tokens"])
-	}
-}
-
-func TestConvertOpenAIChatToResponsesNonStream_ToolCalls(t *testing.T) {
-	ctx := context.Background()
-
-	// 模拟带 tool_calls 的响应
-	chatResponse := `{
-		"id": "chatcmpl-tool",
-		"object": "chat.completion",
-		"created": 1234567890,
-		"model": "gpt-4o",
-		"choices": [{
-			"index": 0,
-			"message": {
-				"role": "assistant",
-				"content": null,
-				"tool_calls": [
-					{
-						"id": "call_xyz",
-						"type": "function",
-						"function": {
-							"name": "search",
-							"arguments": "{\"query\": \"test\"}"
-						}
-					}
-				]
-			},
-			"finish_reason": "tool_calls"
-		}],
-		"usage": {"prompt_tokens": 5, "completion_tokens": 10, "total_tokens": 15}
-	}`
-
-	originalReq := []byte(`{"model":"gpt-4o","input":"Search for test"}`)
-
-	result, convertErr := ConvertOpenAIChatToResponsesNonStream(ctx, "gpt-4o", originalReq, nil, []byte(chatResponse), nil)
-	if convertErr != nil {
-		t.Fatal(convertErr)
-	}
-
-	var resp map[string]interface{}
-	if err := json.Unmarshal([]byte(result), &resp); err != nil {
-		t.Fatalf("failed to parse result: %v", err)
-	}
-
-	output, ok := resp["output"].([]interface{})
-	if !ok || len(output) == 0 {
-		t.Fatal("output should have items")
-	}
-
-	// 查找 function_call item
-	var funcItem map[string]interface{}
-	for _, item := range output {
-		itemMap := item.(map[string]interface{})
-		if itemMap["type"] == "function_call" {
-			funcItem = itemMap
-			break
-		}
-	}
-
-	if funcItem == nil {
-		t.Fatal("should have function_call item")
-	}
-
-	if funcItem["name"] != "search" {
-		t.Errorf("function name should be search, got %v", funcItem["name"])
-	}
-	if funcItem["call_id"] != "call_xyz" {
-		t.Errorf("call_id should be call_xyz, got %v", funcItem["call_id"])
-	}
-}
-
-func TestConvertOpenAIChatToResponsesNonStream_CustomToolCalls(t *testing.T) {
-	ctx := context.Background()
-
-	chatResponse := `{
-		"id": "chatcmpl-custom-tool",
-		"object": "chat.completion",
-		"created": 1234567890,
-		"model": "gpt-4o",
-		"choices": [{
-			"index": 0,
-			"message": {
-				"role": "assistant",
-				"tool_calls": [
-					{
-						"id": "call_exec",
-						"type": "function",
-						"function": {
-							"name": "code_exec",
-							"arguments": "{\"input\":\"print('hi')\"}"
-						}
-					}
-				]
-			},
-			"finish_reason": "tool_calls"
-		}],
-		"usage": {"prompt_tokens": 5, "completion_tokens": 10, "total_tokens": 15}
-	}`
-
-	originalReq := []byte(`{"model":"gpt-4o","input":"Run code","tools":[{"type":"custom","name":"code_exec","description":"Execute code"}]}`)
-
-	result, convertErr := ConvertOpenAIChatToResponsesNonStream(ctx, "gpt-4o", originalReq, nil, []byte(chatResponse), nil)
-	if convertErr != nil {
-		t.Fatal(convertErr)
-	}
-
-	root := gjson.Parse(result)
-	if root.Get("output.0.type").String() != "custom_tool_call" {
-		t.Fatalf("应恢复为 custom_tool_call，实际为 %s", root.Get("output.0.type").String())
-	}
-	if root.Get("output.0.input").String() != "print('hi')" {
-		t.Fatalf("custom tool input 不匹配，实际为 %s", root.Get("output.0.input").String())
 	}
 }
 

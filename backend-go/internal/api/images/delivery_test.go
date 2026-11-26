@@ -1,13 +1,11 @@
 package images
 
 import (
-	"context"
 	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
-	"testing/synctest"
 
 	"github.com/stretchr/testify/require"
 	"insistanan/api-proxy/internal/infra/config"

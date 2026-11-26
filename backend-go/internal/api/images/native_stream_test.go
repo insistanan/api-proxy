@@ -6,11 +6,9 @@ import (
 	"context"
 	"errors"
 	"io"
-	"mime/multipart"
 	"net/http"
 	"strings"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"github.com/gin-gonic/gin"

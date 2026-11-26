@@ -1,8 +1,8 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import piniaPluginPersistedstate from 'pinia-plugin-persistedstate'
-import router from './router'
-import App from './App.vue'
+import router from '@/router'
+import App from '@/App.vue'
 import '@/styles/index.css'
 import { useAuthStore } from '@/shared/stores/auth'
 import { installTheme } from '@/shared/theme'
@@ -19,5 +19,7 @@ app.use(router)
 // 初始化 AuthStore（从 localStorage 恢复状态）
 const authStore = useAuthStore()
 authStore.initializeAuth()
+window.addEventListener('storage', authStore.handleStorageChange)
+app.onUnmount(() => window.removeEventListener('storage', authStore.handleStorageChange))
 
 app.mount('#app')

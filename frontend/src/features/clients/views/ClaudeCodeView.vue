@@ -1,9 +1,11 @@
 <template>
   <div class="agent-config-page claude-code-page">
+    <UiAlert v-if="reloadRequired" type="warning" class="mb-4">配置已写入，请点击刷新核对；刷新成功后才能继续编辑或保存。</UiAlert>
+    <DraftGuard :dirty="draftDirty || promptState.dirty" :busy="editorBusy || promptState.busy" />
     <AgentConfigHeader title="Claude Code 配置">
       <template #default>
-        <UiButton variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="loadSettings">刷新</UiButton>
-        <UiButton color="primary" prepend-icon="mdi-content-save" :loading="saving" :disabled="loading" @click="saveSettings">保存配置</UiButton>
+        <UiButton variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="editorBusy" @click="loadSettings()">刷新</UiButton>
+        <UiButton color="primary" prepend-icon="mdi-content-save" :loading="saving" :disabled="editorBusy || reloadRequired || !settings" @click="saveSettings">保存配置</UiButton>
       </template>
     </AgentConfigHeader>
 
@@ -21,7 +23,7 @@
 
       <div class="grid grid-cols-12 gap-4">
         <div class="min-w-0 col-span-12" >
-          <UiCard elevation="0" class="settings-card agent-config-panel h-full">
+          <UiCard :inert="editorBusy || reloadRequired" elevation="0" class="settings-card agent-config-panel h-full">
             <div class="agent-config-panel-header">
               <div class="agent-config-panel-title">代理连接</div>
             </div>
@@ -63,7 +65,7 @@
         </div>
       </div>
 
-      <UiCard elevation="0" class="settings-card agent-config-panel mt-5">
+      <UiCard :inert="editorBusy || reloadRequired" elevation="0" class="settings-card agent-config-panel mt-5">
         <div class="agent-config-panel-header">
           <div>
             <div class="agent-config-panel-subtitle">为空时不会写入对应环境变量，Claude Code 将使用自身默认模型。每个模型族可独立勾选 1M 上下文。</div>
@@ -96,11 +98,14 @@
       </UiCard>
     </template>
 
-    <AgentPromptCard agent="claude-code" class="mt-5" />
+    <AgentPromptCard agent="claude-code" class="mt-5" @draft-state="promptState = $event" />
   </div>
 </template>
 
 <script setup lang="ts">
+import DraftGuard from '@/shared/components/overlay/DraftGuard.vue'
+import { useDraftSnapshot } from '@/shared/composables/useDraftSnapshot'
+import { ApiError, apiErrorText } from '@/shared/services/http'
 import UiButton from '@/shared/ui/button/Button.vue'
 import UiCard from '@/shared/ui/card/Card.vue'
 import UiCheckbox from '@/shared/ui/check/Checkbox.vue'
@@ -112,7 +117,7 @@ import UiProgress from '@/shared/ui/feedback/Progress.vue'
 import UiInput from '@/shared/ui/field/Input.vue'
 import UiIcon from '@/shared/ui/icon/Icon.vue'
 import UiTooltip from '@/shared/ui/overlay/Tooltip.vue'
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import AgentConfigHeader from '@/features/clients/components/AgentConfigHeader.vue'
 import AgentConfigLocation from '@/features/clients/components/AgentConfigLocation.vue'
 import AgentPromptCard from '@/features/clients/components/AgentPromptCard.vue'
@@ -126,8 +131,12 @@ import { useToast } from '@/shared/composables/useToast'
 
 const { showToast } = useToast()
 
+const { dirty: draftDirty, markSaved } = useDraftSnapshot(() => [baseUrl.value, credentialKind.value, credential.value, credentialAction.value, modelDefaults.value])
 const loading = ref(false)
 const saving = ref(false)
+const reloadRequired = ref(false)
+const editorBusy = computed(() => loading.value || saving.value || connecting.value || importing.value)
+const promptState = ref({ dirty: false, busy: false })
 const error = ref('')
 const settings = ref<ClaudeCodeSettings | null>(null)
 const baseUrl = ref('')
@@ -136,6 +145,7 @@ const credential = ref('')
 const credentialMasked = ref('')
 const credentialPresent = ref(false)
 const credentialAction = ref<'keep' | 'replace' | 'remove'>('keep')
+const credentialRemoved = ref(false)
 const modelDefaults = ref<ClaudeCodeModelDefault[]>([])
 
 // 连接本代理
@@ -148,7 +158,8 @@ const familyColors: Record<string, string> = { fable: 'primary', opus: 'warning'
 const familyTitle = (family: string) => familyTitles[family] ?? family
 const familyColor = (family: string) => familyColors[family] ?? 'default'
 
-const loadSettings = async () => {
+const loadSettings = async (afterSave = false) => {
+  if (loading.value || (!afterSave && editorBusy.value)) return
   loading.value = true
   error.value = ''
   try {
@@ -160,10 +171,14 @@ const loadSettings = async () => {
     credentialMasked.value = loaded.credentialMasked
     credentialPresent.value = loaded.credentialPresent
     credentialAction.value = 'keep'
+    credentialRemoved.value = false
     modelDefaults.value = loaded.modelDefaults.map(item => ({ ...item }))
+    markSaved()
+    reloadRequired.value = false
     // 预取本代理默认 Base URL 用于按钮展示
-    fetchProxyBaseUrl().then(url => { defaultBaseUrl.value = url })
+    fetchProxyBaseUrl().then(url => { defaultBaseUrl.value = url }).catch(error => showToast(apiErrorText(error), 'warning'))
   } catch (loadError) {
+    if (afterSave) reloadRequired.value = true
     error.value = loadError instanceof Error ? loadError.message : '加载 Claude Code 配置失败'
   } finally {
     loading.value = false
@@ -172,12 +187,14 @@ const loadSettings = async () => {
 
 // 一键连接本代理：填 Base URL 与访问密钥
 const connectToProxy = async () => {
+  if (editorBusy.value || reloadRequired.value) return
   connecting.value = true
   try {
     baseUrl.value = await fetchProxyBaseUrl()
     const authStore = useAuthStore()
     if (authStore.apiKey) {
       credential.value = authStore.apiKey
+      credentialRemoved.value = false
       credentialAction.value = 'replace'
     }
     showToast(`已连接本代理：${baseUrl.value}`, 'success')
@@ -190,6 +207,7 @@ const connectToProxy = async () => {
 
 // 从本代理 messages 分组导入 modelDefaults（按 family 归类，导入即替换对应 family）
 const importModelDefaultsFromProxy = async () => {
+  if (editorBusy.value || reloadRequired.value) return
   importing.value = true
   try {
     const response = await api.getProxyModels('messages')
@@ -219,11 +237,12 @@ const importModelDefaultsFromProxy = async () => {
 }
 
 const onCredentialInput = () => {
-  if (credential.value) credentialAction.value = 'replace'
-  else if (!credentialPresent.value) credentialAction.value = 'keep'
+  if (credential.value) { credentialRemoved.value = false; credentialAction.value = 'replace' }
+  else credentialAction.value = credentialRemoved.value ? 'remove' : 'keep'
 }
 
 const clearCredential = () => {
+  credentialRemoved.value = true
   credential.value = ''
   credentialPresent.value = false
   credentialMasked.value = ''
@@ -231,9 +250,11 @@ const clearCredential = () => {
 }
 
 const saveSettings = async () => {
+  if (editorBusy.value || reloadRequired.value || !settings.value) return
   saving.value = true
   try {
     const response = await api.saveClaudeCodeSettings({
+      revision: settings.value?.revision ?? '',
       baseUrl: baseUrl.value,
       credentialKind: credentialKind.value,
       credentialAction: credentialAction.value,
@@ -241,15 +262,17 @@ const saveSettings = async () => {
       modelDefaults: modelDefaults.value
     })
     showToast(`已保存到 ${response.path}`, 'success')
-    await loadSettings()
+    markSaved()
+    await loadSettings(true)
   } catch (saveError) {
-    showToast(saveError instanceof Error ? saveError.message : '保存 Claude Code 配置失败', 'error')
+    if (saveError instanceof ApiError && saveError.committed) { reloadRequired.value = true; markSaved() }
+    showToast(apiErrorText(saveError), saveError instanceof ApiError && saveError.committed ? 'warning' : 'error')
   } finally {
     saving.value = false
   }
 }
 
-onMounted(loadSettings)
+onMounted(() => loadSettings())
 </script>
 
 <style scoped>

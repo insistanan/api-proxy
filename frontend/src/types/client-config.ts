@@ -7,6 +7,7 @@ export type AgentPromptAgent = 'claude-code' | 'codex' | 'opencode' | 'pi' | 'ds
 
 /** GET /api/settings/agent-prompt/:agent 的响应 */
 export interface AgentPromptFile {
+  revision: string
   agent: AgentPromptAgent
   displayName: string
   /** 提示词文件绝对路径 */
@@ -96,6 +97,7 @@ export interface ClaudeCodeModelDefault {
 }
 
 export interface ClaudeCodeSettings {
+  revision: string
   path: string
   exists: boolean
   jsonc: boolean
@@ -108,7 +110,7 @@ export interface ClaudeCodeSettings {
 
 export interface SaveClaudeCodeSettings extends Pick<
   ClaudeCodeSettings,
-  'baseUrl' | 'credentialKind' | 'modelDefaults'
+  'baseUrl' | 'credentialKind' | 'modelDefaults' | 'revision'
 > {
   credentialAction: 'keep' | 'replace' | 'remove'
   credential?: string
@@ -136,6 +138,8 @@ export interface CodexCatalogModel {
 }
 
 export interface CodexSettings {
+  catalogRevision: string
+  revision: string
   configPath: string
   configExists: boolean
   authPath: string
@@ -158,6 +162,7 @@ export interface CodexSettings {
 }
 
 export interface SaveCodexSettings {
+  revision: string
   provider: string
   baseUrl: string
   apiKeyAction: 'keep' | 'replace' | 'remove'
@@ -165,6 +170,7 @@ export interface SaveCodexSettings {
 }
 
 export interface SaveCodexModelCatalog {
+  revision: string
   action: 'upsert' | 'delete' | 'setDefault'
   slug: string
   displayName?: string
@@ -330,6 +336,7 @@ export interface DSHDefaultModel {
 }
 
 export interface DSHSettings {
+  revision: string
   dshHome: string
   path: string
   credentialsPath: string
@@ -348,6 +355,7 @@ export interface DSHCredentialUpdate {
 }
 
 export interface SaveDSHSettings {
+  revision: string
   providers: Record<string, DSHProvider>
   providerKeys?: string[]
   defaultModel: DSHDefaultModel | null

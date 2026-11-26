@@ -8,11 +8,13 @@ api-proxy is a self-hosted LLM API gateway that manages upstream channels, conve
 
 ## Features
 
-- **Protocol support**: accepts Claude Messages, OpenAI Responses, OpenAI Chat, Gemini, and Images requests. The first four support conversation protocol conversion. Images can use native Images API or Responses image-generation upstreams, with operations limited by the upstream protocol.
+- **Protocol support**: accepts Claude Messages, OpenAI Responses, OpenAI Chat, Gemini, and Images requests. Conversion is limited by the selected entry point and upstream capabilities. Embeddings and Decisions have separate pass-through endpoints. Images can use native Images API or Responses image-generation upstreams, with operations limited by the upstream protocol.
 - **Channel scheduling**: tries channels by pool and configuration order, supports failover and circuit breakers, and lets healthy channels temporarily take priority within their pool. Requests sharing a URL, upstream protocol, and API key share concurrency slots and a FIFO queue. Retries respect 429 cooldowns and request budgets. Scheduling also manages multiple BaseURLs and session affinity.
-- **Client setup**: configuration pages for Claude Code, Codex, OpenCode, pi-agent, DSH, and GPT help connect each client to the proxy and configure client disguise versions.
-- **Content security**: detects sensitive data, stores reversible redaction mappings with AES-256-GCM, recursively filters private parameters, and uses an AI gate to review dangerous commands.
+- **Client setup**: configuration pages for Claude Code, Codex (the GPT page), OpenCode, pi-agent, and DSH help connect each client to the proxy and configure client disguise versions.
+- **Content security**: disabled by default through a dedicated master switch. Once enabled, configure detection rules and choose blocking or reversible redaction. AI and manual command review are separate options; redaction mappings use AES-256-GCM.
 - **Logs and metrics**: tracks metrics by channel and model. Request and system logs are stored in SQLite and can also be queried through the CLI. Interception records are grouped by session.
+- **Usage journal and forest**: an independent ledger records new usage after activation. A yearly calendar and daily receipts accompany trees grown from reported usage, active focus, and confirmed rest. Clearing request logs keeps the journal intact.
+- **Extensions**: revision checks protect client file edits; Skills and MCP synchronization track managed copies. Batch translation supports cancellation, and Git export requires a reviewed file preview.
 - **Deployment**: the Vue 3 admin UI is embedded via `go:embed`. One port, 3000 by default, serves both the proxy API and the web UI.
 
 ## Quick Start
@@ -28,7 +30,7 @@ Key environment variables:
 
 | Variable | Description |
 |---|---|
-| `PROXY_ACCESS_KEY` | Access key — **must be changed** |
+| `PROXY_ACCESS_KEY` | **Set your own key before deployment**; the current default is a public example and does not prevent startup |
 | `ENABLE_WEB_UI` | `true` (default) all-in-one mode / `false` API-only mode |
 | `PORT` / `ENV` | Listening port (default 3000) and runtime environment (default production) |
 | `LOG_LEVEL` / `LOG_TO_CONSOLE` | Log level (default info) and console logging (default false) |
@@ -60,6 +62,7 @@ make check   # full local gate before committing
 | `POST /v1/chat/completions` | OpenAI Chat protocol |
 | `POST /v1/images/{generations,edits,variations}` | Images protocol |
 | `POST /v1beta/models/*` | Gemini protocol |
+| `POST /v1/embeddings`, `/v1/decisions` | Pass-through endpoints |
 | `GET /v1/models` | Model catalog |
 | `/api/*` | Admin API (requires the access key via the `x-api-key` header) |
 | `/health` | Health check (public; used by the Docker HEALTHCHECK) |
@@ -74,6 +77,7 @@ Images channels support either native **Images API** or **Responses API** upstre
 | [docs/架构说明.md](docs/架构说明.md) | Architecture diagrams, request flow, scheduling, data storage, auth model |
 | [docs/规范与不变量.md](docs/规范与不变量.md) | Code conventions and key invariants |
 | [docs/技术栈.md](docs/技术栈.md) | Dependencies and toolchain overview |
+| [个人森林与用量手账](docs/个人森林与用量手账方案.md) | Current forest behavior, usage accounting, timers, and future scope |
 | [前端设计系统与主题](docs/前端设计系统与主题.md) | Theme controls, frontend structure, components, and styling |
 
 For the full version history see [CHANGELOG.md](CHANGELOG.md) (Chinese).

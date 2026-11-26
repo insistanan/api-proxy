@@ -32,6 +32,9 @@ func RegisterModelFingerprintRoutes(group *gin.RouterGroup, cfg *config.ConfigMa
 			if errors.Is(err, modelfingerprint.ErrTaskRunning) {
 				status = http.StatusConflict
 			}
+			if errors.Is(err, modelfingerprint.ErrTaskCapacity) {
+				status = http.StatusTooManyRequests
+			}
 			c.JSON(status, gin.H{"error": err.Error()})
 			return
 		}
@@ -49,7 +52,11 @@ func RegisterModelFingerprintRoutes(group *gin.RouterGroup, cfg *config.ConfigMa
 	group.POST("/channels/:id/fingerprint/:taskId/retry", func(c *gin.Context) {
 		task, err := jobs.RetryFailed(c.Param("id"), c.Param("taskId"))
 		if err != nil {
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			status := http.StatusConflict
+			if errors.Is(err, modelfingerprint.ErrTaskCapacity) {
+				status = http.StatusTooManyRequests
+			}
+			c.JSON(status, gin.H{"error": err.Error()})
 			return
 		}
 		c.JSON(http.StatusAccepted, task)
@@ -62,7 +69,11 @@ func RegisterModelFingerprintRoutes(group *gin.RouterGroup, cfg *config.ConfigMa
 		}
 		task, err := jobs.Retry(c.Param("id"), c.Param("taskId"), index)
 		if err != nil {
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			status := http.StatusConflict
+			if errors.Is(err, modelfingerprint.ErrTaskCapacity) {
+				status = http.StatusTooManyRequests
+			}
+			c.JSON(status, gin.H{"error": err.Error()})
 			return
 		}
 		c.JSON(http.StatusAccepted, task)

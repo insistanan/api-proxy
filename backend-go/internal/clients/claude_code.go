@@ -4,15 +4,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"insistanan/api-proxy/internal/protocol/codec"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"insistanan/api-proxy/internal/clients/filetxn"
+	"insistanan/api-proxy/internal/protocol/codec"
 )
 
 var claudeCodeSettingsMu sync.Mutex
@@ -20,6 +21,7 @@ var claudeCodeSettingsMu sync.Mutex
 var claudeCodeModelFamilies = []string{"FABLE", "OPUS", "SONNET", "HAIKU"}
 
 type claudeCodeSettingsResponse struct {
+	Revision          string                       `json:"revision"`
 	Path              string                       `json:"path"`
 	Exists            bool                         `json:"exists"`
 	JSONC             bool                         `json:"jsonc"`
@@ -38,6 +40,7 @@ type claudeCodeModelDefaultView struct {
 }
 
 type saveClaudeCodeSettingsRequest struct {
+	Revision         string                       `json:"revision"`
 	BaseURL          string                       `json:"baseUrl"`
 	CredentialKind   string                       `json:"credentialKind"`
 	CredentialAction string                       `json:"credentialAction"`
@@ -80,6 +83,7 @@ func GetClaudeCodeSettings() gin.HandlerFunc {
 		env := objectValue(root["env"])
 		credentialKind, credential := claudeCodeCredential(env)
 		c.JSON(200, claudeCodeSettingsResponse{
+			Revision:          filetxn.Revision(raw),
 			Path:              path,
 			Exists:            exists,
 			JSONC:             isJSONC(raw),
@@ -104,37 +108,9 @@ func SaveClaudeCodeSettings() gin.HandlerFunc {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-
-		claudeCodeSettingsMu.Lock()
-		defer claudeCodeSettingsMu.Unlock()
-
-		path := resolveClaudeCodeSettingsPath()
-		root, raw, _, err := readClaudeCodeSettings(path)
+		path, err := saveClaudeCodeConfiguration(req)
 		if err != nil {
-			c.JSON(500, gin.H{"error": fmt.Sprintf("读取 Claude Code 配置失败: %v", err)})
-			return
-		}
-		if root == nil {
-			root = make(map[string]interface{})
-		}
-		env := objectValue(root["env"])
-		setOptionalString(env, "ANTHROPIC_BASE_URL", req.BaseURL)
-		mergeClaudeCodeCredential(env, req)
-		mergeClaudeCodeModelDefaults(env, req.ModelDefaults)
-		if len(env) == 0 {
-			delete(root, "env")
-		} else {
-			root["env"] = env
-		}
-
-		data, err := json.MarshalIndent(root, "", "  ")
-		if err != nil {
-			c.JSON(500, gin.H{"error": "序列化 Claude Code 配置失败"})
-			return
-		}
-		data = append(data, '\n')
-		if err := writeClaudeCodeSettings(path, raw, data); err != nil {
-			c.JSON(500, gin.H{"error": fmt.Sprintf("保存 Claude Code 配置失败: %v", err)})
+			respondClientFileError(c, err)
 			return
 		}
 		c.JSON(200, gin.H{"success": true, "path": path})
@@ -167,6 +143,20 @@ func readClaudeCodeSettings(path string) (map[string]interface{}, []byte, bool, 
 	var root map[string]interface{}
 	if err := json.Unmarshal(cleaned, &root); err != nil {
 		return nil, raw, true, fmt.Errorf("JSON/JSONC 格式无效: %w", err)
+	}
+	if root == nil {
+		return nil, raw, true, fmt.Errorf("配置根节点必须是 JSON 对象")
+	}
+	if value, exists := root["env"]; exists {
+		env, ok := value.(map[string]interface{})
+		if !ok {
+			return nil, raw, true, fmt.Errorf("env 必须是对象")
+		}
+		for key := range env {
+			if err := configStringFields(env, "env", key); err != nil {
+				return nil, raw, true, err
+			}
+		}
 	}
 	return root, raw, true, nil
 }
@@ -263,31 +253,5 @@ func mergeClaudeCodeModelDefaults(env map[string]interface{}, defaults []saveCla
 }
 
 func writeClaudeCodeSettings(path string, previous, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return err
-	}
-	if len(previous) > 0 {
-		backup := path + "." + time.Now().Format("20060102-150405.000000000") + ".bak"
-		if err := os.WriteFile(backup, previous, 0600); err != nil {
-			return fmt.Errorf("创建备份失败: %w", err)
-		}
-	}
-	tempFile, err := os.CreateTemp(filepath.Dir(path), ".claude-*.tmp")
-	if err != nil {
-		return err
-	}
-	tempPath := tempFile.Name()
-	defer os.Remove(tempPath)
-	if err := tempFile.Chmod(0600); err != nil {
-		tempFile.Close()
-		return err
-	}
-	if _, err := tempFile.Write(data); err != nil {
-		tempFile.Close()
-		return err
-	}
-	if err := tempFile.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tempPath, path)
+	return filetxn.Replace(path, previous, data, filepath.Dir(path), 0600)
 }

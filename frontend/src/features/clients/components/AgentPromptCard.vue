@@ -15,12 +15,12 @@
         </div>
       </div>
       <div class="agent-config-panel-actions flex gap-1">
-        <UiButton variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="load">刷新</UiButton>
+        <UiButton variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy || editing" @click="load()">刷新</UiButton>
         <UiButton
           v-if="!editing"
           variant="text"
           prepend-icon="mdi-pencil"
-          :disabled="!info || !info.writable"
+          :disabled="busy || !info || !info.writable"
           @click="startEdit"
         >
           编辑
@@ -41,6 +41,7 @@
       <template v-if="editing">
         <UiTextarea
           v-model="draft"
+          :disabled="busy"
           variant="outlined"
           density="comfortable"
           auto-grow
@@ -52,10 +53,9 @@
         />
         <div v-if="saveError" class="text-xs text-destructive mb-3">
           {{ saveError }}
-          <div v-if="saveDetail" class="text-muted-foreground">{{ saveDetail }}</div>
         </div>
         <div class="flex gap-2">
-          <UiButton color="primary" prepend-icon="mdi-content-save" :loading="saving" @click="save">保存提示词</UiButton>
+          <UiButton color="primary" prepend-icon="mdi-content-save" :loading="saving" :disabled="loading || applying" @click="save">保存提示词</UiButton>
           <UiButton variant="text" :disabled="saving" @click="cancelEdit">取消</UiButton>
         </div>
       </template>
@@ -73,7 +73,8 @@
           <UiIcon size="18">mdi-lightning-bolt</UiIcon>
           <span class="text-sm font-medium font-bold">一键配置提示词</span>
         </div>
-        <div v-if="promptEntries.length === 0" class="text-sm text-muted-foreground">
+        <UiAlert v-if="versionsError" type="error">{{ versionsError }}</UiAlert>
+        <div v-else-if="promptEntries.length === 0" class="text-sm text-muted-foreground">
           尚未维护通用提示词版本，请先前往 <router-link to="/settings">设置 · 通用提示词</router-link> 创建。
         </div>
         <template v-else>
@@ -95,7 +96,7 @@
               variant="tonal"
               prepend-icon="mdi-download"
               :loading="applying"
-              :disabled="!selectedVersion || !!info?.readError"
+              :disabled="busy || !info?.writable || !selectedVersion || !!info?.readError"
               @click="applyPromptVersion"
             >
               写入该版本
@@ -106,7 +107,6 @@
           </div>
           <div v-if="applyError" class="text-xs text-destructive mt-2">
             {{ applyError }}
-            <div v-if="applyDetail" class="text-muted-foreground">{{ applyDetail }}</div>
           </div>
         </template>
       </template>
@@ -138,7 +138,8 @@ import UiSelect from '@/shared/ui/select/Select.vue'
 // 支持就地编辑保存（写入失败如只读 / 权限不足时显式展示错误详情），
 // 以及把设置页维护的通用提示词版本一键写入该文件。
 // 状态自管（同 ToolInstallBanner 的先例），不进 store——数据只服务于本卡片。
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { apiErrorText } from '@/shared/services/http'
 import { api, ApiError, type AgentPromptAgent, type AgentPromptFile, type PromptEntry } from '@/api'
 import { formatDateTime } from '@/shared/utils/datetime'
 import ConfirmDialog from '@/shared/components/overlay/ConfirmDialog.vue'
@@ -148,6 +149,7 @@ const props = defineProps<{
   /** 智能体标识，须在后端白名单内：claude-code / codex / opencode / pi / dsh */
   agent: AgentPromptAgent
 }>()
+const emit = defineEmits<{ 'draft-state': [state: { dirty: boolean; busy: boolean }] }>()
 
 const loading = ref(false)
 const saving = ref(false)
@@ -155,10 +157,11 @@ const { pending: pendingConfirm, askConfirm, acceptConfirm, cancelConfirm } = us
 const info = ref<AgentPromptFile | null>(null)
 const loadError = ref('')
 const saveError = ref('')
-const saveDetail = ref('')
 
 const editing = ref(false)
 const draft = ref('')
+const originalDraft = ref('')
+const editRevision = ref('')
 
 // 一键配置提示词：把设置页维护的通用提示词版本写入该文件
 // activeVersion 是设置页标记的生效版本号（展示提示用）
@@ -167,7 +170,9 @@ const activeVersion = ref('')
 const selectedVersion = ref('')
 const applying = ref(false)
 const applyError = ref('')
-const applyDetail = ref('')
+const versionsError = ref('')
+const busy = computed(() => loading.value || saving.value || applying.value)
+watch(() => ({ dirty: editing.value && draft.value !== originalDraft.value, busy: busy.value }), state => emit('draft-state', state), { immediate: true })
 
 const statusChip = computed(() => {
   if (!info.value) return null
@@ -208,16 +213,8 @@ const formatTime = (millis: number): string => {
   return formatDateTime(millis)
 }
 
-/** 从 ApiError 提取后端 detail 字段（保存失败的具体原因，如权限不足） */
-const extractDetail = (error: unknown): string => {
-  if (error instanceof ApiError) {
-    const details = error.details as { detail?: unknown } | undefined
-    if (details && typeof details.detail === 'string') return details.detail
-  }
-  return ''
-}
-
-const load = async () => {
+const load = async (afterWrite = false) => {
+  if (loading.value || (!afterWrite && (busy.value || editing.value))) return
   loading.value = true
   loadError.value = ''
   try {
@@ -227,7 +224,7 @@ const load = async () => {
       editing.value = false
     }
   } catch (error) {
-    loadError.value = error instanceof Error ? error.message : '读取全局提示词失败'
+    loadError.value = (afterWrite ? '提示词已写入，但刷新失败，请刷新核对：' : '') + apiErrorText(error)
   } finally {
     loading.value = false
   }
@@ -242,8 +239,8 @@ const loadPromptVersions = async () => {
     // 默认选中当前生效版本；未指定生效版本时退化为第一个版本
     activeVersion.value = prompts?.activeVersion || ''
     selectedVersion.value = activeVersion.value || promptEntries.value[0]?.version || ''
-  } catch {
-    // 版本库加载失败不阻断卡片主功能；一键写入区展示"尚未维护"提示
+  } catch (error) {
+    versionsError.value = '读取通用提示词版本失败：' + apiErrorText(error)
     promptEntries.value = []
     activeVersion.value = ''
   }
@@ -251,36 +248,41 @@ const loadPromptVersions = async () => {
 
 const startEdit = () => {
   // 未加载完成或不可写时不进入编辑，避免把未知内容当作空草稿保存覆盖原文件
-  if (!info.value || !info.value.writable) return
+  if (busy.value || !info.value || !info.value.writable) return
   draft.value = info.value.content
+  originalDraft.value = draft.value
+  editRevision.value = info.value.revision
   saveError.value = ''
-  saveDetail.value = ''
   editing.value = true
 }
 
 const cancelEdit = () => {
+  if (busy.value) return
   editing.value = false
   saveError.value = ''
-  saveDetail.value = ''
 }
 
 const save = async () => {
+  if (busy.value || !editing.value) return
   saving.value = true
   saveError.value = ''
-  saveDetail.value = ''
   try {
-    await api.saveAgentPrompt(props.agent, draft.value)
+    await api.saveAgentPrompt(props.agent, draft.value, editRevision.value)
     editing.value = false
-    await load()
+    await load(true)
   } catch (error) {
-    saveError.value = error instanceof Error ? error.message : '保存全局提示词失败'
-    saveDetail.value = extractDetail(error)
+    saveError.value = apiErrorText(error)
+    if (error instanceof ApiError && error.committed) {
+      editing.value = false
+      loadError.value = saveError.value
+    }
   } finally {
     saving.value = false
   }
 }
 
 const applyPromptVersion = () => {
+  if (busy.value || editing.value || !info.value?.writable) return
   const entry = promptEntries.value.find(item => item.version === selectedVersion.value)
   if (!entry) return
   if (info.value?.exists && info.value.content) {
@@ -295,15 +297,18 @@ const applyPromptVersion = () => {
 }
 
 const writePromptEntry = async (entry: PromptEntry) => {
+  if (busy.value || editing.value || !info.value?.writable) return
   applying.value = true
   applyError.value = ''
-  applyDetail.value = ''
   try {
-    await api.saveAgentPrompt(props.agent, entry.content)
-    await load()
+    await api.saveAgentPrompt(props.agent, entry.content, info.value?.revision ?? '')
+    await load(true)
   } catch (error) {
-    applyError.value = error instanceof Error ? error.message : '写入通用提示词失败'
-    applyDetail.value = extractDetail(error)
+    applyError.value = apiErrorText(error)
+    if (error instanceof ApiError && error.committed) {
+      info.value = null
+      loadError.value = applyError.value
+    }
   } finally {
     applying.value = false
   }

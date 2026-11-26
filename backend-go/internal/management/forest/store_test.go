@@ -18,6 +18,35 @@ type testUsage struct {
 	activityErr error
 }
 
+func TestGrowth_ConsumerDrainsBacklogWithoutWaitingBetweenFullBatches(t *testing.T) {
+	usage := &testUsage{}
+	for i := 1; i <= 3*tokenusage.GrowthCreditBatchSize+1; i++ {
+		usage.credits = append(usage.credits, tokenusage.Credit{Cursor: int64(i), Tokens: 1, At: time.Now().UnixMilli()})
+	}
+	store := openTestForest(t, filepath.Join(t.TempDir(), "forest.db"), usage)
+	ctx, cancel := context.WithCancel(context.Background())
+	store.done = make(chan struct{})
+	go store.consume(ctx)
+	defer func() { cancel(); <-store.done }()
+	deadline := time.After(time.Second)
+	tick := time.NewTicker(5 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-deadline:
+			t.Fatal("积压仍在逐批等待两秒")
+		case <-tick.C:
+			state, err := readGrowth(ctx, store.db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if state.cursor == int64(len(usage.credits)) {
+				return
+			}
+		}
+	}
+}
+
 func TestGrowth_UnavailableBaselineKeepsExistingTargets(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)

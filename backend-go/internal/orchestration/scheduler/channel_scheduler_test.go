@@ -330,6 +330,7 @@ func TestSelectChannel_ConversationOverridePrecedesPromotion(t *testing.T) {
 	cfg := config.Config{
 		Upstream: []config.UpstreamConfig{
 			{
+				ID:       "override-channel",
 				Name:     "override-channel",
 				BaseURL:  "https://override.example.com",
 				APIKeys:  []string{"sk-override"},
@@ -359,7 +360,7 @@ func TestSelectChannel_ConversationOverridePrecedesPromotion(t *testing.T) {
 	if observeErr != nil {
 		t.Fatal(observeErr)
 	}
-	if _, err := registry.SetRouteOverride(context.Background(), record.ID, string(ChannelKindMessages), 0, "override-channel"); err != nil {
+	if _, err := registry.SetRouteOverride(context.Background(), record.ID, string(ChannelKindMessages), 0, "override-channel", "override-channel"); err != nil {
 		t.Fatalf("SetRouteOverride(context.Background(), ) error = %v", err)
 	}
 	scheduler.SetConversationRegistry(registry)
@@ -730,9 +731,9 @@ func TestSelectChannel_ProfilesDoNotReorderChannels(t *testing.T) {
 	// 固定测试画像，关闭定时评分后再写入，避免后台更新干扰断言。
 	pm.Stop()
 	scheduler.SetProfileManager(pm)
-	slow := pm.GetOrCreateProfile("https://a.example.com", []string{"key-a"}, "claude-sonnet-4", 0)
+	slow := pm.GetOrCreateProfile("https://a.example.com", []string{"key-a"}, "claude-sonnet-4", metrics.ProfileIdentity{Kind: "messages", ID: "provider-a", Index: 0})
 	slow.HealthScore, slow.AvgTTFB, slow.ActiveRequests = 10, 4500, 100
-	fast := pm.GetOrCreateProfile("https://b.example.com", []string{"key-b"}, "claude-sonnet-4", 1)
+	fast := pm.GetOrCreateProfile("https://b.example.com", []string{"key-b"}, "claude-sonnet-4", metrics.ProfileIdentity{Kind: "messages", ID: "provider-b", Index: 1})
 	fast.HealthScore, fast.AvgTTFB, fast.ActiveRequests = 100, 100, 0
 
 	first, err := scheduler.SelectChannel(context.Background(), "profile-user-1", make(map[int]bool), ChannelKindMessages, "claude-sonnet-4")

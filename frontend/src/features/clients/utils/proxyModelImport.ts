@@ -1,30 +1,13 @@
 import type { ApiTab, ModelEntry } from '@/types'
 import { PROTOCOL_DEFAULTS } from '@/features/clients/utils/protocolDefaults'
 
-/**
- * "一键导入本代理模型"共享逻辑。
- *
- * 模型来源：本代理自身暴露的模型列表（GET /api/proxy-models?type=入口协议）。
- * 每个条目的 owned_by 形如 "pool:messages" / "pool:messages,responses"，标识该模型属于哪些协议分组；
- * 普通分组提供匹配词，免费分组统一提供 free；具体免费模型由网关选择。
- *
- * 导入策略：服务端按入口协议筛选，前端保留 owned_by 检查以兼容旧版后端，
- * 然后替换 provider.models（导入即替换）。
- */
-
 /** 本代理模型条目（/api/proxy-models 返回） */
 export interface ProxyModelEntry {
   id: string
   ownedBy: string
 }
 
-/**
- * 从 /api/proxy-models 的返回中按协议分组过滤出模型 ID 列表。
- *
- * 过滤规则：
- * - owned_by 以 "pool:" 开头且协议列表含指定 kind → 归属该协议，导入
- * - 未标明协议分组归属的条目 → 跳过，兼容旧版目录数据
- */
+/** 按 owned_by 中 pool:<协议列表> 的归属筛选并去重；归属不明的模型跳过。 */
 export function filterProxyModelsByKind(entries: ModelEntry[], kind: ApiTab): string[] {
   const prefix = 'pool:'
   const result: string[] = []
@@ -42,16 +25,7 @@ export function filterProxyModelsByKind(entries: ModelEntry[], kind: ApiTab): st
   return result
 }
 
-/**
- * 通用导入入口：把本代理某协议分组下的模型 ID 清单转成客户端模型对象，
- * 然后替换 provider.models（导入即替换）。
- *
- * @param kind 协议分组（messages/responses/gemini/chat）
- * @param modelIds 本代理该协议分组下的模型 ID 列表
- * @param buildModel 单个模型 ID -> 客户端模型对象的转换函数
- * @param setModels 把新模型数组写回 provider 的函数
- * @returns 导入的模型数量
- */
+/** 按客户端格式构造模型并替换完整模型列表，返回导入数量。 */
 export function importProxyModels<TModel>(
   kind: ApiTab,
   modelIds: string[],

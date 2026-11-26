@@ -11,5 +11,6 @@ export const useModelAvailabilityStore = defineStore('modelAvailability', () => 
     snapshots.value = { ...snapshots.value, [type]: snapshot }
   }
 
-  return { snapshots, replace }
+  function reset() { snapshots.value = {} }
+  return { snapshots, replace, reset }
 })

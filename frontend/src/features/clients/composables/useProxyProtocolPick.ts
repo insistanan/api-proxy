@@ -1,5 +1,6 @@
-import { ref, watch } from 'vue'
+import { ref, watch, onScopeDispose } from 'vue'
 import { fetchHealth } from '@/shared/services/health'
+import { useToast } from '@/shared/composables/useToast'
 import type { ApiTab } from '@/types'
 
 /**
@@ -9,7 +10,7 @@ import type { ApiTab } from '@/types'
  * 页面默认填入本代理地址 http://localhost:{port}，端口从 /health 获取，
  * 地址也可以手动修改。模型列表从 /api/proxy-models 读取，再按所选协议筛选。
  *
- * 获取端口失败时返回 null，由调用方使用后端默认端口 3000。
+ * 获取端口失败时明确报错，允许再次选择后重试。
  */
 
 export interface QuickPickTypeOption {
@@ -26,34 +27,30 @@ export const defaultQuickPickTypeOptions: QuickPickTypeOption[] = [
 ]
 
 /** 端口缓存（模块级，多个配置页共享一次 /health 请求） */
-let cachedPort: number | null = null
-let portFetchPromise: Promise<number | null> | null = null
+let portFetchPromise: Promise<number> | null = null
 
 /**
- * 获取本代理监听端口（带模块级缓存）。
- * /health 是公开端点无需鉴权；失败返回 null（调用方回退默认端口）。
+ * 只合并在途请求，完成后释放，避免服务重启后仍使用旧端口。
  */
-export function fetchProxyPort(): Promise<number | null> {
-  if (cachedPort !== null) return Promise.resolve(cachedPort)
+export function fetchProxyPort(): Promise<number> {
   if (portFetchPromise) return portFetchPromise
   portFetchPromise = fetchHealth()
     .then(health => {
-      if (typeof health.port === 'number' && health.port > 0) {
-        cachedPort = health.port
+      if (typeof health.port === 'number' && Number.isInteger(health.port) && health.port > 0 && health.port <= 65535) {
         return health.port
       }
-      return null
+      throw new Error('健康接口未返回有效的代理端口')
     })
-    .catch(() => null)
+    .finally(() => { portFetchPromise = null })
   return portFetchPromise
 }
 
 /**
  * 获取本代理默认 Base URL（http://localhost:{port}）。
- * 端口获取失败时回退 3000（后端 env.go 默认端口）。
+ * 端口读取失败由页面显示，不能生成猜测地址。
  */
 export async function fetchProxyBaseUrl(): Promise<string> {
-  const port = (await fetchProxyPort()) ?? 3000
+  const port = await fetchProxyPort()
   return `http://localhost:${port}`
 }
 
@@ -63,23 +60,42 @@ export async function fetchProxyBaseUrl(): Promise<string> {
  * @param onTypeChange 选定协议后的回调（由调用方实现协议映射与 baseUrl 填充）
  */
 export function useProxyProtocolPick(
-  onTypeChange?: (type: ApiTab, defaultBaseUrl: Promise<string>) => void
+  onTypeChange?: (type: ApiTab, defaultBaseUrl: Promise<string>) => void | Promise<void>
 ) {
   const selectedType = ref<ApiTab | null>(null)
   const defaultBaseUrl = ref('')
+  const loading = ref(false)
+  const { showToast } = useToast()
+  let revision = 0
+  let disposed = false
 
   // 初始化默认 Base URL
   fetchProxyBaseUrl().then(url => {
-    defaultBaseUrl.value = url
-  })
+    if (!disposed) defaultBaseUrl.value = url
+  }).catch(error => { if (!disposed) showToast(`读取代理端口失败：${error instanceof Error ? error.message : String(error)}`, 'error') })
 
-  watch(selectedType, (type) => {
-    if (!type) return
-    onTypeChange?.(type, fetchProxyBaseUrl())
+  watch(selectedType, async (type) => {
+    const current = ++revision
+    if (!type) { loading.value = false; return }
+    loading.value = true
+    try {
+      const url = await fetchProxyBaseUrl()
+      if (disposed || revision !== current) return
+      defaultBaseUrl.value = url
+      await onTypeChange?.(type, Promise.resolve(url))
+    } catch (error) {
+      if (disposed || revision !== current) return
+      selectedType.value = null
+      showToast(`读取代理地址失败：${error instanceof Error ? error.message : String(error)}`, 'error')
+    } finally {
+      if (revision === current) loading.value = false
+    }
   })
+  onScopeDispose(() => { disposed = true; revision++ })
 
   return {
     selectedType,
-    defaultBaseUrl
+    defaultBaseUrl,
+    loading
   }
 }

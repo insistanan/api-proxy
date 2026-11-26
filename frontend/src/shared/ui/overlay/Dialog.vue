@@ -43,8 +43,6 @@ const props = defineProps<{
   maxWidth?: string | number
   drawer?: boolean
   title?: string
-  scrollable?: boolean
-  transition?: string
 }>()
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
 const width = computed(() =>

@@ -29,7 +29,7 @@
 </template>
 <script setup lang="ts">
 import { useTheme } from '@/shared/theme'
-import ArabesquePattern from './ArabesquePattern.vue'
+import ArabesquePattern from '@/shared/theme/components/ArabesquePattern.vue'
 const theme = useTheme()
 </script>
 

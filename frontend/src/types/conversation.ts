@@ -1,10 +1,11 @@
 // 会话类型：会话条目、路由覆盖与路由候选。
 
-import type { Channel } from './channel'
+import type { Channel } from '@/types/channel'
 
 export type ConversationKind = 'messages' | 'responses' | 'gemini' | 'chat' | 'images' | 'embeddings' | 'decisions'
 
 export interface ConversationRouteOverride {
+  channelId: string
   kind: ConversationKind
   channelIndex: number
   channelName?: string
@@ -52,6 +53,7 @@ export interface ConversationsResponse {
 }
 
 export interface ConversationRouteOptionChannel {
+  channelId: string
   kind: ConversationKind
   channelIndex: number
   channelName: string
@@ -74,4 +76,5 @@ export interface ConversationRouteOptionsResponse {
 export interface ConversationRouteUpdateForm {
   kind: ConversationKind
   channelIndex: number
+  channelId: string
 }

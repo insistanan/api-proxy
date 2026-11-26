@@ -81,7 +81,7 @@
 </template>
 <script setup lang="ts" generic="T extends object, K = unknown">
 import { computed, ref, watch } from 'vue'
-import Pagination from './Pagination.vue'
+import Pagination from '@/shared/ui/data/Pagination.vue'
 interface Header {
   title: string
   key: string

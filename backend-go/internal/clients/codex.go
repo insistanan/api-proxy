@@ -19,6 +19,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pelletier/go-toml/v2"
 	"github.com/tidwall/sjson"
+
+	"insistanan/api-proxy/internal/clients/filetxn"
 )
 
 const codexAPIKeyField = "OPENAI_API_KEY"
@@ -26,10 +28,12 @@ const codexAPIKeyField = "OPENAI_API_KEY"
 var (
 	codexSettingsMu  sync.Mutex
 	codexProviderID  = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
-	codexBaseURLLine = regexp.MustCompile(`^(\s*)base_url\s*=.*$`)
+	codexBaseURLLine = regexp.MustCompile(`^(\s*)(?:base_url|"base_url"|'base_url')\s*=.*$`)
 )
 
 type codexSettingsResponse struct {
+	Revision             string              `json:"revision"`
+	CatalogRevision      string              `json:"catalogRevision"`
 	ConfigPath           string              `json:"configPath"`
 	ConfigExists         bool                `json:"configExists"`
 	AuthPath             string              `json:"authPath"`
@@ -57,6 +61,7 @@ type codexProviderView struct {
 }
 
 type saveCodexSettingsRequest struct {
+	Revision     string `json:"revision"`
 	Provider     string `json:"provider"`
 	BaseURL      string `json:"baseUrl"`
 	APIKeyAction string `json:"apiKeyAction"`
@@ -87,12 +92,12 @@ func GetCodexSettings() gin.HandlerFunc {
 			c.JSON(500, gin.H{"error": fmt.Sprintf("解析 Codex 配置目录失败: %v", err)})
 			return
 		}
-		config, _, configExists, err := readCodexConfig(configPath)
+		config, configRaw, configExists, err := readCodexConfig(configPath)
 		if err != nil {
 			c.JSON(500, gin.H{"error": fmt.Sprintf("读取 Codex config.toml 失败: %v", err)})
 			return
 		}
-		auth, _, authExists, err := readCodexAuth(authPath)
+		auth, authRaw, authExists, err := readCodexAuth(authPath)
 		if err != nil {
 			c.JSON(500, gin.H{"error": fmt.Sprintf("读取 Codex auth.json 失败: %v", err)})
 			return
@@ -103,6 +108,11 @@ func GetCodexSettings() gin.HandlerFunc {
 		defer cancel()
 		builtin, builtinErr := loadCodexBuiltinCatalog(ctx, false)
 		catalogModels, modelsExists, modelsError := codexModelCatalogStatus(modelsPath, builtin)
+		modelsRaw, err := filetxn.Read(modelsPath)
+		if err != nil {
+			respondClientFileError(c, err)
+			return
+		}
 		var builtinModels []codexModelView
 		var builtinError string
 		if builtinErr != nil {
@@ -119,6 +129,8 @@ func GetCodexSettings() gin.HandlerFunc {
 			_ = json.Unmarshal(rawAPIKey, &apiKey)
 		}
 		c.JSON(200, codexSettingsResponse{
+			Revision:             filetxn.RevisionSet(configRaw, authRaw),
+			CatalogRevision:      filetxn.RevisionSet(configRaw, modelsRaw),
 			ConfigPath:           configPath,
 			ConfigExists:         configExists,
 			AuthPath:             authPath,
@@ -153,51 +165,10 @@ func SaveCodexSettings() gin.HandlerFunc {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-
-		codexSettingsMu.Lock()
-		defer codexSettingsMu.Unlock()
-
-		configPath, authPath, _, err := resolveCodexPaths()
+		configPath, authPath, err := saveCodexConfiguration(req)
 		if err != nil {
-			c.JSON(500, gin.H{"error": fmt.Sprintf("解析 Codex 配置目录失败: %v", err)})
+			respondClientFileError(c, err)
 			return
-		}
-		_, configRaw, _, err := readCodexConfig(configPath)
-		if err != nil {
-			c.JSON(500, gin.H{"error": fmt.Sprintf("读取 Codex config.toml 失败: %v", err)})
-			return
-		}
-		_, authRaw, _, err := readCodexAuth(authPath)
-		if err != nil {
-			c.JSON(500, gin.H{"error": fmt.Sprintf("读取 Codex auth.json 失败: %v", err)})
-			return
-		}
-
-		updatedConfig, err := mergeCodexProviderBaseURL(configRaw, strings.TrimSpace(req.Provider), strings.TrimSpace(req.BaseURL))
-		if err != nil {
-			c.JSON(400, gin.H{"error": err.Error()})
-			return
-		}
-		var updatedAuth []byte
-		if req.APIKeyAction != "keep" {
-			updatedAuth, err = mergeCodexAPIKey(authRaw, req)
-			if err != nil {
-				c.JSON(500, gin.H{"error": fmt.Sprintf("更新 Codex auth.json 失败: %v", err)})
-				return
-			}
-		}
-
-		if !bytes.Equal(configRaw, updatedConfig) {
-			if err := writeCodexFile(configPath, configRaw, updatedConfig, ".codex-config-*.tmp"); err != nil {
-				c.JSON(500, gin.H{"error": fmt.Sprintf("保存 Codex config.toml 失败: %v", err)})
-				return
-			}
-		}
-		if req.APIKeyAction != "keep" && !bytes.Equal(authRaw, updatedAuth) {
-			if err := writeCodexFile(authPath, authRaw, updatedAuth, ".codex-auth-*.tmp"); err != nil {
-				c.JSON(500, gin.H{"error": fmt.Sprintf("保存 Codex auth.json 失败: %v", err)})
-				return
-			}
 		}
 		c.JSON(200, gin.H{"success": true, "configPath": configPath, "authPath": authPath})
 	}
@@ -260,7 +231,7 @@ func readCodexAuth(path string) (map[string]json.RawMessage, []byte, bool, error
 		return nil, raw, true, fmt.Errorf("JSON 格式无效: %w", err)
 	}
 	if auth == nil {
-		auth = map[string]json.RawMessage{}
+		return nil, raw, true, errors.New("auth.json 根节点必须是对象，不能为 null")
 	}
 	return auth, raw, true, nil
 }
@@ -336,9 +307,13 @@ func mergeCodexProviderBaseURL(raw []byte, provider, baseURL string) ([]byte, er
 	}
 	text := strings.ReplaceAll(string(raw), "\r\n", "\n")
 	lines := strings.Split(text, "\n")
+	code := tomlCodeLines(lines)
 	sectionStart := -1
 	sectionEnd := len(lines)
 	for index, line := range lines {
+		if !code[index] {
+			continue
+		}
 		if id, ok := parseCodexProviderHeader(line); ok && id == provider {
 			sectionStart = index
 			continue
@@ -368,6 +343,9 @@ func mergeCodexProviderBaseURL(raw []byte, provider, baseURL string) ([]byte, er
 		baseURLIndex := -1
 		indent := ""
 		for index := sectionStart + 1; index < sectionEnd; index++ {
+			if !code[index] {
+				continue
+			}
 			if match := codexBaseURLLine.FindStringSubmatch(lines[index]); match != nil {
 				baseURLIndex = index
 				indent = match[1]
@@ -393,6 +371,13 @@ func mergeCodexProviderBaseURL(raw []byte, provider, baseURL string) ([]byte, er
 	if err := toml.Unmarshal(result, &validation); err != nil {
 		return nil, fmt.Errorf("更新后的 config.toml 无效: %w", err)
 	}
+	var value *string
+	if baseURL != "" {
+		value = &baseURL
+	}
+	if err := verifyCodexEdit(raw, result, []string{"model_providers", provider, "base_url"}, value); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
@@ -401,63 +386,27 @@ func parseCodexProviderHeader(line string) (string, bool) {
 	if !strings.HasPrefix(trimmed, "[") || strings.HasPrefix(trimmed, "[[") {
 		return "", false
 	}
-	closing := strings.Index(trimmed, "]")
-	if closing < 0 {
+	var root map[string]interface{}
+	if err := toml.Unmarshal([]byte(trimmed+"\n"), &root); err != nil {
 		return "", false
 	}
-	path := strings.TrimSpace(trimmed[1:closing])
-	const prefix = "model_providers."
-	if !strings.HasPrefix(path, prefix) {
+	providers, ok := root["model_providers"].(map[string]interface{})
+	if !ok || len(providers) != 1 {
 		return "", false
 	}
-	id := strings.TrimSpace(strings.TrimPrefix(path, prefix))
-	if codexProviderID.MatchString(id) {
-		return id, true
-	}
-	if len(id) >= 2 && id[0] == '\'' && id[len(id)-1] == '\'' {
-		return id[1 : len(id)-1], true
-	}
-	if unquoted, err := strconv.Unquote(id); err == nil {
-		return unquoted, true
+	for name, value := range providers {
+		table, ok := value.(map[string]interface{})
+		if ok && len(table) == 0 {
+			return name, true
+		}
 	}
 	return "", false
 }
-
 func isTOMLTableHeader(line string) bool {
 	trimmed := strings.TrimSpace(line)
 	return strings.HasPrefix(trimmed, "[") && strings.Contains(trimmed, "]")
 }
 
-func writeCodexFile(path string, previous, data []byte, pattern string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return err
-	}
-	if len(previous) > 0 {
-		backup := path + "." + time.Now().Format("20060102-150405.000000000") + ".bak"
-		if err := os.WriteFile(backup, previous, 0600); err != nil {
-			return fmt.Errorf("创建备份失败: %w", err)
-		}
-	}
-	tempFile, err := os.CreateTemp(filepath.Dir(path), pattern)
-	if err != nil {
-		return err
-	}
-	tempPath := tempFile.Name()
-	defer os.Remove(tempPath)
-	if err := tempFile.Chmod(0600); err != nil {
-		tempFile.Close()
-		return err
-	}
-	if _, err := tempFile.Write(data); err != nil {
-		tempFile.Close()
-		return err
-	}
-	if err := tempFile.Sync(); err != nil {
-		tempFile.Close()
-		return err
-	}
-	if err := tempFile.Close(); err != nil {
-		return err
-	}
-	return replaceCodexFile(tempPath, path)
+func writeCodexFile(path string, previous, data []byte) error {
+	return filetxn.Replace(path, previous, data, filepath.Dir(path), 0600)
 }

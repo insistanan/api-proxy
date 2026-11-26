@@ -186,19 +186,26 @@ func TestNativeResponseHistoryCredentialOwnership(t *testing.T) {
 		{Type: "text", Content: "第二轮问题"},
 		{Type: "message", Role: "assistant", Content: "第二轮回答"},
 	}, 10, false, "resp-newer", owner))
-	// 同 Key 和换 Key 都不能用最新正文恢复旧分支；协议转换同样遵守此边界。
+	// 同 Key、换 Key及跨协议都恢复指定响应，不把后来产生的回答带进旧分支。
 	provider := &ResponsesProvider{SessionManager: manager}
 	for _, protocol := range []string{"responses", "openai"} {
 		upstream.ServiceType = protocol
 		for _, key := range []string{"first-key", "second-key"} {
 			outcome, err := provider.BuildRequest(RequestInput{Ctx: context.Background(), Body: body, ConversationID: "conv-owner"}, upstream, key)
-			require.ErrorAs(t, err, &historyErr)
-			require.Nil(t, outcome.Request)
+			require.NoError(t, err)
+			encoded, err := io.ReadAll(outcome.Request.Body)
+			require.NoError(t, err)
+			require.NoError(t, outcome.Request.Body.Close())
+			require.NotContains(t, string(encoded), "第二轮回答")
 		}
 		fullHistory := []byte(`{"model":"m","previous_response_id":"resp-owned","input":[{"role":"user","content":[{"type":"input_text","text":"第一轮问题"}]},{"role":"assistant","content":[{"type":"output_text","text":"第一轮回答"}]},{"role":"user","content":[{"type":"input_text","text":"新的分支"}]}]}`)
 		outcome, err := provider.BuildRequest(RequestInput{Ctx: context.Background(), Body: fullHistory, ConversationID: "conv-owner"}, upstream, "second-key")
-		require.ErrorAs(t, err, &historyErr)
-		require.Nil(t, outcome.Request)
+		require.NoError(t, err)
+		encoded, err := io.ReadAll(outcome.Request.Body)
+		require.NoError(t, err)
+		require.NoError(t, outcome.Request.Body.Close())
+		require.Contains(t, string(encoded), "新的分支")
+		require.NotContains(t, string(encoded), "第二轮回答")
 
 	}
 }

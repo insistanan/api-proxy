@@ -7,7 +7,7 @@
 //     OPENCODE_CONFIG(_DIR) / XDG_CONFIG_HOME / PI_AGENT_CONFIG_DIR / DSH_HOME），
 //     与各配置 handler 的目录解析保持同一来源，禁止客户端传入任意路径；
 //   - 文件不存在不算错误（exists=false），首次保存时创建；
-//   - 保存前对原文件做时间戳 .bak 备份（同 writeClaudeCodeSettings 惯例），
+//   - 保存前对原文件做排他创建的 .bak 备份，
 //     经 internal/storage/atomicfile 原子替换；
 //   - 写入失败（目录只读、权限不足、磁盘满等）显式返回 500 + error/detail，
 //     不静默兜底；detail 保留底层错误（含 Windows 只读属性 / ACL 拒绝信息）。
@@ -19,11 +19,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"insistanan/api-proxy/internal/clients/filetxn"
 	"insistanan/api-proxy/internal/clients/piagent"
-	"insistanan/api-proxy/internal/storage/atomicfile"
 )
 
 // agentPromptContentMaxBytes 单次提交的提示词内容上限（1 MiB），
@@ -150,6 +150,7 @@ func resolveDSHPromptPath() (string, error) {
 
 // agentPromptFileResponse GET 的响应体。
 type agentPromptFileResponse struct {
+	Revision    string `json:"revision"`
 	Agent       string `json:"agent"`
 	DisplayName string `json:"displayName"`
 	Path        string `json:"path"`
@@ -165,7 +166,8 @@ type agentPromptFileResponse struct {
 
 // saveAgentPromptRequest PUT 的请求体。
 type saveAgentPromptRequest struct {
-	Content string `json:"content"`
+	Content  *string `json:"content"`
+	Revision string  `json:"revision"`
 }
 
 // GetAgentPrompt 返回指定智能体的全局提示词文件内容与状态。
@@ -203,13 +205,14 @@ func GetAgentPrompt() gin.HandlerFunc {
 				response.UpdatedAt = info.ModTime().UnixMilli()
 			}
 		}
+		response.Revision = filetxn.Revision(raw)
 		response.Writable = checkAgentPromptWritable(path)
 		c.JSON(http.StatusOK, response)
 	}
 }
 
 // SaveAgentPrompt 整体替换指定智能体的全局提示词文件。
-// 写入前对已存在的原文件做时间戳 .bak 备份；内容经 atomicfile 原子替换。
+// 校验读取版本后以排他创建生成唯一 .bak 备份，再原子替换内容。
 func SaveAgentPrompt() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		spec, ok := agentPromptSpecs[c.Param("agent")]
@@ -222,7 +225,11 @@ func SaveAgentPrompt() gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "提示词保存请求无效"})
 			return
 		}
-		if len(req.Content) > agentPromptContentMaxBytes {
+		if req.Content == nil {
+			c.JSON(400, gin.H{"error": "必须提供 content，清空请显式提交空字符串"})
+			return
+		}
+		if len(*req.Content) > agentPromptContentMaxBytes {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("提示词内容不能超过 %d 字节", agentPromptContentMaxBytes)})
 			return
 		}
@@ -242,23 +249,17 @@ func SaveAgentPrompt() gin.HandlerFunc {
 			return
 		}
 
-		if previous, readErr := os.ReadFile(path); readErr == nil && len(previous) > 0 {
-			backup := path + "." + time.Now().Format("20060102-150405.000000000") + ".bak"
-			if err := os.WriteFile(backup, previous, 0600); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{
-					"error":  fmt.Sprintf("备份 %s 原提示词失败: %v", spec.displayName, err),
-					"detail": err.Error(),
-				})
-				return
-			}
+		previous, err := filetxn.Read(path)
+		if err != nil {
+			respondClientFileError(c, fmt.Errorf("读取原提示词失败: %w", err))
+			return
 		}
-
-		data := []byte(req.Content)
-		if err := atomicfile.Write(path, data, atomicfile.Options{TempPrefix: ".agent-prompt-"}); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error":  fmt.Sprintf("保存 %s 提示词失败: %v", spec.displayName, err),
-				"detail": err.Error(),
-			})
+		if !requireClientRevision(c, req.Revision, filetxn.Revision(previous)) {
+			return
+		}
+		data := []byte(*req.Content)
+		if err := filetxn.Replace(path, previous, data, filepath.Dir(path), 0600); err != nil {
+			respondClientFileError(c, fmt.Errorf("保存提示词失败: %w", err))
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"success": true, "path": path, "sizeBytes": len(data)})

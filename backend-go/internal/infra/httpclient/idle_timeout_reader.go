@@ -26,8 +26,7 @@ var ErrStreamIdleTimeout = errors.New("stream idle timeout: upstream sent no dat
 //     stale goroutine 只写自己的缓冲，不会写入调用方已复用的 p（数据竞争）；
 //   - 超时后 reader 进入废弃态，后续 Read 直接返回 ErrStreamIdleTimeout，
 //     不再对已 Close 的底层并发起读（io.Reader 终态错误语义）。
-//     代价是每次 Read 一次 len(p) 分配 + 一次 copy，相对流式路径本身的
-//     逐行字符串分配可忽略；若 profile 证明热点再考虑池化。
+//     代价是每次 Read 分配缓冲并复制；是否值得优化须通过 profile 确认。
 func NewIdleTimeoutReader(inner io.ReadCloser, idleTimeout time.Duration, apiType string) io.ReadCloser {
 	if idleTimeout <= 0 {
 		return inner // 未配置空闲超时，直接透传

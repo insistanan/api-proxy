@@ -14,7 +14,7 @@ import (
 
 func TestBackgroundTaskPersistsResultWithoutCredentials(t *testing.T) {
 	dir := t.TempDir()
-	jobs := NewJobs(&Service{}, dir)
+	jobs := newTestJobs(t, dir)
 	t.Cleanup(func() { require.NoError(t, jobs.Close()) })
 	started, release := make(chan struct{}), make(chan struct{})
 	jobs.run = func(ctx context.Context, _ *Target, emit func(Event)) {
@@ -46,7 +46,7 @@ func TestBackgroundTaskPersistsResultWithoutCredentials(t *testing.T) {
 	require.ErrorIs(t, err, ErrTaskRunning)
 	close(release)
 	jobs.workers.Wait()
-	reopened := NewJobs(&Service{}, dir)
+	reopened := newTestJobs(t, dir)
 	saved, err := reopened.Latest(target.ChannelID)
 	require.NoError(t, err)
 	require.Equal(t, "completed", saved.Status)
@@ -57,7 +57,7 @@ func TestBackgroundTaskPersistsResultWithoutCredentials(t *testing.T) {
 }
 
 func TestExplicitCancellationPersistsAndReleasesWorker(t *testing.T) {
-	jobs := NewJobs(&Service{}, t.TempDir())
+	jobs := newTestJobs(t, t.TempDir())
 	t.Cleanup(func() { require.NoError(t, jobs.Close()) })
 	started := make(chan struct{})
 	jobs.run = func(ctx context.Context, _ *Target, emit func(Event)) {
@@ -76,15 +76,15 @@ func TestExplicitCancellationPersistsAndReleasesWorker(t *testing.T) {
 	require.Equal(t, "cancelled", cancelled.Status)
 	require.Equal(t, "cancelled", cancelled.Samples[0].State)
 	require.NoError(t, jobs.Close())
-	saved, err := NewJobs(&Service{}, jobs.dir).Latest(target.ChannelID)
+	saved, err := newTestJobs(t, jobs.dir).Latest(target.ChannelID)
 	require.NoError(t, err)
 	require.Equal(t, "cancelled", saved.Status)
 }
 
 func TestRestartDoesNotResubmitUnfinishedTask(t *testing.T) {
-	jobs := NewJobs(&Service{}, t.TempDir())
+	jobs := newTestJobs(t, t.TempDir())
 	target := &Target{ChannelID: "d37fdd4b-e928-4410-9dba-796ba0613e72"}
-	require.NoError(t, jobs.saveLocked(Task{ID: "prior-task", Status: "running", Target: target,
+	require.NoError(t, jobs.writeTaskFile(Task{ID: "prior-task", Status: "running", Target: target,
 		Samples: []Sample{{Index: 0, State: "complete", Text: "saved-answer"}, {Index: 1, State: "waiting"}}}))
 	jobs.run = func(context.Context, *Target, func(Event)) { t.Error("查看旧任务不能重发请求") }
 	saved, err := jobs.Latest(target.ChannelID)
@@ -97,7 +97,7 @@ func TestRestartDoesNotResubmitUnfinishedTask(t *testing.T) {
 func TestTaskSaveFailurePreventsSampling(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "not-a-directory")
 	require.NoError(t, os.WriteFile(path, []byte("blocked"), 0600))
-	jobs := NewJobs(&Service{}, path)
+	jobs := newTestJobs(t, path)
 	jobs.run = func(context.Context, *Target, func(Event)) { t.Error("保存失败不能开始采样") }
 	_, err := jobs.Start(&Target{ChannelID: "d37fdd4b-e928-4410-9dba-796ba0613e72"})
 	require.Error(t, err)
@@ -105,7 +105,7 @@ func TestTaskSaveFailurePreventsSampling(t *testing.T) {
 
 func TestTaskStorage_ChannelIDsStayInsideTaskDirectory(t *testing.T) {
 	dir := t.TempDir()
-	jobs := NewJobs(&Service{}, filepath.Join(dir, "tasks"))
+	jobs := newTestJobs(t, filepath.Join(dir, "tasks"))
 	channelIDs := []string{"ch_d37fdd4be92844109dba796ba0613e72", "legacy-channel", "../outside", `..\outside`, "D:\\outside", "渠道一"}
 	paths := make(map[string]bool)
 	for _, channelID := range channelIDs {
@@ -115,8 +115,8 @@ func TestTaskStorage_ChannelIDsStayInsideTaskDirectory(t *testing.T) {
 			require.False(t, paths[path], "不同 ID 不能共用任务文件")
 			paths[path] = true
 			task := Task{ID: "saved-task", Status: "completed", Target: &Target{ChannelID: channelID}}
-			require.NoError(t, jobs.saveLocked(task))
-			saved, err := NewJobs(&Service{}, jobs.dir).Latest(channelID)
+			require.NoError(t, jobs.writeTaskFile(task))
+			saved, err := newTestJobs(t, jobs.dir).Latest(channelID)
 			require.NoError(t, err)
 			require.Equal(t, channelID, saved.Target.ChannelID)
 		})
@@ -132,30 +132,30 @@ func TestTaskStorage_LegacyRecordRules(t *testing.T) {
 	data, err := json.Marshal(legacy)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, channelID+".json"), data, 0600))
-	jobs := NewJobs(&Service{}, dir)
+	jobs := newTestJobs(t, dir)
 	saved, err := jobs.Latest(channelID)
 	require.NoError(t, err)
 	require.Equal(t, "legacy-task", saved.ID)
 	legacy.ID = "new-task"
-	require.NoError(t, jobs.saveLocked(legacy))
-	saved, err = NewJobs(&Service{}, dir).Latest(channelID)
+	require.NoError(t, jobs.writeTaskFile(legacy))
+	saved, err = newTestJobs(t, dir).Latest(channelID)
 	require.NoError(t, err)
 	require.Equal(t, "new-task", saved.ID)
 	require.NoError(t, os.WriteFile(jobs.taskPath(channelID), []byte("broken"), 0600))
-	_, err = NewJobs(&Service{}, dir).Latest(channelID)
+	_, err = newTestJobs(t, dir).Latest(channelID)
 	require.ErrorContains(t, err, "解析指纹检测任务失败", "新记录损坏时不能静默回退到旧结果")
 
 	outside := "../outside"
 	data, err = json.Marshal(Task{ID: "outside-task", Status: "completed", Target: &Target{ChannelID: outside}})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "outside.json"), data, 0600))
-	saved, err = NewJobs(&Service{}, filepath.Join(dir, "tasks")).Latest(outside)
+	saved, err = newTestJobs(t, filepath.Join(dir, "tasks")).Latest(outside)
 	require.NoError(t, err)
 	require.Nil(t, saved, "任务目录之外的旧文件不能被读取")
 }
 
 func TestShutdownCancelsTaskAndPreservesCompletedSamples(t *testing.T) {
-	jobs := NewJobs(&Service{}, t.TempDir())
+	jobs := newTestJobs(t, t.TempDir())
 	started := make(chan struct{})
 	jobs.run = func(ctx context.Context, _ *Target, emit func(Event)) {
 		emit(Event{Type: "sample", Sample: &Sample{Index: 0, State: "complete", Text: "saved-answer"}})
@@ -168,7 +168,7 @@ func TestShutdownCancelsTaskAndPreservesCompletedSamples(t *testing.T) {
 	require.NoError(t, err)
 	<-started
 	require.NoError(t, jobs.Close())
-	saved, err := NewJobs(&Service{}, jobs.dir).Latest(target.ChannelID)
+	saved, err := newTestJobs(t, jobs.dir).Latest(target.ChannelID)
 	require.NoError(t, err)
 	require.Equal(t, "interrupted", saved.Status)
 	require.Equal(t, "saved-answer", saved.Samples[0].Text)
@@ -178,7 +178,7 @@ func TestShutdownCancelsTaskAndPreservesCompletedSamples(t *testing.T) {
 }
 
 func TestRetryRunsOnlySpecifiedSampleAndKeepsTaskIdentity(t *testing.T) {
-	jobs := NewJobs(&Service{}, t.TempDir())
+	jobs := newTestJobs(t, t.TempDir())
 	t.Cleanup(func() { require.NoError(t, jobs.Close()) })
 	target := &Target{ChannelID: "ch_d37fdd4be92844109dba796ba0613e72", Model: "selected",
 		upstream: &config.UpstreamConfig{APIKeys: []string{"original-key"}}}
@@ -188,6 +188,7 @@ func TestRetryRunsOnlySpecifiedSampleAndKeepsTaskIdentity(t *testing.T) {
 		{Index: 2, State: "complete", Prompt: "第三道", Text: "saved-third", ExpectedCount: 330},
 	}}
 	jobs.tasks[target.ChannelID] = &taskRun{task: previous}
+	jobs.restore = func(target *Target) (*Target, error) { return target, nil }
 	started := make(chan Task, 1)
 	release := make(chan struct{})
 	jobs.run = func(context.Context, *Target, func(Event)) { t.Error("单条重试不能重新运行整轮") }
@@ -229,7 +230,7 @@ func TestRetryRunsOnlySpecifiedSampleAndKeepsTaskIdentity(t *testing.T) {
 }
 
 func TestRetryFailed_OnlyQueuesFailedSamplesAndPreservesSuccess(t *testing.T) {
-	jobs := NewJobs(&Service{}, t.TempDir())
+	jobs := newTestJobs(t, t.TempDir())
 	t.Cleanup(func() { require.NoError(t, jobs.Close()) })
 	target := &Target{ChannelID: "ch_retry_failed", upstream: &config.UpstreamConfig{}}
 	previous := Task{ID: "same-task", Status: "completed", Target: target, DataBuilt: "fixture-version", Samples: []Sample{
@@ -238,6 +239,7 @@ func TestRetryFailed_OnlyQueuesFailedSamplesAndPreservesSuccess(t *testing.T) {
 		{Index: 2, State: "truncated", Prompt: "截断挑战", ExpectedCount: 330},
 	}}
 	jobs.tasks[target.ChannelID] = &taskRun{task: previous}
+	jobs.restore = func(target *Target) (*Target, error) { return target, nil }
 	jobs.run = func(context.Context, *Target, func(Event)) { t.Error("重新检测失败项不能启动整轮采样") }
 	queued := make(chan []int, 1)
 	release := make(chan struct{})
@@ -263,11 +265,19 @@ func TestRetryFailed_OnlyQueuesFailedSamplesAndPreservesSuccess(t *testing.T) {
 	require.ErrorIs(t, err, ErrTaskRunning)
 	close(release)
 	jobs.workers.Wait()
-	saved, err := NewJobs(&Service{}, jobs.dir).Latest(target.ChannelID)
+	saved, err := newTestJobs(t, jobs.dir).Latest(target.ChannelID)
 	require.NoError(t, err)
 	require.Equal(t, previous.Samples[0], saved.Samples[0])
 	require.Equal(t, "补测回答", saved.Samples[1].Text)
 	require.Equal(t, "补测回答", saved.Samples[2].Text)
 	_, err = jobs.RetryFailed(target.ChannelID, previous.ID)
 	require.ErrorContains(t, err, "没有需要重新检测")
+}
+
+// 每个测试显式收回后台保留任务，避免临时目录与后台清理并行退出。
+func newTestJobs(t *testing.T, dir string) *Jobs {
+	t.Helper()
+	jobs := NewJobs(&Service{}, dir)
+	t.Cleanup(func() { _ = jobs.Close() })
+	return jobs
 }

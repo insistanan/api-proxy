@@ -24,7 +24,7 @@ type OpenAIProvider struct {
 }
 
 // ConvertToProviderRequest 转换为 OpenAI 请求。
-// R4-a：解析 gin 后委托显式实现 BuildRequest（薄壳）。
+// 解析入站请求后交给 BuildRequest。
 func (p *OpenAIProvider) ConvertToProviderRequest(c *gin.Context, upstream *config.UpstreamConfig, apiKey string) (*http.Request, []byte, error) {
 	originalBodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -47,7 +47,7 @@ func (p *OpenAIProvider) ConvertToProviderRequest(c *gin.Context, upstream *conf
 	return outcome.Request, outcome.OriginalBody, nil
 }
 
-// BuildRequest 以显式输入构造 OpenAI Chat 请求（R4-a 主实现，不依赖 gin）。
+// BuildRequest 以显式输入构造 OpenAI Chat 请求（不依赖 Gin）。
 func (p *OpenAIProvider) buildRequest(input RequestInput, upstream *config.UpstreamConfig, apiKey string) (*RequestOutcome, error) {
 	p.cacheLease = conversation.RequestLeaseFrom(input.Ctx)
 	originalBodyBytes := input.Body

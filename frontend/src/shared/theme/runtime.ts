@@ -1,7 +1,7 @@
 import { watch } from 'vue'
 import type { Pinia } from 'pinia'
-import { useThemeStore } from './store'
-import { parseTheme, readTheme, THEME_STORAGE_KEY } from './bootstrap'
+import { useThemeStore } from '@/shared/theme/store'
+import { parseTheme, readTheme, THEME_STORAGE_KEY } from '@/shared/theme/bootstrap'
 
 export function installTheme(pinia: Pinia) {
   const store = useThemeStore(pinia)

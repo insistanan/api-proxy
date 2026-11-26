@@ -48,6 +48,7 @@ type LocationOptions struct {
 // Location 描述一个受管的 Skill 目录。ReadOnly 为 true 的来源（插件缓存、内置目录）
 // 由外部工具管理，不允许作为写入目标。
 type Location struct {
+	Error      string `json:"error,omitempty"`
 	Key        string `json:"key"`
 	Agent      string `json:"agent"`
 	Path       string `json:"path"`

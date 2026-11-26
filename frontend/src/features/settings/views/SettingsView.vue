@@ -1,8 +1,10 @@
 <template>
   <div class="settings-page">
+    <DraftGuard :dirty="!loading && Object.values(dirtySections).some(Boolean)" :busy="saving" />
+    <UiAlert v-if="reloadRequired" type="warning" class="mb-4">变更已写入，请重新加载核对后再编辑。<UiButton :disabled="saving || loading" @click="loadSettings">重新加载</UiButton></UiAlert>
     <PageHeader title="设置" description="按分类管理全局配置；切换分类会保留当前页面内的未保存修改。" />
 
-    <div class="settings-layout">
+    <div class="settings-layout" :inert="saving || reloadRequired" :aria-busy="saving || undefined">
       <nav class="settings-nav" aria-label="设置分类">
         <UiList v-model:selected="selectedSections" nav mandatory density="compact" bg-color="transparent">
           <UiListItem v-for="section in settingsSections" :key="section.key" :value="section.key" :prepend-icon="section.icon" :title="section.label" :aria-current="activeSection === section.key ? 'page' : undefined">
@@ -437,6 +439,8 @@
 </template>
 
 <script setup lang="ts">
+import DraftGuard from '@/shared/components/overlay/DraftGuard.vue'
+import { ApiError, apiErrorText } from '@/shared/services/http'
 import UiButton from '@/shared/ui/button/Button.vue'
 import UiToggleGroup from '@/shared/ui/button/ToggleGroup.vue'
 import UiCheckbox from '@/shared/ui/check/Checkbox.vue'
@@ -549,18 +553,19 @@ const selectedSections = computed({
     if (section) void router.push({ query: { ...route.query, section } })
   }
 })
-const loading = ref(true)
+const loading = ref(false)
 const saving = ref(false)
+const reloadRequired = ref(false)
 const loadError = ref('')
 
 // 各分区共用保存标记，草稿在独立编辑器中持有；切换分类不丢失未保存内容。
-const gatewayEditor = useGatewaySettings(saving)
+const gatewayEditor = useGatewaySettings(saving, reloadRequired)
 const { gateway, savedGateway } = gatewayEditor
-const disguiseEditor = useDisguiseSettings(saving, activeSection)
+const disguiseEditor = useDisguiseSettings(saving, reloadRequired, activeSection)
 const { disguiseClaudeVersion, disguiseCodexVersion, disguiseAutoUpdate, savedDisguiseClaudeVersion, savedDisguiseCodexVersion, savedDisguiseAutoUpdate, loadDisguiseStatus } = disguiseEditor
-const promptsEditor = usePromptSettings(saving)
+const promptsEditor = usePromptSettings(saving, reloadRequired)
 const { promptEntries, promptActiveVersion, selectedPromptEntry, savedPromptsSnapshot, savedPromptActiveVersion } = promptsEditor
-const extensionsEditor = useExtensionsSettings(saving, activeSection)
+const extensionsEditor = useExtensionsSettings(saving, reloadRequired, activeSection)
 const { skillsDir, skillsRepoUrl, savedSkillsDir, savedSkillsRepoUrl, loadGitStatus } = extensionsEditor
 
 const proxyEnabled = ref(false)
@@ -625,6 +630,7 @@ const proxyUrlRule = (value: string) => {
 }
 
 const loadSettings = async () => {
+  if (saving.value || loading.value) return
   loading.value = true
   loadError.value = ''
   try {
@@ -651,7 +657,7 @@ const loadSettings = async () => {
     disguiseCodexVersion.value = savedDisguiseCodexVersion.value
     disguiseAutoUpdate.value = savedDisguiseAutoUpdate.value
     await loadDisguiseStatus()
-    // 通用提示词版本库（兼容旧配置：prompts 缺失时按空版本库处理）
+    // 通用提示词版本库，未配置时为空
     promptEntries.value = settings.prompts?.entries ?? []
     promptActiveVersion.value = settings.prompts?.activeVersion ?? ''
     savedPromptActiveVersion.value = promptActiveVersion.value
@@ -663,6 +669,7 @@ const loadSettings = async () => {
     savedSkillsRepoUrl.value = settings.extensions?.skillsRepoUrl ?? ''
     skillsDir.value = savedSkillsDir.value
     skillsRepoUrl.value = savedSkillsRepoUrl.value
+    reloadRequired.value = false
     if (activeSection.value === 'extensions') {
       await loadGitStatus()
     }
@@ -674,14 +681,14 @@ const loadSettings = async () => {
 }
 
 const saveNetworkSettings = async () => {
-  if (proxyEnabled.value) {
-    const { valid } = await formRef.value.validate()
-    if (!valid) return
-  }
-
+  if (saving.value || loading.value || reloadRequired.value) return
   saving.value = true
   notice.value = null
   try {
+    if (proxyEnabled.value) {
+      const { valid } = await formRef.value.validate()
+      if (!valid) return
+    }
     const settings = await api.updateSettings({
       network: {
         // 提交规范化值：开关关闭时同步清空地址，避免后端残留旧代理地址强制生效
@@ -689,15 +696,17 @@ const saveNetworkSettings = async () => {
         upstreamProxyEnabled: proxyEnabled.value
       }
     })
-    const saved = settings.network?.upstreamProxyUrl?.trim() || ''
-    const enabled = settings.network?.upstreamProxyEnabled ?? false
+    if (!settings.network) throw new ApiError('服务端未返回网络设置', 200, undefined, 'INVALID_RESPONSE', true)
+    const saved = settings.network.upstreamProxyUrl.trim()
+    const enabled = settings.network.upstreamProxyEnabled
     savedProxyUrl.value = saved
     savedProxyEnabled.value = enabled
     proxyUrl.value = saved
     proxyEnabled.value = enabled
     notice.value = { type: 'success', message: '网络设置已保存' }
   } catch (error) {
-    notice.value = { type: 'error', message: error instanceof Error ? error.message : '保存网络设置失败' }
+    if (error instanceof ApiError && error.committed) reloadRequired.value = true
+    notice.value = { type: reloadRequired.value ? 'warning' : 'error', message: apiErrorText(error) }
   } finally {
     saving.value = false
   }
@@ -724,6 +733,7 @@ const validateCustomRulesForSave = (rules: CustomRuleItem[]): string | null => {
 }
 
 const saveContentSafetySettings = async () => {
+  if (saving.value || loading.value || reloadRequired.value) return
   notice.value = null
   const settingsToSave = normalizeContentSafety(contentSafety.value)
   settingsToSave.dangerousCmd.aiGate.model = settingsToSave.dangerousCmd.aiGate.model?.trim() ?? ''
@@ -766,12 +776,14 @@ const saveContentSafetySettings = async () => {
   saving.value = true
   try {
     const settings = await api.updateSettings({ contentSafety: settingsToSave })
+    if (!settings.contentSafety) throw new ApiError('服务端未返回内容安全设置', 200, undefined, 'INVALID_RESPONSE', true)
     contentSafety.value = normalizeContentSafety(settings.contentSafety)
     savedContentSafety.value = JSON.stringify(contentSafety.value)
     notice.value = { type: 'success', message: '内容安全设置已保存' }
     legacyWordFilterEnabled.value = contentSafety.value.sensitiveWord.enabled
   } catch (error) {
-    notice.value = { type: 'error', message: error instanceof Error ? error.message : '保存内容安全设置失败' }
+    if (error instanceof ApiError && error.committed) reloadRequired.value = true
+    notice.value = { type: reloadRequired.value ? 'warning' : 'error', message: apiErrorText(error) }
   } finally {
     saving.value = false
   }

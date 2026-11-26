@@ -365,7 +365,12 @@ const saveLayout = async () => {
     emit('success', '分组故障转移顺序已保存')
   } catch (error) {
     failed = true
-    syncPoolViews()
+    if (!(error instanceof ApiError && error.committed)) syncPoolViews()
+    else {
+      emit('error', `${errorMessage(error)}（布局已写入，请刷新核对，请勿重复拖动提交）`)
+      await loadPools()
+      return
+    }
     emit('error', `保存分组布局失败：${errorMessage(error)}`)
   } finally {
     layoutSaving.value = false
@@ -416,6 +421,7 @@ const openEditDialog = (pool: ChannelPool) => {
 }
 
 const savePool = async () => {
+  if (saving.value) return
   const name = poolName.value.trim()
   const modelMatcher = normalizedPoolMatcher.value
   if (!name || !modelMatcher) return
@@ -431,6 +437,12 @@ const savePool = async () => {
     poolDialog.value = false
     await loadPools()
   } catch (error) {
+    if (error instanceof ApiError && error.committed) {
+      poolDialog.value = false
+      emit('error', `${errorMessage(error)}（分组已写入，请刷新核对，请勿重复创建）`)
+      await loadPools()
+      return
+    }
     emit('error', `保存分组失败：${errorMessage(error)}`)
   } finally {
     saving.value = false

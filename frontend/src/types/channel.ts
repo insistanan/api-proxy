@@ -1,6 +1,6 @@
 // 渠道领域类型：渠道实体、指标、资源池与渠道接口响应。
 
-import type { ChannelRecentActivity } from './metrics'
+import type { ChannelRecentActivity } from '@/types/metrics'
 
 /** 渠道入口协议，与后端 scheduler.ChannelKind 及管理路由前缀对齐。 */
 export type ApiTab = 'messages' | 'responses' | 'gemini' | 'chat' | 'images' | 'embeddings' | 'decisions'
@@ -124,7 +124,7 @@ export interface Channel {
   temporaryUntil?: string // 临时渠道到期时间
   deprecatedAt?: string // 移入弃用池时间
   injectDummyThoughtSignature?: boolean // Gemini 特定：为 functionCall 注入 dummy thought_signature（兼容第三方 API）
-  stripThoughtSignature?: boolean // Gemini 特定：移除 thought_signature 字段（兼容旧版 Gemini API）
+  stripThoughtSignature?: boolean // Gemini 特定：移除 thought_signature 字段
 }
 
 export interface CacheKeepaliveConfig {

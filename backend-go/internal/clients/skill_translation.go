@@ -60,7 +60,8 @@ type skillTranslationTask struct {
 	Current   string                    `json:"current"`
 	Index     int                       `json:"index"`
 	Total     int                       `json:"total"`
-	Retry     bool                      `json:"retry"`
+	Status    string                    `json:"status"`
+	Remaining int                       `json:"remaining"`
 	Succeeded int                       `json:"succeeded"`
 	Skipped   int                       `json:"skipped"`
 	Failures  []skillTranslationFailure `json:"failures"`
@@ -103,6 +104,24 @@ func (s *SkillsAPI) SkillTranslationStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"task": snapshot})
 }
 
+func (s *SkillsAPI) CancelSkillTranslation(c *gin.Context) {
+	jobs := &s.translations
+	jobs.mu.Lock()
+	if jobs.task == nil || c.Param("taskId") != jobs.task.ID {
+		jobs.mu.Unlock()
+		c.JSON(http.StatusConflict, gin.H{"error": "翻译任务已变化，请刷新后重试"})
+		return
+	}
+	if jobs.cancel != nil {
+		jobs.task.Status = "cancelling"
+		jobs.cancel()
+	}
+	task := *jobs.task
+	task.Failures = slices.Clone(task.Failures)
+	jobs.mu.Unlock()
+	c.JSON(http.StatusAccepted, gin.H{"task": task})
+}
+
 func (s *SkillsAPI) StartSkillTranslation(translate SkillTranslator) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req skillTranslationRequest
@@ -142,8 +161,8 @@ func (s *SkillsAPI) StartSkillTranslation(translate SkillTranslator) gin.Handler
 			return
 		}
 
-		ctx, cancel := context.WithCancel(context.Background())
-		task := skillTranslationTask{ID: uuid.NewString(), Running: true, Total: len(targets), Skipped: skipped, Failures: []skillTranslationFailure{}}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+		task := skillTranslationTask{ID: uuid.NewString(), Status: "running", Running: true, Total: len(targets), Remaining: len(targets), Skipped: skipped, Failures: []skillTranslationFailure{}}
 		jobs.task = &task
 		jobs.cancel = cancel
 		jobs.done = make(chan struct{})
@@ -189,46 +208,46 @@ func (s *SkillsAPI) runSkillTranslation(ctx context.Context, root string, target
 	defer func() {
 		jobs.mu.Lock()
 		defer jobs.mu.Unlock()
-		jobs.task.Running = false
-		jobs.task.Current = ""
+		jobs.task.Running, jobs.task.Current = false, ""
+		switch {
+		case errors.Is(ctx.Err(), context.DeadlineExceeded):
+			jobs.task.Status = "timeout"
+		case ctx.Err() != nil:
+			jobs.task.Status = "cancelled"
+		case len(jobs.task.Failures) > 0:
+			jobs.task.Status = "failed"
+		default:
+			jobs.task.Status = "completed"
+		}
 		jobs.cancel()
 		close(jobs.done)
 		jobs.cancel, jobs.done = nil, nil
 	}()
-
-	pending := targets
-	for pass := 0; pass < 2 && len(pending) > 0; pass++ {
-		var retry []skills.Item
-		var failures []skillTranslationFailure
-		for index, item := range pending {
-			if ctx.Err() != nil {
-				return
-			}
-			jobs.mu.Lock()
-			jobs.task.Current, jobs.task.Index, jobs.task.Total = item.Name, index+1, len(pending)
-			jobs.task.Retry = pass == 1
-			jobs.mu.Unlock()
-
-			skipped, err := s.translateProjectSkill(ctx, root, item, req, translate)
-			jobs.mu.Lock()
-			switch {
-			case err != nil:
-				retry = append(retry, item)
-				failures = append(failures, skillTranslationFailure{Name: item.Name, Error: sensitive.RedactAuditText(err.Error())})
-			case skipped:
-				jobs.task.Skipped++
-			default:
-				jobs.task.Succeeded++
-			}
-			jobs.mu.Unlock()
+	jobs.mu.Lock()
+	jobs.task.Total, jobs.task.Remaining = len(targets), len(targets)
+	jobs.mu.Unlock()
+	// 付费生成不做整项盲重试；保存失败也不会重新请求模型。
+	for index, item := range targets {
+		if ctx.Err() != nil {
+			return
 		}
 		jobs.mu.Lock()
-		jobs.task.Failures = append(jobs.task.Failures[:0], failures...)
+		jobs.task.Current, jobs.task.Index = item.Name, index+1
 		jobs.mu.Unlock()
-		pending = retry
+		skipped, err := s.translateProjectSkill(ctx, root, item, req, translate)
+		jobs.mu.Lock()
+		jobs.task.Remaining--
+		switch {
+		case err != nil:
+			jobs.task.Failures = append(jobs.task.Failures, skillTranslationFailure{Name: item.Name, Error: sensitive.RedactAuditText(err.Error())})
+		case skipped:
+			jobs.task.Skipped++
+		default:
+			jobs.task.Succeeded++
+		}
+		jobs.mu.Unlock()
 	}
 }
-
 func (s *SkillsAPI) translateProjectSkill(ctx context.Context, root string, item skills.Item, req skillTranslationRequest, translate SkillTranslator) (bool, error) {
 	read := func() ([]byte, bool, error) {
 		opts, err := s.locationOptions()

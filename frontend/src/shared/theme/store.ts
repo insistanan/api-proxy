@@ -1,8 +1,8 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { DEFAULT_THEME, THEME_PRESETS } from './catalog'
-import { parseTheme } from './bootstrap'
-import type { ThemeSettings } from './types'
+import { DEFAULT_THEME, THEME_PRESETS } from '@/shared/theme/catalog'
+import { parseTheme } from '@/shared/theme/bootstrap'
+import type { ThemeSettings } from '@/shared/theme/types'
 
 export const useThemeStore = defineStore('theme', () => {
   const settings = ref<ThemeSettings>({ ...DEFAULT_THEME })

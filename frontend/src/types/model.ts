@@ -1,6 +1,6 @@
 // 模型列表类型：本地聚合与上游探测。
 
-import type { Channel } from './channel'
+import type { Channel } from '@/types/channel'
 
 // ============== 上游模型列表类型 ==============
 

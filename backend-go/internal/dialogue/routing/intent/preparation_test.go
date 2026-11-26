@@ -28,7 +28,9 @@ func TestPreparationOwnsCancellationAndRejectsOverlap(t *testing.T) {
 	}
 	_, err = s.startPreparation("chat", nil)
 	require.ErrorContains(t, err, "已有模型准备任务")
-	s.CancelPreparation()
+	_, err = s.CancelPreparation(job.ID)
+	require.NoError(t, err)
+	<-s.preparationDone
 	status := s.PreparationStatus()
 	require.False(t, status.Running)
 	require.Equal(t, "cancelled", status.Phase)

@@ -12,7 +12,7 @@
 </template>
 <script setup lang="ts">
 import { computed, useSlots } from 'vue'
-import { iconMap } from './icons'
+import { iconMap } from '@/shared/ui/icon/icons'
 import { colorClass } from '@/shared/ui/variants'
 const props = defineProps<{ icon?: string; size?: string | number; color?: string; start?: boolean }>()
 const slots = useSlots()

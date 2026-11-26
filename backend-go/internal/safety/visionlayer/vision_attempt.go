@@ -214,7 +214,7 @@ func buildProviderRequest(
 	body []byte,
 	images []visionImage,
 ) (*http.Request, error) {
-	// R4-a：以显式输入构造图片理解请求，不再复制伪造 gin 请求形态。
+	// 以显式输入构造图片理解请求，不再复制伪造 gin 请求形态。
 	// 保留客户端 header（透明代理语义），但目标固定为 Messages 协议。
 	outcome, err := providers.BuildUpstreamRequest(provider, providers.RequestInput{
 		Ctx:    c.Request.Context(),

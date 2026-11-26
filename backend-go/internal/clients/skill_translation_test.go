@@ -12,7 +12,7 @@ import (
 	"insistanan/api-proxy/internal/clients/skills"
 )
 
-func TestSkillTranslationRetriesAfterFirstPassAndSkipsSavedTranslation(t *testing.T) {
+func TestSkillTranslationDoesNotRepeatFailedGenerationAndSkipsSavedTranslation(t *testing.T) {
 	root := t.TempDir()
 	api := NewSkillsAPI(func() (string, error) { return root, nil })
 	for _, name := range []string{"alpha", "beta", "gamma", "saved"} {
@@ -33,7 +33,7 @@ func TestSkillTranslationRetriesAfterFirstPassAndSkipsSavedTranslation(t *testin
 	require.Len(t, targets, 3)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	api.translations.task = &skillTranslationTask{Running: true, Skipped: skipped}
+	api.translations.task = &skillTranslationTask{Running: true, Skipped: skipped, Remaining: len(targets)}
 	api.translations.cancel = cancel
 	api.translations.done = make(chan struct{})
 	var calls []string
@@ -56,16 +56,18 @@ func TestSkillTranslationRetriesAfterFirstPassAndSkipsSavedTranslation(t *testin
 		return translation, "测试渠道", nil
 	})
 
-	require.Equal(t, []string{"alpha", "beta", "gamma", "alpha", "beta"}, calls)
+	require.Equal(t, []string{"alpha", "beta", "gamma"}, calls)
 	result := api.translations.task
 	require.False(t, result.Running)
-	require.Equal(t, 2, result.Succeeded)
+	require.Equal(t, 1, result.Succeeded)
+	require.Equal(t, "failed", result.Status)
+	require.Zero(t, result.Remaining)
 	require.Equal(t, 1, result.Skipped)
-	require.Len(t, result.Failures, 1)
-	require.Equal(t, "beta", result.Failures[0].Name)
+	require.Len(t, result.Failures, 2)
+	require.Equal(t, "alpha", result.Failures[0].Name)
+	require.Equal(t, "beta", result.Failures[1].Name)
 	_, remaining, skipped, err := api.projectTranslationTargets()
 	require.NoError(t, err)
-	require.Equal(t, 3, skipped)
-	require.Len(t, remaining, 1)
-	require.Equal(t, "beta", remaining[0].Name)
+	require.Equal(t, 2, skipped)
+	require.Len(t, remaining, 2)
 }

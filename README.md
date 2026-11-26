@@ -8,27 +8,13 @@ api-proxy 是一个自托管、轻量级、开箱即用的大模型（LLM）API 
 
 ## 核心特性
 
-- **多协议统一接入与转换**：
-  - 对外提供五大主流编排端点（Claude Messages、OpenAI Responses、OpenAI Chat Completions、Google Gemini 以及 Images 图像生成）与原样透传端点（OpenAI Embeddings / Decisions）；
-  - 支持跨协议无缝转换，让支持 OpenAI 格式的客户端直接调用 Claude 或 Gemini 上游；
-  - 完整支持流式推理、Thinking/Reasoning 思考过程输出与 Prompt Cache 亲和性路由。
-- **稳健的多渠道调度体系**：
-  - 内部支持 7 大渠道分组（Messages、Responses、Gemini、Chat、Images、Embeddings、Decisions）；
-  - 支持基于配置顺序轮询、故障自动切换与三态熔断保护；
-  - 支持渠道「健康促销」机制，在指定时间或调用次数内临时优先调度特定渠道；
-  - **凭据级共享准入控制**：对指向相同物理服务地址与 API Key 的渠道请求进行全局并发合并与 FIFO 排队，遵守 429 冷却时间与重试预算，彻底防范上游配额击穿。
-- **内容安全与隐私脱敏**：
-  - 内置敏感凭据检测与 AES-256-GCM **可逆脱敏机制**（请求前自动打掩码，SSE 流式返回时实时无缝还原）；
-  - 内置大模型 AI 命令审核闸门，拦截恶意与高风险命令。
-- **全方位调用观测与上下文快照**：
-  - 采用轻量嵌入式 SQLite 记录请求轨迹、Token 消耗、首字延迟（TTFT）与传输速率（TPS）；
-  - 支持多轮请求的**调用聚合（Call Query）**与**上下文快照（Context Snapshot）**分析，直观定位冗余上下文；
-  - 针对长会话提供正文内容哈希去重与有界摘要，避免日志库急剧膨胀；
-  - 提供独立的命令行日志查询工具（`api-proxy logs`）。
-- **客户端一键配置**：
-  - 为 Claude Code、Codex CLI、OpenCode、pi-agent、DSH 等主流工具提供可视化配置指引，并支持客户端版本伪装。
-- **极简部署形态**：
-  - Vue 3 前端静态产物在编译时直接内嵌至 Go 二进制中，单二进制在单端口（默认 3000）上同时提供代理服务与 Web 管理后台。
+- **协议接入与转换**：提供 Messages、Responses、Chat、Gemini、Images 五类编排入口，以及 Embeddings、Decisions 原样透传。转换范围取决于入口和上游能力，不能表达的字段或内容会明确报错。
+- **渠道与调度**：按分组和配置顺序选渠，支持故障转移、熔断、健康促销、意图路由与会话绑定。相同实际地址、上游协议和 Key 共享并发及队列，发送遵守冷却与请求预算。
+- **内容安全**：总开关默认关闭，启用后分别配置规则与阻断或可逆脱敏。危险命令可以直接阻断，也可单独启用 AI 与人工审核；未启用的审核不会默认接管请求。
+- **调用观测**：SQLite 保存请求、尝试、上下文快照、Token 与延迟指标，管理台和 `api-proxy logs` 可查询。模型指纹提供参考库内的统计排名，不能作为模型身份认证。
+- **个人用量与森林**：独立账本保留启用后的使用足迹，提供年度热力图和每日票据。真实用量、主动专注与确认休息推动森林成长，清理调用日志不会删除手账。
+- **客户端与扩展**：管理 Claude Code、Codex、OpenCode、pi-agent、DSH 配置，保存前核对文件修订；Skills 和 MCP 通过托管记录同步，翻译支持后台执行和取消，仓库推送先预览可分享文件。
+- **单文件部署**：Vue 管理台嵌入 Go 二进制，默认同用 3000 端口，无需额外数据库服务。构建需要 Node.js，运行二进制无需 Node 服务。
 
 ---
 
@@ -47,25 +33,25 @@ docker compose up -d
 
 | 环境变量 | 默认值 | 说明 |
 |---|---|---|
-| `PROXY_ACCESS_KEY` | — | **核心访问凭证**，必须修改。代理端点与管理后台均使用该密钥鉴权 |
+| `PROXY_ACCESS_KEY` | 公开示例值 | **部署前须显式设置自己的密钥**，代理与管理后台共用；当前程序不会因沿用示例值而拒绝启动 |
 | `ENABLE_WEB_UI` | `true` | 是否开启 Web 管理后台。设为 `false` 则转为无 UI 的纯 API 代理模式 |
 | `PORT` | `3000` | 服务监听端口 |
 | `ENV` | `production` | 运行环境模式（production / development） |
 | `LOG_LEVEL` | `info` | 控制台基础日志输出级别 |
 | `LOG_TO_CONSOLE` | `false` | 是否同时在控制台输出请求正文详细日志 |
 
-> **数据持久化说明**：网关的配置文件（`config.json`）与 SQLite 数据库默认保存在容器工作目录下的 `./.config` 文件夹中。详细的请求超时、请求体限制、CORS 来源及日志持久化开关可在登录控制台后于「设置」页面在线热更新。
+> **数据持久化说明**：网关的配置文件（`config.json`）与 SQLite 数据库默认保存在容器工作目录下的 `./.config` 文件夹中。请求超时、请求体限制和 CORS 等策略可在「设置」中调整；日志数据库路径与指标持久化开关需要重启后生效。
 
 ---
 
 ### 方式二：从 GitHub Releases 下载预编译文件
 
-前往 [Releases](../../releases) 下载对应操作系统与架构（Linux / macOS / Windows × amd64 / arm64）的二进制压缩包。解压后设置环境变量并启动：
+前往 [Releases](../../releases) 下载对应操作系统与架构（Linux / macOS / Windows × amd64 / arm64）的可执行文件。设置环境变量并启动：
 
 ```bash
-# Linux / macOS 示例
+# Linux amd64 示例（其他平台使用对应文件名）
 export PROXY_ACCESS_KEY="your-secure-key"
-./api-proxy-go
+./api-proxy-linux-amd64
 
 # Windows PowerShell 示例
 $env:PROXY_ACCESS_KEY="your-secure-key"
@@ -123,6 +109,7 @@ make check   # 或 npm run check
 | [docs/架构说明.md](docs/架构说明.md) | 系统全景设计、请求生命周期流水线、稳定性控制体系与持久化架构 |
 | [docs/规范与不变量.md](docs/规范与不变量.md) | 后端运行状态不变量、前端交互规范、错误处理要求 |
 | [docs/技术栈.md](docs/技术栈.md) | 核心技术选型、依赖版本与运行时关键组件速查 |
+| [个人森林与用量手账](docs/个人森林与用量手账方案.md) | 当前玩法、数据口径、计时与后续范围 |
 | [前端设计系统与主题](docs/前端设计系统与主题.md) | 主题切换、前端目录职责、组件与样式维护 |
 
 完整版本变更记录见 [CHANGELOG.md](CHANGELOG.md)。

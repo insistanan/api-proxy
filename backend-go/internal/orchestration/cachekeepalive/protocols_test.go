@@ -79,9 +79,9 @@ func TestHeartbeatUsage_NormalizesAllProtocolsAndRequiresStreamEnd(t *testing.T)
 		protocol, body, stream string
 		output                 int
 	}{
-		{"claude", `{"type":"message","usage":{"input_tokens":10,"cache_read_input_tokens":1000,"output_tokens":7}}`,
-			"data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10,\"cache_read_input_tokens\":1000,\"output_tokens\":0}}}\n\ndata:{\"type\":\"message_delta\",\"usage\":{\"output_tokens\":7}}\n\ndata:{\"type\":\"message_stop\"}\n\n", 7},
-		{"openai", `{"choices":[],"usage":{"prompt_tokens":1010,"completion_tokens":7,"prompt_tokens_details":{"cached_tokens":1000}}}`, "", 7},
+		{"claude", `{"type":"message","stop_reason":"end_turn","usage":{"input_tokens":10,"cache_read_input_tokens":1000,"output_tokens":7}}`,
+			"data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10,\"cache_read_input_tokens\":1000,\"output_tokens\":0}}}\n\ndata:{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":7}}\n\ndata:{\"type\":\"message_stop\"}\n\n", 7},
+		{"openai", `{"choices":[{"index":0,"finish_reason":"stop"}],"usage":{"prompt_tokens":1010,"completion_tokens":7,"prompt_tokens_details":{"cached_tokens":1000}}}`, "", 7},
 		{"responses", `{"status":"completed","usage":{"input_tokens":1010,"output_tokens":7,"input_tokens_details":{"cached_tokens":1000}}}`, "", 7},
 		{"gemini", `{"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":1010,"cachedContentTokenCount":1000,"candidatesTokenCount":3,"thoughtsTokenCount":4}}`, "", 7},
 	} {
@@ -143,7 +143,7 @@ func TestHeartbeatUsage_PreservesKnownUsageOnErrorsAndFinalGeminiMetadata(t *tes
 	for _, tc := range []struct{ protocol, stream string }{
 		{"responses", "data: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"usage\":{\"input_tokens\":1010,\"output_tokens\":7,\"input_tokens_details\":{\"cached_tokens\":1000}}}}\n\n"},
 		{"openai", "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":1010,\"completion_tokens\":7,\"prompt_tokens_details\":{\"cached_tokens\":1000}}}\n\ndata: {\"error\":{\"message\":\"failed\"}}\n\n"},
-		{"claude", "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10,\"cache_read_input_tokens\":1000,\"output_tokens\":0}}}\n\ndata:{\"type\":\"message_delta\",\"usage\":{\"output_tokens\":7}}\n\ndata:{\"type\":\"error\"}\n\n"},
+		{"claude", "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10,\"cache_read_input_tokens\":1000,\"output_tokens\":0}}}\n\ndata:{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":7}}\n\ndata:{\"type\":\"error\"}\n\n"},
 	} {
 		t.Run(tc.protocol, func(t *testing.T) {
 			usage, err := parseStreamResponse(tc.protocol, []byte(tc.stream), 200)

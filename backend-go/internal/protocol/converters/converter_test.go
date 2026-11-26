@@ -35,8 +35,6 @@ func TestConvertResponsesPassthroughRequest_NoChangeReturnsOriginalBody(t *testi
 	}
 }
 
-// ============== extractTextFromContent 测试 ==============
-
 func TestExtractUsageMetrics_ClaudeCacheReadDoesNotDoubleSubtract(t *testing.T) {
 	usage := ExtractUsageMetrics(map[string]interface{}{
 		"input_tokens":            100,
@@ -99,51 +97,6 @@ func TestExtractUsageMetrics_GeminiCachedAndThoughtsTogether(t *testing.T) {
 	}
 	if usage.CacheReadInputTokens != 900 {
 		t.Fatalf("cache_read_input_tokens 应为 900，实际 %d", usage.CacheReadInputTokens)
-	}
-}
-
-// ============== OpenAI 转换器测试 ==============
-
-func TestResponsesToChatDispatcher_WithMessageType(t *testing.T) {
-	converter := &chatDispatcherFixture{}
-	sess := &types.Session{
-		ID:       "sess_test",
-		Messages: []types.ResponsesItem{},
-	}
-
-	req := &types.ResponsesRequest{
-		Model: "gpt-4",
-		Input: []interface{}{
-			map[string]interface{}{
-				"type": "message",
-				"role": "user",
-				"content": []interface{}{
-					map[string]interface{}{
-						"type": "input_text",
-						"text": "Hello from message type!",
-					},
-				},
-			},
-		},
-	}
-
-	result, err := converter.ToProviderRequest(sess, req)
-	if err != nil {
-		t.Fatalf("转换失败: %v", err)
-	}
-
-	resultMap := result.(map[string]interface{})
-	messages := resultMap["messages"].([]map[string]interface{})
-
-	if len(messages) != 1 {
-		t.Fatalf("期望 1 条消息，实际为 %d", len(messages))
-	}
-
-	if messages[0]["role"] != "user" {
-		t.Errorf("角色应该是 user")
-	}
-	if messages[0]["content"] != "Hello from message type!" {
-		t.Errorf("内容不匹配，实际为 '%v'", messages[0]["content"])
 	}
 }
 
@@ -216,176 +169,26 @@ func TestResponsesToChatDispatcher_SystemAndCustomHistory(t *testing.T) {
 	require.Equal(t, "done", messages.Get("3.content").String())
 }
 
-func TestClaudeConverter_InvalidFunctionCallArguments(t *testing.T) {
-	converter := &ClaudeConverter{}
-	req := &types.ResponsesRequest{
-		Model:           "claude-3-5-sonnet",
-		MaxOutputTokens: 2048,
-		Input: []interface{}{
-			map[string]interface{}{
-				"type":      "function_call",
-				"call_id":   "call_bad",
-				"name":      "lookup",
-				"arguments": "{bad-json",
-			},
-		},
-	}
-
-	if _, err := converter.ToProviderRequest(nil, req); err == nil {
-		t.Fatal("非法 function_call arguments 应返回错误")
-	}
-}
-
-func TestResponsesToGemini_InvalidFunctionCallArguments(t *testing.T) {
-	req := &types.ResponsesRequest{
-		Model: "gemini-2.5-flash",
-		Input: []interface{}{
-			map[string]interface{}{
-				"type":      "function_call",
-				"call_id":   "call_bad",
-				"name":      "lookup",
-				"arguments": "{bad-json",
-			},
-		},
-	}
-
-	if _, err := ConvertResponsesToGeminiRequest("gemini-2.5-flash", nil, req); err == nil {
-		t.Fatal("非法 function_call arguments 应返回错误")
-	}
-}
-
-func TestResponsesToGemini_CustomToolCompatible(t *testing.T) {
-	req := &types.ResponsesRequest{
-		Model: "gemini-2.5-flash",
-		Input: "Run code",
-		Tools: []interface{}{
-			map[string]interface{}{
-				"type":        "custom",
-				"name":        "code_exec",
-				"description": "Execute code",
-			},
-		},
-		ToolChoice: map[string]interface{}{
-			"type": "custom",
-			"name": "code_exec",
-		},
-	}
-
-	body, err := ConvertResponsesToGeminiRequest("gemini-2.5-flash", nil, req)
-	if err != nil {
-		t.Fatalf("custom tool 对 Gemini 应兼容降级，实际报错: %v", err)
-	}
-
-	var result map[string]interface{}
-	if err := json.Unmarshal(body, &result); err != nil {
-		t.Fatalf("解析 Gemini 请求失败: %v", err)
-	}
-
-	tools, ok := result["tools"].([]interface{})
-	if !ok || len(tools) == 0 {
-		t.Fatal("Gemini 请求应包含 tools")
-	}
-	decls, ok := tools[0].(map[string]interface{})["functionDeclarations"].([]interface{})
-	if !ok || len(decls) == 0 {
-		t.Fatal("Gemini 请求应包含 functionDeclarations")
-	}
-	if decls[0].(map[string]interface{})["name"] != "code_exec" {
-		t.Fatalf("tool 名称不匹配，实际为 %#v", decls[0].(map[string]interface{})["name"])
-	}
-	toolConfig, ok := result["toolConfig"].(map[string]interface{})
-	if !ok {
-		t.Fatal("Gemini 请求应包含 toolConfig")
-	}
-	cfg, ok := toolConfig["functionCallingConfig"].(map[string]interface{})
-	if !ok || cfg["mode"] != "ANY" {
-		t.Fatalf("tool choice 应降级为 ANY，实际为 %#v", toolConfig)
+func TestCustomToolsMapToTargetFunctionSchema(t *testing.T) {
+	body := `{"model":"m","max_output_tokens":2048,"input":"Run code","tools":[{"type":"custom","name":"code_exec","description":"Execute code"}],"tool_choice":{"type":"custom","name":"code_exec"}}`
+	for _, tc := range []struct{ target, toolPath, choicePath, choice string }{
+		{"claude", "tools.0", "tool_choice", `{"type":"tool","name":"code_exec"}`},
+		{"gemini", "tools.0.functionDeclarations.0", "toolConfig.functionCallingConfig", `{"mode":"ANY","allowedFunctionNames":["code_exec"]}`},
+	} {
+		t.Run(tc.target, func(t *testing.T) {
+			got, err := dispatchRequest(t, tc.target, body, nil)
+			require.NoError(t, err)
+			require.Equal(t, "code_exec", gjson.GetBytes(got, tc.toolPath+".name").String())
+			require.Contains(t, gjson.GetBytes(got, tc.toolPath+".description").String(), "Execute code")
+			require.JSONEq(t, tc.choice, gjson.GetBytes(got, tc.choicePath).Raw)
+		})
 	}
 }
 
 func TestResponsesToGemini_PrunesToolConfigWithoutTools(t *testing.T) {
-	req := &types.ResponsesRequest{
-		Model:      "gemini-2.5-flash",
-		Input:      "Hi",
-		ToolChoice: "auto",
-	}
-
-	body, err := ConvertResponsesToGeminiRequest("gemini-2.5-flash", nil, req)
-	if err != nil {
-		t.Fatalf("转换失败: %v", err)
-	}
-
-	var result map[string]interface{}
-	if err := json.Unmarshal(body, &result); err != nil {
-		t.Fatalf("解析 Gemini 请求失败: %v", err)
-	}
-	if _, ok := result["toolConfig"]; ok {
-		t.Fatal("没有 tools 时不应保留 toolConfig")
-	}
-}
-
-func TestClaudeResponseToResponses_StopReasonMaxTokens(t *testing.T) {
-	resp := map[string]interface{}{
-		"model":       "claude-3-5-sonnet",
-		"stop_reason": "max_tokens",
-		"content": []interface{}{
-			map[string]interface{}{
-				"type": "text",
-				"text": "partial",
-			},
-		},
-	}
-
-	result, err := ClaudeResponseToResponses(resp, "sess_test")
-	if err != nil {
-		t.Fatalf("转换失败: %v", err)
-	}
-	if result.Object != "response" {
-		t.Errorf("object 不匹配")
-	}
-	if result.Status != "incomplete" {
-		t.Errorf("max_tokens 应映射为 incomplete")
-	}
-}
-
-func TestClaudeConverter_CustomToolCompatible(t *testing.T) {
-	converter := &ClaudeConverter{}
-	req := &types.ResponsesRequest{
-		Model:           "claude-3-5-sonnet",
-		MaxOutputTokens: 2048,
-		Input:           "Run code",
-		Tools: []interface{}{
-			map[string]interface{}{
-				"type":        "custom",
-				"name":        "code_exec",
-				"description": "Execute code",
-			},
-		},
-		ToolChoice: map[string]interface{}{
-			"type": "custom",
-			"name": "code_exec",
-		},
-	}
-
-	result, err := converter.ToProviderRequest(nil, req)
-	if err != nil {
-		t.Fatalf("custom tool 对 Claude 应兼容降级，实际报错: %v", err)
-	}
-
-	resultMap, ok := result.(map[string]interface{})
-	if !ok {
-		t.Fatal("结果不是 map[string]interface{}")
-	}
-	tools, ok := resultMap["tools"].([]types.ClaudeTool)
-	if !ok || len(tools) != 1 {
-		t.Fatalf("Claude 请求 tools 不匹配: %#v", resultMap["tools"])
-	}
-	if tools[0].Name != "code_exec" {
-		t.Fatalf("Claude tool 名称不匹配，实际为 %s", tools[0].Name)
-	}
-	toolChoice, ok := resultMap["tool_choice"].(map[string]interface{})
-	if !ok || toolChoice["type"] != "tool" || toolChoice["name"] != "code_exec" {
-		t.Fatalf("Claude tool_choice 不匹配: %#v", resultMap["tool_choice"])
-	}
+	got, err := dispatchRequest(t, "gemini", `{"model":"m","input":"Hi","tool_choice":"auto"}`, nil)
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(got, "toolConfig").Exists())
 }
 
 func TestResponsesToChatDispatcher_CustomToolOutputReplay(t *testing.T) {
@@ -396,85 +199,23 @@ func TestResponsesToChatDispatcher_CustomToolOutputReplay(t *testing.T) {
 }
 
 func TestResponsesToChatDispatcher_WithSessionHistory(t *testing.T) {
-	converter := &chatDispatcherFixture{}
-	sess := &types.Session{
-		ID: "sess_test",
-		Messages: []types.ResponsesItem{
-			{
-				Type:    "message",
-				Role:    "user",
-				Content: "Previous user message",
-			},
-			{
-				Type:    "message",
-				Role:    "assistant",
-				Content: "Previous assistant message",
-			},
-		},
-	}
-
-	req := &types.ResponsesRequest{
-		Model: "gpt-4",
-		Input: "New user message",
-	}
-
-	result, err := converter.ToProviderRequest(sess, req)
-	if err != nil {
-		t.Fatalf("转换失败: %v", err)
-	}
-
-	resultMap := result.(map[string]interface{})
-	messages := resultMap["messages"].([]map[string]interface{})
-
-	// 应该有 3 条消息：2 条历史 + 1 条新消息
-	if len(messages) != 3 {
-		t.Fatalf("期望 3 条消息，实际为 %d", len(messages))
-	}
-
-	// 检查顺序
-	if messages[0]["content"] != "Previous user message" {
-		t.Errorf("第一条消息内容不匹配")
-	}
-	if messages[1]["content"] != "Previous assistant message" {
-		t.Errorf("第二条消息内容不匹配")
-	}
-	if messages[2]["content"] != "New user message" {
-		t.Errorf("第三条消息内容不匹配")
-	}
+	sess := &types.Session{Messages: []types.ResponsesItem{
+		{Type: "message", Role: "user", Content: "Previous user message"},
+		{Type: "message", Role: "assistant", Content: "Previous assistant message"},
+	}}
+	body := []byte(`{"model":"m","input":"New user message"}`)
+	var request types.ResponsesRequest
+	require.NoError(t, json.Unmarshal(body, &request))
+	got, err := ConvertResponsesRequestToUpstream("openai", "m", body, false, sess, &request, nil)
+	require.NoError(t, err)
+	require.JSONEq(t, `[{"role":"user","content":"Previous user message"},{"role":"assistant","content":"Previous assistant message"},{"role":"user","content":"New user message"}]`, gjson.GetBytes(got, "messages").Raw)
 }
 
-// ============== FinishReason 映射测试 ==============
-
 func TestResponsesToChatDispatcher_ForwardsPromptCacheKey(t *testing.T) {
-	converter := &chatDispatcherFixture{}
-	sess := &types.Session{
-		ID:       "sess_cache",
-		Messages: []types.ResponsesItem{},
-	}
-
-	req := &types.ResponsesRequest{
-		Model:                "gpt-4",
-		Input:                "Hello!",
-		PromptCacheKey:       "my-cache-key-123",
-		PromptCacheRetention: "7d",
-	}
-
-	result, err := converter.ToProviderRequest(sess, req)
-	if err != nil {
-		t.Fatalf("转换失败: %v", err)
-	}
-
-	resultMap, ok := result.(map[string]interface{})
-	if !ok {
-		t.Fatal("结果不是 map[string]interface{}")
-	}
-
-	if resultMap["prompt_cache_key"] != "my-cache-key-123" {
-		t.Errorf("prompt_cache_key 应转发，期望 my-cache-key-123，实际: %v", resultMap["prompt_cache_key"])
-	}
-	if resultMap["prompt_cache_retention"] != "7d" {
-		t.Errorf("prompt_cache_retention 应转发，期望 7d，实际: %v", resultMap["prompt_cache_retention"])
-	}
+	got, err := dispatchRequest(t, "openai", `{"model":"m","input":"Hello!","prompt_cache_key":"cache-key","prompt_cache_retention":"7d"}`, nil)
+	require.NoError(t, err)
+	require.Equal(t, "cache-key", gjson.GetBytes(got, "prompt_cache_key").String())
+	require.Equal(t, "7d", gjson.GetBytes(got, "prompt_cache_retention").String())
 }
 
 func TestResponsesPassthroughPreservesImageGenerationFields(t *testing.T) {

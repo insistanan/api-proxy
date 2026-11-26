@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"insistanan/api-proxy/internal/clients/filetxn"
 )
 
 // 测试用内置清单种子：模拟 `codex debug models` 的输出条目（含指令模板）。
@@ -62,6 +64,23 @@ func resetCodexBuiltinCacheForTest() {
 
 func performCodexModelRequest(t *testing.T, handler gin.HandlerFunc, method, target string, body any) *httptest.ResponseRecorder {
 	t.Helper()
+	if payload, ok := body.(map[string]any); ok && method == http.MethodPut {
+		if _, provided := payload["revision"]; !provided {
+			configPath, _, modelsPath, err := resolveCodexPaths()
+			if err != nil {
+				t.Fatal(err)
+			}
+			config, err := filetxn.Read(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			models, err := filetxn.Read(modelsPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			payload["revision"] = filetxn.RevisionSet(config, models)
+		}
+	}
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	context, _ := gin.CreateTestContext(recorder)

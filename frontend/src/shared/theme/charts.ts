@@ -1,6 +1,6 @@
 import { computed, onMounted, ref } from 'vue'
 import { getActivePinia } from 'pinia'
-import { useThemeStore } from './store'
+import { useThemeStore } from '@/shared/theme/store'
 
 export const chartTokens = {
   indigo: '--chart-1',

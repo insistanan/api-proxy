@@ -7,11 +7,11 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"gopkg.in/yaml.v3"
-	"insistanan/api-proxy/internal/storage/atomicfile"
+
+	"insistanan/api-proxy/internal/clients/filetxn"
 )
 
 var dshSettingsMu sync.Mutex
@@ -43,6 +43,7 @@ type DSHDefaultModel struct {
 
 // dshSettingsResponse 是 GET /settings/dsh 的响应。
 type dshSettingsResponse struct {
+	Revision        string                         `json:"revision"`
 	DSHHome         string                         `json:"dshHome"`
 	Path            string                         `json:"path"`
 	CredentialsPath string                         `json:"credentialsPath"`
@@ -57,6 +58,7 @@ type dshSettingsResponse struct {
 
 // saveDSHSettingsRequest 是 PUT /settings/dsh 的请求体。
 type saveDSHSettingsRequest struct {
+	Revision          string                         `json:"revision"`
 	Providers         map[string]DSHProvider         `json:"providers"`
 	ProviderKeys      []string                       `json:"providerKeys"` // 可选；为空时用 map 随机序
 	DefaultModel      *DSHDefaultModel               `json:"defaultModel"`
@@ -97,7 +99,10 @@ func readDSHSettingsFile(path string) (map[string]interface{}, []byte, bool, err
 		return nil, raw, true, fmt.Errorf("解析 YAML 失败: %w", err)
 	}
 	if root == nil {
-		root = make(map[string]interface{})
+		return nil, raw, true, fmt.Errorf("DSH 配置根节点必须是对象")
+	}
+	if err := validateDSHShape(root); err != nil {
+		return nil, raw, true, err
 	}
 	return root, raw, true, nil
 }
@@ -249,7 +254,7 @@ func GetDSHSettings() gin.HandlerFunc {
 		defer dshSettingsMu.Unlock()
 
 		path := resolveDSHSettingsPath()
-		root, _, exists, err := readDSHSettingsFile(path)
+		root, settingsRaw, exists, err := readDSHSettingsFile(path)
 		if err != nil {
 			c.JSON(500, gin.H{"error": fmt.Sprintf("读取 DSH 配置失败: %v", err)})
 			return
@@ -265,9 +270,15 @@ func GetDSHSettings() gin.HandlerFunc {
 			return
 		}
 
+		credentialsRaw, err := filetxn.Read(credentialsPath)
+		if err != nil {
+			respondClientFileError(c, err)
+			return
+		}
 		writable := checkDSHWritable(path)
 
 		c.JSON(200, dshSettingsResponse{
+			Revision:        filetxn.RevisionSet(settingsRaw, credentialsRaw),
 			DSHHome:         resolveDSHHome(),
 			Path:            path,
 			CredentialsPath: credentialsPath,
@@ -371,311 +382,65 @@ func SaveDSHSettings() gin.HandlerFunc {
 			c.JSON(400, gin.H{"error": "DSH 配置请求无效"})
 			return
 		}
-
-		dshSettingsMu.Lock()
-		defer dshSettingsMu.Unlock()
-
-		path := resolveDSHSettingsPath()
-		root, previousSettings, settingsExists, err := readDSHSettingsFile(path)
-		if err != nil {
-			c.JSON(500, gin.H{"error": fmt.Sprintf("读取 DSH 配置失败: %v", err)})
-			return
-		}
-		if err := validateDSHCredentialUpdates(req.CredentialUpdates, req.Providers); err != nil {
+		if err := validateDSHSettings(req); err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		credentialsPath := resolveDSHCredentialsPath()
-		credentialData, credentialsChanged, err := prepareDSHCredentialDocument(credentialsPath, req.CredentialUpdates, req.Providers)
+		path, credentialsPath, err := saveDSHConfiguration(req)
 		if err != nil {
-			c.JSON(500, gin.H{"error": fmt.Sprintf("准备 DSH 凭据失败: %v", err)})
+			respondClientFileError(c, err)
 			return
 		}
-
-		// 构建 llm-pi-ai.providers 部分
-		piAI, ok := root["llm-pi-ai"].(map[string]interface{})
-		if !ok {
-			piAI = make(map[string]interface{})
-		}
-		// 将 typed providers 转回 generic map，顺序由 SaveDSHSettings 统一决定。
-		orderedKeys := orderedDSHProviderKeys(req.ProviderKeys, req.Providers)
-		provMap := make(map[string]interface{})
-		for _, k := range orderedKeys {
-			provMap[k] = dshProviderToMap(req.Providers[k])
-		}
-		piAI["providers"] = provMap
-		root["llm-pi-ai"] = piAI
-
-		// 构建 agent-default-model 部分
-		if req.DefaultModel != nil && req.DefaultModel.Provider != "" {
-			root["agent-default-model"] = map[string]interface{}{
-				"provider": req.DefaultModel.Provider,
-				"model":    req.DefaultModel.Model,
-			}
-		} else {
-			delete(root, "agent-default-model")
-		}
-
-		// 用 yaml.Node 按有序方式写入（保持 key 顺序）
-		data, err := marshalDSHYAML(root, req.ProviderKeys, req.Providers)
-		if err != nil {
-			c.JSON(500, gin.H{"error": fmt.Sprintf("序列化 DSH 配置失败: %v", err)})
-			return
-		}
-
-		credentialsCommitted := false
-
-		// 凭据先写入、settings 后写入：替换/新增操作即使 settings 写入失败，
-		// 也只会留下未被引用的凭据，不会让旧配置突然失效。remove 操作反过来，
-		// 先提交 settings，再在凭据失败时回滚 settings，避免旧配置引用已删除密钥。
-		hasCredentialRemoval := hasDSHCredentialAction(req.CredentialUpdates, dshCredentialActionRemove)
-		if credentialsChanged && !hasCredentialRemoval {
-			if err := writeDSHCredentials(credentialsPath, credentialData); err != nil {
-				if !atomicfile.IsCommitted(err) {
-					c.JSON(500, gin.H{"error": fmt.Sprintf("写入 DSH 凭据失败: %v", err)})
-					return
-				}
-				// 原子替换已经完成，只有目录同步收尾失败；继续写 settings，
-				// 但最终必须把“已提交”状态透传给前端，禁止按未提交重试。
-				credentialsCommitted = true
-			}
-		}
-
-		if err := writeDSHSettings(path, data); err != nil {
-			if credentialsCommitted || (credentialsChanged && !hasCredentialRemoval) {
-				c.JSON(500, gin.H{
-					"error":     fmt.Sprintf("写入 DSH 配置失败，但凭据已提交: %v", err),
-					"code":      "DSH_CREDENTIAL_COMMITTED",
-					"committed": true,
-				})
-				return
-			}
-			c.JSON(500, gin.H{"error": fmt.Sprintf("写入 DSH 配置失败: %v", err)})
-			return
-		}
-
-		if credentialsChanged && hasCredentialRemoval {
-			if err := writeDSHCredentials(credentialsPath, credentialData); err != nil {
-				if atomicfile.IsCommitted(err) {
-					// settings 已提交，凭据替换也已完成；不能回滚 settings，
-					// 否则会重新引用已删除的密钥。
-					c.JSON(500, gin.H{
-						"error":     fmt.Sprintf("写入 DSH 凭据已提交但收尾失败: %v", err),
-						"code":      "DSH_CREDENTIAL_COMMITTED",
-						"committed": true,
-					})
-					return
-				}
-				rollbackErr := rollbackDSHSettings(path, previousSettings, settingsExists)
-				if rollbackErr != nil {
-					c.JSON(500, gin.H{
-						"error":     fmt.Sprintf("写入 DSH 凭据失败，且配置回滚失败: %v；回滚错误: %v", err, rollbackErr),
-						"code":      "DSH_CONFIG_COMMITTED",
-						"committed": true,
-					})
-					return
-				}
-				c.JSON(500, gin.H{"error": fmt.Sprintf("写入 DSH 凭据失败，配置已回滚: %v", err)})
-				return
-			}
-		}
-
-		if credentialsCommitted {
-			c.JSON(500, gin.H{
-				"error":     "DSH 凭据已写入，但目录同步收尾失败，请刷新查看实际状态",
-				"code":      "DSH_CREDENTIAL_COMMITTED",
-				"committed": true,
-			})
-			return
-		}
-
 		c.JSON(200, gin.H{"success": true, "path": path, "credentialsPath": credentialsPath})
 	}
-}
-
-func hasDSHCredentialAction(updates map[string]dshCredentialUpdate, action string) bool {
-	for _, update := range updates {
-		if update.Action == action {
-			return true
-		}
-	}
-	return false
-}
-
-// rollbackDSHSettings 只用于双文件提交中凭据写失败的补偿路径。
-// settings.yaml 在当前请求前不存在时，删除本次新建文件；其他情况恢复原始字节。
-func rollbackDSHSettings(path string, previous []byte, existed bool) error {
-	if !existed {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		return nil
-	}
-	return writeDSHSettings(path, previous)
 }
 
 // marshalDSHYAML 将 root map 序列化为 YAML 字节，同时保证 llm-pi-ai.providers
 // 下的 key 顺序与 providerKeys 一致（如果提供）。
 func marshalDSHYAML(root map[string]interface{}, providerKeys []string, providers map[string]DSHProvider) ([]byte, error) {
-	rootNode := &yaml.Node{Kind: yaml.MappingNode}
-
-	for _, key := range orderedRootKeys(root) {
-		keyNode := &yaml.Node{Kind: yaml.ScalarNode, Value: key}
-
-		if key == "llm-pi-ai" {
-			piAI, _ := root["llm-pi-ai"].(map[string]interface{})
-			piAINode := buildPiAINode(piAI, providerKeys, providers)
-			rootNode.Content = append(rootNode.Content, keyNode, piAINode)
-		} else if key == "agent-default-model" {
-			val := root[key]
-			if m, ok := val.(map[string]interface{}); ok {
-				dmNode := &yaml.Node{Kind: yaml.MappingNode}
-				if pv, ok := m["provider"].(string); ok {
-					addScalar(dmNode, "provider", pv)
-				}
-				if mv, ok := m["model"].(string); ok {
-					addScalar(dmNode, "model", mv)
-				}
-				rootNode.Content = append(rootNode.Content, keyNode, dmNode)
-			}
-		} else {
-			val := root[key]
-			if vNode := toYAMLNode(val); vNode != nil {
-				rootNode.Content = append(rootNode.Content, keyNode, vNode)
-			}
+	var node yaml.Node
+	if err := node.Encode(root); err != nil {
+		return nil, fmt.Errorf("序列化 DSH 配置失败: %w", err)
+	}
+	reorderYAMLMapping(&node, orderedRootKeys(root))
+	if piAI := nodeValue(&node, "llm-pi-ai"); piAI != nil {
+		reorderYAMLMapping(piAI, orderedPiAIKeys(objectValue(root["llm-pi-ai"])))
+		if entries := nodeValue(piAI, "providers"); entries != nil {
+			reorderYAMLMapping(entries, orderedDSHProviderKeys(providerKeys, providers))
 		}
 	}
-
-	var buf strings.Builder
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
-	if err := enc.Encode(rootNode); err != nil {
-		// 回退到简单 marshal
-		return yaml.Marshal(root)
+	var buffer strings.Builder
+	encoder := yaml.NewEncoder(&buffer)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(&node); err != nil {
+		return nil, err
 	}
-	enc.Close()
-	return []byte(buf.String()), nil
+	if err := encoder.Close(); err != nil {
+		return nil, err
+	}
+	return []byte(buffer.String()), nil
 }
 
-// buildPiAINode 构建 llm-pi-ai 部分，保证字段顺序和 provider key 顺序。
-func buildPiAINode(piAI map[string]interface{}, providerKeys []string, providers map[string]DSHProvider) *yaml.Node {
-	piAINode := &yaml.Node{Kind: yaml.MappingNode}
-	for _, pk := range orderedPiAIKeys(piAI) {
-		if pk == "providers" {
-			providersNode := &yaml.Node{Kind: yaml.MappingNode}
-			for _, rk := range orderedDSHProviderKeys(providerKeys, providers) {
-				p, ok := providers[rk]
-				if !ok {
-					continue
-				}
-				pNode := buildProviderNode(p)
-				providersNode.Content = append(providersNode.Content,
-					&yaml.Node{Kind: yaml.ScalarNode, Value: rk},
-					pNode)
-			}
-			piAINode.Content = append(piAINode.Content,
-				&yaml.Node{Kind: yaml.ScalarNode, Value: "providers"},
-				providersNode)
-		} else {
-			if vNode := toYAMLNode(piAI[pk]); vNode != nil {
-				piAINode.Content = append(piAINode.Content,
-					&yaml.Node{Kind: yaml.ScalarNode, Value: pk},
-					vNode)
-			}
-		}
-	}
-	return piAINode
-}
-
-// buildProviderNode 构建单个 provider 的 yaml.Node，保证字段顺序。
-func buildProviderNode(p DSHProvider) *yaml.Node {
-	pNode := &yaml.Node{Kind: yaml.MappingNode}
-	pMap := dshProviderToMap(p)
-	for _, fkey := range []string{"apiKeyEnv", "api", "baseURL", "displayName", "models"} {
-		if fval, ok := pMap[fkey]; ok {
-			addScalar(pNode, fkey, fval)
-		}
-	}
-	for fkey, fval := range pMap {
-		if !contains([]string{"apiKeyEnv", "api", "baseURL", "displayName", "models"}, fkey) {
-			addScalar(pNode, fkey, fval)
-		}
-	}
-	return pNode
-}
-
-// addScalar 向 mapping node 添加一个 key-value 对，value 会递归转换为合适的 node。
-func addScalar(mapping *yaml.Node, key string, val interface{}) {
-	vNode := toYAMLNode(val)
-	if vNode == nil {
+func reorderYAMLMapping(node *yaml.Node, keys []string) {
+	if node.Kind != yaml.MappingNode {
 		return
 	}
-	mapping.Content = append(mapping.Content,
-		&yaml.Node{Kind: yaml.ScalarNode, Value: key},
-		vNode)
-}
-
-// toYAMLNode 将 interface{} 转换为 yaml.Node。
-func toYAMLNode(val interface{}) *yaml.Node {
-	if val == nil {
-		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!null", Value: ""}
-	}
-	switch v := val.(type) {
-	case string:
-		return &yaml.Node{Kind: yaml.ScalarNode, Value: v}
-	case int:
-		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: fmt.Sprintf("%d", v)}
-	case int64:
-		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: fmt.Sprintf("%d", v)}
-	case float64:
-		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!float", Value: fmt.Sprintf("%g", v)}
-	case bool:
-		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: fmt.Sprintf("%t", v)}
-	case map[string]interface{}:
-		mNode := &yaml.Node{Kind: yaml.MappingNode}
-		for k, vv := range v {
-			addScalar(mNode, k, vv)
-		}
-		return mNode
-	case map[interface{}]interface{}:
-		mNode := &yaml.Node{Kind: yaml.MappingNode}
-		for k, vv := range v {
-			ks, ok := k.(string)
-			if !ok {
-				continue
-			}
-			addScalar(mNode, ks, vv)
-		}
-		return mNode
-	case []interface{}:
-		sNode := &yaml.Node{Kind: yaml.SequenceNode}
-		for _, item := range v {
-			if n := toYAMLNode(item); n != nil {
-				sNode.Content = append(sNode.Content, n)
+	ordered := make([]*yaml.Node, 0, len(node.Content))
+	seen := make(map[string]bool)
+	for _, key := range keys {
+		for index := 0; index+1 < len(node.Content); index += 2 {
+			if node.Content[index].Value == key && !seen[key] {
+				ordered = append(ordered, node.Content[index:index+2]...)
+				seen[key] = true
 			}
 		}
-		return sNode
-	case []string:
-		sNode := &yaml.Node{Kind: yaml.SequenceNode}
-		for _, item := range v {
-			sNode.Content = append(sNode.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: item})
-		}
-		return sNode
-	default:
-		// 最后手段：marshal 然后嵌入
-		data, err := yaml.Marshal(val)
-		if err != nil {
-			return nil
-		}
-		var n yaml.Node
-		if err := yaml.Unmarshal(data, &n); err != nil {
-			return nil
-		}
-		if n.Kind == yaml.DocumentNode && len(n.Content) > 0 {
-			return n.Content[0]
-		}
-		return &n
 	}
+	for index := 0; index+1 < len(node.Content); index += 2 {
+		if !seen[node.Content[index].Value] {
+			ordered = append(ordered, node.Content[index:index+2]...)
+		}
+	}
+	node.Content = ordered
 }
 
 // orderedRootKeys 返回 root map 的 key 顺序，优先使用文件原始顺序。
@@ -769,39 +534,6 @@ func dshModelToMap(m DSHModel) map[string]interface{} {
 	}
 	return result
 }
-
-func writeDSHSettings(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return err
-	}
-	// 备份
-	if prev, err := os.ReadFile(path); err == nil && len(prev) > 0 {
-		backup := path + "." + time.Now().Format("20060102-150405") + ".bak"
-		_ = os.WriteFile(backup, prev, 0600)
-	}
-	// 原子写入
-	tempFile, err := os.CreateTemp(dir, ".dsh-settings-*.tmp")
-	if err != nil {
-		return err
-	}
-	tempPath := tempFile.Name()
-	defer os.Remove(tempPath)
-	if err := tempFile.Chmod(0600); err != nil {
-		tempFile.Close()
-		return err
-	}
-	if _, err := tempFile.Write(data); err != nil {
-		tempFile.Close()
-		return err
-	}
-	if err := tempFile.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tempPath, path)
-}
-
-// ---- 辅助函数 ----
 
 func toInt(v interface{}) int {
 	switch n := v.(type) {

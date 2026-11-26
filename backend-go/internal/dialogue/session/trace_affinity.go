@@ -87,6 +87,11 @@ func (m *TraceAffinityManager) SetPreferredChannelForKind(kind string, conversat
 
 	m.mu.Lock()
 	key := traceAffinityKey(kind, conversationID)
+	if len(key) > maxAffinityFieldBytes {
+		m.mu.Unlock()
+		return
+	}
+	makeAffinityRoom(m.affinity, key, func(value *TraceAffinity) time.Time { return value.LastUsedAt })
 	oldAffinity, existed := m.affinity[key]
 	if existed && oldAffinity.ChannelIndex != channelIndex {
 		logType, oldChannel = 2, oldAffinity.ChannelIndex

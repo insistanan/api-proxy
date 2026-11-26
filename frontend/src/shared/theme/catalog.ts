@@ -1,4 +1,4 @@
-import type { ThemePreset, ThemeSettings } from './types'
+import type { ThemePreset, ThemeSettings } from '@/shared/theme/types'
 
 export const DEFAULT_THEME: ThemeSettings = {
   schemaVersion: 1,

@@ -135,7 +135,7 @@ func (s *Store) World(ctx context.Context, now time.Time) (World, error) {
 		return w, err
 	}
 	w.Tokens, w.Seed, w.SeedGoal, w.Focus, w.Rest = g.tokens, g.seed, g.seedGoal, g.focus, g.rest
-	w.CatchingUp = g.seed >= g.seedGoal || g.progress >= g.goal
+	w.CatchingUp = s.syncPending.Load() || g.seed >= g.seedGoal || g.progress >= g.goal
 	w.Level, w.LevelProgress, w.LevelGoal, w.Baseline = g.level, g.progress, g.goal, g.baseline
 	w.Timer, err = readTimer(ctx, tx, now)
 	if err != nil {

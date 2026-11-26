@@ -1,6 +1,8 @@
 package metrics
 
 import (
+	"encoding/json"
+	"log"
 	"math"
 	"sort"
 	"strings"
@@ -10,13 +12,15 @@ import (
 
 // PerformanceProfile 渠道性能画像（模型级别）
 type PerformanceProfile struct {
-	mu sync.RWMutex
+	mu       sync.RWMutex
+	Identity ProfileIdentity
+	lastUsed time.Time
 
 	// 基础标识
-	BaseURL    string
-	APIKeys    []string
-	Model      string // 模型名（已规范化，去除后缀）
-	ChannelIdx int
+	BaseURL          string
+	credentialDigest string
+	Model            string // 模型名（已规范化，去除后缀）
+	ChannelIdx       int
 
 	// 实时负载
 	ActiveRequests int64 `json:"activeRequests"` // 当前活跃请求数
@@ -65,7 +69,7 @@ type PerformanceProfile struct {
 // PerformanceSnapshotView 是调度器和 API 报表读取画像时使用的只读快照。
 type PerformanceSnapshotView struct {
 	BaseURL           string
-	APIKeys           []string
+	Identity          ProfileIdentity
 	Model             string
 	ChannelIdx        int
 	ActiveRequests    int64
@@ -90,6 +94,7 @@ type PerformanceSnapshotView struct {
 
 // PerformanceSnapshot 性能快照（用于请求追踪）
 type PerformanceSnapshot struct {
+	profile         *PerformanceProfile
 	RequestID       uint64
 	StartTime       time.Time
 	FirstByteTime   *time.Time // 首字节时间
@@ -110,10 +115,12 @@ type ProfileManager struct {
 	activeSnapshots map[uint64]*PerformanceSnapshot
 
 	// 后台更新任务
-	stopCh         chan struct{}
-	doneCh         chan struct{}
-	stopOnce       sync.Once
-	updateInterval time.Duration // 评分更新间隔（默认30秒）
+	stopCh          chan struct{}
+	doneCh          chan struct{}
+	stopOnce        sync.Once
+	updateInterval  time.Duration // 评分更新间隔（默认30秒）
+	validIdentity   func(ProfileIdentity, string, string) bool
+	droppedProfiles uint64
 }
 
 // NewProfileManager 创建性能画像管理器
@@ -139,43 +146,50 @@ func normalizeModel(model string) string {
 }
 
 // generateProfileKey 生成画像键（包含模型与渠道维度）
-func generateProfileKey(baseURL string, apiKeys []string, model string, channelIdx int) string {
-	// 排序 keys 确保一致性
-	sorted := make([]string, len(apiKeys))
-	copy(sorted, apiKeys)
-	sort.Strings(sorted)
-
-	// 规范化模型名
-	normalizedModel := normalizeModel(model)
-
-	var combined string
-	combined = baseURL
-	for _, k := range sorted {
-		combined += "|" + k
-	}
-	combined += "|" + normalizedModel
-
-	return generateMetricsKey(baseURL, combined, channelIdx)
+func generateProfileKey(baseURL string, apiKeys []string, model string, identity ProfileIdentity) string {
+	// JSON 字符串数组不存在编码失败，字段边界也不会被 URL/模型中的分隔符混淆。
+	data, _ := json.Marshal([]string{identity.Kind, identity.ID, baseURL, normalizeModel(model), ProfileCredentials(apiKeys)})
+	return string(data)
 }
 
 // GetOrCreateProfile 获取或创建性能画像（模型级别）
-func (pm *ProfileManager) GetOrCreateProfile(baseURL string, apiKeys []string, model string, channelIdx int) *PerformanceProfile {
-	key := generateProfileKey(baseURL, apiKeys, model, channelIdx)
+func (pm *ProfileManager) GetOrCreateProfile(baseURL string, apiKeys []string, model string, identity ProfileIdentity) *PerformanceProfile {
+	key := generateProfileKey(baseURL, apiKeys, model, identity)
 
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
+	return pm.getOrCreateLocked(baseURL, apiKeys, model, identity, key)
+}
+
+func (pm *ProfileManager) getOrCreateLocked(baseURL string, apiKeys []string, model string, identity ProfileIdentity, key string) *PerformanceProfile {
 
 	if profile, exists := pm.profiles[key]; exists {
+		profile.mu.Lock()
+		profile.lastUsed = time.Now()
+		profile.ChannelIdx, profile.Identity = identity.Index, identity
+		profile.mu.Unlock()
 		return profile
+	}
+	if len(pm.profiles) >= maxProfiles {
+		pm.pruneLocked(time.Now(), true)
+	}
+	if len(pm.profiles) >= maxProfiles {
+		pm.droppedProfiles++
+		if pm.droppedProfiles&(pm.droppedProfiles-1) == 0 {
+			log.Printf("[Metrics-Profile] 所有画像均在使用，已跳过 %d 个新画像采样", pm.droppedProfiles)
+		}
+		return nil
 	}
 
 	normalizedModel := normalizeModel(model)
 
 	profile := &PerformanceProfile{
+		lastUsed:            time.Now(),
 		BaseURL:             baseURL,
-		APIKeys:             apiKeys,
+		credentialDigest:    ProfileCredentials(apiKeys),
 		Model:               normalizedModel,
-		ChannelIdx:          channelIdx,
+		Identity:            identity,
+		ChannelIdx:          identity.Index,
 		sampleWindowSize:    1000,
 		HealthScore:         80.0, // 初始80分（新模型给中等分数）
 		PerformanceTier:     "A",
@@ -193,8 +207,8 @@ func (pm *ProfileManager) GetOrCreateProfile(baseURL string, apiKeys []string, m
 }
 
 // GetProfile 获取已存在的性能画像（不创建）
-func (pm *ProfileManager) GetProfile(baseURL string, apiKeys []string, model string, channelIdx int) *PerformanceProfile {
-	key := generateProfileKey(baseURL, apiKeys, model, channelIdx)
+func (pm *ProfileManager) GetProfile(baseURL string, apiKeys []string, model string, identity ProfileIdentity) *PerformanceProfile {
+	key := generateProfileKey(baseURL, apiKeys, model, identity)
 
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
@@ -212,8 +226,8 @@ const (
 )
 
 // GetProfileSnapshot 获取已存在画像的只读快照。
-func (pm *ProfileManager) GetProfileSnapshot(baseURL string, apiKeys []string, model string, channelIdx int) (PerformanceSnapshotView, bool) {
-	profile := pm.GetProfile(baseURL, apiKeys, model, channelIdx)
+func (pm *ProfileManager) GetProfileSnapshot(baseURL string, apiKeys []string, model string, identity ProfileIdentity) (PerformanceSnapshotView, bool) {
+	profile := pm.GetProfile(baseURL, apiKeys, model, identity)
 	if profile == nil {
 		return PerformanceSnapshotView{}, false
 	}
@@ -246,7 +260,7 @@ func (p *PerformanceProfile) Snapshot() PerformanceSnapshotView {
 
 	return PerformanceSnapshotView{
 		BaseURL:           p.BaseURL,
-		APIKeys:           append([]string(nil), p.APIKeys...),
+		Identity:          p.Identity,
 		Model:             p.Model,
 		ChannelIdx:        p.ChannelIdx,
 		ActiveRequests:    p.ActiveRequests,
@@ -271,11 +285,13 @@ func (p *PerformanceProfile) Snapshot() PerformanceSnapshotView {
 }
 
 // StartRequest 开始追踪请求
-func (pm *ProfileManager) StartRequest(baseURL string, apiKeys []string, model string, channelIdx int, requestID uint64) {
-	profile := pm.GetOrCreateProfile(baseURL, apiKeys, model, channelIdx)
-
+func (pm *ProfileManager) StartRequest(baseURL string, apiKeys []string, model string, identity ProfileIdentity, requestID uint64) {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
+	profile := pm.getOrCreateLocked(baseURL, apiKeys, model, identity, generateProfileKey(baseURL, apiKeys, model, identity))
+	if profile == nil {
+		return
+	}
 
 	// 增加活跃计数
 	profile.mu.Lock()
@@ -284,6 +300,7 @@ func (pm *ProfileManager) StartRequest(baseURL string, apiKeys []string, model s
 
 	// 创建快照
 	pm.activeSnapshots[requestID] = &PerformanceSnapshot{
+		profile:   profile,
 		RequestID: requestID,
 		StartTime: time.Now(),
 	}
@@ -305,23 +322,21 @@ func (pm *ProfileManager) RecordFirstByte(requestID uint64) {
 }
 
 // EndRequest 结束请求追踪
-func (pm *ProfileManager) EndRequest(baseURL string, apiKeys []string, model string, channelIdx int, requestID uint64, success bool, outputTokens int64) {
+func (pm *ProfileManager) EndRequest(requestID uint64, success bool, outputTokens int64) {
 	outcome := RequestOutcomeFailure
 	if success {
 		outcome = RequestOutcomeSuccess
 	}
-	pm.EndRequestWithOutcome(baseURL, apiKeys, model, channelIdx, requestID, outcome, outputTokens)
+	pm.EndRequestWithOutcome(requestID, outcome, outputTokens)
 }
 
 // EndRequestNeutral 结束请求但不计入成功率，适用于客户端取消等非上游质量事件。
-func (pm *ProfileManager) EndRequestNeutral(baseURL string, apiKeys []string, model string, channelIdx int, requestID uint64) {
-	pm.EndRequestWithOutcome(baseURL, apiKeys, model, channelIdx, requestID, RequestOutcomeNeutral, 0)
+func (pm *ProfileManager) EndRequestNeutral(requestID uint64) {
+	pm.EndRequestWithOutcome(requestID, RequestOutcomeNeutral, 0)
 }
 
 // EndRequestWithOutcome 结束请求追踪并按指定口径更新画像。
-func (pm *ProfileManager) EndRequestWithOutcome(baseURL string, apiKeys []string, model string, channelIdx int, requestID uint64, outcome RequestOutcome, outputTokens int64) {
-	profile := pm.GetOrCreateProfile(baseURL, apiKeys, model, channelIdx)
-
+func (pm *ProfileManager) EndRequestWithOutcome(requestID uint64, outcome RequestOutcome, outputTokens int64) {
 	pm.mu.Lock()
 	snapshot, exists := pm.activeSnapshots[requestID]
 	if exists {
@@ -330,14 +345,9 @@ func (pm *ProfileManager) EndRequestWithOutcome(baseURL string, apiKeys []string
 	pm.mu.Unlock()
 
 	if !exists {
-		// 降级处理：没有开始追踪的请求
-		profile.mu.Lock()
-		if profile.ActiveRequests > 0 {
-			profile.ActiveRequests--
-		}
-		profile.mu.Unlock()
 		return
 	}
+	profile := snapshot.profile
 
 	// 减少活跃计数
 	profile.mu.Lock()
@@ -472,12 +482,13 @@ func (pm *ProfileManager) backgroundScoreUpdater() {
 
 // updateAllScores 更新所有渠道的健康评分
 func (pm *ProfileManager) updateAllScores() {
-	pm.mu.RLock()
+	pm.mu.Lock()
+	pm.pruneLocked(time.Now(), false)
 	profiles := make([]*PerformanceProfile, 0, len(pm.profiles))
 	for _, p := range pm.profiles {
 		profiles = append(profiles, p)
 	}
-	pm.mu.RUnlock()
+	pm.mu.Unlock()
 
 	for _, profile := range profiles {
 		pm.calculateHealthScore(profile)

@@ -54,7 +54,9 @@ export const useChannelStore = defineStore('channel', () => {
 
   // 自动刷新定时器（串行 setTimeout，避免重入）
   let autoRefreshTimer: ReturnType<typeof setTimeout> | null = null
-  let autoRefreshRunning = false
+  let autoRefreshGeneration = 0
+  let lifetime = 0
+  let visionRevision = 0
   const AUTO_REFRESH_INTERVAL = 2000 // 2秒
 
   // 刷新按发起协议排队；每次调用仅接收自己协议的结果，某项失败不阻断后续刷新。
@@ -125,21 +127,25 @@ export const useChannelStore = defineStore('channel', () => {
 
   /** 刷新跨协议共享的公用图片理解池。 */
   async function refreshVisionChannels() {
+    const revision = ++visionRevision
     const response = await api.getVisionChannels()
     if (!Array.isArray(response.channels)) throw new Error('图片理解池响应格式无效')
-    visionChannels.value = response.channels
+    if (revision === visionRevision) visionChannels.value = response.channels
   }
 
   /**
    * 刷新渠道数据
    */
   async function refreshChannels(tab: ApiTab = activeTab.value) {
+    const generation = lifetime
     const queued = queuedRefreshes.get(tab)
     if (queued) return queued
 
     const doRefresh = async (tab: ApiTab) => {
+      if (generation !== lifetime) return
       try {
         const dashboard = await api.getChannelDashboard(tab)
+        if (generation !== lifetime) return
 
         const previous = channelsDataMap.value[tab]
         const channels = mergeChannelsWithLocalData(dashboard.channels, previous.channels)
@@ -158,12 +164,13 @@ export const useChannelStore = defineStore('channel', () => {
 
         lastRefreshSuccess.value = true
       } catch (error) {
-        lastRefreshSuccess.value = false
+        if (generation === lifetime) lastRefreshSuccess.value = false
         throw error
       }
     }
 
     const runRefresh = () => {
+      if (generation !== lifetime) return
       queuedRefreshes.delete(tab)
       return doRefresh(tab)
     }
@@ -183,18 +190,21 @@ export const useChannelStore = defineStore('channel', () => {
   async function saveChannel(
     channel: Omit<Channel, 'id' | 'index' | 'latency'>,
     editingChannelIndex: number | null,
-    options?: { isQuickAdd?: boolean },
+    options?: { isQuickAdd?: boolean; expectedChannelId?: string },
     tab: ApiTab = activeTab.value
   ): Promise<{ message: string; quickAddMessage?: string; warning?: string }> {
     const ca = tabApi(tab)
+    const generation = lifetime
 
     if (editingChannelIndex !== null) {
       // 更新现有渠道
-      await ca.updateChannel(editingChannelIndex, channel)
+      if (!options?.expectedChannelId) throw new Error('编辑目标缺少稳定渠道 ID，请重新打开编辑器')
+      await ca.updateChannel(editingChannelIndex, channel, options.expectedChannelId)
       return { message: '渠道更新成功' }
     } else {
       // 添加新渠道
       const createdChannel = await ca.addChannel(channel)
+      if (generation !== lifetime) throw new DOMException('认证会话已结束', 'AbortError')
 
       // 创建与促销是两个提交点，后一步失败不能让用户重复创建渠道。
       if (options?.isQuickAdd) {
@@ -229,9 +239,11 @@ export const useChannelStore = defineStore('channel', () => {
    * 测试单个渠道延迟
    */
   async function pingChannel(channelId: number) {
+    const generation = lifetime
     const tab = activeTab.value
     const targetId = channelsDataMap.value[tab].channels.find(c => c.index === channelId)?.id
     const result = await tabApi(tab).pingChannel(channelId)
+    if (generation !== lifetime) return { success: false }
 
     const channel = targetId === undefined ? undefined : channelsDataMap.value[tab].channels.find(c => c.id === targetId)
     if (channel) {
@@ -247,12 +259,14 @@ export const useChannelStore = defineStore('channel', () => {
    */
   async function pingAllChannels() {
     if (isPingingAll.value) return { success: false, message: '正在测试中' }
+    const generation = lifetime
 
     const tab = activeTab.value
     const targets = new Map(channelsDataMap.value[tab].channels.map(c => [c.index, c.id]))
     isPingingAll.value = true
     try {
       const results = await tabApi(tab).pingAllChannels()
+      if (generation !== lifetime) return { success: false }
 
       const now = Date.now()
       results.forEach(result => {
@@ -266,7 +280,7 @@ export const useChannelStore = defineStore('channel', () => {
 
       return { success: true }
     } finally {
-      isPingingAll.value = false
+      if (generation === lifetime) isPingingAll.value = false
     }
   }
 
@@ -275,17 +289,17 @@ export const useChannelStore = defineStore('channel', () => {
    */
   function startAutoRefresh() {
     stopAutoRefresh()
-    autoRefreshRunning = true
+    const generation = autoRefreshGeneration
 
     const tick = async () => {
-      if (!autoRefreshRunning) return
+      if (generation !== autoRefreshGeneration) return
       try {
         // 看板隐藏到托盘或浏览器后台时暂停刷新，代理和危险命令通知仍独立运行。
         if (typeof document === 'undefined' || !document.hidden) await refreshChannels()
       } catch (error) {
         console.warn('自动刷新失败:', error)
       } finally {
-        if (autoRefreshRunning) {
+        if (generation === autoRefreshGeneration) {
           autoRefreshTimer = setTimeout(() => {
             void tick()
           }, AUTO_REFRESH_INTERVAL)
@@ -302,7 +316,7 @@ export const useChannelStore = defineStore('channel', () => {
    * 停止自动刷新定时器
    */
   function stopAutoRefresh() {
-    autoRefreshRunning = false
+    autoRefreshGeneration++
     if (!autoRefreshTimer) return
     clearTimeout(autoRefreshTimer)
     autoRefreshTimer = null
@@ -312,6 +326,11 @@ export const useChannelStore = defineStore('channel', () => {
    * 清空所有渠道数据（用于注销）
    */
   function clearChannels() {
+    stopAutoRefresh()
+    lifetime++
+    visionRevision++
+    queuedRefreshes.clear()
+    refreshLoopPromise = null
     channelsDataMap.value = perTab(emptyChannels)
     dashboardCache.value = perTab(emptyDashboard)
     channelPoolsMap.value = perTab(() => [] as ChannelPool[])
@@ -320,6 +339,8 @@ export const useChannelStore = defineStore('channel', () => {
     for (const tab of API_TABS) poolRevisions[tab]++
     lastRefreshSuccess.value = null
     isPingingAll.value = false
+    isSavingChannel.value = false
+    isDeletingChannel.value = false
   }
 
   // ===== 返回公开接口 =====

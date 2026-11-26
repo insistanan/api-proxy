@@ -81,6 +81,9 @@ func (s *sqliteStore) initSchema() error {
 	if err := s.ensureColumn("response_session_mappings", "alias_key", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	if err := s.ensureColumn("response_session_mappings", "boundary_json", "TEXT"); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -161,66 +164,6 @@ func (s *sqliteStore) create(ctx context.Context, session *Session, limit int, a
 		return nil, err
 	}
 	return removed, nil
-}
-
-// commit 将正文、版本、response 归属及 registry 别名放入同一事务。
-func (s *sqliteStore) commit(ctx context.Context, next *Session, messages []byte, expected int64, replace bool, responseID, owner, alias string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE response_sessions SET conversation_id=?,messages_json=?,last_response_id=?,last_access_at=?,total_tokens=?,has_vision_content=?,version=? WHERE id=? AND version=?`, next.ConversationID, string(messages), next.LastResponseID, next.LastAccessAt.Unix(), next.TotalTokens, boolToInt(next.HasVisionContent), next.Version, next.ID, expected)
-	if err != nil {
-		return err
-	}
-	changed, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if changed != 1 {
-		return fmt.Errorf("会话历史已更新或删除，请重新读取最新边界")
-	}
-	if responseID != "" {
-		result, err = tx.ExecContext(ctx, `INSERT INTO response_session_mappings (response_id,session_id,upstream_identity,alias_key) VALUES (?,?,?,?) ON CONFLICT(response_id) DO NOTHING`, responseID, next.ID, owner, alias)
-		if err != nil {
-			return err
-		}
-		changed, err = result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if changed != 1 {
-			return fmt.Errorf("response ID 已存在，拒绝覆盖历史归属")
-		}
-	}
-	if replace {
-		if alias != "" {
-			if _, err = tx.ExecContext(ctx, `DELETE FROM conversation_aliases WHERE alias_key IN (SELECT alias_key FROM response_session_mappings WHERE session_id=? AND response_id!=?)`, next.ID, responseID); err != nil {
-				return err
-			}
-		}
-		if _, err = tx.ExecContext(ctx, `DELETE FROM response_session_mappings WHERE session_id=? AND response_id!=?`, next.ID, responseID); err != nil {
-			return err
-		}
-	}
-	if alias != "" {
-		result, err = tx.ExecContext(ctx, `INSERT INTO conversation_aliases(alias_key,conversation_id) VALUES (?,?) ON CONFLICT(alias_key) DO UPDATE SET conversation_id=excluded.conversation_id WHERE conversation_aliases.conversation_id=excluded.conversation_id`, alias, next.ConversationID)
-		if err != nil {
-			return err
-		}
-		changed, err = result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if changed != 1 {
-			return fmt.Errorf("response ID 别名属于其他对话")
-		}
-	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO response_session_access(session_id,last_access_at) VALUES (?,?) ON CONFLICT(session_id) DO UPDATE SET last_access_at=excluded.last_access_at`, next.ID, next.LastAccessAt.Unix()); err != nil {
-		return err
-	}
-	return tx.Commit()
 }
 
 // touch 只刷新访问时间，不在读取热路径猜测或修复历史归属。

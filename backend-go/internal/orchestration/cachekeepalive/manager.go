@@ -68,22 +68,23 @@ type Status struct {
 }
 
 type snapshot struct {
-	stream      bool
-	mode        string
-	model       string
-	cacheURL    string
-	cacheName   string
-	deadline    time.Time
-	source      Source
-	body        []byte
-	policy      config.CacheKeepaliveConfig
-	baseline    int64
-	baselineHit float64
-	read        int64
-	ttl         time.Duration
-	lastSent    time.Time
-	charge      int64
-	refs        int
+	configDigest string
+	stream       bool
+	mode         string
+	model        string
+	cacheURL     string
+	cacheName    string
+	deadline     time.Time
+	source       Source
+	body         []byte
+	policy       config.CacheKeepaliveConfig
+	baseline     int64
+	baselineHit  float64
+	read         int64
+	ttl          time.Duration
+	lastSent     time.Time
+	charge       int64
+	refs         int
 }
 
 type entry struct {
@@ -122,6 +123,7 @@ type Manager struct {
 	workers            sync.WaitGroup
 	jobs               chan work
 	state              func() (bool, uint64)
+	targetDigest       func(string, string) (string, uint64)
 	now                func() time.Time
 	send               func(context.Context, *snapshot) sendResult
 	checkPrompt        func(context.Context, string, string) error
@@ -129,6 +131,7 @@ type Manager struct {
 
 func New(cfg *config.ConfigManager, checkPrompt func(context.Context, string, string) error, recorders ...func(tokenusage.Fact)) *Manager {
 	m := newManager(cfg.CacheKeepaliveState, time.Now)
+	m.targetDigest = cfg.CacheKeepaliveTargetDigest
 	m.send = newSender(cfg, recorders...)
 	m.checkPrompt = checkPrompt
 	changes := cfg.CacheKeepaliveChanges()
@@ -226,7 +229,7 @@ func (t *Turn) Capture(source Source) {
 	_, revision := m.state()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if !t.current() || t.entry.revision != revision {
+	if !t.current() || !m.matchesRevision(t.entry, revision) {
 		return
 	}
 	e := t.entry
@@ -277,7 +280,16 @@ func (t *Turn) Capture(source Source) {
 	if source.Kind != "messages" && source.Kind != "responses" {
 		source.Upstream.ClientIdentityMode = "api"
 	}
-	e.snapshot = &snapshot{source: source, policy: u.CacheKeepalive, charge: charge, refs: 1, lastSent: m.now()}
+	digest := ""
+	if m.targetDigest != nil {
+		var targetRevision uint64
+		digest, targetRevision = m.targetDigest(source.Kind, u.ID)
+		if digest == "" || targetRevision != e.revision {
+			m.stopEntry(e, "配置已更新，等待新的真实请求")
+			return
+		}
+	}
+	e.snapshot = &snapshot{configDigest: digest, source: source, policy: u.CacheKeepalive, charge: charge, refs: 1, lastSent: m.now()}
 	e.status.State, e.status.Reason = "active", ""
 	m.bytes += charge
 }
@@ -460,7 +472,7 @@ func (m *Manager) ActiveChannels() map[string]int {
 	result := make(map[string]int)
 	now := m.now()
 	for _, e := range m.entries {
-		if e.active != 0 || e.revision != revision || e.snapshot == nil || e.snapshot.body == nil ||
+		if e.active != 0 || !m.matchesRevision(e, revision) || e.snapshot == nil || e.snapshot.body == nil ||
 			!e.deadline.IsZero() && !now.Before(e.deadline) {
 			continue
 		}

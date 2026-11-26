@@ -1,12 +1,15 @@
 package extensions
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"insistanan/api-proxy/internal/clients/filetxn"
 )
 
 func TestMigrateSkillsDirMovesAllFilesAndSupportsRollback(t *testing.T) {
@@ -28,7 +31,7 @@ func TestMigrateSkillsDirMovesAllFilesAndSupportsRollback(t *testing.T) {
 	require.NotNil(t, rollback)
 
 	_, err = os.Stat(oldDir)
-	require.True(t, os.IsNotExist(err))
+	require.NoError(t, err, "配置提交前必须保留完整源目录")
 
 	content, err := os.ReadFile(filepath.Join(newDir, "mcp.json"))
 	require.NoError(t, err)
@@ -98,12 +101,20 @@ func TestCopyThenRemoveKeepsCompleteCopy(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(src, "first"), []byte("one"), 0600))
 		require.NoError(t, os.WriteFile(filepath.Join(src, "second"), []byte("two"), 0600))
 		cause := errors.New("源文件被占用")
-		err := copyThenRemove(src, dst, func(path string) error {
+		_, _, err := MigrateSkillsDir(src, dst)
+		require.NoError(t, err)
+		identity, err := filetxn.Identity(dst)
+		require.NoError(t, err)
+		raw, err := os.ReadFile(migrationRecordPath(identity))
+		require.NoError(t, err)
+		var record migrationRecord
+		require.NoError(t, json.Unmarshal(raw, &record))
+		err = finishMigration(record, func(path string) error {
 			require.NoError(t, os.Remove(filepath.Join(path, "first")))
 			return cause
 		})
 		require.ErrorIs(t, err, cause)
-		require.ErrorContains(t, err, dst)
+		require.ErrorContains(t, err, identity)
 		for name, expected := range map[string]string{"first": "one", "second": "two"} {
 			data, err := os.ReadFile(filepath.Join(dst, name))
 			require.NoError(t, err)

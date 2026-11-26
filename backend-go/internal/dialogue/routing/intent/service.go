@@ -62,11 +62,12 @@ type persistedState struct {
 }
 
 type Service struct {
-	preparationMu      sync.Mutex
-	preparation        Preparation
-	preparationCancel  context.CancelFunc
-	preparationDone    chan struct{}
-	preparationClosing bool
+	preparationMu       sync.Mutex
+	preparation         Preparation
+	preparationCancel   context.CancelFunc
+	preparationDone     chan struct{}
+	preparationClosing  bool
+	preparationStopping bool
 
 	Cfg      *config.ConfigManager
 	Caller   *llmgate.Caller

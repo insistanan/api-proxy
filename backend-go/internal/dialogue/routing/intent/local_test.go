@@ -80,7 +80,7 @@ func TestVerifiedDownloadCommitsOnlyCompleteValidModel(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "model.gguf")
 			require.NoError(t, os.WriteFile(path, []byte("原模型"), 0600))
 			err := atomicfile.WriteFunc(path, func(w io.Writer) error {
-				return downloadVerified(context.Background(), server.URL, tc.hash, tc.limit, w, "GGUF")
+				return downloadVerified(context.Background(), server.Client(), server.URL, tc.hash, tc.limit, w, "GGUF")
 			}, atomicfile.Options{})
 			data, readErr := os.ReadFile(path)
 			require.NoError(t, readErr)

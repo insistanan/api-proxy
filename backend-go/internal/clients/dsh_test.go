@@ -12,6 +12,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"insistanan/api-proxy/internal/clients/filetxn"
 )
 
 // setupDSHHome 把 DSH_HOME 指到临时目录，避免读写真实 ~/.dsh/settings.yaml。
@@ -24,6 +26,21 @@ func setupDSHHome(t *testing.T) string {
 
 func performDSHSettingsRequest(t *testing.T, method, body string) *httptest.ResponseRecorder {
 	t.Helper()
+	if method == http.MethodPut {
+		var payload map[string]any
+		if json.Unmarshal([]byte(body), &payload) == nil && payload != nil {
+			if _, provided := payload["revision"]; !provided {
+				settings, err := filetxn.Read(resolveDSHSettingsPath())
+				require.NoError(t, err)
+				credentials, err := filetxn.Read(resolveDSHCredentialsPath())
+				require.NoError(t, err)
+				payload["revision"] = filetxn.RevisionSet(settings, credentials)
+				encoded, err := json.Marshal(payload)
+				require.NoError(t, err)
+				body = string(encoded)
+			}
+		}
+	}
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.GET("/settings/dsh", GetDSHSettings())
@@ -158,4 +175,30 @@ ui-theme:
 			strings.Index(string(content), "alpha:"), strings.Index(string(content), "zeta:"),
 			"缺省 providerKeys 应按字母序稳定输出")
 	})
+}
+
+func TestDSHSharedCredentialsUseIndependentReplacement(t *testing.T) {
+	home := setupDSHHome(t)
+	path := filepath.Join(home, "credentials.yaml")
+	original := []byte("version: 1\nrefs:\n  SHARED: original-value\n")
+	require.NoError(t, os.WriteFile(path, original, 0600))
+	req := saveDSHSettingsRequest{
+		Providers: map[string]DSHProvider{
+			"first":  {APIKeyEnv: "SHARED"},
+			"second": {APIKeyEnv: "SHARED"},
+		},
+		CredentialUpdates: map[string]dshCredentialUpdate{
+			"first": {Action: dshCredentialActionReplace, APIKey: "new-value"},
+		},
+	}
+	prepared, cleaned, err := prepareDSHCredentials(path, &req)
+	require.NoError(t, err)
+	require.NotEqual(t, "SHARED", req.Providers["first"].APIKeyEnv)
+	require.Equal(t, "SHARED", req.Providers["second"].APIKeyEnv)
+	require.Contains(t, string(prepared), "SHARED: original-value")
+	require.Contains(t, string(prepared), "new-value")
+	require.Nil(t, cleaned, "另一个 provider 仍在引用旧值")
+	actual, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, original, actual, "准备阶段不得写凭据文件")
 }

@@ -1,149 +1,120 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, shallowRef, computed } from 'vue'
 
-/**
- * 认证状态管理 Store
- *
- * 职责：
- * - 管理 API Key 的存储和读取
- * - 管理认证错误和安全状态（失败次数、锁定时间等）
- * - 管理认证 UI 状态（加载中、自动认证等）
- * - 提供响应式的认证状态
- * - 自动持久化到 localStorage
- */
+const STORAGE_KEY = 'api-proxy-auth'
+
+// 凭据恢复与验证分开；每次更换会话都取消上一代请求。
 export const useAuthStore = defineStore('auth', () => {
-  // ===== 状态 =====
-
-  // API Key
   const apiKey = ref<string | null>(null)
-
-  // 认证错误消息
+  const verified = ref(false)
+  const generation = ref(0)
+  let controller = new AbortController()
+  const requestSignal = shallowRef(controller.signal)
   const authError = ref('')
-
-  // 认证失败次数
   const authAttempts = ref(0)
-
-  // 认证锁定时间（存储时间戳）
   const authLockoutTime = ref<number | null>(null)
-
-  // 自动认证进行中
-  const isAutoAuthenticating = ref(true) // 初始化为true，防止登录框闪现
-
-  // 初始化完成标志
+  const isAutoAuthenticating = ref(true)
   const isInitialized = ref(false)
-
-  // 认证加载状态
   const authLoading = ref(false)
-
-  // 认证输入框值
   const authKeyInput = ref('')
+  const isAuthenticated = computed(() => verified.value && !!apiKey.value)
 
-  // ===== 计算属性 =====
-
-  const isAuthenticated = computed(() => !!apiKey.value)
-
-  // 检查是否被锁定
-  const isAuthLocked = computed(() => {
-    if (!authLockoutTime.value) return false
-    return Date.now() < authLockoutTime.value
-  })
-
-  // ===== 操作方法 =====
-
+  function persist() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ apiKey: apiKey.value, authAttempts: authAttempts.value, authLockoutTime: authLockoutTime.value }))
+    } catch {
+      throw new Error('无法保存认证状态，请检查浏览器存储权限')
+    }
+  }
+  function invalidate() {
+    verified.value = false
+    controller.abort(new DOMException('认证会话已结束', 'AbortError'))
+    controller = new AbortController()
+    requestSignal.value = controller.signal
+    generation.value++
+  }
   function setApiKey(key: string | null) {
+    invalidate()
     apiKey.value = key
-    // 同时保存到旧的 localStorage key 以保持兼容性
-    if (key) {
-      localStorage.setItem('proxyAccessKey', key)
-    } else {
-      localStorage.removeItem('proxyAccessKey')
-    }
   }
-
-  function clearAuth() {
-    apiKey.value = null
-    // 清除旧的 localStorage key
-    localStorage.removeItem('proxyAccessKey')
-  }
-
-  function initializeAuth() {
-    // 优先从旧的 localStorage key 读取（兼容性）
-    const oldKey = localStorage.getItem('proxyAccessKey')
-    if (oldKey) {
-      apiKey.value = oldKey
-      return
-    }
-
-    // 如果没有旧 key，尝试从 Pinia 持久化恢复
-    // （由 persistedstate 插件自动处理）
-  }
-
-  function setAuthError(error: string) {
-    authError.value = error
-  }
-
-  function incrementAuthAttempts() {
-    authAttempts.value++
-  }
-
-  function resetAuthAttempts() {
+  function confirmAuthentication(expected: number) {
+    if (generation.value !== expected || !apiKey.value) return false
     authAttempts.value = 0
+    authLockoutTime.value = null
+    persist()
+    verified.value = true
+    return true
   }
-
-  function setAuthLockout(lockoutTime: Date | null) {
-    authLockoutTime.value = lockoutTime ? lockoutTime.getTime() : null
+  function clearAuth() {
+    setApiKey(null)
+    authKeyInput.value = ''
+    try { persist() } catch (error) { authError.value = (error as Error).message }
   }
-
-  function setAutoAuthenticating(value: boolean) {
-    isAutoAuthenticating.value = value
+  function initializeAuth() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY)
+      if (raw !== null) {
+        const saved: unknown = JSON.parse(raw)
+        if (!saved || typeof saved !== 'object' || !('apiKey' in saved) || (saved.apiKey !== null && typeof saved.apiKey !== 'string')) {
+          throw new Error('已保存的认证状态格式无效，请重新登录')
+        }
+        apiKey.value = saved.apiKey
+        if ('authAttempts' in saved && typeof saved.authAttempts === 'number' && Number.isSafeInteger(saved.authAttempts) && saved.authAttempts >= 0) authAttempts.value = saved.authAttempts
+        if ('authLockoutTime' in saved && typeof saved.authLockoutTime === 'number' && Number.isFinite(saved.authLockoutTime)) authLockoutTime.value = saved.authLockoutTime
+      } else {
+        apiKey.value = localStorage.getItem('proxyAccessKey')
+        persist()
+      }
+      // 旧格式只迁移一次，新格式始终是唯一事实源。
+      localStorage.removeItem('proxyAccessKey')
+      authKeyInput.value = apiKey.value ?? ''
+    } catch (error) {
+      apiKey.value = null
+      authError.value = '恢复认证状态失败：' + (error instanceof Error ? error.message : String(error))
+    }
   }
-
-  function setInitialized(value: boolean) {
-    isInitialized.value = value
+  function handleStorageChange(event: StorageEvent) {
+    if (event.key !== STORAGE_KEY && event.key !== null) return
+    try {
+      const saved = event.newValue === null ? { apiKey: null } : JSON.parse(event.newValue)
+      if (!saved || typeof saved !== 'object' || !('apiKey' in saved) || (saved.apiKey !== null && typeof saved.apiKey !== 'string')) {
+        throw new Error('其他标签页保存的认证状态格式无效')
+      }
+      authAttempts.value = Number.isSafeInteger(saved.authAttempts) && saved.authAttempts >= 0 ? saved.authAttempts : 0
+      authLockoutTime.value = typeof saved.authLockoutTime === 'number' && Number.isFinite(saved.authLockoutTime) ? saved.authLockoutTime : null
+      // 仅锁定计数变化时，不打断其他标签页的有效会话。
+      if (saved.apiKey === apiKey.value) return
+      setApiKey(saved.apiKey)
+      authKeyInput.value = saved.apiKey ?? ''
+      authError.value = '认证状态已在其他标签页更改，请重新验证'
+    } catch (error) {
+      setApiKey(null)
+      authError.value = error instanceof Error ? error.message : String(error)
+    }
+    authLoading.value = false
+    isAutoAuthenticating.value = false
+    isInitialized.value = true
   }
-
-  function setAuthLoading(value: boolean) {
-    authLoading.value = value
+  // 墙上时钟不是响应式依赖，提交时实时计算。
+  function lockoutSeconds() { return Math.max(0, Math.ceil(((authLockoutTime.value ?? 0) - Date.now()) / 1000)) }
+  function setAuthError(error: string) { authError.value = error }
+  function rejectAuthentication(automatic: boolean, maxAttempts: number) {
+    apiKey.value = null
+    if (!automatic) authAttempts.value++
+    if (authAttempts.value >= maxAttempts) authLockoutTime.value = Date.now() + 5 * 60 * 1000
+    persist()
   }
-
-  function setAuthKeyInput(value: string) {
-    authKeyInput.value = value
+  function clearExpiredLockout() {
+    if (authLockoutTime.value === null || lockoutSeconds() > 0) return
+    authAttempts.value = 0
+    authLockoutTime.value = null
+    persist()
   }
+  function setAutoAuthenticating(value: boolean) { isAutoAuthenticating.value = value }
+  function setInitialized(value: boolean) { isInitialized.value = value }
+  function setAuthLoading(value: boolean) { authLoading.value = value }
+  function setAuthKeyInput(value: string) { authKeyInput.value = value }
 
-  return {
-    // 状态
-    apiKey,
-    authError,
-    authAttempts,
-    authLockoutTime,
-    isAutoAuthenticating,
-    isInitialized,
-    authLoading,
-    authKeyInput,
-
-    // 计算属性
-    isAuthenticated,
-    isAuthLocked,
-
-    // 方法
-    setApiKey,
-    clearAuth,
-    initializeAuth,
-    setAuthError,
-    incrementAuthAttempts,
-    resetAuthAttempts,
-    setAuthLockout,
-    setAutoAuthenticating,
-    setInitialized,
-    setAuthLoading,
-    setAuthKeyInput,
-  }
-}, {
-  // 持久化配置
-  persist: {
-    key: 'api-proxy-auth',
-    storage: localStorage,
-    // 仅持久化必要字段，排除瞬态 UI 状态和敏感输入
-    pick: ['apiKey', 'authAttempts', 'authLockoutTime'],
-  },
+  return { apiKey, generation, requestSignal, authError, authAttempts, authLockoutTime, isAutoAuthenticating, isInitialized, authLoading, authKeyInput, isAuthenticated,
+    setApiKey, confirmAuthentication, clearAuth, initializeAuth, handleStorageChange, lockoutSeconds, setAuthError, rejectAuthentication, clearExpiredLockout, setAutoAuthenticating, setInitialized, setAuthLoading, setAuthKeyInput }
 })

@@ -13,11 +13,15 @@ import (
 	"time"
 
 	"insistanan/api-proxy/internal/api/system"
+	"insistanan/api-proxy/internal/dialogue/routing/intent"
 	"insistanan/api-proxy/internal/infra/cli"
 	"insistanan/api-proxy/internal/infra/config"
 )
 
 func main() {
+	if handled, code := intent.RunLocalProcessHelper(os.Args[1:]); handled {
+		os.Exit(code)
+	}
 	loadedEnvFiles, err := config.LoadDotEnv()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -46,8 +50,35 @@ func main() {
 	}
 }
 
-// runServer 保证监听失败、收到信号和正常退出都先回收资源，再由 main 决定退出码。
-func runServer() (err error) {
+// runServer 给完整停机设置期限。到期由 main 以失败状态退出进程，
+// 不在请求或生产者仍运行时抢先关闭它们依赖的数据库。
+func runServer() error {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	result := make(chan error, 1)
+	go func() { result <- runApplication(ctx) }()
+	select {
+	case err := <-result:
+		return err
+	case <-ctx.Done():
+	}
+	// 恢复信号默认行为，第二次 Ctrl+C 可以立即终止卡住的 I/O。
+	stop()
+	return awaitShutdown(result, 30*time.Second)
+}
+
+func awaitShutdown(result <-chan error, budget time.Duration) error {
+	timer := time.NewTimer(budget)
+	defer timer.Stop()
+	select {
+	case err := <-result:
+		return err
+	case <-timer.C:
+		return fmt.Errorf("完整停机超过 %s，仍有请求或资源未退出，强制结束进程；未落盘数据可能丢失", budget)
+	}
+}
+
+func runApplication(ctx context.Context) (err error) {
 	application, err := newApp()
 	if err != nil {
 		return err
@@ -62,7 +93,5 @@ func runServer() (err error) {
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 	return serveUntilStopped(ctx, srv, 10*time.Second)
 }

@@ -1,5 +1,5 @@
 // 应用设置与内容安全类型。
-import type { SemanticSafetyConfig } from './datasets'
+import type { SemanticSafetyConfig } from '@/types/datasets'
 
 export interface AppSettings {
   network: {
@@ -22,6 +22,10 @@ export interface ExtensionsSettings {
 }
 
 export interface ExtensionsGitStatus {
+  migration?: { source: string; target: string; stage: string; recordPath: string }
+  exportFiles?: string[]
+  exportRevision?: string
+  exportError?: string
   gitAvailable: boolean
   skillsDir: string
   repoUrl: string

@@ -19,16 +19,13 @@ import (
 	"insistanan/api-proxy/internal/protocol/visionmedia"
 )
 
-// Session 会话数据结构。
-// 定义已下沉到 types（纯数据体，converters 依赖它做参数类型），
-// 此处保留别名以兼容 session 包内外的既有引用。
+// Session 使用协议层的纯数据类型。
 type Session = types.Session
 
 // SessionManager 会话管理器
 type SessionManager struct {
-	sessions        map[string]*Session // sessionID → Session
-	responseMapping map[string]string   // responseID → sessionID
-	responseOwners  map[string]string   // responseID → 上游组合摘要，与轮次原子提交
+	sessions        map[string]*Session          // sessionID → Session
+	responseMapping map[string]responseReference // responseID → 历史边界与上游归属
 	mu              syncstate.Mutex
 	active          map[string]int
 	registry        *conversation.Registry
@@ -72,8 +69,7 @@ func newSessionManager(maxAge time.Duration, maxMessages int, maxTokens int, sto
 	return &SessionManager{
 		sessions:          make(map[string]*Session),
 		active:            make(map[string]int),
-		responseMapping:   make(map[string]string),
-		responseOwners:    make(map[string]string),
+		responseMapping:   make(map[string]responseReference),
 		maxAge:            maxAge,
 		maxMessages:       maxMessages,
 		maxTokens:         maxTokens,
@@ -143,8 +139,18 @@ func (sm *SessionManager) getOrCreateLocked(ctx context.Context, previous, conve
 		return nil, err
 	}
 	var current *Session
+	var ref responseReference
 	if previous != "" {
-		current = sm.sessions[sm.responseMapping[previous]]
+		var exists bool
+		ref, exists = sm.responseMapping[previous]
+		if !exists && sm.store != nil {
+			var err error
+			ref, _, err = sm.store.loadResponseReference(ctx, previous)
+			if err != nil {
+				return nil, err
+			}
+		}
+		current = sm.sessions[ref.SessionID]
 	} else if conversationID != "" {
 		for _, candidate := range sm.sessions {
 			if candidate.ConversationID == conversationID && (current == nil || candidate.LastAccessAt.After(current.LastAccessAt)) {
@@ -155,7 +161,7 @@ func (sm *SessionManager) getOrCreateLocked(ctx context.Context, previous, conve
 	if current == nil && sm.store != nil {
 		var err error
 		if previous != "" {
-			current, err = sm.store.load(ctx, `WHERE rs.id=(SELECT session_id FROM response_session_mappings WHERE response_id=?)`, previous)
+			current, err = sm.store.load(ctx, `WHERE rs.id=?`, ref.SessionID)
 		} else if conversationID != "" {
 			current, err = sm.store.load(ctx, `WHERE rs.conversation_id=? ORDER BY COALESCE(rsa.last_access_at,rs.last_access_at) DESC,rs.id DESC LIMIT 1`, conversationID)
 		}
@@ -199,7 +205,11 @@ func (sm *SessionManager) getOrCreateLocked(ctx context.Context, previous, conve
 		}
 		current = &candidate
 	}
-	sm.cacheLoadedSessionLocked(current, previous)
+	sm.cacheLoadedSessionLocked(current)
+	if previous != "" {
+		sm.responseMapping[previous] = ref
+		return responseSnapshot(current, previous, ref.Boundary)
+	}
 	return current, nil
 }
 
@@ -217,7 +227,7 @@ func (sm *SessionManager) activeIDsLocked() []string {
 	return ids
 }
 
-func (sm *SessionManager) cacheLoadedSessionLocked(current *Session, responseID string) {
+func (sm *SessionManager) cacheLoadedSessionLocked(current *Session) {
 	if sm.store != nil && sm.maxLoadedSessions > 0 && len(sm.sessions) >= sm.maxLoadedSessions && sm.sessions[current.ID] == nil {
 		var oldest *Session
 		for id, candidate := range sm.sessions {
@@ -230,14 +240,11 @@ func (sm *SessionManager) cacheLoadedSessionLocked(current *Session, responseID 
 		}
 	}
 	sm.sessions[current.ID] = current
-	if responseID != "" {
-		sm.responseMapping[responseID] = current.ID
-	}
 }
 func (sm *SessionManager) removeCachedSessionLocked(id string) {
 	delete(sm.sessions, id)
-	for responseID, sessionID := range sm.responseMapping {
-		if sessionID == id {
+	for responseID, ref := range sm.responseMapping {
+		if ref.SessionID == id {
 			sm.forgetResponseMappingLocked(responseID)
 		}
 	}
@@ -306,9 +313,6 @@ func (sm *SessionManager) commitSnapshot(ctx context.Context, current *Session, 
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if cached := sm.sessions[current.ID]; cached != nil && cached.Version != current.Version {
-			return fmt.Errorf("会话历史已更新，拒绝合并过时响应")
-		}
 		alias := ""
 		if sm.registry != nil && next.ConversationID != "" && responseID != "" {
 			alias = conversation.ResponseAliasKey(responseID)
@@ -318,23 +322,31 @@ func (sm *SessionManager) commitSnapshot(ctx context.Context, current *Session, 
 				return err
 			}
 		} else {
-			if sm.sessions[current.ID] == nil {
+			cached := sm.sessions[current.ID]
+			if cached == nil {
 				return fmt.Errorf("会话已删除")
 			}
-			if responseID != "" && sm.responseMapping[responseID] != "" {
+			if _, exists := sm.responseMapping[responseID]; responseID != "" && exists {
 				return fmt.Errorf("response ID 已存在，拒绝覆盖历史归属")
+			}
+			if cached.Version != current.Version {
+				id, err := generateID("sess")
+				if err != nil {
+					return err
+				}
+				next.ID = id
 			}
 		}
 		if replace {
-			for id, sessionID := range sm.responseMapping {
-				if sessionID == next.ID {
+			for id, ref := range sm.responseMapping {
+				if ref.SessionID == next.ID {
 					sm.forgetResponseMappingLocked(id)
 				}
 			}
 		}
-		sm.cacheLoadedSessionLocked(&next, responseID)
+		sm.cacheLoadedSessionLocked(&next)
 		if responseID != "" {
-			sm.responseOwners[responseID] = owner
+			sm.responseMapping[responseID] = responseReference{SessionID: next.ID, Owner: owner, Boundary: boundaryOf(&next)}
 		}
 		return nil
 	})

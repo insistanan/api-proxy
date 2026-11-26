@@ -43,7 +43,7 @@ type Caller struct {
 	EnvConfig        *config.EnvConfig
 	CfgManager       *config.ConfigManager
 	ChannelScheduler *scheduler.ChannelScheduler
-	// RequestLogStore 请求日志存储（R4-b 装配层注入，替代调度器服务定位器）。
+	// RequestLogStore 请求日志存储（装配层注入）。
 	// 未注入时不记录请求索引；调度器不负责定位内部调用的日志存储。
 	RequestLogStore *metrics.RequestLogStore
 	// TimeoutSecs 单次 Call 的整体超时；0 取 DefaultTimeoutSecs。
@@ -242,7 +242,7 @@ type PromptMessage struct {
 }
 
 func (c *Caller) callOnChannel(ctx context.Context, selection *SelectedChannel, prompt Prompt, trace *callLogContext) (result *CallResult, err error) {
-	// 结束时统一释放选渠许可（R2-b）：健康结果恰好记账一次（成功 / 失败，
+	// 结束时统一释放选渠许可：健康结果恰好记账一次（成功 / 失败，
 	// 取消按中性），随后幂等释放 in-flight 预留；未记账的探测名额按中性释放。
 	// 与主链路 multi_channel_failover 的口径一致。
 	defer func() {
@@ -610,7 +610,7 @@ func (c *Caller) timeoutDuration() time.Duration {
 	return time.Duration(timeout) * time.Second
 }
 
-// buildProviderRequest 以显式输入构造上游请求（R4-a）：
+// buildProviderRequest 以显式输入构造上游请求：
 // providers 统一以 Claude Messages 请求体为输入（visionlayer 同此约定），
 // 经 RequestInput 显式传入 context / method / header / body，
 // 不再伪造 gin 测试上下文；也绝不携带管理端 cookie / x-proxy-key。

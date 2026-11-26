@@ -1,8 +1,8 @@
 package cachekeepalive
 
 import (
-	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -11,6 +11,7 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 	"insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/contract"
 	"insistanan/api-proxy/internal/protocol/tokenusage"
 	"insistanan/api-proxy/internal/protocol/types"
 )
@@ -63,13 +64,11 @@ func parseProtocolResponse(protocol string, body []byte, status int) (*types.Usa
 	input, output, cached := "input_tokens", "output_tokens", "input_tokens_details.cached_tokens"
 	if protocol == "openai" {
 		input, output, cached = "prompt_tokens", "completion_tokens", "prompt_tokens_details.cached_tokens"
-		if !root.Get("choices").IsArray() {
+		if !root.Get("choices").IsArray() || root.Get("choices.#").Int() == 0 {
 			responseErr = errors.Join(responseErr, errors.New("Chat 未返回 choices"))
 		}
 		for _, choice := range root.Get("choices").Array() {
-			if choice.Get("finish_reason").String() == "content_filter" {
-				responseErr = errors.Join(responseErr, errors.New("Chat 保活生成被内容过滤"))
-			}
+			responseErr = errors.Join(responseErr, keepaliveCompletion("openai", choice.Get("finish_reason").String()))
 		}
 	} else if protocol == "responses" {
 		if state := root.Get("status").String(); state != "completed" && state != "incomplete" {
@@ -98,26 +97,20 @@ func parseProtocolResponse(protocol string, body []byte, status int) (*types.Usa
 
 // 只聚合上游用量，不缓存回复，不经过任何会话写回或工具执行链。
 func parseStreamResponse(protocol string, body []byte, status int) (*types.Usage, error) {
-	scanner := bufio.NewScanner(bytes.NewReader(body))
-	scanner.Buffer(make([]byte, 4096), 1<<20)
-	var data []string
-	eventName := ""
+	scanner := codec.NewSSEEventReader(context.Background(), bytes.NewReader(body))
 	var envelope []byte
 	var merged = []byte(`{}`)
 	done := false
 	claudeFinalUsage := false
 	var streamErr error
 	geminiFinish := ""
-	consume := func() error {
-		if len(data) == 0 {
-			eventName = ""
+	claudeFinish := ""
+	chatFinishes := make(map[int64]string)
+	consume := func(event, payload string) error {
+		if payload == "" {
 			return nil
 		}
-		event := eventName
-		eventName = ""
-		payload := strings.Join(data, "\n")
-		data = nil
-		if payload == codec.SSEDoneMarker {
+		if strings.TrimSpace(payload) == codec.SSEDoneMarker {
 			if protocol == "openai" {
 				done = true
 			}
@@ -136,6 +129,9 @@ func parseStreamResponse(protocol string, body []byte, status int) (*types.Usage
 		}
 		switch protocol {
 		case "claude":
+			if reason := root.Get("delta.stop_reason").String(); reason != "" {
+				claudeFinish = reason
+			}
 			u := root.Get("usage")
 			if kind == "message_start" {
 				u = root.Get("message.usage")
@@ -161,8 +157,9 @@ func parseStreamResponse(protocol string, body []byte, status int) (*types.Usage
 			}
 		case "openai":
 			for _, choice := range root.Get("choices").Array() {
-				if choice.Get("finish_reason").String() == "content_filter" {
-					streamErr = errors.Join(streamErr, errors.New("Chat 保活生成被内容过滤"))
+				index := choice.Get("index").Int()
+				if _, exists := chatFinishes[index]; !exists || choice.Get("finish_reason").String() != "" {
+					chatFinishes[index] = choice.Get("finish_reason").String()
 				}
 			}
 			if u := root.Get("usage"); u.IsObject() {
@@ -182,25 +179,14 @@ func parseStreamResponse(protocol string, body []byte, status int) (*types.Usage
 		return nil
 	}
 	for scanner.Scan() {
-		line := strings.TrimSuffix(scanner.Text(), "\r")
-		if line == "" {
-			if err := consume(); err != nil {
-				streamErr = errors.Join(streamErr, err)
-				break
-			}
-			continue
-		}
-		if value, ok := codec.ParseSSEDataLine(line); ok {
-			data = append(data, value)
-		} else if strings.HasPrefix(line, "event:") {
-			eventName = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+		event := scanner.Event()
+		if err := consume(event.Name, event.Data); err != nil {
+			streamErr = errors.Join(streamErr, err)
+			break
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		streamErr = errors.Join(streamErr, fmt.Errorf("读取保活 SSE 失败: %w", err))
-	}
-	if err := consume(); err != nil {
-		streamErr = errors.Join(streamErr, err)
 	}
 	if !done {
 		streamErr = errors.Join(streamErr, errors.New("保活流式响应未完整结束"))
@@ -210,6 +196,17 @@ func parseStreamResponse(protocol string, body []byte, status int) (*types.Usage
 			return nil, errors.Join(streamErr, errors.New("Claude 流缺少最终输出用量，不能把起始零值作为实际用量"))
 		}
 		envelope = append(append([]byte(`{"type":"message","usage":`), merged...), '}')
+		var err error
+		envelope, err = sjson.SetBytes(envelope, "stop_reason", claudeFinish)
+		streamErr = errors.Join(streamErr, err)
+	} else if protocol == "openai" && len(envelope) > 0 {
+		choices := make([]map[string]any, 0, len(chatFinishes))
+		for index, reason := range chatFinishes {
+			choices = append(choices, map[string]any{"index": index, "finish_reason": reason})
+		}
+		var err error
+		envelope, err = sjson.SetBytes(envelope, "choices", choices)
+		streamErr = errors.Join(streamErr, err)
 	} else if protocol == "gemini" && geminiFinish != "" && len(envelope) > 0 {
 		// Gemini 可先发 finishReason，再单独发送最终 usageMetadata。
 		var err error
@@ -218,4 +215,18 @@ func parseStreamResponse(protocol string, body []byte, status int) (*types.Usage
 	}
 	usage, err := parseProtocolResponse(protocol, envelope, status)
 	return usage, errors.Join(streamErr, err)
+}
+
+func keepaliveCompletion(protocol, reason string) error {
+	if reason == "" {
+		return fmt.Errorf("%s 保活响应缺少停止原因", protocol)
+	}
+	completion, err := contract.Finish(protocol, reason)
+	if err != nil {
+		return err
+	}
+	if completion.Status != "completed" && completion.Reason != "max_output_tokens" {
+		return fmt.Errorf("%s 保活响应未正常完成: %s", protocol, reason)
+	}
+	return nil
 }

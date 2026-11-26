@@ -2,17 +2,19 @@ package piagent
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
 
-	"insistanan/api-proxy/internal/storage/atomicfile"
+	"insistanan/api-proxy/internal/clients/filetxn"
 )
 
 // ErrLocked 表示 pi-agent（proper-lockfile）正持有目标文件锁。
@@ -24,53 +26,58 @@ var ErrRevisionMismatch = errors.New("配置文件已被外部修改")
 // ErrRevisionRequired 表示修改已存在文件时必须携带读取时的 revision。
 var ErrRevisionRequired = errors.New("修改已存在的配置必须提供 revision")
 
-// LockDuration 表示 manager 锁在多大时间内视为有效（超过视为陈旧）。
-const lockStaleAfter = 60 * time.Second
-
-// managerLockName 是 api-proxy 写入 pi-agent 配置时使用的互斥锁文件名，
-// 放在 pi-agent 配置目录下，避免与 pi-agent 的 per-file proper-lockfile 冲突。
+// 管理锁文件保持原位，由操作系统绑定句柄所有权；进程退出自动释放，禁止按时间删锁。
 const managerLockName = ".pi-agent-manager.lock"
 
-// acquireManagerLock 以排他方式获取管理锁。若锁已存在且陈旧则回收。
-// 返回的 release 函数必须在写入完成后调用。
-func acquireManagerLock(configDir string) (release func(), err error) {
+func acquireManagerLock(ctx context.Context, configDir string) (func(), error) {
 	if err := os.MkdirAll(configDir, 0700); err != nil {
-		return nil, fmt.Errorf("创建配置目录失败: %w", err)
+		return nil, err
 	}
-	lockPath := filepath.Join(configDir, managerLockName)
-	deadline := time.Now().Add(5 * time.Second)
+	file, err := os.OpenFile(filepath.Join(configDir, managerLockName), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("打开管理锁失败: %w", err)
+	}
+	closeFile := func() {
+		if err := file.Close(); err != nil {
+			log.Printf("[PiAgent-Lock] 关闭管理锁失败: %v", err)
+		}
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	tick := time.NewTicker(100 * time.Millisecond)
+	defer tick.Stop()
 	for {
-		file, openErr := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-		if openErr == nil {
-			fmt.Fprintf(file, "%d\n", time.Now().UnixNano())
-			file.Close()
-			return func() {
-				_ = os.Remove(lockPath)
-			}, nil
+		if err := waitCtx.Err(); err != nil {
+			closeFile()
+			return nil, err
 		}
-		if !os.IsExist(openErr) {
-			return nil, fmt.Errorf("获取管理锁失败: %w", openErr)
+		locked, err := tryManagerFileLock(file)
+		if err != nil {
+			closeFile()
+			return nil, fmt.Errorf("获取管理锁失败: %w", err)
 		}
-		info, statErr := os.Stat(lockPath)
-		if statErr == nil && time.Since(info.ModTime()) > lockStaleAfter {
-			// 陈旧锁直接回收，避免死锁
-			_ = os.Remove(lockPath)
-			continue
+		if locked {
+			return closeFile, nil
 		}
-		if time.Now().After(deadline) {
-			return nil, ErrLocked
+		select {
+		case <-waitCtx.Done():
+			closeFile()
+			return nil, errors.Join(ErrLocked, waitCtx.Err())
+		case <-tick.C:
 		}
-		time.Sleep(100 * time.Millisecond)
 	}
 }
 
 // checkPiAgentLocks 检测 pi-agent 自身的 proper-lockfile 是否正持有
 // models.json / auth.json / settings.json 任一文件锁（锁以 <file>.lock 目录存在表达）。
+// 这是取管理锁前后及提交前的冲突检测；管理锁并未参与官方锁协议，外部交错仍由内容校验拒绝。
 func checkPiAgentLocks(configDir string) error {
 	for _, kind := range allFileKinds {
 		lockPath := filepath.Join(configDir, string(kind)+".lock")
 		if _, err := os.Stat(lockPath); err == nil {
 			return ErrLocked
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("检查 pi-agent 锁失败: %w", err)
 		}
 	}
 	return nil
@@ -117,6 +124,9 @@ func ReadJSON(path string) (map[string]json.RawMessage, []byte, bool, error) {
 	if err := json.Unmarshal(raw, &root); err != nil {
 		return nil, raw, true, fmt.Errorf("JSON 格式无效: %w", err)
 	}
+	if root == nil {
+		return nil, raw, true, fmt.Errorf("配置根节点必须是 JSON 对象，不能是 null")
+	}
 	return root, raw, true, nil
 }
 
@@ -130,7 +140,7 @@ type WriteResult struct {
 // WriteFileAtomic 以"备份 → 同目录临时文件 → 原子替换"的方式写入文件。
 // 返回备份路径与新内容 revision。备份写入失败时中止写入。
 // 文件替换原语委托 internal/storage/atomicfile（唯一平台实现出处）。
-func WriteFileAtomic(path string, data []byte, sensitive bool, backupDir string) (WriteResult, error) {
+func WriteFileAtomic(path string, data []byte, sensitive bool, backupDir string, expected []byte) (WriteResult, error) {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return WriteResult{}, fmt.Errorf("创建目录失败: %w", err)
@@ -141,6 +151,12 @@ func WriteFileAtomic(path string, data []byte, sensitive bool, backupDir string)
 		return WriteResult{}, fmt.Errorf("读取现有文件失败: %w", err)
 	}
 
+	if (previous == nil) != (expected == nil) || !bytes.Equal(previous, expected) {
+		return WriteResult{}, ErrRevisionMismatch
+	}
+	if err := checkPiAgentLocks(dir); err != nil {
+		return WriteResult{}, err
+	}
 	var backupPath string
 	if exists && len(previous) > 0 {
 		backupPath, err = writeBackup(path, previous, sensitive, backupDir)
@@ -153,11 +169,8 @@ func WriteFileAtomic(path string, data []byte, sensitive bool, backupDir string)
 	if sensitive {
 		mode = 0600
 	}
-	if err := atomicfile.Write(path, data, atomicfile.Options{
-		TempPrefix: ".piagent-",
-		Mode:       mode,
-	}); err != nil {
-		return WriteResult{}, err
+	if err := filetxn.Replace(path, previous, data, "", mode); err != nil {
+		return WriteResult{Path: path, Revision: SHA256Hex(data), Backup: backupPath}, err
 	}
 
 	return WriteResult{
@@ -175,16 +188,7 @@ func writeBackup(path string, content []byte, sensitive bool, backupDir string) 
 	if err := os.MkdirAll(backupDir, 0700); err != nil {
 		return "", fmt.Errorf("创建备份目录失败: %w", err)
 	}
-	name := fmt.Sprintf("%s.%s.json", filepath.Base(path), time.Now().Format("20060102-150405.000000000"))
-	backupPath := filepath.Join(backupDir, name)
-	mode := os.FileMode(0600)
-	if !sensitive {
-		mode = 0644
-	}
-	if err := os.WriteFile(backupPath, content, mode); err != nil {
-		return "", fmt.Errorf("创建备份失败: %w", err)
-	}
-	return backupPath, nil
+	return filetxn.Backup(backupDir, filepath.Base(path), content)
 }
 
 // MarshalIndent 以两空格缩进序列化 JSON，并保证以换行结尾。

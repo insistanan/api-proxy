@@ -1,1 +1,1 @@
-export { useThemeStore as useTheme } from './store'
+export { useThemeStore as useTheme } from '@/shared/theme/store'

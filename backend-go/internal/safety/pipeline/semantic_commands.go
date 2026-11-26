@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"strings"
 
 	"insistanan/api-proxy/internal/dialogue/routing/semantic"
@@ -66,16 +65,12 @@ func reviewSemanticCommands(ctx context.Context, service *semantic.Service, reco
 			return &ContentSafetyError{BlockType: sensitive.BlockTypeDangerousCmd, RuleName: command.Rule, Snippet: command.SemanticEvidence, Command: command.Command, CommandHash: sensitive.CommandIdentity(command)}
 		}
 		var pendingReview *sensitive.CommandMatch
-		for _, hit := range result.Hits {
-			if hit.Sample.Negative || hit.Score < p.Threshold {
-				continue
-			}
-			negative := -1.0
-			for _, other := range result.Hits {
-				if other.Sample.Label == hit.Sample.Label && other.Sample.Negative {
-					negative = other.Score
-				}
-			}
+		matches, err := semantic.AssessSafety(result, command.Command, p.Threshold, p.Margin)
+		if err != nil {
+			return err
+		}
+		for _, match := range matches {
+			hit, negative := match.Hit, match.NegativeScore
 			candidate := command
 			candidate.Rule = hit.Sample.Label
 			candidate.SemanticEvidence = fmt.Sprintf("数据集=%s 修订=%d 样本=%s 正例相似度=%.5f 反例相似度=%.5f 索引=%s 策略=%s；相似度仅为线索，不代表命令危险概率。", hit.DatasetID, hit.Revision, hit.Sample.ID, hit.Score, negative, result.Version, policy)
@@ -85,16 +80,10 @@ func reviewSemanticCommands(ctx context.Context, service *semantic.Service, reco
 				}
 				continue
 			}
-			if p.Mode == "block" && hit.Sample.Pattern != "" && hit.Score-negative >= p.Margin {
-				pattern, err := regexp.Compile(hit.Sample.Pattern)
-				if err != nil {
-					return fmt.Errorf("语义核验规则无效: %w", err)
-				}
-				if pattern.MatchString(command.Command) {
-					safetyErr := dangerousCommandError(candidate)
-					safetyErr.Snippet = candidate.SemanticEvidence
-					return safetyErr
-				}
+			if p.Mode == "block" && match.BlockEligible {
+				safetyErr := dangerousCommandError(candidate)
+				safetyErr.Snippet = candidate.SemanticEvidence
+				return safetyErr
 			}
 			if pendingReview == nil {
 				pendingReview = &candidate

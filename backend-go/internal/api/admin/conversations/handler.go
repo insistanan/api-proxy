@@ -15,6 +15,7 @@ import (
 )
 
 type routeOverrideRequest struct {
+	ChannelID    string `json:"channelId"`
 	Kind         string `json:"kind"`
 	ChannelIndex int    `json:"channelIndex"`
 }
@@ -24,6 +25,7 @@ type conversationNameRequest struct {
 }
 
 type routeOptionChannel struct {
+	ChannelID    string              `json:"channelId"`
 	Kind         string              `json:"kind"`
 	ChannelIndex int                 `json:"channelIndex"`
 	ChannelName  string              `json:"channelName"`
@@ -203,13 +205,13 @@ func SetConversationRouteOverride(registry *conversation.Registry, cfgManager *c
 			c.JSON(http.StatusConflict, gin.H{"error": "route override kind must match conversation kind"})
 			return
 		}
-		channelName, ok := lookupChannelName(cfgManager, scheduler.ChannelKind(req.Kind), req.ChannelIndex, item.LastModel)
+		channelName, ok := lookupChannelName(cfgManager, scheduler.ChannelKind(req.Kind), req.ChannelIndex, item.LastModel, req.ChannelID)
 		if !ok {
-			c.JSON(http.StatusNotFound, gin.H{"error": "channel not found"})
+			c.JSON(http.StatusConflict, gin.H{"error": "渠道身份或可用范围已变化，请刷新后重新选择", "code": "channel_identity_conflict"})
 			return
 		}
 
-		item, err = registry.SetRouteOverride(c.Request.Context(), c.Param("id"), req.Kind, req.ChannelIndex, channelName)
+		item, err = registry.SetRouteOverride(c.Request.Context(), c.Param("id"), req.Kind, req.ChannelIndex, channelName, req.ChannelID)
 		if err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 			return
@@ -259,6 +261,7 @@ func buildRouteOptionGroup(cfgManager *config.ConfigManager, kind scheduler.Chan
 			continue
 		}
 		channels = append(channels, routeOptionChannel{
+			ChannelID:    upstream.ID,
 			Kind:         string(kind),
 			ChannelIndex: index,
 			ChannelName:  upstream.Name,
@@ -275,13 +278,16 @@ func buildRouteOptionGroup(cfgManager *config.ConfigManager, kind scheduler.Chan
 	}
 }
 
-func lookupChannelName(cfgManager *config.ConfigManager, kind scheduler.ChannelKind, channelIndex int, model string) (string, bool) {
+func lookupChannelName(cfgManager *config.ConfigManager, kind scheduler.ChannelKind, channelIndex int, model string, channelID string) (string, bool) {
 	cfg := cfgManager.GetConfig()
 	upstreams := getConfigUpstreams(cfg, kind)
 	if channelIndex < 0 || channelIndex >= len(upstreams) {
 		return "", false
 	}
 	upstream := &upstreams[channelIndex]
+	if channelID == "" || upstream.ID != channelID {
+		return "", false
+	}
 	if upstream.ExcludeFromConversation || config.GetChannelStatus(upstream) == config.ChannelStatusDeleted {
 		return "", false
 	}

@@ -146,9 +146,10 @@ func newSender(cfg *config.ConfigManager, recorders ...func(tokenusage.Fact)) fu
 
 func parseResponse(body []byte, statusCode int) (*types.Usage, error) {
 	var envelope struct {
-		Type  string          `json:"type"`
-		Error json.RawMessage `json:"error"`
-		Usage *struct {
+		Type       string          `json:"type"`
+		StopReason string          `json:"stop_reason"`
+		Error      json.RawMessage `json:"error"`
+		Usage      *struct {
 			types.Usage
 			InputTokens          *int `json:"input_tokens"`
 			OutputTokens         *int `json:"output_tokens"`
@@ -180,6 +181,9 @@ func parseResponse(body []byte, statusCode int) (*types.Usage, error) {
 	}
 	if envelope.Type != "message" {
 		return usage, errors.New("保活上游未返回 Messages 响应")
+	}
+	if err := keepaliveCompletion("claude", envelope.StopReason); err != nil {
+		return usage, err
 	}
 	_, _, _, _, err := usageNumbers(usage)
 	return usage, err

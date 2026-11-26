@@ -1,179 +1,48 @@
 package providers
 
 import (
-	"encoding/json"
-	"net/http"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"insistanan/api-proxy/internal/infra/config"
-	"insistanan/api-proxy/internal/protocol/types"
 )
 
-func TestOpenAIProviderConvertToProviderRequest_UsesSingleTokenField(t *testing.T) {
-	t.Run("replays thinking as reasoning content", func(t *testing.T) {
-		c := newGinContext(http.MethodPost, "/v1/messages", []byte(`{
-			"model":"reasoning-model",
-			"messages":[{"role":"assistant","content":[
-				{"type":"thinking","thinking":"need inspect files"},
-				{"type":"text","text":"I will inspect the files."}
-			]}]
-		}`), nil)
-		upstream := &config.UpstreamConfig{BaseURL: "https://api.example.com", ServiceType: "openai"}
+func TestOpenAIProviderUsesSingleTokenField(t *testing.T) {
+	for _, model := range []string{"gpt-4o", "kimi-2.6", "o3-mini", "gpt-5.2", "codex-o4-mini"} {
+		t.Run(model, func(t *testing.T) {
+			upstream := &config.UpstreamConfig{BaseURL: "https://api.example.com", ServiceType: "openai", ModelMapping: map[string][]string{"claude-x": {model}}}
+			got := messagesProviderPayload(t, &OpenAIProvider{}, `{"model":"claude-x","max_tokens":64000,"messages":[]}`, upstream)
+			tokenField, absent := "max_completion_tokens", "max_tokens"
+			if model == "gpt-4o" {
+				tokenField, absent = absent, tokenField
+			}
+			require.Equal(t, model, got.Get("model").String())
+			require.Equal(t, int64(64000), got.Get(tokenField).Int())
+			require.False(t, got.Get(absent).Exists())
+		})
+	}
+}
 
-		p := &OpenAIProvider{}
-		req, _, err := p.ConvertToProviderRequest(c, upstream, "sk-test")
-		if err != nil {
-			t.Fatalf("ConvertToProviderRequest() err = %v", err)
-		}
-
-		var got types.OpenAIRequest
-		if err := json.NewDecoder(req.Body).Decode(&got); err != nil {
-			t.Fatalf("decode request body: %v", err)
-		}
-		if len(got.Messages) != 1 {
-			t.Fatalf("messages = %#v", got.Messages)
-		}
-		if got.Messages[0].ReasoningContent != "need inspect files" {
-			t.Fatalf("reasoning_content = %q", got.Messages[0].ReasoningContent)
-		}
-		if got.Messages[0].Content != "I will inspect the files." {
-			t.Fatalf("content = %#v", got.Messages[0].Content)
-		}
-	})
-
-	t.Run("generic openai keeps max_tokens only", func(t *testing.T) {
-		c := newGinContext(http.MethodPost, "/v1/messages", []byte(`{"model":"gpt-4o","max_tokens":123,"messages":[]}`), nil)
-		upstream := &config.UpstreamConfig{
-			BaseURL:     "https://api.example.com",
-			ServiceType: "openai",
-		}
-
-		p := &OpenAIProvider{}
-		req, _, err := p.ConvertToProviderRequest(c, upstream, "sk-test")
-		if err != nil {
-			t.Fatalf("ConvertToProviderRequest() err = %v", err)
-		}
-
-		var got types.OpenAIRequest
-		if err := json.NewDecoder(req.Body).Decode(&got); err != nil {
-			t.Fatalf("decode request body: %v", err)
-		}
-
-		if got.MaxTokens != 123 {
-			t.Fatalf("MaxTokens = %d, want 123", got.MaxTokens)
-		}
-		if got.MaxCompletionTokens != 0 {
-			t.Fatalf("MaxCompletionTokens = %d, want 0", got.MaxCompletionTokens)
-		}
-	})
-
-	t.Run("kimi target prefers max_completion_tokens", func(t *testing.T) {
-		c := newGinContext(http.MethodPost, "/v1/messages", []byte(`{"model":"claude-sonnet-4-5-20250929","max_tokens":64000,"messages":[]}`), nil)
-		upstream := &config.UpstreamConfig{
-			BaseURL:      "https://api.example.com",
-			ServiceType:  "openai",
-			ModelMapping: map[string][]string{"claude-sonnet-4-5-20250929": {"kimi-2.6"}},
-		}
-
-		p := &OpenAIProvider{}
-		req, _, err := p.ConvertToProviderRequest(c, upstream, "sk-test")
-		if err != nil {
-			t.Fatalf("ConvertToProviderRequest() err = %v", err)
-		}
-
-		var got types.OpenAIRequest
-		if err := json.NewDecoder(req.Body).Decode(&got); err != nil {
-			t.Fatalf("decode request body: %v", err)
-		}
-
-		if got.Model != "kimi-2.6" {
-			t.Fatalf("Model = %q, want kimi-2.6", got.Model)
-		}
-		if got.MaxCompletionTokens != 64000 {
-			t.Fatalf("MaxCompletionTokens = %d, want 64000", got.MaxCompletionTokens)
-		}
-		if got.MaxTokens != 0 {
-			t.Fatalf("MaxTokens = %d, want 0", got.MaxTokens)
-		}
-	})
-
-	t.Run("stream requests include usage chunk", func(t *testing.T) {
-		c := newGinContext(http.MethodPost, "/v1/messages", []byte(`{"model":"gpt-4o","stream":true,"messages":[]}`), nil)
-		upstream := &config.UpstreamConfig{
-			BaseURL:     "https://api.example.com",
-			ServiceType: "openai",
-		}
-
-		p := &OpenAIProvider{}
-		req, _, err := p.ConvertToProviderRequest(c, upstream, "sk-test")
-		if err != nil {
-			t.Fatalf("ConvertToProviderRequest() err = %v", err)
-		}
-
-		var got map[string]interface{}
-		if err := json.NewDecoder(req.Body).Decode(&got); err != nil {
-			t.Fatalf("decode request body: %v", err)
-		}
-
-		streamOptions, ok := got["stream_options"].(map[string]interface{})
-		if !ok {
-			t.Fatalf("stream_options missing: %#v", got["stream_options"])
-		}
-		if includeUsage, ok := streamOptions["include_usage"].(bool); !ok || !includeUsage {
-			t.Fatalf("stream_options.include_usage = %#v, want true", streamOptions["include_usage"])
-		}
-	})
-
-	t.Run("tool_choice none kept only when tools exist", func(t *testing.T) {
-		c := newGinContext(http.MethodPost, "/v1/messages", []byte(`{
-			"model":"gpt-4o",
-			"tool_choice":"none",
-			"tools":[{"name":"lookup","input_schema":{"type":"object","properties":{}}}],
-			"messages":[{"role":"user","content":"hi"}]
-		}`), nil)
-		upstream := &config.UpstreamConfig{
-			BaseURL:     "https://api.example.com",
-			ServiceType: "openai",
-		}
-
-		p := &OpenAIProvider{}
-		req, _, err := p.ConvertToProviderRequest(c, upstream, "sk-test")
-		if err != nil {
-			t.Fatalf("ConvertToProviderRequest() err = %v", err)
-		}
-
-		var got map[string]interface{}
-		if err := json.NewDecoder(req.Body).Decode(&got); err != nil {
-			t.Fatalf("decode request body: %v", err)
-		}
-		if got["tool_choice"] != "none" {
-			t.Fatalf("tool_choice = %#v, want none", got["tool_choice"])
-		}
-	})
-
-	t.Run("tool_choice dropped when tools missing", func(t *testing.T) {
-		c := newGinContext(http.MethodPost, "/v1/messages", []byte(`{
-			"model":"gpt-4o",
-			"tool_choice":"none",
-			"messages":[{"role":"user","content":"hi"}]
-		}`), nil)
-		upstream := &config.UpstreamConfig{
-			BaseURL:     "https://api.example.com",
-			ServiceType: "openai",
-		}
-
-		p := &OpenAIProvider{}
-		req, _, err := p.ConvertToProviderRequest(c, upstream, "sk-test")
-		if err != nil {
-			t.Fatalf("ConvertToProviderRequest() err = %v", err)
-		}
-
-		var got map[string]interface{}
-		if err := json.NewDecoder(req.Body).Decode(&got); err != nil {
-			t.Fatalf("decode request body: %v", err)
-		}
-		if _, ok := got["tool_choice"]; ok {
-			t.Fatalf("tool_choice should be dropped when tools missing, got %#v", got["tool_choice"])
-		}
-	})
+func TestOpenAIProviderPreservesReasoningAndControls(t *testing.T) {
+	for _, tc := range []struct {
+		name, fields string
+		want         map[string]string
+		absent       string
+	}{
+		{"推理重放", `"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"need inspect files"},{"type":"text","text":"I will inspect the files."}]}]`,
+			map[string]string{"messages.#": "1", "messages.0.reasoning_content": `"need inspect files"`, "messages.0.content": `"I will inspect the files."`}, ""},
+		{"流式用量", `"stream":true,"messages":[]`, map[string]string{"stream_options.include_usage": "true"}, ""},
+		{"禁用已声明工具", `"tool_choice":"none","tools":[{"name":"lookup","input_schema":{"type":"object","properties":{}}}],"messages":[]`, map[string]string{"tool_choice": `"none"`}, ""},
+		{"未声明工具", `"tool_choice":"none","messages":[]`, nil, "tool_choice"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := messagesProviderPayload(t, &OpenAIProvider{}, `{"model":"gpt-4o",`+tc.fields+`}`, &config.UpstreamConfig{BaseURL: "https://api.example.com", ServiceType: "openai"})
+			for path, want := range tc.want {
+				require.JSONEq(t, want, got.Get(path).Raw, path)
+			}
+			if tc.absent != "" {
+				require.False(t, got.Get(tc.absent).Exists())
+			}
+		})
+	}
 }

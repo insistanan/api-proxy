@@ -13,7 +13,7 @@ type ChannelRouteDeps struct {
 	Cfg           *config.ConfigManager
 	Scheduler     *scheduler.ChannelScheduler
 	MetricsByKind func(kind scheduler.ChannelKind) *metrics.MetricsManager
-	// LogStoreByKind 渠道日志存储（R4-b 装配层注入，替代调度器定位器）。
+	// LogStoreByKind 渠道日志存储，由装配层注入。
 	LogStoreByKind func(kind scheduler.ChannelKind) *metrics.ChannelLogStore
 }
 

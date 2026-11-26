@@ -61,7 +61,7 @@ export const observabilityApi = {
     return apiRequest(`/request-logs${query ? `?${query}` : ''}`)
   },
 
-  async getRequestStats(params: RequestStatsParams = {}): Promise<RequestStatsResponse> {
+  async getRequestStats(params: RequestStatsParams = {}, signal?: AbortSignal): Promise<RequestStatsResponse> {
     const search = new URLSearchParams()
     for (const key of ['duration', 'from', 'to', 'interval', 'type', 'channel', 'model', 'status', 'errorType', 'upstream', 'keyMask', 'dimensionSort', 'q'] as const) {
       const value = params[key]
@@ -69,7 +69,7 @@ export const observabilityApi = {
     }
     if (params.compare !== undefined) search.set('compare', String(params.compare))
     const query = search.toString()
-    return apiRequest(`/request-stats${query ? `?${query}` : ''}`)
+    return apiRequest(`/request-stats${query ? `?${query}` : ''}`, { signal })
   },
 
   async getSystemLogs(params: { type?: LogAPIType | ''; limit?: number } = {}): Promise<SystemLogsResponse> {
@@ -205,10 +205,10 @@ export const observabilityApi = {
     return apiRequest('/conversations/route-options')
   },
 
-  async setConversationRoute(id: string, kind: ConversationKind, channelIndex: number): Promise<ConversationEntry> {
+  async setConversationRoute(id: string, kind: ConversationKind, channelIndex: number, channelId: string): Promise<ConversationEntry> {
     return apiRequest(`/conversations/${encodeURIComponent(id)}/route`, {
       method: 'PUT',
-      body: JSON.stringify({ kind, channelIndex })
+      body: JSON.stringify({ kind, channelIndex, channelId })
     })
   },
 

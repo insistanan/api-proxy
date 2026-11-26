@@ -25,6 +25,9 @@ func (s *Store) ReadModelSettings() (ModelSettingsView, map[string]json.RawMessa
 	if err != nil {
 		return ModelSettingsView{}, nil, raw, exists, err
 	}
+	if err := validateModelSettingsFields(root); err != nil {
+		return ModelSettingsView{}, nil, raw, exists, err
+	}
 	view := ModelSettingsView{
 		DefaultProvider:      stringField(root, "defaultProvider"),
 		DefaultModel:         stringField(root, "defaultModel"),
@@ -44,14 +47,14 @@ func (s *Store) UpdateModelSettings(update ModelSettingsView, revision string) (
 	if err != nil {
 		return WriteResult{}, err
 	}
+	if err := validateModelSettingsFields(root); err != nil {
+		return WriteResult{}, err
+	}
 	if exists && revision == "" {
 		return WriteResult{}, ErrRevisionRequired
 	}
 	if revision != "" && SHA256Hex(raw) != revision {
 		return WriteResult{}, ErrRevisionMismatch
-	}
-	if root == nil {
-		root = make(map[string]json.RawMessage)
 	}
 	if strings.TrimSpace(update.DefaultThinkingLevel) != "" && !IsValidThinkingLevel(update.DefaultThinkingLevel) {
 		return WriteResult{}, fmt.Errorf("无效的思考等级: %s", update.DefaultThinkingLevel)
@@ -73,7 +76,7 @@ func (s *Store) UpdateModelSettings(update ModelSettingsView, revision string) (
 	if err != nil {
 		return WriteResult{}, err
 	}
-	return WriteFileAtomic(path, data, false, s.BackupDir)
+	return WriteFileAtomic(path, data, false, s.BackupDir, raw)
 }
 
 func (s *Store) settingsPath() (string, error) {
@@ -82,6 +85,30 @@ func (s *Store) settingsPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, string(FileSettings)), nil
+}
+
+func validateModelSettingsFields(root map[string]json.RawMessage) error {
+	for _, key := range []string{"defaultProvider", "defaultModel", "defaultThinkingLevel", "enabledModels"} {
+		raw, exists := root[key]
+		if !exists {
+			continue
+		}
+		if strings.TrimSpace(string(raw)) == "null" {
+			return fmt.Errorf("%s 不能是 null", key)
+		}
+		var err error
+		if key == "enabledModels" {
+			var value []string
+			err = json.Unmarshal(raw, &value)
+		} else {
+			var value string
+			err = json.Unmarshal(raw, &value)
+		}
+		if err != nil {
+			return fmt.Errorf("%s 类型无效: %w", key, err)
+		}
+	}
+	return nil
 }
 
 func stringField(root map[string]json.RawMessage, key string) string {

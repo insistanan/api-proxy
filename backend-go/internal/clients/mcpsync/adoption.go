@@ -3,9 +3,6 @@ package mcpsync
 import (
 	"fmt"
 	"slices"
-	"strings"
-
-	toml "github.com/pelletier/go-toml/v2"
 )
 
 // Adoption 记录用户直接编辑或删除的应用条目及其原始版本。
@@ -17,31 +14,14 @@ type Adoption struct {
 	Replacement   string   `json:"replacement"`
 }
 
-func generatedEntry(server Server, agent AgentKey) (map[string]any, error) {
-	switch agent {
-	case AgentClaudeCode:
-		return claudeEntry(server), nil
-	case AgentOpenCode:
-		return openCodeEntry(server), nil
-	case AgentCodex:
-		var root map[string]any
-		if err := toml.Unmarshal([]byte(strings.Join(codexBlock(server), "\n")), &root); err != nil {
-			return nil, fmt.Errorf("生成 Codex MCP 条目失败: %w", err)
-		}
-		return root["mcp_servers"].(map[string]any)[server.Name].(map[string]any), nil
-	case AgentPi:
-		return piEntry(server), nil
-	case AgentDSH:
-		return dshEntry(server), nil
-	default:
-		return nil, fmt.Errorf("未知的 MCP 应用: %s", agent)
-	}
-}
-
 // prepareAdoptions 在内存中校验原始条目并保留附加设置，不写入用户文件。
 func prepareAdoptions(adapter Adapter, current []byte, file *storeFile, changes []Adoption, servers []Server) ([]byte, map[string]Server, error) {
 	base := current
 	adopted := map[string]Server{}
+	codec, err := codecFor(adapter)
+	if err != nil {
+		return nil, nil, err
+	}
 	root, field, err := configObject(adapter, current)
 	if err != nil {
 		return nil, nil, err
@@ -79,7 +59,7 @@ func prepareAdoptions(adapter Adapter, current []byte, file *storeFile, changes 
 		if entry == nil {
 			return nil, nil, fmt.Errorf("%w: %s 已不存在，请刷新", ErrAgentConflict, name)
 		}
-		original, _, err := decodeEntry(name, entry, change.Agent)
+		original, _, err := codec.Parse(name, entry)
 		if err != nil || !sameConfig(original, change.Server) {
 			return nil, nil, fmt.Errorf("%w: %s / %s", ErrAgentConflict, adapter.Name(), name)
 		}
@@ -104,18 +84,17 @@ func prepareAdoptions(adapter Adapter, current []byte, file *storeFile, changes 
 				}
 			}
 		}
-		generated, err := generatedEntry(replacement, change.Agent)
+		merged, err := codec.Merge(entry, replacement)
 		if err != nil {
 			return nil, nil, err
 		}
-		merged := mergeEntry(entry, replacement, change.Agent, func(Server) map[string]any { return generated })
 		if slices.Contains(servers[index].Agents, change.Agent) {
 			base, _, err = replaceEntry(adapter, base, replacement.Name, merged)
 			if err != nil {
 				return nil, nil, err
 			}
 		} else {
-			snapshot, err := encodeEntry(change.Agent, replacement.Name, merged)
+			snapshot, err := encodeEntry(adapter, replacement.Name, merged)
 			if err != nil {
 				return nil, nil, err
 			}

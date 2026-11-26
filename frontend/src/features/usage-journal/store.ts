@@ -7,15 +7,22 @@ export const useUsageJournal = defineStore('usage-journal', () => {
   const status = shallowRef<JournalStatus>()
   const days = shallowRef<JournalDay[]>([])
   const detail = shallowRef<JournalDetail>()
+  let lifetime = 0
+  let selection = 0
 
   async function loadStatus() {
+    const generation = lifetime
     const snapshot = await apiRequest<JournalStatus>('/usage-journal/status')
+    if (generation !== lifetime) return
     if (!status.value?.enabledAt || snapshot.enabledAt) status.value = snapshot
     return status.value
   }
 
   async function load(year?: number, date?: string) {
+    const generation = lifetime
+    const current = ++selection
     const snapshot = await apiRequest<JournalStatus>('/usage-journal/status')
+    if (generation !== lifetime || current !== selection) return
     if (!snapshot.enabledAt) {
       status.value = snapshot
       days.value = []
@@ -28,21 +35,29 @@ export const useUsageJournal = defineStore('usage-journal', () => {
       apiRequest<JournalDay[]>(`/usage-journal/calendar?year=${activeYear}`),
       apiRequest<JournalDetail>(`/usage-journal/days/${encodeURIComponent(activeDate)}`)
     ])
+    if (generation !== lifetime || current !== selection) return
     status.value = snapshot
     days.value = calendar
     detail.value = ticket
   }
 
   async function enable(timeZone: string) {
-    status.value = await apiRequest<JournalStatus>('/usage-journal/enable', {
+    const generation = lifetime
+    const snapshot = await apiRequest<JournalStatus>('/usage-journal/enable', {
       method: 'POST', body: JSON.stringify({ timeZone })
     })
+    if (generation !== lifetime) return
+    status.value = snapshot
     await load()
   }
 
   async function select(date: string) {
-    detail.value = await apiRequest<JournalDetail>(`/usage-journal/days/${encodeURIComponent(date)}`)
+    const generation = lifetime
+    const current = ++selection
+    const value = await apiRequest<JournalDetail>(`/usage-journal/days/${encodeURIComponent(date)}`)
+    if (generation === lifetime && current === selection) detail.value = value
   }
 
-  return { status, days, detail, loadStatus, load, enable, select }
+  function reset() { lifetime++; selection++; status.value = undefined; days.value = []; detail.value = undefined }
+  return { status, days, detail, loadStatus, load, enable, select, reset }
 })

@@ -137,6 +137,13 @@ func TestResponseToolTypesRoundTrip(t *testing.T) {
 				require.NoError(t, err)
 				require.Len(t, normal.Output, 1)
 				require.Equal(t, tc.typ, normal.Output[0].Type)
+				require.NotEmpty(t, normal.Output[0].CallID)
+				if tc.name == "run" {
+					require.Equal(t, "line 1\n\"quoted\"", normal.Output[0].Content)
+				} else if tc.name == "fs__read" {
+					require.Equal(t, "read", normal.Output[0].Name)
+					require.Equal(t, "c", normal.Output[0].CallID)
+				}
 				events, err := convertStreamFixture(t, protocol, request, chunks)
 				require.NoError(t, err)
 				item := finalResponse(events).Get("output.0")

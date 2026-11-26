@@ -3,6 +3,7 @@ package session
 import (
 	"log"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -72,11 +73,15 @@ func (manager *BaseURLAffinityManager) SetPreferredBaseURL(sessionKey string, ba
 	if manager == nil || sessionKey == "" || baseURL == "" {
 		return
 	}
+	if len(sessionKey) > maxAffinityFieldBytes || len(baseURL) > maxAffinityFieldBytes {
+		return
+	}
 
 	var logKind int // 0 none, 1 create, 2 change
 	var previous string
 
 	manager.mu.Lock()
+	makeAffinityRoom(manager.affinity, sessionKey, func(value *BaseURLAffinity) time.Time { return value.LastUsedAt })
 	oldEntry, existed := manager.affinity[sessionKey]
 	if existed && oldEntry.BaseURL != baseURL {
 		logKind = 2
@@ -84,8 +89,8 @@ func (manager *BaseURLAffinityManager) SetPreferredBaseURL(sessionKey string, ba
 	} else if !existed {
 		logKind = 1
 	}
-	manager.affinity[sessionKey] = &BaseURLAffinity{
-		BaseURL:    baseURL,
+	manager.affinity[strings.Clone(sessionKey)] = &BaseURLAffinity{
+		BaseURL:    strings.Clone(baseURL),
 		LastUsedAt: time.Now(),
 	}
 	manager.mu.Unlock()

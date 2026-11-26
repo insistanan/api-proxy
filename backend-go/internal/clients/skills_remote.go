@@ -7,8 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"insistanan/api-proxy/internal/api/common"
 	"io"
+	"io/fs"
+	"net"
 	"net/http"
 	"net/url"
 	pathpkg "path"
@@ -18,6 +19,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"insistanan/api-proxy/internal/api/common"
 	"insistanan/api-proxy/internal/clients/skills"
 )
 
@@ -29,14 +32,15 @@ const (
 	remoteSkillArchiveTimeout   = 120 * time.Second
 	remoteSkillDownloadAttempts = 3
 	// skills.sh 实测响应 10~25 秒且偶发 TLS 中断，30 秒单次超时过紧。
-	skillsSearchTimeout      = 45 * time.Second
-	skillsSearchAttempts     = 2
-	maxSkillSearchResponse   = 2 << 20
-	maxGitHubTreeResponse    = 12 << 20
-	maxRemoteArchiveBytes    = 128 << 20
-	maxRemoteSkillFiles      = 128
-	maxRemoteSkillTotalBytes = 20 << 20
-	maxRemoteSkillFileBytes  = 5 << 20
+	skillsSearchTimeout           = 45 * time.Second
+	skillsSearchAttempts          = 2
+	maxSkillSearchResponse        = 2 << 20
+	maxGitHubTreeResponse         = 12 << 20
+	maxRemoteArchiveBytes         = 128 << 20
+	maxRemoteArchiveExpandedBytes = 512 << 20
+	maxRemoteSkillFiles           = 128
+	maxRemoteSkillTotalBytes      = 20 << 20
+	maxRemoteSkillFileBytes       = 5 << 20
 )
 
 var (
@@ -69,6 +73,7 @@ type remoteSkillRequest struct {
 }
 
 type remoteSkillInstallRequest struct {
+	Commit  string   `json:"commit"`
 	ID      string   `json:"id"`
 	Targets []string `json:"targets"`
 }
@@ -92,6 +97,7 @@ type remoteSkillPreview struct {
 }
 
 type remoteSkillPackage struct {
+	Modes           map[string]fs.FileMode
 	ID              string
 	Name            string
 	Description     string
@@ -124,6 +130,7 @@ type githubTreeResponse struct {
 }
 
 type githubTreeEntry struct {
+	Mode string `json:"mode"`
 	Path string `json:"path"`
 	Type string `json:"type"`
 	Size int64  `json:"size"`
@@ -205,9 +212,14 @@ func (s *SkillsAPI) InstallRemote() gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "至少选择一个安装目标"})
 			return
 		}
-		pkg, err := s.loadRemoteSkill(c.Request.Context(), req.ID)
-		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("读取远程 Skill 失败: %v", err)})
+		owner, repository, requestedPath, err := parseRemoteSkillID(req.ID)
+		if err != nil || !commitSHAPattern.MatchString(req.Commit) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "安装需要有效的 Skill ID 和预览提交号"})
+			return
+		}
+		pkg, cached := s.remoteCache.get(owner + "/" + repository + "/" + requestedPath)
+		if !cached || pkg.Commit != req.Commit {
+			c.JSON(http.StatusConflict, gin.H{"error": "预览已过期或版本已变化，请重新预览后安装"})
 			return
 		}
 
@@ -218,7 +230,7 @@ func (s *SkillsAPI) InstallRemote() gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		locations, err := skills.Locations(opts)
+		locations, err := skills.BaseLocations(opts)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -241,16 +253,8 @@ func (s *SkillsAPI) InstallRemote() gin.HandlerFunc {
 			}
 			targetLocations = append(targetLocations, location)
 		}
-		if err := skills.InstallFiles(targetLocations, pkg.Name, pkg.Files); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("安装失败: %v", err)})
-			return
-		}
-		if err := skills.RecordSkillTargets(opts.ProjectDir, pkg.Name, targets, true); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("记录 Skill 启用清单失败: %v", err)})
-			return
-		}
-		if _, err := skills.SyncManifestToAgents(opts); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("同步 Skill 到 Agent 失败: %v", err)})
+		if err := skills.InstallManaged(opts, targetLocations, pkg.Name, pkg.Files, pkg.Modes); err != nil {
+			respondClientFileError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{
@@ -288,12 +292,9 @@ func (s *SkillsAPI) loadRemoteSkill(ctx context.Context, id string) (*remoteSkil
 	if pkg, ok := s.remoteCache.get(cacheKey); ok {
 		return pkg, nil
 	}
-	pkg, err := loadRemoteSkillFromGitHub(ctx, owner, repository, requestedPath, strings.Trim(id, "/"))
-	if err != nil {
-		return nil, err
-	}
-	s.remoteCache.put(cacheKey, pkg)
-	return pkg, nil
+	return s.remoteCache.load(ctx, cacheKey, func() (*remoteSkillPackage, error) {
+		return loadRemoteSkillFromGitHub(ctx, owner, repository, requestedPath, strings.Trim(id, "/"))
+	})
 }
 
 func loadRemoteSkillFromGitHub(ctx context.Context, owner, repository, requestedPath, id string) (*remoteSkillPackage, error) {
@@ -340,7 +341,16 @@ func loadRemoteSkillFromGitHub(ctx context.Context, owner, repository, requested
 	}
 
 	wanted := make(map[string]string, len(fileEntries))
+	modes := make(map[string]fs.FileMode, len(fileEntries))
 	for _, file := range fileEntries {
+		switch file.entry.Mode {
+		case "100755":
+			modes[file.relative] = 0700
+		case "100644":
+			modes[file.relative] = 0600
+		default:
+			return nil, fmt.Errorf("远程 Skill 文件模式不受支持: %s (%s)", file.relative, file.entry.Mode)
+		}
 		if file.entry.Size > maxRemoteSkillFileBytes {
 			return nil, fmt.Errorf("远程 Skill 文件过大: %s", file.relative)
 		}
@@ -389,6 +399,7 @@ func loadRemoteSkillFromGitHub(ctx context.Context, owner, repository, requested
 	}
 	sort.Slice(fileInfo, func(i, j int) bool { return fileInfo[i].Path < fileInfo[j].Path })
 	return &remoteSkillPackage{
+		Modes:           modes,
 		ID:              id,
 		Name:            name,
 		Description:     description,
@@ -475,9 +486,13 @@ func extractRemoteSkillArchive(reader io.Reader, wanted map[string]string) (map[
 
 	files := make(map[string][]byte, len(wanted))
 	var totalSize int64
-	tarReader := tar.NewReader(gzipReader)
+	expanded := &countingReader{reader: gzipReader}
+	tarReader := tar.NewReader(io.LimitReader(expanded, maxRemoteArchiveExpandedBytes+1))
 	for {
 		header, err := tarReader.Next()
+		if expanded.read > maxRemoteArchiveExpandedBytes {
+			return nil, errors.New("远程归档展开后超过 512 MB")
+		}
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -507,8 +522,7 @@ func extractRemoteSkillArchive(reader io.Reader, wanted map[string]string) (map[
 				return nil, fmt.Errorf("读取归档文件 %s 失败: %w", relative, err)
 			}
 		case tar.TypeSymlink:
-			// GitHub 归档把符号链接保留为链接本身；与 raw 下载一致，安装链接文本而不是目标内容。
-			content = []byte(header.Linkname)
+			return nil, fmt.Errorf("远程 Skill 不支持符号链接: %s", relative)
 		default:
 			return nil, fmt.Errorf("远程 Skill 包含不支持的文件类型: %s", relative)
 		}
@@ -517,9 +531,12 @@ func extractRemoteSkillArchive(reader io.Reader, wanted map[string]string) (map[
 			return nil, fmt.Errorf("远程 Skill 总大小超过 %d MB", maxRemoteSkillTotalBytes/(1<<20))
 		}
 		files[relative] = content
-		if len(files) == len(wanted) {
-			break
-		}
+	}
+	if _, err := io.Copy(io.Discard, io.LimitReader(expanded, maxRemoteArchiveExpandedBytes-expanded.read+1)); err != nil {
+		return nil, fmt.Errorf("校验归档尾部失败: %w", err)
+	}
+	if expanded.read > maxRemoteArchiveExpandedBytes {
+		return nil, errors.New("远程归档展开后超过 512 MB")
 	}
 
 	missing := make([]string, 0)
@@ -561,11 +578,15 @@ func (e *remoteHTTPStatusError) Error() string {
 }
 
 func retryableRemoteSkillError(err error) bool {
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
 	var statusErr *remoteHTTPStatusError
 	if errors.As(err, &statusErr) {
 		return statusErr.StatusCode == http.StatusTooManyRequests || statusErr.StatusCode >= 500
 	}
-	return true
+	var networkErr net.Error
+	return errors.As(err, &networkErr)
 }
 
 type countingReader struct {

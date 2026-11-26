@@ -26,6 +26,9 @@ type Fact struct {
 	CacheRead     int64
 }
 
+// GrowthCreditBatchSize 为消费者判断是否继续追赶积压提供统一批量边界。
+const GrowthCreditBatchSize = 256
+
 // Credit 是已落盘的可用于成长的用量，按游标严格递增。
 type Credit struct {
 	Cursor int64

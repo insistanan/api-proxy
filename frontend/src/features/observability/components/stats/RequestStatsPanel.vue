@@ -185,13 +185,20 @@ function queryParams(): RequestStatsParams {
   return params
 }
 
+let inFlight = 0
+let statsController: AbortController | undefined
 async function loadStats(silent = false) {
+  if (silent && inFlight > 0) return
+  statsController?.abort()
+  const controller = new AbortController()
+  statsController = controller
+  inFlight++
   const current = ++revision
   if (!silent) loading.value = true
   errorMessage.value = ''
   try {
     const params = queryParams()
-    const result = await api.getRequestStats(params)
+    const result = await api.getRequestStats(params, controller.signal)
     if (current === revision) {
       const { type, channel, model, status, errorType, upstream, keyMask } = params
       loadedFilters = { type, channel, model, status, errorType, upstream, keyMask }
@@ -200,7 +207,8 @@ async function loadStats(silent = false) {
   } catch (error) {
     if (current === revision) errorMessage.value = error instanceof Error ? error.message : '读取调用统计失败'
   } finally {
-    if (current === revision && !silent) loading.value = false
+    inFlight--
+    if (current === revision) loading.value = false
   }
 }
 function applyCustomRange() { void loadStats() }
@@ -261,7 +269,7 @@ watch(() => props.apiType, value => {
   void loadStats()
 })
 onMounted(() => { readPreferences(); void loadStats() })
-onBeforeUnmount(() => { revision++ })
+onBeforeUnmount(() => { revision++; statsController?.abort() })
 
 async function refreshData(silent = false) { await loadStats(silent) }
 function startAutoRefresh() { if (!autoRefreshSeconds.value) autoRefreshSeconds.value = 15 }

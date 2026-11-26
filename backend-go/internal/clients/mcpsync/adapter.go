@@ -4,14 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"maps"
 	"reflect"
 	"slices"
 )
 
-// decodeJSONObject 解析 JSON 对象。空字节视为空对象；使用 UseNumber 保留数字原样，避免写回时精度变化。
+// decodeJSONObject 解析 JSON 对象；只有不存在（nil）视为空对象，损坏文件明确报错。
 func decodeJSONObject(raw []byte) (map[string]any, error) {
-	if len(bytes.TrimSpace(raw)) == 0 {
+	if raw == nil {
 		return map[string]any{}, nil
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
@@ -22,6 +23,10 @@ func decodeJSONObject(raw []byte) (map[string]any, error) {
 	}
 	if root == nil {
 		return nil, fmt.Errorf("顶层必须是 JSON 对象")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return nil, fmt.Errorf("JSON 对象后存在多余内容")
 	}
 	return root, nil
 }

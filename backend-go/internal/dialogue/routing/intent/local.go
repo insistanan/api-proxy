@@ -8,12 +8,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"insistanan/api-proxy/internal/infra/httpclient"
 	"io"
 	"math"
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -40,6 +40,7 @@ type LocalManifest struct {
 }
 
 type LocalStatus struct {
+	PreparationID   string `json:"preparationId,omitempty"`
 	DownloadedBytes int64  `json:"downloadedBytes"`
 	TotalBytes      int64  `json:"totalBytes"`
 	Notice          string `json:"notice,omitempty"`
@@ -60,7 +61,7 @@ type LocalRuntime struct {
 	mu              sync.Mutex
 	dir             string
 	manifest        LocalManifest
-	cmd             *exec.Cmd
+	cmd             *localProcess
 	done            chan struct{}
 	endpoint        string
 	ready           bool
@@ -75,6 +76,7 @@ type LocalRuntime struct {
 	queue           chan struct{}
 	active          chan struct{}
 	client          *http.Client
+	downloadClient  func(time.Duration) (*http.Client, error)
 }
 
 func NewLocal(dir string) (*LocalRuntime, error) {
@@ -83,6 +85,7 @@ func NewLocal(dir string) (*LocalRuntime, error) {
 		return nil, fmt.Errorf("解析本地向量安装路径失败: %w", err)
 	}
 	l := &LocalRuntime{dir: absDir, phase: "idle", presets: newPresetCatalog(), queue: make(chan struct{}, 3), active: make(chan struct{}, 1), client: &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{Proxy: nil, MaxConnsPerHost: 1, MaxIdleConns: 1, IdleConnTimeout: 60 * time.Second}}}
+	l.downloadClient = func(timeout time.Duration) (*http.Client, error) { return httpclient.DownloadClient(nil, timeout) }
 	l.presets.loadURL(absDir)
 	data, err := os.ReadFile(filepath.Join(l.dir, "manifest.json"))
 	if errors.Is(err, os.ErrNotExist) {
@@ -206,19 +209,33 @@ func (l *LocalRuntime) Install(ctx context.Context, manifest LocalManifest) (err
 	defer cancel()
 	archivePath := filepath.Join(l.dir, strings.ToLower(manifest.RuntimeSHA256)+".archive")
 	if err := l.downloadResource(ctx, append([]string{manifest.RuntimeURL}, manifest.RuntimeMirrors...), manifest.RuntimeSHA256, 128<<20, archivePath, ""); err != nil {
+		if atomicfile.IsCommitted(err) {
+			recordPreparation(ctx, "运行时压缩包："+manifest.RuntimeSHA256)
+		}
 		return err
 	}
+	recordPreparation(ctx, "运行时压缩包："+manifest.RuntimeSHA256)
 	runtimeDir := filepath.Join(l.dir, strings.ToLower(manifest.RuntimeSHA256))
 	l.setPhase("extracting_runtime")
 	manifest.Executable, err = extractRuntime(ctx, archivePath, runtimeDir, manifest.RuntimeFormat, manifest.Executable)
 	if err != nil {
+		if _, statErr := os.Lstat(runtimeDir); statErr == nil {
+			recordPreparation(ctx, "运行时解包目录（未完成，可清理后重试）："+manifest.RuntimeSHA256)
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			err = errors.Join(err, fmt.Errorf("检查部分解包产物失败: %w", statErr))
+		}
 		return err
 	}
+	recordPreparation(ctx, "运行时目录："+manifest.RuntimeSHA256)
 	modelPath := filepath.Join(l.dir, strings.ToLower(manifest.ModelSHA256)+".gguf")
 	l.setPhase("downloading_model")
 	if err := l.downloadResource(ctx, append([]string{manifest.ModelURL}, manifest.ModelMirrors...), manifest.ModelSHA256, 1<<30, modelPath, "GGUF"); err != nil {
+		if atomicfile.IsCommitted(err) {
+			recordPreparation(ctx, "模型文件："+manifest.ModelSHA256)
+		}
 		return err
 	}
+	recordPreparation(ctx, "模型文件："+manifest.ModelSHA256)
 	data, err := json.Marshal(manifest)
 	if err != nil {
 		return err
@@ -228,29 +245,28 @@ func (l *LocalRuntime) Install(ctx context.Context, manifest LocalManifest) (err
 			l.mu.Lock()
 			l.manifest = manifest
 			l.mu.Unlock()
+			recordPreparation(ctx, "本地模型："+manifest.ModelSHA256)
 		}
 		return err
 	}
 	l.mu.Lock()
 	l.manifest = manifest
 	l.mu.Unlock()
+	recordPreparation(ctx, "本地模型："+manifest.ModelSHA256)
 	return nil
 }
 
-func downloadVerified(ctx context.Context, rawURL, expected string, limit int64, dst io.Writer, magic string, verifying ...func()) error {
+// SetDownloadClientFactory 在启动装配时注入，后续每次下载读取最新出口设置。
+func (l *LocalRuntime) SetDownloadClientFactory(factory func(time.Duration) (*http.Client, error)) {
+	l.downloadClient = factory
+	l.presets.downloadClient = factory
+}
+
+func downloadVerified(ctx context.Context, client *http.Client, rawURL, expected string, limit int64, dst io.Writer, magic string, verifying ...func()) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return err
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.ResponseHeaderTimeout = 30 * time.Second
-	defer transport.CloseIdleConnections()
-	client := &http.Client{Timeout: 10 * time.Minute, Transport: transport, CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		if len(via) > 8 || req.URL.Scheme != "https" || req.URL.User != nil {
-			return fmt.Errorf("下载重定向无效")
-		}
-		return nil
-	}}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("下载失败: %w", err)
@@ -335,14 +351,12 @@ func (l *LocalRuntime) Start(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(executable, "--model", modelPath, "--alias", m.ModelName, "--embedding", "--pooling", m.Pooling,
+	args := []string{"--model", modelPath, "--alias", m.ModelName, "--embedding", "--pooling", m.Pooling,
 		"--host", "127.0.0.1", "--port", fmt.Sprint(port), "--threads", "2", "--threads-batch", "2", "--parallel", "1",
-		"--ctx-size", "512", "--batch-size", "512", "--ubatch-size", "512", "--n-gpu-layers", "0", "--cache-ram", "0")
-	cmd.Dir = filepath.Dir(executable)
+		"--ctx-size", "512", "--batch-size", "512", "--ubatch-size", "512", "--n-gpu-layers", "0", "--cache-ram", "0"}
 	diagnostic := &processDiagnostic{}
-	cmd.Stderr = diagnostic
-	hideProcessWindow(cmd)
-	if err := cmd.Start(); err != nil {
+	cmd, err := startLocalProcess(executable, args, filepath.Dir(executable), diagnostic)
+	if err != nil {
 		return fmt.Errorf("启动本地助手失败: %w", err)
 	}
 	done := make(chan struct{})
@@ -384,6 +398,7 @@ func (l *LocalRuntime) Start(ctx context.Context) (err error) {
 				if !ready {
 					return errors.Join(fmt.Errorf("本地助手预热结束时已停止或取消"), l.Stop())
 				}
+				recordPreparation(ctx, "本地助手已启动并预热")
 				return nil
 			} else {
 				lastWarmupError = callErr
@@ -411,7 +426,7 @@ func (l *LocalRuntime) Stop() error {
 	if cmd == nil {
 		return nil
 	}
-	if err := cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+	if err := cmd.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return err
 	}
 	select {

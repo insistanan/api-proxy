@@ -5,7 +5,7 @@
 </template>
 <script setup lang="ts" generic="T">
 import { computed, provide } from 'vue'
-import { toggleKey } from './context'
+import { toggleKey } from '@/shared/ui/button/context'
 const props = defineProps<{
   modelValue?: T
   disabled?: boolean

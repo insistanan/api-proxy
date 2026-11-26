@@ -398,13 +398,18 @@ const toggleVisionCapability = async (channel: Channel) => {
   const nextValue = !channel.visionCapable
 
   try {
-    await channelApiByType(kindOf(channel)).updateChannel(channel.index, { visionCapable: nextValue })
+    await channelApiByType(kindOf(channel)).updateChannel(channel.index, { visionCapable: nextValue }, channel.id)
 
     emit('refresh')
     emit('success', nextValue
       ? `已将 ${channel.name} 设为支持图片理解`
       : `已取消 ${channel.name} 的图片理解支持`)
   } catch (error) {
+    if (error instanceof ApiError && error.committed) {
+      emit('refresh')
+      emit('error', `${error.message}（图片理解能力已写入，请刷新核对，请勿重复提交）`)
+      return
+    }
     console.error('Failed to update vision capability:', error)
     const errorMessage = error instanceof Error ? error.message : '未知错误'
     emit('error', `设置图片理解能力失败: ${errorMessage}`)

@@ -169,7 +169,7 @@ func applyContentSafetySegments(
 
 		// 自定义规则（可逆脱敏，最低优先级）：仅 mask 模式参与，且在凭据/个人信息
 		// 之后执行——内置规则先占住各自区间，自定义规则只处理剩余文本；且它是最后的
-		// 掩码步骤，宽正则不会把已生成的占位符再包一层（R1-e：改写后不再复检）。
+		// 掩码步骤，宽正则不会把已生成的占位符再包一层。
 		// 放行字面量过滤同样生效（命中原文与条目相等则丢弃）。
 		if redactionEnabled && snapshot.custom != nil && snapshot.custom.Enabled() {
 			customSource := segment.Text
@@ -194,7 +194,7 @@ func applyContentSafetySegments(
 
 		if redactionEnabled && !infoChecked {
 			// 未分类来源没有经过前面的个人信息检测，保留原有末尾校验；
-			// 已改写片段不再复检（R1-e：脱敏输出假定可信，避免整段二次扫描）。
+			// 已改写片段不再复检，避免重复扫描。
 			// 校验同样过放行字面量过滤：被放行的值（如 localhost）本来就应留在
 			// 文本里，不能被此处误报为命中。
 			if matches := snapshot.credential.FindAll(segment.Text); len(matches) > 0 {

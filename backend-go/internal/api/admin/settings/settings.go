@@ -9,12 +9,15 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+
 	adminshared "insistanan/api-proxy/internal/api/admin/shared"
 	"insistanan/api-proxy/internal/api/common"
 	"insistanan/api-proxy/internal/clients"
 	"insistanan/api-proxy/internal/clients/extensions"
+	"insistanan/api-proxy/internal/clients/filetxn"
 	"insistanan/api-proxy/internal/infra/config"
 	"insistanan/api-proxy/internal/infra/upstreamreq"
+	"insistanan/api-proxy/internal/storage/atomicfile"
 )
 
 // GetSettings 获取可由管理界面维护的全局设置。
@@ -129,6 +132,12 @@ func UpdateSettings(cfgManager *config.ConfigManager, skillsAPI *clients.SkillsA
 					saveErr = err
 					return err
 				}
+				if migrated {
+					if err := extensions.FinalizeSkillsMigration(oldSkillsDir, newSkillsDir); err != nil {
+						saveErr = &atomicfile.CommittedError{Phase: atomicfile.PhaseDirSync, Err: err}
+						return saveErr
+					}
+				}
 				return nil
 			})
 			if lockErr != nil {
@@ -140,7 +149,7 @@ func UpdateSettings(cfgManager *config.ConfigManager, skillsAPI *clients.SkillsA
 				if userBadRequest {
 					status = http.StatusBadRequest
 				}
-				c.JSON(status, gin.H{"error": lockErr.Error()})
+				c.JSON(status, gin.H{"error": lockErr.Error(), "committed": filetxn.Committed(lockErr)})
 				return
 			}
 		} else {

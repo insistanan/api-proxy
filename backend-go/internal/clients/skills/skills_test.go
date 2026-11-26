@@ -151,7 +151,7 @@ func TestCopySkillDir(t *testing.T) {
 	})
 }
 
-func TestInstallFiles(t *testing.T) {
+func TestStagedInstall(t *testing.T) {
 	t.Run("多目标安装先暂存再替换并保留项目备份", func(t *testing.T) {
 		root := t.TempDir()
 		agents := Location{Key: "agents", Agent: "Agents 目录", Path: filepath.Join(root, "agents")}
@@ -177,7 +177,16 @@ func TestInstallFiles(t *testing.T) {
 			"SKILL.md":              []byte("---\nname: demo\ndescription: 示例\n---\n"),
 			"references/current.md": []byte("当前资源"),
 		}
-		if err := InstallFiles([]Location{agents, project}, "demo", files); err != nil {
+		staged, err := stageInstallTargets([]Location{agents, project}, "demo", "", files, nil)
+		if err != nil {
+			t.Fatalf("暂存失败: %v", err)
+		}
+		defer func() {
+			for _, item := range staged {
+				item.abort()
+			}
+		}()
+		if err := commitInstalls(staged); err != nil {
 			t.Fatalf("安装失败: %v", err)
 		}
 
@@ -207,7 +216,7 @@ func TestInstallFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		err := InstallFiles([]Location{location}, "demo", map[string][]byte{"../escape.md": []byte("越界")})
+		_, err := stageInstallTargets([]Location{location}, "demo", "", map[string][]byte{"../escape.md": []byte("越界")}, nil)
 		if err == nil || !strings.Contains(err.Error(), "Skill 文件路径无效") {
 			t.Fatalf("期望路径校验失败，得到: %v", err)
 		}

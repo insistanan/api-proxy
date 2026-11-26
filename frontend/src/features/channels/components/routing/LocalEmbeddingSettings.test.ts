@@ -5,7 +5,7 @@ import LocalEmbeddingSettings from '@/features/channels/components/routing/Local
 import type { LocalPresets, LocalStatus } from '@/features/channels/services/intent'
 
 const api = vi.hoisted(() => ({ local: vi.fn(), presets: vi.fn(), installPreset: vi.fn(), localAction: vi.fn(), importResource: vi.fn(), setPresetsUrl: vi.fn(), cancelPreparation: vi.fn() }))
-vi.mock('@/features/channels/services/intent', () => ({ intentApi: api, intentErrorText: (error: Error) => error.message }))
+vi.mock('@/features/channels/services/intent', () => ({ intentApi: api }))
 type State = Record<string, unknown>
 const value = <T>(state: State, key: string) => (state[key] as Ref<T>).value
 const status = (): LocalStatus => ({ installed: false, running: false, ready: false, busy: false, error: '', platform: 'windows/amd64', installPath: 'D:\\gateway\\.config\\intent-embedding', presetsUrl: 'https://example.invalid/presets.json', phase: 'idle', manifest: { runtimeUrl: '', runtimeSha256: '', executable: '', modelUrl: '', modelSha256: '', modelName: '', pooling: 'mean' } })

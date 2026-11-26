@@ -15,8 +15,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
 	adminshared "insistanan/api-proxy/internal/api/admin/shared"
 	"insistanan/api-proxy/internal/clients"
+	extensionfiles "insistanan/api-proxy/internal/clients/extensions"
 	"insistanan/api-proxy/internal/clients/mcpsync"
 	"insistanan/api-proxy/internal/clients/skills"
 	"insistanan/api-proxy/internal/infra/config"
@@ -45,19 +47,23 @@ func NewExtensionsGitAPI(cfgManager *config.ConfigManager, skillsAPI *clients.Sk
 
 // ExtensionsGitStatus 描述当前项目 Skills 目录的 Git 仓库状态。
 type ExtensionsGitStatus struct {
-	GitAvailable bool     `json:"gitAvailable"`
-	SkillsDir    string   `json:"skillsDir"`
-	RepoURL      string   `json:"repoUrl"`
-	DirExists    bool     `json:"dirExists"`
-	IsGitRepo    bool     `json:"isGitRepo"`
-	Branch       string   `json:"branch,omitempty"`
-	RemoteURL    string   `json:"remoteUrl,omitempty"`
-	Dirty        bool     `json:"dirty"`
-	ChangedFiles []string `json:"changedFiles,omitempty"`
-	Ahead        int      `json:"ahead"`
-	Behind       int      `json:"behind"`
-	HasCommits   bool     `json:"hasCommits"`
-	Error        string   `json:"error,omitempty"`
+	Migration      *extensionfiles.MigrationState `json:"migration,omitempty"`
+	ExportFiles    []string                       `json:"exportFiles,omitempty"`
+	ExportRevision string                         `json:"exportRevision,omitempty"`
+	ExportError    string                         `json:"exportError,omitempty"`
+	GitAvailable   bool                           `json:"gitAvailable"`
+	SkillsDir      string                         `json:"skillsDir"`
+	RepoURL        string                         `json:"repoUrl"`
+	DirExists      bool                           `json:"dirExists"`
+	IsGitRepo      bool                           `json:"isGitRepo"`
+	Branch         string                         `json:"branch,omitempty"`
+	RemoteURL      string                         `json:"remoteUrl,omitempty"`
+	Dirty          bool                           `json:"dirty"`
+	ChangedFiles   []string                       `json:"changedFiles,omitempty"`
+	Ahead          int                            `json:"ahead"`
+	Behind         int                            `json:"behind"`
+	HasCommits     bool                           `json:"hasCommits"`
+	Error          string                         `json:"error,omitempty"`
 }
 
 type extensionsGitSyncResponse struct {
@@ -288,12 +294,16 @@ func (api *ExtensionsGitAPI) Pull() gin.HandlerFunc {
 func (api *ExtensionsGitAPI) Push() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req struct {
-			Message string `json:"message"`
+			Message        string `json:"message"`
+			ExportRevision string `json:"exportRevision"`
 		}
-		_ = c.ShouldBindJSON(&req)
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Git 推送请求无效"})
+			return
+		}
 		commitMsg := strings.TrimSpace(req.Message)
 		if commitMsg == "" {
-			commitMsg = "chore: sync skills and mcp config"
+			commitMsg = "chore: sync shareable skills"
 		}
 		if _, err := exec.LookPath("git"); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "未检测到 git 命令，请先安装 Git"})
@@ -367,11 +377,27 @@ func (api *ExtensionsGitAPI) Push() gin.HandlerFunc {
 				}
 			}
 
-			if err := ensureGitignore(skillsDir); err != nil {
+			plan, err := prepareExport(ctx, skillsDir)
+			if err != nil {
 				return err
 			}
-			if _, err := runGit(ctx, skillsDir, "add", "-A"); err != nil {
-				return fmt.Errorf("暂存变更失败: %w", err)
+			if req.ExportRevision == "" || plan.Revision != req.ExportRevision {
+				httpCode = http.StatusConflict
+				return errors.New("导出文件范围或内容已变化，请刷新预览后推送")
+			}
+			if err := validateExportHistory(ctx, skillsDir); err != nil {
+				return err
+			}
+			if err := stageExport(ctx, skillsDir, plan); err != nil {
+				return err
+			}
+			currentPlan, err := prepareExport(ctx, skillsDir)
+			if err != nil {
+				return err
+			}
+			if currentPlan.Revision != plan.Revision {
+				httpCode = http.StatusConflict
+				return errors.New("暂存期间导出内容发生变化，请刷新预览后推送")
 			}
 			hasStaged, err := hasStagedChanges(ctx, skillsDir)
 			if err != nil {
@@ -388,20 +414,24 @@ func (api *ExtensionsGitAPI) Push() gin.HandlerFunc {
 				return errors.New("当前 Skills 目录为空，没有可推送的提交")
 			}
 
-			if _, upstreamErr := runGit(ctx, skillsDir, "rev-parse", "--abbrev-ref", "@{upstream}"); upstreamErr != nil {
-				if _, err := runGit(ctx, skillsDir, "push", "-u", "origin", branch); err != nil {
-					return fmt.Errorf("推送到远程仓库失败，本地提交已保留；若远程刚有更新，请重新获取并合并后再推送: %w", err)
-				}
-			} else {
-				aheadStr, err := runGit(ctx, skillsDir, "rev-list", "--count", "@{upstream}..HEAD")
+			if err := validateExportHistory(ctx, skillsDir); err != nil {
+				return err
+			}
+			shouldPush := true
+			if strings.TrimSpace(remoteBranch) == remoteRef {
+				ahead, err := runGit(ctx, skillsDir, "rev-list", "--count", remoteRef+"..HEAD")
 				if err != nil {
 					return fmt.Errorf("检查待推送提交失败: %w", err)
 				}
-				if strings.TrimSpace(aheadStr) == "0" {
-					message = "已是最新，无需推送"
-				} else if _, err := runGit(ctx, skillsDir, "push"); err != nil {
-					return fmt.Errorf("推送到远程仓库失败，本地提交已保留；若远程刚有更新，请重新获取并合并后再推送: %w", err)
+				shouldPush = strings.TrimSpace(ahead) != "0"
+			}
+			if shouldPush {
+				// 固定推送已检查的当前分支，避免 push.default / followTags 扩大导出范围。
+				if _, err := runGit(ctx, skillsDir, "push", "--no-follow-tags", "-u", "origin", "HEAD:refs/heads/"+branch); err != nil {
+					return fmt.Errorf("推送到远程仓库失败，本地提交已保留；请核对远程状态后重试: %w", err)
 				}
+			} else {
+				message = "已是最新，无需推送"
 			}
 			status, err = api.inspectStatus(ctx)
 			return err
@@ -446,6 +476,10 @@ func (api *ExtensionsGitAPI) inspectStatus(ctx context.Context) (ExtensionsGitSt
 		SkillsDir:    skillsDir,
 		RepoURL:      settings.SkillsRepoURL,
 	}
+	status.Migration, err = extensionfiles.MigrationStatus(skillsDir)
+	if err != nil {
+		return status, err
+	}
 	if info, statErr := os.Stat(skillsDir); statErr == nil && info.IsDir() {
 		status.DirExists = true
 	}
@@ -456,6 +490,11 @@ func (api *ExtensionsGitAPI) inspectStatus(ctx context.Context) (ExtensionsGitSt
 		return status, nil
 	}
 	status.IsGitRepo = true
+	if plan, err := prepareExport(ctx, skillsDir); err != nil {
+		status.ExportError = err.Error()
+	} else {
+		status.ExportFiles, status.ExportRevision = plan.Files, plan.Revision
+	}
 
 	if remoteURL, err := runGit(ctx, skillsDir, "remote", "get-url", "origin"); err == nil {
 		status.RemoteURL = strings.TrimSpace(remoteURL)
@@ -514,7 +553,7 @@ func ensureGitignore(skillsDir string) error {
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("检查 .gitignore 失败: %w", err)
 	}
-	content := ".skill-stage-*\n.skill-old-*\n*.tmp\n"
+	content := ".skill-stage-*\n.skill-old-*\n.skill-removed-*\n*.tmp\n/mcp.json\n/.state/\n/.metadata/\n**/.backups/\n"
 	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		return fmt.Errorf("创建 .gitignore 失败: %w", err)
 	}
@@ -591,7 +630,7 @@ func runGit(ctx context.Context, dir string, args ...string) (string, error) {
 		if errText == "" {
 			errText = err.Error()
 		}
-		return "", errors.New(errText)
+		return "", fmt.Errorf("%s: %w", errText, err)
 	}
 	return stdout.String(), nil
 }

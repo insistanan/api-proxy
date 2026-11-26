@@ -218,6 +218,7 @@ const CREATE_REASONING_LEVELS = ['low', 'high', 'max']
 const CREATE_DEFAULTS = { supportsImage: true, contextWindow: 200000, defaultReasoningLevel: 'high' }
 
 const form = reactive({
+  revision: '',
   visible: false,
   editing: false,
   slug: '',
@@ -287,6 +288,7 @@ watch(
 )
 
 const openCreateForm = () => {
+  form.revision = props.settings?.catalogRevision ?? ''
   form.visible = true
   form.editing = false
   form.slug = ''
@@ -298,6 +300,7 @@ const openCreateForm = () => {
 }
 
 const openEditForm = (model: CodexCatalogModel) => {
+  form.revision = props.settings?.catalogRevision ?? ''
   form.visible = true
   form.editing = true
   form.slug = model.slug
@@ -316,6 +319,7 @@ const saveModel = async () => {
   savingModel.value = true
   try {
     const payload: SaveCodexModelCatalog = {
+      revision: form.revision,
       action: 'upsert',
       slug: form.slug,
       displayName: form.displayName,
@@ -339,7 +343,11 @@ const saveDefault = async () => {
   if (!defaultModel.value) return
   savingDefault.value = true
   try {
-    const payload: SaveCodexModelCatalog = { action: 'setDefault', slug: defaultModel.value }
+    const payload: SaveCodexModelCatalog = {
+      action: 'setDefault',
+      slug: defaultModel.value,
+      revision: props.settings?.catalogRevision ?? ''
+    }
     if (defaultEffort.value) {
       payload.reasoningEffort = defaultEffort.value
     } else if (props.settings?.modelReasoningEffort) {
@@ -356,17 +364,18 @@ const saveDefault = async () => {
 }
 
 const deleteModel = (model: CodexCatalogModel) => {
+  const revision = props.settings?.catalogRevision ?? ''
   askConfirm({
     message: `删除模型“${model.slug}”？若目录删空将自动回退 config.toml 的模型目录配置。`,
     confirmText: '删除',
-    action: () => removeModel(model)
+    action: () => removeModel(model, revision)
   })
 }
 
-const removeModel = async (model: CodexCatalogModel) => {
+const removeModel = async (model: CodexCatalogModel, revision: string) => {
   deletingSlug.value = model.slug
   try {
-    const response = await api.saveCodexModelCatalog({ action: 'delete', slug: model.slug })
+    const response = await api.saveCodexModelCatalog({ action: 'delete', slug: model.slug, revision })
     showToast(`已从 ${response.modelsPath} 删除`, 'success')
     if (form.visible && form.editing && form.slug === model.slug) closeForm()
     emit('saved')

@@ -42,8 +42,8 @@ import {
   type Mark,
   type Point,
   type View
-} from './map'
-import sprites from './trees.webp'
+} from '@/features/usage-journal/forest/map'
+import sprites from '@/features/usage-journal/forest/trees.webp'
 
 const props = defineProps<{
   view: View

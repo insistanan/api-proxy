@@ -118,7 +118,7 @@ data: {"candidates":[{"content":{"parts":[{"text":"b"}],"role":"model"},"finishR
 	}
 }
 
-// 反证切片 3 修复：第三方兼容网关把 usage 终值放在**没有 candidates** 的纯
+// 第三方兼容网关把 usage 终值放在**没有 candidates** 的纯
 // usageMetadata 尾 chunk。抓取点必须在 candidates 守卫之前，否则读不到。
 // message_delta 在流尾统一发送，必须包含尾包终值且不重复终止。
 func TestGeminiStreamUsage_TrailingUsageOnlyChunkCaptured(t *testing.T) {

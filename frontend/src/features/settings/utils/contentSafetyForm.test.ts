@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { defaultContentSafety, normalizeContentSafety } from './contentSafetyForm'
+import { defaultContentSafety, normalizeContentSafety } from '@/features/settings/utils/contentSafetyForm'
 
 describe('内容安全总开关', () => {
   it('默认关闭，与处置模式分开保存', () => {

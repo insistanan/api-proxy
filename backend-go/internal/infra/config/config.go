@@ -148,6 +148,7 @@ func ValidateReasoningOptions(upstream *UpstreamConfig) error {
 
 // UpstreamUpdate 用于部分更新 UpstreamConfig
 type UpstreamUpdate struct {
+	ExpectedChannelID    *string               `json:"expectedChannelId,omitempty"`
 	MaxBranchConcurrency *int                  `json:"maxBranchConcurrency,omitempty"`
 	CacheKeepalive       *CacheKeepaliveConfig `json:"cacheKeepalive"`
 	MaxConcurrency       *int                  `json:"maxConcurrency"`

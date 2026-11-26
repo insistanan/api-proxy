@@ -1,6 +1,6 @@
 // 指标与统计类型：渠道/Key 历史、全局统计与实时活跃度。
 
-import type { LogAPIType } from './logs'
+import type { LogAPIType } from '@/types/logs'
 
 // 历史数据点（用于时间序列图表）
 export interface HistoryDataPoint {

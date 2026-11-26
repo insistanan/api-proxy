@@ -57,6 +57,13 @@ func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
 	apiGroup.DELETE("/blocked-logs", adminlogs.ClearBlockedLogs(a.blockedStore))
 	apiGroup.GET("/logs/dates", adminlogs.ListLogDates(a.logStore))
 	apiGroup.GET("/logs/storage", adminlogs.GetLogStorageStatus(a.logStore))
+	apiGroup.GET("/metrics/storage", func(c *gin.Context) {
+		if a.metricsStore == nil {
+			c.JSON(200, gin.H{"enabled": false})
+			return
+		}
+		c.JSON(200, gin.H{"enabled": true, "queue": a.metricsStore.QueueStatus()})
+	})
 	apiGroup.POST("/logs/purge", adminlogs.PurgeLogs(a.logStore))
 
 	// 危险命令 AI 闸门（待确认列表 / 用户决定 / 会话级白黑名单）
@@ -142,6 +149,7 @@ func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
 	apiGroup.POST("/skills/backup", a.skillsAPI.Backup())
 	apiGroup.GET("/skills/translation", a.skillsAPI.SkillTranslationStatus)
 	apiGroup.POST("/skills/translation", a.skillsAPI.StartSkillTranslation(a.skillTranslator))
+	apiGroup.DELETE("/skills/translation/:taskId", a.skillsAPI.CancelSkillTranslation)
 	// MCP 统一列表与智能体分发（沿用 apiGroup 的统一鉴权）
 	apiGroup.GET("/mcp", a.mcpAPI.List())
 	apiGroup.PUT("/mcp", a.mcpAPI.Save())

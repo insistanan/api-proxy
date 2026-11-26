@@ -1,7 +1,6 @@
 package images
 
 import (
-	"bufio"
 	"bytes"
 	"compress/gzip"
 	"context"

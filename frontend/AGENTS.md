@@ -31,7 +31,7 @@ Vue 3 + TypeScript strict + Tailwind CSS 4 管理台。Go 嵌入前端构建产�
 
 ## 日常约定
 
-- 全局数据用 Pinia；弹窗和设置页维护草稿，保存成功再同步 Store。
+- 全局数据用 Pinia；弹窗和设置页维护草稿，保存成功再同步 Store。复用 useDraftSnapshot 与 DraftGuard，保存时锁定编辑区；认证变化取消旧请求并清理受保护状态。
 - 新图标先在 `shared/ui/icon/icons.ts` 注册；路由视图保留单个真实 DOM 根节点。
 - 使用 Tailwind 语义类与基础控件处理布局和外观。业务特有的选择器和容器查询留在相应 feature 内，引用 `styles/index.css` 中的 Tailwind 配置。
 - 管理请求走 `shared/services/http.ts`；鉴权流走 `shared/utils/sse.ts`。

@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+
+	"insistanan/api-proxy/internal/clients/filetxn"
 	"insistanan/api-proxy/internal/clients/mcpsync"
 	"insistanan/api-proxy/internal/clients/piagent"
 )
@@ -104,6 +106,10 @@ func (api *MCPAPI) Toggle() gin.HandlerFunc {
 		}
 		result, err := api.service.Toggle(mcpsync.ToggleRequest{Revision: *req.Revision, AgentRevision: *req.AgentRevision, Agent: req.Agent, Server: req.Server, Enabled: *req.Enabled})
 		if err != nil {
+			if filetxn.Committed(err) || errors.Is(err, filetxn.ErrConflict) {
+				respondClientFileError(c, err)
+				return
+			}
 			switch {
 			case errors.Is(err, mcpsync.ErrInvalidServers):
 				c.JSON(400, gin.H{"error": err.Error()})
@@ -149,6 +155,10 @@ func (api *MCPAPI) Save() gin.HandlerFunc {
 
 		result, err := api.service.Save(*req.Revision, req.Servers, req.Adoptions...)
 		if err != nil {
+			if filetxn.Committed(err) || errors.Is(err, filetxn.ErrConflict) {
+				respondClientFileError(c, err)
+				return
+			}
 			switch {
 			case errors.Is(err, mcpsync.ErrInvalidServers):
 				c.JSON(400, gin.H{"error": err.Error()})

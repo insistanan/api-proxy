@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -14,9 +16,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func ParseImported(fileName string, content []byte) (map[string][]byte, string, error) {
+func ParseImported(fileName string, content []byte, modes ...map[string]fs.FileMode) (map[string][]byte, string, error) {
 	if strings.EqualFold(filepath.Ext(fileName), ".zip") {
-		return parseZip(content)
+		return parseZip(content, modes...)
 	}
 	if !strings.EqualFold(filepath.Ext(fileName), ".md") {
 		return nil, "", errors.New("仅支持 ZIP 压缩包或 Markdown 文件")
@@ -28,23 +30,42 @@ func ParseImported(fileName string, content []byte) (map[string][]byte, string, 
 	return map[string][]byte{"SKILL.md": content}, name, nil
 }
 
-func parseZip(content []byte) (map[string][]byte, string, error) {
+func parseZip(content []byte, modes ...map[string]fs.FileMode) (map[string][]byte, string, error) {
 	reader, err := zip.NewReader(bytes.NewReader(content), int64(len(content)))
 	if err != nil {
 		return nil, "", errors.New("ZIP 文件无效")
 	}
 	files := make(map[string][]byte)
+	if len(reader.File) > 2048 {
+		return nil, "", errors.New("ZIP 条目数不能超过 2048")
+	}
+	seen := make(map[string]bool)
+	var expanded uint64
 	var skillPath string
 	for _, file := range reader.File {
-		name := filepath.ToSlash(file.Name)
-		if strings.HasPrefix(name, "/") || strings.Contains(name, "../") || file.FileInfo().IsDir() {
+		name := strings.TrimSuffix(file.Name, "/")
+		if !fs.ValidPath(name) || strings.ContainsAny(name, "\\:") || path.Clean(name) != name {
+			return nil, "", fmt.Errorf("ZIP 路径无效: %s", file.Name)
+		}
+		if seen[strings.ToLower(name)] {
+			return nil, "", fmt.Errorf("ZIP 路径重复: %s", name)
+		}
+		seen[strings.ToLower(name)] = true
+		if file.FileInfo().IsDir() {
 			continue
 		}
+		if !file.Mode().IsRegular() {
+			return nil, "", fmt.Errorf("ZIP 不支持链接或特殊文件: %s", name)
+		}
+		if file.UncompressedSize64 > MaxImportBytes || expanded > 64<<20-file.UncompressedSize64 {
+			return nil, "", errors.New("ZIP 展开后不能超过 64 MB，单文件不能超过 20 MB")
+		}
+		expanded += file.UncompressedSize64
 		if strings.EqualFold(filepath.Base(name), "SKILL.md") {
 			if skillPath != "" {
 				return nil, "", errors.New("ZIP 中只能包含一个 SKILL.md")
 			}
-			skillPath = filepath.Dir(name)
+			skillPath = path.Dir(name)
 		}
 	}
 	if skillPath == "" {
@@ -73,11 +94,17 @@ func parseZip(content []byte) (map[string][]byte, string, error) {
 			return nil, "", err
 		}
 		data, readErr := io.ReadAll(io.LimitReader(input, MaxImportBytes+1))
-		input.Close()
-		if readErr != nil || len(data) > MaxImportBytes {
-			return nil, "", errors.New("读取 ZIP 内容失败或文件过大")
+		closeErr := input.Close()
+		if readErr != nil || closeErr != nil {
+			return nil, "", fmt.Errorf("读取 ZIP 内容失败: %w", errors.Join(readErr, closeErr))
+		}
+		if len(data) > MaxImportBytes || uint64(len(data)) != file.UncompressedSize64 {
+			return nil, "", errors.New("ZIP 文件实际大小与声明不符或超过限制")
 		}
 		files[name] = data
+		if len(modes) > 0 && modes[0] != nil {
+			modes[0][name] = 0600 | file.Mode().Perm()&0111
+		}
 	}
 	skill, exists := files["SKILL.md"]
 	if !exists {

@@ -8,18 +8,23 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"syscall"
 
+	"insistanan/api-proxy/internal/clients/filetxn"
 	"insistanan/api-proxy/internal/infra/config"
 )
 
-// MigrateSkillsDir 将旧目录内容（含 .git、.metadata、.backups、skills-manifest.json、mcp.json）安全迁移到新目录。
-// 返回 migrated 表示是否实际移动了文件，以及在配置保存失败时用于恢复的 rollback 回调。
+// MigrateSkillsDir 将旧目录内容（含 .git、.metadata、.backups、skills-manifest.json、mcp.json）完整复制到新目录，配置提交前始终保留源目录。
+// 返回 migrated 表示是否已发布目标副本，以及在配置保存失败时用于恢复的 rollback 回调。
 func MigrateSkillsDir(oldDir, newDir string) (bool, func() error, error) {
-	oldClean := filepath.Clean(oldDir)
-	newClean := filepath.Clean(newDir)
+	oldClean, err := filetxn.Identity(oldDir)
+	if err != nil {
+		return false, nil, err
+	}
+	newClean, err := filetxn.Identity(newDir)
+	if err != nil {
+		return false, nil, err
+	}
 	if config.SamePath(oldClean, newClean) {
 		return false, nil, nil
 	}
@@ -44,6 +49,9 @@ func MigrateSkillsDir(oldDir, newDir string) (bool, func() error, error) {
 	if len(oldEntries) == 0 {
 		return false, nil, nil
 	}
+	if resumed, rollback, err := resumePreparedMigration(oldClean, newClean); resumed || err != nil {
+		return resumed, rollback, err
+	}
 
 	newInfo, err := os.Stat(newClean)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -66,58 +74,13 @@ func MigrateSkillsDir(oldDir, newDir string) (bool, func() error, error) {
 		}
 	}
 
-	if err := moveDirSafe(oldClean, newClean); err != nil {
-		return false, nil, err
-	}
-	rollback := func() error {
-		return moveDirSafe(newClean, oldClean)
-	}
-	return true, rollback, nil
+	return prepareMigration(oldClean, newClean)
 }
 
 func isNestedPath(parent, child string) bool {
-	if runtime.GOOS == "windows" {
-		parent = strings.ToLower(parent)
-		child = strings.ToLower(child)
-	}
 	rel, err := filepath.Rel(parent, child)
-	if err != nil {
-		return false
-	}
-	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
-
-func moveDirSafe(src, dst string) error {
-	if err := os.MkdirAll(filepath.Dir(dst), 0700); err != nil {
-		return fmt.Errorf("创建目标父目录失败: %w", err)
-	}
-	if err := os.Rename(src, dst); err == nil {
-		return nil
-	} else if !isCrossDeviceError(err) {
-		return fmt.Errorf("重命名 Skills 目录失败: %w", err)
-	}
-	return copyThenRemove(src, dst, removeAllForce)
-}
-
-func isCrossDeviceError(err error) bool {
-	if runtime.GOOS == "windows" {
-		return errors.Is(err, syscall.Errno(17)) // ERROR_NOT_SAME_DEVICE
-	}
-	return errors.Is(err, syscall.EXDEV)
-}
-
-// copyThenRemove 的删除依赖可替换，用于确定性验证“源目录部分清理失败”。
-func copyThenRemove(src, dst string, removeSource func(string) error) error {
-	if err := copyDirRecursive(src, dst); err != nil {
-		return errors.Join(fmt.Errorf("复制 Skills 目录失败: %w", err), removeAllForce(dst))
-	}
-	if err := removeSource(src); err != nil {
-		// 删除可能已经部分成功，此时目标是唯一完整副本，绝不能删除目标来“回滚”。
-		return fmt.Errorf("清理原 Skills 目录 %s 失败，完整副本保留在 %s，请恢复目录后再操作: %w", src, dst, err)
-	}
-	return nil
-}
-
 func copyDirRecursive(src, dst string) error {
 	return filepath.WalkDir(src, func(current string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -136,14 +99,13 @@ func copyDirRecursive(src, dst string) error {
 			return err
 		}
 		if entry.Type()&fs.ModeSymlink != 0 {
-			linkTarget, err := os.Readlink(current)
-			if err != nil {
-				return err
-			}
-			return os.Symlink(linkTarget, target)
+			return fmt.Errorf("迁移不支持符号链接: %s", current)
 		}
 		if entry.IsDir() {
 			return os.MkdirAll(target, info.Mode().Perm()|0700)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("迁移不支持特殊文件: %s", current)
 		}
 		return copyFileWithMode(current, target, info.Mode().Perm())
 	})
@@ -163,7 +125,7 @@ func copyFileWithMode(src, dst string, mode fs.FileMode) error {
 	if _, err := io.Copy(out, in); err != nil {
 		return errors.Join(err, out.Close())
 	}
-	if err := out.Close(); err != nil {
+	if err := errors.Join(out.Sync(), out.Close()); err != nil {
 		return err
 	}
 	if mode&0200 == 0 {

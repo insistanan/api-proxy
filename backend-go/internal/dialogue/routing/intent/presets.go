@@ -63,18 +63,29 @@ type PresetsStatus struct {
 }
 
 type presetCatalog struct {
-	mu        sync.Mutex
-	url       string
-	urlFile   string
-	loadError string
-	client    *http.Client
-	manifest  EmbeddingPresets
-	fetchedAt time.Time
+	mu             sync.Mutex
+	url            string
+	urlFile        string
+	loadError      string
+	client         *http.Client
+	downloadClient func(time.Duration) (*http.Client, error)
+	manifest       EmbeddingPresets
+	fetchedAt      time.Time
+	revision       uint64
+	flight         *presetFetch
+}
+
+type presetFetch struct {
+	done     chan struct{}
+	revision uint64
+	manifest EmbeddingPresets
+	err      error
 }
 
 func newPresetCatalog() *presetCatalog {
 	return &presetCatalog{url: DefaultPresetsURL, client: &http.Client{
-		Timeout: 10 * time.Second,
+		Transport: &http.Transport{Proxy: nil},
+		Timeout:   10 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 8 {
 				return fmt.Errorf("预设清单重定向次数超限")
@@ -143,6 +154,7 @@ func (l *LocalRuntime) SetPresetsURL(raw string) error {
 	}
 	p.url = raw
 	p.manifest = EmbeddingPresets{}
+	p.revision++
 	p.fetchedAt = time.Time{}
 	p.loadError = ""
 	return writeErr
@@ -191,37 +203,69 @@ func validatePresets(data []byte) (EmbeddingPresets, error) {
 
 func (p *presetCatalog) fetch(ctx context.Context) (EmbeddingPresets, error) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if !p.fetchedAt.IsZero() && time.Since(p.fetchedAt) < presetCacheTTL {
-		return p.manifest, nil
+		manifest := p.manifest
+		p.mu.Unlock()
+		return manifest, nil
 	}
-	manifest, err := p.download(ctx)
-	if err != nil {
-		// 上一次成功结果仍可展示，但错误显式返回，安装不会使用失败的刷新结果。
-		return p.manifest, fmt.Errorf("拉取发布预设清单失败: %w", err)
+	if flight := p.flight; flight != nil && flight.revision == p.revision {
+		p.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return EmbeddingPresets{}, ctx.Err()
+		case <-flight.done:
+			return flight.manifest, flight.err
+		}
 	}
-	p.manifest, p.fetchedAt = manifest, time.Now()
-	return manifest, nil
+	flight := &presetFetch{done: make(chan struct{}), revision: p.revision}
+	p.flight = flight
+	rawURL := p.url
+	p.mu.Unlock()
+	manifest, err := p.download(ctx, rawURL)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if flight.revision != p.revision {
+		err = fmt.Errorf("下载期间预设清单地址已变化，请重新读取")
+		manifest = EmbeddingPresets{}
+	} else if err != nil {
+		manifest, err = p.manifest, fmt.Errorf("拉取发布预设清单失败: %w", err)
+	} else {
+		p.manifest, p.fetchedAt = manifest, time.Now()
+	}
+	flight.manifest, flight.err = manifest, err
+	if p.flight == flight {
+		p.flight = nil
+	}
+	close(flight.done)
+	return manifest, err
 }
 
-func (p *presetCatalog) download(ctx context.Context) (EmbeddingPresets, error) {
-	if p.url == DefaultPresetsURL {
+func (p *presetCatalog) download(ctx context.Context, rawURL string) (EmbeddingPresets, error) {
+	if rawURL == DefaultPresetsURL {
 		data, err := apiproxy.FrontendFS.ReadFile("frontend/dist/embedding-presets.json")
 		if err != nil {
 			return EmbeddingPresets{}, fmt.Errorf("读取内置向量预设清单失败，请通过项目复制脚本重新构建: %w", err)
 		}
 		return validatePresets(data)
 	}
-	if err := validateHTTPS(p.url); err != nil {
+	if err := validateHTTPS(rawURL); err != nil {
 		return EmbeddingPresets{}, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return EmbeddingPresets{}, err
 	}
-	resp, err := p.client.Do(req)
+	client := p.client
+	if p.downloadClient != nil {
+		client, err = p.downloadClient(10 * time.Second)
+		if err != nil {
+			return EmbeddingPresets{}, err
+		}
+	}
+	defer client.CloseIdleConnections()
+	resp, err := client.Do(req)
 	if err != nil {
 		return EmbeddingPresets{}, err
 	}

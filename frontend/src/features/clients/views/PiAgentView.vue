@@ -1,5 +1,6 @@
 <template>
   <div class="agent-config-page piagent-page">
+    <DraftGuard :dirty="providersDirty || settingsDirty || promptState.dirty" :busy="loading || editorBusy || promptState.busy" />
     <AgentConfigHeader title="pi 配置">
       <template #default>
         <UiButton variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="editorBusy || deleteProviderDialog" @click="loadAll">刷新</UiButton>
@@ -273,11 +274,14 @@
       @confirm="confirmDeleteProvider"
     />
 
-    <AgentPromptCard agent="pi" class="mt-5" />
+    <AgentPromptCard agent="pi" class="mt-5" @draft-state="promptState = $event" />
   </div>
 </template>
 
 <script setup lang="ts">
+import DraftGuard from '@/shared/components/overlay/DraftGuard.vue'
+import { apiErrorText } from '@/shared/services/http'
+import { useDraftSnapshot } from '@/shared/composables/useDraftSnapshot'
 import UiButton from '@/shared/ui/button/Button.vue'
 import UiCard from '@/shared/ui/card/Card.vue'
 import UiCheckbox from '@/shared/ui/check/Checkbox.vue'
@@ -307,6 +311,7 @@ import { filterProxyModelsByKind, importProxyModels, buildPiAgentModel } from '@
 import { useAuthStore } from '@/shared/stores/auth'
 import { parseJSONObject } from '@/shared/utils/parseJSONObject'
 
+const promptState = ref({ dirty: false, busy: false })
 const loading = ref(false)
 const disabled = ref(false)
 const loadError = ref('')
@@ -396,6 +401,8 @@ interface EditableProvider {
 }
 
 const providers = ref<EditableProvider[]>([])
+const providerBaselines = ref<Record<string, string>>({})
+const providersDirty = computed(() => providers.value.some(provider => providerBaselines.value[provider.localId] !== JSON.stringify(provider)))
 const selectedProviderId = ref('')
 const providersRevision = ref('')
 const savingProvider = ref(false)
@@ -658,12 +665,14 @@ const saveSelectedProvider = async () => {
     written = true
     provider.persisted = true
     provider.id = provider.id.trim()
+    providerBaselines.value[provider.localId] = JSON.stringify(provider)
     const refreshed = await api.getPiAgentProviders()
     const saved = refreshed.providers.find(p => p.id === provider.id)
     if (!saved) throw new Error(`保存后未找到供应商 ${provider.id}`)
     // 只刷新本次保存的供应商，其余供应商的未保存草稿保留。
     const updated = { ...toEditableProvider(saved), localId: provider.localId }
     providers.value = providers.value.map(p => p.localId === provider.localId ? updated : p)
+    providerBaselines.value[provider.localId] = JSON.stringify(updated)
   } catch (error) {
     if (written) notice.value = { visible: true, type: 'warning', message: `供应商已保存，但刷新失败: ${error instanceof Error ? error.message : '未知错误'}。请勿重复创建` }
     else handleApiError(error, '保存供应商失败')
@@ -762,6 +771,7 @@ const discoverModels = async () => {
 
 // ---- 默认模型设置 ----
 const modelSettings = ref({ defaultProvider: '', defaultModel: '', defaultThinkingLevel: '', enabledModels: [] as string[] })
+const { dirty: settingsDirty, markSaved: markSettingsSaved } = useDraftSnapshot(() => modelSettings.value)
 const settingsRevision = ref('')
 const savingSettings = ref(false)
 const editorBusy = computed(() => savingProvider.value || savingSettings.value || deletingProvider.value || testing.value || discovering.value || preparingProvider.value)
@@ -780,6 +790,7 @@ const saveModelSettings = async () => {
       }
     })
     settingsRevision.value = result.revision
+    markSettingsSaved()
     notice.value = { visible: true, type: 'success', message: '默认模型设置已保存' }
   } catch (error) {
     handleApiError(error, '保存默认模型设置失败')
@@ -800,7 +811,7 @@ const handleApiError = (error: unknown, fallback: string) => {
     notice.value = { visible: true, type: 'error', message: '配置版本已失效，当前编辑已保留。请先记录需要保留的修改，再刷新配置后重新编辑' }
     return notice.value.message
   }
-  notice.value = { visible: true, type: 'error', message: apiError?.message || fallback }
+  notice.value = { visible: true, type: apiError?.committed ? 'warning' : 'error', message: error instanceof Error ? apiErrorText(error) : fallback }
   return notice.value.message
 }
 
@@ -808,6 +819,7 @@ const applyProviders = (result: Awaited<ReturnType<typeof api.getPiAgentProvider
   providersRevision.value = result.revision
   const prevSelectionId = selectedProvider.value?.id ?? ''
   providers.value = result.providers.map(toEditableProvider)
+  providerBaselines.value = Object.fromEntries(providers.value.map(provider => [provider.localId, JSON.stringify(provider)]))
   const target = prevSelectionId ? providers.value.find(p => p.id === prevSelectionId) : undefined
   selectedProviderId.value = target?.localId ?? providers.value[0]?.localId ?? ''
 }
@@ -832,6 +844,7 @@ const loadAll = async () => {
     const [loadedProviders, loadedSettings] = await Promise.all([api.getPiAgentProviders(), api.getPiAgentModelSettings()])
     applyProviders(loadedProviders)
     applyModelSettings(loadedSettings)
+    markSettingsSaved()
   } catch (error) {
     loadError.value = handleApiError(error, '加载 pi-agent 配置失败')
   } finally {

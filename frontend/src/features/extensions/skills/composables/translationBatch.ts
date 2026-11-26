@@ -14,9 +14,33 @@ export const batchProgress = computed(() => {
   const task = batchTask.value
   if (!task?.running) return ''
   if (!task.current) return '正在准备项目技能翻译'
-  return `${task.retry ? '重试' : '首轮'} ${task.index}/${task.total}：${task.current}`
+  return `${task.status === 'cancelling' ? '正在取消' : '翻译'} ${task.index}/${task.total}：${task.current}`
 })
-export const batchResult = computed(() => batchTask.value?.running ? null : batchTask.value)
+export const batchResult = computed(() => (batchTask.value?.running ? null : batchTask.value))
+export const batchResultLabel = computed(() => {
+  const status = batchResult.value?.status
+  return status === 'cancelled'
+    ? '项目技能批量翻译已取消'
+    : status === 'timeout'
+      ? '项目技能批量翻译已超时'
+      : status === 'failed'
+        ? '项目技能批量翻译存在失败项'
+        : '项目技能批量翻译已完成'
+})
+
+export async function cancelSkillTranslation() {
+  const taskId = batchTask.value?.id
+  if (!taskId) return
+  const revision = ++requestRevision
+  try {
+    const { task } = await skillsApi.cancelSkillTranslation(taskId)
+    if (revision === requestRevision) applyTask(task)
+  } catch (error) {
+    if (revision === requestRevision) batchStatusError.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    if (revision === requestRevision) schedulePoll()
+  }
+}
 
 export function pendingProjectTranslations(skills: readonly ManagedSkill[]) {
   const unique = new Map<string, ManagedSkill>()
@@ -40,10 +64,14 @@ function applyTask(task: SkillTranslationTask | null) {
   const key = `skill-translation:${task.id}`
   if (useNotificationStore().messages.some(item => item.key === key)) return
   const failed = task.failures.length
-  const summary = `项目技能翻译完成 · 成功 ${task.succeeded} · 失败 ${failed} · 跳过 ${task.skipped}`
+  const summary = `${batchResultLabel.value} · 成功 ${task.succeeded} · 失败 ${failed} · 跳过 ${task.skipped} · 未处理 ${task.remaining}`
   const details = task.failures.map(item => `${item.name}：${item.error}`).join('\n')
-  useToast().showToast(summary, failed ? 'warning' : 'success', {
-    key, details, source: '批量翻译', level: failed ? 'warning' : 'notice'
+  const incomplete = failed > 0 || task.status !== 'completed'
+  useToast().showToast(summary, incomplete ? 'warning' : 'success', {
+    key,
+    details,
+    source: '批量翻译',
+    level: incomplete ? 'warning' : 'notice'
   })
 }
 
@@ -74,18 +102,20 @@ export async function refreshSkillTranslation() {
 
 export async function startSkillTranslation(channelId: string, protocol: string, model: string) {
   if (batchStarting.value || batchRunning.value || translationInProgress.value) return
-  ++requestRevision
+  const revision = ++requestRevision
   clearTimeout(pollTimer)
   batchStarting.value = true
   try {
     const { task } = await skillsApi.startSkillTranslation({ channelId, protocol, model })
-    if (!useAuthStore().isAuthenticated) return
+    if (revision !== requestRevision || !useAuthStore().isAuthenticated) return
     batchStatusError.value = ''
     applyTask(task)
     schedulePoll()
   } finally {
-    batchStarting.value = false
-    if (!batchRunning.value) void refreshSkillTranslation()
+    if (revision === requestRevision) {
+      batchStarting.value = false
+      if (!batchRunning.value) void refreshSkillTranslation()
+    }
   }
 }
 
@@ -94,12 +124,17 @@ export function useSkillTranslationMonitor() {
     ++requestRevision
     clearTimeout(pollTimer)
     batchTask.value = null
+    batchStarting.value = false
     batchStatusError.value = ''
     completedTask = ''
   }
-  watch(() => useAuthStore().isAuthenticated, authenticated => {
-    if (authenticated) void refreshSkillTranslation()
-    else reset()
-  }, { immediate: true })
+  watch(
+    () => useAuthStore().isAuthenticated,
+    authenticated => {
+      if (authenticated) void refreshSkillTranslation()
+      else reset()
+    },
+    { immediate: true, flush: 'sync' }
+  )
   onUnmounted(reset)
 }

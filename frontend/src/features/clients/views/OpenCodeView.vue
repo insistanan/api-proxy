@@ -1,5 +1,6 @@
 <template>
   <div class="agent-config-page opencode-page">
+    <DraftGuard :dirty="draftDirty || promptState.dirty" :busy="loading || editorBusy || promptState.busy" />
     <AgentConfigHeader title="OpenCode 配置">
       <template #default>
         <UiButton variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="editorBusy" @click="loadConfig">刷新</UiButton>
@@ -224,7 +225,7 @@
 
     </fieldset>
 
-    <AgentPromptCard agent="opencode" class="mt-5" />
+    <AgentPromptCard agent="opencode" class="mt-5" @draft-state="promptState = $event" />
   </div>
   <ConfirmDialog
     :model-value="pendingConfirm !== null"
@@ -239,6 +240,9 @@
 </template>
 
 <script setup lang="ts">
+import DraftGuard from '@/shared/components/overlay/DraftGuard.vue'
+import { useDraftSnapshot } from '@/shared/composables/useDraftSnapshot'
+import { ApiError, apiErrorText } from '@/shared/services/http'
 import UiButton from '@/shared/ui/button/Button.vue'
 import UiCard from '@/shared/ui/card/Card.vue'
 import UiCheckbox from '@/shared/ui/check/Checkbox.vue'
@@ -335,6 +339,8 @@ function makeDefaultVariants(): EditableVariant[] {
   return defaultVariantNames.map(name => ({ name, reasoningEffort: name, enabled: true }))
 }
 
+const { dirty: draftDirty, markSaved } = useDraftSnapshot(() => providers.value)
+const promptState = ref({ dirty: false, busy: false })
 const loading = ref(false)
 const saving = ref(false)
 const preparingProvider = ref(false)
@@ -470,6 +476,7 @@ const applyLoadedConfig = (loaded: OpenCodeConfig) => {
   providers.value = loaded.providers.map(toEditableProvider)
   selectedProviderId.value = providers.value.some(provider => provider.id === selectedId)
     ? selectedId : providers.value[0]?.id ?? ''
+  markSaved()
 }
 
 const addProvider = () => {
@@ -644,6 +651,7 @@ const saveConfig = async () => {
     const payload = { providers: providers.value.map(prepareProvider), revision: config.value.revision }
     const response = await api.saveOpenCodeConfig(payload)
     config.value.revision = response.revision
+    markSaved()
     showToast(`已保存到 ${response.path}`, 'success')
     try {
       applyLoadedConfig(await api.getOpenCodeConfig())
@@ -651,8 +659,8 @@ const saveConfig = async () => {
       showToast(`配置已保存，但刷新失败: ${error instanceof Error ? error.message : '未知错误'}。请刷新查看实际状态，请勿重复提交`, 'warning')
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : '保存 OpenCode 配置失败'
-    showToast(`${message}。当前编辑已保留`, 'error')
+    const committed = error instanceof ApiError && error.committed
+    showToast(apiErrorText(error) + (committed ? '' : '。当前编辑已保留'), committed ? 'warning' : 'error')
   } finally {
     saving.value = false
   }

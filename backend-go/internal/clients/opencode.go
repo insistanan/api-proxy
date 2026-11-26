@@ -5,21 +5,22 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"insistanan/api-proxy/internal/protocol/codec"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"insistanan/api-proxy/internal/clients/filetxn"
+	"insistanan/api-proxy/internal/protocol/codec"
 )
 
 const openCodeSchemaURL = "https://opencode.ai/config.json"
 
 var openCodeConfigMu sync.Mutex
-var errOpenCodeRevisionConflict = errors.New("配置文件已被外部修改，请刷新后重试")
+var errOpenCodeRevisionConflict = filetxn.ErrConflict
 
 type openCodeConfigResponse struct {
 	Path       string                 `json:"path"`
@@ -130,50 +131,12 @@ func SaveOpenCodeConfig() gin.HandlerFunc {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		if req.Revision == nil {
-			c.JSON(428, gin.H{"error": "保存需要配置版本，请先刷新配置", "code": "revision_required"})
-			return
-		}
-
-		openCodeConfigMu.Lock()
-		defer openCodeConfigMu.Unlock()
-
-		path := resolveOpenCodeConfigPath()
-		root, raw, _, err := readOpenCodeConfig(path)
+		path, revision, err := saveOpenCodeConfiguration(req)
 		if err != nil {
-			c.JSON(500, gin.H{"error": fmt.Sprintf("读取 OpenCode 配置失败: %v", err)})
+			respondClientFileError(c, err)
 			return
 		}
-		if *req.Revision != sha256HexOrEmpty(raw) {
-			c.JSON(409, gin.H{"error": errOpenCodeRevisionConflict.Error(), "code": "revision_conflict"})
-			return
-		}
-		if root == nil {
-			root = make(map[string]interface{})
-		}
-		if _, ok := root["$schema"]; !ok {
-			root["$schema"] = openCodeSchemaURL
-		}
-
-		existingProviders := objectValue(root["provider"])
-		root["provider"] = mergeOpenCodeProviders(existingProviders, req.Providers)
-
-		data, err := json.MarshalIndent(root, "", "  ")
-		if err != nil {
-			c.JSON(500, gin.H{"error": "序列化 OpenCode 配置失败"})
-			return
-		}
-		data = append(data, '\n')
-		if err := writeOpenCodeConfig(path, raw, data); err != nil {
-			if errors.Is(err, errOpenCodeRevisionConflict) {
-				c.JSON(409, gin.H{"error": err.Error(), "code": "revision_conflict"})
-				return
-			}
-			c.JSON(500, gin.H{"error": fmt.Sprintf("保存 OpenCode 配置失败: %v", err)})
-			return
-		}
-
-		c.JSON(200, gin.H{"success": true, "path": path, "revision": sha256HexOrEmpty(data)})
+		c.JSON(200, gin.H{"success": true, "path": path, "revision": revision})
 	}
 }
 
@@ -260,6 +223,9 @@ func readOpenCodeConfig(path string) (map[string]interface{}, []byte, bool, erro
 	if err := json.Unmarshal(cleaned, &root); err != nil {
 		return nil, raw, true, fmt.Errorf("JSON/JSONC 格式无效: %w", err)
 	}
+	if err := validateOpenCodeShape(root); err != nil {
+		return nil, raw, true, err
+	}
 	return root, raw, true, nil
 }
 
@@ -310,7 +276,10 @@ func mergeOpenCodeProviders(existing map[string]interface{}, providers []saveOpe
 			applyOpenCodeImageDefaults(oldModel)
 			setOptionalString(oldModel, "id", model.APIModelID)
 			setOptionalString(oldModel, "name", model.Name)
-			limits := make(map[string]interface{})
+			limits := copyObject(objectValue(oldModel["limit"]))
+			for _, key := range []string{"context", "input", "output"} {
+				delete(limits, key)
+			}
 			if model.ContextLimit > 0 {
 				limits["context"] = model.ContextLimit
 			}
@@ -334,9 +303,10 @@ func mergeOpenCodeProviders(existing map[string]interface{}, providers []saveOpe
 			if len(model.Variants) == 0 {
 				delete(oldModel, "variants")
 			} else {
+				oldVariants := objectValue(oldModel["variants"])
 				variants := make(map[string]interface{}, len(model.Variants))
 				for variantName, variant := range model.Variants {
-					v := make(map[string]interface{})
+					v := copyObject(objectValue(oldVariants[variantName]))
 					setOptionalString(v, "reasoningEffort", variant.ReasoningEffort)
 					if len(v) > 0 {
 						variants[variantName] = v
@@ -461,41 +431,7 @@ func openCodeVariantViews(variants map[string]interface{}) map[string]openCodeVa
 }
 
 func writeOpenCodeConfig(path string, previous, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return err
-	}
-	if len(previous) > 0 {
-		backup := path + "." + time.Now().Format("20060102-150405") + ".bak"
-		if err := os.WriteFile(backup, previous, 0600); err != nil {
-			return fmt.Errorf("创建备份失败: %w", err)
-		}
-	}
-	tempFile, err := os.CreateTemp(filepath.Dir(path), ".opencode-*.tmp")
-	if err != nil {
-		return err
-	}
-	tempPath := tempFile.Name()
-	defer os.Remove(tempPath)
-	if err := tempFile.Chmod(0600); err != nil {
-		tempFile.Close()
-		return err
-	}
-	if _, err := tempFile.Write(data); err != nil {
-		tempFile.Close()
-		return err
-	}
-	if err := tempFile.Close(); err != nil {
-		return err
-	}
-	// 外部编辑器不受 API 互斥锁保护，替换前再比较原始字节，避免覆盖期间的修改。
-	current, err := os.ReadFile(path)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("检查 OpenCode 配置版本失败: %w", err)
-	}
-	if !bytes.Equal(current, previous) {
-		return errOpenCodeRevisionConflict
-	}
-	return os.Rename(tempPath, path)
+	return filetxn.Replace(path, previous, data, filepath.Dir(path), 0600)
 }
 
 func normalizeJSONC(raw []byte) ([]byte, error) {
@@ -603,53 +539,6 @@ func isJSONC(raw []byte) bool {
 		}
 	}
 	return false
-}
-
-func objectValue(value interface{}) map[string]interface{} {
-	if object, ok := value.(map[string]interface{}); ok {
-		return object
-	}
-	return make(map[string]interface{})
-}
-
-func stringMapValue(value interface{}) map[string]string {
-	object := objectValue(value)
-	result := make(map[string]string, len(object))
-	for key, raw := range object {
-		if codec.StringValue(raw) != "" {
-			result[key] = codec.StringValue(raw)
-		}
-	}
-	return result
-}
-
-func copyObject(source map[string]interface{}) map[string]interface{} {
-	copy := make(map[string]interface{}, len(source))
-	for key, value := range source {
-		copy[key] = value
-	}
-	return copy
-}
-
-func boolValue(value interface{}) bool {
-	boolValue, _ := value.(bool)
-	return boolValue
-}
-
-func intValue(value interface{}) int {
-	number, ok := value.(float64)
-	if !ok {
-		return 0
-	}
-	return int(number)
-}
-
-func setOptionalString(object map[string]interface{}, key, value string) {
-	if value = strings.TrimSpace(value); value == "" {
-		delete(object, key)
-		return
-	}
-	object[key] = value
 }
 
 func maskOpenCodeSecret(secret string) string {

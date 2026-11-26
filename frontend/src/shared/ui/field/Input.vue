@@ -4,9 +4,10 @@
       >{{ label }}<span v-if="required" class="ml-1 text-destructive">*</span></label
     >
     <div
-      class="ui-field field-surface flex min-h-10 items-center gap-2 px-3"
+      class="ui-field field-surface flex items-center gap-2 px-3"
       :data-disabled="disabled || undefined"
-      :class="message || error ? 'border-destructive' : 'border-input'"
+      :class="[message || error ? 'border-destructive' : 'border-input', density === 'compact' ? 'min-h-8' : density === 'comfortable' ? 'min-h-11' : 'min-h-10', variant === 'filled' ? 'bg-muted' : variant === 'plain' ? 'border-transparent shadow-none' : '']"
+      :aria-busy="loading || undefined"
     >
       <Icon v-if="prependInnerIcon" :icon="prependInnerIcon" :size="16" class="text-muted-foreground" />
       <input
@@ -17,10 +18,12 @@
         :disabled="disabled"
         :required="required"
         :aria-invalid="!!message || !!error"
-        :aria-describedby="message || hint ? `${id}-message` : undefined"
-        class="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none! placeholder:text-muted-foreground/70 disabled:cursor-not-allowed"
+        :aria-describedby="showDetails ? `${id}-message` : undefined"
+        class="min-w-0 flex-1 bg-transparent text-sm outline-none! placeholder:text-muted-foreground/70 disabled:cursor-not-allowed"
+        :class="density === 'compact' ? 'py-1' : 'py-2'"
         @input="input"
-        @blur="validate"
+        @focus="focused = true"
+        @blur="focused = false; validate()"
       />
       <button
         v-if="clearable && modelValue !== '' && modelValue != null"
@@ -33,20 +36,22 @@
         <Icon icon="mdi-close" :size="14" />
       </button>
       <slot name="append-inner"></slot>
+      <Icon v-if="loading" icon="mdi-loading" :size="16" class="animate-spin" />
     </div>
     <p
-      v-if="message || hint"
+      v-if="showDetails"
       :id="`${id}-message`"
       class="mt-1 text-xs leading-5"
       :class="message ? 'text-destructive' : 'text-muted-foreground'"
       :role="message ? 'alert' : undefined"
     >
-      {{ message || hint }}
+      {{ message || (showHint ? hint : '') }}
+      <span v-if="counter" class="float-right ml-3">{{ String(modelValue ?? '').length }}<template v-if="counter !== true"> / {{ counter }}</template></span>
     </p>
   </div>
 </template>
 <script setup lang="ts" generic="T extends string | number | null | undefined = string">
-import { computed, useAttrs, useId, type StyleValue } from 'vue'
+import { computed, ref, useAttrs, useId, type StyleValue } from 'vue'
 import Icon from '@/shared/ui/icon/Icon.vue'
 import { cn } from '@/shared/utils/classes'
 import { useField, type ValidationRule } from '@/shared/ui/form/context'
@@ -78,6 +83,9 @@ const nativeAttrs = computed(() =>
 )
 const id = useId()
 const { disabled, message, validate } = useField(props)
+const focused = ref(false)
+const showHint = computed(() => !!props.hint && (props.persistentHint || focused.value))
+const showDetails = computed(() => props.hideDetails !== true && (!!message.value || showHint.value || !!props.counter))
 function input(event: Event) {
   let value: string | number = (event.target as HTMLInputElement).value
   if (props.modelModifiers?.trim) value = value.trim()

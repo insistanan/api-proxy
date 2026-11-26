@@ -31,6 +31,7 @@ type Observation struct {
 }
 
 type RouteOverride struct {
+	ChannelID    string    `json:"channelId"`
 	Kind         string    `json:"kind"`
 	ChannelIndex int       `json:"channelIndex"`
 	ChannelName  string    `json:"channelName,omitempty"`

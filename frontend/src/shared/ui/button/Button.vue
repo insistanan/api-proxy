@@ -8,10 +8,12 @@
         icon ? 'aspect-square px-0' : '',
         block && 'w-full',
         appearance,
+        rounding,
         $attrs.class as string
       )
     "
     :aria-disabled="blocked || undefined"
+    :style="heightStyle"
     :data-color="color"
     :data-variant="variant || 'solid'"
     :aria-busy="loading || undefined"
@@ -32,7 +34,7 @@ import { cva } from 'class-variance-authority'
 import Icon from '@/shared/ui/icon/Icon.vue'
 import { cn } from '@/shared/utils/classes'
 import { colorClass, toneClass } from '@/shared/ui/variants'
-import { toggleKey } from './context'
+import { toggleKey } from '@/shared/ui/button/context'
 defineOptions({ inheritAttrs: true })
 const props = defineProps<{
   icon?: boolean | string
@@ -56,6 +58,14 @@ const emit = defineEmits<{ click: [event: MouseEvent] }>()
 const group = inject(toggleKey, null)
 const selected = computed(() => props.active || (group && group.value.value === props.value))
 const blocked = computed(() => props.disabled || props.loading || group?.disabled.value)
+const rounding = computed(() => props.rounded === true || props.rounded === 'pill' || props.rounded === 'full' ? 'rounded-full'
+  : props.rounded === false || props.rounded === '0' || props.rounded === 'none' ? 'rounded-none'
+  : props.rounded === 'lg' ? 'rounded-lg' : props.rounded === 'md' ? 'rounded-md' : props.rounded === 'sm' ? 'rounded-sm' : '')
+const heightStyle = computed(() => {
+  if (props.height === undefined) return undefined
+  const height = typeof props.height === 'number' || /^\d+(\.\d+)?$/.test(props.height) ? `${props.height}px` : props.height
+  return { height, minHeight: height }
+})
 const normalizedSize = computed(() =>
   ['x-small', 'small', 'large'].includes(props.size ?? '') ? (props.size as 'small' | 'large' | 'x-small') : 'default'
 )

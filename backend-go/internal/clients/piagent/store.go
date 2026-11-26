@@ -1,6 +1,7 @@
 package piagent
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -31,7 +32,7 @@ func DefaultBackupDir() (string, error) {
 }
 
 // LockAndCheck 获取管理锁并检测 pi-agent proper-lockfile。返回 release 函数。
-func (s *Store) LockAndCheck() (release func(), err error) {
+func (s *Store) LockAndCheck(ctx context.Context) (release func(), err error) {
 	dir, err := ResolveConfigDir()
 	if err != nil {
 		return nil, err
@@ -39,7 +40,15 @@ func (s *Store) LockAndCheck() (release func(), err error) {
 	if err := checkPiAgentLocks(dir); err != nil {
 		return nil, err
 	}
-	return acquireManagerLock(dir)
+	release, err = acquireManagerLock(ctx, dir)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkPiAgentLocks(dir); err != nil {
+		release()
+		return nil, err
+	}
+	return release, nil
 }
 
 // ReadProviders 读取 models.json 中的 provider map。
@@ -74,7 +83,7 @@ func (s *Store) SaveProviders(providers map[string]ProviderConfig, revision stri
 	if err != nil {
 		return WriteResult{}, err
 	}
-	root, raw, exists, err := ReadJSON(path)
+	_, root, raw, exists, err := s.ReadProviders()
 	if err != nil {
 		return WriteResult{}, err
 	}
@@ -107,20 +116,7 @@ func (s *Store) SaveProviders(providers map[string]ProviderConfig, revision stri
 	if err != nil {
 		return WriteResult{}, err
 	}
-	return WriteFileAtomic(path, data, true, s.BackupDir)
-}
-
-// UpsertProvider 新增或更新单个 provider。
-func (s *Store) UpsertProvider(id string, provider ProviderConfig, revision string) (WriteResult, error) {
-	providers, _, raw, _, err := s.ReadProviders()
-	if err != nil {
-		return WriteResult{}, err
-	}
-	if revision != "" && SHA256Hex(raw) != revision {
-		return WriteResult{}, ErrRevisionMismatch
-	}
-	providers[id] = provider
-	return s.SaveProviders(providers, revision)
+	return WriteFileAtomic(path, data, true, s.BackupDir, raw)
 }
 
 // DeleteProvider 删除单个 provider。
@@ -139,19 +135,6 @@ func (s *Store) DeleteProvider(id string, revision string) (WriteResult, error) 
 	return s.SaveProviders(providers, revision)
 }
 
-// ListModels 列出 provider 下的模型 ID 列表。
-func (s *Store) ListModels(providerID string) ([]ModelConfig, error) {
-	providers, _, _, _, err := s.ReadProviders()
-	if err != nil {
-		return nil, err
-	}
-	provider, exists := providers[providerID]
-	if !exists {
-		return nil, fmt.Errorf("provider 不存在: %s", providerID)
-	}
-	return provider.Models, nil
-}
-
 func (s *Store) modelsPath() (string, error) {
 	dir, err := ResolveConfigDir()
 	if err != nil {
@@ -167,6 +150,9 @@ func objectRawValue(raw json.RawMessage) (map[string]json.RawMessage, error) {
 	result := make(map[string]json.RawMessage)
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return nil, err
+	}
+	if result == nil {
+		return nil, fmt.Errorf("字段必须是 JSON 对象，不能是 null")
 	}
 	return result, nil
 }

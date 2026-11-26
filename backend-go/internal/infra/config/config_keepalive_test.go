@@ -6,6 +6,36 @@ import (
 	"time"
 )
 
+func TestKeepaliveTargetDigest_OnlyRelevantConfigurationInvalidatesTarget(t *testing.T) {
+	manager := &ConfigManager{}
+	manager.publishConfigLocked(Config{Upstream: []UpstreamConfig{
+		{ID: "a", BaseURL: "https://a.example", APIKeys: []string{"a"}},
+		{ID: "b", BaseURL: "https://b.example", APIKeys: []string{"b"}},
+	}})
+	digest, _ := manager.CacheKeepaliveTargetDigest("messages", "a")
+	cfg := manager.GetConfig()
+	cfg.Upstream[1].APIKeys = []string{"rotated"}
+	manager.publishConfigLocked(cfg)
+	other, _ := manager.CacheKeepaliveTargetDigest("messages", "a")
+	if digest != other {
+		t.Fatal("其他渠道变更不应废弃本目标")
+	}
+	cfg = manager.GetConfig()
+	cfg.Upstream[0].APIKeys = []string{"rotated"}
+	manager.publishConfigLocked(cfg)
+	changed, _ := manager.CacheKeepaliveTargetDigest("messages", "a")
+	if digest == changed {
+		t.Fatal("目标凭据变更未使候选失效")
+	}
+	cfg = manager.GetConfig()
+	cfg.Settings.ContentSafety.Enabled = !cfg.Settings.ContentSafety.Enabled
+	manager.publishConfigLocked(cfg)
+	safety, _ := manager.CacheKeepaliveTargetDigest("messages", "a")
+	if safety == changed {
+		t.Fatal("安全策略变更未使候选失效")
+	}
+}
+
 func TestCacheKeepaliveConfig_IgnoresRemovedTokenLimitInExistingSettings(t *testing.T) {
 	var upstream UpstreamConfig
 	err := json.Unmarshal([]byte(`{"serviceType":"claude","cacheKeepalive":{"enabled":true,"intervalSeconds":280,"maxAttempts":100,"maxIdleMinutes":0,"prompt":"继续","minCacheHitPercent":90,"maxOutputTokens":16,"maxTotalTokens":1}}`), &upstream)

@@ -26,7 +26,7 @@ type ResponsesProvider struct {
 }
 
 // ConvertToProviderRequest 将 Responses 请求转换为上游格式。
-// R4-a：解析 gin 后委托显式实现 BuildRequest（薄壳）；转换产物
+// 解析入站请求后交给 BuildRequest；转换产物
 // （previous_response_id 移除 / 历史边界）写回 gin context 供响应出口消费。
 func (p *ResponsesProvider) ConvertToProviderRequest(
 	c *gin.Context,
@@ -74,7 +74,7 @@ func (p *ResponsesProvider) ConvertToProviderRequest(
 	return outcome.Request, outcome.OriginalBody, nil
 }
 
-// BuildRequest 以显式输入构造 Responses 上游请求（R4-a 主实现，不依赖 gin）。
+// BuildRequest 以显式输入构造 Responses 上游请求（不依赖 Gin）。
 // 转换产物经 RequestOutcome 返回（错误路径同样返回部分产物供调用方消费）。
 func (p *ResponsesProvider) buildRequest(input RequestInput, upstream *config.UpstreamConfig, apiKey string) (*RequestOutcome, error) {
 	bodyBytes := input.Body

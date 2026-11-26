@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strings"
 	"time"
+
+	"github.com/google/uuid"
 
 	"insistanan/api-proxy/internal/dialogue/routing/semantic"
 	"insistanan/api-proxy/internal/infra/config"
@@ -14,18 +17,29 @@ import (
 
 // Preparation 属于服务生命周期；关闭浏览器不取消任务，停机先取消并等待再关闭存储。
 type Preparation struct {
-	ID       string                      `json:"id"`
-	Protocol string                      `json:"protocol"`
-	Running  bool                        `json:"running"`
-	Phase    string                      `json:"phase"`
-	Error    string                      `json:"error"`
-	Config   *config.IntentRoutingConfig `json:"config,omitempty"`
+	ID        string                      `json:"id"`
+	Protocol  string                      `json:"protocol"`
+	Running   bool                        `json:"running"`
+	Phase     string                      `json:"phase"`
+	Error     string                      `json:"error"`
+	Config    *config.IntentRoutingConfig `json:"config,omitempty"`
+	Completed []string                    `json:"completed"`
+	Committed bool                        `json:"committed"`
+}
+
+type preparationObserverKey struct{}
+
+func recordPreparation(ctx context.Context, artifact string) {
+	if observe, ok := ctx.Value(preparationObserverKey{}).(func(string)); ok {
+		observe(artifact)
+	}
 }
 
 func (s *Service) PreparationStatus() Preparation {
 	s.preparationMu.Lock()
 	defer s.preparationMu.Unlock()
 	result := s.preparation
+	result.Completed = append([]string{}, result.Completed...)
 	if result.Config != nil {
 		copy := *result.Config
 		copy.DatasetIDs = slices.Clone(copy.DatasetIDs)
@@ -43,13 +57,21 @@ func (s *Service) preparationPhase(phase string) {
 func (s *Service) startPreparation(kind string, run func(context.Context) (*config.IntentRoutingConfig, error)) (Preparation, error) {
 	s.preparationMu.Lock()
 	defer s.preparationMu.Unlock()
-	if s.preparationClosing || s.preparation.Running {
+	if s.preparationClosing || s.preparationStopping || s.preparation.Running {
 		return Preparation{}, fmt.Errorf("已有模型准备任务正在执行或服务正在关闭，请等待完成")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	done := make(chan struct{})
 	s.preparationCancel, s.preparationDone = cancel, done
-	s.preparation = Preparation{ID: digest(fmt.Sprint(time.Now().UnixNano())), Protocol: kind, Running: true, Phase: "queued"}
+	s.preparation = Preparation{ID: uuid.NewString(), Protocol: kind, Running: true, Phase: "queued", Completed: []string{}}
+	ctx = context.WithValue(ctx, preparationObserverKey{}, func(artifact string) {
+		s.preparationMu.Lock()
+		defer s.preparationMu.Unlock()
+		if !slices.Contains(s.preparation.Completed, artifact) {
+			s.preparation.Completed = append(s.preparation.Completed, artifact)
+		}
+		s.preparation.Committed = true
+	})
 	go func() {
 		defer close(done)
 		defer cancel()
@@ -68,32 +90,65 @@ func (s *Service) startPreparation(kind string, run func(context.Context) (*conf
 			if errors.Is(err, context.Canceled) {
 				s.preparation.Phase = "cancelled"
 			}
+			if len(s.preparation.Completed) > 0 {
+				s.preparation.Error += "；已生效产物：" + strings.Join(s.preparation.Completed, "、") + "。请核对后重试。"
+				if kind != "" {
+					s.preparation.Error += "路由配置尚未应用。"
+				}
+			}
 		}
 	}()
 	return s.preparation, nil
 }
 
-func (s *Service) CancelPreparation() {
+func (s *Service) CancelPreparation(taskID string) (Preparation, error) {
 	s.preparationMu.Lock()
+	defer s.preparationMu.Unlock()
+	if taskID == "" || s.preparation.ID != taskID {
+		return Preparation{}, fmt.Errorf("准备任务已变化，请刷新后重试")
+	}
+	if s.preparation.Running {
+		s.preparationCancel()
+		s.preparation.Phase = "cancelling"
+	}
+	result := s.preparation
+	result.Completed = slices.Clone(result.Completed)
+	return result, nil
+}
+
+func (s *Service) StopPreparation() error {
+	s.preparationMu.Lock()
+	s.preparationClosing = true
 	cancel, done := s.preparationCancel, s.preparationDone
 	s.preparationMu.Unlock()
 	if cancel != nil {
 		cancel()
 		<-done
 	}
+	return nil
 }
 
-func (s *Service) StopPreparation() error {
+// StopLocal 不把停止运行时解释为取消未知代次的准备任务。
+func (s *Service) StopLocal() error {
 	s.preparationMu.Lock()
-	s.preparationClosing = true
+	if s.preparation.Running || s.preparationStopping || s.preparationClosing {
+		s.preparationMu.Unlock()
+		return fmt.Errorf("请先取消当前准备任务并等待结束，再停止本地助手")
+	}
+	s.preparationStopping = true
 	s.preparationMu.Unlock()
-	s.CancelPreparation()
-	return nil
+	defer func() {
+		s.preparationMu.Lock()
+		s.preparationStopping = false
+		s.preparationMu.Unlock()
+	}()
+	return s.Local.Stop()
 }
 
 func (s *Service) LocalStatus() LocalStatus {
 	status := s.Local.Status()
 	job := s.PreparationStatus()
+	status.PreparationID = job.ID
 	if job.Running && !status.Busy {
 		status.Phase = job.Phase
 	}
@@ -182,6 +237,7 @@ func (s *Service) PrepareIntent(kind string, cfg config.IntentRoutingConfig, pre
 			if err := s.adoptBuiltinIntents(ctx); err != nil {
 				return nil, err
 			}
+			recordPreparation(ctx, "数据集："+semantic.RecommendedIntentDatasetID)
 			cfg.DatasetIDs = []string{semantic.RecommendedIntentDatasetID}
 		}
 		s.preparationPhase("indexing")

@@ -3,15 +3,17 @@ package clients
 import (
 	"encoding/base64"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"insistanan/api-proxy/internal/clients/filetxn"
 	"insistanan/api-proxy/internal/clients/piagent"
 	"insistanan/api-proxy/internal/clients/skills"
 )
@@ -136,17 +138,11 @@ func (s *SkillsAPI) List() gin.HandlerFunc {
 		}
 
 		items := make([]skills.Item, 0)
-		for _, location := range locations {
-			if location.Key == "project" {
-				if err := skills.RestoreProjectBackups(location.Path); err != nil {
-					c.JSON(500, gin.H{"error": fmt.Sprintf("整理项目 Skills 备份失败: %v", err)})
-					return
-				}
-			}
+		for index, location := range locations {
 			found, err := skills.Scan(location, opts.ProjectDir)
 			if err != nil {
-				c.JSON(500, gin.H{"error": fmt.Sprintf("扫描 %s 失败: %v", location.Path, err)})
-				return
+				locations[index].Error = err.Error()
+				continue
 			}
 			items = append(items, found...)
 		}
@@ -255,7 +251,7 @@ func (s *SkillsAPI) UpdateNote() gin.HandlerFunc {
 			return
 		}
 		if err := skills.WriteGlobalMetadata(opts.ProjectDir, req.Name, skills.GlobalMetadata{Note: note, UpdatedAt: time.Now().Format(time.RFC3339)}); err != nil {
-			c.JSON(500, gin.H{"error": fmt.Sprintf("保存 Skill 备注失败: %v", err)})
+			respondClientFileError(c, fmt.Errorf("保存 Skill 备注失败: %w", err))
 			return
 		}
 		c.JSON(200, gin.H{"success": true, "note": note})
@@ -291,7 +287,7 @@ func (s *SkillsAPI) Consolidate() gin.HandlerFunc {
 			return
 		}
 		if err := skills.RestoreProjectBackups(projectLocation.Path); err != nil {
-			c.JSON(500, gin.H{"error": fmt.Sprintf("整理项目 Skills 备份失败: %v", err)})
+			respondClientFileError(c, fmt.Errorf("整理项目 Skills 备份失败: %w", err))
 			return
 		}
 
@@ -321,39 +317,30 @@ func (s *SkillsAPI) Consolidate() gin.HandlerFunc {
 			}
 		}
 
-		manifest, err := skills.ReadManifest(opts.ProjectDir)
-		if err != nil {
-			c.JSON(500, gin.H{"error": err.Error()})
-			return
-		}
-		manifestChanged := false
-
 		names := make([]string, 0, len(selected))
 		for name := range selected {
 			names = append(names, name)
 		}
 		sort.Strings(names)
 		imported := 0
+		var completed []string
 		for _, name := range names {
 			item := selected[name]
+			if err := skills.RecordSkillTargets(opts.ProjectDir, name, agentPresence[name], true); err != nil {
+				if len(completed) > 0 {
+					err = &filetxn.CommitError{Files: completed, Err: err}
+				}
+				respondClientFileError(c, err)
+				return
+			}
 			if item.LocationKey != "project" {
-				destination := filepath.Join(projectLocation.Path, item.Name)
-				if err := skills.CopyDir(item.Path, destination, true); err != nil {
-					c.JSON(500, gin.H{"error": fmt.Sprintf("归档 %s 失败: %v", item.Name, err)})
+				if err := skills.CopyManaged(opts, []skills.Location{*projectLocation}, name, item.Path); err != nil {
+					respondClientFileError(c, &filetxn.CommitError{Files: []string{"Skill 启用清单"}, Err: err})
 					return
 				}
 				imported++
 			}
-			if _, exists := manifest.Skills[name]; !exists {
-				manifest.Skills[name] = agentPresence[name]
-				manifestChanged = true
-			}
-		}
-		if manifestChanged {
-			if err := skills.WriteManifest(opts.ProjectDir, manifest); err != nil {
-				c.JSON(500, gin.H{"error": err.Error()})
-				return
-			}
+			completed = append(completed, name)
 		}
 		c.JSON(200, gin.H{"success": true, "total": len(selected), "imported": imported, "duplicates": len(duplicates)})
 	}
@@ -387,7 +374,7 @@ func (s *SkillsAPI) Import() gin.HandlerFunc {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
 		}
-		locations, err := skills.Locations(opts)
+		locations, err := skills.BaseLocations(opts)
 		if err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
@@ -397,7 +384,8 @@ func (s *SkillsAPI) Import() gin.HandlerFunc {
 			locationByKey[location.Key] = location
 		}
 
-		files, skillName, err := skills.ParseImported(req.FileName, content)
+		modes := make(map[string]fs.FileMode)
+		files, skillName, err := skills.ParseImported(req.FileName, content, modes)
 		if err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
@@ -416,16 +404,8 @@ func (s *SkillsAPI) Import() gin.HandlerFunc {
 			}
 			targetLocations = append(targetLocations, location)
 		}
-		if err := skills.InstallFiles(targetLocations, skillName, files); err != nil {
-			c.JSON(500, gin.H{"error": fmt.Sprintf("安装失败: %v", err)})
-			return
-		}
-		if err := skills.RecordSkillTargets(opts.ProjectDir, skillName, targets, true); err != nil {
-			c.JSON(500, gin.H{"error": fmt.Sprintf("记录 Skill 启用清单失败: %v", err)})
-			return
-		}
-		if _, err := skills.SyncManifestToAgents(opts); err != nil {
-			c.JSON(500, gin.H{"error": fmt.Sprintf("同步 Skill 到 Agent 失败: %v", err)})
+		if err := skills.InstallManaged(opts, targetLocations, skillName, files, modes); err != nil {
+			respondClientFileError(c, err)
 			return
 		}
 		c.JSON(200, gin.H{"success": true, "name": skillName})
@@ -449,20 +429,9 @@ func (s *SkillsAPI) Delete() gin.HandlerFunc {
 			c.JSON(400, gin.H{"error": "该 Skill 来自插件缓存或内置目录，不能直接删除；请通过原 Agent 的插件管理功能移除"})
 			return
 		}
-		if err := skills.Remove(ref); err != nil {
-			c.JSON(500, gin.H{"error": fmt.Sprintf("删除 Skill 失败: %v", err)})
+		if err := skills.DeleteManaged(opts, ref); err != nil {
+			respondClientFileError(c, err)
 			return
-		}
-		if ref.LocationKey == "project" {
-			if err := skills.RemoveSkillFromManifest(opts.ProjectDir, ref.Name); err != nil {
-				c.JSON(500, gin.H{"error": fmt.Sprintf("更新 Skill 清单失败: %v", err)})
-				return
-			}
-		} else if skills.IsManagedAgentKey(ref.LocationKey) {
-			if err := skills.RemoveAgentFromSkillManifest(opts.ProjectDir, ref.Name, ref.LocationKey); err != nil {
-				c.JSON(500, gin.H{"error": fmt.Sprintf("更新 Skill 清单失败: %v", err)})
-				return
-			}
 		}
 		c.JSON(200, gin.H{"success": true})
 	}
@@ -489,7 +458,7 @@ func (s *SkillsAPI) Copy() gin.HandlerFunc {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
 		}
-		locations, err := skills.Locations(opts)
+		locations, err := skills.BaseLocations(opts)
 		if err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
@@ -531,29 +500,13 @@ func (s *SkillsAPI) Copy() gin.HandlerFunc {
 				return
 			}
 		}
+		targetLocations := make([]skills.Location, 0, len(req.Targets))
 		for _, target := range req.Targets {
-			location := locationByKey[target]
-			destination := filepath.Join(location.Path, req.Name)
-			if filepath.Dir(destination) != filepath.Clean(location.Path) {
-				c.JSON(400, gin.H{"error": "Skill 目标路径无效"})
-				return
-			}
-			if err := skills.CopyDir(sourcePath, destination, location.Key == "project"); err != nil {
-				c.JSON(500, gin.H{"error": fmt.Sprintf("复制到 %s 失败: %v", location.Agent, err)})
-				return
-			}
+			targetLocations = append(targetLocations, locationByKey[target])
 		}
-		if req.LocationKey == "project" {
-			if err := skills.RecordSkillTargets(opts.ProjectDir, req.Name, req.Targets, true); err != nil {
-				c.JSON(500, gin.H{"error": fmt.Sprintf("更新 Skill 清单失败: %v", err)})
-				return
-			}
-		} else if slices.Contains(req.Targets, "project") {
-			targets := append([]string{req.LocationKey}, req.Targets...)
-			if err := skills.RecordSkillTargets(opts.ProjectDir, req.Name, targets, true); err != nil {
-				c.JSON(500, gin.H{"error": fmt.Sprintf("更新 Skill 清单失败: %v", err)})
-				return
-			}
+		if err := skills.CopyManaged(opts, targetLocations, req.Name, sourcePath); err != nil {
+			respondClientFileError(c, err)
+			return
 		}
 		c.JSON(200, gin.H{"success": true, "name": req.Name, "targets": req.Targets})
 	}
@@ -576,7 +529,7 @@ func (s *SkillsAPI) Toggle() gin.HandlerFunc {
 		}
 		manifest, err := skills.ToggleAgent(opts, req.Name, req.Agent, *req.Enabled)
 		if err != nil {
-			c.JSON(400, gin.H{"error": err.Error()})
+			respondClientFileError(c, err)
 			return
 		}
 		c.JSON(200, gin.H{"success": true, "manifest": manifest.Skills})
@@ -595,10 +548,10 @@ func (s *SkillsAPI) Sync() gin.HandlerFunc {
 		}
 		report, err := skills.SyncManifestToAgents(opts)
 		if err != nil {
-			c.JSON(500, gin.H{"error": fmt.Sprintf("同步 Skills 失败: %v", err)})
+			respondClientFileError(c, fmt.Errorf("同步 Skills 失败: %w", err))
 			return
 		}
-		c.JSON(200, gin.H{"success": true, "report": report})
+		c.JSON(200, gin.H{"success": len(report.Errors) == 0, "report": report})
 	}
 }
 
@@ -645,7 +598,7 @@ func (s *SkillsAPI) Backup() gin.HandlerFunc {
 			Translated: req.Translated, Model: req.Model, ChannelName: req.ChannelName,
 		})
 		if err != nil {
-			c.JSON(500, gin.H{"error": err.Error()})
+			respondClientFileError(c, err)
 			return
 		}
 		name, description, language := (skills.Backup{Translated: req.Translated}).Presentation()

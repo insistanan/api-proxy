@@ -14,7 +14,7 @@
 <script setup lang="ts">
 import { provide } from 'vue'
 import { DropdownMenuRoot, DropdownMenuTrigger, DropdownMenuPortal, DropdownMenuContent } from 'reka-ui'
-import { menuKey } from './context'
+import { menuKey } from '@/shared/ui/overlay/context'
 defineProps<{ maxWidth?: string | number; closeOnContentClick?: boolean }>()
 provide(menuKey, true)
 </script>

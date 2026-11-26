@@ -24,7 +24,7 @@ import { THEME_OPTIONS, THEME_PRESETS, useTheme } from '@/shared/theme'
 import Button from '@/shared/ui/button/Button.vue'
 import UiIcon from '@/shared/ui/icon/Icon.vue'
 import AppDialog from '@/shared/components/overlay/AppDialog.vue'
-import ThemePanel from './ThemePanel.vue'
+import ThemePanel from '@/shared/theme/components/ThemePanel.vue'
 const theme = useTheme()
 const open = ref(false)
 const themeName = computed(() => THEME_PRESETS.find(preset => preset.id === theme.preset)?.name ?? THEME_OPTIONS.palette[theme.settings.palette])

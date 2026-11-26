@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"insistanan/api-proxy/internal/clients/filetxn"
 )
 
 // Codex 模型目录（models.json）管理：
@@ -38,6 +40,7 @@ var (
 )
 
 type saveCodexModelCatalogRequest struct {
+	Revision              string `json:"revision"`
 	Action                string `json:"action"`
 	Slug                  string `json:"slug"`
 	DisplayName           string `json:"displayName"`
@@ -85,6 +88,19 @@ func SaveCodexModelCatalog() gin.HandlerFunc {
 			c.JSON(500, gin.H{"error": fmt.Sprintf("解析 Codex 配置目录失败: %v", err)})
 			return
 		}
+		configRaw, err := filetxn.Read(configPath)
+		if err != nil {
+			respondClientFileError(c, err)
+			return
+		}
+		modelsRaw, err := filetxn.Read(modelsPath)
+		if err != nil {
+			respondClientFileError(c, err)
+			return
+		}
+		if !requireClientRevision(c, req.Revision, filetxn.RevisionSet(configRaw, modelsRaw)) {
+			return
+		}
 		response := codexModelCatalogResponse{ModelsPath: modelsPath, ConfigPath: configPath}
 		// 内置清单需要执行外部命令，限制总时长防止请求悬挂。
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
@@ -109,8 +125,12 @@ func SaveCodexModelCatalog() gin.HandlerFunc {
 				respondCodexModelError(c, err)
 				return
 			}
-			if err := writeCodexFile(modelsPath, updated.previous, updated.data, ".codex-models-*.tmp"); err != nil {
-				c.JSON(500, gin.H{"error": fmt.Sprintf("保存 models.json 失败: %v", err)})
+			if filetxn.Revision(updated.previous) != filetxn.Revision(modelsRaw) {
+				respondClientFileError(c, filetxn.ErrConflict)
+				return
+			}
+			if err := writeCodexFile(modelsPath, updated.previous, updated.data); err != nil {
+				respondClientFileError(c, fmt.Errorf("保存 models.json 失败: %w", err))
 				return
 			}
 		case "delete":
@@ -119,16 +139,25 @@ func SaveCodexModelCatalog() gin.HandlerFunc {
 				respondCodexModelError(c, err)
 				return
 			}
-			if err := writeCodexFile(modelsPath, updated.previous, updated.data, ".codex-models-*.tmp"); err != nil {
-				c.JSON(500, gin.H{"error": fmt.Sprintf("保存 models.json 失败: %v", err)})
+			if filetxn.Revision(updated.previous) != filetxn.Revision(modelsRaw) {
+				respondClientFileError(c, filetxn.ErrConflict)
 				return
 			}
-			if err := cleanupCodexConfigAfterModelDelete(configPath, strings.TrimSpace(req.Slug), empty); err != nil {
-				c.JSON(500, gin.H{"error": fmt.Sprintf("更新 Codex config.toml 失败: %v", err)})
+			nextConfig, err := cleanupCodexConfigAfterModelDelete(configRaw, strings.TrimSpace(req.Slug), empty)
+			if err != nil {
+				respondCodexModelError(c, err)
+				return
+			}
+			// 先解除引用，再删除目录条目；准备失败时两个文件都不写。
+			if err := filetxn.Commit(
+				filetxn.Change{Path: configPath, Previous: configRaw, Next: nextConfig},
+				filetxn.Change{Path: modelsPath, Previous: modelsRaw, Next: updated.data},
+			); err != nil {
+				respondClientFileError(c, err)
 				return
 			}
 		case "setDefault":
-			if err := setCodexDefaultModel(ctx, configPath, modelsPath, strings.TrimSpace(req.Slug), req.ReasoningEffort, req.ClearReasoningEffort); err != nil {
+			if err := setCodexDefaultModel(ctx, configPath, modelsPath, strings.TrimSpace(req.Slug), req.ReasoningEffort, req.ClearReasoningEffort, req.Revision); err != nil {
 				respondCodexModelError(c, err)
 				return
 			}
@@ -144,6 +173,10 @@ func SaveCodexModelCatalog() gin.HandlerFunc {
 
 // respondCodexModelError 按错误类型区分状态码：用户输入问题 400，其余 500。
 func respondCodexModelError(c *gin.Context, err error) {
+	if filetxn.Committed(err) || errors.Is(err, filetxn.ErrConflict) {
+		respondClientFileError(c, err)
+		return
+	}
 	var inputErr codexUserInputError
 	if errors.As(err, &inputErr) {
 		c.JSON(400, gin.H{"error": inputErr.Error()})

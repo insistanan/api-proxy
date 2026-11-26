@@ -83,7 +83,7 @@ import UiAlert from '@/shared/ui/feedback/Alert.vue'
 import { THEME_OPTIONS, THEME_PRESETS, useTheme, type ThemeSettings } from '@/shared/theme'
 import UiSwitch from '@/shared/ui/check/Switch.vue'
 import UiIcon from '@/shared/ui/icon/Icon.vue'
-import ArabesquePattern from './ArabesquePattern.vue'
+import ArabesquePattern from '@/shared/theme/components/ArabesquePattern.vue'
 import { usePreferencesStore } from '@/shared/stores/preferences'
 const theme = useTheme()
 const preferences = usePreferencesStore()

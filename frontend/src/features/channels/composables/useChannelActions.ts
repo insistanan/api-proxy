@@ -62,9 +62,11 @@ export function useChannelActions(notify: ToastFn) {
     if (channelStore.isSavingChannel || channelStore.isDeletingChannel) return
     const tab = dialogStore.channelType
     const editingIndex = dialogStore.editingChannel?.index ?? null
+    const generation = authStore.generation
     channelStore.isSavingChannel = true
     try {
-      const result = await channelStore.saveChannel(channel, editingIndex, options, tab)
+      const result = await channelStore.saveChannel(channel, editingIndex, { ...options, expectedChannelId: dialogStore.editingChannel?.id }, tab)
+      if (generation !== authStore.generation) return
       notify(result.message, 'success')
       if (result.quickAddMessage) {
         notify(result.quickAddMessage, 'info')
@@ -74,7 +76,8 @@ export function useChannelActions(notify: ToastFn) {
       await refreshAfterMutation(tab, onAuthError)
     } catch (error) {
       // 配置已过提交点（文件已写入，收尾失败）：不得自动重试，
-      // 提示用户刷新查看实际状态（R3 committed 语义）。
+      // 提示用户刷新查看实际状态。
+      if (generation !== authStore.generation) return
       if (error instanceof ApiError && error.committed) {
         notify(`${error.message}（变更已写入，请刷新查看实际状态，请勿重复提交）`, 'warning')
         dialogStore.closeAddChannelModal()
@@ -83,7 +86,7 @@ export function useChannelActions(notify: ToastFn) {
       }
       reportError(error, onAuthError)
     } finally {
-      channelStore.isSavingChannel = false
+      if (generation === authStore.generation) channelStore.isSavingChannel = false
     }
   }
 
@@ -93,12 +96,15 @@ export function useChannelActions(notify: ToastFn) {
     tab: ApiTab = channelStore.activeTab
   ): Promise<void> => {
     if (channelStore.isSavingChannel || channelStore.isDeletingChannel) return
+    const generation = authStore.generation
     channelStore.isDeletingChannel = true
     try {
       const result = await channelStore.deleteChannel(channelId, tab)
+      if (generation !== authStore.generation) return
       notify(result.message, 'success')
       await refreshAfterMutation(tab, onAuthError)
     } catch (error) {
+      if (generation !== authStore.generation) return
       if (error instanceof ApiError && error.committed) {
         notify(`${error.message}（删除已写入，请刷新查看实际状态，请勿重复提交）`, 'warning')
         await refreshAfterMutation(tab, onAuthError)
@@ -106,7 +112,7 @@ export function useChannelActions(notify: ToastFn) {
       }
       reportError(error, onAuthError)
     } finally {
-      channelStore.isDeletingChannel = false
+      if (generation === authStore.generation) channelStore.isDeletingChannel = false
     }
   }
 

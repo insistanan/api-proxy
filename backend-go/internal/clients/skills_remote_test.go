@@ -143,16 +143,15 @@ func TestExtractRemoteSkillArchiveFiltersAndStripsRoot(t *testing.T) {
 	require.NotContains(t, files, ".gitignore")
 }
 
-func TestExtractRemoteSkillArchiveKeepsSymlinkTargetText(t *testing.T) {
+func TestExtractRemoteSkillArchiveRejectsSymlink(t *testing.T) {
 	archive := buildRemoteSkillArchive(t, []testArchiveEntry{
 		{name: "repo-sha/SKILL.md", content: []byte("---\nname: demo\ndescription: 示例\n---\n")},
 		{name: "repo-sha/current.md", link: "references/v2.md"},
 	})
 	wanted := map[string]string{"SKILL.md": "SKILL.md", "current.md": "current.md"}
 
-	files, err := extractRemoteSkillArchive(bytes.NewReader(archive), wanted)
-	require.NoError(t, err)
-	require.Equal(t, "references/v2.md", string(files["current.md"]))
+	_, err := extractRemoteSkillArchive(bytes.NewReader(archive), wanted)
+	require.ErrorContains(t, err, "不支持符号链接")
 }
 
 func TestExtractRemoteSkillArchiveRejectsMissingFile(t *testing.T) {

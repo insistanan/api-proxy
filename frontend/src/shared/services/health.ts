@@ -21,7 +21,7 @@ export interface HealthResponse {
  */
 export const fetchHealth = async (): Promise<HealthResponse> => {
   const baseUrl = import.meta.env.PROD ? '' : import.meta.env.VITE_BACKEND_URL || ''
-  const response = await fetch(`${baseUrl}/health`)
+  const response = await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(10_000) })
   if (!response.ok) {
     throw new Error(`Health check failed: ${response.status}`)
   }

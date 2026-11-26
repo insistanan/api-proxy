@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"path/filepath"
 	"sync"
 	"time"
@@ -321,10 +322,14 @@ func (a *app) initScheduling() error {
 
 func (a *app) initSafety(gateCaller *llmgate.Caller) error {
 	a.cmdGate = pipeline.NewCmdGate(a.cfgManager, gateCaller, a.gateStore, a.blockedStore)
+	a.registerWorker("命令审核任务", a.cmdGate.Close)
 	localEmbedding, err := intent.NewLocal(".config/intent-embedding")
 	if err != nil {
 		return err
 	}
+	localEmbedding.SetDownloadClientFactory(func(timeout time.Duration) (*http.Client, error) {
+		return httpclient.DownloadClient(a.cfgManager, timeout)
+	})
 	a.registerWorker("本地向量助手", localEmbedding.Stop)
 	a.intentService, err = intent.New(a.cfgManager, gateCaller, ".config/intent.db", localEmbedding)
 	if err != nil {

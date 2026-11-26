@@ -4,7 +4,7 @@
       <div>
         <h2 id="extensions-settings-title" class="text-lg font-bold">技能与 MCP</h2>
         <div class="text-sm text-muted-foreground mt-1">
-          统一管理项目 Skills、启用清单 <code>skills-manifest.json</code> 与集中式 <code>mcp.json</code> 的存放路径及 Git 同步。
+          统一管理 Skills 与 MCP 的存放路径。Git 推送仅包含 Skill 资源和启用清单；MCP 配置、备注及翻译备份保留在本机。
         </div>
       </div>
     </div>
@@ -28,7 +28,7 @@
         v-model="skillsRepoUrl"
         label="Git 远程仓库地址（可选）"
         placeholder="git@github.com:yourname/agent-extensions.git 或 https://..."
-        hint="用于多端同步项目 Skills、启用清单与 MCP 配置。支持 https://、ssh://、file:// 或 git@host:owner/repo.git。"
+        hint="用于多端同步项目 Skills 与启用清单。支持 https://、ssh://、file:// 或 git@host:owner/repo.git。"
         persistent-hint
         prepend-inner-icon="mdi-link-variant"
         variant="outlined"
@@ -122,6 +122,15 @@
         变更预览：{{ gitStatus.changedFiles.slice(0, 6).join('、') }}
         <span v-if="gitStatus.changedFiles.length > 6">等共 {{ gitStatus.changedFiles.length }} 项</span>
       </div>
+      <UiAlert v-if="gitStatus.exportError" type="error" class="mt-2">{{ gitStatus.exportError }}</UiAlert>
+      <UiAlert v-if="gitStatus.migration && gitStatus.migration.stage !== 'complete'" type="warning" class="mt-2">
+        目录迁移阶段：{{ gitStatus.migration.stage }}。完整目标：{{ gitStatus.migration.target }}；原目录：{{ gitStatus.migration.source }}。记录：{{ gitStatus.migration.recordPath }}
+      </UiAlert>
+      <details v-if="!gitStatus.exportError && gitStatus.exportRevision" class="mt-2 text-xs">
+        <summary>推送文件清单（{{ gitStatus.exportFiles?.length || 0 }} 项）</summary>
+        <p>仅导出 Skill 资源及启用清单，MCP 配置、本机状态和翻译备份保留在本地。</p>
+        <ul><li v-for="path in gitStatus.exportFiles" :key="path">{{ path }}</li></ul>
+      </details>
 
       <div class="flex flex-wrap items-center gap-2 mt-4">
         <UiButton
@@ -164,7 +173,7 @@
             color="primary"
             prepend-icon="mdi-cloud-upload-outline"
             :loading="gitActionLoading === 'push'"
-            :disabled="!gitStatus.gitAvailable || extensionsDirty || (!gitStatus.remoteUrl && !savedSkillsRepoUrl) || gitActionLoading !== null"
+            :disabled="!gitStatus.gitAvailable || !gitStatus.exportRevision || !!gitStatus.exportError || extensionsDirty || (!gitStatus.remoteUrl && !savedSkillsRepoUrl) || gitActionLoading !== null"
             @click="pushGitRepo"
           >
             提交并推送

@@ -1,7 +1,9 @@
 package metrics
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -19,8 +21,12 @@ type SQLiteStore struct {
 	dbPath string
 
 	// 写入缓冲区
-	writeBuffer []PersistentRecord
-	bufferMu    sync.Mutex
+	writeBuffer    []PersistentRecord
+	bufferMu       sync.Mutex
+	pendingRecords int
+	pendingBytes   int
+	droppedRecords uint64
+	lastWriteError string
 
 	// 配置
 	batchSize             int           // 批量写入阈值（记录数）
@@ -29,13 +35,14 @@ type SQLiteStore struct {
 	retentionDaysProvider func() int    // 可选热更新来源，构造后不修改函数本身
 
 	// 控制
-	stopCh       chan struct{}
-	wg           sync.WaitGroup
-	closed       bool           // 是否已关闭
-	flushMu      sync.Mutex     // 串行化 flush 与 delete 操作，避免并发竞态
-	asyncFlushWg sync.WaitGroup // 追踪 AddRecord 触发的异步 flush goroutine
-	closeOnce    sync.Once
-	closeErr     error
+	stopCh    chan struct{}
+	wg        sync.WaitGroup
+	closed    bool          // 是否已关闭
+	flushMu   sync.Mutex    // 串行化 flush 与 delete 操作，避免并发竞态
+	flushWake chan struct{} // 合并唤醒，由唯一写入循环刷盘
+	flushErr  error
+	closeOnce sync.Once
+	closeErr  error
 }
 
 // SQLiteStoreConfig SQLite 存储配置
@@ -49,6 +56,9 @@ type SQLiteStoreConfig struct {
 const (
 	defaultBatchSize     = 100              // 批量写入阈值
 	defaultFlushInterval = 30 * time.Second // 定时刷新间隔
+	maxPendingRecords    = 4096
+	maxPendingBytes      = 8 << 20
+	metricsWriteTimeout  = 5 * time.Second
 )
 
 // NewSQLiteStore 创建 SQLite 存储
@@ -101,6 +111,7 @@ func NewSQLiteStore(cfg *SQLiteStoreConfig) (*SQLiteStore, error) {
 		retentionDays:         cfg.RetentionDays,
 		retentionDaysProvider: cfg.RetentionDaysProvider,
 		stopCh:                make(chan struct{}),
+		flushWake:             make(chan struct{}, 1),
 	}
 
 	// 启动后台任务
@@ -154,43 +165,62 @@ func initSchema(db *sql.DB) error {
 		return err
 	}
 
-	// 尝试向旧表添加 model 列（忽略已存在的错误，用于平滑迁移）
-	_, _ = db.Exec("ALTER TABLE request_records ADD COLUMN model TEXT NOT NULL DEFAULT ''")
+	// 只迁移确实缺失的列；锁冲突和损坏不能被当作“已经迁移”。
+	var modelColumns int
+	if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('request_records') WHERE name = 'model'").Scan(&modelColumns); err != nil {
+		return fmt.Errorf("读取指标表结构失败: %w", err)
+	}
+	if modelColumns == 0 {
+		if _, err := db.Exec("ALTER TABLE request_records ADD COLUMN model TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("迁移指标 model 列失败: %w", err)
+		}
+	}
 	return nil
 }
 
 // AddRecord 添加记录到写入缓冲区（非阻塞）
 func (s *SQLiteStore) AddRecord(record PersistentRecord) {
+	size := persistentRecordBytes(record)
 	s.bufferMu.Lock()
 	if s.closed {
 		s.bufferMu.Unlock()
 		return // 已关闭，忽略新记录
 	}
-	s.writeBuffer = append(s.writeBuffer, record)
-	shouldFlush := len(s.writeBuffer) >= s.batchSize
-	// 与 closed 检查共用锁，确保 Close 开始等待后不会再登记异步写入。
-	if shouldFlush {
-		s.asyncFlushWg.Add(1)
+	// 在途批次仍占用预算，失败回填不会突破总容量。
+	if s.pendingRecords >= maxPendingRecords || size > maxPendingBytes-s.pendingBytes {
+		s.droppedRecords++
+		dropped := s.droppedRecords
+		s.bufferMu.Unlock()
+		if dropped == 1 || dropped&(dropped-1) == 0 {
+			log.Printf("[SQLite-Queue] 指标队列容量不足，累计拒收 %d 条，持久统计存在缺口", dropped)
+		}
+		return
 	}
+	record.MetricsKey = strings.Clone(record.MetricsKey)
+	record.BaseURL = strings.Clone(record.BaseURL)
+	record.KeyMask = strings.Clone(record.KeyMask)
+	record.Model = strings.Clone(record.Model)
+	record.APIType = strings.Clone(record.APIType)
+	s.writeBuffer = append(s.writeBuffer, record)
+	s.pendingRecords++
+	s.pendingBytes += size
+	shouldFlush := len(s.writeBuffer) >= s.batchSize
 	s.bufferMu.Unlock()
 
 	if shouldFlush {
-		go func() {
-			defer s.asyncFlushWg.Done()
-			// 获取 flush 锁，与 DeleteRecordsByMetricsKeys 串行化
-			s.flushMu.Lock()
-			s.flush()
-			s.flushMu.Unlock()
-		}()
+		select {
+		case s.flushWake <- struct{}{}:
+		default:
+		}
 	}
 }
 
 // flush 刷新缓冲区到数据库
-func (s *SQLiteStore) flush() {
+func (s *SQLiteStore) flush() error {
 	s.bufferMu.Lock()
 	if len(s.writeBuffer) == 0 {
 		s.bufferMu.Unlock()
-		return
+		return nil
 	}
 
 	// 取出缓冲区数据
@@ -199,17 +229,21 @@ func (s *SQLiteStore) flush() {
 	s.bufferMu.Unlock()
 
 	// 批量写入
-	if err := s.batchInsertRecords(records); err != nil {
+	err := s.batchInsertRecords(records)
+	s.bufferMu.Lock()
+	defer s.bufferMu.Unlock()
+	if err != nil {
 		log.Printf("[SQLite-Flush] 警告: 批量写入指标记录失败: %v", err)
-		// 失败时将记录放回缓冲区（限制重试，避免无限增长）
-		s.bufferMu.Lock()
-		if len(s.writeBuffer) < s.batchSize*10 { // 最多保留 10 倍缓冲
-			s.writeBuffer = append(records, s.writeBuffer...)
-		} else {
-			log.Printf("[SQLite-Flush] 警告: 写入缓冲区已满，丢弃 %d 条记录", len(records))
-		}
-		s.bufferMu.Unlock()
+		s.lastWriteError = err.Error()
+		s.writeBuffer = append(records, s.writeBuffer...)
+		return fmt.Errorf("%d 条指标未能落盘: %w", len(records), err)
 	}
+	s.lastWriteError = ""
+	s.pendingRecords -= len(records)
+	for _, record := range records {
+		s.pendingBytes -= persistentRecordBytes(record)
+	}
+	return nil
 }
 
 // batchInsertRecords 批量插入记录
@@ -218,13 +252,15 @@ func (s *SQLiteStore) batchInsertRecords(records []PersistentRecord) error {
 		return nil
 	}
 
-	tx, err := s.db.Begin()
+	ctx, cancel := context.WithTimeout(context.Background(), metricsWriteTimeout)
+	defer cancel()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	stmt, err := tx.Prepare(`
+	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO request_records
 		(metrics_key, base_url, key_mask, timestamp, success,
 		 input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, api_type, model)
@@ -240,7 +276,7 @@ func (s *SQLiteStore) batchInsertRecords(records []PersistentRecord) error {
 		if r.Success {
 			success = 1
 		}
-		_, err := stmt.Exec(
+		_, err := stmt.ExecContext(ctx,
 			r.MetricsKey, r.BaseURL, r.KeyMask, r.Timestamp.Unix(), success,
 			r.InputTokens, r.OutputTokens, r.CacheCreationTokens, r.CacheReadTokens, r.APIType, r.Model,
 		)
@@ -291,7 +327,9 @@ func (s *SQLiteStore) LoadRecords(since time.Time, apiType string) ([]Persistent
 
 // CleanupOldRecords 清理过期数据
 func (s *SQLiteStore) CleanupOldRecords(before time.Time) (int64, error) {
-	result, err := s.db.Exec(
+	ctx, cancel := context.WithTimeout(context.Background(), metricsWriteTimeout)
+	defer cancel()
+	result, err := s.db.ExecContext(ctx,
 		"DELETE FROM request_records WHERE timestamp < ?",
 		before.Unix(),
 	)
@@ -313,7 +351,16 @@ func (s *SQLiteStore) DeleteRecordsByMetricsKeys(metricsKeys []string, apiType s
 	defer s.flushMu.Unlock()
 
 	// 先刷新缓冲区，确保待删除的记录已写入数据库
-	s.flush()
+	if err := s.flush(); err != nil {
+		return 0, fmt.Errorf("删除前保存指标失败，未执行删除: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), metricsWriteTimeout)
+	defer cancel()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
 
 	// 分批删除，限制单条 SQL 的参数数量。
 	const batchSize = 500
@@ -340,14 +387,20 @@ func (s *SQLiteStore) DeleteRecordsByMetricsKeys(metricsKeys []string, apiType s
 			strings.Join(placeholders, ","),
 		)
 
-		result, err := s.db.Exec(query, args...)
+		result, err := tx.ExecContext(ctx, query, args...)
 		if err != nil {
-			return totalDeleted, fmt.Errorf("batch %d-%d failed: %w", i, end, err)
+			return 0, fmt.Errorf("删除指标批次 %d-%d 失败: %w", i, end, err)
 		}
-		affected, _ := result.RowsAffected()
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return 0, err
+		}
 		totalDeleted += affected
 	}
 
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
 	return totalDeleted, nil
 }
 
@@ -358,18 +411,32 @@ func (s *SQLiteStore) flushLoop() {
 	defer ticker.Stop()
 
 	for {
+		stopping := false
 		select {
 		case <-ticker.C:
-			// 获取 flush 锁，与 DeleteRecordsByMetricsKeys 串行化
-			s.flushMu.Lock()
-			s.flush()
-			s.flushMu.Unlock()
+		case <-s.flushWake:
 		case <-s.stopCh:
-			// 关闭前最后一次刷新
-			s.flushMu.Lock()
-			s.flush()
-			s.flushMu.Unlock()
+			stopping = true
+		}
+		s.flushMu.Lock()
+		err := s.flush()
+		s.flushMu.Unlock()
+		if stopping {
+			s.flushErr = err
 			return
+		}
+		if err != nil {
+			// 写入失败后限速；持续请求只能合并一个唤醒，不能形成磁盘重试风暴。
+			retry := time.NewTimer(time.Second)
+			select {
+			case <-retry.C:
+			case <-s.stopCh:
+				retry.Stop()
+				s.flushMu.Lock()
+				s.flushErr = s.flush()
+				s.flushMu.Unlock()
+				return
+			}
 		}
 	}
 }
@@ -425,10 +492,7 @@ func (s *SQLiteStore) Close() error {
 		close(s.stopCh)
 		s.wg.Wait()
 
-		// 等待所有 AddRecord 触发的异步 flush goroutine 完成
-		s.asyncFlushWg.Wait()
-
-		s.closeErr = s.db.Close()
+		s.closeErr = errors.Join(s.flushErr, s.db.Close())
 	})
 	return s.closeErr
 }

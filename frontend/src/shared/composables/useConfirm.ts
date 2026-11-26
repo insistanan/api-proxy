@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { ref, onScopeDispose } from 'vue'
 
 /** 一次待确认的危险操作。 */
 export interface ConfirmRequest {
@@ -24,7 +24,9 @@ export function useConfirm() {
   const pending = ref<ConfirmRequest | null>(null)
 
   const askConfirm = (request: ConfirmRequest) => {
+    const previous = pending.value
     pending.value = request
+    previous?.onCancel?.()
   }
 
   const acceptConfirm = async () => {
@@ -39,5 +41,6 @@ export function useConfirm() {
     request?.onCancel?.()
   }
 
+  onScopeDispose(cancelConfirm, true)
   return { pending, askConfirm, acceptConfirm, cancelConfirm }
 }

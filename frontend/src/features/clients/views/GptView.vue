@@ -1,9 +1,11 @@
 <template>
   <div class="agent-config-page gpt-page">
+    <UiAlert v-if="reloadRequired" type="warning" class="mb-4">配置已写入，请点击刷新核对；刷新成功后才能继续编辑或保存。</UiAlert>
+    <DraftGuard :dirty="draftDirty || promptState.dirty" :busy="editorBusy || promptState.busy" />
     <AgentConfigHeader title="GPT 配置">
       <template #default>
-        <UiButton variant="text" prepend-icon="mdi-refresh" :loading="loading" @click="loadSettings">刷新</UiButton>
-        <UiButton color="primary" prepend-icon="mdi-content-save" :loading="saving" :disabled="loading" @click="saveSettings">保存配置</UiButton>
+        <UiButton variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="editorBusy" @click="loadSettings()">刷新</UiButton>
+        <UiButton color="primary" prepend-icon="mdi-content-save" :loading="saving" :disabled="editorBusy || reloadRequired || !settings" @click="saveSettings">保存配置</UiButton>
       </template>
     </AgentConfigHeader>
 
@@ -26,7 +28,7 @@
         class="mb-5"
       />
 
-      <UiCard elevation="0" class="settings-card agent-config-panel">
+      <UiCard :inert="editorBusy || reloadRequired" elevation="0" class="settings-card agent-config-panel">
         <div class="agent-config-panel-header">
           <div>
             <div class="agent-config-panel-title">代理连接</div>
@@ -97,11 +99,14 @@ v-model="provider" searchable
       <CodexModelCatalog :settings="settings" class="mb-5" @saved="loadSettings" />
     </template>
 
-    <AgentPromptCard agent="codex" class="mt-5" />
+    <AgentPromptCard agent="codex" class="mt-5" @draft-state="promptState = $event" />
   </div>
 </template>
 
 <script setup lang="ts">
+import DraftGuard from '@/shared/components/overlay/DraftGuard.vue'
+import { useDraftSnapshot } from '@/shared/composables/useDraftSnapshot'
+import { ApiError, apiErrorText } from '@/shared/services/http'
 import UiButton from '@/shared/ui/button/Button.vue'
 import UiCard from '@/shared/ui/card/Card.vue'
 import UiAlert from '@/shared/ui/feedback/Alert.vue'
@@ -127,9 +132,13 @@ import { useToast } from '@/shared/composables/useToast'
 
 const { showToast } = useToast()
 
+const { dirty: draftDirty, markSaved } = useDraftSnapshot(() => [provider.value, baseUrl.value, apiKey.value, apiKeyAction.value])
 const loading = ref(false)
 const saving = ref(false)
+const reloadRequired = ref(false)
+const editorBusy = computed(() => loading.value || saving.value || connecting.value)
 const connecting = ref(false)
+const promptState = ref({ dirty: false, busy: false })
 const error = ref('')
 const settings = ref<CodexSettings | null>(null)
 const provider = ref('')
@@ -152,11 +161,12 @@ const selectedProvider = computed(() => settings.value?.providers.find(item => i
 
 watch(selectedProvider, selected => {
   baseUrl.value = selected?.baseUrl ?? ''
-})
+}, { flush: 'sync' })
 
 const proxyResponsesBaseUrl = async () => `${(await fetchProxyBaseUrl()).replace(/\/$/, '')}/v1`
 
-const loadSettings = async () => {
+const loadSettings = async (afterSave = false) => {
+  if (loading.value || (!afterSave && editorBusy.value)) return
   loading.value = true
   error.value = ''
   try {
@@ -170,8 +180,11 @@ const loadSettings = async () => {
     originalAPIKeyPresent.value = loaded.apiKeyPresent
     apiKeyDeleteRequested.value = false
     apiKeyAction.value = 'keep'
-    defaultBaseUrl.value = await proxyResponsesBaseUrl()
+    markSaved()
+    reloadRequired.value = false
+    void proxyResponsesBaseUrl().then(url => { defaultBaseUrl.value = url }).catch(error => showToast(apiErrorText(error), 'warning'))
   } catch (loadError) {
+    if (afterSave) reloadRequired.value = true
     error.value = loadError instanceof Error ? loadError.message : '加载 GPT 配置失败'
   } finally {
     loading.value = false
@@ -179,6 +192,7 @@ const loadSettings = async () => {
 }
 
 const connectToProxy = async () => {
+  if (editorBusy.value || reloadRequired.value) return
   connecting.value = true
   try {
     baseUrl.value = await proxyResponsesBaseUrl()
@@ -218,6 +232,7 @@ const clearAPIKey = () => {
 }
 
 const saveSettings = async () => {
+  if (editorBusy.value || reloadRequired.value || !settings.value) return
   const providerID = provider.value.trim()
   if (!providerID) {
     showToast('请选择或输入 Model Provider', 'error')
@@ -226,19 +241,22 @@ const saveSettings = async () => {
   saving.value = true
   try {
     const response = await api.saveCodexSettings({
+      revision: settings.value?.revision ?? '',
       provider: providerID,
       baseUrl: baseUrl.value,
       apiKeyAction: apiKeyAction.value,
       apiKey: apiKey.value
     })
     showToast(`已保存到 ${response.configPath}`, 'success')
-    await loadSettings()
+    markSaved()
+    await loadSettings(true)
   } catch (saveError) {
-    showToast(saveError instanceof Error ? saveError.message : '保存 GPT 配置失败', 'error')
+    if (saveError instanceof ApiError && saveError.committed) { reloadRequired.value = true; markSaved() }
+    showToast(apiErrorText(saveError), saveError instanceof ApiError && saveError.committed ? 'warning' : 'error')
   } finally {
     saving.value = false
   }
 }
 
-onMounted(loadSettings)
+onMounted(() => loadSettings())
 </script>

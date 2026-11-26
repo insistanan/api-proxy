@@ -1,6 +1,7 @@
 // Skills 管理类型：本地托管、备份与远程检索。
 
 export interface SkillLocation {
+  error?: string
   key: string
   agent: string
   path: string
@@ -38,7 +39,8 @@ export interface SkillTranslationTask {
   current: string
   index: number
   total: number
-  retry: boolean
+  status: 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled' | 'timeout'
+  remaining: number
   succeeded: number
   skipped: number
   failures: Array<{ name: string; error: string }>

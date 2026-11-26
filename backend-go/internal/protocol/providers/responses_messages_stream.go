@@ -197,10 +197,7 @@ func (s *responsesToClaudeStreamState) finish() []string {
 	return out
 }
 
-// proxycoreIsModelCapacity 委托 upstreamreq.IsUpstreamModelCapacityMessage：
-// 容量错误判据的唯一出处（R4-a 收敛），消除 providers 与 proxycore 的
-// 重复实现（providers 不能 import proxycore：proxycore→visionlayer→providers
-// 会成环；utils 是双方共同依赖）。
+// 流内错误与 HTTP 错误共用容量判据。
 func proxycoreIsModelCapacity(payload string) bool {
 	return upstreamreq.IsUpstreamModelCapacityMessage(payload)
 }

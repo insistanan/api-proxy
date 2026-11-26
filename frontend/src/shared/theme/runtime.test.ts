@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createPinia } from 'pinia'
-import { installTheme } from './runtime'
-import { DEFAULT_THEME } from './catalog'
-import { useThemeStore } from './store'
-import { THEME_STORAGE_KEY } from './bootstrap'
+import { installTheme } from '@/shared/theme/runtime'
+import { DEFAULT_THEME } from '@/shared/theme/catalog'
+import { useThemeStore } from '@/shared/theme/store'
+import { THEME_STORAGE_KEY } from '@/shared/theme/bootstrap'
 
 const stopHandlers: Array<() => void> = []
 afterEach(() => {

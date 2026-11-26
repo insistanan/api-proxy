@@ -200,7 +200,7 @@ func TestRetryOnlyRequestsFailedSampleAndScoresWithSavedReplies(t *testing.T) {
 		{Index: 2, State: "complete", Prompt: "第三道", Text: "保留第三条", ExpectedCount: 330},
 	}}
 	var events []Event
-	service.Retry(context.Background(), target, previous, 1, func(event Event) { events = append(events, event) })
+	service.RetrySamples(context.Background(), target, previous, []int{1}, func(event Event) { events = append(events, event) })
 	require.Equal(t, 1, calls)
 	require.Equal(t, "原始第二道挑战", actualPrompt)
 	require.Equal(t, "result", events[len(events)-1].Type)
@@ -226,7 +226,7 @@ func TestRetryRejectsChangedReferenceBeforeSendingRequest(t *testing.T) {
 			previous := Task{Target: target, DataBuilt: test.builtAt, DataSHA256: test.digest,
 				Samples: []Sample{{Index: 0, State: "failed", Prompt: "原挑战", ExpectedCount: 302}}}
 			var events []Event
-			service.Retry(context.Background(), target, previous, 0, func(event Event) { events = append(events, event) })
+			service.RetrySamples(context.Background(), target, previous, []int{0}, func(event Event) { events = append(events, event) })
 			require.Len(t, events, 1)
 			require.Equal(t, "error", events[0].Type)
 			require.Contains(t, events[0].Error, test.message)

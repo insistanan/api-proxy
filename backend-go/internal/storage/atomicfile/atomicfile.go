@@ -61,6 +61,9 @@ type Options struct {
 	TempPrefix string
 	// Mode 新文件权限；零值取 0600（配置文件默认含密钥，按受限权限）。
 	Mode os.FileMode
+	// BeforeReplace 在临时文件同步后检查调用方的版本等提交前提。
+	// 失败时尚未替换目标；调用方负责检查与替换期间的并发协调。
+	BeforeReplace func() error
 }
 
 // Write 以原子方式把 data 写入 path。
@@ -72,6 +75,20 @@ func Write(path string, data []byte, opts Options) error {
 		_, err := w.Write(data)
 		return err
 	}, opts)
+}
+
+// SyncDirectory 同步目录项；Windows 目录不支持 fsync，目录发布须配合 RenameDirectory。
+func SyncDirectory(path string) error { return syncDir(path) }
+
+// RenameDirectory 发布已同步的目录；调用方负责目标的不存在性和并发前提。
+func RenameDirectory(source, target string) error {
+	if err := replaceFile(source, target); err != nil {
+		return err
+	}
+	if err := syncDir(filepath.Dir(target)); err != nil {
+		return &CommittedError{Phase: PhaseDirSync, Err: err}
+	}
+	return nil
 }
 
 // WriteFunc 流式写入同目录临时文件；回调完成写入与校验后才原子替换目标。
@@ -114,6 +131,11 @@ func WriteFunc(path string, write func(io.Writer) error, opts Options) error {
 		return fmt.Errorf("关闭临时文件失败: %w", err)
 	}
 
+	if opts.BeforeReplace != nil {
+		if err := opts.BeforeReplace(); err != nil {
+			return fmt.Errorf("检查提交前提失败: %w", err)
+		}
+	}
 	if err := replaceFile(tempPath, path); err != nil {
 		return fmt.Errorf("替换目标文件失败: %w", err)
 	}

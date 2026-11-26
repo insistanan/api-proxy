@@ -19,6 +19,12 @@ import (
 )
 
 var ErrTaskRunning = errors.New("该渠道已有指纹检测正在进行")
+var ErrTaskCapacity = errors.New("指纹检测任务已达并发上限，请等待其他任务结束")
+
+const maxActiveTasks = 4
+const maxCachedTasks = 128
+const maxStoredTasks = 256
+const taskRetention = 30 * 24 * time.Hour
 
 // Task 保存每个渠道最近一轮检测；凭据和内部上游配置不会序列化。
 type Task struct {
@@ -37,25 +43,37 @@ type Task struct {
 }
 
 type taskRun struct {
-	task   Task
-	cancel context.CancelFunc
+	task    Task
+	cancel  context.CancelFunc
+	writeMu sync.Mutex
 }
 
 // Jobs 的生命周期由进程管理，HTTP 断开只停止查看，不取消检测。
 type Jobs struct {
-	mu       sync.Mutex
-	workers  sync.WaitGroup
-	dir      string
-	tasks    map[string]*taskRun
-	closed   bool
-	closeErr error
-	run      func(context.Context, *Target, func(Event))
-	retry    func(context.Context, *Target, Task, []int, func(Event))
-	restore  func(*Target) (*Target, error)
+	mu        sync.Mutex
+	workers   sync.WaitGroup
+	dir       string
+	tasks     map[string]*taskRun
+	closed    bool
+	closeErr  error
+	run       func(context.Context, *Target, func(Event))
+	retry     func(context.Context, *Target, Task, []int, func(Event))
+	restore   func(*Target) (*Target, error)
+	writeTask func(Task) error
+	diskMu    [64]sync.Mutex
+	stop      chan struct{}
+	done      chan struct{}
+	stopOnce  sync.Once
+	pruneWake chan struct{}
 }
 
 func NewJobs(service *Service, dir string) *Jobs {
-	return &Jobs{dir: dir, tasks: make(map[string]*taskRun), run: service.Run, retry: service.RetrySamples, restore: service.restoreTarget}
+	j := &Jobs{dir: dir, tasks: make(map[string]*taskRun), run: service.Run, retry: service.RetrySamples, restore: service.restoreTarget,
+		stop: make(chan struct{}), done: make(chan struct{}), pruneWake: make(chan struct{}, 1)}
+	j.writeTask = j.writeTaskFile
+	go j.retentionLoop()
+	j.wakeRetention()
+	return j
 }
 
 func taskActive(task Task) bool {
@@ -80,6 +98,11 @@ func detectorSDKVersion() string {
 
 func taskSnapshot(task Task) *Task {
 	task.Samples = append([]Sample{}, task.Samples...)
+	if task.Target != nil {
+		target := *task.Target
+		target.upstream, target.apiKey, target.proxyURL = nil, "", ""
+		task.Target = &target
+	}
 	return &task
 }
 
@@ -88,7 +111,7 @@ func (j *Jobs) taskPath(channelID string) string {
 	return filepath.Join(j.dir, fmt.Sprintf("%x.json", sha256.Sum256([]byte(channelID))))
 }
 
-func (j *Jobs) saveLocked(task Task) error {
+func (j *Jobs) writeTaskFile(task Task) error {
 	if task.Target == nil || strings.TrimSpace(task.Target.ChannelID) == "" {
 		return fmt.Errorf("保存指纹检测任务失败：缺少渠道 ID")
 	}
@@ -102,6 +125,29 @@ func (j *Jobs) saveLocked(task Task) error {
 	return nil
 }
 
+// 调用方持有 j.mu。写锁只串行同一任务文件，磁盘操作期间释放全局状态锁。
+// 取得写锁后重新取最新快照，旧事件不会覆盖后来发布的取消状态。
+func (j *Jobs) saveRunLocked(current *taskRun) error {
+	channelID := current.task.Target.ChannelID
+	j.mu.Unlock()
+	current.writeMu.Lock()
+	stripe := sha256.Sum256([]byte(channelID))
+	disk := &j.diskMu[int(stripe[0])%len(j.diskMu)]
+	disk.Lock()
+	j.mu.Lock()
+	task := *taskSnapshot(current.task)
+	stillCurrent := j.tasks[channelID] == current
+	j.mu.Unlock()
+	var err error
+	if stillCurrent {
+		err = j.writeTask(task)
+	}
+	disk.Unlock()
+	current.writeMu.Unlock()
+	j.mu.Lock()
+	return err
+}
+
 func (j *Jobs) loadLocked(channelID string) (*taskRun, error) {
 	if strings.TrimSpace(channelID) == "" {
 		return nil, fmt.Errorf("渠道 ID 不能为空")
@@ -109,6 +155,7 @@ func (j *Jobs) loadLocked(channelID string) (*taskRun, error) {
 	if current := j.tasks[channelID]; current != nil {
 		return current, nil
 	}
+	j.mu.Unlock()
 	data, err := os.ReadFile(j.taskPath(channelID))
 	// 仅当新文件名不存在时读取旧版 UUID 文件名的任务记录。
 	if errors.Is(err, os.ErrNotExist) && !strings.ContainsAny(channelID, `/\:`) {
@@ -117,7 +164,15 @@ func (j *Jobs) loadLocked(channelID string) (*taskRun, error) {
 		}
 	}
 	if errors.Is(err, os.ErrNotExist) {
+		j.mu.Lock()
+		if current := j.tasks[channelID]; current != nil {
+			return current, nil
+		}
 		return nil, nil
+	}
+	j.mu.Lock()
+	if current := j.tasks[channelID]; current != nil {
+		return current, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("读取指纹检测任务失败：%w", err)
@@ -133,14 +188,18 @@ func (j *Jobs) loadLocked(channelID string) (*taskRun, error) {
 		task.DetectorSHA256 = task.Analysis.ModelVersion.BaseSHA256
 	}
 	// 进程重启后保留已完成样本，不自动重发会产生费用的请求。
-	if taskActive(task) {
+	interrupted := taskActive(task)
+	if interrupted {
 		stopTask(&task, "interrupted", "服务重启，检测已中断")
-		if err := j.saveLocked(task); err != nil {
+	}
+	j.makeRoomLocked()
+	current := &taskRun{task: task}
+	j.tasks[channelID] = current
+	if interrupted {
+		if err := j.saveRunLocked(current); err != nil {
 			return nil, err
 		}
 	}
-	current := &taskRun{task: task}
-	j.tasks[channelID] = current
 	return current, nil
 }
 
@@ -167,17 +226,28 @@ func (j *Jobs) Start(target *Target) (*Task, error) {
 	if current != nil && (taskActive(current.task) || current.cancel != nil) {
 		return nil, ErrTaskRunning
 	}
+	if j.closed {
+		return nil, fmt.Errorf("服务正在关闭，无法开始检测")
+	}
+	if j.activeLocked() >= maxActiveTasks {
+		return nil, ErrTaskCapacity
+	}
 	now := time.Now().UTC()
 	task := Task{ID: uuid.NewString(), Status: "loading", Target: target, Samples: []Sample{}, SDKVersion: detectorSDKVersion(), CreatedAt: now, UpdatedAt: now}
-	if err := j.saveLocked(task); err != nil {
-		return nil, err
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	current = &taskRun{task: task, cancel: cancel}
+	j.makeRoomLocked()
 	j.tasks[target.ChannelID] = current
 	j.workers.Add(1)
+	if err := j.saveRunLocked(current); err != nil {
+		cancel()
+		current.cancel = nil
+		stopTask(&current.task, "failed", err.Error())
+		j.workers.Done()
+		return nil, err
+	}
 	go j.execute(ctx, current, func(emit func(Event)) { j.run(ctx, target, emit) })
-	return taskSnapshot(task), nil
+	return taskSnapshot(current.task), nil
 }
 
 func (j *Jobs) Retry(channelID, taskID string, index int) (*Task, error) {
@@ -207,6 +277,12 @@ func (j *Jobs) retrySamples(channelID, taskID string, indexes []int) (*Task, err
 	}
 	if taskActive(current.task) || current.cancel != nil {
 		return nil, ErrTaskRunning
+	}
+	if j.closed {
+		return nil, fmt.Errorf("服务正在关闭，无法重试")
+	}
+	if j.activeLocked() >= maxActiveTasks {
+		return nil, ErrTaskCapacity
 	}
 	if indexes == nil {
 		for index, sample := range current.task.Samples {
@@ -241,15 +317,19 @@ func (j *Jobs) retrySamples(channelID, taskID string, indexes []int) (*Task, err
 	next := *taskSnapshot(current.task)
 	next.Status, next.Error, next.Analysis = "loading", "", nil
 	next.UpdatedAt = time.Now().UTC()
-	if err := j.saveLocked(next); err != nil {
-		return nil, err
-	}
 	current.task = next
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	current.cancel = cancel
 	j.workers.Add(1)
+	if err := j.saveRunLocked(current); err != nil {
+		cancel()
+		current.cancel = nil
+		stopTask(&current.task, "failed", err.Error())
+		j.workers.Done()
+		return nil, err
+	}
 	go j.execute(ctx, current, func(emit func(Event)) { j.retry(ctx, target, previous, indexes, emit) })
-	return taskSnapshot(next), nil
+	return taskSnapshot(current.task), nil
 }
 
 func (j *Jobs) execute(ctx context.Context, current *taskRun, run func(func(Event))) {
@@ -270,7 +350,12 @@ func (j *Jobs) execute(ctx context.Context, current *taskRun, run func(func(Even
 			j.persistRunLocked(current)
 		}
 		current.cancel = nil
+		current.task.Target = taskSnapshot(current.task).Target
+		j.wakeRetention()
 	}()
+	if ctx.Err() != nil {
+		return
+	}
 	run(func(event Event) {
 		j.mu.Lock()
 		defer j.mu.Unlock()
@@ -315,9 +400,11 @@ func (j *Jobs) execute(ctx context.Context, current *taskRun, run func(func(Even
 
 // 保存失败时显式结束任务，避免继续产生无法保留的采样结果。
 func (j *Jobs) persistRunLocked(current *taskRun) {
-	if err := j.saveLocked(current.task); err != nil {
+	if err := j.saveRunLocked(current); err != nil {
 		stopTask(&current.task, "failed", err.Error())
-		current.cancel()
+		if current.cancel != nil {
+			current.cancel()
+		}
 		j.closeErr = errors.Join(j.closeErr, err)
 	}
 }
@@ -346,7 +433,7 @@ func (j *Jobs) Cancel(channelID, taskID string) (*Task, error) {
 	if taskActive(current.task) {
 		stopTask(&current.task, "cancelled", "检测已停止")
 		current.cancel()
-		if err := j.saveLocked(current.task); err != nil {
+		if err := j.saveRunLocked(current); err != nil {
 			return nil, err
 		}
 	}
@@ -354,19 +441,25 @@ func (j *Jobs) Cancel(channelID, taskID string) (*Task, error) {
 }
 
 func (j *Jobs) Close() error {
+	j.stopOnce.Do(func() { close(j.stop) })
 	j.mu.Lock()
 	j.closed = true
+	var interrupted []*taskRun
 	for _, current := range j.tasks {
 		if taskActive(current.task) {
 			stopTask(&current.task, "interrupted", "服务停止，检测已中断")
-			j.persistRunLocked(current)
+			interrupted = append(interrupted, current)
 		}
 		if current.cancel != nil {
 			current.cancel()
 		}
 	}
+	for _, current := range interrupted {
+		j.persistRunLocked(current)
+	}
 	j.mu.Unlock()
 	j.workers.Wait()
+	<-j.done
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	return j.closeErr

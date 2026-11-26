@@ -41,8 +41,8 @@ export const channelsApi = {
     return {
       getChannels: () => apiRequest(`${p}/channels`),
       addChannel: channel => apiRequest(`${p}/channels`, { method: 'POST', body: JSON.stringify(channel) }),
-      updateChannel: (id, channel) =>
-        apiRequest(`${p}/channels/${id}`, { method: 'PUT', body: JSON.stringify(channel) }),
+      updateChannel: (id, channel, expectedChannelId) =>
+        apiRequest(`${p}/channels/${id}`, { method: 'PUT', body: JSON.stringify({ ...channel, expectedChannelId }) }),
       deleteChannel: id => apiRequest(`${p}/channels/${id}`, { method: 'DELETE' }),
       addKey: (channelId, apiKey) =>
         apiRequest(`${p}/channels/${channelId}/keys`, { method: 'POST', body: JSON.stringify({ apiKey }) }),

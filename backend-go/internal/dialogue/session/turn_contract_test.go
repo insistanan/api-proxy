@@ -30,26 +30,60 @@ func newTurnFixture(t *testing.T) (*SessionManager, *conversation.Registry, *sql
 	return m, r, db, rec.ID
 }
 
-func TestTurnRejectsConcurrentStaleCommitAndPublishesAliasAtomically(t *testing.T) {
-	m, r, _, id := newTurnFixture(t)
-	ctx := context.Background()
-	a, err := m.BeginTurn(ctx, "", id)
-	require.NoError(t, err)
-	defer a.Close()
-	b, err := m.BeginTurn(ctx, "", id)
-	require.NoError(t, err)
-	defer b.Close()
-	require.NoError(t, a.Commit(ctx, []types.ResponsesItem{{Type: "message", Role: "assistant", Content: "winner"}}, 1, false, "r1", "owner", false))
-	require.Error(t, b.Commit(ctx, []types.ResponsesItem{{Type: "compaction", EncryptedContent: "stale"}}, 0, false, "r2", "owner", true))
-	resolved, err := r.ResolveExistingRecordIDWithError(context.Background(), "responses", conversation.Identity{ExplicitID: "r1", Source: "previous_response"})
-	require.NoError(t, err)
-	require.Equal(t, id, resolved)
-	_, exists, err := m.ResponseOwner(context.Background(), "r2")
-	require.NoError(t, err)
-	require.False(t, exists)
-	latest, err := m.GetOrCreateSessionForConversation(context.Background(), "r1", id)
-	require.NoError(t, err)
-	require.Equal(t, "winner", latest.Messages[0].Content)
+func TestConcurrentTurnsKeepIndependentHistoryAndResponseBoundaries(t *testing.T) {
+	for _, compact := range []bool{false, true} {
+		t.Run(map[bool]string{false: "普通分支", true: "压缩分支"}[compact], func(t *testing.T) {
+			m, r, _, id := newTurnFixture(t)
+			ctx := context.Background()
+			a, err := m.BeginTurn(ctx, "", id)
+			require.NoError(t, err)
+			defer a.Close()
+			b, err := m.BeginTurn(ctx, "", id)
+			require.NoError(t, err)
+			defer b.Close()
+			require.NoError(t, a.Commit(ctx, []types.ResponsesItem{{Type: "message", Content: "A"}}, 1, false, "a", "owner", false))
+			item := types.ResponsesItem{Type: "message", Content: "B"}
+			if compact {
+				item = types.ResponsesItem{Type: "compaction", EncryptedContent: "B"}
+			}
+			require.NoError(t, b.Commit(ctx, []types.ResponsesItem{item}, 1, false, "b", "owner", compact))
+			for _, responseID := range []string{"a", "b"} {
+				resolved, err := r.ResolveExistingRecordIDWithError(ctx, "responses", conversation.Identity{ExplicitID: responseID, Source: "previous_response"})
+				require.NoError(t, err)
+				require.Equal(t, id, resolved)
+			}
+			continued, err := m.BeginTurn(ctx, "a", id)
+			require.NoError(t, err)
+			defer continued.Close()
+			require.NoError(t, continued.Commit(ctx, []types.ResponsesItem{{Type: "message", Content: "A2"}}, 1, false, "a2", "owner", false))
+			// 同一条正文推进以后，旧 response ID 仍只恢复它自己的前缀。
+			for _, cold := range []bool{false, true} {
+				if cold {
+					m.mu.Lock()
+					for key := range m.sessions {
+						m.removeCachedSessionLocked(key)
+					}
+					m.mu.Unlock()
+				}
+				for _, responseID := range []string{"a", "b", "a2"} {
+					history, err := m.GetOrCreateSessionForConversation(ctx, responseID, id)
+					require.NoError(t, err)
+					require.Equal(t, responseID, history.LastResponseID)
+					if responseID == "a2" {
+						require.Len(t, history.Messages, 2)
+						require.Equal(t, "A2", history.Messages[1].Content)
+					} else {
+						require.Len(t, history.Messages, 1)
+					}
+					if responseID == "b" {
+						require.Equal(t, item, history.Messages[0])
+					} else {
+						require.Equal(t, "A", history.Messages[0].Content)
+					}
+				}
+			}
+		})
+	}
 }
 
 func TestTurnSurvivesCachePressureAndBlocksCapacityEviction(t *testing.T) {

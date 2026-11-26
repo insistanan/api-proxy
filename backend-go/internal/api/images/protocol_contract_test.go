@@ -12,7 +12,6 @@ import (
 	"github.com/tidwall/gjson"
 	"insistanan/api-proxy/internal/infra/config"
 	"insistanan/api-proxy/internal/protocol/types"
-	"insistanan/api-proxy/internal/proxycore"
 )
 
 func TestImagesSSEChecksFinalOverriddenFormat(t *testing.T) {
