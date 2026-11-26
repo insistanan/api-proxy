@@ -145,4 +145,6 @@ func validateFreeRoute(c *gin.Context, cfg *config.ConfigManager, kind scheduler
 	return cfg.ValidateFreeRequest(string(kind), model, index)
 }
 
-func intentHistoryProtected(c *gin.Context) bool { return intent.TurnFrom(c.Request.Context()) != nil }
+func intentHistoryProtected(c *gin.Context) bool {
+	return intent.TurnFrom(c.Request.Context()) != nil || compactionRequest(c).Native()
+}

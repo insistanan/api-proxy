@@ -5,6 +5,9 @@
     <template v-else-if="detail">
       <div class="detail-meta">
         <code>{{ requestId }}</code>
+        <UiBadge v-if="detail.summary.compactionKind" size="small" :title="detail.summary.compactionEvidence" variant="tonal">
+          {{ ({ summary: '文本摘要', native: '原生压缩', automatic: '自动压缩策略', history: '压缩历史重放' } as Record<string, string>)[detail.summary.compactionKind] || detail.summary.compactionKind }}
+        </UiBadge>
         <UiBadge size="small" :color="logStatus(detail.summary).color" variant="tonal">{{ logStatus(detail.summary).label }}</UiBadge>
         <span v-if="detail.summary.durationMs != null" class="text-xs">网关总耗时 {{ detail.summary.durationMs.toLocaleString() }} ms</span>
         <span v-if="detail.summary.clientStatusCode" class="text-xs">网关写出 HTTP {{ detail.summary.clientStatusCode }}</span>

@@ -81,39 +81,39 @@ func New(cfg *config.ConfigManager) *Service {
 func (s *Service) Prepare(channelID string, input Request) (*Target, error) {
 	located, ok := s.cfg.FindChannelByID(channelID)
 	if !ok {
-		return nil, fmt.Errorf("渠道不存在或已被删除")
+		return nil, fmt.Errorf("%w: 渠道不存在或已被删除", ErrNotFound)
 	}
 	u := located.Upstream.Clone()
 	if config.GetChannelStatus(u) == config.ChannelStatusDeleted || u.BuiltinProvider != "" {
-		return nil, fmt.Errorf("该渠道不支持独立模型指纹检测")
+		return nil, fmt.Errorf("%w: 该渠道不支持独立模型指纹检测", ErrInvalidInput)
 	}
 	switch located.Kind {
 	case "messages", "responses", "chat", "gemini":
 	default:
-		return nil, fmt.Errorf("仅支持对话类渠道的文本模型检测")
+		return nil, fmt.Errorf("%w: 仅支持对话类渠道的文本模型检测", ErrInvalidInput)
 	}
 	switch u.ServiceType {
 	case "claude", "responses", "openai", "gemini":
 	default:
-		return nil, fmt.Errorf("不支持的上游协议：%s", u.ServiceType)
+		return nil, fmt.Errorf("%w: 不支持的上游协议：%s", ErrInvalidInput, u.ServiceType)
 	}
 	model := strings.TrimSpace(input.Model)
 	if model == "" || len(model) > 256 || strings.ContainsAny(model, "\r\n") {
-		return nil, fmt.Errorf("请提供有效的模型名称（最多 256 字符）")
+		return nil, fmt.Errorf("%w: 请提供有效的模型名称（最多 256 字符）", ErrInvalidInput)
 	}
 	urls := u.GetAllBaseURLs()
 	if input.URLIndex < 0 || input.URLIndex >= len(urls) || strings.TrimSpace(urls[input.URLIndex]) == "" {
-		return nil, fmt.Errorf("指定的上游地址不存在")
+		return nil, fmt.Errorf("%w: 指定的上游地址不存在", ErrInvalidInput)
 	}
 	if input.KeyIndex < 0 || input.KeyIndex >= len(u.APIKeys) || strings.TrimSpace(u.APIKeys[input.KeyIndex]) == "" {
-		return nil, fmt.Errorf("指定的 API Key 不存在或为空")
+		return nil, fmt.Errorf("%w: 指定的 API Key 不存在或为空", ErrInvalidInput)
 	}
 	key := u.APIKeys[input.KeyIndex]
 	effort := strings.TrimSpace(input.Effort)
 	switch effort {
 	case "", "none", "low", "high", "xhigh", "max":
 	default:
-		return nil, fmt.Errorf("不支持的思考等级：%s", effort)
+		return nil, fmt.Errorf("%w: 不支持的思考等级：%s", ErrInvalidInput, effort)
 	}
 	proxyURL, err := s.cfg.ResolveUpstreamProxyURL(u)
 	if err != nil {
@@ -156,7 +156,7 @@ func (s *Service) restoreTarget(previous *Target) (*Target, error) {
 		return nil, err
 	}
 	if previous.ConfigDigest == "" || target.ConfigDigest != previous.ConfigDigest {
-		return nil, fmt.Errorf("无法确认原采样配置未变，请重新开始整轮检测")
+		return nil, fmt.Errorf("%w: 无法确认原采样配置未变，请重新开始整轮检测", ErrConflict)
 	}
 	return target, nil
 }

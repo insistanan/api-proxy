@@ -41,6 +41,9 @@ func PatchTokensInEventData(data map[string]interface{}, estimatedInputTokens, e
 }
 
 func patchUsageFieldsWithLog(usage map[string]interface{}, estimatedInput, estimatedOutput int, enableLog bool, location string) {
+	if iterations, ok := usage["iterations"].([]interface{}); ok && len(iterations) > 0 {
+		return
+	}
 	originalInput := usage["input_tokens"]
 	originalOutput := usage["output_tokens"]
 	inputPatched := false
@@ -88,9 +91,8 @@ func patchUsageFieldsWithLog(usage map[string]interface{}, estimatedInput, estim
 }
 
 // BuildUsageEvent 构建带 usage 的 message_delta SSE 事件
-func BuildUsageEvent(outputText string) string {
+func BuildUsageEvent(outputTokens int) string {
 	inputTokens := 0 // 上游未提供输入量，不把全量历史估算写给客户端。
-	outputTokens := tokenusage.EstimateTokens(outputText)
 
 	event := map[string]interface{}{
 		"type": "message_delta",
@@ -112,7 +114,7 @@ func BuildUsageEvent(outputText string) string {
 //
 // 只改返回的事件字符串；ctx.UpstreamUsage 与指标路径保持上游原值。
 func sanityCheckMessageStreamInputTokens(event string, requestBody []byte, enableLog bool) (string, bool) {
-	if len(requestBody) == 0 {
+	if len(requestBody) == 0 || tokenusage.PreserveCompactionUsage(requestBody) {
 		return event, false
 	}
 	if !strings.Contains(event, "input_tokens") {
@@ -125,6 +127,9 @@ func sanityCheckMessageStreamInputTokens(event string, requestBody []byte, enabl
 		}
 		usage := claudeUsageFromEvent(root)
 		if usage == nil {
+			return "", false
+		}
+		if iterations, ok := usage["iterations"].([]interface{}); ok && len(iterations) > 0 {
 			return "", false
 		}
 		upstreamUsage := extractUsageFromMap(usage)

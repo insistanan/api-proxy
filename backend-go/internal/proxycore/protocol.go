@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"insistanan/api-proxy/internal/infra/upstreamreq"
 	"insistanan/api-proxy/internal/protocol/codec"
-	"insistanan/api-proxy/internal/protocol/visionmedia"
 	"log"
 	"net/http"
 	"strings"
@@ -125,16 +124,29 @@ func RunProxyRequest(
 		c.Set(upstreamreq.ContextKeyClaudeCodeDisguise, cfgManager.GetClaudeCodeDisguiseEnabled())
 		c.Set(upstreamreq.ContextKeyCodexDisguise, cfgManager.GetCodexDisguiseEnabled())
 	}
-	identity := ResolveConversationIdentity(c, bodyBytes)
+	identity, transcript, imageFingerprints, err := parseConversationObservation(c, string(spec.Kind), bodyBytes)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无法解析会话请求", "code": "INVALID_CONVERSATION_REQUEST"})
+		return
+	}
+	if config.IsConversationChannelKind(string(spec.Kind)) {
+		compaction, err := BindCompactionRequest(c, string(spec.Kind), bodyBytes)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_COMPACTION_REQUEST"})
+			return
+		}
+		if compaction.Kind == "summary" || compaction.Kind == "native" {
+			runIndependentCompactionRequest(c, envCfg, cfgManager, channelScheduler, spec, bodyBytes, model, stream, startTime)
+			return
+		}
+	}
 	c.Set(conversationBranchContextKey, conversationBranchKey(identity))
-	keepaliveTurn := beginCacheKeepalive(c, channelScheduler, spec.Kind, identity, envCfg.Current().ProxyAccessKey, IsQuickTestRequest(c, bodyBytes))
+	keepaliveTurn := beginCacheKeepalive(c, channelScheduler, spec.Kind, identity, envCfg.Current().ProxyAccessKey, IsQuickTestRequest(c, bodyBytes) || compactionRequest(c).Kind == "automatic")
 	defer keepaliveTurn.End()
 	requestState.ClientFamily = identity.ClientFamily
 	requestState.IdentitySource = identity.Source
 	requestState.Model = model
 	requestState.Stream = stream
-	transcript := BuildConversationTranscript(string(spec.Kind), bodyBytes)
-	imageFingerprints := visionmedia.ExtractImageFingerprints(bodyBytes)
 	pipeline.AttachHookPipeline(c, spec.HookPipeline, pipeline.HookContext{
 		RedactionScope: RedactionScope(identity, envCfg.Current().ProxyAccessKey),
 		APIType:        string(spec.Kind),
@@ -256,6 +268,15 @@ func RunProxyRequest(
 	if err := validateFreeRoute(c, cfgManager, spec.Kind, model, explicitIndex); err != nil {
 		requestState.ErrorType, requestState.ErrorMessage = "route_validation", truncateLogMessage(err.Error(), 500)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "FREE_CHANNEL_ROUTE"})
+		return
+	}
+	if compactionRequest(c).Native() {
+		upstream, channelIndex, err := ResolveCompactionSource(c, cfgManager, channelScheduler, spec.Kind, bodyBytes, model, conversationID)
+		if err != nil {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "COMPACTION_SOURCE_UNAVAILABLE"})
+			return
+		}
+		handleSingleChannelProxy(c, envCfg, cfgManager, channelScheduler, spec, bodyBytes, model, stream, conversationID, upstream, channelIndex, startTime)
 		return
 	}
 	if hasRequestedChannel {

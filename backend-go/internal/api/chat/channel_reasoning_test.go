@@ -21,7 +21,6 @@ func TestChatBuildersApplyChannelReasoningWithoutChangingInput(t *testing.T) {
 		fn   func(*gin.Context, *config.UpstreamConfig, string, []byte) (*http.Request, error)
 	}{
 		{"原生Chat", buildChatUpstreamRequest},
-		{"转换后直发Chat", buildChatDirectRequest},
 	} {
 		t.Run(build.name, func(t *testing.T) {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())

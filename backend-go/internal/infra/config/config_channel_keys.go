@@ -10,7 +10,7 @@ import (
 	"insistanan/api-proxy/internal/infra/utils"
 )
 
-// applyAPIKeysUpdate 处理 API Keys 更新逻辑（历史记录、自动激活）
+// applyAPIKeysUpdate 更新密钥与历史记录；用户暂停状态只由显式状态命令恢复。
 func applyAPIKeysUpdate(upstream *UpstreamConfig, index int, newAPIKeys []string, label string) bool {
 	shouldResetMetrics := false
 	newKeys := make(map[string]bool)
@@ -46,10 +46,6 @@ func applyAPIKeysUpdate(upstream *UpstreamConfig, index int, newAPIKeys []string
 
 	if len(upstream.APIKeys) == 1 && len(newAPIKeys) == 1 && upstream.APIKeys[0] != newAPIKeys[0] {
 		shouldResetMetrics = true
-		if upstream.Status == "suspended" {
-			upstream.Status = "active"
-			log.Printf("[Config-Upstream] %s渠道 [%d] %s 已从暂停状态自动激活（单 key 更换）", label, index, upstream.Name)
-		}
 	}
 	upstream.APIKeys = utils.DedupeStrings(newAPIKeys)
 	return shouldResetMetrics
@@ -59,10 +55,10 @@ func applyAPIKeysUpdate(upstream *UpstreamConfig, index int, newAPIKeys []string
 // 渠道索引被会话路由、日志和 URL 健康缓存引用，物理删除会使这些状态错绑到后续渠道。
 func removeFromSlice(upstreams []UpstreamConfig, index int, label string) ([]UpstreamConfig, *UpstreamConfig, error) {
 	if index < 0 || index >= len(upstreams) {
-		return upstreams, nil, fmt.Errorf("无效的%s上游索引: %d", label, index)
+		return upstreams, nil, fmt.Errorf("%w: %s 上游索引 %d", ErrChannelNotFound, label, index)
 	}
 	if GetChannelStatus(&upstreams[index]) == ChannelStatusDeleted {
-		return upstreams, nil, fmt.Errorf("无效的%s上游索引: %d（已删除）", label, index)
+		return upstreams, nil, fmt.Errorf("%w: %s 上游索引 %d（已删除）", ErrChannelNotFound, label, index)
 	}
 	removed := upstreams[index]
 	for ownerIndex := range upstreams {
@@ -85,8 +81,11 @@ func removeFromSlice(upstreams []UpstreamConfig, index int, label string) ([]Ups
 
 // addAPIKeyOp 向指定渠道添加 API 密钥（调用方必须持锁）
 func addAPIKeyOp(upstreams []UpstreamConfig, index int, apiKey string, label string) error {
+	if strings.TrimSpace(apiKey) == "" || strings.ContainsAny(apiKey, "\r\n") {
+		return proxyConfigErrorf("API 密钥不能为空或包含换行")
+	}
 	if index < 0 || index >= len(upstreams) {
-		return fmt.Errorf("无效的上游索引: %d", index)
+		return fmt.Errorf("%w: 上游索引 %d", ErrChannelNotFound, index)
 	}
 	for _, key := range upstreams[index].APIKeys {
 		if key == apiKey {
@@ -112,7 +111,7 @@ func addAPIKeyOp(upstreams []UpstreamConfig, index int, apiKey string, label str
 // removeAPIKeyOp 从指定渠道删除 API 密钥（调用方必须持锁）
 func removeAPIKeyOp(upstreams []UpstreamConfig, index int, apiKey string, label string) error {
 	if index < 0 || index >= len(upstreams) {
-		return fmt.Errorf("无效的上游索引: %d", index)
+		return fmt.Errorf("%w: 上游索引 %d", ErrChannelNotFound, index)
 	}
 	keys := upstreams[index].APIKeys
 	found := false
@@ -146,7 +145,7 @@ func removeAPIKeyOp(upstreams []UpstreamConfig, index int, apiKey string, label 
 // moveKeyToTopOp 将密钥移到列表顶部（调用方必须持锁）
 func moveKeyToTopOp(upstreams []UpstreamConfig, upstreamIndex int, apiKey string) error {
 	if upstreamIndex < 0 || upstreamIndex >= len(upstreams) {
-		return fmt.Errorf("无效的上游索引: %d", upstreamIndex)
+		return fmt.Errorf("%w: 上游索引 %d", ErrChannelNotFound, upstreamIndex)
 	}
 	upstream := &upstreams[upstreamIndex]
 	index := -1
@@ -156,7 +155,10 @@ func moveKeyToTopOp(upstreams []UpstreamConfig, upstreamIndex int, apiKey string
 			break
 		}
 	}
-	if index <= 0 {
+	if index < 0 {
+		return proxyConfigErrorf("API密钥不存在")
+	}
+	if index == 0 {
 		return nil
 	}
 	upstream.APIKeys = append([]string{apiKey}, append(upstream.APIKeys[:index], upstream.APIKeys[index+1:]...)...)
@@ -166,7 +168,7 @@ func moveKeyToTopOp(upstreams []UpstreamConfig, upstreamIndex int, apiKey string
 // moveKeyToBottomOp 将密钥移到列表底部（调用方必须持锁）
 func moveKeyToBottomOp(upstreams []UpstreamConfig, upstreamIndex int, apiKey string) error {
 	if upstreamIndex < 0 || upstreamIndex >= len(upstreams) {
-		return fmt.Errorf("无效的上游索引: %d", upstreamIndex)
+		return fmt.Errorf("%w: 上游索引 %d", ErrChannelNotFound, upstreamIndex)
 	}
 	upstream := &upstreams[upstreamIndex]
 	index := -1
@@ -176,7 +178,10 @@ func moveKeyToBottomOp(upstreams []UpstreamConfig, upstreamIndex int, apiKey str
 			break
 		}
 	}
-	if index == -1 || index == len(upstream.APIKeys)-1 {
+	if index < 0 {
+		return proxyConfigErrorf("API密钥不存在")
+	}
+	if index == len(upstream.APIKeys)-1 {
 		return nil
 	}
 	upstream.APIKeys = append(upstream.APIKeys[:index], upstream.APIKeys[index+1:]...)

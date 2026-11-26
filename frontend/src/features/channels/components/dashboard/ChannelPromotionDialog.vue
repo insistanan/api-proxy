@@ -24,6 +24,7 @@
       :min="0"
       density="compact"
     />
+    <p class="mt-3 text-sm text-muted-foreground">按次数促销仅在本次运行有效，重启后结束。只设置时长则重启后继续。</p>
     <template #actions>
       <UiButton variant="text" :disabled="isSavingPromotion" @click="closePromotionDialog">取消</UiButton>
       <UiButton color="info" variant="flat" :loading="isSavingPromotion" :disabled="isSavingPromotion" @click="confirmPromotion">确认设置</UiButton>

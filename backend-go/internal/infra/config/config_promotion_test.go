@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPromotionLimitsPersistAndEitherLimitEndsPromotion(t *testing.T) {
+func TestCountPromotionIsRuntimeOnlyAndEitherLimitEndsPromotion(t *testing.T) {
 	for _, kind := range []string{"messages", "responses", "gemini", "chat", "images"} {
 		t.Run(kind, func(t *testing.T) {
 			cm := newTransactionTestManager(t, kind)
@@ -20,8 +20,9 @@ func TestPromotionLimitsPersistAndEitherLimitEndsPromotion(t *testing.T) {
 			require.NoError(t, json.Unmarshal(raw, &persisted))
 			cs, err := persisted.channelSetFor(kind)
 			require.NoError(t, err)
-			require.NotNil(t, (*cs.upstreams)[0].PromotionUntil)
-			require.Equal(t, 2, (*cs.upstreams)[0].PromotionCount)
+			require.Nil(t, (*cs.upstreams)[0].PromotionUntil)
+			require.Zero(t, (*cs.upstreams)[0].PromotionCount)
+			beforeConsume := append([]byte(nil), raw...)
 
 			cm.ConsumePromotionCount(0, kind)
 			snapshot := cm.GetConfig()
@@ -29,6 +30,9 @@ func TestPromotionLimitsPersistAndEitherLimitEndsPromotion(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, 1, (*cs.upstreams)[0].PromotionCount)
 			require.True(t, IsChannelInPromotion(&(*cs.upstreams)[0]))
+			raw, err = os.ReadFile(cm.configFile)
+			require.NoError(t, err)
+			require.Equal(t, beforeConsume, raw)
 			cm.ConsumePromotionCount(0, kind)
 			snapshot = cm.GetConfig()
 			cs, err = snapshot.channelSetFor(kind)
@@ -43,6 +47,14 @@ func TestPromotionLimitsPersistAndEitherLimitEndsPromotion(t *testing.T) {
 			require.NoError(t, err)
 			require.Nil(t, (*cs.upstreams)[0].PromotionUntil)
 			require.Zero(t, (*cs.upstreams)[0].PromotionCount)
+
+			require.NoError(t, cm.SetChannelPromotionFor(kind, 0, time.Hour, 0))
+			raw, err = os.ReadFile(cm.configFile)
+			require.NoError(t, err)
+			require.NoError(t, json.Unmarshal(raw, &persisted))
+			cs, err = persisted.channelSetFor(kind)
+			require.NoError(t, err)
+			require.NotNil(t, (*cs.upstreams)[0].PromotionUntil)
 		})
 	}
 }

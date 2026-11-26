@@ -165,6 +165,30 @@
     </div>
   </section>
 
+  <section v-if="isConversationProtocol(channelType)" class="vision-pool-section">
+    <header class="vision-pool-header">
+      <div class="flex items-center gap-2">
+        <span class="text-sm font-medium">文本摘要池</span>
+        <UiBadge size="x-small">{{ summaryChannels.length }}</UiBadge>
+      </div>
+      <span class="section-inline-label">{{ protocolLabel(channelType) }} 入口 · 独立摘要</span>
+    </header>
+    <div class="vision-channel-list">
+      <div v-for="channel in summaryChannels" :id="channel.id && !channel.visionCapable ? channelAnchorId(channelType, channel.id) : undefined" :key="channel.id ?? channel.index" class="vision-channel-row" tabindex="-1">
+        <button v-if="canToggleVisionStatus(channel)" type="button" class="vision-status-toggle" :aria-label="`切换 ${channel.name} 状态`" @click="emit('toggleVisionStatus', channel)">
+          <ChannelStatusBadge :status="channel.status || 'active'" />
+        </button>
+        <ChannelStatusBadge v-else :status="channel.status || 'active'" />
+        <button type="button" class="font-medium truncate" @click="emit('edit', channel)">{{ channel.name }}</button>
+        <span class="text-xs text-muted-foreground truncate">{{ channel.compaction?.summaryModel }}</span>
+        <span class="flex-1"></span>
+        <UiButton size="x-small" variant="text" @click="emit('edit', channel)">配置</UiButton>
+        <UiButton size="x-small" color="error" variant="text" @click="emit('delete', channel.index, channel.kind)">删除</UiButton>
+      </div>
+      <EmptyState v-if="summaryChannels.length === 0" variant="inline" icon="mdi-chat-outline" title="暂无文本摘要渠道" description="在渠道的上下文压缩设置中加入摘要池并指定模型，再为主渠道开启委托。" />
+    </div>
+  </section>
+
   <AppDialog v-model="poolDialog" :title="editingPool ? '编辑分组' : '新建分组'" size="sm">
     <UiInput v-model="poolName" label="名称" variant="outlined" density="compact" autofocus />
     <UiSelect
@@ -326,9 +350,12 @@ const poolColumns = computed(() => {
   ]
 })
 const visionChannels = computed(() => {
-  const source = props.sharedVisionChannels ?? props.channels.filter(channel => channel.excludeFromConversation)
+  const source = props.sharedVisionChannels ?? props.channels.filter(channel => channel.excludeFromConversation && channel.visionCapable)
   return source.filter(channel => channel.status !== 'deleted')
 })
+const summaryChannels = computed(() => props.channels
+  .filter(channel => channel.excludeFromConversation && channel.compaction?.summaryCapable && channel.status !== 'deleted')
+  .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0)))
 const protocolLabel = (kind?: ApiTab) => (kind ? API_TAB_LABELS[kind] : '')
 const canToggleVisionStatus = (channel: Channel) => ['active', 'suspended'].includes(channel.status || 'active')
 const deletePoolMessage = computed(() => {

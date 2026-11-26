@@ -16,6 +16,7 @@ import (
 	"insistanan/api-proxy/internal/clients/filetxn"
 	"insistanan/api-proxy/internal/clients/piagent"
 	"insistanan/api-proxy/internal/clients/skills"
+	"insistanan/api-proxy/internal/infra/config"
 )
 
 // SkillsAPI 聚合 skills 管理的互斥锁与项目目录解析，由 main.go 构造并注入路由，
@@ -40,12 +41,15 @@ func (s *SkillsAPI) WithLock(fn func() error) error {
 }
 
 // SyncOnStartup 在服务启动或 Git 拉取后，按项目目录中的 skills-manifest.json 自动同步到各 Agent 目录。
-func (s *SkillsAPI) SyncOnStartup() (skills.SyncReport, error) {
+func (s *SkillsAPI) SyncOnStartup(expectedDirectory ...string) (skills.SyncReport, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	opts, err := s.locationOptions()
 	if err != nil {
 		return skills.SyncReport{}, err
+	}
+	if len(expectedDirectory) > 0 && !config.SamePath(opts.ProjectDir, expectedDirectory[0]) {
+		return skills.SyncReport{}, fmt.Errorf("Skills 目录已切换，未同步其他仓库；请刷新后重试同步")
 	}
 	return skills.SyncManifestToAgents(opts)
 }

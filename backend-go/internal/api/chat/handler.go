@@ -3,9 +3,7 @@ package chat
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"insistanan/api-proxy/internal/infra/upstreamreq"
 	"insistanan/api-proxy/internal/protocol/codec"
@@ -59,18 +57,15 @@ func Handler(
 				c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 				return "", false, nil, false
 			}
+			if modelcatalog.IsRetiredChatAlias(chatReq.Model) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
+					"type": "invalid_request_error", "code": "retired_model_alias",
+					"message": "旧 Chat 渠道别名已停用，请从 /v1/models 选择分组模型，或使用渠道配置的模型名",
+				}})
+				return "", false, nil, false
+			}
 			prompts := proxycore.ExtractPromptsFromOpenAI(chatReq.Messages)
 			return chatReq.Model, chatReq.Stream, prompts, true
-		},
-		PreRoute: func(c *gin.Context, body []byte, model string, conversationID string, startTime time.Time) bool {
-			route, ok := modelcatalog.ResolveChatRoute(c.Request.Context(), cfgManager, model)
-			if !ok {
-				return false
-			}
-			var chatReq types.OpenAIRequest
-			_ = json.Unmarshal(body, &chatReq)
-			handleRoutedChat(c, envCfg, cfgManager, channelScheduler, route, body, model, chatReq.Stream, conversationID, startTime)
-			return true
 		},
 		BuildUpstreamRequest: func(c *gin.Context, up *config.UpstreamConfig, apiKey string, body []byte) (*http.Request, error) {
 			return buildChatUpstreamRequest(c, up, apiKey, body)
@@ -84,114 +79,6 @@ func Handler(
 	return func(c *gin.Context) {
 		proxycore.RunProxyRequest(c, envCfg, cfgManager, channelScheduler, spec)
 	}
-}
-
-func handleRoutedChat(
-	c *gin.Context,
-	envCfg *config.EnvConfig,
-	cfgManager *config.ConfigManager,
-	channelScheduler *scheduler.ChannelScheduler,
-	route modelcatalog.ChatRoute,
-	bodyBytes []byte,
-	model string,
-	stream bool,
-	conversationID string,
-	startTime time.Time,
-) {
-	upstream, err := chatRouteUpstream(cfgManager, route)
-	if err != nil {
-		proxycore.MarkConversationFailure(channelScheduler, conversationID, scheduler.ChannelKindChat, err)
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": gin.H{
-				"message": err.Error(),
-				"type":    "invalid_request_error",
-			},
-		})
-		return
-	}
-
-	if err := channelScheduler.ValidateFixedChannel(c.Request.Context(), conversationID, scheduler.ChannelKindChat, route.ChannelIndex); err != nil {
-		proxycore.MarkConversationFailure(channelScheduler, conversationID, scheduler.ChannelKindChat, err)
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "CONVERSATION_ROUTE_OVERRIDE"})
-		return
-	}
-
-	routedBody, err := replaceChatModel(bodyBytes, route.UpstreamModel)
-	if err != nil {
-		proxycore.MarkConversationFailure(channelScheduler, conversationID, scheduler.ChannelKindChat, err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	urlResults := proxycore.BuildDefaultURLResults([]string{route.BaseURL})
-	attempt := proxycore.NewUpstreamAttempt(
-		c, envCfg, cfgManager, channelScheduler,
-		scheduler.ChannelKindChat, "Chat", upstream, model, routedBody, stream,
-		route.ChannelIndex, conversationID,
-	)
-	attempt.URLResults = urlResults
-	attempt.NextAPIKey = func(upstream *config.UpstreamConfig, failedKeys map[string]bool) (string, error) {
-		if failedKeys[route.APIKey] {
-			return "", fmt.Errorf("路由模型 %s 指定的 API Key 已失败", route.Alias)
-		}
-		return route.APIKey, nil
-	}
-	attempt.BuildRequest = func(c *gin.Context, upstreamCopy *config.UpstreamConfig, apiKey string) (*http.Request, error) {
-		return buildChatDirectRequest(c, upstreamCopy, apiKey, routedBody)
-	}
-	attempt.MarkURLFailure = func(url string) {
-		channelScheduler.MarkURLFailure(scheduler.ChannelKindChat, route.ChannelIndex, url)
-	}
-	attempt.MarkURLSuccess = func(url string) {
-		channelScheduler.MarkURLSuccess(scheduler.ChannelKindChat, route.ChannelIndex, url)
-	}
-	attempt.HandleSuccess = func(c *gin.Context, resp *http.Response, upstreamCopy *config.UpstreamConfig, apiKey string) (*types.Usage, error) {
-		return handleSuccess(c, resp, envCfg, startTime, stream, routedBody)
-	}
-	result := attempt.TryWithModelMappingFailover()
-	if result.Handled {
-		if result.SuccessKey != "" {
-			proxycore.MarkConversationSuccess(channelScheduler, conversationID, scheduler.ChannelKindChat, route.ChannelIndex, route.ChannelName)
-			channelScheduler.ConsumePromotionCount(route.ChannelIndex, scheduler.ChannelKindChat)
-		} else if result.LastError != nil && !errors.Is(result.LastError, context.Canceled) {
-			proxycore.MarkConversationFailure(channelScheduler, conversationID, scheduler.ChannelKindChat, result.LastError)
-		}
-		return
-	}
-
-	log.Printf("[Chat-Route] 路由模型失败: alias=%s channel=%d key=%s", route.Alias, route.ChannelIndex, route.KeyID)
-	proxycore.MarkConversationFailure(channelScheduler, conversationID, scheduler.ChannelKindChat, result.LastError)
-	proxycore.HandleAllKeysFailed(c, cfgManager.GetFuzzyModeEnabledForProtocol("chat"), result.FailoverError, result.LastError, "Chat")
-}
-
-func chatRouteUpstream(cfgManager *config.ConfigManager, route modelcatalog.ChatRoute) (*config.UpstreamConfig, error) {
-	cfg := cfgManager.GetConfig()
-	if route.ChannelIndex < 0 || route.ChannelIndex >= len(cfg.ChatUpstream) {
-		return nil, fmt.Errorf("路由模型 %s 指向的 Chat 渠道不存在", route.Alias)
-	}
-
-	upstream := cfg.ChatUpstream[route.ChannelIndex].Clone()
-	if config.GetChannelStatus(upstream) != config.ChannelStatusActive || !config.IsChannelSchedulable(upstream) {
-		return nil, fmt.Errorf("路由模型 %s 指向的 Chat 渠道不可用", route.Alias)
-	}
-
-	keyExists := false
-	for _, apiKey := range upstream.APIKeys {
-		if apiKey == route.APIKey {
-			keyExists = true
-			break
-		}
-	}
-	if !keyExists {
-		return nil, fmt.Errorf("路由模型 %s 指向的 API Key 已不存在", route.Alias)
-	}
-
-	upstream.BaseURL = route.BaseURL
-	upstream.BaseURLs = nil
-	upstream.APIKeys = []string{route.APIKey}
-	upstream.ModelMapping = nil
-	upstream.DefaultModel = ""
-	return upstream, nil
 }
 
 func buildChatUpstreamRequest(c *gin.Context, upstream *config.UpstreamConfig, apiKey string, originalBody []byte) (*http.Request, error) {
@@ -366,58 +253,4 @@ func handleSuccess(c *gin.Context, resp *http.Response, envCfg *config.EnvConfig
 	proxycore.MarkRequestLogFirstToken(c)
 	c.Data(resp.StatusCode, "application/json", bodyBytes)
 	return usage, nil
-}
-
-func buildChatDirectRequest(c *gin.Context, upstream *config.UpstreamConfig, apiKey string, bodyBytes []byte) (*http.Request, error) {
-	var err error
-	bodyBytes, err = converters.ApplyChannelReasoningOverride(bodyBytes, upstream, "")
-	if err != nil {
-		return nil, err
-	}
-	bodyBytes, err = stripChatPromptCacheFields(bodyBytes, upstream)
-	if err != nil {
-		return nil, err
-	}
-	url := buildChatCompletionsURL(upstream.GetEffectiveBaseURL(), upstream.UseFullURL)
-	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, url, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return nil, fmt.Errorf("创建 Chat 请求失败: %w", err)
-	}
-
-	req.Header = upstreamreq.PrepareUpstreamHeaders(c, req.URL.Host)
-	upstreamreq.SetAuthenticationHeader(req.Header, apiKey)
-	return req, nil
-}
-
-func stripChatPromptCacheFields(bodyBytes []byte, upstream *config.UpstreamConfig) ([]byte, error) {
-	if upstream == nil || !upstream.DisablePromptCacheKey {
-		return bodyBytes, nil
-	}
-	var payload map[string]interface{}
-	decoder := json.NewDecoder(bytes.NewReader(bodyBytes))
-	decoder.UseNumber()
-	if err := decoder.Decode(&payload); err != nil {
-		return nil, fmt.Errorf("解析 Chat 请求体失败: %w", err)
-	}
-	delete(payload, "prompt_cache_key")
-	delete(payload, "prompt_cache_retention")
-	return codec.MarshalJSONNoEscape(payload)
-}
-
-func replaceChatModel(bodyBytes []byte, model string) ([]byte, error) {
-	var payload map[string]interface{}
-	decoder := json.NewDecoder(bytes.NewReader(bodyBytes))
-	decoder.UseNumber()
-	if err := decoder.Decode(&payload); err != nil {
-		return nil, fmt.Errorf("解析 Chat 请求体失败: %w", err)
-	}
-	if strings.TrimSpace(model) == "" {
-		return nil, fmt.Errorf("路由模型缺少上游模型名")
-	}
-	payload["model"] = model
-	if err := sanitizeOpenAIChatPayloadForUpstream(payload); err != nil {
-		return nil, err
-	}
-	ensureChatStreamUsageOptions(payload)
-	return codec.MarshalJSONNoEscape(payload)
 }

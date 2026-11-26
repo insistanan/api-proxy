@@ -378,7 +378,7 @@ v-model="form.defaultModel" searchable
       <ChannelCacheKeepaliveFields v-model="form.cacheKeepalive" :service-type="form.serviceType" :channel-id="isEditing ? channel?.id : undefined" />
     </div>
     <div v-if="supportsConversationFeatures" class="min-w-0 col-span-12" >
-      <DisclosureSection v-model="detailedSections.compatibility" title="图片理解与对话兼容" :description="compatibilitySummary" icon="mdi-image-search-outline" data-form-section="compatibility">
+      <DisclosureSection v-model="detailedSections.compatibility" title="图片理解、上下文压缩与兼容" :description="compatibilitySummary" icon="mdi-image-search-outline" data-form-section="compatibility">
         <div class="grid grid-cols-12 gap-4 pt-3">
           <!-- 图片理解能力与图片理解层 -->
           <div class="min-w-0 col-span-12" >
@@ -437,6 +437,12 @@ v-model="form.defaultModel" searchable
           </div>
 
           <!-- 对话与缓存兼容性 -->
+          <div class="min-w-0 col-span-12">
+            <ChannelCompactionFields
+              v-model="form.compaction"
+              :native-protocol="(channelType === 'messages' && form.serviceType === 'claude') || (channelType === 'responses' && form.serviceType === 'responses')"
+            />
+          </div>
           <div class="min-w-0 col-span-12" >
             <UiCard variant="outlined" rounded="lg">
               <div class="ui-card-title px-4 pt-4 text-base font-semibold flex items-center gap-2 p-4 pb-2">
@@ -447,9 +453,9 @@ v-model="form.defaultModel" searchable
                 <div class="flex items-center justify-between">
                   <div>
                     <div class="text-base font-medium">不参与对话</div>
-                    <div class="text-sm text-muted-foreground mt-1">仅用作图片理解，退出常规对话调度。</div>
+                    <div class="text-sm text-muted-foreground mt-1">仅用作图片理解或文本摘要，退出常规对话调度。</div>
                   </div>
-                  <UiSwitch v-model="form.excludeFromConversation" aria-label="不参与对话调度" inset color="primary" hide-details />
+                  <UiSwitch v-model="form.excludeFromConversation" :disabled="form.compaction.summaryCapable" aria-label="不参与对话调度" inset color="primary" hide-details />
                 </div>
 
                 <template v-if="form.serviceType === 'openai' || form.serviceType === 'responses'">
@@ -619,6 +625,7 @@ import ModelMappingEditor from '@/features/channels/components/form/ModelMapping
 import ImagesChannelProtocolFields from '@/features/channels/components/form/ImagesChannelProtocolFields.vue'
 import ImagesOutputFields from '@/features/channels/components/form/ImagesOutputFields.vue'
 import ChannelCacheKeepaliveFields from '@/features/channels/components/form/ChannelCacheKeepaliveFields.vue'
+import ChannelCompactionFields from '@/features/channels/components/form/ChannelCompactionFields.vue'
 import { supportsCacheKeepalive } from '@/features/channels/utils/cacheKeepalive'
 import { validateEmbeddingsDimensions } from '@/features/channels/composables/useChannelEditor'
 import { isConversationProtocol } from '@/features/channels/services/channel-api'
@@ -702,7 +709,9 @@ const connectionSummary = computed(() => {
   return [`分支上限 ${form.maxBranchConcurrency}`, `请求上限 ${form.maxConcurrency}`, proxy ? `代理：${proxy}` : undefined, identity].filter(Boolean).join(' · ')
 })
 const compatibilitySummary = computed(() => {
-  const items = [form.excludeFromConversation ? '仅用于图片理解' : '参与对话调度']
+  const items = [form.excludeFromConversation ? '仅用于辅助任务' : '参与对话调度']
+  if (form.compaction.summaryCapable) items.push('摘要池')
+  if (form.compaction.summaryPool) items.push('委托摘要池')
   if (form.visionCapable) items.push('支持图片理解')
   if (form.visionLayerEnabled) items.push('指定图片理解渠道')
   if (['openai', 'responses'].includes(form.serviceType) && form.disablePromptCacheKey) items.push('移除缓存键')

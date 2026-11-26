@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -69,17 +70,36 @@ func (cm *ConfigManager) runChannelLifecycle(now time.Time, cleanupDeprecated bo
 
 	candidate := cloneConfig(cm.config)
 	changed := false
+	var blocked []error
 	for _, set := range candidate.channelSets() {
-		listChanged := false
-		*set.upstreams, listChanged = applyLifecycleToUpstreams(*set.upstreams, now, cleanupDeprecated, set.name)
-		changed = changed || listChanged
+		for index := range *set.upstreams {
+			before := (*set.upstreams)[index]
+			next, itemChanged := applyChannelLifecycle(before, now, cleanupDeprecated)
+			if !itemChanged {
+				continue
+			}
+			(*set.upstreams)[index] = next
+			err := validateConfig(&candidate)
+			if err == nil && cm.validateResources != nil {
+				err = cm.validateResources(cm.config, candidate)
+			}
+			if err != nil {
+				(*set.upstreams)[index] = before
+				blocked = append(blocked, fmt.Errorf("保留受引用约束的渠道 %s/%s: %w", set.kind, before.ID, err))
+				continue
+			}
+			if channelStatusPool(&before) != channelStatusPool(&next) {
+				moveChannelToStatusPoolTail(*set.upstreams, index)
+			}
+			changed = true
+		}
 	}
 
 	if !changed {
-		return nil
+		return errors.Join(blocked...)
 	}
 	if err := cm.saveConfigLocked(candidate); err != nil {
 		return fmt.Errorf("保存生命周期维护结果失败: %w", err)
 	}
-	return nil
+	return errors.Join(blocked...)
 }

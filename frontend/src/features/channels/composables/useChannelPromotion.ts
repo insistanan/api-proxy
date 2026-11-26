@@ -47,20 +47,20 @@ export function useChannelPromotion(props: { channelType: ApiTab }, emit: Promot
     isSavingPromotion.value = true
     promotionError.value = ''
     try {
+      if (!channel.id) throw new Error('操作目标缺少稳定渠道 ID，请刷新后重试')
       if (!Number.isSafeInteger(durationMinutes) || durationMinutes < 0 ||
           !Number.isSafeInteger(durationMinutes * 60) || !Number.isSafeInteger(count) || count < 0) {
         throw new Error('促销时长和次数必须是有效的非负整数')
       }
       if (channel.status === 'suspended' && (durationMinutes > 0 || count > 0)) {
-        // resume 只重置熔断；持久化状态必须单独设为 active。
-        await ca.resumeChannel(channel.index)
-        await ca.setStatus(channel.index, 'active')
+        // 激活成功后统一重置熔断，避免先改运行态、后保存配置的半完成操作。
+        await ca.setStatus(channel.index, 'active', channel.id)
         channel.status = 'active'
         changed = true
       }
 
       settingPromotion = true
-      await ca.setPromotion(channel.index, durationMinutes * 60, count)
+      await ca.setPromotion(channel.index, durationMinutes * 60, count, channel.id)
       changed = true
       const durationText = durationMinutes > 0 ? `${durationMinutes}分钟` : ''
       const countText = count > 0 ? `${count}次成功请求` : ''

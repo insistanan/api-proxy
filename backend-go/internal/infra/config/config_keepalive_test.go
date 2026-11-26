@@ -36,28 +36,12 @@ func TestKeepaliveTargetDigest_OnlyRelevantConfigurationInvalidatesTarget(t *tes
 	}
 }
 
-func TestCacheKeepaliveConfig_IgnoresRemovedTokenLimitInExistingSettings(t *testing.T) {
+func TestCacheKeepaliveConfig_RejectsRemovedTokenLimit(t *testing.T) {
 	var upstream UpstreamConfig
-	err := json.Unmarshal([]byte(`{"serviceType":"claude","cacheKeepalive":{"enabled":true,"intervalSeconds":280,"maxAttempts":100,"maxIdleMinutes":0,"prompt":"继续","minCacheHitPercent":90,"maxOutputTokens":16,"maxTotalTokens":1}}`), &upstream)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := ValidateCacheKeepalive("messages", &upstream); err != nil {
-		t.Fatalf("旧配置残留字段不应影响启用: %v", err)
-	}
-	data, err := json.Marshal(upstream.CacheKeepalive)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var saved map[string]json.RawMessage
-	if err := json.Unmarshal(data, &saved); err != nil {
-		t.Fatal(err)
-	}
-	if _, exists := saved["maxTotalTokens"]; exists {
-		t.Fatal("保存时不应继续输出已移除的 Token 限制")
+	if err := json.Unmarshal([]byte(`{"serviceType":"claude","cacheKeepalive":{"maxTotalTokens":1}}`), &upstream); err == nil {
+		t.Fatal("已移除字段必须报错，不能在保存时静默丢弃")
 	}
 }
-
 func TestCacheKeepaliveValidation_RejectsInvalidLimitsAndUnsupportedChannels(t *testing.T) {
 	valid := UpstreamConfig{ServiceType: "claude", CacheKeepalive: CacheKeepaliveConfig{
 		Enabled: true, IntervalSeconds: 180, MaxAttempts: 100, Prompt: "接下来应该怎么做？",

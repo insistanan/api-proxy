@@ -3,10 +3,12 @@ package config
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,7 +31,7 @@ func newTransactionTestManager(t *testing.T, kind string) *ConfigManager {
 	}
 	cm := &ConfigManager{
 		config: cfg, configFile: filepath.Join(t.TempDir(), "config.json"),
-		failedKeysCache: map[string]*FailedKey{"k1": {Timestamp: time.Now(), FailureCount: 1}},
+		failedKeysCache: map[string]*FailedKey{transactionFailureIdentity(): {Timestamp: time.Now(), FailureCount: 1}},
 	}
 	if err := cm.SaveConfig(); err != nil {
 		t.Fatal(err)
@@ -46,6 +48,142 @@ func blockTransactionBackup(t *testing.T, cm *ConfigManager) {
 }
 
 var allChannelKinds = []string{"messages", "responses", "gemini", "chat", "images", "embeddings", "decisions"}
+
+func TestSettingsPatchPreservesConcurrentCategories(t *testing.T) {
+	cm := newTransactionTestManager(t, "messages")
+	network := NetworkSettings{UpstreamProxyURL: "http://127.0.0.1:8080", UpstreamProxyEnabled: true}
+	gateway := json.RawMessage(`{"enableRequestLogs":false}`)
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	var workers sync.WaitGroup
+	for _, patch := range []SettingsPatch{{Network: &network}, {Gateway: &gateway}} {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			results <- cm.PatchSettings(patch)
+		}()
+	}
+	close(start)
+	workers.Wait()
+	close(results)
+	for err := range results {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	settings := cm.GetSettings()
+	if settings.Network != network || settings.Gateway.EnableRequestLogs {
+		t.Fatal("并发分类保存丢失了其他分类的修改")
+	}
+}
+
+func TestConfigSaveRejectsExternalEditBeforeWatcher(t *testing.T) {
+	cm := newTransactionTestManager(t, "messages")
+	before := cm.GetConfig()
+	external := cloneConfig(before)
+	external.Upstream[0].Name = "external"
+	data, err := json.Marshal(external)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cm.configFile, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := cm.SaveConfig(); !errors.Is(err, ErrConfigConflict) {
+		t.Fatalf("旧快照必须报告版本冲突，得到 %v", err)
+	}
+	actual, err := os.ReadFile(cm.configFile)
+	if err != nil || !bytes.Equal(actual, data) || !reflect.DeepEqual(before, cm.GetConfig()) {
+		t.Fatal("冲突后修改了磁盘或已发布快照")
+	}
+	if err := cm.reloadFromDisk(); err != nil {
+		t.Fatal(err)
+	}
+	if cm.GetConfig().Upstream[0].Name != "external" {
+		t.Fatal("外部修改未在重载后生效")
+	}
+}
+
+func TestConfigRejectsNonObjectRoot(t *testing.T) {
+	cm := newTransactionTestManager(t, "messages")
+	for _, input := range []string{"null", "[]", "true", ""} {
+		if _, _, err := cm.prepareCandidate([]byte(input)); err == nil {
+			t.Errorf("接受了非对象根节点 %q", input)
+		}
+	}
+}
+
+func TestChannelWritesCheckIdentityAndTombstones(t *testing.T) {
+	cm := newTransactionTestManager(t, "messages")
+	commands := []func(string) error{
+		func(id string) error { _, err := cm.RemoveChannel("messages", 0, id); return err },
+		func(id string) error { return cm.SetChannelStatusFor("messages", 0, ChannelStatusSuspended, id) },
+		func(id string) error { return cm.SetChannelPromotionFor("messages", 0, time.Minute, 1, id) },
+		func(id string) error { return cm.AddChannelKey("messages", 0, "new", id) },
+		func(id string) error { return cm.RemoveChannelKey("messages", 0, "k1", id) },
+		func(id string) error { return cm.MoveChannelKeyTop("messages", 0, "k2", id) },
+	}
+	before := cm.GetConfig()
+	for _, command := range commands {
+		if err := command("stale-id"); !errors.Is(err, ErrChannelIdentityConflict) {
+			t.Fatalf("旧身份未被拒绝: %v", err)
+		}
+	}
+	if !reflect.DeepEqual(before, cm.GetConfig()) {
+		t.Fatal("身份冲突改变了配置")
+	}
+	if _, err := cm.RemoveChannel("messages", 0, "first"); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range commands {
+		if err := command("first"); !errors.Is(err, ErrChannelNotFound) {
+			t.Fatalf("墓碑仍可修改: %v", err)
+		}
+	}
+	if err := cm.DuplicateChannel("messages", 0); !errors.Is(err, ErrChannelNotFound) {
+		t.Fatalf("墓碑仍可复制: %v", err)
+	}
+}
+
+func TestChannelIDsAreUniqueAcrossProtocols(t *testing.T) {
+	cm := newTransactionTestManager(t, "messages")
+	duplicate := *cm.GetConfig().Upstream[0].Clone()
+	if _, err := cm.AddChannel("chat", duplicate); err == nil {
+		t.Fatal("允许跨协议复用稳定 ID")
+	}
+	candidate := cm.GetConfig()
+	candidate.ChatUpstream = []UpstreamConfig{duplicate}
+	raw, err := json.Marshal(candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := cm.prepareCandidate(raw); err == nil {
+		t.Fatal("热重载静默改写了重复 ID")
+	}
+}
+
+func TestKeyEditsPreserveExplicitSuspension(t *testing.T) {
+	cm := newTransactionTestManager(t, "messages")
+	if err := cm.RemoveChannelKey("messages", 1, "k3"); err != nil {
+		t.Fatal(err)
+	}
+	if cm.GetConfig().Upstream[1].Status != ChannelStatusSuspended {
+		t.Fatal("删除最后一个 Key 后没有立即暂停")
+	}
+	if err := cm.AddChannelKey("messages", 1, "new"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cm.UpdateChannel("messages", 1, UpstreamUpdate{APIKeys: []string{"replacement"}}); err != nil {
+		t.Fatal(err)
+	}
+	if cm.GetConfig().Upstream[1].Status != ChannelStatusSuspended {
+		t.Fatal("更换 Key 意外恢复了暂停状态")
+	}
+	if err := cm.reloadFromDisk(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestConfigSnapshotsAreIsolatedFromCallers(t *testing.T) {
 	for _, kind := range allChannelKinds {
@@ -179,7 +317,7 @@ func TestChannelTransactionsKeepSnapshotOnSaveFailure(t *testing.T) {
 					cm.persistedDigest = configDigest(data)
 				}
 				before := cm.GetConfig()
-				failure := *cm.failedKeysCache["k1"]
+				failure := *cm.failedKeysCache[transactionFailureIdentity()]
 				diskBefore, err := os.ReadFile(cm.configFile)
 				if err != nil {
 					t.Fatal(err)
@@ -195,7 +333,7 @@ func TestChannelTransactionsKeepSnapshotOnSaveFailure(t *testing.T) {
 				if !reflect.DeepEqual(before, cm.GetConfig()) {
 					t.Fatal("提交前失败污染当前配置")
 				}
-				if got := cm.failedKeysCache["k1"]; got == nil || *got != failure {
+				if got := cm.failedKeysCache[transactionFailureIdentity()]; got == nil || *got != failure {
 					t.Fatal("提交前失败提前清理失败密钥")
 				}
 				diskAfter, err := os.ReadFile(cm.configFile)
@@ -327,13 +465,13 @@ func TestVisionMigrationSkipsDeletedTombstones(t *testing.T) {
 	}
 }
 
-func TestPromotionConsumptionKeepsCountOnSaveFailure(t *testing.T) {
+func TestPromotionConsumptionDoesNotRequireDiskWrite(t *testing.T) {
 	cm := newTransactionTestManager(t, "messages")
 	cm.config.Upstream[0].PromotionCount = 3
 	blockTransactionBackup(t, cm)
 	cm.ConsumePromotionCount(0, "messages")
-	if cm.GetConfig().Upstream[0].PromotionCount != 3 {
-		t.Fatal("促销次数保存失败污染当前配置")
+	if cm.GetConfig().Upstream[0].PromotionCount != 2 {
+		t.Fatal("促销次数应在内存中消费，不依赖配置备份")
 	}
 }
 
@@ -346,7 +484,7 @@ func TestChannelRemovalCommitsTombstoneBeforeCleanup(t *testing.T) {
 			if err != nil || removed == nil || removed.ID != "first" {
 				t.Fatalf("删除失败: %v", err)
 			}
-			if cm.failedKeysCache["k1"] != nil {
+			if cm.failedKeysCache[transactionFailureIdentity()] != nil {
 				t.Fatal("提交成功未清理失败密钥")
 			}
 			raw, err := os.ReadFile(cm.configFile)
@@ -408,5 +546,38 @@ func TestMigrationSaveFailureKeepsPublishedSnapshot(t *testing.T) {
 	}
 	if !reflect.DeepEqual(before, cm.GetConfig()) {
 		t.Fatal("迁移回写失败提前发布候选")
+	}
+}
+
+func transactionFailureIdentity() string {
+	channel := UpstreamConfig{BaseURL: "https://first.example.com", ServiceType: "openai"}
+	return channel.RequestIdentity("k1").Fingerprint()
+}
+
+func TestKeyFailuresUseActualUpstreamIdentity(t *testing.T) {
+	cm := newTransactionTestManager(t, "messages")
+	cm.keyRecoveryTime = time.Hour
+	first := cm.GetConfig().Upstream[0]
+	cm.MarkKeyAsFailed(&first, "k1", "test")
+	key, err := cm.GetNextAPIKey(&first, nil, "test")
+	if err != nil || key != "k2" {
+		t.Fatalf("失败身份未被避开: key=%s err=%v", key, err)
+	}
+	other := first
+	other.BaseURL = "https://other.example.com"
+	key, err = cm.GetNextAPIKey(&other, nil, "test")
+	if err != nil || key != "k1" {
+		t.Fatalf("另一地址被错误隔离: key=%s err=%v", key, err)
+	}
+	other = first
+	other.ServiceType = "gemini"
+	other.upstreamProtocol = "gemini"
+	key, err = cm.GetNextAPIKey(&other, nil, "test")
+	if err != nil || key != "k1" {
+		t.Fatalf("另一协议被错误隔离: key=%s err=%v", key, err)
+	}
+	other.APIKeys = []string{"k1"}
+	if _, err = cm.GetNextAPIKey(&other, map[string]bool{"k1": true}, "test"); err == nil {
+		t.Fatal("单 Key 必须遵守请求内排除")
 	}
 }

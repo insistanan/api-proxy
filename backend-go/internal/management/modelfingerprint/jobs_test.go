@@ -174,7 +174,7 @@ func TestShutdownCancelsTaskAndPreservesCompletedSamples(t *testing.T) {
 	require.Equal(t, "saved-answer", saved.Samples[0].Text)
 	require.Equal(t, "cancelled", saved.Samples[1].State)
 	_, err = jobs.Start(target)
-	require.ErrorContains(t, err, "服务正在关闭")
+	require.ErrorIs(t, err, ErrClosed)
 }
 
 func TestRetryRunsOnlySpecifiedSampleAndKeepsTaskIdentity(t *testing.T) {

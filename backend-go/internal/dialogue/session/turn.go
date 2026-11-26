@@ -64,6 +64,7 @@ func (sm *SessionManager) release(id string) {
 	if sm.active[id] <= 0 {
 		delete(sm.active, id)
 	}
+	sm.pruneCacheLocked("")
 }
 
 func (t *Turn) Commit(ctx context.Context, items []types.ResponsesItem, tokens int, vision bool, responseID, owner string, replace bool) error {

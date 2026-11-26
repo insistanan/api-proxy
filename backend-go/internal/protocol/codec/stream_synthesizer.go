@@ -13,6 +13,9 @@ type StreamSynthesizer struct {
 	synthesizedContent  strings.Builder
 	toolCallAccumulator map[int]*ToolCall
 	parseFailed         bool
+	maxBytes            int
+	consumed            int
+	truncated           bool
 
 	// responses专用累积器
 	responsesText map[int]*strings.Builder
@@ -22,12 +25,13 @@ type StreamSynthesizer struct {
 type ToolCall struct {
 	ID        string
 	Name      string
-	Arguments string
+	Arguments strings.Builder
 }
 
 // NewStreamSynthesizer 创建新的流合成器
-func NewStreamSynthesizer(serviceType string) *StreamSynthesizer {
+func NewStreamSynthesizer(serviceType string, maxBytes int) *StreamSynthesizer {
 	return &StreamSynthesizer{
+		maxBytes:            maxBytes,
 		serviceType:         serviceType,
 		toolCallAccumulator: make(map[int]*ToolCall),
 		responsesText:       make(map[int]*strings.Builder),
@@ -36,6 +40,14 @@ func NewStreamSynthesizer(serviceType string) *StreamSynthesizer {
 
 // ProcessLine 处理SSE流的一行
 func (s *StreamSynthesizer) ProcessLine(line string) {
+	if s.truncated {
+		return
+	}
+	if len(line) > s.maxBytes-s.consumed {
+		s.truncated = true
+		return
+	}
+	s.consumed += len(line)
 	// 上游行可能带缩进或回车，先归一再判 data 前缀；判定与载荷清理走 ParseSSEDataLine 单一出处
 	jsonStr, ok := SSEDataJSON(strings.TrimSpace(line))
 	if !ok {
@@ -164,7 +176,7 @@ func (s *StreamSynthesizer) processResponses(data map[string]interface{}) {
 			acc.ID = id
 		}
 		if delta, ok := data["delta"].(string); ok {
-			acc.Arguments += delta
+			acc.Arguments.WriteString(delta)
 		}
 	case "response.function_call_arguments.done":
 		index := getIndex()
@@ -176,7 +188,8 @@ func (s *StreamSynthesizer) processResponses(data map[string]interface{}) {
 			acc.ID = id
 		}
 		if args, ok := data["arguments"].(string); ok && args != "" {
-			acc.Arguments = args
+			acc.Arguments.Reset()
+			acc.Arguments.WriteString(args)
 		}
 		if name, ok := data["name"].(string); ok && name != "" {
 			acc.Name = name
@@ -286,7 +299,7 @@ func (s *StreamSynthesizer) processOpenAI(data map[string]interface{}) {
 					accumulated.Name = name
 				}
 				if args, ok := function["arguments"].(string); ok {
-					accumulated.Arguments += args
+					accumulated.Arguments.WriteString(args)
 				}
 			}
 		}
@@ -369,7 +382,7 @@ func (s *StreamSynthesizer) processClaude(data map[string]interface{}) {
 				}
 
 				accumulated := s.toolCallAccumulator[blockIndex]
-				accumulated.Arguments += partialJSON
+				accumulated.Arguments.WriteString(partialJSON)
 			}
 		case "thinking_delta":
 			// thinking 内容不记录到合成内容中（可选：如需记录可取消注释）
@@ -432,7 +445,7 @@ func (s *StreamSynthesizer) GetSynthesizedContent() string {
 		var toolCallsBuilder strings.Builder
 		for _, index := range indices {
 			tool := s.toolCallAccumulator[index]
-			args := tool.Arguments
+			args := tool.Arguments.String()
 			if args == "" {
 				args = "{}"
 			}
@@ -468,6 +481,9 @@ func (s *StreamSynthesizer) GetSynthesizedContent() string {
 		result += toolCallsBuilder.String()
 	}
 
+	if s.truncated {
+		result += "\n[日志已截断]"
+	}
 	return result
 }
 
@@ -507,14 +523,15 @@ func (s *StreamSynthesizer) mergeSplitToolCalls() {
 		// 1. 当前 block 有 name 和 id，但参数为空或只有 "{}"
 		// 2. 下一个 block 没有 name，但有实际参数
 		// 3. 如果 next 有 ID，必须与 curr 相同（或 curr 无 ID）
-		currArgsEmpty := curr.Arguments == "" || curr.Arguments == "{}"
+		currArgsEmpty := curr.Arguments.Len() == 0 || curr.Arguments.String() == "{}"
 		nextHasNoName := next.Name == ""
-		nextHasArgs := next.Arguments != "" && next.Arguments != "{}"
+		nextHasArgs := next.Arguments.Len() > 0 && next.Arguments.String() != "{}"
 		idMatch := next.ID == "" || curr.ID == "" || next.ID == curr.ID
 
 		if curr.Name != "" && currArgsEmpty && nextHasNoName && nextHasArgs && idMatch {
 			// 合并：将 next 的参数移到 curr，补全缺失字段
-			curr.Arguments = next.Arguments
+			curr.Arguments.Reset()
+			curr.Arguments.WriteString(next.Arguments.String())
 			if curr.ID == "" && next.ID != "" {
 				curr.ID = next.ID
 			}
@@ -534,6 +551,8 @@ func (s *StreamSynthesizer) mergeSplitToolCalls() {
 func (s *StreamSynthesizer) IsParseFailed() bool {
 	return s.parseFailed
 }
+
+func (s *StreamSynthesizer) Truncated() bool { return s.truncated }
 
 // HasToolCalls 检查是否有工具调用被处理
 func (s *StreamSynthesizer) HasToolCalls() bool {

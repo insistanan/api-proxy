@@ -54,7 +54,11 @@ func ShouldForceIdentityEncoding(req *http.Request, isStream bool) bool {
 // 不执行额外的传输重试或重定向；重试由调用层决定。
 // resp.Body 的关闭责任归调用方；取消经 req 自带的 context 传播。
 // 返回错误时 resp 恒为 nil（无资源泄漏窗口）。
-func Send(req *http.Request, opts SendOptions) (*http.Response, error) {
+func Send(req *http.Request, opts SendOptions) (response *http.Response, resultErr error) {
+	defer func() {
+		resultErr = upstreamreq.RedactError(resultErr, []string{req.URL.String(), opts.ProxyURL},
+			strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer "), req.Header.Get("X-Api-Key"), req.Header.Get("X-Goog-Api-Key"))
+	}()
 	PrepareInferenceHeaders(req, opts.IsStream)
 	manager := GetManager()
 

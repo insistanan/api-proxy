@@ -147,8 +147,26 @@ func TestGrowth_CommitSurvivesReplayAndKeepsIslandLayout(t *testing.T) {
 	if err := store.EditTree(ctx, 1, TreeEdit{Name: &name, Slot: &slot}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.EditIsland(ctx, 1, "起点", true); err != nil {
+	islandName, favorite := "起点", true
+	if err := store.EditIsland(ctx, 1, IslandEdit{Name: &islandName, Favorite: &favorite}); err != nil {
 		t.Fatal(err)
+	}
+	if err := store.EditIsland(ctx, 1, IslandEdit{Name: &islandName}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.EditIsland(ctx, 1, IslandEdit{Favorite: &favorite}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.EditIsland(ctx, 1, IslandEdit{}); err == nil {
+		t.Fatal("空更新必须拒绝")
+	}
+	var savedName string
+	var savedFavorite bool
+	if err := store.db.QueryRowContext(ctx, `SELECT name,favorite FROM islands WHERE id=1`).Scan(&savedName, &savedFavorite); err != nil {
+		t.Fatal(err)
+	}
+	if savedName != islandName || !savedFavorite {
+		t.Fatal("部分更新清空了未提交的字段")
 	}
 	if err := store.db.Close(); err != nil {
 		t.Fatal(err)

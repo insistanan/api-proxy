@@ -224,6 +224,8 @@ func (a *app) initStores() error {
 		return fmt.Errorf("绑定会话生命周期失败: %w", err)
 	}
 	providers.BindConversationCaches(a.conversationRegistry)
+	providers.BindGeminiShadowPersistence(a.sessionManager)
+	a.registerCleanup("Gemini 签名缓存", func() error { providers.BindGeminiShadowPersistence(nil); return nil })
 
 	// 初始化指标持久化存储（可选）
 	if a.envCfg.MetricsPersistenceEnabled {

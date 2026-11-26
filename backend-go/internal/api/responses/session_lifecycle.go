@@ -18,7 +18,7 @@ import (
 const responsesTurnKey = "__responses_session_turn"
 
 func beginResponsesTurn(c *gin.Context, manager *session.SessionManager, body []byte, conversationID string) error {
-	if manager == nil {
+	if manager == nil || c.GetBool(upstreamreq.ContextKeyAuxiliaryTask) {
 		return nil
 	}
 	if _, exists := c.Get(responsesTurnKey); exists {
@@ -26,7 +26,7 @@ func beginResponsesTurn(c *gin.Context, manager *session.SessionManager, body []
 	}
 	previous := gjson.GetBytes(body, "previous_response_id").String()
 	for _, item := range gjson.GetBytes(body, "input").Array() {
-		if item.Get("type").String() == "compaction" {
+		if respitems.IsResponsesCompactionType(item.Get("type").String()) {
 			previous = ""
 			break
 		}
@@ -54,6 +54,34 @@ func (e *sessionCommitError) LocalResponseError() bool { return true }
 
 // commitResponsesTurn 共用普通、流式和 compact 的提交责任；已交付工具后的收尾有独立上限。
 func commitResponsesTurn(c *gin.Context, manager *session.SessionManager, request *types.ResponsesRequest, body []byte, output []types.ResponsesItem, tokens int, responseID, owner string, compact, delivered bool) error {
+	if c.GetBool(upstreamreq.ContextKeyAuxiliaryTask) {
+		return nil
+	}
+	validateCompaction := compact || respitems.ResponsesItemsContainCompaction(output)
+	var input []types.ResponsesItem
+	if !compact {
+		var err error
+		input, err = parseInputToItems(request.Input)
+		if err != nil {
+			return &sessionCommitError{Err: err}
+		}
+		for _, item := range input {
+			if item.Type == "compaction_trigger" {
+				validateCompaction = true
+				break
+			}
+		}
+	}
+	// 自动压缩同样会替换历史，必须在裁剪窗口和提交前验证完整性。
+	if validateCompaction {
+		if err := respitems.ValidateResponsesCompactionOutput(output); err != nil {
+			return &sessionCommitError{Err: err}
+		}
+	}
+	items := output
+	if !compact {
+		items = respitems.ResponsesTurnItems(input, output)
+	}
 	if manager == nil {
 		return nil
 	}
@@ -65,14 +93,6 @@ func commitResponsesTurn(c *gin.Context, manager *session.SessionManager, reques
 		return &sessionCommitError{Err: fmt.Errorf("Responses 请求缺少调用前历史快照")}
 	}
 	turn := value.(*session.Turn)
-	items := output
-	if !compact {
-		input, err := parseInputToItems(request.Input)
-		if err != nil {
-			return &sessionCommitError{Err: err}
-		}
-		items = respitems.ResponsesTurnItems(input, output)
-	}
 	ctx := c.Request.Context()
 	if delivered {
 		ctx = context.WithoutCancel(ctx)

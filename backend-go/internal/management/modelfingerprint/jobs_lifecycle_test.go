@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"insistanan/api-proxy/internal/infra/config"
 )
@@ -60,6 +62,20 @@ func TestJobs_RetentionProtectsActiveTask(t *testing.T) {
 	require.NoError(t, jobs.pruneFiles())
 	require.FileExists(t, jobs.taskPath("active"))
 	require.NoFileExists(t, jobs.taskPath("old"))
+}
+
+func TestJobs_RetentionIncludesLegacyFiles(t *testing.T) {
+	jobs := newTestJobs(t, t.TempDir())
+	legacyPath := filepath.Join(jobs.dir, uuid.NewString()+".json")
+	unrelatedPath := filepath.Join(jobs.dir, "notes.json")
+	old := time.Now().Add(-2 * taskRetention)
+	for _, path := range []string{legacyPath, unrelatedPath} {
+		require.NoError(t, os.WriteFile(path, []byte(`{}`), 0600))
+		require.NoError(t, os.Chtimes(path, old, old))
+	}
+	require.NoError(t, jobs.pruneFiles())
+	require.NoFileExists(t, legacyPath)
+	require.FileExists(t, unrelatedPath)
 }
 
 func TestRestoreTarget_RejectsInProcessConfigurationChange(t *testing.T) {

@@ -85,7 +85,7 @@ func runApplication(ctx context.Context) (err error) {
 	}
 	defer func() { err = errors.Join(err, application.shutdown()) }()
 
-	addr := fmt.Sprintf(":%d", application.envCfg.Port)
+	addr := application.envCfg.ListenAddress()
 	application.logStartupInfo()
 	srv := &http.Server{
 		Addr:              addr,

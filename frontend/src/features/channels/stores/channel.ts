@@ -210,7 +210,7 @@ export const useChannelStore = defineStore('channel', () => {
       if (options?.isQuickAdd) {
         try {
           const channelIndex = createdChannel.channel.index
-          await ca.setPromotion(channelIndex, 300, 0)
+          await ca.setPromotion(channelIndex, 300, 0, createdChannel.channel.id)
 
           return {
             message: '渠道添加成功',
@@ -230,8 +230,8 @@ export const useChannelStore = defineStore('channel', () => {
   /**
    * 删除渠道
    */
-  async function deleteChannel(channelId: number, tab: ApiTab = activeTab.value) {
-    await tabApi(tab).deleteChannel(channelId)
+  async function deleteChannel(channelId: number, expectedId: string, tab: ApiTab = activeTab.value) {
+    await tabApi(tab).deleteChannel(channelId, expectedId)
     return { success: true, message: '渠道删除成功' }
   }
 

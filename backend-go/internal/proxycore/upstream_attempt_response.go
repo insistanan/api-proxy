@@ -260,7 +260,7 @@ func (step candidateAttempt) deliverResponse(resp *http.Response) (UpstreamAttem
 			if failureStatus >= http.StatusOK && failureStatus < http.StatusMultipleChoices {
 				failureStatus = http.StatusBadGateway
 			}
-			cfgManager.MarkKeyAsFailed(apiKey, apiType)
+			cfgManager.MarkKeyAsFailed(upstreamCopy, apiKey, apiType)
 			lifecycle.finalizeFailed()
 			shouldRetryResponseProcessing := !c.Writer.Written()
 			finishAttempt(c, logCtx, upstream, apiType, requestLogID, currentBaseURL, apiKey, "failed", failureStatus, false, attemptStart, "response_processing", err.Error(), shouldRetryResponseProcessing, isStream, usage)

@@ -1,6 +1,8 @@
 package channels
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +24,9 @@ func GetChannelMetricsWithKind(metricsManager *metrics.MetricsManager, cfgManage
 
 		result := make([]gin.H, 0, len(upstreams))
 		for i, upstream := range upstreams {
+			if config.GetChannelStatus(&upstream) == config.ChannelStatusDeleted {
+				continue
+			}
 			// 使用多 URL 聚合方法获取渠道指标（支持 failover 多端点场景）
 			resp := metricsManager.ToResponseMultiURL(i, upstream.GetAllBaseURLs(), upstream.APIKeys, 0, upstream.HistoricalAPIKeys)
 
@@ -57,7 +62,7 @@ func GetChannelMetricsWithKind(metricsManager *metrics.MetricsManager, cfgManage
 }
 
 // ResumeChannelByKind 恢复指定一等公民渠道的熔断状态
-func ResumeChannelByKind(sch *scheduler.ChannelScheduler, kind scheduler.ChannelKind) gin.HandlerFunc {
+func ResumeChannelByKind(sch *scheduler.ChannelScheduler, cfg *config.ConfigManager, kind scheduler.ChannelKind) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		idStr := c.Param("id")
 		id, err := strconv.Atoi(idStr)
@@ -66,6 +71,19 @@ func ResumeChannelByKind(sch *scheduler.ChannelScheduler, kind scheduler.Channel
 			return
 		}
 
+		channels, _, err := cfg.GetChannelConfig(string(kind))
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		if id < 0 || id >= len(channels) || config.GetChannelStatus(&channels[id]) == config.ChannelStatusDeleted {
+			c.JSON(404, gin.H{"error": "渠道不存在或已删除"})
+			return
+		}
+		if expected := c.GetHeader("X-Channel-ID"); expected == "" || channels[id].ID != expected {
+			c.JSON(409, gin.H{"error": config.ErrChannelIdentityConflict.Error()})
+			return
+		}
 		sch.ResetChannelMetrics(id, kind)
 
 		c.JSON(200, gin.H{
@@ -80,6 +98,7 @@ func GetSchedulerStats(sch *scheduler.ChannelScheduler) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		kind := scheduler.ChannelKindMessages
 		switch strings.ToLower(c.Query("type")) {
+		case "", "messages":
 		case "responses":
 			kind = scheduler.ChannelKindResponses
 		case "gemini":
@@ -92,6 +111,9 @@ func GetSchedulerStats(sch *scheduler.ChannelScheduler) gin.HandlerFunc {
 			kind = scheduler.ChannelKindEmbeddings
 		case "decisions":
 			kind = scheduler.ChannelKindDecisions
+		default:
+			c.JSON(400, gin.H{"error": "不支持的统计协议"})
+			return
 		}
 
 		metricsManager := sch.MetricsManager(kind)
@@ -123,7 +145,7 @@ func GetChannelMetricsHistoryByKind(metricsManager *metrics.MetricsManager, cfgM
 		// 解析 duration 参数
 		durationStr := c.DefaultQuery("duration", "24h")
 		duration, err := time.ParseDuration(durationStr)
-		if err != nil {
+		if err != nil || duration <= 0 {
 			c.JSON(400, gin.H{"error": "Invalid duration parameter"})
 			return
 		}
@@ -138,7 +160,7 @@ func GetChannelMetricsHistoryByKind(metricsManager *metrics.MetricsManager, cfgM
 		var interval time.Duration
 		if intervalStr != "" {
 			interval, err = time.ParseDuration(intervalStr)
-			if err != nil {
+			if err != nil || interval <= 0 {
 				c.JSON(400, gin.H{"error": "Invalid interval parameter"})
 				return
 			}
@@ -170,8 +192,11 @@ func GetChannelMetricsHistoryByKind(metricsManager *metrics.MetricsManager, cfgM
 
 		result := make([]MetricsHistoryResponse, 0, len(upstreams))
 		for i, upstream := range upstreams {
+			if config.GetChannelStatus(&upstream) == config.ChannelStatusDeleted {
+				continue
+			}
 			// 使用多 URL 聚合方法获取历史数据（支持 failover 多端点场景）
-			dataPoints := metricsManager.GetHistoricalStatsMultiURL(upstream.GetAllBaseURLs(), upstream.APIKeys, i, duration, interval)
+			dataPoints := metricsManager.GetHistoricalStatsMultiURL(upstream.GetAllBaseURLs(), channelHistoryKeys(upstream), i, duration, interval)
 
 			result = append(result, MetricsHistoryResponse{
 				ChannelIndex: i,
@@ -225,7 +250,7 @@ func GetChannelKeyMetricsHistoryByKind(metricsManager *metrics.MetricsManager, c
 			}
 		} else {
 			duration, err = time.ParseDuration(durationStr)
-			if err != nil {
+			if err != nil || duration <= 0 {
 				c.JSON(400, gin.H{"error": "Invalid duration parameter. Use: 1h, 6h, 24h, or today"})
 				return
 			}
@@ -241,7 +266,7 @@ func GetChannelKeyMetricsHistoryByKind(metricsManager *metrics.MetricsManager, c
 		var interval time.Duration
 		if intervalStr != "" {
 			interval, err = time.ParseDuration(intervalStr)
-			if err != nil {
+			if err != nil || interval <= 0 {
 				c.JSON(400, gin.H{"error": "Invalid interval parameter"})
 				return
 			}
@@ -290,7 +315,7 @@ func GetChannelKeyMetricsHistoryByKind(metricsManager *metrics.MetricsManager, c
 		// 获取所有 Key 的使用信息并筛选（最多显示 10 个）
 		const maxDisplayKeys = 10
 		// 使用多 URL 聚合方法获取 Key 使用信息（支持 failover 多端点场景）
-		allKeyInfos := metricsManager.GetChannelKeyUsageInfoMultiURL(upstream.GetAllBaseURLs(), upstream.APIKeys, channelID)
+		allKeyInfos := metricsManager.GetChannelKeyUsageInfoMultiURL(upstream.GetAllBaseURLs(), channelHistoryKeys(upstream), channelID)
 		displayKeys := metrics.SelectTopKeys(allKeyInfos, maxDisplayKeys)
 
 		// 构建响应
@@ -308,8 +333,9 @@ func GetChannelKeyMetricsHistoryByKind(metricsManager *metrics.MetricsManager, c
 			// 获取 Key 的颜色
 			color := keyColors[i%len(keyColors)]
 
-			// 获取 Key 的脱敏显示（只取前 8 个字符）
-			keyMask := truncateKeyMask(keyInfo.KeyMask, 8)
+			// 摘要标识避免相同前缀的密钥曲线重名。
+			digest := sha256.Sum256([]byte(keyInfo.APIKey))
+			keyMask := fmt.Sprintf("Key-%x", digest[:6])
 
 			result.Keys = append(result.Keys, KeyMetricsHistoryResult{
 				KeyMask:    keyMask,
@@ -322,12 +348,18 @@ func GetChannelKeyMetricsHistoryByKind(metricsManager *metrics.MetricsManager, c
 	}
 }
 
-// truncateKeyMask 截取 keyMask 的前 N 个字符
-func truncateKeyMask(keyMask string, maxLen int) string {
-	if len(keyMask) <= maxLen {
-		return keyMask
+func channelHistoryKeys(upstream config.UpstreamConfig) []string {
+	keys := make([]string, 0, len(upstream.APIKeys)+len(upstream.HistoricalAPIKeys))
+	seen := make(map[string]bool)
+	for _, group := range [][]string{upstream.APIKeys, upstream.HistoricalAPIKeys} {
+		for _, key := range group {
+			if !seen[key] {
+				seen[key] = true
+				keys = append(keys, key)
+			}
+		}
 	}
-	return keyMask[:maxLen]
+	return keys
 }
 
 // GetChannelDashboard 获取渠道仪表盘数据（合并 channels + metrics + stats）

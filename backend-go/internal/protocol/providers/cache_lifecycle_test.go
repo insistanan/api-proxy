@@ -23,12 +23,14 @@ func TestProtocolCachesFollowDeletionAndRejectLateWrites(t *testing.T) {
 			scope := ReasoningCacheScope(record.ID, &config.UpstreamConfig{ID: "up", ServiceType: "openai"}, "model")
 			write := func() {
 				session.DefaultResponseChainManager().Set(record.ID, session.ResponseChainState{ResponseID: "response"})
-				defaultGeminiShadowStore.Record("provider", record.ID, GeminiShadowTurn{AssistantContent: map[string]interface{}{"parts": []interface{}{map[string]interface{}{"text": "private"}}}})
+				require.NoError(t, defaultGeminiShadowStore.Record(ctx, "provider", record.ID, GeminiShadowTurn{AssistantContent: map[string]interface{}{"parts": []interface{}{map[string]interface{}{"text": "private"}}}}))
 				storeReasoning("answer", "private reasoning", scope)
 			}
 			lease := conversation.RequestLeaseFrom(ctx)
 			require.True(t, lease.Store(write))
-			require.NotEmpty(t, defaultGeminiShadowStore.Get("provider", record.ID).Turns)
+			shadow, err := defaultGeminiShadowStore.Get(ctx, "provider", record.ID)
+			require.NoError(t, err)
+			require.NotEmpty(t, shadow.Turns)
 			if all {
 				require.NoError(t, registry.DeleteWithHistory(ctx, "", &session.SessionManager{}))
 			} else {
@@ -38,7 +40,9 @@ func TestProtocolCachesFollowDeletionAndRejectLateWrites(t *testing.T) {
 			require.NoError(t, CacheClaudeResponseReasoning(ctx, &types.ClaudeResponse{Role: "assistant", Content: []types.ClaudeContent{{Type: "thinking", Thinking: "late"}, {Type: "text", Text: "answer"}}}, scope))
 			_, exists := session.DefaultResponseChainManager().Get(record.ID)
 			require.False(t, exists)
-			require.Empty(t, defaultGeminiShadowStore.Get("provider", record.ID).Turns)
+			shadow, err = defaultGeminiShadowStore.Get(ctx, "provider", record.ID)
+			require.NoError(t, err)
+			require.Empty(t, shadow.Turns)
 			require.Empty(t, reasoningContentForAssistantMessage(types.OpenAIMessage{Role: "assistant", Content: "answer"}, scope))
 		})
 	}

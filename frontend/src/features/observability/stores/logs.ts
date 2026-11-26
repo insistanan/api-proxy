@@ -9,7 +9,7 @@ const MAX_CACHE_BYTES = 16 * 1024 * 1024
 const MAX_CACHE_ENTRIES = 40
 
 export function summaryVersion(summary: SystemLogSummary): string {
-  return JSON.stringify([summary.unixMilli, summary.startedAt, summary.endedAt, summary.durationMs, summary.status, summary.statusCode, summary.clientStatusCode, summary.phases, summary.missingPhases, summary.stream, summary.truncated, summary.channelName, summary.model, summary.client, summary.apiType, summary.conversationId, summary.requestHash, summary.errorType, summary.errorMessage, summary.promptPreview, summary.clientFamily, summary.identitySource, summary.context])
+  return JSON.stringify([summary.unixMilli, summary.startedAt, summary.endedAt, summary.durationMs, summary.status, summary.statusCode, summary.clientStatusCode, summary.phases, summary.missingPhases, summary.stream, summary.truncated, summary.channelName, summary.model, summary.client, summary.apiType, summary.conversationId, summary.requestHash, summary.errorType, summary.errorMessage, summary.promptPreview, summary.clientFamily, summary.identitySource, summary.context, summary.compactionKind, summary.compactionEvidence])
 }
 
 export function conversationVersion(group: LogConversationSummary | null): string {
@@ -41,6 +41,7 @@ export function createLogsState() {
   const storageLoading = ref(false)
   const storageError = ref('')
   const purging = ref(false)
+  const compactionError = ref('')
   let storageRevision = 0
   const loadedAt = new Map<string, number>()
   // 非响应式的请求句柄与缓存记账，不承载 UI 状态。
@@ -151,10 +152,20 @@ export function createLogsState() {
       const { success, purged } = await api.purgeLogs(scope)
       if (!success) throw new Error('日志清理未完成，请刷新存储状态。')
       reset()
+      compactionError.value = purged.compactionError || ''
       return purged.deletedAppLogs + purged.deletedTrafficLogs + purged.deletedRequestLogs
     } finally {
       purging.value = false
       void loadStorageStatus()
+    }
+  }
+
+  async function retryCompaction() {
+    if (purging.value) return
+    try {
+      await purgeLogs({ scope: 'compact' })
+    } catch (error) {
+      compactionError.value = error instanceof Error ? error.message : '压缩失败'
     }
   }
 
@@ -235,6 +246,7 @@ export function createLogsState() {
   }
 
   function reset() {
+    compactionError.value = ''
     lifetime++
     selectionRevision++
     listRevision++
@@ -259,7 +271,7 @@ export function createLogsState() {
     anchored.value = false
   }
 
-  return { typeFilter, searchFilter, statusFilter, fromFilter, toFilter, totalConversations, conversations, nextConversationCursor, selectedKey, selectedConversation, requests, nextRequestCursor, anchored, listLoading, roundsLoading, listError, roundsError, details, detailErrors, active, storage, storageLoading, storageError, purging, purgeLogs, loadStorageStatus, loadDetail, loadConversations, loadRounds, selectConversation, locateRequest, refresh, reset }
+  return { typeFilter, searchFilter, statusFilter, fromFilter, toFilter, totalConversations, conversations, nextConversationCursor, selectedKey, selectedConversation, requests, nextRequestCursor, anchored, listLoading, roundsLoading, listError, roundsError, details, detailErrors, active, storage, storageLoading, storageError, purging, compactionError, retryCompaction, purgeLogs, loadStorageStatus, loadDetail, loadConversations, loadRounds, selectConversation, locateRequest, refresh, reset }
 }
 
 export const useLogsStore = defineStore('logs', createLogsState)

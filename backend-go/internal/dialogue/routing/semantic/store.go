@@ -17,6 +17,8 @@ import (
 )
 
 var ErrNotFound = errors.New("数据集不存在")
+var ErrInvalidInput = errors.New("数据集参数无效")
+var ErrConflict = errors.New("数据集状态冲突")
 
 type Service struct {
 	db        *sql.DB
@@ -154,19 +156,19 @@ func (s *Service) Get(id string) (Dataset, error) {
 // Save 使用修订号阻止并发编辑互相覆盖；编辑不会替换已发布的向量快照。
 func (s *Service) Save(ctx context.Context, d Dataset) (Dataset, error) {
 	if err := ValidateDataset(d); err != nil {
-		return Dataset{}, err
+		return Dataset{}, fmt.Errorf("%w: %w", ErrInvalidInput, err)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	previous, exists := s.datasets[d.ID]
 	if d.Revision != previous.Revision {
-		return Dataset{}, fmt.Errorf("数据集已被其他操作修改，请重新加载后编辑")
+		return Dataset{}, fmt.Errorf("%w: 数据集已被其他操作修改，请重新加载后编辑", ErrConflict)
 	}
 	if exists && previous.Kind != d.Kind {
-		return Dataset{}, fmt.Errorf("已有数据集不能更改用途")
+		return Dataset{}, fmt.Errorf("%w: 已有数据集不能更改用途", ErrInvalidInput)
 	}
 	if !exists && len(s.datasets) >= 32 {
-		return Dataset{}, fmt.Errorf("数据集数量已达 32 个上限")
+		return Dataset{}, fmt.Errorf("%w: 数据集数量已达 32 个上限", ErrConflict)
 	}
 	d = cloneDataset(d)
 	d.Revision++
@@ -175,14 +177,14 @@ func (s *Service) Save(ctx context.Context, d Dataset) (Dataset, error) {
 		return Dataset{}, err
 	}
 	if len(data) > maxDatasetBytes {
-		return Dataset{}, fmt.Errorf("数据集不能超过 4 MiB")
+		return Dataset{}, fmt.Errorf("%w: 数据集不能超过 4 MiB", ErrInvalidInput)
 	}
 	var total int64
 	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(length(data)),0) FROM semantic_datasets WHERE id<>?`, d.ID).Scan(&total); err != nil {
 		return Dataset{}, err
 	}
 	if total+int64(len(data)) > maxDatasetTotalBytes {
-		return Dataset{}, fmt.Errorf("全部数据集超过 64 MiB，请先移除不再使用的样本或数据集")
+		return Dataset{}, fmt.Errorf("%w: 全部数据集超过 64 MiB，请先移除不再使用的样本或数据集", ErrConflict)
 	}
 	if _, err = s.db.ExecContext(ctx, `INSERT INTO semantic_datasets(id,data) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data`, d.ID, data); err != nil {
 		return Dataset{}, fmt.Errorf("保存数据集失败: %w", err)
@@ -288,7 +290,7 @@ func (s *Service) published(ctx context.Context, id string) (*snapshot, error) {
 	var data, vectors []byte
 	err := s.db.QueryRowContext(ctx, `SELECT data,vectors FROM semantic_indexes WHERE id=?`, id).Scan(&data, &vectors)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("数据集尚未为当前模型建立索引，请先构建并发布")
+		return nil, fmt.Errorf("%w: 数据集尚未为当前模型建立索引，请先构建并发布", ErrConflict)
 	}
 	if err != nil {
 		return nil, err
@@ -334,7 +336,7 @@ func (s *Service) Delete(ctx context.Context, id string, revision int64) error {
 	case s.buildSlot <- struct{}{}:
 		defer func() { <-s.buildSlot }()
 	default:
-		return fmt.Errorf("构建或评测期间不能删除数据集")
+		return fmt.Errorf("%w: 构建或评测期间不能删除数据集", ErrConflict)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -343,7 +345,7 @@ func (s *Service) Delete(ctx context.Context, id string, revision int64) error {
 		return ErrNotFound
 	}
 	if d.Revision != revision {
-		return fmt.Errorf("数据集修订已变化，请刷新后再删除")
+		return fmt.Errorf("%w: 数据集修订已变化，请刷新后再删除", ErrConflict)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -373,13 +375,16 @@ func (s *Service) DeleteIndex(ctx context.Context, id string, expected IndexStat
 	case s.buildSlot <- struct{}{}:
 		defer func() { <-s.buildSlot }()
 	default:
-		return fmt.Errorf("构建或评测期间不能删除索引")
+		return fmt.Errorf("%w: 构建或评测期间不能删除索引", ErrConflict)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := id + "/" + profileKey(expected.Profile)
 	var data []byte
 	if err := s.db.QueryRowContext(ctx, `SELECT data FROM semantic_indexes WHERE id=?`, key).Scan(&data); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: 索引不存在", ErrNotFound)
+		}
 		return fmt.Errorf("索引不存在或无法读取: %w", err)
 	}
 	var current IndexStatus
@@ -387,7 +392,7 @@ func (s *Service) DeleteIndex(ctx context.Context, id string, expected IndexStat
 		return err
 	}
 	if current.Revision != expected.Revision || !current.BuiltAt.Equal(expected.BuiltAt) {
-		return fmt.Errorf("索引已重新发布，请刷新后再删除")
+		return fmt.Errorf("%w: 索引已重新发布，请刷新后再删除", ErrConflict)
 	}
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM semantic_indexes WHERE id=?`, key); err != nil {
 		return err
@@ -404,7 +409,7 @@ func (s *Service) validateKind(id, kind string) error {
 		return fmt.Errorf("%w: %s", ErrNotFound, id)
 	}
 	if d.Kind != kind {
-		return fmt.Errorf("数据集 %s 的用途不是 %s", id, kind)
+		return fmt.Errorf("%w: 数据集 %s 的用途不是 %s", ErrInvalidInput, id, kind)
 	}
 	return nil
 }

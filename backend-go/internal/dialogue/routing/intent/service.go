@@ -91,10 +91,16 @@ func New(cfg *config.ConfigManager, caller *llmgate.Caller, path string, local *
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("打开数据集存储失败: %w", err), s.store.db.Close())
 	}
+	if cfg != nil {
+		cfg.SetResourceValidator(s.validateDatasetReferences)
+	}
 	return s, nil
 }
 
 func (s *Service) Close() error {
+	if s.Cfg != nil {
+		s.Cfg.SetResourceValidator(nil)
+	}
 	return errors.Join(s.StopPreparation(), s.Datasets.Close(), s.store.db.Close())
 }
 
@@ -177,6 +183,10 @@ func (s *Service) Begin(ctx context.Context, kind, conversation, requestID strin
 // BeginControl 让上下文压缩沿用会话来源，不触发分类或增加用户轮次。
 func (s *Service) BeginControl(ctx context.Context, conversation, requestID string, body []byte) (context.Context, func(), error) {
 	return s.begin(ctx, "responses", conversation, requestID, body, "", true)
+}
+
+func (s *Service) BeginProtocolControl(ctx context.Context, kind, conversation, requestID string, body []byte) (context.Context, func(), error) {
+	return s.begin(ctx, kind, conversation, requestID, body, "", true)
 }
 
 func (s *Service) begin(ctx context.Context, kind, conversation, requestID string, body []byte, manualPool string, control bool) (context.Context, func(), error) {
@@ -326,7 +336,13 @@ func (t *Turn) CheckTarget(up *config.UpstreamConfig, key, model string) error {
 	if pool := t.event.Decision.PoolID; pool != "" && target.PoolID != pool {
 		return &HistoryError{"模型映射目标超出了意图选择的分组，已阻止发送"}
 	}
-	if t.strict && target != t.previous.Target {
+	comparison := target
+	cfg := up.Compaction
+	if t.event.Control && cfg.NativeCompatibilityConfirmed && model == cfg.NativeModel &&
+		len(up.APIKeys) == 1 && len(up.GetAllBaseURLs()) == 1 && cfg.NativeSourceModel == t.previous.Target.Model {
+		comparison.Model = cfg.NativeSourceModel
+	}
+	if t.strict && comparison != t.previous.Target {
 		return &HistoryError{"工具或加密历史与候选渠道、模型或凭据不兼容，已阻止切换；不会删除思考块重试"}
 	}
 	return nil
@@ -372,6 +388,10 @@ func (t *Turn) CommitTarget(up *config.UpstreamConfig, key, model string) error 
 		}
 	}
 	candidate.Sessions[t.key] = next
+	if t.event.Control {
+		// 压缩执行目标保留在事件中；主会话来源仍是续聊模型。
+		candidate.Sessions[t.key] = t.previous
+	}
 	event := t.event
 	event.Target = target
 	event.Target.Identity = "" // 管理界面不暴露凭据指纹。

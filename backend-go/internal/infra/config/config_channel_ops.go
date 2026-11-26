@@ -218,20 +218,16 @@ func normalizeUpstreamPriorities(upstreams []UpstreamConfig) bool {
 }
 
 func ensureUpstreamIDs(upstreams []UpstreamConfig) bool {
-	seen := make(map[string]struct{}, len(upstreams))
 	changed := false
 	for i := range upstreams {
 		id := strings.TrimSpace(upstreams[i].ID)
 		if id == "" {
-			id = newUpstreamID()
-		} else if _, exists := seen[id]; exists {
 			id = newUpstreamID()
 		}
 		if upstreams[i].ID != id {
 			upstreams[i].ID = id
 			changed = true
 		}
-		seen[id] = struct{}{}
 	}
 	return changed
 }

@@ -3,7 +3,6 @@ package config
 import (
 	"errors"
 	"fmt"
-	"log"
 	"maps"
 	"sort"
 	"strings"
@@ -55,10 +54,16 @@ func validateLoadBalanceStrategy(strategy string) error {
 	return nil
 }
 
-// ConfigError 配置错误
+// ErrConfigConflict 表示候选基于的配置版本已失效。
+var ErrConfigConflict = errors.New("配置版本冲突")
+
+// ConfigError 配置错误。
 type ConfigError struct {
 	Message string
+	Cause   error
 }
+
+func (e *ConfigError) Unwrap() error { return e.Cause }
 
 func (e *ConfigError) Error() string {
 	return e.Message
@@ -306,9 +311,18 @@ func prepareUpstreamLifecycle(upstream *UpstreamConfig, now time.Time) {
 }
 
 func setUpstreamStatus(upstream *UpstreamConfig, status string, now time.Time) error {
+	if GetChannelStatus(upstream) == ChannelStatusDeleted {
+		return ErrChannelNotFound
+	}
+	if strings.TrimSpace(status) == "" || strings.EqualFold(strings.TrimSpace(status), ChannelStatusDeleted) {
+		return proxyConfigErrorf("状态不能为空；删除渠道请使用删除命令")
+	}
 	normalized, err := normalizeChannelStatus(status)
 	if err != nil {
 		return err
+	}
+	if normalized == ChannelStatusActive && len(upstream.APIKeys) == 0 {
+		return proxyConfigErrorf("渠道尚未配置 API 密钥，无法启用")
 	}
 	upstream.Status = normalized
 	if normalized == ChannelStatusDeprecated {
@@ -404,55 +418,34 @@ func sameTimePtr(a *time.Time, b *time.Time) bool {
 
 func lifecycleMetadataChanged(before UpstreamConfig, after UpstreamConfig) bool {
 	return before.Status != after.Status ||
+		before.PromotionCount != after.PromotionCount ||
+		!sameTimePtr(before.PromotionUntil, after.PromotionUntil) ||
 		before.Temporary != after.Temporary ||
 		!sameTimePtr(before.TemporaryUntil, after.TemporaryUntil) ||
 		!sameTimePtr(before.DeprecatedAt, after.DeprecatedAt)
 }
 
-func applyLifecycleToUpstreams(upstreams []UpstreamConfig, now time.Time, cleanupDeprecated bool, label string) ([]UpstreamConfig, bool) {
-	changed := false
-	next := make([]UpstreamConfig, 0, len(upstreams))
-	poolChanged := make([]int, 0)
-	for i := range upstreams {
-		upstream := upstreams[i]
-		before := upstream
-		previousPool := channelStatusPool(&before)
-		prepareUpstreamLifecycle(&upstream, now)
-		if upstream.PromotionUntil != nil && !now.Before(*upstream.PromotionUntil) {
-			upstream.PromotionUntil = nil
-			upstream.PromotionCount = 0
-			changed = true
-		}
-		if lifecycleMetadataChanged(before, upstream) {
-			changed = true
-		}
-		if upstream.Temporary && upstream.TemporaryUntil != nil && !now.Before(*upstream.TemporaryUntil) {
-			upstream.Status = ChannelStatusDeprecated
-			upstream.Temporary = false
-			upstream.TemporaryUntil = nil
-			deprecatedAt := now
-			upstream.DeprecatedAt = &deprecatedAt
-			changed = true
-			log.Printf("[Config-Lifecycle] %s 渠道 [%d] %s 临时期结束，已移入弃用池", label, i, upstream.Name)
-		}
-		if cleanupDeprecated && upstream.Status == ChannelStatusDeprecated && upstream.DeprecatedAt != nil && now.Sub(*upstream.DeprecatedAt) > deprecatedChannelTTL {
-			upstream.Status = ChannelStatusDeleted
-			upstream.Temporary = false
-			upstream.TemporaryUntil = nil
-			upstream.PromotionUntil = nil
-			upstream.PromotionCount = 0
-			changed = true
-			log.Printf("[Config-Lifecycle] %s 渠道 [%d] %s 已在弃用池超过 3 天，自动清理为删除占位", label, i, upstream.Name)
-		}
-		next = append(next, upstream)
-		if previousPool != channelStatusPool(&upstream) {
-			poolChanged = append(poolChanged, i)
-		}
+func applyChannelLifecycle(upstream UpstreamConfig, now time.Time, cleanupDeprecated bool) (UpstreamConfig, bool) {
+	before := upstream
+	prepareUpstreamLifecycle(&upstream, now)
+	if upstream.PromotionUntil != nil && !now.Before(*upstream.PromotionUntil) {
+		upstream.PromotionUntil = nil
+		upstream.PromotionCount = 0
 	}
-	for _, index := range poolChanged {
-		moveChannelToStatusPoolTail(next, index)
+	if upstream.Temporary && upstream.TemporaryUntil != nil && !now.Before(*upstream.TemporaryUntil) {
+		upstream.Status = ChannelStatusDeprecated
+		upstream.Temporary = false
+		upstream.TemporaryUntil = nil
+		upstream.DeprecatedAt = &now
 	}
-	return next, changed
+	if cleanupDeprecated && upstream.Status == ChannelStatusDeprecated && upstream.DeprecatedAt != nil && now.Sub(*upstream.DeprecatedAt) > deprecatedChannelTTL {
+		upstream.Status = ChannelStatusDeleted
+		upstream.Temporary = false
+		upstream.TemporaryUntil = nil
+		upstream.PromotionUntil = nil
+		upstream.PromotionCount = 0
+	}
+	return upstream, lifecycleMetadataChanged(before, upstream)
 }
 
 // ============== UpstreamConfig 方法 ==============

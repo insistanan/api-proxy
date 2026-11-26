@@ -43,7 +43,7 @@ describe('渠道分支并发快速设置', () => {
     draft.value = '6'
     const pending = save(true)
     await save(false)
-    expect(update).toHaveBeenCalledExactlyOnceWith(2, { maxBranchConcurrency: 6 })
+    expect(update).toHaveBeenCalledExactlyOnceWith(2, { maxBranchConcurrency: 6 }, 'stable-id')
     finish()
     await pending
     await save(false)

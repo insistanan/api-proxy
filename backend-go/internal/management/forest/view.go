@@ -477,12 +477,23 @@ func (s *Store) EditTree(ctx context.Context, id int64, edit TreeEdit) error {
 	return tx.Commit()
 }
 
-func (s *Store) EditIsland(ctx context.Context, id int64, name string, favorite bool) error {
-	name = strings.TrimSpace(name)
-	if utf8.RuneCountInString(name) > 30 {
+type IslandEdit struct {
+	Name     *string `json:"name"`
+	Favorite *bool   `json:"favorite"`
+}
+
+func (s *Store) EditIsland(ctx context.Context, id int64, edit IslandEdit) error {
+	if edit.Name == nil && edit.Favorite == nil {
 		return ErrInvalid
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE islands SET name=?,favorite=? WHERE id=?`, name, favorite, id)
+	if edit.Name != nil {
+		name := strings.TrimSpace(*edit.Name)
+		if utf8.RuneCountInString(name) > 30 {
+			return ErrInvalid
+		}
+		edit.Name = &name
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE islands SET name=COALESCE(?,name),favorite=COALESCE(?,favorite) WHERE id=?`, edit.Name, edit.Favorite, id)
 	if err != nil {
 		return err
 	}

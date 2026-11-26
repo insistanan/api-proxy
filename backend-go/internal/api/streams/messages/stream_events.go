@@ -5,10 +5,10 @@
 package messages
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"insistanan/api-proxy/internal/protocol/codec"
+	"io"
 	"log"
 	"net/http"
 	"sort"
@@ -287,7 +287,7 @@ func PatchMessageStartEvent(event string, requestModel string, rewriteModel bool
 }
 
 // ExtractTextFromEvent 从 SSE 事件中提取文本内容
-func ExtractTextFromEvent(event string, buf *bytes.Buffer) {
+func ExtractTextFromEvent(event string, buf io.StringWriter) {
 	for _, line := range strings.Split(event, "\n") {
 		jsonStr, isData := codec.ParseSSEDataLine(line)
 		if !isData {
@@ -318,7 +318,7 @@ func ExtractTextFromEvent(event string, buf *bytes.Buffer) {
 	}
 }
 
-func ExtractTextFromEventData(data map[string]interface{}, buf *bytes.Buffer) {
+func ExtractTextFromEventData(data map[string]interface{}, buf io.StringWriter) {
 	if data == nil {
 		return
 	}

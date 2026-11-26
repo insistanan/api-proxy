@@ -113,7 +113,7 @@ it('全局添加保存到选定协议后留在当前页面', async () => {
 
 describe('渠道删除组件确认', () => {
   it('列出跨协议图片理解引用，确认后才向目标协议发出一次删除', async () => {
-    vi.spyOn(api, 'getChannelDeletionImpact').mockResolvedValue({ name: '待删除渠道', channelCount: 1, dependents: [{ kind: 'messages', index: 4, name: '引用方' }] })
+    vi.spyOn(api, 'getChannelDeletionImpact').mockResolvedValue({ channelId: 'target-id', name: '待删除渠道', channelCount: 1, dependents: [{ kind: 'messages', index: 4, name: '引用方' }] })
     const env = await setupView()
     await env.requestDelete(2, 'chat')
     expect(api.getChannelDeletionImpact).toHaveBeenCalledWith('chat', 2)
@@ -122,12 +122,12 @@ describe('渠道删除组件确认', () => {
     expect(env.pending.value?.message).toContain('关闭这些渠道的图片理解支持和图片理解层')
     await env.accept()
     await env.accept()
-    expect(env.remove).toHaveBeenCalledExactlyOnceWith(2, 'chat')
+    expect(env.remove).toHaveBeenCalledExactlyOnceWith(2, 'target-id', 'chat')
     expect(env.pending.value).toBeNull()
   })
 
   it('取消确认不执行删除', async () => {
-    vi.spyOn(api, 'getChannelDeletionImpact').mockResolvedValue({ name: '待删除渠道', channelCount: 1, dependents: [] })
+    vi.spyOn(api, 'getChannelDeletionImpact').mockResolvedValue({ channelId: 'target-id', name: '待删除渠道', channelCount: 1, dependents: [] })
     const env = await setupView()
     await env.requestDelete(0)
     env.cancel()

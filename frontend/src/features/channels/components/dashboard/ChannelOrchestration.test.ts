@@ -1,4 +1,4 @@
-// 执行真实组件 setup，验证暂停渠道的促销恢复顺序与部分提交错误。
+// 执行真实组件 setup，验证稳定渠道身份、激活顺序与部分提交错误。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createSSRApp, reactive, type Ref, type SetupContext } from 'vue'
 import { renderToString } from '@vue/server-renderer'
@@ -15,7 +15,7 @@ type State = Record<string, unknown>
 const value = <T>(state: State, key: string) => (state[key] as Ref<T>).value
 const put = <T>(state: State, key: string, next: T) => { (state[key] as Ref<T>).value = next }
 const run = (state: State) => (state.confirmPromotion as () => Promise<void>)()
-const suspended: Channel = { name: '暂停渠道', serviceType: 'claude', baseUrl: 'https://example.com', apiKeys: [], index: 2, status: 'suspended' }
+const suspended: Channel = { id: 'suspended-id', name: '暂停渠道', serviceType: 'claude', baseUrl: 'https://example.com', apiKeys: [], index: 2, status: 'suspended' }
 const setupPromotion = async (dashboardMetrics: ChannelMetrics[] = []) => {
   let state!: State
   const emit = vi.fn()
@@ -78,7 +78,7 @@ describe('手动恢复渠道', () => {
     }])
     const channel = { ...suspended, status: 'active' as const }
     await (state.toggleChannelPrimaryStatus as (_channel: Channel) => Promise<void>)(channel)
-    expect(status).toHaveBeenCalledExactlyOnceWith(2, 'active')
+    expect(status).toHaveBeenCalledExactlyOnceWith(2, 'active', suspended.id)
     expect(resume).not.toHaveBeenCalled()
     expect(emit).toHaveBeenCalledWith('refresh')
     expect(channel.status).toBe('active')
@@ -87,7 +87,7 @@ describe('手动恢复渠道', () => {
   it('恢复失败时显示错误', async () => {
     status.mockRejectedValue(new Error('状态写入失败'))
     const { state, emit } = await setupPromotion()
-    await (state.resumeChannel as (_id: number) => Promise<void>)(2)
+    await (state.resumeChannel as (_channel: Channel) => Promise<void>)(suspended)
     expect(emit).toHaveBeenCalledWith('error', expect.stringContaining('状态写入失败'))
     expect(emit).not.toHaveBeenCalledWith('refresh')
   })
@@ -95,22 +95,21 @@ describe('手动恢复渠道', () => {
   it('激活已提交但收尾失败时刷新并提示实际状态', async () => {
     status.mockRejectedValue(new ApiError('目录同步失败', 500, undefined, undefined, true))
     const { state, emit } = await setupPromotion()
-    await (state.resumeChannel as (_id: number) => Promise<void>)(2)
+    await (state.resumeChannel as (_channel: Channel) => Promise<void>)(suspended)
     expect(emit).toHaveBeenCalledWith('refresh')
     expect(emit).toHaveBeenCalledWith('error', expect.stringContaining('状态已写入'))
   })
 })
 
 describe('暂停渠道设置促销', () => {
-  it('先恢复熔断，再持久化 active，最后设置促销；不修改父级原数据', async () => {
+  it('先提交 active 并由后端恢复熔断，再设置促销；不修改父级原数据', async () => {
     const { state, emit } = await setupPromotion()
     put(state, 'promotionDuration', 3)
     put(state, 'promotionCount', 2)
     await run(state)
-    expect(resume).toHaveBeenCalledWith(2)
-    expect(status).toHaveBeenCalledWith(2, 'active')
-    expect(promote).toHaveBeenCalledWith(2, 180, 2)
-    expect(resume.mock.invocationCallOrder[0]).toBeLessThan(status.mock.invocationCallOrder[0])
+    expect(resume).not.toHaveBeenCalled()
+    expect(status).toHaveBeenCalledWith(2, 'active', suspended.id)
+    expect(promote).toHaveBeenCalledWith(2, 180, 2, suspended.id)
     expect(status.mock.invocationCallOrder[0]).toBeLessThan(promote.mock.invocationCallOrder[0])
     expect(refreshChannels).toHaveBeenCalledWith('messages')
     expect(emit).toHaveBeenCalledWith('success', expect.stringContaining('任一限制达到即结束'))
@@ -124,7 +123,7 @@ describe('暂停渠道设置促销', () => {
     await run(state)
     expect(resume).not.toHaveBeenCalled()
     expect(status).not.toHaveBeenCalled()
-    expect(promote).toHaveBeenCalledWith(2, 0, 0)
+    expect(promote).toHaveBeenCalledWith(2, 0, 0, suspended.id)
   })
 
   it('恢复状态失败时不设置促销，并保留错误', async () => {

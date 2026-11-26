@@ -1,8 +1,6 @@
 package config
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"insistanan/api-proxy/internal/protocol/codec"
 	"log"
@@ -20,6 +18,7 @@ import (
 
 // UpstreamConfig 上游配置
 type UpstreamConfig struct {
+	Compaction           CompactionConfig     `json:"compaction,omitempty"`
 	CacheKeepalive       CacheKeepaliveConfig `json:"cacheKeepalive,omitempty"`
 	BuiltinProvider      string               `json:"builtinProvider,omitempty"`
 	MaxBranchConcurrency int                  `json:"maxBranchConcurrency"` // 渠道同时处理的独立分支上限，默认 3
@@ -96,35 +95,20 @@ type UpstreamConfig struct {
 	EnablePreviousResponseID    bool   `json:"enablePreviousResponseID,omitempty"`    // Messages->Responses 是否启用 previous_response_id 链
 }
 
-// UnmarshalJSON 兼容旧配置中 modelMapping 的一对一字符串格式：
-//
-//	"modelMapping": { "opus": "gpt-4o" }
-//
-// 当前内部统一使用一对多格式：
-//
-//	"modelMapping": { "opus": ["gpt-4o"] }
+// UnmarshalJSON 只接受当前格式；旧映射由配置文件的版本迁移处理。
 func (u *UpstreamConfig) UnmarshalJSON(data []byte) error {
 	type upstreamConfigAlias UpstreamConfig
 	alias := upstreamConfigAlias{MaxConcurrency: upstreamcontrol.DefaultConcurrency, MaxBranchConcurrency: DefaultBranchConcurrency}
-	decoded := struct {
-		*upstreamConfigAlias
-		ModelMapping json.RawMessage `json:"modelMapping"`
-	}{upstreamConfigAlias: &alias}
-	if err := json.Unmarshal(data, &decoded); err != nil {
+	if err := decodeStrictConfigJSON(data, &alias); err != nil {
 		return err
 	}
 	if err := validateExplicitBranchConcurrency(data); err != nil {
 		return err
 	}
-	mapping, err := decodeModelMapping(decoded.ModelMapping)
-	if err != nil {
-		return fmt.Errorf("modelMapping: %w", err)
-	}
 	if alias.MaxConcurrency < 1 && alias.Status != ChannelStatusDeleted {
 		return fmt.Errorf("maxConcurrency 必须是正整数")
 	}
 	*u = UpstreamConfig(alias)
-	u.ModelMapping = mapping
 	return ValidateReasoningOptions(u)
 }
 
@@ -148,6 +132,7 @@ func ValidateReasoningOptions(upstream *UpstreamConfig) error {
 
 // UpstreamUpdate 用于部分更新 UpstreamConfig
 type UpstreamUpdate struct {
+	Compaction           *CompactionConfig     `json:"compaction"`
 	ExpectedChannelID    *string               `json:"expectedChannelId,omitempty"`
 	MaxBranchConcurrency *int                  `json:"maxBranchConcurrency,omitempty"`
 	CacheKeepalive       *CacheKeepaliveConfig `json:"cacheKeepalive"`
@@ -210,62 +195,14 @@ type UpstreamUpdate struct {
 func (u *UpstreamUpdate) UnmarshalJSON(data []byte) error {
 	type upstreamUpdateAlias UpstreamUpdate
 	var alias upstreamUpdateAlias
-	decoded := struct {
-		*upstreamUpdateAlias
-		ModelMapping json.RawMessage `json:"modelMapping"`
-	}{upstreamUpdateAlias: &alias}
-	if err := json.Unmarshal(data, &decoded); err != nil {
+	if err := decodeStrictConfigJSON(data, &alias); err != nil {
 		return err
 	}
 	if err := validateExplicitBranchConcurrency(data); err != nil {
 		return err
 	}
-	mapping, err := decodeModelMapping(decoded.ModelMapping)
-	if err != nil {
-		return fmt.Errorf("modelMapping: %w", err)
-	}
 	*u = UpstreamUpdate(alias)
-	u.ModelMapping = mapping
 	return nil
-}
-
-func decodeModelMapping(raw json.RawMessage) (map[string][]string, error) {
-	raw = bytes.TrimSpace(raw)
-	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
-		return nil, nil
-	}
-
-	var items map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &items); err != nil {
-		return nil, err
-	}
-
-	modelMapping := make(map[string][]string, len(items))
-	for source, targetRaw := range items {
-		targetRaw = bytes.TrimSpace(targetRaw)
-		if len(targetRaw) == 0 || bytes.Equal(targetRaw, []byte("null")) {
-			continue
-		}
-
-		switch targetRaw[0] {
-		case '"':
-			var target string
-			if err := json.Unmarshal(targetRaw, &target); err != nil {
-				return nil, err
-			}
-			modelMapping[source] = []string{target}
-		case '[':
-			var targets []string
-			if err := json.Unmarshal(targetRaw, &targets); err != nil {
-				return nil, err
-			}
-			modelMapping[source] = targets
-		default:
-			return nil, fmt.Errorf("映射值必须是字符串或字符串数组")
-		}
-	}
-
-	return normalizeModelMapping(modelMapping), nil
 }
 
 // SettingsConfig 集中承载可由管理界面维护的全局设置，便于后续扩展其他设置分类。
@@ -525,6 +462,7 @@ func DefaultContentSafetyConfig() ContentSafetyConfig {
 
 // Config 配置结构
 type Config struct {
+	SchemaVersion int `json:"schemaVersion"`
 	// HistoricalKeysPending 表示配置已提交，完整历史 Key 快照尚待同步到指标库。
 	// 同步成功即移除此标记及磁盘中的历史 Key，重启期间不能合并旧数据库覆盖它。
 	HistoricalKeysPending bool `json:"historicalKeysPending,omitempty"`
@@ -604,9 +542,10 @@ type ConfigManager struct {
 	workers           sync.WaitGroup
 
 	// persistedDigest 是当前已持久化配置的内容摘要（R3）。
-	// 仅用于 watcher 重载去重（避免自身提交触发“保存→重载→再保存”循环），
-	// 不用于输出配置原文。
-	persistedDigest string
+	// 用于 watcher 去重和保存前版本核对，不保存配置原文。
+	persistedDigest   string
+	reloadStatus      ConfigReloadStatus
+	validateResources func(Config, Config) error
 
 	// historicalKeyStore 保存换 Key 后仍需聚合统计的旧 Key。
 	// 未注入（指标持久化关闭）时，历史 Key 继续随配置保存。
@@ -647,29 +586,27 @@ func (cm *ConfigManager) GetNextAPIKey(upstream *UpstreamConfig, failedKeys map[
 	if len(upstream.APIKeys) == 0 {
 		return "", fmt.Errorf("上游 %s 没有可用的API密钥", upstream.Name)
 	}
-	if len(upstream.APIKeys) == 1 {
-		return upstream.APIKeys[0], nil
-	}
-
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
 	now := time.Now()
 	oldestTime := now
 	oldestKey := ""
+	hasOldest := false
 	for index, key := range upstream.APIKeys {
 		if failedKeys[key] {
 			continue
 		}
-		failure := cm.failedKeysCache[key]
+		failure := cm.failedKeysCache[upstream.RequestIdentity(key).Fingerprint()]
 		if failure == nil || now.Sub(failure.Timestamp) >= cm.failureRecoveryTime(failure) {
 			log.Printf("[%s-Key] 故障转移选择密钥 %s (%d/%d)", apiType, codec.MaskAPIKey(key), index+1, len(upstream.APIKeys))
 			return key, nil
 		}
-		if failure.Timestamp.Before(oldestTime) {
+		if !hasOldest || failure.Timestamp.Before(oldestTime) {
 			oldestTime, oldestKey = failure.Timestamp, key
+			hasOldest = true
 		}
 	}
-	if oldestKey == "" {
+	if !hasOldest {
 		return "", fmt.Errorf("上游 %s 的所有API密钥都暂时不可用", upstream.Name)
 	}
 	log.Printf("[%s-Key] 警告: 所有密钥都失效，尝试最早失败的密钥: %s", apiType, codec.MaskAPIKey(oldestKey))
@@ -678,21 +615,24 @@ func (cm *ConfigManager) GetNextAPIKey(upstream *UpstreamConfig, failedKeys map[
 
 // MarkKeyAsFailed 标记密钥失败
 // apiType: 接口类型（Messages/Responses/Gemini），用于日志标签前缀
-func (cm *ConfigManager) MarkKeyAsFailed(apiKey string, apiType string) {
+func (cm *ConfigManager) MarkKeyAsFailed(upstream *UpstreamConfig, apiKey string, apiType string) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
-
-	if failure, exists := cm.failedKeysCache[apiKey]; exists {
+	identity := upstream.RequestIdentity(apiKey).Fingerprint()
+	if cm.failedKeysCache == nil {
+		cm.failedKeysCache = make(map[string]*FailedKey)
+	}
+	if failure, exists := cm.failedKeysCache[identity]; exists {
 		failure.FailureCount++
 		failure.Timestamp = time.Now()
 	} else {
-		cm.failedKeysCache[apiKey] = &FailedKey{
+		cm.failedKeysCache[identity] = &FailedKey{
 			Timestamp:    time.Now(),
 			FailureCount: 1,
 		}
 	}
 
-	failure := cm.failedKeysCache[apiKey]
+	failure := cm.failedKeysCache[identity]
 	log.Printf("[%s-Key] 标记API密钥失败: %s (失败次数: %d, 恢复时间: %v)",
 		apiType, codec.MaskAPIKey(apiKey), failure.FailureCount, cm.failureRecoveryTime(failure))
 }
@@ -705,14 +645,24 @@ func (cm *ConfigManager) failureRecoveryTime(failure *FailedKey) time.Duration {
 	return cm.keyRecoveryTime
 }
 
-// clearFailedKeysForUpstream 清理指定渠道的所有失败 key 记录
-// 当渠道被删除时调用，避免内存泄漏和冷却状态残留
-// apiType: 接口类型（Messages/Responses/Gemini），用于日志标签前缀
-func (cm *ConfigManager) clearFailedKeysForUpstream(upstream *UpstreamConfig, apiType string) {
-	for _, key := range upstream.APIKeys {
-		if _, exists := cm.failedKeysCache[key]; exists {
-			delete(cm.failedKeysCache, key)
-			log.Printf("[%s-Key] 已清理被删除渠道 %s 的失败密钥记录: %s", apiType, upstream.Name, codec.MaskAPIKey(key))
+// 删除渠道后只清理无引用身份；多个渠道指向同一真实上游时共享故障记录。
+func (cm *ConfigManager) pruneFailedKeysLocked() {
+	active := make(map[string]bool)
+	for _, set := range cm.config.channelSets() {
+		for _, upstream := range *set.upstreams {
+			if GetChannelStatus(&upstream) == ChannelStatusDeleted {
+				continue
+			}
+			for _, baseURL := range upstream.GetAllBaseURLs() {
+				for _, key := range upstream.APIKeys {
+					active[upstreamIdentity(&upstream, baseURL, key).Fingerprint()] = true
+				}
+			}
+		}
+	}
+	for identity := range cm.failedKeysCache {
+		if !active[identity] {
+			delete(cm.failedKeysCache, identity)
 		}
 	}
 }
@@ -733,7 +683,7 @@ func (cm *ConfigManager) cleanupExpiredFailures() {
 			for key, failure := range cm.failedKeysCache {
 				if now.Sub(failure.Timestamp) > cm.failureRecoveryTime(failure) {
 					delete(cm.failedKeysCache, key)
-					log.Printf("[Config-Key] API密钥 %s 已从失败列表中恢复", codec.MaskAPIKey(key))
+					log.Printf("[Config-Key] 上游身份 %s 已从失败列表中恢复", key[:12])
 				}
 			}
 			cm.mu.Unlock()

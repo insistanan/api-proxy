@@ -234,7 +234,7 @@ func TestTryCompactWithKey_AppliesCodexDisguise(t *testing.T) {
 				body, err := io.ReadAll(r.Body)
 				received <- receivedRequest{header: r.Header.Clone(), body: body, length: r.ContentLength, path: r.URL.Path, err: err}
 				w.Header().Set("Content-Type", "application/json")
-				_, _ = io.WriteString(w, `{"output":[]}`)
+				_, _ = io.WriteString(w, `{"id":"compact-disguise","output":[{"type":"compaction","encrypted_content":"opaque"}]}`)
 			}))
 			defer server.Close()
 			cfgManager, err := config.NewConfigManager(filepath.Join(t.TempDir(), "config.json"))

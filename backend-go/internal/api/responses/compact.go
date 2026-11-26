@@ -22,6 +22,7 @@ import (
 	"insistanan/api-proxy/internal/orchestration/upstreamcontrol"
 	"insistanan/api-proxy/internal/protocol/codec"
 	"insistanan/api-proxy/internal/protocol/converters"
+	respitems "insistanan/api-proxy/internal/protocol/items"
 	"insistanan/api-proxy/internal/protocol/providers"
 	"insistanan/api-proxy/internal/protocol/tokenusage"
 	"insistanan/api-proxy/internal/protocol/types"
@@ -71,6 +72,12 @@ func CompactHandler(
 			return
 		}
 		requestID := proxycore.BindRequestLogID(c)
+		finishLog := proxycore.BeginCompactionLog(c, envCfg, bodyBytes)
+		defer finishLog()
+		if _, err := proxycore.BindCompactionRequest(c, "responses", bodyBytes); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_COMPACTION_REQUEST"})
+			return
+		}
 
 		// compact 是控制面操作：只复用主请求已经建立的内部会话，不创建新的会话记录。
 		// 这样不会改变客户端协议，同时避免外部 conversation ID 与内部记录 ID 分裂。
@@ -106,17 +113,11 @@ func CompactHandler(
 			defer release()
 			c.Request = c.Request.WithContext(ctx)
 		}
-		isMultiChannel := cfgManager.GetFuzzyModeEnabledForProtocol("responses") && channelScheduler.ActiveChannelCountForRequest(c.Request.Context(), scheduler.ChannelKindResponses, model) > 1
-
-		if isMultiChannel {
-			handleMultiChannelCompact(c, envCfg, cfgManager, sessionManager, channelScheduler, bodyBytes, conversationID, model)
-		} else {
-			handleSingleChannelCompact(c, envCfg, cfgManager, sessionManager, channelScheduler, bodyBytes, conversationID, model)
-		}
+		handleSingleChannelCompact(c, envCfg, cfgManager, sessionManager, channelScheduler, bodyBytes, conversationID, model)
 	})
 }
 
-// handleSingleChannelCompact 沿用单渠道入口，仅允许显式模型映射指定的单跳目标。
+// handleSingleChannelCompact 固定主会话渠道，原生压缩不做跨渠道故障转移。
 func handleSingleChannelCompact(
 	c *gin.Context,
 	envCfg *config.EnvConfig,
@@ -127,16 +128,22 @@ func handleSingleChannelCompact(
 	conversationID string,
 	model string,
 ) {
-	upstream, channelIndex, err := cfgManager.GetCurrentResponsesUpstreamWithIndexForModel(model)
-	if scheduler.PoolConstraintFrom(c.Request.Context()).PoolID != "" {
-		upstream, channelIndex, err = channelScheduler.IntentSingleChannel(c.Request.Context(), scheduler.ChannelKindResponses)
-	}
+	upstream, channelIndex, err := proxycore.ResolveCompactionSource(c, cfgManager, channelScheduler, scheduler.ChannelKindResponses, bodyBytes, model, conversationID)
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 		return
 	}
-	result := compactAttempt(c, upstream, channelIndex, nil, cfgManager, sessionManager,
+	selection, err := channelScheduler.SelectMappedChannel(scheduler.ChannelKindResponses, upstream.ID)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error(), "code": "COMPACTION_SOURCE_UNAVAILABLE"})
+		return
+	}
+	defer selection.Permit.Release()
+	upstream, channelIndex = selection.Upstream, selection.ChannelIndex
+	c.Header("X-Api-Proxy-Compaction-Route", "source")
+	result := compactAttempt(c, upstream, channelIndex, selection.Permit, cfgManager, sessionManager,
 		channelScheduler, bodyBytes, conversationID, envCfg).TryWithModelMappingFailover()
+	result.RecordPermitHealth(selection.Permit)
 	if !result.Handled {
 		proxycore.HandleAllKeysFailed(c, cfgManager.GetFuzzyModeEnabledForProtocol("responses"), result.FailoverError, result.LastError, "Responses")
 	}
@@ -197,6 +204,10 @@ func compactAttempt(
 	conversationID string,
 	envCfg *config.EnvConfig,
 ) proxycore.UpstreamAttempt {
+	urls := channelScheduler.GetSortedURLsForChannel(scheduler.ChannelKindResponses, channelIndex, upstream.GetAllBaseURLs())
+	if preferred, ok := channelScheduler.GetPreferredBaseURL(conversationID); ok {
+		urls = scheduler.PreferBaseURLInResults(urls, preferred)
+	}
 	return proxycore.UpstreamAttempt{
 		Context:            c,
 		EnvConfig:          envCfg,
@@ -210,13 +221,14 @@ func compactAttempt(
 		AllowModelFailover: cfgManager.GetFuzzyModeEnabledForProtocol("responses"),
 		Permit:             permit,
 		SkipVisionLayer:    true,
-		URLResults:         channelScheduler.GetSortedURLsForChannel(scheduler.ChannelKindResponses, channelIndex, upstream.GetAllBaseURLs()),
+		URLResults:         urls,
 		RequestBody:        bodyBytes,
 		NextAPIKey:         cfgManager.GetNextResponsesAPIKey,
 		LogContext: proxycore.AttemptLogContext{
-			ChannelIndex:   channelIndex,
-			Model:          compactRequestModel(bodyBytes),
-			ConversationID: conversationID,
+			ChannelIndex:    channelIndex,
+			Model:           compactRequestModel(bodyBytes),
+			LogStore:        channelScheduler.GetChannelLogStore(scheduler.ChannelKindResponses),
+			RequestLogStore: channelScheduler.GetRequestLogStore(),
 		},
 		BuildRequest: func(c *gin.Context, candidate *config.UpstreamConfig, apiKey string) (*http.Request, error) {
 			return buildCompactRequest(c, candidate, apiKey, bodyBytes, cfgManager, sessionManager, conversationID)
@@ -379,11 +391,11 @@ func finishCompactResponse(c *gin.Context, resp *http.Response, requestBody []by
 	if err != nil {
 		return usage, err
 	}
+	responseID, items, err := parseCompactOutput(respBody)
+	if err != nil {
+		return usage, &sessionCommitError{Err: err}
+	}
 	if sessionManager != nil {
-		responseID, items, err := parseCompactOutput(respBody)
-		if err != nil {
-			return usage, &sessionCommitError{Err: err}
-		}
 		if err := commitResponsesTurn(c, sessionManager, nil, requestBody, items, 0, responseID, responseUpstreamOwner(resp), true, false); err != nil {
 			return usage, err
 		}
@@ -428,6 +440,9 @@ func extractCompactResponseID(body []byte) string {
 
 // parseCompactOutput 只解释压缩结果，提交交由普通/流式共用的生命周期入口。
 func parseCompactOutput(responseBody []byte) (string, []types.ResponsesItem, error) {
+	if !json.Valid(responseBody) {
+		return "", nil, fmt.Errorf("compact 响应不是完整 JSON，保留压缩前会话")
+	}
 	responseID := extractCompactResponseID(responseBody)
 	if responseID == "" {
 		return "", nil, fmt.Errorf("compact 响应缺少新 response id，无法建立压缩后的会话边界")
@@ -447,6 +462,9 @@ func parseCompactOutput(responseBody []byte) (string, []types.ResponsesItem, err
 	items, err := parseInputToItems(rawItems)
 	if err != nil {
 		return "", nil, fmt.Errorf("解析 compact session item 失败: %w", err)
+	}
+	if err := respitems.ValidateResponsesCompactionOutput(items); err != nil {
+		return "", nil, err
 	}
 	return responseID, items, nil
 }

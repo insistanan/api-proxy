@@ -92,6 +92,7 @@ export function useChannelActions(notify: ToastFn) {
 
   const deleteChannel = async (
     channelId: number,
+    expectedId: string,
     onAuthError?: (error: unknown) => void,
     tab: ApiTab = channelStore.activeTab
   ): Promise<void> => {
@@ -99,7 +100,7 @@ export function useChannelActions(notify: ToastFn) {
     const generation = authStore.generation
     channelStore.isDeletingChannel = true
     try {
-      const result = await channelStore.deleteChannel(channelId, tab)
+      const result = await channelStore.deleteChannel(channelId, expectedId, tab)
       if (generation !== authStore.generation) return
       notify(result.message, 'success')
       await refreshAfterMutation(tab, onAuthError)

@@ -15,6 +15,11 @@ import type {
 } from '@/types'
 import type { ApiTab, ChannelApi } from '@/features/channels/services/channel-api'
 
+function channelIdentity(expectedChannelId: string): Record<string, string> {
+  if (!expectedChannelId) throw new Error('操作目标缺少稳定渠道 ID，请刷新后重试')
+  return { 'X-Channel-ID': expectedChannelId }
+}
+
 function normalizePromotionValue(value: unknown): number {
   const parsed = typeof value === 'number' ? value : Number(String(value ?? '').trim())
 
@@ -43,23 +48,24 @@ export const channelsApi = {
       addChannel: channel => apiRequest(`${p}/channels`, { method: 'POST', body: JSON.stringify(channel) }),
       updateChannel: (id, channel, expectedChannelId) =>
         apiRequest(`${p}/channels/${id}`, { method: 'PUT', body: JSON.stringify({ ...channel, expectedChannelId }) }),
-      deleteChannel: id => apiRequest(`${p}/channels/${id}`, { method: 'DELETE' }),
-      addKey: (channelId, apiKey) =>
-        apiRequest(`${p}/channels/${channelId}/keys`, { method: 'POST', body: JSON.stringify({ apiKey }) }),
-      removeKey: (channelId, apiKey) =>
-        apiRequest(`${p}/channels/${channelId}/keys/${encodeURIComponent(apiKey)}`, { method: 'DELETE' }),
-      moveKeyToTop: (channelId, apiKey) =>
-        apiRequest(`${p}/channels/${channelId}/keys/${encodeURIComponent(apiKey)}/top`, { method: 'POST' }),
-      moveKeyToBottom: (channelId, apiKey) =>
-        apiRequest(`${p}/channels/${channelId}/keys/${encodeURIComponent(apiKey)}/bottom`, { method: 'POST' }),
+      deleteChannel: (id, expectedId) => apiRequest(`${p}/channels/${id}`, { method: 'DELETE', headers: channelIdentity(expectedId) }),
+      addKey: (channelId, apiKey, expectedId) =>
+        apiRequest(`${p}/channels/${channelId}/keys`, { method: 'POST', headers: channelIdentity(expectedId), body: JSON.stringify({ apiKey }) }),
+      removeKey: (channelId, apiKey, expectedId) =>
+        apiRequest(`${p}/channels/${channelId}/keys`, { method: 'DELETE', headers: channelIdentity(expectedId), body: JSON.stringify({ apiKey }) }),
+      moveKeyToTop: (channelId, apiKey, expectedId) =>
+        apiRequest(`${p}/channels/${channelId}/keys/top`, { method: 'POST', headers: channelIdentity(expectedId), body: JSON.stringify({ apiKey }) }),
+      moveKeyToBottom: (channelId, apiKey, expectedId) =>
+        apiRequest(`${p}/channels/${channelId}/keys/bottom`, { method: 'POST', headers: channelIdentity(expectedId), body: JSON.stringify({ apiKey }) }),
       reorder: order => apiRequest(`${p}/channels/reorder`, { method: 'POST', body: JSON.stringify({ order }) }),
-      setStatus: (channelId, status) =>
-        apiRequest(`${p}/channels/${channelId}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
-      setPromotion: (channelId, durationSeconds, count) => {
+      setStatus: (channelId, status, expectedId) =>
+        apiRequest(`${p}/channels/${channelId}/status`, { method: 'PATCH', headers: channelIdentity(expectedId), body: JSON.stringify({ status }) }),
+      setPromotion: (channelId, durationSeconds, count, expectedId) => {
         const duration = normalizePromotionValue(durationSeconds)
         const normalizedCount = normalizePromotionValue(count)
         return apiRequest(`${p}/channels/${channelId}/promotion`, {
           method: 'POST',
+          headers: channelIdentity(expectedId),
           body: JSON.stringify({ duration, count: normalizedCount })
         })
       },
@@ -67,7 +73,7 @@ export const channelsApi = {
       pingAllChannels: () => apiRequest(`${p}/ping`),
       updateLoadBalance: strategy =>
         apiRequest(`${p}/loadbalance`, { method: 'PUT', body: JSON.stringify({ strategy }) }),
-      resumeChannel: channelId => apiRequest(`${p}/channels/${channelId}/resume`, { method: 'POST' }),
+      resumeChannel: (channelId, expectedId) => apiRequest(`${p}/channels/${channelId}/resume`, { method: 'POST', headers: channelIdentity(expectedId) }),
       getChannelMetrics: () => apiRequest(`${p}/channels/metrics`),
       getChannelMetricsHistory: (duration = '24h') =>
         apiRequest(`${p}/channels/metrics/history?duration=${duration}`),

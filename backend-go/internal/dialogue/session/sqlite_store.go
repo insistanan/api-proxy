@@ -39,6 +39,15 @@ func newSQLiteStoreWithDB(db *sql.DB) (*sqliteStore, error) {
 }
 
 func (s *sqliteStore) initSchema() error {
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS gemini_shadow_turns (
+		id INTEGER PRIMARY KEY, conversation_id TEXT NOT NULL, provider_id TEXT NOT NULL, turn_json TEXT NOT NULL,
+		FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+	)`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_gemini_shadow_conversation_provider ON gemini_shadow_turns(conversation_id,provider_id,id)`); err != nil {
+		return err
+	}
 	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS response_sessions (
 		id TEXT PRIMARY KEY,
 		conversation_id TEXT NOT NULL DEFAULT '',

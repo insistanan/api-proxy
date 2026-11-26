@@ -55,6 +55,10 @@
       <UiAlert v-if="purgeNotice" type="success" variant="tonal" density="compact" class="mb-4" closable @click:close="purgeNotice = ''">
         {{ purgeNotice }}
       </UiAlert>
+      <UiAlert v-if="logsStore.compactionError" type="warning" variant="tonal" class="mb-4">
+        日志已删除，空间回收未完成：{{ logsStore.compactionError }}
+        <UiButton variant="text" :loading="purging" @click="logsStore.retryCompaction">仅重试压缩</UiButton>
+      </UiAlert>
 
       <UiAlert v-if="error" type="error" variant="tonal" density="compact" class="mb-4">
         {{ error }}

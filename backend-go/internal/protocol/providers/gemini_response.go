@@ -42,8 +42,10 @@ func (p *GeminiProvider) ConvertToClaudeResponse(providerResp *types.ProviderRes
 
 	rectifyGeminiFunctionCallIDs(parts)
 	shadowTurn := buildGeminiShadowTurnFromParts(parts)
-	if geminiShadowTurnHasParts(shadowTurn) {
-		p.cacheLease.Store(func() { defaultGeminiShadowStore.Record(p.shadowProviderID, p.shadowSessionID, shadowTurn) })
+	if geminiShadowTurnHasParts(shadowTurn) && p.persistShadow != nil {
+		if err := p.persistShadow(shadowTurn); err != nil {
+			return nil, err
+		}
 	}
 
 	textParts := make([]string, 0)

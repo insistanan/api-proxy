@@ -55,8 +55,8 @@ func (api *MCPAPI) MigrateLegacy(legacyPath string) (bool, error) {
 }
 
 // SyncToAgents 根据当前存储的 mcp.json 将启用的 MCP 分发到各智能体配置文件。
-func (api *MCPAPI) SyncToAgents() ([]mcpsync.AgentResult, error) {
-	return api.service.SyncToAgents()
+func (api *MCPAPI) SyncToAgents(expectedDirectory ...string) ([]mcpsync.AgentResult, error) {
+	return api.service.SyncToAgents(expectedDirectory...)
 }
 
 // SyncOnStartup 先迁移旧列表，再分发当前列表；逐项保留失败原因。

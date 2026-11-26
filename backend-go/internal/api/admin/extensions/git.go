@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -49,6 +50,7 @@ func NewExtensionsGitAPI(cfgManager *config.ConfigManager, skillsAPI *clients.Sk
 type ExtensionsGitStatus struct {
 	Migration      *extensionfiles.MigrationState `json:"migration,omitempty"`
 	ExportFiles    []string                       `json:"exportFiles,omitempty"`
+	ExportExcluded []exportExclusion              `json:"exportExcluded,omitempty"`
 	ExportRevision string                         `json:"exportRevision,omitempty"`
 	ExportError    string                         `json:"exportError,omitempty"`
 	GitAvailable   bool                           `json:"gitAvailable"`
@@ -96,24 +98,27 @@ func (api *ExtensionsGitAPI) Init() gin.HandlerFunc {
 		var req struct {
 			RepoURL string `json:"repoUrl"`
 		}
-		_ = c.ShouldBindJSON(&req)
-
-		settings := api.cfgManager.GetSettings().Extensions
-		repoURL := strings.TrimSpace(req.RepoURL)
-		if repoURL == "" {
-			repoURL = strings.TrimSpace(settings.SkillsRepoURL)
-		}
-		if err := config.ValidateGitRepoURL(repoURL); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的 Git 请求参数"})
 			return
 		}
+
 		if _, err := exec.LookPath("git"); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "未检测到 git 命令，请先安装 Git"})
 			return
 		}
 
 		var status ExtensionsGitStatus
+		var completed []string
 		err := adminshared.WithExtensionsLocks(api.skillsAPI, api.mcpAPI, func() error {
+			settings := api.cfgManager.GetSettings().Extensions
+			repoURL := strings.TrimSpace(req.RepoURL)
+			if repoURL == "" {
+				repoURL = settings.SkillsRepoURL
+			}
+			if err := config.ValidateGitRepoURL(repoURL); err != nil {
+				return err
+			}
 			skillsDir, err := config.ResolveSkillsDir(settings.SkillsDir)
 			if err != nil {
 				return err
@@ -124,10 +129,15 @@ func (api *ExtensionsGitAPI) Init() gin.HandlerFunc {
 			ctx, cancel := context.WithTimeout(c.Request.Context(), gitCommandTimeout)
 			defer cancel()
 
-			if !isStandaloneGitRepo(ctx, skillsDir) {
+			repo, err := isStandaloneGitRepo(ctx, skillsDir)
+			if err != nil {
+				return err
+			}
+			if !repo {
 				if _, err := runGit(ctx, skillsDir, "init"); err != nil {
 					return fmt.Errorf("初始化 Git 仓库失败: %w", err)
 				}
+				completed = append(completed, "repository_created")
 			}
 			if repoURL != "" {
 				if err := ensureOriginRemote(ctx, skillsDir, repoURL); err != nil {
@@ -137,15 +147,19 @@ func (api *ExtensionsGitAPI) Init() gin.HandlerFunc {
 			if err := ensureGitignore(skillsDir); err != nil {
 				return err
 			}
-			status, err = api.inspectStatus(ctx)
+			completed = append(completed, "init")
+			status, err = api.inspectStatusFor(ctx, settings)
 			return err
 		})
 		if err != nil {
 			httpCode := http.StatusInternalServerError
+			if config.IsConfigError(err) {
+				httpCode = http.StatusBadRequest
+			}
 			if errors.Is(err, errOriginRemoteMismatch) {
 				httpCode = http.StatusConflict
 			}
-			c.JSON(httpCode, gin.H{"error": err.Error()})
+			writeGitOperationError(c, httpCode, err, completed)
 			return
 		}
 		c.JSON(http.StatusOK, extensionsGitSyncResponse{Status: status, Message: "Git 仓库已就绪"})
@@ -158,21 +172,11 @@ func (api *ExtensionsGitAPI) Clone() gin.HandlerFunc {
 		var req struct {
 			RepoURL string `json:"repoUrl"`
 		}
-		_ = c.ShouldBindJSON(&req)
+		if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的 Git 请求参数"})
+			return
+		}
 
-		settings := api.cfgManager.GetSettings().Extensions
-		repoURL := strings.TrimSpace(req.RepoURL)
-		if repoURL == "" {
-			repoURL = strings.TrimSpace(settings.SkillsRepoURL)
-		}
-		if repoURL == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "请先配置 Git 仓库地址"})
-			return
-		}
-		if err := config.ValidateGitRepoURL(repoURL); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
 		if _, err := exec.LookPath("git"); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "未检测到 git 命令，请先安装 Git"})
 			return
@@ -180,7 +184,21 @@ func (api *ExtensionsGitAPI) Clone() gin.HandlerFunc {
 
 		httpCode := http.StatusInternalServerError
 		var status ExtensionsGitStatus
+		var completed []string
 		err := adminshared.WithExtensionsLocks(api.skillsAPI, api.mcpAPI, func() error {
+			settings := api.cfgManager.GetSettings().Extensions
+			repoURL := strings.TrimSpace(req.RepoURL)
+			if repoURL == "" {
+				repoURL = settings.SkillsRepoURL
+			}
+			if repoURL == "" {
+				httpCode = http.StatusBadRequest
+				return errors.New("请先配置 Git 仓库地址")
+			}
+			if err := config.ValidateGitRepoURL(repoURL); err != nil {
+				httpCode = http.StatusBadRequest
+				return err
+			}
 			skillsDir, err := config.ResolveSkillsDir(settings.SkillsDir)
 			if err != nil {
 				httpCode = http.StatusBadRequest
@@ -212,18 +230,19 @@ func (api *ExtensionsGitAPI) Clone() gin.HandlerFunc {
 			if _, err := runGit(ctx, filepath.Dir(skillsDir), "clone", "--", repoURL, skillsDir); err != nil {
 				return fmt.Errorf("克隆远程仓库失败: %w", err)
 			}
-			status, err = api.inspectStatus(ctx)
+			completed = append(completed, "clone")
+			status, err = api.inspectStatusFor(ctx, settings)
 			return err
 		})
 		if err != nil {
-			c.JSON(httpCode, gin.H{"error": err.Error()})
+			writeGitOperationError(c, httpCode, err, completed)
 			return
 		}
 
-		skillsReport, mcpAgents := api.syncAgentsAfterUpdate()
+		skillsReport, mcpAgents := api.syncAgentsAfterUpdate(status.SkillsDir)
 		c.JSON(http.StatusOK, extensionsGitSyncResponse{
 			Status:       status,
-			Message:      "克隆完成并已同步到本地 Agent",
+			Message:      "克隆完成，Agent 同步结果见详情",
 			SkillsReport: skillsReport,
 			MCPAgents:    mcpAgents,
 		})
@@ -237,10 +256,11 @@ func (api *ExtensionsGitAPI) Pull() gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "未检测到 git 命令，请先安装 Git"})
 			return
 		}
-		settings := api.cfgManager.GetSettings().Extensions
 		httpCode := http.StatusInternalServerError
 		var status ExtensionsGitStatus
+		var completed []string
 		err := adminshared.WithExtensionsLocks(api.skillsAPI, api.mcpAPI, func() error {
+			settings := api.cfgManager.GetSettings().Extensions
 			skillsDir, err := config.ResolveSkillsDir(settings.SkillsDir)
 			if err != nil {
 				httpCode = http.StatusBadRequest
@@ -249,7 +269,11 @@ func (api *ExtensionsGitAPI) Pull() gin.HandlerFunc {
 			ctx, cancel := context.WithTimeout(c.Request.Context(), gitCommandTimeout)
 			defer cancel()
 
-			if !isStandaloneGitRepo(ctx, skillsDir) {
+			repo, err := isStandaloneGitRepo(ctx, skillsDir)
+			if err != nil {
+				return err
+			}
+			if !repo {
 				httpCode = http.StatusBadRequest
 				return errors.New("当前 Skills 目录尚未初始化 Git 仓库")
 			}
@@ -272,18 +296,19 @@ func (api *ExtensionsGitAPI) Pull() gin.HandlerFunc {
 			if _, err := runGit(ctx, skillsDir, "pull", "--ff-only"); err != nil {
 				return fmt.Errorf("Git 快进拉取失败，请检查上游分支；若历史已分叉，在仓库目录手动合并并解决冲突后再推送: %w", err)
 			}
-			status, err = api.inspectStatus(ctx)
+			completed = append(completed, "pull")
+			status, err = api.inspectStatusFor(ctx, settings)
 			return err
 		})
 		if err != nil {
-			c.JSON(httpCode, gin.H{"error": err.Error()})
+			writeGitOperationError(c, httpCode, err, completed)
 			return
 		}
 
-		skillsReport, mcpAgents := api.syncAgentsAfterUpdate()
+		skillsReport, mcpAgents := api.syncAgentsAfterUpdate(status.SkillsDir)
 		c.JSON(http.StatusOK, extensionsGitSyncResponse{
 			Status:       status,
-			Message:      "已拉取更新并同步到本地 Agent",
+			Message:      "已拉取更新，Agent 同步结果见详情",
 			SkillsReport: skillsReport,
 			MCPAgents:    mcpAgents,
 		})
@@ -310,12 +335,13 @@ func (api *ExtensionsGitAPI) Push() gin.HandlerFunc {
 			return
 		}
 
-		settings := api.cfgManager.GetSettings().Extensions
 		httpCode := http.StatusInternalServerError
 		var status ExtensionsGitStatus
+		var completed []string
 		message := "已推送到远程仓库"
 
 		err := adminshared.WithExtensionsLocks(api.skillsAPI, api.mcpAPI, func() error {
+			settings := api.cfgManager.GetSettings().Extensions
 			skillsDir, err := config.ResolveSkillsDir(settings.SkillsDir)
 			if err != nil {
 				httpCode = http.StatusBadRequest
@@ -324,7 +350,11 @@ func (api *ExtensionsGitAPI) Push() gin.HandlerFunc {
 			ctx, cancel := context.WithTimeout(c.Request.Context(), gitCommandTimeout)
 			defer cancel()
 
-			if !isStandaloneGitRepo(ctx, skillsDir) {
+			repo, err := isStandaloneGitRepo(ctx, skillsDir)
+			if err != nil {
+				return err
+			}
+			if !repo {
 				httpCode = http.StatusBadRequest
 				return errors.New("当前 Skills 目录尚未初始化 Git 仓库")
 			}
@@ -391,6 +421,7 @@ func (api *ExtensionsGitAPI) Push() gin.HandlerFunc {
 			if err := stageExport(ctx, skillsDir, plan); err != nil {
 				return err
 			}
+			completed = append(completed, "stage")
 			currentPlan, err := prepareExport(ctx, skillsDir)
 			if err != nil {
 				return err
@@ -404,10 +435,14 @@ func (api *ExtensionsGitAPI) Push() gin.HandlerFunc {
 				return err
 			}
 			if hasStaged {
-				commitArgs := gitCommitArgsWithFallbackAuthor(ctx, skillsDir, commitMsg)
+				commitArgs, err := gitCommitArgsWithFallbackAuthor(ctx, skillsDir, commitMsg)
+				if err != nil {
+					return err
+				}
 				if _, err := runGit(ctx, skillsDir, commitArgs...); err != nil {
 					return fmt.Errorf("提交变更失败: %w", err)
 				}
+				completed = append(completed, "commit")
 			}
 			if _, err := runGit(ctx, skillsDir, "rev-parse", "--verify", "HEAD"); err != nil {
 				httpCode = http.StatusBadRequest
@@ -433,21 +468,22 @@ func (api *ExtensionsGitAPI) Push() gin.HandlerFunc {
 			} else {
 				message = "已是最新，无需推送"
 			}
-			status, err = api.inspectStatus(ctx)
+			completed = append(completed, "push")
+			status, err = api.inspectStatusFor(ctx, settings)
 			return err
 		})
 		if err != nil {
-			c.JSON(httpCode, gin.H{"error": err.Error()})
+			writeGitOperationError(c, httpCode, err, completed)
 			return
 		}
 		c.JSON(http.StatusOK, extensionsGitSyncResponse{Status: status, Message: message})
 	}
 }
 
-func (api *ExtensionsGitAPI) syncAgentsAfterUpdate() (*skills.SyncReport, []mcpsync.AgentResult) {
+func (api *ExtensionsGitAPI) syncAgentsAfterUpdate(directory string) (*skills.SyncReport, []mcpsync.AgentResult) {
 	var skillsReport *skills.SyncReport
 	if api.skillsAPI != nil {
-		if report, err := api.skillsAPI.SyncOnStartup(); err == nil {
+		if report, err := api.skillsAPI.SyncOnStartup(directory); err == nil {
 			skillsReport = &report
 		} else {
 			skillsReport = &skills.SyncReport{Errors: []string{err.Error()}}
@@ -455,7 +491,7 @@ func (api *ExtensionsGitAPI) syncAgentsAfterUpdate() (*skills.SyncReport, []mcps
 	}
 	var mcpAgents []mcpsync.AgentResult
 	if api.mcpAPI != nil {
-		if results, err := api.mcpAPI.SyncToAgents(); err == nil {
+		if results, err := api.mcpAPI.SyncToAgents(directory); err == nil {
 			mcpAgents = results
 		} else {
 			mcpAgents = []mcpsync.AgentResult{{Name: "MCP", OK: false, Error: err.Error()}}
@@ -465,7 +501,10 @@ func (api *ExtensionsGitAPI) syncAgentsAfterUpdate() (*skills.SyncReport, []mcps
 }
 
 func (api *ExtensionsGitAPI) inspectStatus(ctx context.Context) (ExtensionsGitStatus, error) {
-	settings := api.cfgManager.GetSettings().Extensions
+	return api.inspectStatusFor(ctx, api.cfgManager.GetSettings().Extensions)
+}
+
+func (api *ExtensionsGitAPI) inspectStatusFor(ctx context.Context, settings config.ExtensionsSettings) (ExtensionsGitStatus, error) {
 	skillsDir, err := config.ResolveSkillsDir(settings.SkillsDir)
 	if err != nil {
 		return ExtensionsGitStatus{}, err
@@ -480,13 +519,22 @@ func (api *ExtensionsGitAPI) inspectStatus(ctx context.Context) (ExtensionsGitSt
 	if err != nil {
 		return status, err
 	}
-	if info, statErr := os.Stat(skillsDir); statErr == nil && info.IsDir() {
+	if info, statErr := os.Stat(skillsDir); statErr == nil {
+		if !info.IsDir() {
+			return status, fmt.Errorf("Skills 路径不是目录")
+		}
 		status.DirExists = true
+	} else if !errors.Is(statErr, fs.ErrNotExist) {
+		return status, fmt.Errorf("读取 Skills 目录失败: %w", statErr)
 	}
 	if !status.GitAvailable || !status.DirExists {
 		return status, nil
 	}
-	if !isStandaloneGitRepo(ctx, skillsDir) {
+	repo, err := isStandaloneGitRepo(ctx, skillsDir)
+	if err != nil {
+		return status, err
+	}
+	if !repo {
 		return status, nil
 	}
 	status.IsGitRepo = true
@@ -494,32 +542,62 @@ func (api *ExtensionsGitAPI) inspectStatus(ctx context.Context) (ExtensionsGitSt
 		status.ExportError = err.Error()
 	} else {
 		status.ExportFiles, status.ExportRevision = plan.Files, plan.Revision
+		status.ExportExcluded = plan.Excluded
 	}
 
-	if remoteURL, err := runGit(ctx, skillsDir, "remote", "get-url", "origin"); err == nil {
-		status.RemoteURL = strings.TrimSpace(remoteURL)
+	remotes, err := runGit(ctx, skillsDir, "remote")
+	if err != nil {
+		return status, err
 	}
-	if branch, err := currentGitBranch(ctx, skillsDir); err == nil {
-		status.Branch = branch
-	}
-	if _, err := runGit(ctx, skillsDir, "rev-parse", "--verify", "HEAD"); err == nil {
-		status.HasCommits = true
-	}
-	if porcelain, err := runGit(ctx, skillsDir, "status", "--porcelain=v1"); err == nil {
-		for _, line := range strings.Split(strings.TrimRight(porcelain, "\r\n"), "\n") {
-			trimmed := strings.TrimSpace(line)
-			if trimmed != "" {
-				status.ChangedFiles = append(status.ChangedFiles, trimmed)
+	for _, remote := range strings.Fields(remotes) {
+		if remote == "origin" {
+			remoteURL, err := runGit(ctx, skillsDir, "remote", "get-url", "origin")
+			if err != nil {
+				return status, err
 			}
+			status.RemoteURL = strings.TrimSpace(remoteURL)
 		}
-		status.Dirty = len(status.ChangedFiles) > 0
 	}
-	if status.HasCommits {
-		if counts, err := runGit(ctx, skillsDir, "rev-list", "--left-right", "--count", "HEAD...@{upstream}"); err == nil {
+	status.Branch, err = currentGitBranch(ctx, skillsDir)
+	if err != nil {
+		return status, err
+	}
+	_, err = runGit(ctx, skillsDir, "rev-parse", "--verify", "--quiet", "HEAD")
+	status.HasCommits = err == nil
+	if err != nil && !gitExitCode(err, 1) {
+		return status, err
+	}
+	porcelain, err := runGit(ctx, skillsDir, "status", "--porcelain=v1")
+	if err != nil {
+		return status, err
+	}
+	for _, line := range strings.Split(strings.TrimRight(porcelain, "\r\n"), "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			status.ChangedFiles = append(status.ChangedFiles, trimmed)
+		}
+	}
+	status.Dirty = len(status.ChangedFiles) > 0
+	if status.HasCommits && status.Branch != "HEAD" {
+		upstream, err := runGit(ctx, skillsDir, "for-each-ref", "--format=%(upstream)", "refs/heads/"+status.Branch)
+		if err != nil {
+			return status, err
+		}
+		if strings.TrimSpace(upstream) != "" {
+			counts, err := runGit(ctx, skillsDir, "rev-list", "--left-right", "--count", "HEAD...@{upstream}")
+			if err != nil {
+				return status, err
+			}
 			fields := strings.Fields(counts)
-			if len(fields) == 2 {
-				status.Ahead, _ = strconv.Atoi(fields[0])
-				status.Behind, _ = strconv.Atoi(fields[1])
+			if len(fields) != 2 {
+				return status, fmt.Errorf("Git 提交计数格式无效")
+			}
+			status.Ahead, err = strconv.Atoi(fields[0])
+			if err != nil {
+				return status, fmt.Errorf("读取领先提交数失败: %w", err)
+			}
+			status.Behind, err = strconv.Atoi(fields[1])
+			if err != nil {
+				return status, fmt.Errorf("读取落后提交数失败: %w", err)
 			}
 		}
 	}
@@ -527,23 +605,43 @@ func (api *ExtensionsGitAPI) inspectStatus(ctx context.Context) (ExtensionsGitSt
 }
 
 // isStandaloneGitRepo 确认 skillsDir 自身是独立 Git 仓库根目录，避免向上继承到宿主工作区（如 api-proxy 自身）的 .git。
-func isStandaloneGitRepo(ctx context.Context, skillsDir string) bool {
+func isStandaloneGitRepo(ctx context.Context, skillsDir string) (bool, error) {
 	if _, err := os.Stat(filepath.Join(skillsDir, ".git")); err != nil {
-		return false
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
 	}
 	top, err := runGit(ctx, skillsDir, "rev-parse", "--show-toplevel")
 	if err != nil {
-		return false
+		return false, err
 	}
 	topClean := strings.TrimSpace(top)
 	expectedClean := filepath.Clean(skillsDir)
 	if resolved, err := filepath.EvalSymlinks(topClean); err == nil {
 		topClean = resolved
+	} else {
+		return false, err
 	}
 	if resolved, err := filepath.EvalSymlinks(expectedClean); err == nil {
 		expectedClean = resolved
+	} else {
+		return false, err
 	}
-	return config.SamePath(topClean, expectedClean)
+	return config.SamePath(topClean, expectedClean), nil
+}
+
+func gitExitCode(err error, code int) bool {
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr) && exitErr.ExitCode() == code
+}
+
+func writeGitOperationError(c *gin.Context, status int, err error, completed []string) {
+	message := err.Error()
+	if len(completed) > 0 {
+		message = "已完成 " + strings.Join(completed, "、") + "；后续步骤失败，请刷新核对后再操作：" + message
+	}
+	c.JSON(status, gin.H{"error": message, "completedStages": completed, "committed": len(completed) > 0})
 }
 
 func ensureGitignore(skillsDir string) error {
@@ -564,6 +662,9 @@ func ensureOriginRemote(ctx context.Context, skillsDir, repoURL string) error {
 	repoURL = strings.TrimSpace(repoURL)
 	existing, err := runGit(ctx, skillsDir, "remote", "get-url", "origin")
 	if err != nil {
+		if !gitExitCode(err, 2) {
+			return err
+		}
 		if _, addErr := runGit(ctx, skillsDir, "remote", "add", "origin", "--", repoURL); addErr != nil {
 			return fmt.Errorf("添加 origin 远程仓库失败: %w", addErr)
 		}
@@ -589,9 +690,15 @@ func hasStagedChanges(ctx context.Context, skillsDir string) (bool, error) {
 	return false, fmt.Errorf("检查暂存变更失败: %w", err)
 }
 
-func gitCommitArgsWithFallbackAuthor(ctx context.Context, skillsDir, msg string) []string {
-	name, _ := runGit(ctx, skillsDir, "config", "user.name")
-	email, _ := runGit(ctx, skillsDir, "config", "user.email")
+func gitCommitArgsWithFallbackAuthor(ctx context.Context, skillsDir, msg string) ([]string, error) {
+	name, err := runGit(ctx, skillsDir, "config", "--get", "user.name")
+	if err != nil && !gitExitCode(err, 1) {
+		return nil, err
+	}
+	email, err := runGit(ctx, skillsDir, "config", "--get", "user.email")
+	if err != nil && !gitExitCode(err, 1) {
+		return nil, err
+	}
 	args := make([]string, 0, 7)
 	if strings.TrimSpace(name) == "" {
 		args = append(args, "-c", "user.name=api-proxy")
@@ -600,13 +707,16 @@ func gitCommitArgsWithFallbackAuthor(ctx context.Context, skillsDir, msg string)
 		args = append(args, "-c", "user.email=api-proxy@local")
 	}
 	args = append(args, "commit", "-m", msg)
-	return args
+	return args, nil
 }
 
 func currentGitBranch(ctx context.Context, skillsDir string) (string, error) {
-	branch, err := runGit(ctx, skillsDir, "symbolic-ref", "--short", "HEAD")
+	branch, err := runGit(ctx, skillsDir, "symbolic-ref", "--quiet", "--short", "HEAD")
 	if err == nil && strings.TrimSpace(branch) != "" {
 		return strings.TrimSpace(branch), nil
+	}
+	if err != nil && !gitExitCode(err, 1) {
+		return "", err
 	}
 	branch, err = runGit(ctx, skillsDir, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {

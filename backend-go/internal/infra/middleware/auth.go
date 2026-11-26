@@ -77,7 +77,7 @@ func AdminAuthMiddleware(envCfg *config.EnvConfig) gin.HandlerFunc {
 				reason = "密钥缺失"
 			}
 			log.Printf("[Auth-Failed] IP: %s | Path: %s | Time: %s | Reason: %s",
-				clientIP, c.Request.URL.Path, timestamp, reason)
+				clientIP, requestRoute(c), timestamp, reason)
 
 			c.JSON(401, gin.H{
 				"error":   "Unauthorized",
@@ -90,7 +90,7 @@ func AdminAuthMiddleware(envCfg *config.EnvConfig) gin.HandlerFunc {
 		// 认证成功 - 记录日志(可选，根据日志级别)
 		// 如果启用了 QuietPollingLogs，则静默轮询端点日志
 		if envCfg.ShouldLog("info") && !(envCfg.QuietPollingLogs && isPollingEndpoint(c.Request.URL.Path)) {
-			log.Printf("[Auth-Success] IP: %s | Path: %s | Time: %s", clientIP, c.Request.URL.Path, timestamp)
+			log.Printf("[Auth-Success] IP: %s | Path: %s | Time: %s", clientIP, requestRoute(c), timestamp)
 		}
 
 		c.Next()

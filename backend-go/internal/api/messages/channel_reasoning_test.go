@@ -66,12 +66,13 @@ func TestMessagesChannelReasoningOffSendsDisableAndForwardsUpstreamThinking(t *t
 			manager, err := config.NewConfigManager(filepath.Join(t.TempDir(), "config.json"))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, manager.Close()) })
-			require.NoError(t, manager.AddUpstream(config.UpstreamConfig{
+			_, err = manager.AddChannel("messages", config.UpstreamConfig{
 				Name: "reasoning-test", ServiceType: tc.protocol, BaseURL: upstream.URL,
 				APIKeys: []string{"fixture"}, DefaultModel: "mapped-model",
-			}))
+			})
+			require.NoError(t, err)
 			off := "none"
-			_, err = manager.UpdateUpstream(0, config.UpstreamUpdate{ReasoningEffort: &off})
+			_, err = manager.UpdateChannel("messages", 0, config.UpstreamUpdate{ReasoningEffort: &off})
 			require.NoError(t, err)
 			channels := scheduler.NewChannelScheduler(manager, map[scheduler.ChannelKind]*metrics.MetricsManager{scheduler.ChannelKindMessages: metrics.NewMetricsManager()}, session.NewTraceAffinityManager(), urlhealth.NewURLManager(30*time.Second, 3))
 			t.Cleanup(channels.Stop)

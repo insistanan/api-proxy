@@ -2,6 +2,7 @@
 import type { SemanticSafetyConfig } from '@/types/datasets'
 
 export interface AppSettings {
+  configReload?: { revision: string; lastAttempt: string; lastSuccess: string; error?: string }
   network: {
     upstreamProxyUrl: string
     upstreamProxyEnabled: boolean
@@ -24,6 +25,7 @@ export interface ExtensionsSettings {
 export interface ExtensionsGitStatus {
   migration?: { source: string; target: string; stage: string; recordPath: string }
   exportFiles?: string[]
+  exportExcluded?: { path: string; reason: string }[]
   exportRevision?: string
   exportError?: string
   gitAvailable: boolean

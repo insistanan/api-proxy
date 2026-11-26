@@ -14,7 +14,7 @@ func TestFreeChannelsSharedConfigPersistsAndKeepsIndexes(t *testing.T) {
 	cm, err := NewConfigManager(path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, cm.Close()) })
-	err = cm.AddUpstream(UpstreamConfig{Name: "普通渠道", BaseURL: "https://example.invalid", APIKeys: []string{"test"}})
+	_, err = cm.AddChannel("messages", UpstreamConfig{Name: "普通渠道", BaseURL: "https://example.invalid", APIKeys: []string{"test"}})
 	require.NoError(t, err)
 	before := cm.GetConfig().Upstream[0].ID
 	require.NoError(t, cm.EnsureFreeChannels())
@@ -67,7 +67,7 @@ func TestFreeRequestsAndMutationsStayIsolated(t *testing.T) {
 	cm, err := NewConfigManager(filepath.Join(t.TempDir(), "config.json"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, cm.Close()) })
-	err = cm.AddUpstream(UpstreamConfig{Name: "普通渠道", BaseURL: "https://example.invalid", APIKeys: []string{"test"}})
+	_, err = cm.AddChannel("messages", UpstreamConfig{Name: "普通渠道", BaseURL: "https://example.invalid", APIKeys: []string{"test"}})
 	require.NoError(t, err)
 	require.NoError(t, cm.EnsureFreeChannels())
 	ordinary, builtin := 0, 1
@@ -95,8 +95,8 @@ func TestFreeRequestsAndMutationsStayIsolated(t *testing.T) {
 	require.Equal(t, DefaultChannelPoolID, route[0].ID)
 
 	require.Error(t, cm.DuplicateChannel("messages", builtin))
-	require.Error(t, cm.SetChannelStatus(builtin, ChannelStatusDisabled))
-	require.Error(t, cm.AddAPIKey(builtin, "not-allowed"))
+	require.Error(t, cm.SetChannelStatusFor("messages", builtin, ChannelStatusDisabled))
+	require.Error(t, cm.AddChannelKey("messages", builtin, "not-allowed"))
 	require.Error(t, cm.DeleteChannelPool("messages", FreeChannelPoolID))
 	require.Error(t, cm.SaveChannelPoolLayout("messages", []ChannelPoolLayout{
 		{PoolID: DefaultChannelPoolID, ChannelIDs: []string{"builtin-kilo-messages"}},

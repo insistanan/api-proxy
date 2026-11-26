@@ -91,7 +91,7 @@ func normalizeInput(text string) (string, bool) {
 func opaqueBlocks(v any) bool {
 	switch m := v.(type) {
 	case map[string]any:
-		if typ, _ := m["type"].(string); typ == "thinking" || typ == "redacted_thinking" || typ == "compaction" {
+		if typ, _ := m["type"].(string); typ == "thinking" || typ == "redacted_thinking" || typ == "compaction" || typ == "compaction_summary" || typ == "compaction_trigger" {
 			return true
 		}
 		for _, key := range []string{"encrypted_content", "signature", "thoughtSignature", "thought_signature"} {

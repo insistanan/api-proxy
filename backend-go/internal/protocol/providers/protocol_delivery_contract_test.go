@@ -100,7 +100,7 @@ func TestGeminiShadowUsesConversationCredentialAndMappedModel(t *testing.T) {
 	owner := &GeminiProvider{}
 	_, err := owner.BuildRequest(input, upstream, "key-a")
 	require.NoError(t, err)
-	defaultGeminiShadowStore.Record(owner.shadowProviderID, owner.shadowSessionID, GeminiShadowTurn{AssistantContent: map[string]interface{}{"parts": []interface{}{map[string]interface{}{"text": "answer", "thoughtSignature": "signed"}}}})
+	require.NoError(t, defaultGeminiShadowStore.Record(input.Ctx, owner.shadowProviderID, owner.shadowSessionID, GeminiShadowTurn{AssistantContent: map[string]interface{}{"parts": []interface{}{map[string]interface{}{"text": "answer", "thoughtSignature": "signed"}}}}))
 	for _, tc := range []struct {
 		name, key, model, conversation string
 		strip, signed                  bool

@@ -204,7 +204,7 @@ func TestGateNetworkErrorIsRetryableAndMasksActualKey(t *testing.T) {
 
 func mustAddMessagesChannel(t *testing.T, cfgManager *config.ConfigManager, name, id string, active bool, keys []string) {
 	t.Helper()
-	if err := cfgManager.AddUpstream(config.UpstreamConfig{
+	if _, err := cfgManager.AddChannel("messages", config.UpstreamConfig{
 		ID:           id,
 		Name:         name,
 		BaseURL:      "https://" + name + ".example.com",
@@ -279,7 +279,7 @@ func TestPickChannelSkipsUnusableChannels(t *testing.T) {
 	})
 	t.Run("解析不出模型的渠道在选渠阶段被排除", func(t *testing.T) {
 		cfgManager, sch := newGateTestEnv(t)
-		if err := cfgManager.AddUpstream(config.UpstreamConfig{
+		if _, err := cfgManager.AddChannel("messages", config.UpstreamConfig{
 			ID: "messages-1", Name: "no-default-model", BaseURL: "https://no-model.example.com",
 			APIKeys: []string{"sk"}, ServiceType: "claude", Priority: 1,
 		}); err != nil {
@@ -304,7 +304,7 @@ func TestPickChannelSkipsUnusableChannels(t *testing.T) {
 	})
 	t.Run("仅配具体模型映射的渠道可解析模型并参与选渠", func(t *testing.T) {
 		cfgManager, sch := newGateTestEnv(t)
-		if err := cfgManager.AddUpstream(config.UpstreamConfig{
+		if _, err := cfgManager.AddChannel("messages", config.UpstreamConfig{
 			ID: "messages-map", Name: "mapping-only", BaseURL: "https://map.example.com",
 			APIKeys: []string{"sk"}, ServiceType: "claude", Priority: 1,
 			ModelMapping: map[string][]string{"claude-sonnet-4-5": {"upstream-sonnet"}},
@@ -355,7 +355,7 @@ func TestPickChannelGroupRouting(t *testing.T) {
 		t.Fatalf("创建分组失败: %v", err)
 	}
 	// 分组内渠道与兜底分组渠道各一，分组内渠道优先级更靠后也必须被模型路由选中。
-	if err := cfgManager.AddUpstream(config.UpstreamConfig{
+	if _, err := cfgManager.AddChannel("messages", config.UpstreamConfig{
 		ID: "messages-glm", Name: "glm-channel", BaseURL: "https://glm.example.com",
 		APIKeys: []string{"sk-glm"}, ServiceType: "claude", PoolID: pool.ID, Priority: 9,
 	}); err != nil {
@@ -452,7 +452,7 @@ func TestCallFailoverAcrossChannels(t *testing.T) {
 
 	cfgManager, sch := newGateTestEnv(t)
 	// messages 首选渠道始终 500；chat 渠道正常。
-	if err := cfgManager.AddUpstream(config.UpstreamConfig{
+	if _, err := cfgManager.AddChannel("messages", config.UpstreamConfig{
 		ID: "messages-1", Name: "broken", BaseURL: broken.URL,
 		APIKeys: []string{"sk-broken"}, ServiceType: "claude", DefaultModel: "m1",
 	}); err != nil {
@@ -513,7 +513,7 @@ func TestCallClaudeUpstream(t *testing.T) {
 
 	cfgManager, sch := newGateTestEnv(t)
 	requestLogStore := metrics.NewRequestLogStore(logStore)
-	if err := cfgManager.AddUpstream(config.UpstreamConfig{
+	if _, err := cfgManager.AddChannel("messages", config.UpstreamConfig{
 		ID:           "messages-1",
 		Name:         "claude-primary",
 		BaseURL:      upstream.URL,
@@ -656,7 +656,7 @@ func TestCallTimeout(t *testing.T) {
 	t.Cleanup(upstream.Close)
 
 	cfgManager, sch := newGateTestEnv(t)
-	if err := cfgManager.AddUpstream(config.UpstreamConfig{
+	if _, err := cfgManager.AddChannel("messages", config.UpstreamConfig{
 		ID: "messages-1", Name: "slow", BaseURL: upstream.URL,
 		APIKeys: []string{"sk-test"}, ServiceType: "claude", DefaultModel: "test-model",
 	}); err != nil {
@@ -677,7 +677,7 @@ func TestPickChannelAutoScansNamedPools(t *testing.T) {
 		t.Fatalf("创建分组失败: %v", err)
 	}
 	// messages 渠道全部挂在命名分组（兜底分组为空），且配置了默认模型。
-	if err := cfgManager.AddUpstream(config.UpstreamConfig{
+	if _, err := cfgManager.AddChannel("messages", config.UpstreamConfig{
 		ID: "messages-named", Name: "named-channel", BaseURL: "https://named.example.com",
 		APIKeys: []string{"sk-named"}, ServiceType: "claude", PoolID: pool.ID, DefaultModel: "named-model",
 	}); err != nil {

@@ -130,6 +130,8 @@
         <summary>推送文件清单（{{ gitStatus.exportFiles?.length || 0 }} 项）</summary>
         <p>仅导出 Skill 资源及启用清单，MCP 配置、本机状态和翻译备份保留在本地。</p>
         <ul><li v-for="path in gitStatus.exportFiles" :key="path">{{ path }}</li></ul>
+        <p v-if="gitStatus.exportExcluded?.length" class="mt-2">以下文件保留在本机：</p>
+        <ul><li v-for="item in gitStatus.exportExcluded" :key="item.path">{{ item.path }}：{{ item.reason }}</li></ul>
       </details>
 
       <div class="flex flex-wrap items-center gap-2 mt-4">

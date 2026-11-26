@@ -38,6 +38,9 @@ type SessionManager struct {
 	// 资源限制
 	maxSessions       int // 全局最大 session 数，0 表示不限制
 	maxLoadedSessions int // 内存缓存上限；持久化历史通过 response ID 按需恢复
+	maxLoadedBytes    int
+	loadedBytes       int
+	sessionBytes      map[string]int
 	store             *sqliteStore
 	stopCh            chan struct{}
 	doneCh            chan struct{}
@@ -75,6 +78,8 @@ func newSessionManager(maxAge time.Duration, maxMessages int, maxTokens int, sto
 		maxTokens:         maxTokens,
 		maxSessions:       0, // 默认不限制，由调用方按需设置
 		maxLoadedSessions: 128,
+		maxLoadedBytes:    64 << 20,
+		sessionBytes:      make(map[string]int),
 		store:             store,
 		stopCh:            make(chan struct{}),
 		doneCh:            make(chan struct{}),
@@ -122,6 +127,7 @@ func (sm *SessionManager) snapshot(ctx context.Context, previous, conversationID
 		if err == nil && pin {
 			sm.active[result.ID]++
 		}
+		sm.pruneCacheLocked("")
 		return err
 	})
 	if err != nil {
@@ -228,20 +234,16 @@ func (sm *SessionManager) activeIDsLocked() []string {
 }
 
 func (sm *SessionManager) cacheLoadedSessionLocked(current *Session) {
-	if sm.store != nil && sm.maxLoadedSessions > 0 && len(sm.sessions) >= sm.maxLoadedSessions && sm.sessions[current.ID] == nil {
-		var oldest *Session
-		for id, candidate := range sm.sessions {
-			if sm.active[id] == 0 && (oldest == nil || candidate.LastAccessAt.Before(oldest.LastAccessAt)) {
-				oldest = candidate
-			}
-		}
-		if oldest != nil {
-			sm.removeCachedSessionLocked(oldest.ID)
-		}
-	}
+	sm.loadedBytes -= sm.sessionBytes[current.ID]
+	sm.sessionBytes[current.ID] = sessionCacheBytes(current)
+	sm.loadedBytes += sm.sessionBytes[current.ID]
 	sm.sessions[current.ID] = current
+	// snapshot 尚未取得租约，先保留当前项；取得租约或请求结束后再次检查。
+	sm.pruneCacheLocked(current.ID)
 }
 func (sm *SessionManager) removeCachedSessionLocked(id string) {
+	sm.loadedBytes -= sm.sessionBytes[id]
+	delete(sm.sessionBytes, id)
 	delete(sm.sessions, id)
 	for responseID, ref := range sm.responseMapping {
 		if ref.SessionID == id {
@@ -259,13 +261,16 @@ func cloneSession(current *Session) (*Session, error) {
 	return &copy, err
 }
 func cloneResponsesItems(items []types.ResponsesItem) ([]types.ResponsesItem, error) {
-	data, err := json.Marshal(items)
-	if err != nil {
-		return nil, fmt.Errorf("复制会话历史失败: %w", err)
+	if items == nil {
+		return nil, nil
 	}
-	var copied []types.ResponsesItem
-	if err = json.Unmarshal(data, &copied); err != nil {
-		return nil, fmt.Errorf("复制会话历史失败: %w", err)
+	copied := make([]types.ResponsesItem, len(items))
+	for i, item := range items {
+		var err error
+		copied[i], err = cloneHistoryItem(item)
+		if err != nil {
+			return nil, fmt.Errorf("复制会话历史第 %d 项失败: %w", i, err)
+		}
 	}
 	return copied, nil
 }
@@ -301,8 +306,8 @@ func (sm *SessionManager) commitSnapshot(ctx context.Context, current *Session, 
 		return err
 	}
 	// 发布的历史必须同时脱离新输入和请求开始快照，不能保留调用方的嵌套引用。
-	next.Messages = nil
-	if err := json.Unmarshal(messages, &next.Messages); err != nil {
+	next.Messages, err = cloneResponsesItems(next.Messages)
+	if err != nil {
 		return fmt.Errorf("复制已提交会话历史失败: %w", err)
 	}
 	return sm.withConversation(ctx, next.ConversationID, func() error {
@@ -348,6 +353,7 @@ func (sm *SessionManager) commitSnapshot(ctx context.Context, current *Session, 
 		if responseID != "" {
 			sm.responseMapping[responseID] = responseReference{SessionID: next.ID, Owner: owner, Boundary: boundaryOf(&next)}
 		}
+		sm.pruneCacheLocked("")
 		return nil
 	})
 }

@@ -46,9 +46,22 @@ func RedactionScope(identity conversation.Identity, accessKey string) string {
 // ResolveConversationIdentity 只把语义明确的 conversation/thread/composer 标识
 // 作为强身份。缓存键、普通用户 ID 和 Cursor session 仅作为历史匹配范围。
 func ResolveConversationIdentity(c *gin.Context, bodyBytes []byte) conversation.Identity {
-	identity := conversation.Identity{ClientFamily: detectConversationClient(c, bodyBytes)}
 	var root map[string]interface{}
 	_ = json.Unmarshal(bodyBytes, &root)
+	return resolveConversationIdentity(c, bodyBytes, root)
+}
+
+// 会话身份、历史指纹和图片指纹共享一次解码；只用于当前观测阶段，不缓存可变请求正文。
+func parseConversationObservation(c *gin.Context, kind string, body []byte) (conversation.Identity, conversation.Transcript, []string, error) {
+	var root map[string]any
+	if err := json.Unmarshal(body, &root); err != nil {
+		return conversation.Identity{}, conversation.Transcript{}, nil, err
+	}
+	return resolveConversationIdentity(c, body, root), buildConversationTranscript(kind, root), visionmedia.ExtractImageFingerprintsFromValue(root), nil
+}
+
+func resolveConversationIdentity(c *gin.Context, bodyBytes []byte, root map[string]any) conversation.Identity {
+	identity := conversation.Identity{ClientFamily: detectConversationClient(c, bodyBytes)}
 	metadata, _ := root["metadata"].(map[string]interface{})
 
 	if c != nil {
@@ -183,6 +196,10 @@ func BuildConversationTranscript(apiKind string, bodyBytes []byte) conversation.
 	if json.Unmarshal(bodyBytes, &root) != nil {
 		return conversation.Transcript{}
 	}
+	return buildConversationTranscript(apiKind, root)
+}
+
+func buildConversationTranscript(apiKind string, root map[string]any) conversation.Transcript {
 	items := conversationItems(strings.ToLower(strings.TrimSpace(apiKind)), root)
 	prefixes := make([]string, 0, len(items))
 	state := []byte("conversation-transcript-v1")

@@ -133,13 +133,17 @@ func validateIntentRouting(candidate *Config) error {
 		if err := ValidateIntentRouting(value, *cs.pools); err != nil {
 			return fmt.Errorf("%s 意图匹配配置无效: %w", kind, err)
 		}
-		if value.EmbeddingChannel != "" && !slices.ContainsFunc(candidate.EmbeddingsUpstream, func(up UpstreamConfig) bool { return up.ID == value.EmbeddingChannel }) {
+		if value.EmbeddingChannel != "" && !slices.ContainsFunc(candidate.EmbeddingsUpstream, func(up UpstreamConfig) bool {
+			return up.ID == value.EmbeddingChannel && GetChannelStatus(&up) != ChannelStatusDeleted
+		}) {
 			return fmt.Errorf("%s 意图配置引用的向量渠道不存在，删除渠道前请解除引用", kind)
 		}
 		if value.ClassifierChannel != "" {
 			found := false
 			for _, group := range [][]UpstreamConfig{candidate.Upstream, candidate.ResponsesUpstream, candidate.ChatUpstream, candidate.GeminiUpstream, candidate.DecisionsUpstream} {
-				if slices.ContainsFunc(group, func(up UpstreamConfig) bool { return up.ID == value.ClassifierChannel }) {
+				if slices.ContainsFunc(group, func(up UpstreamConfig) bool {
+					return up.ID == value.ClassifierChannel && GetChannelStatus(&up) != ChannelStatusDeleted
+				}) {
 					found = true
 				}
 			}

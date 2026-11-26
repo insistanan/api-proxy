@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/protocol/tokenusage"
 	"insistanan/api-proxy/internal/protocol/types"
 	"insistanan/api-proxy/internal/storage/logger"
 )
@@ -49,8 +50,9 @@ func (ctx *Context) upstreamUsageSnapshot() *types.Usage {
 		ctx.UpstreamUsage.CacheReadInputTokens > 0 ||
 		ctx.UpstreamUsage.CacheCreation5mInputTokens > 0 ||
 		ctx.UpstreamUsage.CacheCreation1hInputTokens > 0
-	if hasUsageData {
+	if hasUsageData || len(ctx.UpstreamUsage.Iterations) > 0 {
 		usage = &types.Usage{
+			Iterations:                 ctx.UpstreamUsage.Iterations,
 			InputTokens:                ctx.UpstreamUsage.InputTokens,
 			OutputTokens:               ctx.UpstreamUsage.OutputTokens,
 			CacheCreationInputTokens:   ctx.UpstreamUsage.CacheCreationInputTokens,
@@ -60,7 +62,7 @@ func (ctx *Context) upstreamUsageSnapshot() *types.Usage {
 			CacheTTL:                   ctx.UpstreamUsage.CacheTTL,
 		}
 	}
-	return usage
+	return tokenusage.BillingUsage(usage)
 }
 
 // logPartialResponse 记录部分响应日志
@@ -93,7 +95,7 @@ func logSynthesizedContent(c *gin.Context, ctx *Context, debug bool) {
 				log.Printf("[Messages-Stream] requestId=%s attemptId=%s 合成正文=%d 字节；正文见结构化日志", logger.RequestIDFromContext(requestCtx), logger.AttemptIDFromContext(requestCtx), len(strings.TrimSpace(trimmed)))
 			}
 			if c != nil {
-				logger.RecordStreamSynth(c.Request.Context(), "Messages", strings.TrimSpace(trimmed))
+				logger.RecordStreamSynth(c.Request.Context(), "Messages", strings.TrimSpace(trimmed), ctx.Synthesizer.Truncated())
 			}
 			return
 		}
@@ -104,7 +106,7 @@ func logSynthesizedContent(c *gin.Context, ctx *Context, debug bool) {
 			log.Printf("[Messages-Stream] requestId=%s attemptId=%s 原始流=%d 字节；内容见结构化日志", logger.RequestIDFromContext(requestCtx), logger.AttemptIDFromContext(requestCtx), len(raw))
 		}
 		if c != nil {
-			logger.RecordStreamSynth(c.Request.Context(), "Messages", raw)
+			logger.RecordStreamSynth(c.Request.Context(), "Messages", raw, ctx.LogBuffer.Truncated)
 		}
 	}
 }

@@ -1,10 +1,64 @@
 package modelcatalog
 
 import (
+	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+	"insistanan/api-proxy/internal/infra/config"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
 )
 
+func TestDiscoveryDoesNotRetryAuthenticationOrMalformedPages(t *testing.T) {
+	cm := newTestConfigManager(t, config.Config{})
+	for _, status := range []int{http.StatusUnauthorized, http.StatusTooManyRequests, http.StatusOK} {
+		calls := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls++
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(`invalid-json`))
+		}))
+		upstream := &config.UpstreamConfig{ServiceType: "openai", BaseURL: server.URL, ProxyMode: "direct"}
+		_, err := DiscoverUpstreamModels(context.Background(), cm, upstream, "fixture-key")
+		server.Close()
+		require.Error(t, err)
+		require.Equal(t, 1, calls, "认证、限流及坏响应不能重新猜协议")
+	}
+}
+
+func TestGeminiDiscoveryRejectsRepeatedCursorWithoutLeakingKey(t *testing.T) {
+	cm := newTestConfigManager(t, config.Config{})
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		require.Empty(t, r.URL.Query().Get("key"))
+		require.Equal(t, "fixture-key", r.Header.Get("x-goog-api-key"))
+		_, _ = w.Write([]byte(`{"models":[{"name":"models/gemini-test"}],"nextPageToken":"repeat"}`))
+	}))
+	defer server.Close()
+	upstream := &config.UpstreamConfig{ServiceType: "gemini", BaseURL: server.URL, ProxyMode: "direct"}
+	_, err := DiscoverUpstreamModels(context.Background(), cm, upstream, "fixture-key")
+	require.ErrorContains(t, err, "游标重复")
+	require.Equal(t, 2, calls)
+
+	cause := errors.New("TLS fixture-key")
+	networkErr := &url.Error{Op: "Get", URL: "https://user:password@example.test/models?key=fixture-key", Err: cause}
+	err = upstreamreq.RedactError(networkErr, []string{networkErr.URL}, "fixture-key")
+	require.NotContains(t, err.Error(), "fixture-key")
+	require.NotContains(t, err.Error(), "password")
+	require.ErrorIs(t, err, cause)
+	nested := &url.Error{Op: "proxy", URL: "https://proxy:other-password@proxy.test?token=secret", Err: errors.New("TLS other-password")}
+	networkErr.Err = nested
+	err = upstreamreq.RedactError(networkErr, []string{networkErr.URL}, "fixture-key")
+	require.NotContains(t, err.Error(), "other-password")
+	require.NotContains(t, err.Error(), "token=secret")
+	require.ErrorIs(t, err, nested)
+}
 func TestParseModelsFlexibleFormats(t *testing.T) {
 	t.Parallel()
 
@@ -96,10 +150,6 @@ func TestBuildModelsURLs(t *testing.T) {
 		{name: "versioned hash skip", fn: buildVersionedModelsURL, in: "https://gateway.example.com/custom#", want: "https://gateway.example.com/custom/models"},
 		{name: "strip chat completions", fn: buildVersionedModelsURL, in: "https://api.openai.com/v1/chat/completions", want: "https://api.openai.com/v1/models"},
 		{name: "root models", fn: buildRootModelsURL, in: "https://example.com/v1", want: "https://example.com/v1/models"},
-		{name: "openai path", fn: buildOpenAIPathModelsURL, in: "https://my.azure.example", want: "https://my.azure.example/openai/v1/models"},
-		{name: "api path", fn: buildAPIVersionedModelsURL, in: "https://openrouter.ai", want: "https://openrouter.ai/api/v1/models"},
-		{name: "compat mode", fn: buildCompatibleModeModelsURL, in: "https://dashscope.aliyuncs.com", want: "https://dashscope.aliyuncs.com/compatible-mode/v1/models"},
-		{name: "gemini openai", fn: buildGeminiOpenAIModelsURL, in: "https://generativelanguage.googleapis.com/v1beta", want: "https://generativelanguage.googleapis.com/v1beta/openai/models"},
 		{name: "ollama tags", fn: buildOllamaTagsURL, in: "http://127.0.0.1:11434", want: "http://127.0.0.1:11434/api/tags"},
 	}
 
@@ -123,11 +173,11 @@ func TestBuildModelsURLs(t *testing.T) {
 	}
 
 	geminiURL := buildGeminiModelsURL("https://generativelanguage.googleapis.com/v1beta", "secret-key")
-	if !strings.HasPrefix(geminiURL, "https://generativelanguage.googleapis.com/v1beta/models?") {
+	if geminiURL != "https://generativelanguage.googleapis.com/v1beta/models" {
 		t.Fatalf("unexpected gemini url: %s", geminiURL)
 	}
-	if !strings.Contains(geminiURL, "key=secret-key") {
-		t.Fatalf("gemini url missing key: %s", geminiURL)
+	if strings.Contains(geminiURL, "secret-key") {
+		t.Fatalf("Gemini 目录 URL 泄露了密钥: %s", geminiURL)
 	}
 }
 

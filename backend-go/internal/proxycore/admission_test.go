@@ -22,7 +22,11 @@ func runConfiguredAttempt(t *testing.T, attempt UpstreamAttempt) UpstreamAttempt
 	t.Helper()
 	if attempt.ConfigManager != nil && attempt.Upstream != nil && len(attempt.Upstream.APIKeys) > 0 &&
 		attempt.Context != nil && attempt.Context.Request != nil && attempt.Context.Request.Context().Err() == nil {
-		require.NoError(t, attempt.ConfigManager.AddUpstream(*attempt.Upstream))
+		added, err := attempt.ConfigManager.AddChannel("messages", *attempt.Upstream)
+		require.NoError(t, err)
+		channels, _, err := attempt.ConfigManager.GetChannelConfig("messages")
+		require.NoError(t, err)
+		*attempt.Upstream = channels[added.Index]
 	}
 	return attempt.TryWithModelMappingFailover()
 }
@@ -112,5 +116,9 @@ func TestMissingResponseHistoryIsClientErrorAndDoesNotRotateKeys(t *testing.T) {
 
 func registerHealthUpstream(t *testing.T, cfgManager *config.ConfigManager, upstream *config.UpstreamConfig) {
 	t.Helper()
-	require.NoError(t, cfgManager.AddUpstream(*upstream))
+	added, err := cfgManager.AddChannel("messages", *upstream)
+	require.NoError(t, err)
+	channels, _, err := cfgManager.GetChannelConfig("messages")
+	require.NoError(t, err)
+	*upstream = channels[added.Index]
 }

@@ -1,16 +1,19 @@
 package intent
 
 import (
+	"errors"
 	"math"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	routingintent "insistanan/api-proxy/internal/dialogue/routing/intent"
 	"insistanan/api-proxy/internal/dialogue/routing/semantic"
 	"insistanan/api-proxy/internal/infra/config"
 )
 
 // RegisterDatasetAPI 仅挂在已鉴权的管理路由组；不会自动调用远程模型或导入请求日志。
-func RegisterDatasetAPI(api *gin.RouterGroup, service *semantic.Service) {
+func RegisterDatasetAPI(api *gin.RouterGroup, routing *routingintent.Service) {
+	service := routing.Datasets
 	group := api.Group("/datasets")
 	group.Use(func(c *gin.Context) {
 		limit := int64(64 << 10)
@@ -31,7 +34,7 @@ func RegisterDatasetAPI(api *gin.RouterGroup, service *semantic.Service) {
 	group.GET("/:id", func(c *gin.Context) {
 		value, err := service.Get(c.Param("id"))
 		if err != nil {
-			c.JSON(404, gin.H{"error": err.Error()})
+			respondDatasetError(c, err)
 			return
 		}
 		c.JSON(200, value)
@@ -49,7 +52,7 @@ func RegisterDatasetAPI(api *gin.RouterGroup, service *semantic.Service) {
 		}
 		saved, err := service.Save(c.Request.Context(), value)
 		if err != nil {
-			c.JSON(400, gin.H{"error": err.Error()})
+			respondDatasetError(c, err)
 			return
 		}
 		c.JSON(200, saved)
@@ -64,8 +67,8 @@ func RegisterDatasetAPI(api *gin.RouterGroup, service *semantic.Service) {
 			c.JSON(400, gin.H{"error": "删除参数无效"})
 			return
 		}
-		if err := service.Delete(c.Request.Context(), c.Param("id"), req.Revision); err != nil {
-			c.JSON(400, gin.H{"error": err.Error()})
+		if err := routing.DeleteDataset(c.Request.Context(), c.Param("id"), req.Revision); err != nil {
+			respondDatasetError(c, err)
 			return
 		}
 		c.JSON(200, gin.H{"ok": true})
@@ -77,11 +80,11 @@ func RegisterDatasetAPI(api *gin.RouterGroup, service *semantic.Service) {
 			return
 		}
 		if err := config.ValidateSemanticEmbedding(req.Profile); err != nil {
-			c.JSON(400, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		if err := service.DeleteIndex(c.Request.Context(), c.Param("id"), req); err != nil {
-			c.JSON(400, gin.H{"error": err.Error()})
+		if err := routing.DeleteDatasetIndex(c.Request.Context(), c.Param("id"), req); err != nil {
+			respondDatasetError(c, err)
 			return
 		}
 		c.JSON(200, gin.H{"ok": true})
@@ -100,7 +103,7 @@ func RegisterDatasetAPI(api *gin.RouterGroup, service *semantic.Service) {
 			if respondVectorRequired(c, err) {
 				return
 			}
-			c.JSON(400, gin.H{"error": err.Error()})
+			respondDatasetError(c, err)
 			return
 		}
 		c.JSON(200, result)
@@ -116,12 +119,12 @@ func RegisterDatasetAPI(api *gin.RouterGroup, service *semantic.Service) {
 		}
 		d, err := service.Get(c.Param("id"))
 		if err != nil {
-			c.JSON(404, gin.H{"error": err.Error()})
+			respondDatasetError(c, err)
 			return
 		}
 		result, err := service.Search(c.Request.Context(), []string{d.ID}, d.Kind, req.Profile, req.Text, "dataset-preview")
 		if err != nil {
-			c.JSON(400, gin.H{"error": err.Error()})
+			respondDatasetError(c, err)
 			return
 		}
 		c.JSON(200, result)
@@ -144,9 +147,25 @@ func RegisterDatasetAPI(api *gin.RouterGroup, service *semantic.Service) {
 		}
 		result, err := service.Evaluate(c.Request.Context(), c.Param("id"), req.Profile, req.Threshold, req.Margin)
 		if err != nil {
-			c.JSON(400, gin.H{"error": err.Error()})
+			respondDatasetError(c, err)
 			return
 		}
 		c.JSON(200, result)
 	})
+}
+
+func respondDatasetError(c *gin.Context, err error) {
+	if respondVectorRequired(c, err) {
+		return
+	}
+	status := http.StatusInternalServerError
+	switch {
+	case errors.Is(err, semantic.ErrNotFound):
+		status = http.StatusNotFound
+	case errors.Is(err, semantic.ErrInvalidInput), config.IsConfigError(err):
+		status = http.StatusBadRequest
+	case errors.Is(err, semantic.ErrConflict):
+		status = http.StatusConflict
+	}
+	c.JSON(status, gin.H{"error": err.Error()})
 }

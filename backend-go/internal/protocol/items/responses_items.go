@@ -3,6 +3,7 @@ package respitems
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 
@@ -77,16 +78,43 @@ func ResponsesItemsPrefixOverlap(history, current []types.ResponsesItem) int {
 
 func isResponsesReasoningItem(item types.ResponsesItem) bool { return item.Type == "reasoning" }
 
+func IsResponsesCompactionType(typ string) bool {
+	typ = strings.ToLower(strings.TrimSpace(typ))
+	return typ == "compaction" || typ == "compaction_summary"
+}
+
 // ResponsesItemsContainCompaction 判断当前 input/output 是否包含 Responses
 // compaction 控制项。该 item 的 encrypted_content 通常是不透明的压缩边界，
 // 不能按普通消息追加到旧历史之后。
 func ResponsesItemsContainCompaction(items []types.ResponsesItem) bool {
 	for _, item := range items {
-		if strings.EqualFold(strings.TrimSpace(item.Type), "compaction") {
+		if IsResponsesCompactionType(item.Type) {
 			return true
 		}
 	}
 	return false
+}
+
+// ValidateResponsesCompactionOutput 只校验完整性，不解密或修改厂商的不透明材料。
+func ValidateResponsesCompactionOutput(items []types.ResponsesItem) error {
+	found := false
+	for _, item := range items {
+		if item.Type == "compaction_trigger" {
+			return fmt.Errorf("压缩输出包含请求控制项，保留原历史")
+		}
+		if !IsResponsesCompactionType(item.Type) {
+			continue
+		}
+		content, ok := item.EncryptedContent.(string)
+		if !ok || strings.TrimSpace(content) == "" {
+			return fmt.Errorf("压缩输出缺少有效 encrypted_content，保留原历史")
+		}
+		found = true
+	}
+	if !found {
+		return fmt.Errorf("压缩请求未返回压缩块，保留原历史")
+	}
+	return nil
 }
 
 // ResponsesItemsFromCompactionRoot 用于 /responses 服务端自动压缩的 output，
@@ -94,7 +122,7 @@ func ResponsesItemsContainCompaction(items []types.ResponsesItem) bool {
 // 完整窗口：该窗口的 compaction 前置消息也属于新的有效上下文。
 func ResponsesItemsFromCompactionRoot(items []types.ResponsesItem) []types.ResponsesItem {
 	for index := len(items) - 1; index >= 0; index-- {
-		if strings.EqualFold(strings.TrimSpace(items[index].Type), "compaction") {
+		if IsResponsesCompactionType(items[index].Type) {
 			return append([]types.ResponsesItem(nil), items[index:]...)
 		}
 	}
@@ -104,11 +132,21 @@ func ResponsesItemsFromCompactionRoot(items []types.ResponsesItem) []types.Respo
 // ResponsesTurnItems 区分客户端完整压缩窗口与本轮服务端自动压缩。
 // 客户端带 compaction 时整体保留 input；output 再次压缩时以最新根替换旧窗口。
 func ResponsesTurnItems(input, output []types.ResponsesItem) []types.ResponsesItem {
+	for _, item := range input {
+		if item.Type == "compaction_trigger" && ResponsesItemsContainCompaction(output) {
+			// V2 独立压缩交付整个新窗口，不截掉压缩块之前的有效条目。
+			return append([]types.ResponsesItem(nil), output...)
+		}
+	}
 	if ResponsesItemsContainCompaction(output) {
 		return ResponsesItemsFromCompactionRoot(output)
 	}
 	items := make([]types.ResponsesItem, 0, len(input)+len(output))
-	items = append(items, input...)
+	for _, item := range input {
+		if item.Type != "compaction_trigger" {
+			items = append(items, item)
+		}
+	}
 	return append(items, output...)
 }
 
@@ -126,7 +164,7 @@ func ResponsesItemsContainCompactionFromInput(input interface{}) bool {
 				continue
 			}
 			typ, _ := item["type"].(string)
-			if strings.EqualFold(strings.TrimSpace(typ), "compaction") {
+			if IsResponsesCompactionType(typ) {
 				return true
 			}
 		}
@@ -143,7 +181,7 @@ func ResponsesRawItemsContainCompaction(items []json.RawMessage) bool {
 			continue
 		}
 		typ, _ := item["type"].(string)
-		if strings.EqualFold(strings.TrimSpace(typ), "compaction") {
+		if IsResponsesCompactionType(typ) {
 			return true
 		}
 	}

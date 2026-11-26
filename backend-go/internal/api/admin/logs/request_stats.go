@@ -73,6 +73,10 @@ func parseStatsRange(c *gin.Context) (time.Time, time.Time, string, bool) {
 // GET /api/request-stats?duration=24h&type=responses&compare=true
 func GetRequestStats(store *logger.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		compare, ok := parseOptionalBool(c, "compare")
+		if !ok || !validateLogQuery(c, true) {
+			return
+		}
 		from, to, durationText, ok := parseStatsRange(c)
 		if !ok {
 			return
@@ -97,7 +101,7 @@ func GetRequestStats(store *logger.Store) gin.HandlerFunc {
 			Upstream: c.Query("upstream"), KeyMask: c.Query("keyMask"), DimensionSort: c.Query("dimensionSort"),
 		}
 		var previous *logger.RequestStatsFilter
-		if c.DefaultQuery("compare", "true") != "false" {
+		if compare == nil || *compare {
 			duration := to.Sub(from)
 			previousTo := from.Add(-time.Millisecond)
 			previousFrom := previousTo.Add(-duration).Add(time.Millisecond)

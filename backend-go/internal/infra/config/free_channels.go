@@ -29,7 +29,7 @@ type KiloFreeConfig struct {
 func (k *KiloFreeConfig) UnmarshalJSON(data []byte) error {
 	type plain KiloFreeConfig
 	decoded := plain{MaxBranchConcurrency: DefaultBranchConcurrency}
-	if err := json.Unmarshal(data, &decoded); err != nil {
+	if err := decodeStrictConfigJSON(data, &decoded); err != nil {
 		return err
 	}
 	if err := validateExplicitBranchConcurrency(data); err != nil {
@@ -214,9 +214,15 @@ func materializeFreeChannels(candidate *Config) error {
 	return nil
 }
 
-func rejectBuiltinChannel(upstreams []UpstreamConfig, index int) error {
-	if index >= 0 && index < len(upstreams) && upstreams[index].BuiltinProvider != "" {
-		return fmt.Errorf("内置免费渠道请通过免费分组管理，修改会同步到所有协议")
+func rejectBuiltinChannel(upstreams []UpstreamConfig, index int, expectedID ...string) error {
+	if index < 0 || index >= len(upstreams) || GetChannelStatus(&upstreams[index]) == ChannelStatusDeleted {
+		return ErrChannelNotFound
+	}
+	if len(expectedID) > 0 && (expectedID[0] == "" || upstreams[index].ID != expectedID[0]) {
+		return ErrChannelIdentityConflict
+	}
+	if upstreams[index].BuiltinProvider != "" {
+		return proxyConfigErrorf("内置免费渠道请通过免费分组管理，修改会同步到所有协议")
 	}
 	return nil
 }

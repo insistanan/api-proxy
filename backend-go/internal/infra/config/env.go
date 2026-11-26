@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -123,13 +124,24 @@ func LoadEnvConfig() (*EnvConfig, error) {
 		}
 	}
 	if value, exists := os.LookupEnv("PROXY_ACCESS_KEY"); exists {
-		if value == "" {
+		if strings.TrimSpace(value) == "" || strings.ContainsAny(value, "\r\n") {
 			return nil, fmt.Errorf("PROXY_ACCESS_KEY 不能为空")
 		}
 		current.ProxyAccessKey = value
 	}
+	if current.IsProduction() && current.ProxyAccessKey == "your-proxy-access-key" {
+		return nil, fmt.Errorf("生产模式必须显式设置 PROXY_ACCESS_KEY，不能使用公开示例值")
+	}
 	current.QuietPollingLogs = current.LogLevel != "debug"
 	return current, nil
+}
+
+// ListenAddress 将显式开发模式限制在本机；生产模式启动前已校验访问密钥。
+func (c *EnvConfig) ListenAddress() string {
+	if c.IsDevelopment() {
+		return fmt.Sprintf("127.0.0.1:%d", c.Port)
+	}
+	return fmt.Sprintf(":%d", c.Port)
 }
 
 // IsDevelopment 是否为开发环境

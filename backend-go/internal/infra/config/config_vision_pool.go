@@ -95,12 +95,15 @@ func (cfg *Config) locateVisionChannel(id string, pendingKind string, pendingUps
 
 // VisionLayerDependent 只包含确认删除所需的渠道身份，不暴露上游地址或密钥。
 type VisionLayerDependent struct {
-	Kind  string `json:"kind"`
-	Index int    `json:"index"`
-	Name  string `json:"name"`
+	Feature  string `json:"feature,omitempty"`
+	Blocking bool   `json:"blocking,omitempty"`
+	Kind     string `json:"kind"`
+	Index    int    `json:"index"`
+	Name     string `json:"name"`
 }
 
 type ChannelDeletionImpact struct {
+	ChannelID    string                 `json:"channelId,omitempty"`
 	Name         string                 `json:"name"`
 	ChannelCount int                    `json:"channelCount"`
 	Dependents   []VisionLayerDependent `json:"dependents"`
@@ -168,6 +171,7 @@ func (cm *ConfigManager) GetChannelDeletionImpact(kind string, channelIndex *int
 			return impact, err
 		}
 		impact.Name, impact.ChannelCount = channel.Name, 1
+		impact.ChannelID = channel.ID
 		if channel.ID != "" {
 			targetIDs[channel.ID] = struct{}{}
 		}
@@ -194,6 +198,7 @@ func (cm *ConfigManager) GetChannelDeletionImpact(kind string, channelIndex *int
 		}
 	}
 	impact.Dependents = cm.config.visionLayerDependents(targetIDs)
+	impact.Dependents = append(impact.Dependents, cm.config.blockingChannelDependents(targetIDs)...)
 	return impact, nil
 }
 

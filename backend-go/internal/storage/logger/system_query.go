@@ -414,6 +414,7 @@ func buildSystemLogSummary(requestID string, rows []trafficRowMeta, meta *reques
 		}
 	}
 	if started != nil {
+		summary.CompactionKind, summary.CompactionEvidence = started.CompactionKind, started.CompactionEvidence
 		summary.PromptPreview = started.PromptPreview
 		summary.ClientFamily = started.ClientFamily
 		summary.IdentitySource = started.IdentitySource
@@ -433,6 +434,7 @@ func buildSystemLogSummary(requestID string, rows []trafficRowMeta, meta *reques
 		}
 	}
 	if ended != nil {
+		summary.CompactionKind, summary.CompactionEvidence = ended.CompactionKind, ended.CompactionEvidence
 		summary.PromptPreview = ended.PromptPreview
 		summary.ClientFamily = ended.ClientFamily
 		summary.IdentitySource = ended.IdentitySource
@@ -618,16 +620,38 @@ func (s *Store) Purge(ctx context.Context, opts PurgeOptions) (PurgeResult, erro
 	if err := tx.Commit(); err != nil {
 		return result, fmt.Errorf("提交日志清理事务失败: %w", err)
 	}
+	result.Committed = true
 	s.statusMu.Lock()
 	s.maintenance.DeletedRows += result.DeletedAppLogs + result.DeletedTrafficLogs + result.DeletedRequestLogs
 	s.maintenance.LastCleanupAt = time.Now().UTC().Format(time.RFC3339Nano)
 	s.statusMu.Unlock()
-	// VACUUM 不能在事务内执行；DELETE 不收缩文件，磁盘空间不 VACUUM 不归还。
-	if _, err := s.db.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
-		return result, fmt.Errorf("日志库 checkpoint 失败: %w", err)
+	err = s.compactLocked(ctx)
+	if err != nil {
+		result.CompactionError = err.Error()
+	}
+	return result, err
+}
+
+// Compact 仅回收磁盘空间；重试压缩不会删除清理后新产生的日志。
+func (s *Store) Compact(ctx context.Context) error {
+	if s == nil || s.readOnly {
+		return fmt.Errorf("日志存储不可写，无法压缩")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.compactLocked(ctx)
+}
+
+func (s *Store) compactLocked(ctx context.Context) error {
+	var busy, logFrames, checkpointed int
+	if err := s.db.QueryRowContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`).Scan(&busy, &logFrames, &checkpointed); err != nil {
+		return fmt.Errorf("日志库 checkpoint 失败: %w", err)
+	}
+	if busy != 0 {
+		return fmt.Errorf("日志库仍被读取占用，checkpoint 未完成")
 	}
 	if _, err := s.db.ExecContext(ctx, `VACUUM`); err != nil {
-		return result, fmt.Errorf("日志库 VACUUM 失败: %w", err)
+		return fmt.Errorf("日志库 VACUUM 失败: %w", err)
 	}
-	return result, nil
+	return nil
 }

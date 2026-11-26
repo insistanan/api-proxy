@@ -28,7 +28,10 @@ func TestShareableExtensionPath(t *testing.T) {
 		"demo/.backups/20261126-120000.1/SKILL.md": false,
 		"demo/20261126-120000.1/metadata.json":     false,
 		"mcp.json":                                 false,
-		"demo/auth.json":                           false,
+		"demo/auth.json":                           true,
+		"demo/examples/credentials.json":           true,
+		"demo/.templates/example.json":             true,
+		"demo/.git/config":                         false,
 		".skill-metadata/demo.json":                false,
 	} {
 		t.Run(path, func(t *testing.T) {
@@ -300,7 +303,8 @@ func TestExtensionsGitLifecycleInitPushClonePull(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(childSkills, "demo-skill", "SKILL.md"), []byte("---\nname: demo-skill\ndescription: v2\n---\n\nv2\n"), 0600))
 	_, err = runGit(ctx, childSkills, "add", "-A")
 	require.NoError(t, err)
-	commitArgs := gitCommitArgsWithFallbackAuthor(ctx, childSkills, "update v2")
+	commitArgs, err := gitCommitArgsWithFallbackAuthor(ctx, childSkills, "update v2")
+	require.NoError(t, err)
 	_, err = runGit(ctx, childSkills, commitArgs...)
 	require.NoError(t, err)
 	_, err = runGit(ctx, childSkills, "push")

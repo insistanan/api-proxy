@@ -32,15 +32,15 @@ func (s *stubChannelConfig) UpdateChannel(kind string, index int, update config.
 	return s.update(kind, index, update)
 }
 
-func (s *stubChannelConfig) RemoveChannel(kind string, index int) (*config.UpstreamConfig, error) {
+func (s *stubChannelConfig) RemoveChannel(kind string, index int, expectedID ...string) (*config.UpstreamConfig, error) {
 	return s.remove(kind, index)
 }
 
-func (s *stubChannelConfig) SetChannelStatusFor(kind string, index int, status string) error {
+func (s *stubChannelConfig) SetChannelStatusFor(kind string, index int, status string, expectedID ...string) error {
 	return s.status(kind, index, status)
 }
 
-func (s *stubChannelConfig) SetChannelPromotionFor(kind string, index int, duration time.Duration, count int) error {
+func (s *stubChannelConfig) SetChannelPromotionFor(kind string, index int, duration time.Duration, count int, expectedID ...string) error {
 	return s.promote(kind, index, duration, count)
 }
 
@@ -107,7 +107,7 @@ func TestCommittedOperationsFinishSchedulerCleanup(t *testing.T) {
 					}
 				})
 				up := config.UpstreamConfig{Name: "test", BaseURL: "https://example.com", APIKeys: []string{"test-key"}, ServiceType: "openai"}
-				if err := cm.AddUpstream(up); err != nil {
+				if _, err := cm.AddChannel("messages", up); err != nil {
 					t.Fatal(err)
 				}
 				mm := metrics.NewMetricsManager()

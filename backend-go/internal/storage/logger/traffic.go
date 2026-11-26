@@ -59,7 +59,7 @@ func RecordTraffic(entry TrafficLog) {
 	_ = store.RecordTraffic(entry)
 }
 
-func RecordStreamSynth(ctx context.Context, apiType string, body string) {
+func RecordStreamSynth(ctx context.Context, apiType string, body string, truncated bool) {
 	if body == "" {
 		return
 	}
@@ -70,6 +70,7 @@ func RecordStreamSynth(ctx context.Context, apiType string, body string) {
 		APIType:   apiType,
 		Body:      body,
 		Stream:    true,
+		Truncated: truncated,
 	})
 }
 

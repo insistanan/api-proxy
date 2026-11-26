@@ -7,12 +7,17 @@ import (
 	"encoding/json"
 	"insistanan/api-proxy/internal/protocol/codec"
 	"insistanan/api-proxy/internal/protocol/tokenusage"
+	"insistanan/api-proxy/internal/protocol/types"
 	"log"
 	"strings"
 )
 
 // updateCollectedUsage 更新收集的 usage 数据
 func updateCollectedUsage(collected *CollectedUsageData, usageData CollectedUsageData) {
+	// 每个事件的 iterations 是累计快照，替换而非累加，避免 SSE 重复计费。
+	if len(usageData.Iterations) > 0 {
+		collected.Iterations = usageData.Iterations
+	}
 	if usageData.InputTokens > collected.InputTokens {
 		collected.InputTokens = usageData.InputTokens
 	}
@@ -92,6 +97,9 @@ func CheckEventUsageStatusFromData(data map[string]interface{}, enableLog bool) 
 // checkUsageFieldsWithPatch 检查 usage 对象是否包含 token 字段
 func checkUsageFieldsWithPatch(usage interface{}) (bool, bool, bool) {
 	if u, ok := usage.(map[string]interface{}); ok {
+		if iterations, ok := u["iterations"].([]interface{}); ok && len(iterations) > 0 {
+			return true, false, false
+		}
 		inputTokens, hasInput := u["input_tokens"]
 		outputTokens, hasOutput := u["output_tokens"]
 		if hasInput || hasOutput {
@@ -137,6 +145,17 @@ func checkUsageFieldsWithPatch(usage interface{}) (bool, bool, bool) {
 // extractUsageFromMap 从 usage map 中提取 token 数据
 func extractUsageFromMap(usage map[string]interface{}) CollectedUsageData {
 	var data CollectedUsageData
+	if iterations, ok := usage["iterations"].([]interface{}); ok {
+		for _, raw := range iterations {
+			if item, ok := raw.(map[string]interface{}); ok {
+				data.Iterations = append(data.Iterations, types.UsageIteration{Usage: types.Usage{
+					InputTokens: usageTokenValue(item, "input_tokens"), OutputTokens: usageTokenValue(item, "output_tokens"),
+					CacheReadInputTokens: usageTokenValue(item, "cache_read_input_tokens"), CacheCreationInputTokens: usageTokenValue(item, "cache_creation_input_tokens"),
+					CacheCreation5mInputTokens: usageTokenValue(item, "cache_creation_5m_input_tokens"), CacheCreation1hInputTokens: usageTokenValue(item, "cache_creation_1h_input_tokens"),
+				}})
+			}
+		}
+	}
 
 	data.InputTokens = usageTokenValue(usage, "input_tokens")
 	data.OutputTokens = usageTokenValue(usage, "output_tokens")

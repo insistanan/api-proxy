@@ -23,6 +23,7 @@ func IsProtocolStructuralField(key string) bool {
 func IsSignedProtocolValue(value map[string]interface{}) bool {
 	typeName, _ := value["type"].(string)
 	return typeName == "thinking" || typeName == "thinking_delta" || typeName == "redacted_thinking" ||
+		typeName == "compaction" || typeName == "compaction_summary" || typeName == "compaction_delta" ||
 		value["thought"] == true || value["thoughtSignature"] != nil || value["thought_signature"] != nil
 }
 

@@ -49,6 +49,19 @@ func CapturePolicyFromContext(ctx context.Context) (CapturePolicy, bool) {
 	return policy, ok
 }
 
+func StreamLogLimit(ctx context.Context, enabled bool) int {
+	if !enabled {
+		return 0
+	}
+	if policy, ok := CapturePolicyFromContext(ctx); ok {
+		if policy.BodyState(true) != "" {
+			return 0
+		}
+		return min(policy.BodyLimit, logbody.MaxBodyBytes)
+	}
+	return logbody.MaxBodyBytes
+}
+
 func (s *Store) BodyCapturePaused() bool {
 	if s == nil {
 		return false

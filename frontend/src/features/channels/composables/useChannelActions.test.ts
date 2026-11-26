@@ -109,9 +109,9 @@ describe('渠道操作提交阶段', () => {
     const env = arrange()
     const write = deferred<void>()
     env.remove.mockReturnValue(write.promise)
-    const pending = env.actions.deleteChannel(0)
+    const pending = env.actions.deleteChannel(0, 'channel-0')
     env.store.activeTab = 'chat'
-    await env.actions.deleteChannel(0)
+    await env.actions.deleteChannel(0, 'channel-0')
     expect(env.remove).toHaveBeenCalledTimes(1)
     write.resolve(undefined)
     await pending

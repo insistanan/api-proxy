@@ -24,6 +24,7 @@ type GeminiProvider struct {
 	shadowProviderID            string
 	shadowSessionID             string
 	shadowSnapshot              GeminiShadowSnapshot
+	persistShadow               func(GeminiShadowTurn) error
 	stripThoughtSignature       bool
 	injectDummyThoughtSignature bool
 }
@@ -70,7 +71,18 @@ func (p *GeminiProvider) buildRequest(input RequestInput, upstream *config.Upstr
 		p.shadowProviderID = upstream.RequestIdentity(apiKey).Fingerprint() + "|" + config.ResolveUpstreamModel(claudeReq.Model, upstream)
 	}
 	p.shadowSessionID = input.ConversationID
-	p.shadowSnapshot = defaultGeminiShadowStore.Get(p.shadowProviderID, p.shadowSessionID)
+	shadow, err := defaultGeminiShadowStore.Get(input.Ctx, p.shadowProviderID, p.shadowSessionID)
+	if err != nil {
+		return nil, err
+	}
+	p.shadowSnapshot = shadow
+	// Provider 随单次请求创建；闭包沿用该请求的取消信号和删除租约。
+	providerID, sessionID, lease := p.shadowProviderID, p.shadowSessionID, p.cacheLease
+	p.persistShadow = func(turn GeminiShadowTurn) error {
+		var err error
+		lease.Store(func() { err = defaultGeminiShadowStore.Record(input.Ctx, providerID, sessionID, turn) })
+		return err
+	}
 	p.stripThoughtSignature = false
 	p.injectDummyThoughtSignature = false
 	if upstream != nil {

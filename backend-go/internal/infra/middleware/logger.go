@@ -22,29 +22,32 @@ var defaultSkipPrefixes = []string{
 
 // FilteredLogger 根据 QuietPollingLogs 选择访问日志的输出方式。
 // 开启时，指定前缀的 GET 请求、健康检查和 OPTIONS 预检不输出访问日志，
-// 其余请求记录开始、结束、状态码和耗时；关闭时使用 gin.Logger() 的标准输出。
+// 其余请求记录开始、结束、状态码和耗时；日志只记录路由模板，避免路径参数泄露凭据。
 // 这个开关只影响访问日志，各业务组件的日志仍由调用方控制。
 func FilteredLogger(envCfg *config.EnvConfig, skipPrefixes ...string) gin.HandlerFunc {
-	if !envCfg.QuietPollingLogs {
-		return gin.Logger()
-	}
-
 	if len(skipPrefixes) == 0 {
 		skipPrefixes = defaultSkipPrefixes
 	}
 
 	return func(c *gin.Context) {
-		if isSilentRequest(c, skipPrefixes) {
+		if envCfg.QuietPollingLogs && isSilentRequest(c, skipPrefixes) {
 			c.Next()
 			return
 		}
 
 		start := time.Now()
-		log.Printf("┌──────── %s %s", c.Request.Method, c.Request.URL.Path)
+		log.Printf("┌──────── %s %s", c.Request.Method, requestRoute(c))
 		c.Next()
 		log.Printf("└──────── %s %s · 状态 %d · 耗时 %s",
-			c.Request.Method, c.Request.URL.Path, c.Writer.Status(), time.Since(start).Round(time.Millisecond))
+			c.Request.Method, requestRoute(c), c.Writer.Status(), time.Since(start).Round(time.Millisecond))
 	}
+}
+
+func requestRoute(c *gin.Context) string {
+	if route := c.FullPath(); route != "" {
+		return route
+	}
+	return "<unmatched>"
 }
 
 // isSilentRequest 判断静默模式下是否跳过访问日志；业务日志由各调用方控制。

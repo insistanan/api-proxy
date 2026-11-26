@@ -33,7 +33,7 @@ docker compose up -d
 
 | 环境变量 | 默认值 | 说明 |
 |---|---|---|
-| `PROXY_ACCESS_KEY` | 公开示例值 | **部署前须显式设置自己的密钥**，代理与管理后台共用；当前程序不会因沿用示例值而拒绝启动 |
+| `PROXY_ACCESS_KEY` | 公开示例值 | **生产模式必须设置自己的密钥**，代理与管理后台共用；未设置或沿用示例值会拒绝启动。显式设置 `ENV=development` 时允许本机调试，服务仅监听 `127.0.0.1` |
 | `ENABLE_WEB_UI` | `true` | 是否开启 Web 管理后台。设为 `false` 则转为无 UI 的纯 API 代理模式 |
 | `PORT` | `3000` | 服务监听端口 |
 | `ENV` | `production` | 运行环境模式（production / development） |

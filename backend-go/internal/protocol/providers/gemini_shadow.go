@@ -1,7 +1,9 @@
 package providers
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 )
 
@@ -31,69 +33,107 @@ type geminiShadowKey struct {
 }
 
 type geminiShadowStore struct {
-	mu                 sync.Mutex
-	maxSessions        int
-	maxTurnsPerSession int
-	order              []geminiShadowKey
-	sessions           map[geminiShadowKey][]GeminiShadowTurn
+	mu          sync.Mutex
+	maxSessions int
+	maxBytes    int
+	usedBytes   int
+	order       []geminiShadowKey
+	sessions    map[geminiShadowKey][]json.RawMessage
+	persistence GeminiShadowPersistence
 }
 
-var defaultGeminiShadowStore = newGeminiShadowStore(200, 64)
+// GeminiShadowPersistence 由会话存储实现；删除和 TTL 通过对话外键统一清理。
+type GeminiShadowPersistence interface {
+	LoadGeminiShadows(context.Context, string, string) ([]json.RawMessage, error)
+	AppendGeminiShadow(context.Context, string, string, json.RawMessage) error
+}
 
-func newGeminiShadowStore(maxSessions int, maxTurnsPerSession int) *geminiShadowStore {
-	if maxSessions < 1 {
-		maxSessions = 1
-	}
-	if maxTurnsPerSession < 1 {
-		maxTurnsPerSession = 1
-	}
+var defaultGeminiShadowStore = newGeminiShadowStore(200, 32<<20)
+
+func BindGeminiShadowPersistence(persistence GeminiShadowPersistence) {
+	s := defaultGeminiShadowStore
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.persistence = persistence
+	s.sessions = make(map[geminiShadowKey][]json.RawMessage)
+	s.order = nil
+	s.usedBytes = 0
+}
+
+func newGeminiShadowStore(maxSessions, maxBytes int) *geminiShadowStore {
 	return &geminiShadowStore{
-		maxSessions:        maxSessions,
-		maxTurnsPerSession: maxTurnsPerSession,
-		sessions:           make(map[geminiShadowKey][]GeminiShadowTurn),
+		maxSessions: maxSessions, maxBytes: maxBytes,
+		sessions: make(map[geminiShadowKey][]json.RawMessage),
 	}
 }
 
-func (s *geminiShadowStore) Get(providerID string, sessionID string) GeminiShadowSnapshot {
+func (s *geminiShadowStore) Get(ctx context.Context, providerID string, sessionID string) (GeminiShadowSnapshot, error) {
 	if s == nil || providerID == "" || sessionID == "" {
-		return GeminiShadowSnapshot{}
+		return GeminiShadowSnapshot{}, nil
 	}
 	key := geminiShadowKey{ProviderID: providerID, SessionID: sessionID}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	turns := cloneGeminiShadowTurns(s.sessions[key])
-	if turns != nil {
+	encoded, found := s.sessions[key]
+	if !found && s.persistence != nil {
+		var err error
+		encoded, err = s.persistence.LoadGeminiShadows(ctx, providerID, sessionID)
+		if err != nil {
+			return GeminiShadowSnapshot{}, fmt.Errorf("恢复 Gemini 签名失败: %w", err)
+		}
+	}
+	turns := make([]GeminiShadowTurn, len(encoded))
+	for i, data := range encoded {
+		if err := json.Unmarshal(data, &turns[i]); err != nil {
+			return GeminiShadowSnapshot{}, fmt.Errorf("解析 Gemini 签名失败: %w", err)
+		}
+	}
+	if len(encoded) > 0 {
+		if !found {
+			s.sessions[key] = encoded
+			s.usedBytes += shadowBytes(key, encoded)
+		}
 		s.touchLocked(key)
+		s.pruneLocked()
 	}
 	return GeminiShadowSnapshot{
 		ProviderID: providerID,
 		SessionID:  sessionID,
 		Turns:      turns,
-	}
+	}, nil
 }
 
-func (s *geminiShadowStore) Record(providerID string, sessionID string, turn GeminiShadowTurn) GeminiShadowSnapshot {
+func (s *geminiShadowStore) Record(ctx context.Context, providerID string, sessionID string, turn GeminiShadowTurn) error {
 	if s == nil || providerID == "" || sessionID == "" || len(turn.AssistantContent) == 0 {
-		return GeminiShadowSnapshot{}
+		return nil
+	}
+	encoded, err := json.Marshal(turn)
+	if err != nil {
+		return fmt.Errorf("编码 Gemini 签名失败: %w", err)
 	}
 	key := geminiShadowKey{ProviderID: providerID, SessionID: sessionID}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if s.persistence != nil {
+		if err := s.persistence.AppendGeminiShadow(ctx, providerID, sessionID, encoded); err != nil {
+			return fmt.Errorf("保存 Gemini 签名失败: %w", err)
+		}
+	}
+	turns, loaded := s.sessions[key]
+	// 尚未加载的历史留到 Get 恢复，不能只缓存新一轮并覆盖历史视图。
+	if !loaded && s.persistence != nil {
+		return nil
+	}
+	if !loaded {
+		s.usedBytes += len(key.ProviderID) + len(key.SessionID) + 64
+	}
+	s.sessions[key] = append(turns, encoded)
+	s.usedBytes += len(encoded) + 24
 	s.touchLocked(key)
-	turns := append(s.sessions[key], cloneGeminiShadowTurn(turn))
-	for len(turns) > s.maxTurnsPerSession {
-		turns = turns[1:]
-	}
-	s.sessions[key] = turns
 	s.pruneLocked()
-
-	return GeminiShadowSnapshot{
-		ProviderID: providerID,
-		SessionID:  sessionID,
-		Turns:      cloneGeminiShadowTurns(turns),
-	}
+	return nil
 }
 
 func (s *geminiShadowStore) touchLocked(key geminiShadowKey) {
@@ -107,34 +147,20 @@ func (s *geminiShadowStore) touchLocked(key geminiShadowKey) {
 }
 
 func (s *geminiShadowStore) pruneLocked() {
-	for len(s.order) > s.maxSessions {
+	for len(s.order) > 0 && (len(s.order) > s.maxSessions || s.usedBytes > s.maxBytes) {
 		oldest := s.order[0]
 		s.order = s.order[1:]
+		s.usedBytes -= shadowBytes(oldest, s.sessions[oldest])
 		delete(s.sessions, oldest)
 	}
 }
 
-func cloneGeminiShadowTurns(turns []GeminiShadowTurn) []GeminiShadowTurn {
-	if len(turns) == 0 {
-		return nil
+func shadowBytes(key geminiShadowKey, turns []json.RawMessage) int {
+	size := len(key.ProviderID) + len(key.SessionID) + 64
+	for _, turn := range turns {
+		size += len(turn) + 24
 	}
-	out := make([]GeminiShadowTurn, len(turns))
-	for i := range turns {
-		out[i] = cloneGeminiShadowTurn(turns[i])
-	}
-	return out
-}
-
-func cloneGeminiShadowTurn(turn GeminiShadowTurn) GeminiShadowTurn {
-	toolCalls := make([]GeminiShadowToolCall, len(turn.ToolCalls))
-	for i := range turn.ToolCalls {
-		toolCalls[i] = turn.ToolCalls[i]
-		toolCalls[i].Args = cloneInterface(turn.ToolCalls[i].Args)
-	}
-	return GeminiShadowTurn{
-		AssistantContent: cloneMapStringInterface(turn.AssistantContent),
-		ToolCalls:        toolCalls,
-	}
+	return size
 }
 
 func cloneMapStringInterface(in map[string]interface{}) map[string]interface{} {

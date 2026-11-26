@@ -21,9 +21,11 @@ type PurgeOptions struct {
 
 // PurgeResult 是手动清理的删除行数统计。
 type PurgeResult struct {
-	DeletedAppLogs     int64 `json:"deletedAppLogs"`
-	DeletedTrafficLogs int64 `json:"deletedTrafficLogs"`
-	DeletedRequestLogs int64 `json:"deletedRequestLogs"`
+	Committed          bool   `json:"committed"`
+	CompactionError    string `json:"compactionError,omitempty"`
+	DeletedAppLogs     int64  `json:"deletedAppLogs"`
+	DeletedTrafficLogs int64  `json:"deletedTrafficLogs"`
+	DeletedRequestLogs int64  `json:"deletedRequestLogs"`
 }
 
 // cleanupTarget 描述自动清理的一张表：顺序必须与 cleanupBatch、cleanupCeiling、

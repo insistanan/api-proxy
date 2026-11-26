@@ -2,6 +2,7 @@ package logs
 
 import (
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -13,6 +14,9 @@ import (
 
 func GetRequestLogs(store *metrics.RequestLogStore) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if !validateLogQuery(c, false) {
+			return
+		}
 		pageSize := 50
 		if rawLimit := c.Query("limit"); rawLimit != "" {
 			parsed, err := strconv.Atoi(rawLimit)
@@ -77,6 +81,27 @@ func GetRequestLogs(store *metrics.RequestLogStore) gin.HandlerFunc {
 			"logs": logs, "limit": pageSize, "total": total, "page": page, "pageSize": pageSize,
 		})
 	}
+}
+
+// 列表与统计共用过滤语义；显式未知值不能变成空结果或默认排序。
+func validateLogQuery(c *gin.Context, stats bool) bool {
+	choices := map[string][]string{
+		"type":   {"messages", "responses", "gemini", "chat", "images", "embeddings", "decisions"},
+		"status": {"completed", "failed", "cancelled", "interrupted", "blocked", "unknown"},
+	}
+	if stats {
+		choices["dimensionSort"] = []string{"volume", "failures", "failureRate", "tokens", "duration"}
+	} else {
+		choices["sort"] = []string{"timestamp", "durationMs", "firstTokenMs", "inputTokens", "outputTokens", "totalTokens"}
+		choices["order"] = []string{"asc", "desc"}
+	}
+	for name, allowed := range choices {
+		if value := c.Query(name); value != "" && !slices.Contains(allowed, value) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的参数 " + name})
+			return false
+		}
+	}
+	return true
 }
 
 func parseOptionalBool(c *gin.Context, name string) (*bool, bool) {
@@ -145,6 +170,13 @@ func PurgeLogs(store *logger.Store) gin.HandlerFunc {
 		}
 		options := logger.PurgeOptions{}
 		switch strings.ToLower(strings.TrimSpace(req.Scope)) {
+		case "compact":
+			if err := store.Compact(c.Request.Context()); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"success": true, "purged": logger.PurgeResult{}})
+			return
 		case "all":
 			options.All = true
 		case "day":
@@ -153,12 +185,16 @@ func PurgeLogs(store *logger.Store) gin.HandlerFunc {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "date is required when scope is day"})
 				return
 			}
+			if _, _, err := logger.LocalDayRange(options.Date); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
 		default:
-			c.JSON(http.StatusBadRequest, gin.H{"error": "scope must be all or day"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "scope must be all, day or compact"})
 			return
 		}
 		result, err := store.Purge(c.Request.Context(), options)
-		if err != nil {
+		if err != nil && !result.Committed {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}

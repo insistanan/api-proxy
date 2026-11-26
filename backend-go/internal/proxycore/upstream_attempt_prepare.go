@@ -63,6 +63,7 @@ func (a UpstreamAttempt) buildPreparedAttemptRequest(
 	}
 	// 最终上游请求必须继承入站取消和共享预算，避免构建器意外使用 Background。
 	req = req.WithContext(a.Context.Request.Context())
+	req.Header.Del("X-Api-Proxy-Task")
 	if a.SkipVisionLayer {
 		if err := pipeline.ResetAttachedStreamRestoration(a.Context); err != nil {
 			return req, "content_safety", err

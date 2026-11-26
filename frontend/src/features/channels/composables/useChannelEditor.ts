@@ -6,13 +6,14 @@ import { reactive, toValue, type MaybeRefOrGetter } from 'vue'
 import { DEFAULT_BRANCH_CONCURRENCY, isPositiveInteger } from '@/features/channels/utils/branchConcurrency'
 import type { Channel, ChannelStatus } from '@/api'
 import { rowsFromImagesExtraParams, type ImagesExtraParamRow } from '@/features/channels/utils/imagesExtraParams'
-import type { ApiTab, ImagesOutputFormat } from '@/types/channel'
+import type { ApiTab, CompactionConfig, ImagesOutputFormat } from '@/types/channel'
 import { isConversationProtocol } from '@/features/channels/services/channel-api'
 import { imagesGIFDefaults } from '@/features/channels/utils/imagesChannelProtocol'
 import { buildCacheKeepalive, defaultCacheKeepalive, supportsCacheKeepalive, type CacheKeepaliveDraft } from '@/features/channels/utils/cacheKeepalive'
 
 /** 表单草稿：AddChannelModal 的唯一可编辑状态本体。 */
 export type ChannelFormState = {
+  compaction: CompactionConfig
   cacheKeepalive: CacheKeepaliveDraft
   maxConcurrency: number | string | null
   maxBranchConcurrency: number | string | null
@@ -60,6 +61,11 @@ export type ChannelFormState = {
 /** 新建 Embeddings 渠道的默认输出维度，与常用的 1024 维向量模型一致。 */
 export const EMBEDDINGS_DIMENSIONS_DEFAULT = 1024
 
+export const defaultCompaction = (): CompactionConfig => ({
+  summaryPool: false, summaryCapable: false, summaryModel: '', detectClientPrompts: false,
+  nativeSourceModel: '', nativeModel: '', nativeCompatibilityConfirmed: false
+})
+
 /**
  * Embeddings 输出维度校验：必须是非负整数，0 表示不覆盖。
  * 返回空字符串表示合法，否则返回错误说明。
@@ -83,6 +89,7 @@ export function supportsChannelClientIdentity(channelType: string, serviceType: 
 /** 新渠道的默认草稿。responses 协议默认启用图片理解（历史行为）。 */
 export function defaultChannelForm(channelType: string): ChannelFormState {
   return {
+    compaction: defaultCompaction(),
     cacheKeepalive: defaultCacheKeepalive(),
     maxConcurrency: 5,
     maxBranchConcurrency: DEFAULT_BRANCH_CONCURRENCY,
@@ -216,9 +223,24 @@ export function buildChannelPayload(
   const supportsClientIdentity = supportsChannelClientIdentity(channelType, form.serviceType)
   // Embeddings / Decisions 是纯透传协议，不参与图片理解与对话调度。
   const supportsConversationFeatures = !isImages && channelType !== 'embeddings' && channelType !== 'decisions'
+  const supportsNativeCompaction = !form.compaction.summaryCapable &&
+    ((channelType === 'messages' && form.serviceType === 'claude') || (channelType === 'responses' && form.serviceType === 'responses'))
+  if (supportsConversationFeatures && form.compaction.summaryCapable && (!form.excludeFromConversation || !form.compaction.summaryModel.trim())) {
+    throw new Error('加入摘要池需关闭常规对话调度并填写摘要模型')
+  }
+  if (supportsNativeCompaction && form.compaction.nativeModel.trim() && (!form.compaction.nativeSourceModel.trim() || !form.compaction.nativeCompatibilityConfirmed)) {
+    throw new Error('请填写原生压缩的精确源模型，并确认此模型对的完整往返兼容性')
+  }
   const urls = deduplicateBaseUrls(form)
   const mapping = isChat ? {} : cloneModelMapping(form.modelMapping)
   const channel: Omit<Channel, 'id' | 'index' | 'latency'> = {
+    compaction: supportsConversationFeatures ? {
+      ...form.compaction,
+      summaryModel: form.compaction.summaryCapable ? form.compaction.summaryModel.trim() : '',
+      nativeModel: supportsNativeCompaction ? form.compaction.nativeModel.trim() : '',
+      nativeSourceModel: supportsNativeCompaction && form.compaction.nativeModel.trim() ? form.compaction.nativeSourceModel.trim() : '',
+      nativeCompatibilityConfirmed: supportsNativeCompaction && !!form.compaction.nativeModel.trim() && form.compaction.nativeCompatibilityConfirmed
+    } : defaultCompaction(),
     cacheKeepalive: buildCacheKeepalive(form.cacheKeepalive, supportsCacheKeepalive(channelType, form.serviceType)),
     maxConcurrency: Number(form.maxConcurrency),
     maxBranchConcurrency: Number(form.maxBranchConcurrency),
@@ -283,6 +305,7 @@ export function useChannelEditor(channelType: MaybeRefOrGetter<string>) {
     const currentChannelType = toValue(channelType)
     const supportsConversationFeatures =
       currentChannelType !== 'images' && currentChannelType !== 'embeddings' && currentChannelType !== 'decisions'
+    form.compaction = supportsConversationFeatures ? { ...defaultCompaction(), ...channel.compaction } : defaultCompaction()
     form.cacheKeepalive = channel.cacheKeepalive?.intervalSeconds
       ? { ...channel.cacheKeepalive } : defaultCacheKeepalive()
     form.maxConcurrency = channel.maxConcurrency ?? 5
@@ -352,6 +375,7 @@ export function useChannelEditor(channelType: MaybeRefOrGetter<string>) {
       .map(([source, targets]) => [source, targets.filter(target => !channel.modelMappingChannels?.[source]?.[target])] as const)
       .filter(([, targets]) => targets.length > 0))
     Object.assign(form, {
+      compaction: defaults.compaction,
       cacheKeepalive: defaults.cacheKeepalive,
       visionCapable: defaults.visionCapable,
       excludeFromConversation: defaults.excludeFromConversation,

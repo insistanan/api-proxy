@@ -89,7 +89,7 @@ func newGateTestHarness(t *testing.T, waitSeconds int) *gateTestHarness {
 	}))
 	t.Cleanup(aiUpstream.Close)
 
-	if err := cfgManager.AddUpstream(config.UpstreamConfig{
+	if _, err := cfgManager.AddChannel("messages", config.UpstreamConfig{
 		ID: "gate-ai", Name: "gate-ai", BaseURL: aiUpstream.URL,
 		APIKeys: []string{"sk-gate"}, ServiceType: "claude", DefaultModel: "gate-model",
 	}); err != nil {
@@ -449,7 +449,7 @@ func TestGateDecisionReviewUsesConfiguredProtocolAndModel(t *testing.T) {
 			channel := config.UpstreamConfig{ID: "approval-target", Name: "审批目标", BaseURL: upstream.URL, APIKeys: []string{"test-key"}, DefaultModel: "default-model"}
 			if protocol == "chat" {
 				channel.ServiceType = "claude"
-				if err := h.cfgManager.AddUpstream(channel); err != nil {
+				if _, err := h.cfgManager.AddChannel("messages", channel); err != nil {
 					t.Fatal(err)
 				}
 			} else {

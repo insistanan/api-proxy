@@ -6,9 +6,10 @@ import type { ChannelRecentActivity } from '@/types/metrics'
 export type ApiTab = 'messages' | 'responses' | 'gemini' | 'chat' | 'images' | 'embeddings' | 'decisions'
 
 export interface ChannelDeletionImpact {
+  channelId?: string
   name: string
   channelCount: number
-  dependents: { kind: ApiTab; index: number; name: string }[]
+  dependents: { kind: ApiTab; index: number; name: string; feature?: string; blocking?: boolean }[]
 }
 
 // 渠道状态枚举
@@ -65,7 +66,18 @@ export interface ChannelMetrics {
   }
 }
 
+export interface CompactionConfig {
+  summaryPool: boolean
+  summaryCapable: boolean
+  summaryModel: string
+  detectClientPrompts: boolean
+  nativeSourceModel: string
+  nativeModel: string
+  nativeCompatibilityConfirmed: boolean
+}
+
 export interface Channel {
+  compaction?: CompactionConfig
   cacheKeepalive?: CacheKeepaliveConfig
   builtinProvider?: 'kilo'
   maxConcurrency?: number // 每个 URL、实际协议、Key 组合的配置并发，默认 5

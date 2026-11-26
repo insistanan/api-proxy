@@ -153,6 +153,8 @@ export interface SystemLogSummary {
   promptPreview?: string
   clientFamily?: string
   identitySource?: string
+  compactionKind?: string
+  compactionEvidence?: string
   context?: ContextSnapshot
 }
 
@@ -314,6 +316,8 @@ export interface LogDatesResponse {
 
 /** 手动清理 logs.db 的删除行数统计。 */
 export interface PurgeLogsResult {
+	committed?: boolean
+	compactionError?: string
   deletedAppLogs: number
   deletedTrafficLogs: number
   deletedRequestLogs: number

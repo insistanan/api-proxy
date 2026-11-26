@@ -106,7 +106,7 @@ func TestWatcherSurvivesAtomicReplacements(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = cm.Close() })
 
-	if err := cm.AddUpstream(UpstreamConfig{
+	if _, err := cm.AddChannel("messages", UpstreamConfig{
 		Name: "ch-0", BaseURL: "https://a.example.com", APIKeys: []string{"k0"},
 	}); err != nil {
 		t.Fatalf("添加渠道失败: %v", err)
@@ -117,7 +117,7 @@ func TestWatcherSurvivesAtomicReplacements(t *testing.T) {
 		t.Helper()
 		cfg := cm.GetConfig()
 		cfg.Upstream = append(cfg.Upstream, UpstreamConfig{
-			Name: name, BaseURL: "https://b.example.com", APIKeys: []string{"k1"},
+			ID: name, Name: name, Status: ChannelStatusActive, BaseURL: "https://b.example.com", APIKeys: []string{"k1"},
 			MaxConcurrency: upstreamcontrol.DefaultConcurrency,
 		})
 		data, _ := json.MarshalIndent(cfg, "", "  ")
@@ -137,7 +137,7 @@ func TestWatcherSurvivesAtomicReplacements(t *testing.T) {
 	waitForConfig(t, cm, func(c Config) bool { return len(c.Upstream) == 3 }, "第二次外部原子替换生效（watcher 未失效）")
 
 	// 再经 API 修改一次，确认自身保存路径在连续外部替换后仍正常。
-	if err := cm.AddUpstream(UpstreamConfig{
+	if _, err := cm.AddChannel("messages", UpstreamConfig{
 		Name: "ch-3", BaseURL: "https://c.example.com", APIKeys: []string{"k2"},
 	}); err != nil {
 		t.Fatalf("API 添加渠道失败: %v", err)
@@ -156,7 +156,7 @@ func TestWatcherSurvivesBriefDeleteAndRecreate(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = cm.Close() })
 
-	if err := cm.AddUpstream(UpstreamConfig{
+	if _, err := cm.AddChannel("messages", UpstreamConfig{
 		Name: "ch-0", BaseURL: "https://a.example.com", APIKeys: []string{"k0"},
 	}); err != nil {
 		t.Fatalf("添加渠道失败: %v", err)
@@ -174,7 +174,7 @@ func TestWatcherSurvivesBriefDeleteAndRecreate(t *testing.T) {
 	// 恢复（带新增渠道）：重载生效。
 	cfg := cm.GetConfig()
 	cfg.Upstream = append(cfg.Upstream, UpstreamConfig{
-		Name: "ch-restored", BaseURL: "https://r.example.com", APIKeys: []string{"k1"},
+		ID: "ch-restored", Name: "ch-restored", Status: ChannelStatusActive, BaseURL: "https://r.example.com", APIKeys: []string{"k1"},
 		MaxConcurrency: upstreamcontrol.DefaultConcurrency,
 	})
 	data, _ := json.MarshalIndent(cfg, "", "  ")
@@ -195,7 +195,7 @@ func TestInvalidJSONKeepsLastValidSnapshot(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = cm.Close() })
 
-	if err := cm.AddUpstream(UpstreamConfig{
+	if _, err := cm.AddChannel("messages", UpstreamConfig{
 		Name: "ch-0", BaseURL: "https://a.example.com", APIKeys: []string{"k0"},
 	}); err != nil {
 		t.Fatalf("添加渠道失败: %v", err)
@@ -239,7 +239,7 @@ func TestSelfCommitDoesNotTriggerReloadLoop(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = cm.Close() })
 
-	if err := cm.AddUpstream(UpstreamConfig{
+	if _, err := cm.AddChannel("messages", UpstreamConfig{
 		Name: "ch-0", BaseURL: "https://a.example.com", APIKeys: []string{"k0"},
 	}); err != nil {
 		t.Fatalf("添加渠道失败: %v", err)
@@ -284,7 +284,7 @@ func TestFailedCommitKeepsSnapshotConsistent(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = cm.Close() })
 
-	if err := cm.AddUpstream(UpstreamConfig{
+	if _, err := cm.AddChannel("messages", UpstreamConfig{
 		Name: "ch-0", BaseURL: "https://a.example.com", APIKeys: []string{"k0"},
 	}); err != nil {
 		t.Fatalf("添加渠道失败: %v", err)
@@ -300,7 +300,7 @@ func TestFailedCommitKeepsSnapshotConsistent(t *testing.T) {
 	}
 
 	before := cm.GetConfig()
-	err = cm.AddUpstream(UpstreamConfig{
+	_, err = cm.AddChannel("messages", UpstreamConfig{
 		Name: "ch-fail", BaseURL: "https://f.example.com", APIKeys: []string{"kf"},
 	})
 	if err == nil {

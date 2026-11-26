@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"insistanan/api-proxy/internal/infra/upstreamreq"
 	"insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/contract"
 	"insistanan/api-proxy/internal/protocol/tokenusage"
 	"io"
 	"log"
@@ -129,6 +130,11 @@ func handleNormalResponse(
 		Body:       bodyBytes,
 		Stream:     false,
 	}
+	if contract.IsClaudeOnDemandCompaction(requestBody) {
+		if err := contract.ValidateClaudeCompactionResponse(bodyBytes); err != nil {
+			return tokenusage.ExtractJSONUsage(bodyBytes), err
+		}
+	}
 
 	claudeResp, err := provider.ConvertToClaudeResponse(providerResp)
 	if err != nil {
@@ -150,11 +156,12 @@ func handleNormalResponse(
 	// 污染计费、熔断与性能画像。
 	var metricsUsage *types.Usage
 	if claudeResp.Usage != nil {
-		usageSnapshot := *claudeResp.Usage
-		metricsUsage = &usageSnapshot
+		metricsUsage = tokenusage.BillingUsage(claudeResp.Usage)
 	}
+	preserveCompactionUsage := tokenusage.PreserveCompactionUsage(requestBody) ||
+		claudeResp.Usage != nil && len(claudeResp.Usage.Iterations) > 0
 	var usageRewrite claudeUsageRewrite
-	if claudeResp.Usage == nil {
+	if claudeResp.Usage == nil && !preserveCompactionUsage {
 		estimatedInput := tokenusage.SafeEstimatedInputTokens(tokenusage.EstimateRequestTokens(requestBody))
 		estimatedOutput := tokenusage.EstimateResponseTokens(claudeResp.Content)
 		claudeResp.Usage = &types.Usage{
@@ -165,7 +172,7 @@ func handleNormalResponse(
 		if envCfg.Current().EnableResponseLogs {
 			log.Printf("[Messages-Token] 上游无Usage, 本地估算: input=%d, output=%d", estimatedInput, estimatedOutput)
 		}
-	} else {
+	} else if !preserveCompactionUsage {
 		originalInput := claudeResp.Usage.InputTokens
 		originalOutput := claudeResp.Usage.OutputTokens
 		patched := false
@@ -237,7 +244,7 @@ func handleNormalResponse(
 			claudeResp.Usage.CacheCreationInputTokens,
 			claudeResp.Usage.CacheCreation5mInputTokens,
 			claudeResp.Usage.CacheCreation1hInputTokens,
-		); need {
+		); need && !preserveCompactionUsage {
 			if envCfg.Current().EnableResponseLogs {
 				log.Printf("[Messages-Token] 上游 usage 错报校正: input_tokens=%d->%d, clear_cache=%v（本地估算，仅改下发值）",
 					claudeResp.Usage.InputTokens, correction.InputTokens, correction.ClearCache)

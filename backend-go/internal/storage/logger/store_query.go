@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
 	"insistanan/api-proxy/internal/storage/logbody"
 	"time"
 )
@@ -149,6 +150,7 @@ func normalizeAppLog(entry AppLog) AppLog {
 }
 
 func normalizeTrafficLog(entry TrafficLog) TrafficLog {
+	entry.URL = upstreamreq.RedactURL(entry.URL)
 	now := time.Now()
 	if entry.UnixMilli == 0 {
 		entry.UnixMilli = now.UnixMilli()

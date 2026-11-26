@@ -193,44 +193,28 @@ func TestResolveUpstreamModel(t *testing.T) {
 	}
 }
 
-func TestLegacyModelMappingDecodesForUpstreamAndUpdate(t *testing.T) {
-	t.Run("config", func(t *testing.T) {
-		input := []byte(`{
-			"baseUrl": "https://api.example.com",
-			"apiKeys": ["sk-test"],
-			"serviceType": "openai",
-			"modelMapping": {
-				"opus": "kimi-2.6",
-				"sonnet": ["gpt-4o", "gpt-4o-mini"]
-			}
-		}`)
-		var upstream UpstreamConfig
-		if err := json.Unmarshal(input, &upstream); err != nil {
-			t.Fatalf("json.Unmarshal() err = %v", err)
-		}
-		assertStringSlice(t, upstream.ModelMapping["opus"], []string{"kimi-2.6"})
-		assertStringSlice(t, upstream.ModelMapping["sonnet"], []string{"gpt-4o", "gpt-4o-mini"})
-		if upstream.BaseURL != "https://api.example.com" || upstream.ServiceType != "openai" || upstream.MaxConcurrency != 5 || len(upstream.APIKeys) != 1 {
-			t.Fatalf("兼容映射解码覆盖了其他字段或默认值: %+v", upstream)
-		}
-	})
-
-	t.Run("update", func(t *testing.T) {
-		input := []byte(`{
-			"modelMapping": {
-				"opus": "kimi-2.6",
-				"sonnet": ["gpt-4o"]
-			}
-		}`)
-		var update UpstreamUpdate
-		if err := json.Unmarshal(input, &update); err != nil {
-			t.Fatalf("json.Unmarshal() err = %v", err)
-		}
-		assertStringSlice(t, update.ModelMapping["opus"], []string{"kimi-2.6"})
-		assertStringSlice(t, update.ModelMapping["sonnet"], []string{"gpt-4o"})
-	})
+func TestLegacyModelMappingOnlyMigratesUnversionedFiles(t *testing.T) {
+	cm := newTransactionTestManager(t, "messages")
+	legacy := []byte(`{"upstream":[{"baseUrl":"https://api.example.com","apiKeys":["test-key"],"serviceType":"openai","modelMapping":{"opus":"gpt-4o","sonnet":["gpt-4o","gpt-4o-mini"]}}]}`)
+	candidate, migrated, err := cm.prepareCandidate(legacy)
+	if err != nil || !migrated || candidate.SchemaVersion != currentConfigSchema {
+		t.Fatalf("旧文件迁移失败: migrated=%v err=%v", migrated, err)
+	}
+	assertStringSlice(t, candidate.Upstream[0].ModelMapping["opus"], []string{"gpt-4o"})
+	assertStringSlice(t, candidate.Upstream[0].ModelMapping["sonnet"], []string{"gpt-4o", "gpt-4o-mini"})
+	current := append([]byte(`{"schemaVersion":1,`), legacy[1:]...)
+	if _, _, err := cm.prepareCandidate(current); err == nil {
+		t.Fatal("当前版本不能重新进入旧格式迁移")
+	}
+	var upstream UpstreamConfig
+	if err := json.Unmarshal([]byte(`{"modelMapping":{"opus":"gpt-4o"}}`), &upstream); err == nil {
+		t.Fatal("新增渠道不能接受旧模型映射")
+	}
+	var update UpstreamUpdate
+	if err := json.Unmarshal([]byte(`{"modelMapping":{"opus":"gpt-4o"}}`), &update); err == nil {
+		t.Fatal("编辑渠道不能接受旧模型映射")
+	}
 }
-
 func TestExplicitActivationRequestsFailureStateReset(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -245,7 +229,7 @@ func TestExplicitActivationRequestsFailureStateReset(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, status := range []string{ChannelStatusActive, ChannelStatusSuspended} {
-				upstream := UpstreamConfig{Status: status}
+				upstream := UpstreamConfig{Status: status, APIKeys: []string{"fixture-key"}}
 				var update UpstreamUpdate
 				if err := json.Unmarshal([]byte(tc.input), &update); err != nil {
 					t.Fatal(err)

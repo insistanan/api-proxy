@@ -12,8 +12,6 @@ import (
 func (p *GeminiProvider) HandleStreamResponseCtx(ctx context.Context, body io.ReadCloser) (<-chan string, <-chan error, error) {
 	pump := newStreamPump(ctx)
 	eventChan, errChan := pump.eventChan, pump.errChan
-	shadowProviderID := p.shadowProviderID
-	shadowSessionID := p.shadowSessionID
 
 	go func() {
 		defer close(eventChan)
@@ -55,15 +53,16 @@ func (p *GeminiProvider) HandleStreamResponseCtx(ctx context.Context, body io.Re
 		if !pump.finishRead(state.pendingStopReason != "", scanner.Err()) {
 			return
 		}
+		if len(state.shadowParts) > 0 && p.persistShadow != nil {
+			if err := p.persistShadow(GeminiShadowTurn{AssistantContent: map[string]interface{}{"parts": state.shadowParts}, ToolCalls: state.shadowToolCalls}); err != nil {
+				fail(err)
+				return
+			}
+		}
 		for _, event := range state.Finish() {
 			if !send(event) {
 				return
 			}
-		}
-		if len(state.shadowParts) > 0 {
-			p.cacheLease.Store(func() {
-				defaultGeminiShadowStore.Record(shadowProviderID, shadowSessionID, GeminiShadowTurn{AssistantContent: map[string]interface{}{"parts": state.shadowParts}, ToolCalls: state.shadowToolCalls})
-			})
 		}
 
 	}()

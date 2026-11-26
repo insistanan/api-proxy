@@ -55,7 +55,7 @@ func TestBaseURLDeduplication(t *testing.T) {
 
 	t.Run("add upstream dedupes extra base urls", func(t *testing.T) {
 		cm := writeTestConfig(t, `{"upstream": [], "loadBalance": "failover"}`)
-		err := cm.AddUpstream(UpstreamConfig{
+		_, err := cm.AddChannel("messages", UpstreamConfig{
 			Name:        "dedup-test",
 			BaseURL:     "https://main.example.com",
 			BaseURLs:    []string{"https://a.com", "https://b.com", "https://a.com/", "https://c.com"},
@@ -129,7 +129,7 @@ func TestUpdateUpstreamBaseURLConsistency(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := cm.UpdateUpstream(0, tt.updates); err != nil {
+			if _, err := cm.UpdateChannel("messages", 0, tt.updates); err != nil {
 				t.Fatalf("UpdateUpstream 失败: %v", err)
 			}
 			upstream := cm.GetConfig().Upstream[0]

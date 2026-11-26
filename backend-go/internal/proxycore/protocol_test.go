@@ -374,7 +374,7 @@ func performRunProxyRequest(t *testing.T, env *runProxyTestEnv, spec ProtocolSpe
 
 func addTestUpstream(t *testing.T, env *runProxyTestEnv, name string, baseURL string, apiKey string) {
 	t.Helper()
-	if err := env.cfgManager.AddUpstream(config.UpstreamConfig{
+	if _, err := env.cfgManager.AddChannel("messages", config.UpstreamConfig{
 		Name:    name,
 		BaseURL: baseURL,
 		APIKeys: []string{apiKey},
@@ -546,7 +546,7 @@ func TestRunProxyRequestQuickTestBypassesModelMappingAndDefaultModel(t *testing.
 	env := newRunProxyTestEnv(t)
 	server := newRecordingUpstreamServer(t, nil)
 
-	if err := env.cfgManager.AddUpstream(config.UpstreamConfig{
+	if _, err := env.cfgManager.AddChannel("messages", config.UpstreamConfig{
 		Name:         "ch-redirect",
 		BaseURL:      server.URL(),
 		APIKeys:      []string{"key-redirect"},
@@ -629,7 +629,11 @@ func newRecordingUpstreamServer(t *testing.T, handler func(w http.ResponseWriter
 	mux.HandleFunc("/v1/test", func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		rec.mu.Lock()
-		rec.keys = append(rec.keys, r.Header.Get("x-api-key"))
+		key := r.Header.Get("x-api-key")
+		if key == "" {
+			key = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		}
+		rec.keys = append(rec.keys, key)
 		rec.bodies = append(rec.bodies, string(body))
 		rec.mu.Unlock()
 		if handler != nil {

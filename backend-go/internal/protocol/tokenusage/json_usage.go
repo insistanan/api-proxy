@@ -57,5 +57,5 @@ func ParseJSONUsage(raw []byte) (*types.Usage, error) {
 			usage.PromptTokens = usage.InputTokens
 		}
 	}
-	return usage, nil
+	return BillingUsage(usage), nil
 }

@@ -1,6 +1,7 @@
 package channels
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -29,26 +30,31 @@ func UpdateKiloFreeChannel(cfg *config.ConfigManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var body json.RawMessage
 		var input struct {
-			Enabled *bool `json:"enabled"`
+			Enabled              *bool           `json:"enabled"`
+			MaxBranchConcurrency json.RawMessage `json:"maxBranchConcurrency"`
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		if err := json.Unmarshal(body, &input); err != nil {
+		decoder := json.NewDecoder(bytes.NewReader(body))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&input); err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		var update config.UpstreamUpdate
-		if err := json.Unmarshal(body, &update); err != nil {
-			c.JSON(400, gin.H{"error": err.Error()})
-			return
+		var limit *int
+		if len(input.MaxBranchConcurrency) > 0 {
+			if err := json.Unmarshal(input.MaxBranchConcurrency, &limit); err != nil || limit == nil || *limit < 1 {
+				c.JSON(400, gin.H{"error": "maxBranchConcurrency 必须是正整数"})
+				return
+			}
 		}
-		if input.Enabled == nil && update.MaxBranchConcurrency == nil {
+		if input.Enabled == nil && limit == nil {
 			c.JSON(400, gin.H{"error": "必须提供 enabled 或 maxBranchConcurrency"})
 			return
 		}
-		if err := cfg.UpdateKiloSettings(input.Enabled, update.MaxBranchConcurrency); err != nil {
+		if err := cfg.UpdateKiloSettings(input.Enabled, limit); err != nil {
 			writeFreeConfigError(c, err)
 			return
 		}

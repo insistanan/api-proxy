@@ -41,9 +41,9 @@ func TestFingerprintRouteRequiresAdminAndStableChannel(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, request)
 	require.Equal(t, http.StatusUnauthorized, w.Code)
-	w = channelAdminRequest(t, r, http.MethodPost, "/api/channels/missing/fingerprint", `{"model":"requested"}`, http.StatusBadRequest)
+	w = channelAdminRequest(t, r, http.MethodPost, "/api/channels/missing/fingerprint", `{"model":"requested"}`, http.StatusNotFound)
 	require.Contains(t, w.Body.String(), "渠道不存在")
-	added, err := a.cfgManager.AddUpstreamWithResult(config.UpstreamConfig{
+	added, err := a.cfgManager.AddChannel("messages", config.UpstreamConfig{
 		Name: "指纹查询测试", ServiceType: "claude", BaseURL: "https://example.invalid", APIKeys: []string{"fixture-key"},
 	})
 	require.NoError(t, err)
@@ -99,11 +99,14 @@ func newChannelAdminTestRouter(t *testing.T) (*gin.Engine, *app) {
 	return r, a
 }
 
-func channelAdminRequest(t *testing.T, r *gin.Engine, method, path, body string, want int) *httptest.ResponseRecorder {
+func channelAdminRequest(t *testing.T, r *gin.Engine, method, path, body string, want int, channelID ...string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", "test-admin")
+	if len(channelID) > 0 {
+		req.Header.Set("X-Channel-ID", channelID[0])
+	}
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	require.Equal(t, want, w.Code, "%s %s: %s", method, path, w.Body.String())
@@ -119,8 +122,8 @@ func TestChannelAdminRouteContract(t *testing.T) {
 	common := []string{
 		"GET /channels/:id/deletion-impact", "GET /pools/:id/deletion-impact",
 		"GET /channels", "POST /channels", "PUT /channels/:id", "DELETE /channels/:id",
-		"POST /channels/:id/keys", "DELETE /channels/:id/keys/:apiKey",
-		"POST /channels/:id/keys/:apiKey/top", "POST /channels/:id/keys/:apiKey/bottom",
+		"POST /channels/:id/keys", "DELETE /channels/:id/keys",
+		"POST /channels/:id/keys/top", "POST /channels/:id/keys/bottom",
 		"GET /pools", "POST /pools", "PUT /pools/layout", "PUT /pools/:id", "DELETE /pools/:id",
 		"POST /channels/reorder", "POST /channels/tidy", "PATCH /channels/:id/status",
 		"POST /channels/:id/duplicate", "POST /channels/:id/resume", "POST /channels/:id/promotion",
@@ -176,7 +179,7 @@ func TestChannelDeletionImpactRoutesAndCrossProtocolDetach(t *testing.T) {
 	require.NotContains(t, w.Body.String(), "fixture")
 	require.NotContains(t, w.Body.String(), "baseUrl")
 	require.True(t, a.cfgManager.GetConfig().ChatUpstream[0].VisionLayerEnabled)
-	channelAdminRequest(t, r, http.MethodDelete, fmt.Sprintf("/api/messages/channels/%d", vision.Index), "", http.StatusOK)
+	channelAdminRequest(t, r, http.MethodDelete, fmt.Sprintf("/api/messages/channels/%d", vision.Index), "", http.StatusOK, vision.ID)
 	owner := a.cfgManager.GetConfig().ChatUpstream[0]
 	require.False(t, owner.VisionCapable)
 	require.False(t, owner.VisionLayerEnabled)
@@ -228,12 +231,15 @@ func TestChannelAdminProtocolIsolation(t *testing.T) {
 }
 
 func TestChannelResumeDoesNotActivateSuspendedConfig(t *testing.T) {
-	r, _ := newChannelAdminTestRouter(t)
+	r, a := newChannelAdminTestRouter(t)
 	for _, kind := range channelAdminKinds {
 		prefix := "/api/" + string(kind) + "/channels"
 		channelAdminRequest(t, r, http.MethodPost, prefix,
 			`{"name":"suspended","baseUrl":"https://example.com","apiKeys":["fixture-key"],"serviceType":"openai","status":"suspended"}`, http.StatusOK)
-		channelAdminRequest(t, r, http.MethodPost, prefix+"/0/resume", "", http.StatusOK)
+		channels, _, err := a.cfgManager.GetChannelConfig(string(kind))
+		require.NoError(t, err)
+		channelID := channels[0].ID
+		channelAdminRequest(t, r, http.MethodPost, prefix+"/0/resume", "", http.StatusOK, channelID)
 		w := channelAdminRequest(t, r, http.MethodGet, prefix, "", http.StatusOK)
 		var result struct {
 			Channels []struct {
@@ -243,7 +249,7 @@ func TestChannelResumeDoesNotActivateSuspendedConfig(t *testing.T) {
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
 		require.Len(t, result.Channels, 1)
 		require.Equal(t, "suspended", result.Channels[0].Status)
-		channelAdminRequest(t, r, http.MethodPatch, prefix+"/0/status", `{"status":"active"}`, http.StatusOK)
-		channelAdminRequest(t, r, http.MethodPost, prefix+"/0/promotion", `{"duration":60,"count":2}`, http.StatusOK)
+		channelAdminRequest(t, r, http.MethodPatch, prefix+"/0/status", `{"status":"active"}`, http.StatusOK, channelID)
+		channelAdminRequest(t, r, http.MethodPost, prefix+"/0/promotion", `{"duration":60,"count":2}`, http.StatusOK, channelID)
 	}
 }

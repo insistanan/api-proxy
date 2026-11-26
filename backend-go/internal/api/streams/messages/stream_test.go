@@ -34,7 +34,7 @@ func TestProcessStreamEventsDoesNotLoseBufferedError(t *testing.T) {
 		failures <- streamErr
 		close(failures)
 
-		usage, err := ProcessStreamEvents(c, c.Writer, c.Writer, events, failures, NewStreamContext(envCfg), envCfg, time.Now(), nil)
+		usage, err := ProcessStreamEvents(c, c.Writer, c.Writer, events, failures, NewStreamContext(context.Background(), envCfg), envCfg, time.Now(), nil)
 		require.ErrorIs(t, err, streamErr)
 		require.Nil(t, usage)
 		require.Contains(t, recorder.Body.String(), "event: error")
@@ -46,7 +46,7 @@ func TestMessagesStreamFailurePreservesReportedUsage(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 	envCfg := &config.EnvConfig{}
-	ctx := NewStreamContext(envCfg)
+	ctx := NewStreamContext(context.Background(), envCfg)
 	event := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"usage\":{\"input_tokens\":100,\"output_tokens\":0}}}\n\n"
 	require.NoError(t, ProcessStreamEvent(c, c.Writer, c.Writer, event, ctx, envCfg, nil))
 	events := make(chan string)
@@ -70,7 +70,7 @@ func TestProcessStreamErrorClosesDeliveredReasoningAndText(t *testing.T) {
 				c, _ := gin.CreateTestContext(recorder)
 				c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 				envCfg := &config.EnvConfig{} // 关闭日志时也必须跟踪块生命周期。
-				ctx := NewStreamContext(envCfg)
+				ctx := NewStreamContext(context.Background(), envCfg)
 				start := fmt.Sprintf("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":3,\"content_block\":{\"type\":%q}}\n\n", blockType)
 				require.NoError(t, ProcessStreamEvent(c, c.Writer, c.Writer, start, ctx, envCfg, nil))
 				stop := "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":3}\n\n"
@@ -111,7 +111,7 @@ func TestProcessStreamEventsClosedErrorChannelPreservesEvents(t *testing.T) {
 	failures := make(chan error)
 	close(failures)
 
-	_, err := ProcessStreamEvents(c, c.Writer, c.Writer, events, failures, NewStreamContext(envCfg), envCfg, time.Now(), nil)
+	_, err := ProcessStreamEvents(c, c.Writer, c.Writer, events, failures, NewStreamContext(context.Background(), envCfg), envCfg, time.Now(), nil)
 	require.NoError(t, err)
 	require.Contains(t, recorder.Body.String(), "正常回复")
 }
@@ -127,7 +127,7 @@ func TestProcessStreamEventsCanCancelAfterEventsClose(t *testing.T) {
 	failures := make(chan error)
 	defer close(failures)
 	cancel()
-	streamCtx := NewStreamContext(envCfg)
+	streamCtx := NewStreamContext(context.Background(), envCfg)
 
 	_, err := ProcessStreamEvents(c, c.Writer, c.Writer, events, failures, streamCtx, envCfg, time.Now(), nil)
 	require.ErrorIs(t, err, context.Canceled)

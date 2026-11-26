@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
 	"log"
 	"strings"
 	"time"
@@ -87,6 +88,7 @@ func (s *RequestLogStore) Record(entry RequestLogEntry) {
 		entry.Timestamp = time.Now().Format(time.RFC3339Nano)
 	}
 	entry.APIType = normalizeRequestLogAPIType(entry.APIType)
+	entry.BaseURL = upstreamreq.RedactURL(entry.BaseURL)
 	entry.Entry = normalizeRequestLogEntry(entry.Entry, entry.APIType)
 	if entry.TPM == 0 {
 		entry.TPM = calculateRequestLogTPM(entry)

@@ -83,14 +83,11 @@ func Register(parent *gin.RouterGroup, store *domain.Store) {
 		if !ok {
 			return
 		}
-		var input struct {
-			Name     string `json:"name"`
-			Favorite bool   `json:"favorite"`
-		}
+		var input domain.IslandEdit
 		if !bind(c, &input) {
 			return
 		}
-		reply(c, nil, store.EditIsland(c.Request.Context(), id, input.Name, input.Favorite))
+		reply(c, nil, store.EditIsland(c.Request.Context(), id, input))
 	})
 	r.PATCH("/trees/:id", func(c *gin.Context) {
 		id, ok := parseID(c)

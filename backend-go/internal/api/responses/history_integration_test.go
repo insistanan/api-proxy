@@ -74,6 +74,66 @@ func sendHistoryRequest(router http.Handler, body string) *httptest.ResponseReco
 	router.ServeHTTP(recorder, req)
 	return recorder
 }
+
+func TestAutomaticCompaction_ValidatesBeforeReplacingHistory(t *testing.T) {
+	for _, typ := range []string{"compaction", "compaction_summary"} {
+		for _, stream := range []bool{false, true} {
+			for _, valid := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/stream=%t/valid=%t", typ, stream, valid), func(t *testing.T) {
+					var calls atomic.Int64
+					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						call := calls.Add(1)
+						output := `[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"旧历史"}]}]`
+						if call > 1 {
+							encrypted := "null"
+							if valid {
+								encrypted = `"opaque"`
+							}
+							output = fmt.Sprintf(`[{"type":%q,"encrypted_content":%s}]`, typ, encrypted)
+						}
+						response := fmt.Sprintf(`{"id":"response-%d","model":"m","status":"completed","output":%s,"usage":{"input_tokens":11,"output_tokens":7}}`, call, output)
+						if call > 1 && stream {
+							w.Header().Set("Content-Type", "text/event-stream")
+							fmt.Fprintf(w, "data: {\"type\":\"response.completed\",\"response\":%s}\n\n", response)
+						} else {
+							w.Header().Set("Content-Type", "application/json")
+							io.WriteString(w, response)
+						}
+					}))
+					defer server.Close()
+					fixture := newHistoryRouteFixture(t, filepath.Join(t.TempDir(), "dialogue.db"), server.URL, "key")
+					response := sendHistoryRequest(fixture.router, `{"model":"m","input":"保留原始上下文"}`)
+					require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+					before, err := fixture.manager.GetOrCreateSessionForConversation(context.Background(), "response-1", "")
+					require.NoError(t, err)
+					response = sendHistoryRequest(fixture.router, fmt.Sprintf(`{"model":"m","previous_response_id":"response-1","input":"继续","context_management":[{"type":"compaction","compact_threshold":1000}],"stream":%t}`, stream))
+					require.Equal(t, int64(2), calls.Load(), response.Body.String())
+					_, oldKnown, err := fixture.manager.ResponseOwner(context.Background(), "response-1")
+					require.NoError(t, err)
+					_, newKnown, err := fixture.manager.ResponseOwner(context.Background(), "response-2")
+					require.NoError(t, err)
+					require.Equal(t, !valid, oldKnown)
+					require.Equal(t, valid, newKnown)
+					if valid {
+						require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+						after, err := fixture.manager.GetOrCreateSessionForConversation(context.Background(), "response-2", "")
+						require.NoError(t, err)
+						require.Len(t, after.Messages, 1)
+						require.Equal(t, "opaque", after.Messages[0].EncryptedContent)
+					} else {
+						require.Contains(t, response.Body.String(), "缺少有效 encrypted_content")
+						require.NotContains(t, response.Body.String(), `"type":"response.completed"`)
+						after, err := fixture.manager.GetOrCreateSessionForConversation(context.Background(), "response-1", "")
+						require.NoError(t, err)
+						require.Equal(t, before.Messages, after.Messages)
+						require.Equal(t, before.Version, after.Version)
+					}
+				})
+			}
+		}
+	}
+}
+
 func TestImageToolHistoryRestoresAfterRestartAndCredentialChange(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		for _, image := range []bool{false, true} {

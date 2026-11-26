@@ -2,11 +2,9 @@
 package settings
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -14,7 +12,6 @@ import (
 	"insistanan/api-proxy/internal/api/common"
 	"insistanan/api-proxy/internal/clients"
 	"insistanan/api-proxy/internal/clients/extensions"
-	"insistanan/api-proxy/internal/clients/filetxn"
 	"insistanan/api-proxy/internal/infra/config"
 	"insistanan/api-proxy/internal/infra/upstreamreq"
 	"insistanan/api-proxy/internal/storage/atomicfile"
@@ -23,140 +20,71 @@ import (
 // GetSettings 获取可由管理界面维护的全局设置。
 func GetSettings(cfgManager *config.ConfigManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.JSON(http.StatusOK, cfgManager.GetSettings())
+		c.JSON(http.StatusOK, struct {
+			config.SettingsConfig
+			ConfigReload config.ConfigReloadStatus `json:"configReload"`
+		}{cfgManager.GetSettings(), cfgManager.GetReloadStatus()})
 	}
 }
 
 // UpdateSettings 更新管理界面开放的全局设置。未提交的设置分类保持原值。
 func UpdateSettings(cfgManager *config.ConfigManager, skillsAPI *clients.SkillsAPI, mcpAPI *clients.MCPAPI) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var req struct {
-			Network       *config.NetworkSettings     `json:"network"`
-			ContentSafety *config.ContentSafetyConfig `json:"contentSafety"`
-			Disguise      *config.DisguiseSettings    `json:"disguise"`
-			Gateway       *json.RawMessage            `json:"gateway"`
-			Prompts       *config.PromptSettings      `json:"prompts"`
-			Extensions    *config.ExtensionsSettings  `json:"extensions"`
-		}
-		if err := c.ShouldBindJSON(&req); err != nil {
+		var patch config.SettingsPatch
+		if err := c.ShouldBindJSON(&patch); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的设置参数"})
 			return
 		}
-		if req.Network == nil && req.ContentSafety == nil && req.Disguise == nil && req.Gateway == nil && req.Prompts == nil && req.Extensions == nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "至少需要提交一个设置分类"})
-			return
-		}
 
-		settings := cfgManager.GetSettings()
-		if req.Network != nil {
-			req.Network.UpstreamProxyURL = strings.TrimSpace(req.Network.UpstreamProxyURL)
-			if err := config.ValidateProxyURL(req.Network.UpstreamProxyURL); err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-				return
-			}
-			settings.Network = *req.Network
-		}
-		if req.ContentSafety != nil {
-			if err := config.ValidateContentSafetyConfig(*req.ContentSafety); err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-				return
-			}
-			settings.ContentSafety = *req.ContentSafety
-		}
-		if req.Disguise != nil {
-			req.Disguise.ClaudeCodeVersion = strings.TrimSpace(req.Disguise.ClaudeCodeVersion)
-			req.Disguise.CodexVersion = strings.TrimSpace(req.Disguise.CodexVersion)
-			settings.Disguise = *req.Disguise
-			if err := config.ValidateDisguiseSettings(settings.Disguise); err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-				return
-			}
-		}
-		if req.Gateway != nil {
-			gateway := settings.Gateway
-			if err := json.Unmarshal(*req.Gateway, &gateway); err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求与日志设置"})
-				return
-			}
-			if err := config.ValidateGatewaySettings(gateway); err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-				return
-			}
-			settings.Gateway = gateway
-		}
-		if req.Prompts != nil {
-			// 提交 prompts 分类时才归一化（trim + 刷新 UpdatedAt）；
-			// 其他分类单独保存时保持 prompts 原快照，不误刷新时间戳。
-			// previous 传当前快照：未变化的条目保留原 UpdatedAt。
-			settings.Prompts = config.NormalizePromptSettings(*req.Prompts, settings.Prompts)
-		}
-
-		needDirMigration := false
-		var oldSkillsDir, newSkillsDir string
-		if req.Extensions != nil {
-			ext := config.NormalizeExtensionsSettings(*req.Extensions)
-			if err := config.ValidateExtensionsSettings(ext); err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-				return
-			}
-			var err error
-			oldSkillsDir, err = config.ResolveSkillsDir(settings.Extensions.SkillsDir)
-			if err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-				return
-			}
-			newSkillsDir, err = config.ResolveSkillsDir(ext.SkillsDir)
-			if err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-				return
-			}
-			needDirMigration = !config.SamePath(oldSkillsDir, newSkillsDir)
-			settings.Extensions = ext
-		}
-
-		if needDirMigration {
-			var saveErr error
-			var userBadRequest bool
-			lockErr := adminshared.WithExtensionsLocks(skillsAPI, mcpAPI, func() error {
-				migrated, rollback, migErr := extensions.MigrateSkillsDir(oldSkillsDir, newSkillsDir)
-				if migErr != nil {
-					userBadRequest = config.IsConfigError(migErr)
-					return migErr
-				}
-				if err := cfgManager.UpdateSettings(settings); err != nil {
-					if migrated && rollback != nil && !config.IsCommittedError(err) {
-						if rbErr := rollback(); rbErr != nil {
-							err = errors.Join(err, fmt.Errorf("恢复 Skills 目录失败: %w", rbErr))
-						}
-					}
-					saveErr = err
+		save := func() error { return cfgManager.PatchSettings(patch) }
+		var err error
+		if patch.Extensions == nil {
+			err = save()
+		} else {
+			err = adminshared.WithExtensionsLocks(skillsAPI, mcpAPI, func() error {
+				previous := cfgManager.GetSettings().Extensions
+				next := config.NormalizeExtensionsSettings(*patch.Extensions)
+				if err := config.ValidateExtensionsSettings(next); err != nil {
 					return err
 				}
+				oldDir, err := config.ResolveSkillsDir(previous.SkillsDir)
+				if err != nil {
+					return err
+				}
+				newDir, err := config.ResolveSkillsDir(next.SkillsDir)
+				if err != nil {
+					return err
+				}
+				patch.ExpectedExtensions = &previous
+				if config.SamePath(oldDir, newDir) {
+					return save()
+				}
+
+				migrated, rollback, err := extensions.MigrateSkillsDir(oldDir, newDir)
+				if err != nil {
+					return err
+				}
+				saveErr := save()
+				if saveErr != nil && !config.IsCommittedError(saveErr) {
+					if migrated && rollback != nil {
+						if rollbackErr := rollback(); rollbackErr != nil {
+							return errors.Join(saveErr, fmt.Errorf("恢复 Skills 目录失败: %w", rollbackErr))
+						}
+					}
+					return saveErr
+				}
+				// 配置已提交时必须完成迁移收尾，即使目录同步发出了告警。
 				if migrated {
-					if err := extensions.FinalizeSkillsMigration(oldSkillsDir, newSkillsDir); err != nil {
-						saveErr = &atomicfile.CommittedError{Phase: atomicfile.PhaseDirSync, Err: err}
-						return saveErr
+					if err := extensions.FinalizeSkillsMigration(oldDir, newDir); err != nil {
+						return errors.Join(saveErr, &atomicfile.CommittedError{Phase: atomicfile.PhaseDirSync, Err: err})
 					}
 				}
-				return nil
+				return saveErr
 			})
-			if lockErr != nil {
-				if saveErr != nil {
-					common.WriteSaveError(c, "保存全局设置失败", saveErr)
-					return
-				}
-				status := http.StatusInternalServerError
-				if userBadRequest {
-					status = http.StatusBadRequest
-				}
-				c.JSON(status, gin.H{"error": lockErr.Error(), "committed": filetxn.Committed(lockErr)})
-				return
-			}
-		} else {
-			if err := cfgManager.UpdateSettings(settings); err != nil {
-				common.WriteSaveError(c, "保存全局设置失败", err)
-				return
-			}
+		}
+		if err != nil {
+			common.WriteSaveError(c, "保存全局设置失败", err)
+			return
 		}
 		c.JSON(http.StatusOK, cfgManager.GetSettings())
 	}
@@ -254,10 +182,10 @@ func SetClientDisguise(cfgManager *config.ConfigManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req struct {
 			Protocol string `json:"protocol" binding:"required"`
-			Enabled  bool   `json:"enabled"`
+			Enabled  *bool  `json:"enabled"`
 		}
 
-		if err := c.ShouldBindJSON(&req); err != nil {
+		if err := c.ShouldBindJSON(&req); err != nil || req.Enabled == nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数"})
 			return
 		}
@@ -267,8 +195,8 @@ func SetClientDisguise(cfgManager *config.ConfigManager) gin.HandlerFunc {
 			return
 		}
 
-		if err := cfgManager.SetClientDisguiseEnabled(req.Protocol, req.Enabled); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存客户端伪装设置失败"})
+		if err := cfgManager.SetClientDisguiseEnabled(req.Protocol, *req.Enabled); err != nil {
+			common.WriteSaveError(c, "保存客户端伪装设置失败", err)
 			return
 		}
 

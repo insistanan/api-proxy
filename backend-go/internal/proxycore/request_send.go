@@ -14,6 +14,7 @@ import (
 
 	"insistanan/api-proxy/internal/infra/config"
 	"insistanan/api-proxy/internal/infra/httpclient"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
 	"insistanan/api-proxy/internal/orchestration/scheduler"
 	"insistanan/api-proxy/internal/safety/pipeline"
 	"insistanan/api-proxy/internal/storage/logger"
@@ -38,10 +39,10 @@ func SendRequest(req *http.Request, upstream *config.UpstreamConfig, envCfg *con
 	policy := capturePolicy(req.Context(), envCfg)
 	req = req.WithContext(logger.ContextWithCapturePolicy(req.Context(), policy))
 	if upstream.InsecureSkipVerify && policy.Request {
-		log.Printf("[%s-Request-TLS] 警告: 正在跳过对 %s 的TLS证书验证", apiType, req.URL.String())
+		log.Printf("[%s-Request-TLS] 警告: 正在跳过对 %s 的TLS证书验证", apiType, upstreamreq.RedactURL(req.URL.String()))
 	}
 
-	log.Printf("[%s-Request] requestId=%s attemptId=%s %s %s", apiType, logger.RequestIDFromContext(req.Context()), logger.AttemptIDFromContext(req.Context()), req.Method, req.URL.String())
+	log.Printf("[%s-Request] requestId=%s attemptId=%s %s %s", apiType, logger.RequestIDFromContext(req.Context()), logger.AttemptIDFromContext(req.Context()), req.Method, upstreamreq.RedactURL(req.URL.String()))
 	if err := logRequestDetails(req, envCfg, apiType, isStream); err != nil {
 		return nil, err
 	}

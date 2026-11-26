@@ -155,6 +155,12 @@ func appendKnownTextContent(segments *[]SafetySegment, protocol, source, path st
 				}
 			}
 		}
+		if blockType == "compaction" {
+			if text, ok := block["content"].(string); ok && text != "" {
+				appendMapStringSegment(segments, protocol, source, fmt.Sprintf("%s[%d].content", path, index), block, "content", text)
+				(*segments)[len(*segments)-1].Signed = true
+			}
+		}
 	}
 }
 

@@ -138,7 +138,7 @@ func migrateManagedSettings(candidate *Config, rawJSON []byte) (bool, error) {
 		if _, exists := gateway[field]; exists {
 			continue
 		}
-		if raw := os.Getenv(legacy[field]); raw != "" {
+		if raw := os.Getenv(legacy[field]); candidate.SchemaVersion == 0 && raw != "" {
 			var parsed any
 			switch field {
 			case "enableRequestLogs", "enableResponseLogs", "metricsPersistenceEnabled", "enableCORS":

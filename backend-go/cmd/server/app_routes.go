@@ -35,7 +35,7 @@ func (a *app) setupAdminAPI(apiGroup *gin.RouterGroup) {
 	adminusage.Register(apiGroup, a.usageLedger)
 	adminforest.Register(apiGroup, a.forest)
 	adminintent.RegisterIntentAPI(apiGroup, a.intentService)
-	adminintent.RegisterDatasetAPI(apiGroup, a.intentService.Datasets)
+	adminintent.RegisterDatasetAPI(apiGroup, a.intentService)
 	apiGroup.GET("/free-channels", channels.GetFreeChannels(a.cfgManager))
 	apiGroup.PUT("/free-channels/kilo", channels.UpdateKiloFreeChannel(a.cfgManager))
 	apiGroup.POST("/free-channels/kilo/models/sync", channels.SyncKiloFreeModels(a.cfgManager))

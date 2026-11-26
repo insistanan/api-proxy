@@ -23,19 +23,12 @@ func RegisterModelFingerprintRoutes(group *gin.RouterGroup, cfg *config.ConfigMa
 		}
 		target, err := service.Prepare(c.Param("id"), input)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			respondFingerprintError(c, err)
 			return
 		}
 		task, err := jobs.Start(target)
 		if err != nil {
-			status := http.StatusInternalServerError
-			if errors.Is(err, modelfingerprint.ErrTaskRunning) {
-				status = http.StatusConflict
-			}
-			if errors.Is(err, modelfingerprint.ErrTaskCapacity) {
-				status = http.StatusTooManyRequests
-			}
-			c.JSON(status, gin.H{"error": err.Error()})
+			respondFingerprintError(c, err)
 			return
 		}
 		c.JSON(http.StatusAccepted, task)
@@ -44,7 +37,7 @@ func RegisterModelFingerprintRoutes(group *gin.RouterGroup, cfg *config.ConfigMa
 		c.Header("Cache-Control", "no-store")
 		task, err := jobs.Latest(c.Param("id"))
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			respondFingerprintError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, task)
@@ -52,28 +45,20 @@ func RegisterModelFingerprintRoutes(group *gin.RouterGroup, cfg *config.ConfigMa
 	group.POST("/channels/:id/fingerprint/:taskId/retry", func(c *gin.Context) {
 		task, err := jobs.RetryFailed(c.Param("id"), c.Param("taskId"))
 		if err != nil {
-			status := http.StatusConflict
-			if errors.Is(err, modelfingerprint.ErrTaskCapacity) {
-				status = http.StatusTooManyRequests
-			}
-			c.JSON(status, gin.H{"error": err.Error()})
+			respondFingerprintError(c, err)
 			return
 		}
 		c.JSON(http.StatusAccepted, task)
 	})
 	group.POST("/channels/:id/fingerprint/:taskId/samples/:sampleIndex/retry", func(c *gin.Context) {
 		index, err := strconv.Atoi(c.Param("sampleIndex"))
-		if err != nil {
+		if err != nil || index < 0 {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "样本序号无效"})
 			return
 		}
 		task, err := jobs.Retry(c.Param("id"), c.Param("taskId"), index)
 		if err != nil {
-			status := http.StatusConflict
-			if errors.Is(err, modelfingerprint.ErrTaskCapacity) {
-				status = http.StatusTooManyRequests
-			}
-			c.JSON(status, gin.H{"error": err.Error()})
+			respondFingerprintError(c, err)
 			return
 		}
 		c.JSON(http.StatusAccepted, task)
@@ -81,10 +66,27 @@ func RegisterModelFingerprintRoutes(group *gin.RouterGroup, cfg *config.ConfigMa
 	group.DELETE("/channels/:id/fingerprint/:taskId", func(c *gin.Context) {
 		task, err := jobs.Cancel(c.Param("id"), c.Param("taskId"))
 		if err != nil {
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			respondFingerprintError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, task)
 	})
 	return jobs.Close
+}
+
+func respondFingerprintError(c *gin.Context, err error) {
+	status := http.StatusInternalServerError
+	switch {
+	case errors.Is(err, modelfingerprint.ErrInvalidInput):
+		status = http.StatusBadRequest
+	case errors.Is(err, modelfingerprint.ErrNotFound):
+		status = http.StatusNotFound
+	case errors.Is(err, modelfingerprint.ErrConflict), errors.Is(err, modelfingerprint.ErrTaskRunning):
+		status = http.StatusConflict
+	case errors.Is(err, modelfingerprint.ErrTaskCapacity):
+		status = http.StatusTooManyRequests
+	case errors.Is(err, modelfingerprint.ErrClosed):
+		status = http.StatusServiceUnavailable
+	}
+	c.JSON(status, gin.H{"error": err.Error()})
 }

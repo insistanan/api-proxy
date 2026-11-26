@@ -85,7 +85,10 @@ async function save(explicit: boolean) {
   error.value = ''
   try {
     if (props.channel.builtinProvider) await free.setBranchConcurrency(value)
-    else await channelApiByType(props.kind).updateChannel(props.channel.index, { maxBranchConcurrency: value })
+    else {
+      if (!props.channel.id) throw new Error('操作目标缺少稳定渠道 ID，请刷新后重试')
+      await channelApiByType(props.kind).updateChannel(props.channel.index, { maxBranchConcurrency: value }, props.channel.id)
+    }
     limit.value = value
     editing.value = false
     emit('refresh')

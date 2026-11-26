@@ -81,6 +81,8 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 
 	for urlIdx, urlResult := range urlResults {
 		currentBaseURL := urlResult.URL
+		keySelection := *upstream
+		keySelection.BaseURL = currentBaseURL
 		originalIdx := urlResult.OriginalIdx // 原始索引用于指标记录
 		retryState := newCandidateRetryState(len(upstream.APIKeys))
 
@@ -92,7 +94,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 			ResetRequestLogFirstToken(c)
 			attemptStart := time.Now()
 
-			apiKey, err := a.NextAPIKey(upstream, retryState.FailedKeys())
+			apiKey, err := a.NextAPIKey(&keySelection, retryState.FailedKeys())
 			if err != nil {
 				// 候选选取耗尽不能覆盖明确的本地容量错误。
 				if !upstreamcontrol.IsLocalError(failoverState.lastError) {
@@ -237,7 +239,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 				}
 				// 真实渠道故障：计入失败，继续 failover
 				retryState.MarkKeyFailed(apiKey)
-				cfgManager.MarkKeyAsFailed(apiKey, apiType)
+				cfgManager.MarkKeyAsFailed(upstreamCopy, apiKey, apiType)
 				lifecycle.finalizeFailed()
 				if a.MarkURLFailure != nil {
 					a.MarkURLFailure(currentBaseURL)
@@ -264,7 +266,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 					// 不把截断 body 用于错误分类或回给客户端。
 					failoverState.lastError = fmt.Errorf("读取上游错误响应体失败: %w", readErr)
 					retryState.MarkKeyFailed(apiKey)
-					cfgManager.MarkKeyAsFailed(apiKey, apiType)
+					cfgManager.MarkKeyAsFailed(upstreamCopy, apiKey, apiType)
 					lifecycle.finalizeFailed()
 					if a.MarkURLFailure != nil {
 						a.MarkURLFailure(currentBaseURL)
@@ -341,7 +343,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 					case upstreamFailureTryNextKey:
 						failoverState.lastError = fmt.Errorf("上游错误: %d", resp.StatusCode)
 						retryState.MarkKeyFailed(apiKey)
-						cfgManager.MarkKeyAsFailed(apiKey, apiType)
+						cfgManager.MarkKeyAsFailed(upstreamCopy, apiKey, apiType)
 						lifecycle.finalizeFailed()
 						if a.MarkURLFailure != nil && !decision.quotaRelated && upstreamreq.IsEndpointFailure(resp.StatusCode, respBodyBytes) {
 							a.MarkURLFailure(currentBaseURL)
@@ -411,7 +413,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 					failureBody, _ := json.Marshal(gin.H{"error": "读取上游响应失败"})
 					failoverState.lastFailoverError = &FailoverError{Status: http.StatusBadGateway, Body: failureBody}
 					retryState.MarkKeyFailed(apiKey)
-					cfgManager.MarkKeyAsFailed(apiKey, apiType)
+					cfgManager.MarkKeyAsFailed(upstreamCopy, apiKey, apiType)
 					lifecycle.finalizeFailed()
 					if a.MarkURLFailure != nil {
 						a.MarkURLFailure(currentBaseURL)
@@ -425,7 +427,7 @@ func (a UpstreamAttempt) tryWithAllKeys() UpstreamAttemptResult {
 					failoverState.lastError = fmt.Errorf("上游 2xx 响应携带错误信封")
 					failoverState.lastFailoverError = &FailoverError{Status: http.StatusBadGateway, Body: sniff}
 					retryState.MarkKeyFailed(apiKey)
-					cfgManager.MarkKeyAsFailed(apiKey, apiType)
+					cfgManager.MarkKeyAsFailed(upstreamCopy, apiKey, apiType)
 					lifecycle.finalizeFailed()
 					if a.MarkURLFailure != nil && upstreamreq.IsEndpointFailure(resp.StatusCode, sniff) {
 						a.MarkURLFailure(currentBaseURL)

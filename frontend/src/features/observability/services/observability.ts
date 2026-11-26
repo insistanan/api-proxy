@@ -162,7 +162,7 @@ export const observabilityApi = {
     return apiRequest('/logs/dates')
   },
 
-  async purgeLogs(body: { scope: 'all' | 'day'; date?: string }): Promise<{ success: boolean; purged: PurgeLogsResult }> {
+  async purgeLogs(body: { scope: 'all' | 'day' | 'compact'; date?: string }): Promise<{ success: boolean; purged: PurgeLogsResult }> {
     return apiRequest('/logs/purge', { method: 'POST', body: JSON.stringify(body) })
   },
 

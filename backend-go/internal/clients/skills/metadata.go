@@ -180,7 +180,6 @@ func LatestBackup(projectDir string, ref Item, original []byte) (Backup, bool, e
 	if err != nil {
 		return Backup{}, false, err
 	}
-	expectedPath := filepath.Clean(filepath.Join(ref.Path, "SKILL.md"))
 	expectedHash := ContentSHA256(original)
 	for _, backupPath := range entries {
 		metadataBytes, err := os.ReadFile(filepath.Join(backupPath, "metadata.json"))
@@ -191,11 +190,8 @@ func LatestBackup(projectDir string, ref Item, original []byte) (Backup, bool, e
 		if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
 			return Backup{}, false, fmt.Errorf("备份 %s 元数据损坏: %w", backupPath, err)
 		}
-		sourceMatches := metadata.SourceSHA256 != "" && metadata.SourceSHA256 == expectedHash
-		if metadata.SourceSHA256 == "" {
-			sourceMatches = filepath.Clean(metadata.SourcePath) == expectedPath
-		}
-		if !sourceMatches {
+		// 自动选择必须能证明原文一致；无摘要的旧备份仍可手动查看。
+		if metadata.SourceSHA256 != expectedHash {
 			continue
 		}
 		translated, err := os.ReadFile(filepath.Join(backupPath, "translated.md"))

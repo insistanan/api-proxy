@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"insistanan/api-proxy/internal/infra/upstreamreq"
 	"log"
 	"time"
 )
@@ -112,7 +113,7 @@ func (m *MetricsManager) ResetKeyFailureState(baseURL, apiKey string, channelInd
 		metrics.ConsecutiveFailures = 0
 		metrics.recentResults = make([]bool, 0, m.windowSize)
 		metrics.CircuitBrokenAt = nil
-		log.Printf("[Metrics-Reset] Key [%s] (%s) 熔断状态已重置（保留历史统计）", metrics.KeyMask, metrics.BaseURL)
+		log.Printf("[Metrics-Reset] Key [%s] (%s) 熔断状态已重置（保留历史统计）", metrics.KeyMask, upstreamreq.RedactURL(metrics.BaseURL))
 	}
 }
 
@@ -221,7 +222,7 @@ func (m *MetricsManager) recoverExpiredCircuitBreakers() {
 				metrics.ConsecutiveFailures = 0
 				metrics.recentResults = make([]bool, 0, m.windowSize)
 				metrics.CircuitBrokenAt = nil
-				log.Printf("[Metrics-Circuit] Key [%s] (%s) 熔断自动恢复（已超过 %v）", metrics.KeyMask, metrics.BaseURL, m.circuitRecoveryTime)
+				log.Printf("[Metrics-Circuit] Key [%s] (%s) 熔断自动恢复（已超过 %v）", metrics.KeyMask, upstreamreq.RedactURL(metrics.BaseURL), m.circuitRecoveryTime)
 			}
 		}
 	}

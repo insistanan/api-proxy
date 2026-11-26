@@ -13,6 +13,8 @@ import (
 )
 
 const (
+	// ContextKeyAuxiliaryTask 标记不参与主会话持久化的独立文本摘要。
+	ContextKeyAuxiliaryTask      = "auxiliary-summary-task"
 	ContextKeyClaudeCodeDisguise = "client-disguise-claude-code"
 	ContextKeyCodexDisguise      = "client-disguise-codex"
 	// ContextKeyConversationUserID 由 RunProxyRequest 在会话观测后写入，

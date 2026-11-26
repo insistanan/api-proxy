@@ -1,6 +1,7 @@
 package session
 
 import (
+	"insistanan/api-proxy/internal/infra/upstreamreq"
 	"log"
 	"os"
 	"strings"
@@ -97,9 +98,9 @@ func (manager *BaseURLAffinityManager) SetPreferredBaseURL(sessionKey string, ba
 
 	if baseURLAffinityDebug {
 		if logKind == 2 {
-			log.Printf("[BaseURL-Affinity] session %s: %s -> %s", maskSessionKey(sessionKey), previous, baseURL)
+			log.Printf("[BaseURL-Affinity] session %s: %s -> %s", maskSessionKey(sessionKey), upstreamreq.RedactURL(previous), upstreamreq.RedactURL(baseURL))
 		} else if logKind == 1 {
-			log.Printf("[BaseURL-Affinity] session %s sticky %s", maskSessionKey(sessionKey), baseURL)
+			log.Printf("[BaseURL-Affinity] session %s sticky %s", maskSessionKey(sessionKey), upstreamreq.RedactURL(baseURL))
 		}
 	}
 }

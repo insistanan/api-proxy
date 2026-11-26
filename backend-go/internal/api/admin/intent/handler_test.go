@@ -31,7 +31,7 @@ func TestIntentAndDatasetEndpointsShareVectorReadinessError(t *testing.T) {
 	require.NoError(t, err)
 	router := gin.New()
 	RegisterIntentAPI(router.Group("/api"), service)
-	RegisterDatasetAPI(router.Group("/api"), service.Datasets)
+	RegisterDatasetAPI(router.Group("/api"), service)
 	cfg := config.DefaultIntentRouting()
 	cfg.Strategy, cfg.EmbeddingSource, cfg.EmbeddingModel = "semantic", "local", "vector"
 	cfg.Enabled = true

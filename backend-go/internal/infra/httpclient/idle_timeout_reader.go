@@ -26,7 +26,7 @@ var ErrStreamIdleTimeout = errors.New("stream idle timeout: upstream sent no dat
 //     stale goroutine 只写自己的缓冲，不会写入调用方已复用的 p（数据竞争）；
 //   - 超时后 reader 进入废弃态，后续 Read 直接返回 ErrStreamIdleTimeout，
 //     不再对已 Close 的底层并发起读（io.Reader 终态错误语义）。
-//     代价是每次 Read 分配缓冲并复制；是否值得优化须通过 profile 确认。
+//     缓冲、结果通道和计时器跨成功读取复用；每次仍用 goroutine 隔离阻塞读取。
 func NewIdleTimeoutReader(inner io.ReadCloser, idleTimeout time.Duration, apiType string) io.ReadCloser {
 	if idleTimeout <= 0 {
 		return inner // 未配置空闲超时，直接透传
@@ -45,6 +45,9 @@ type idleTimeoutReader struct {
 	// timedOut 标记空闲超时已发生（终态）。只在 Read 的调用方 goroutine
 	// 内读写（io.Reader 不约定并发调用），无需加锁。
 	timedOut bool
+	buffer   []byte
+	done     chan readResult
+	timer    *time.Timer
 }
 
 type readResult struct {
@@ -59,21 +62,34 @@ func (r *idleTimeoutReader) Read(p []byte) (int, error) {
 
 	// 私有缓冲：与调用方的 p 解耦，超时放弃读取后 stale goroutine
 	// 的迟到写入只会落在私有缓冲里，随 GC 回收。
-	buf := make([]byte, len(p))
-	done := make(chan readResult, 1)
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if cap(r.buffer) < len(p) {
+		r.buffer = make([]byte, len(p))
+	}
+	buf := r.buffer[:len(p)]
+	if r.done == nil {
+		r.done = make(chan readResult, 1)
+	}
+	done := r.done
 	go func() {
 		n, err := r.inner.Read(buf)
 		done <- readResult{buf: buf[:n], err: err}
 	}()
 
-	timer := time.NewTimer(r.idleTimeout)
-	defer timer.Stop()
+	if r.timer == nil {
+		r.timer = time.NewTimer(r.idleTimeout)
+	} else {
+		r.timer.Reset(r.idleTimeout)
+	}
+	defer r.timer.Stop()
 
 	select {
 	case res := <-done:
 		n := copy(p, res.buf)
 		return n, res.err
-	case <-timer.C:
+	case <-r.timer.C:
 		// 空闲超时：关闭底层连接以解阻塞 pending Read，返回超时错误。
 		log.Printf("[%s-Stream-IdleTimeout] 警告: 流式响应空闲超时（%.0f 秒无数据），判定上游挂起，已中止流", r.apiType, r.idleTimeout.Seconds())
 		r.timedOut = true

@@ -22,15 +22,16 @@ func TestFreeCatalogUsesSharedListWithoutDiscovery(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, []string{"free"}, modelIDs(models.Data), "目录同步后仍只导入一个免费分组")
 	}
-	// 只有内置免费渠道时，旧发现链路应立即返回空结果，不访问其真实地址。
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	models, routes, err := discoverChatModels(ctx, cm)
-	require.NoError(t, err)
-	require.Empty(t, models)
-	require.Empty(t, routes)
 	require.NoError(t, cm.SetKiloEnabled(false))
 	require.Empty(t, OpenAIModels(context.Background(), cm).Data)
+}
+
+func TestRetiredChatAliasMatchesOnlyCompleteSyntax(t *testing.T) {
+	require.True(t, IsRetiredChatAlias("gpt-4__c12__k0123abcd"))
+	require.True(t, IsRetiredChatAlias("gpt-4__c12__k0123abcd__mabcdef_2"))
+	for _, model := range []string{"gpt-4", "model__custom__kind", "gpt__c1__k", "gpt__c1__k0123abcd/trailing"} {
+		require.False(t, IsRetiredChatAlias(model), model)
+	}
 }
 
 func TestOpenAIModelsPreservesConfiguredPoolKinds(t *testing.T) {
@@ -72,7 +73,7 @@ func TestOpenAIModelsPreservesConfiguredPoolKinds(t *testing.T) {
 			t.Fatalf("duplicate model %q", model.ID)
 		}
 		seen[model.ID] = true
-		if looksLikeChatRouteAlias(model.ID) {
+		if IsRetiredChatAlias(model.ID) {
 			t.Fatalf("公开列表不应包含渠道别名 %q", model.ID)
 		}
 		if want, ok := wantKinds[model.ID]; !ok || model.OwnedBy != want {
@@ -125,7 +126,7 @@ func TestModelsForKindUsesIngressProtocolAndFreeEligibility(t *testing.T) {
 		ChatPools: pools("chat"), GeminiPools: pools("gemini"), ImagesPools: pools("images"),
 		EmbeddingsPools: pools("embeddings"), DecisionsPools: pools("decisions"),
 		// Messages 入口使用 Chat 上游，不改变公开目录的协议归属。
-		Upstream:     []config.UpstreamConfig{{PoolID: "messages", Name: "Chat 上游", ServiceType: "openai", BaseURL: "https://upstream.invalid", APIKeys: []string{"fixture"}, MaxConcurrency: 5}},
+		Upstream:     []config.UpstreamConfig{{PoolID: "messages", Name: "Chat 上游", Status: config.ChannelStatusActive, ServiceType: "openai", BaseURL: "https://upstream.invalid", APIKeys: []string{"fixture"}, MaxConcurrency: 5}},
 		FreeChannels: &config.FreeChannelsConfig{Kilo: config.KiloFreeConfig{Enabled: true, Models: []string{"vendor/model"}}},
 	})
 	for _, kind := range []string{"messages", "responses", "chat", "gemini", "images", "embeddings", "decisions"} {

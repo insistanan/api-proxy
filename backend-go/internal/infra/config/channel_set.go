@@ -9,6 +9,7 @@ import (
 )
 
 var ErrChannelIdentityConflict = errors.New("渠道身份已变化，请刷新后重新编辑")
+var ErrChannelNotFound = errors.New("渠道不存在或已删除")
 
 // channelSet 把"某一种渠道类型在 Config 里的存放位置"抽象出来，
 // 使 CRUD 逻辑不必为每种渠道类型复制一遍。
@@ -54,7 +55,7 @@ func (cfg *Config) channelSetFor(kind string) (*channelSet, error) {
 			return &set, nil
 		}
 	}
-	return nil, fmt.Errorf("不支持的渠道类型: %s", kind)
+	return nil, proxyConfigErrorf("不支持的渠道类型: %s", kind)
 }
 
 // mutateChannelSet 统一无返回值的渠道写操作：只修改候选，提交后发布。
@@ -81,7 +82,7 @@ func (cm *ConfigManager) mutateChannelSet(kind string, mutate func(*channelSet) 
 // chat/images 版额外做了 DefaultModel TrimSpace，此处统一对所有 kind 做（对 messages 无害）。
 func (cm *ConfigManager) AddChannel(kind string, up UpstreamConfig) (AddedUpstream, error) {
 	if up.BuiltinProvider != "" {
-		return AddedUpstream{}, fmt.Errorf("不能通过普通接口创建内置免费渠道")
+		return AddedUpstream{}, proxyConfigErrorf("不能通过普通接口创建内置免费渠道")
 	}
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
@@ -126,7 +127,7 @@ func (cm *ConfigManager) UpdateChannel(kind string, index int, updates UpstreamU
 	}
 
 	if index < 0 || index >= len(upstreams) {
-		return false, fmt.Errorf("无效的 %s 上游索引: %d", cs.name, index)
+		return false, fmt.Errorf("%w: %s 上游索引 %d", ErrChannelNotFound, cs.name, index)
 	}
 
 	if updates.ExpectedChannelID != nil && (*updates.ExpectedChannelID == "" || upstreams[index].ID != *updates.ExpectedChannelID) {
@@ -146,7 +147,7 @@ func (cm *ConfigManager) UpdateChannel(kind string, index int, updates UpstreamU
 }
 
 // RemoveChannel 删除上游（通用版）。
-func (cm *ConfigManager) RemoveChannel(kind string, index int) (*UpstreamConfig, error) {
+func (cm *ConfigManager) RemoveChannel(kind string, index int, expectedID ...string) (*UpstreamConfig, error) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
@@ -155,11 +156,11 @@ func (cm *ConfigManager) RemoveChannel(kind string, index int) (*UpstreamConfig,
 	if err != nil {
 		return nil, err
 	}
-	if err := rejectBuiltinChannel(*cs.upstreams, index); err != nil {
+	if err := rejectBuiltinChannel(*cs.upstreams, index, expectedID...); err != nil {
 		return nil, err
 	}
 	if index < 0 || index >= len(*cs.upstreams) {
-		return nil, fmt.Errorf("无效的 %s 上游索引: %d", cs.name, index)
+		return nil, fmt.Errorf("%w: %s 上游索引 %d", ErrChannelNotFound, cs.name, index)
 	}
 	removedUpstream := (*cs.upstreams)[index]
 	if removedUpstream.ID != "" {
@@ -174,15 +175,15 @@ func (cm *ConfigManager) RemoveChannel(kind string, index int) (*UpstreamConfig,
 	if err != nil && !IsCommittedError(err) {
 		return nil, err
 	}
-	cm.clearFailedKeysForUpstream(removed, cs.name)
+	cm.pruneFailedKeysLocked()
 	log.Printf("[Config-Upstream] 已删除 %s 上游: %s", cs.name, removed.Name)
 	return removed, err
 }
 
 // AddChannelKey 为指定渠道添加 API 密钥。
-func (cm *ConfigManager) AddChannelKey(kind string, index int, apiKey string) error {
+func (cm *ConfigManager) AddChannelKey(kind string, index int, apiKey string, expectedID ...string) error {
 	return cm.mutateChannelSet(kind, func(cs *channelSet) error {
-		if err := rejectBuiltinChannel(*cs.upstreams, index); err != nil {
+		if err := rejectBuiltinChannel(*cs.upstreams, index, expectedID...); err != nil {
 			return err
 		}
 		return addAPIKeyOp(*cs.upstreams, index, apiKey, cs.name)
@@ -190,9 +191,9 @@ func (cm *ConfigManager) AddChannelKey(kind string, index int, apiKey string) er
 }
 
 // RemoveChannelKey 从指定渠道移除 API 密钥。
-func (cm *ConfigManager) RemoveChannelKey(kind string, index int, apiKey string) error {
+func (cm *ConfigManager) RemoveChannelKey(kind string, index int, apiKey string, expectedID ...string) error {
 	return cm.mutateChannelSet(kind, func(cs *channelSet) error {
-		if err := rejectBuiltinChannel(*cs.upstreams, index); err != nil {
+		if err := rejectBuiltinChannel(*cs.upstreams, index, expectedID...); err != nil {
 			return err
 		}
 		return removeAPIKeyOp(*cs.upstreams, index, apiKey, cs.name)
@@ -200,9 +201,9 @@ func (cm *ConfigManager) RemoveChannelKey(kind string, index int, apiKey string)
 }
 
 // MoveChannelKeyTop 将 API 密钥移到列表顶部。
-func (cm *ConfigManager) MoveChannelKeyTop(kind string, index int, apiKey string) error {
+func (cm *ConfigManager) MoveChannelKeyTop(kind string, index int, apiKey string, expectedID ...string) error {
 	return cm.mutateChannelSet(kind, func(cs *channelSet) error {
-		if err := rejectBuiltinChannel(*cs.upstreams, index); err != nil {
+		if err := rejectBuiltinChannel(*cs.upstreams, index, expectedID...); err != nil {
 			return err
 		}
 		return moveKeyToTopOp(*cs.upstreams, index, apiKey)
@@ -210,9 +211,9 @@ func (cm *ConfigManager) MoveChannelKeyTop(kind string, index int, apiKey string
 }
 
 // MoveChannelKeyBottom 将 API 密钥移到底部。
-func (cm *ConfigManager) MoveChannelKeyBottom(kind string, index int, apiKey string) error {
+func (cm *ConfigManager) MoveChannelKeyBottom(kind string, index int, apiKey string, expectedID ...string) error {
 	return cm.mutateChannelSet(kind, func(cs *channelSet) error {
-		if err := rejectBuiltinChannel(*cs.upstreams, index); err != nil {
+		if err := rejectBuiltinChannel(*cs.upstreams, index, expectedID...); err != nil {
 			return err
 		}
 		return moveKeyToBottomOp(*cs.upstreams, index, apiKey)
@@ -227,9 +228,9 @@ func (cm *ConfigManager) ReorderChannels(kind string, order []int) error {
 }
 
 // SetChannelStatusFor 设置渠道状态。
-func (cm *ConfigManager) SetChannelStatusFor(kind string, index int, status string) error {
+func (cm *ConfigManager) SetChannelStatusFor(kind string, index int, status string, expectedID ...string) error {
 	return cm.mutateChannelSet(kind, func(cs *channelSet) error {
-		if err := rejectBuiltinChannel(*cs.upstreams, index); err != nil {
+		if err := rejectBuiltinChannel(*cs.upstreams, index, expectedID...); err != nil {
 			return err
 		}
 		return setStatusOp(*cs.upstreams, index, status, cs.name)
@@ -237,9 +238,9 @@ func (cm *ConfigManager) SetChannelStatusFor(kind string, index int, status stri
 }
 
 // SetChannelPromotionFor 设置渠道促销期。
-func (cm *ConfigManager) SetChannelPromotionFor(kind string, index int, duration time.Duration, count int) error {
+func (cm *ConfigManager) SetChannelPromotionFor(kind string, index int, duration time.Duration, count int, expectedID ...string) error {
 	return cm.mutateChannelSet(kind, func(cs *channelSet) error {
-		if err := rejectBuiltinChannel(*cs.upstreams, index); err != nil {
+		if err := rejectBuiltinChannel(*cs.upstreams, index, expectedID...); err != nil {
 			return err
 		}
 		return setPromotionOp(*cs.upstreams, index, duration, count, cs.name)

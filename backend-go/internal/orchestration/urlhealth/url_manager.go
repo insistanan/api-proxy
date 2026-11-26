@@ -2,6 +2,7 @@
 package urlhealth
 
 import (
+	"insistanan/api-proxy/internal/infra/upstreamreq"
 	"log"
 	"sort"
 	"sync"
@@ -83,7 +84,7 @@ func (m *URLManager) MarkFailure(channelIndex int, url string) {
 	if state := m.channelStates[channelIndex][url]; state != nil {
 		state.failCount++
 		state.lastFailTime = time.Now()
-		log.Printf("[URLManager] URL 失败: 渠道 [%d], URL: %s, 连续失败: %d", channelIndex, url, state.failCount)
+		log.Printf("[URLManager] URL 失败: 渠道 [%d], URL: %s, 连续失败: %d", channelIndex, upstreamreq.RedactURL(url), state.failCount)
 	}
 }
 

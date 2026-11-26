@@ -26,6 +26,7 @@ func (s *geminiShadowStore) clearConversation(id string) {
 	kept := s.order[:0]
 	for _, key := range s.order {
 		if id == "" || key.SessionID == id {
+			s.usedBytes -= shadowBytes(key, s.sessions[key])
 			delete(s.sessions, key)
 		} else {
 			kept = append(kept, key)

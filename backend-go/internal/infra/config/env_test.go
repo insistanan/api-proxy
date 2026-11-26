@@ -41,6 +41,7 @@ func TestLoadEnvConfig_RejectsExplicitInvalidValues(t *testing.T) {
 		{"PORT", "abc"}, {"PORT", "0"}, {"PORT", "65536"}, {"PORT", ""},
 		{"ENABLE_WEB_UI", "FALSE"}, {"LOG_TO_CONSOLE", "yes"},
 		{"ENV", "unknown"}, {"LOG_LEVEL", "verbose"}, {"PROXY_ACCESS_KEY", ""},
+		{"PROXY_ACCESS_KEY", "your-proxy-access-key"}, {"PROXY_ACCESS_KEY", "   "},
 	} {
 		t.Run(tc.key+"="+tc.value, func(t *testing.T) {
 			t.Setenv(tc.key, tc.value)

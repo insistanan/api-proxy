@@ -19,6 +19,8 @@
         <summary>将导出 {{ status.exportFiles?.length || 0 }} 个 Skill 资源及清单文件</summary>
         <p class="my-2 text-muted-foreground">MCP 配置、本机托管记录和翻译备份不在导出范围内。</p>
         <ul><li v-for="path in status.exportFiles" :key="path" class="break-all">{{ path }}</li></ul>
+        <p v-if="status.exportExcluded?.length" class="mt-2">以下文件保留在本机：</p>
+        <ul><li v-for="item in status.exportExcluded" :key="item.path" class="break-all">{{ item.path }}：{{ item.reason }}</li></ul>
       </details>
     </template>
     <div class="mt-4 space-y-2 text-sm leading-6 text-muted-foreground">

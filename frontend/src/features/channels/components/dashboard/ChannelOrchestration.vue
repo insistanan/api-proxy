@@ -419,9 +419,10 @@ const toggleVisionCapability = async (channel: Channel) => {
 const duplicateChannel = (channel: Channel) => emit('duplicate', channel)
 
 // 设置渠道状态
-const setChannelStatus = async (channelId: number, status: ChannelStatus, kind: ApiTab = props.channelType) => {
+const setChannelStatus = async (channel: Channel, status: ChannelStatus, kind: ApiTab = kindOf(channel)) => {
   try {
-    await channelApiByType(kind).setStatus(channelId, status)
+    if (!channel.id) throw new Error('操作目标缺少稳定渠道 ID，请刷新后重试')
+    await channelApiByType(kind).setStatus(channel.index, status, channel.id)
     emit('refresh')
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : '未知错误'
@@ -435,8 +436,8 @@ const setChannelStatus = async (channelId: number, status: ChannelStatus, kind: 
 }
 
 // 恢复暂停渠道与启用备用渠道是同一操作：激活接口统一重置两层熔断，避免恢复到一半的状态。
-const resumeChannel = async (channelId: number, kind: ApiTab = props.channelType) => {
-  await setChannelStatus(channelId, 'active', kind)
+const resumeChannel = async (channel: Channel, kind: ApiTab = kindOf(channel)) => {
+  await setChannelStatus(channel, 'active', kind)
 }
 
 const shouldResumeChannel = (channel: Channel): boolean => {
@@ -451,12 +452,12 @@ const toggleChannelPrimaryStatus = async (channel: Channel) => {
   const kind = kindOf(channel)
 
   if (shouldResumeChannel(channel)) {
-    await resumeChannel(channel.index, kind)
+    await resumeChannel(channel, kind)
     return
   }
 
   if (currentStatus === 'active') {
-    await setChannelStatus(channel.index, 'suspended', kind)
+    await setChannelStatus(channel, 'suspended', kind)
   }
 }
 
@@ -471,10 +472,10 @@ const runMenuAction = (channel: Channel, action: ChannelMenuAction) => {
     case 'ping': return emit('ping', channel.index)
     case 'logs': return openLogsDialog(channel)
     case 'promotion': return openPromotionDialog(channel)
-    case 'resume': return resumeChannel(channel.index, kind)
-    case 'suspend': return setChannelStatus(channel.index, 'suspended', kind)
-    case 'disable': return setChannelStatus(channel.index, 'disabled', kind)
-    case 'deprecate': return setChannelStatus(channel.index, 'deprecated', kind)
+    case 'resume': return resumeChannel(channel, kind)
+    case 'suspend': return setChannelStatus(channel, 'suspended', kind)
+    case 'disable': return setChannelStatus(channel, 'disabled', kind)
+    case 'deprecate': return setChannelStatus(channel, 'deprecated', kind)
   }
 }
 

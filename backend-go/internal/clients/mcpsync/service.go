@@ -127,11 +127,20 @@ func sameFilePath(a, b string) bool {
 // SyncToAgents 根据当前存储的 mcp.json 将启用的 MCP 条目分发到各智能体配置文件。
 // 与 Save 不同，单个智能体不可用或写入失败只记录在该智能体的 AgentResult 中，不中断其他智能体。
 // 文件内容未变化时跳过写入，避免产生多余备份或无谓磁盘 IO。
-func (s *Service) SyncToAgents() ([]AgentResult, error) {
+func (s *Service) SyncToAgents(expectedDirectory ...string) ([]AgentResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	raw, err := s.store.ReadRaw()
+	path, err := s.store.Path()
+	if err != nil {
+		return nil, err
+	}
+	if len(expectedDirectory) > 0 && !sameFilePath(filepath.Dir(path), expectedDirectory[0]) {
+		return nil, fmt.Errorf("MCP 目录已切换，未同步其他仓库；请刷新后重试同步")
+	}
+	// 同一轮分发固定列表及托管状态路径，配置热更新不能把写入导向另一个目录。
+	store := NewStore(path)
+	raw, err := store.ReadRaw()
 	if err != nil {
 		return nil, err
 	}
@@ -224,7 +233,7 @@ func (s *Service) SyncToAgents() ([]AgentResult, error) {
 		if err := trackOwnership(&file, adapter, path, current, next, managed); err != nil {
 			return results, err
 		}
-		if _, err := s.store.writeFile(&file); err != nil {
+		if _, err := store.writeFile(&file); err != nil {
 			return results, err
 		}
 		if !bytes.Equal(current, next) {
@@ -237,7 +246,7 @@ func (s *Service) SyncToAgents() ([]AgentResult, error) {
 		}
 		if res.OK {
 			confirmOwnership(&file, adapter.Key())
-			if _, err := s.store.writeFile(&file); err != nil {
+			if _, err := store.writeFile(&file); err != nil {
 				return results, &filetxn.CommitError{Files: []string{path}, Err: err}
 			}
 		}

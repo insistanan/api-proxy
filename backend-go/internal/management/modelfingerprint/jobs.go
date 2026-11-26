@@ -20,6 +20,10 @@ import (
 
 var ErrTaskRunning = errors.New("该渠道已有指纹检测正在进行")
 var ErrTaskCapacity = errors.New("指纹检测任务已达并发上限，请等待其他任务结束")
+var ErrInvalidInput = errors.New("指纹检测参数无效")
+var ErrNotFound = errors.New("指纹检测目标不存在")
+var ErrConflict = errors.New("指纹检测状态冲突")
+var ErrClosed = errors.New("指纹检测服务已关闭")
 
 const maxActiveTasks = 4
 const maxCachedTasks = 128
@@ -50,21 +54,22 @@ type taskRun struct {
 
 // Jobs 的生命周期由进程管理，HTTP 断开只停止查看，不取消检测。
 type Jobs struct {
-	mu        sync.Mutex
-	workers   sync.WaitGroup
-	dir       string
-	tasks     map[string]*taskRun
-	closed    bool
-	closeErr  error
-	run       func(context.Context, *Target, func(Event))
-	retry     func(context.Context, *Target, Task, []int, func(Event))
-	restore   func(*Target) (*Target, error)
-	writeTask func(Task) error
-	diskMu    [64]sync.Mutex
-	stop      chan struct{}
-	done      chan struct{}
-	stopOnce  sync.Once
-	pruneWake chan struct{}
+	mu           sync.Mutex
+	workers      sync.WaitGroup
+	dir          string
+	tasks        map[string]*taskRun
+	closed       bool
+	closeErr     error
+	retentionErr error
+	run          func(context.Context, *Target, func(Event))
+	retry        func(context.Context, *Target, Task, []int, func(Event))
+	restore      func(*Target) (*Target, error)
+	writeTask    func(Task) error
+	diskMu       [64]sync.Mutex
+	stop         chan struct{}
+	done         chan struct{}
+	stopOnce     sync.Once
+	pruneWake    chan struct{}
 }
 
 func NewJobs(service *Service, dir string) *Jobs {
@@ -150,7 +155,7 @@ func (j *Jobs) saveRunLocked(current *taskRun) error {
 
 func (j *Jobs) loadLocked(channelID string) (*taskRun, error) {
 	if strings.TrimSpace(channelID) == "" {
-		return nil, fmt.Errorf("渠道 ID 不能为空")
+		return nil, fmt.Errorf("%w: 渠道 ID 不能为空", ErrInvalidInput)
 	}
 	if current := j.tasks[channelID]; current != nil {
 		return current, nil
@@ -217,7 +222,7 @@ func (j *Jobs) Start(target *Target) (*Task, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if j.closed {
-		return nil, fmt.Errorf("服务正在关闭，无法开始检测")
+		return nil, ErrClosed
 	}
 	current, err := j.loadLocked(target.ChannelID)
 	if err != nil {
@@ -227,7 +232,7 @@ func (j *Jobs) Start(target *Target) (*Task, error) {
 		return nil, ErrTaskRunning
 	}
 	if j.closed {
-		return nil, fmt.Errorf("服务正在关闭，无法开始检测")
+		return nil, ErrClosed
 	}
 	if j.activeLocked() >= maxActiveTasks {
 		return nil, ErrTaskCapacity
@@ -266,20 +271,20 @@ func (j *Jobs) retrySamples(channelID, taskID string, indexes []int) (*Task, err
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if j.closed {
-		return nil, fmt.Errorf("服务正在关闭，无法重试")
+		return nil, ErrClosed
 	}
 	current, err := j.loadLocked(channelID)
 	if err != nil {
 		return nil, err
 	}
 	if current == nil || current.task.ID != taskID {
-		return nil, fmt.Errorf("检测任务不存在或已被替换，请刷新后重试")
+		return nil, fmt.Errorf("%w: 检测任务不存在或已被替换，请刷新后重试", ErrNotFound)
 	}
 	if taskActive(current.task) || current.cancel != nil {
 		return nil, ErrTaskRunning
 	}
 	if j.closed {
-		return nil, fmt.Errorf("服务正在关闭，无法重试")
+		return nil, ErrClosed
 	}
 	if j.activeLocked() >= maxActiveTasks {
 		return nil, ErrTaskCapacity
@@ -292,22 +297,22 @@ func (j *Jobs) retrySamples(channelID, taskID string, indexes []int) (*Task, err
 		}
 	}
 	if len(indexes) == 0 {
-		return nil, fmt.Errorf("没有需要重新检测的失败样本")
+		return nil, fmt.Errorf("%w: 没有需要重新检测的失败样本", ErrConflict)
 	}
 	for _, index := range indexes {
 		if index < 0 || index >= len(current.task.Samples) {
-			return nil, fmt.Errorf("指定样本不存在")
+			return nil, fmt.Errorf("%w: 指定样本不存在", ErrNotFound)
 		}
 		sample := current.task.Samples[index]
 		if !sampleRetryable(sample) {
-			return nil, fmt.Errorf("只能重试失败、截断或已停止的样本")
+			return nil, fmt.Errorf("%w: 只能重试失败、截断或已停止的样本", ErrConflict)
 		}
 		if sample.Prompt == "" || sample.ExpectedCount <= 0 || current.task.DataBuilt == "" {
-			return nil, fmt.Errorf("原挑战或参考库版本缺失，请重新开始整轮检测")
+			return nil, fmt.Errorf("%w: 原挑战或参考库版本缺失，请重新开始整轮检测", ErrConflict)
 		}
 	}
 	if current.task.SDKVersion != "" && current.task.SDKVersion != detectorSDKVersion() {
-		return nil, fmt.Errorf("检测 SDK 版本已变化，请重新开始整轮检测")
+		return nil, fmt.Errorf("%w: 检测 SDK 版本已变化，请重新开始整轮检测", ErrConflict)
 	}
 	target, err := j.restore(current.task.Target)
 	if err != nil {
@@ -428,7 +433,7 @@ func (j *Jobs) Cancel(channelID, taskID string) (*Task, error) {
 		return nil, err
 	}
 	if current == nil || current.task.ID != taskID {
-		return nil, fmt.Errorf("检测任务不存在或已被替换，请刷新后重试")
+		return nil, fmt.Errorf("%w: 检测任务不存在或已被替换，请刷新后重试", ErrNotFound)
 	}
 	if taskActive(current.task) {
 		stopTask(&current.task, "cancelled", "检测已停止")

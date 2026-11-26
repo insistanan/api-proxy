@@ -24,6 +24,9 @@ func TestPromotionAdmissionAndEndRules(t *testing.T) {
 			}}
 			s, cleanup := createTestScheduler(t, cfg)
 			t.Cleanup(cleanup)
+			if scenario != "expired" {
+				require.NoError(t, s.configManager.SetChannelPromotionFor("messages", 1, time.Hour, 1))
+			}
 			failed := map[int]bool{}
 			if scenario == "failed" {
 				failed[1] = true

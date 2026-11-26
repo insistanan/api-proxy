@@ -62,6 +62,8 @@ var (
 	ErrGateStoreClosed = errors.New("闸门存储已关闭")
 	// ErrGatePendingNotFound 表示待确认记录不存在或已结束。
 	ErrGatePendingNotFound = errors.New("待确认记录不存在或已结束")
+	ErrGateInvalidInput    = errors.New("命令审核参数无效")
+	ErrGateConflict        = errors.New("命令审核状态冲突")
 )
 
 // GateStore 持久化闸门状态。
@@ -193,7 +195,7 @@ func (s *GateStore) RecordPending(ctx context.Context, entry GatePending) (GateP
 	if affected, err := result.RowsAffected(); err != nil {
 		return GatePending{}, fmt.Errorf("读取待确认写入结果失败: %w", err)
 	} else if affected == 0 {
-		return GatePending{}, fmt.Errorf("待确认命令已达 256 条上限，请稍后重试")
+		return GatePending{}, fmt.Errorf("%w: 待确认命令已达 256 条上限，请稍后重试", ErrGateConflict)
 	}
 	entry.ID, err = result.LastInsertId()
 	if err != nil {
@@ -225,7 +227,7 @@ func (s *GateStore) ResolvePending(ctx context.Context, id int64, status string)
 		return GatePending{}, err
 	}
 	if !validGatePendingStatus(status) {
-		return GatePending{}, fmt.Errorf("无效的待确认状态 %q", status)
+		return GatePending{}, fmt.Errorf("%w: 无效的待确认状态 %q", ErrGateInvalidInput, status)
 	}
 	result, err := s.db.ExecContext(ctx, `UPDATE gate_pending SET status = ? WHERE id = ? AND status = 'waiting'`, status, id)
 	if err != nil {
@@ -307,14 +309,14 @@ func resolveCommandPendings(ctx context.Context, tx *sql.Tx, entry GateDecision)
 func writeGateDecision(ctx context.Context, tx *sql.Tx, entry GateDecision) (GateDecision, error) {
 	entry.Decision = strings.ToLower(strings.TrimSpace(entry.Decision))
 	if entry.Decision != GateDecisionAllow && entry.Decision != GateDecisionBlock {
-		return GateDecision{}, fmt.Errorf("无效的闸门名单决定 %q", entry.Decision)
+		return GateDecision{}, fmt.Errorf("%w: 无效的闸门名单决定 %q", ErrGateInvalidInput, entry.Decision)
 	}
 	entry.ConversationID = strings.TrimSpace(entry.ConversationID)
 	if entry.ConversationID == "" {
-		return GateDecision{}, fmt.Errorf("闸门名单决定缺少会话 ID")
+		return GateDecision{}, fmt.Errorf("%w: 闸门名单决定缺少会话 ID", ErrGateInvalidInput)
 	}
 	if strings.TrimSpace(entry.CommandHash) == "" {
-		return GateDecision{}, fmt.Errorf("闸门名单决定缺少完整命令身份")
+		return GateDecision{}, fmt.Errorf("%w: 闸门名单决定缺少完整命令身份", ErrGateInvalidInput)
 	}
 	entry.CommandSnippet = truncateAuditText(RedactAuditText(entry.CommandSnippet), 500)
 	if entry.CreatedAt.IsZero() {
@@ -329,7 +331,7 @@ func writeGateDecision(ctx context.Context, tx *sql.Tx, entry GateDecision) (Gat
 		return GateDecision{}, fmt.Errorf("检查命令授权容量失败: %w", err)
 	}
 	if count >= 10000 {
-		return GateDecision{}, fmt.Errorf("命令授权已达 10000 条上限，请先解除不再使用的授权")
+		return GateDecision{}, fmt.Errorf("%w: 命令授权已达 10000 条上限，请先解除不再使用的授权", ErrGateConflict)
 	}
 	result, err := tx.ExecContext(ctx, "INSERT INTO gate_decisions (conversation_id, decision, rule, command_snippet, command_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)",
 		entry.ConversationID, entry.Decision, entry.Rule, entry.CommandSnippet, entry.CommandHash, entry.CreatedAt.Format(gateTimeLayout))
@@ -350,7 +352,7 @@ func (s *GateStore) DecidePending(ctx context.Context, id int64, decision string
 	}
 	decision = strings.ToLower(strings.TrimSpace(decision))
 	if decision != GateDecisionAllow && decision != GateDecisionBlock {
-		return GatePending{}, nil, fmt.Errorf("无效的闸门决定 %q", decision)
+		return GatePending{}, nil, fmt.Errorf("%w: 无效的闸门决定 %q", ErrGateInvalidInput, decision)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -368,10 +370,10 @@ func (s *GateStore) DecidePending(ctx context.Context, id int64, decision string
 		return GatePending{}, nil, ErrGatePendingNotFound
 	}
 	if pending.CommandHash == "" {
-		return GatePending{}, nil, fmt.Errorf("旧待确认记录缺少完整命令身份，请重新发起审核")
+		return GatePending{}, nil, fmt.Errorf("%w: 旧待确认记录缺少完整命令身份，请重新发起审核", ErrGateConflict)
 	}
 	if pending.AIVerdict == GateDecisionAllow && decision != GateDecisionBlock {
-		return GatePending{}, nil, fmt.Errorf("AI 已放行的命令只接受否决")
+		return GatePending{}, nil, fmt.Errorf("%w: AI 已放行的命令只接受否决", ErrGateConflict)
 	}
 	status := "blocked"
 	if decision == GateDecisionAllow {
@@ -503,16 +505,16 @@ func (s *GateStore) RemoveDecisionsForConversation(ctx context.Context, conversa
 	}
 	conversationID = strings.TrimSpace(conversationID)
 	if conversationID == "" {
-		return 0, fmt.Errorf("会话 ID 不能为空")
+		return 0, fmt.Errorf("%w: 会话 ID 不能为空", ErrGateInvalidInput)
 	}
 	if len(commandHashes) > 1 {
-		return 0, fmt.Errorf("一次只能解除一个命令身份")
+		return 0, fmt.Errorf("%w: 一次只能解除一个命令身份", ErrGateInvalidInput)
 	}
 	query := `DELETE FROM gate_decisions WHERE conversation_id = ?`
 	args := []any{conversationID}
 	if len(commandHashes) == 1 {
 		if commandHashes[0] == "" {
-			return 0, fmt.Errorf("命令身份不能为空")
+			return 0, fmt.Errorf("%w: 命令身份不能为空", ErrGateInvalidInput)
 		}
 		query += ` AND command_hash = ?`
 		args = append(args, commandHashes[0])

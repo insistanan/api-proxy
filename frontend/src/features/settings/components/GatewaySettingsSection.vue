@@ -7,6 +7,10 @@
       </UiButton>
     </div>
     <LogStorageStatus />
+    <UiAlert v-if="logs.compactionError" type="warning" variant="tonal" class="mb-4">
+      日志已删除，空间回收未完成：{{ logs.compactionError }}
+      <UiButton variant="text" :loading="logs.purging" @click="logs.retryCompaction">仅重试压缩</UiButton>
+    </UiAlert>
     <UiAlert v-if="purgeNotice" :type="purgeNotice.type" variant="tonal" density="compact" class="mb-4" role="status">
       {{ purgeNotice.message }}
     </UiAlert>

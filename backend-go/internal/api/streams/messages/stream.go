@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"insistanan/api-proxy/internal/infra/upstreamreq"
 	"insistanan/api-proxy/internal/protocol/codec"
+	"insistanan/api-proxy/internal/protocol/contract"
 	"insistanan/api-proxy/internal/protocol/tokenusage"
 	"io"
 	"log"
@@ -27,17 +28,19 @@ import (
 	"insistanan/api-proxy/internal/protocol/types"
 	"insistanan/api-proxy/internal/proxycore"
 	"insistanan/api-proxy/internal/safety/pipeline"
+	"insistanan/api-proxy/internal/storage/logbody"
+	"insistanan/api-proxy/internal/storage/logger"
 )
 
 // Context 流处理上下文
 type Context struct {
-	LogBuffer         bytes.Buffer
-	OutputTextBuffer  bytes.Buffer
+	Compaction        contract.ClaudeCompactionStream
+	LogBuffer         logbody.Buffer
+	OutputEstimate    tokenusage.IncrementalEstimator
 	ResponseText      bytes.Buffer
 	Reasoning         bytes.Buffer
 	Synthesizer       *codec.StreamSynthesizer
 	LoggingEnabled    bool
-	LogBufferFull     bool // LogBuffer 达到上限后标记，避免重复检查
 	ClientGone        bool
 	TerminalDelivered bool
 	HasUsage          bool
@@ -71,6 +74,7 @@ type StreamToolCall struct {
 
 // CollectedUsageData 从流事件中收集的 usage 数据
 type CollectedUsageData struct {
+	Iterations               []types.UsageIteration
 	InputTokens              int
 	OutputTokens             int
 	CacheCreationInputTokens int
@@ -82,14 +86,16 @@ type CollectedUsageData struct {
 }
 
 // NewStreamContext 创建流处理上下文
-func NewStreamContext(envCfg *config.EnvConfig) *Context {
+func NewStreamContext(requestCtx context.Context, envCfg *config.EnvConfig) *Context {
+	limit := logger.StreamLogLimit(requestCtx, envCfg.Current().EnableResponseLogs)
 	ctx := &Context{
-		LoggingEnabled:    envCfg.Current().EnableResponseLogs,
+		LoggingEnabled:    limit > 0,
+		LogBuffer:         logbody.Buffer{Limit: limit},
 		ContentBlockTypes: make(map[int]string),
 		ToolCalls:         make(map[int]*StreamToolCall),
 	}
 	if ctx.LoggingEnabled {
-		ctx.Synthesizer = codec.NewStreamSynthesizer("claude")
+		ctx.Synthesizer = codec.NewStreamSynthesizer("claude", ctx.LogBuffer.Limit)
 	}
 	return ctx
 }
@@ -256,7 +262,7 @@ func HandleStreamResponse(
 	w := c.Writer
 	var flusher http.Flusher = w
 
-	ctx := NewStreamContext(envCfg)
+	ctx := NewStreamContext(c.Request.Context(), envCfg)
 	ctx.ReasoningScope = providers.ReasoningCacheScope(c.GetString(upstreamreq.ContextKeyConversationUserID), upstream, requestModel)
 	ctx.RequestModel = requestModel
 	ctx.LowQuality = upstream.LowQuality
@@ -349,6 +355,9 @@ func ProcessStreamEvents(
 	if err := pipeline.FlushAttachedStreamHooks(c); err != nil {
 		return ctx.upstreamUsageSnapshot(), err
 	}
+	if contract.IsClaudeOnDemandCompaction(requestBody) && !ctx.Compaction.Complete {
+		return ctx.upstreamUsageSnapshot(), fmt.Errorf("Claude 压缩流缺少完整终态，保留旧历史")
+	}
 	return logStreamCompletion(c, ctx, envCfg, startTime), nil
 }
 
@@ -413,9 +422,9 @@ func ProcessStreamEvent(
 
 	// 提取文本用于估算 token
 	if hasEventData {
-		ExtractTextFromEventData(eventData, &ctx.OutputTextBuffer)
+		ExtractTextFromEventData(eventData, &ctx.OutputEstimate)
 	} else {
-		ExtractTextFromEvent(event, &ctx.OutputTextBuffer)
+		ExtractTextFromEvent(event, &ctx.OutputEstimate)
 	}
 
 	// 检测并收集 usage
@@ -426,11 +435,12 @@ func ProcessStreamEvent(
 	} else {
 		hasUsage, needInputPatch, needOutputPatch, usageData = CheckEventUsageStatus(event, envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug"))
 	}
-	needPatch := needInputPatch || needOutputPatch
+	preserveCompactionUsage := tokenusage.PreserveCompactionUsage(requestBody) || len(usageData.Iterations) > 0 || len(ctx.UpstreamUsage.Iterations) > 0
+	needPatch := (needInputPatch || needOutputPatch) && !preserveCompactionUsage
 	if hasUsage {
 		if !ctx.HasUsage {
 			ctx.HasUsage = true
-			ctx.NeedTokenPatch = needPatch || ctx.LowQuality
+			ctx.NeedTokenPatch = (needPatch || ctx.LowQuality) && !preserveCompactionUsage
 			if envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug") && needPatch && !IsMessageDeltaEvent(event) {
 				log.Printf("[Messages-Stream-Token] 检测到虚假值, 延迟到流结束修补")
 			}
@@ -444,18 +454,13 @@ func ProcessStreamEvent(
 	}
 
 	// 日志缓存（带内存上限保护）
-	if ctx.LoggingEnabled {
-		if !ctx.LogBufferFull {
-			const maxLogBufferSize = 2 * 1024 * 1024 // 2MB 上限
-			if ctx.LogBuffer.Len()+len(event) > maxLogBufferSize {
-				ctx.LogBufferFull = true
-				if envCfg.ShouldLog("debug") {
-					log.Printf("[Messages-Stream] 日志缓冲区已达上限 (2MB)，后续流事件不再缓存")
-				}
-			} else {
-				ctx.LogBuffer.WriteString(event)
-			}
+	if hasEventData && contract.IsClaudeOnDemandCompaction(requestBody) {
+		if err := ctx.Compaction.Observe(eventData); err != nil {
+			return err
 		}
+	}
+	if ctx.LoggingEnabled {
+		ctx.LogBuffer.WriteString(event)
 		if ctx.Synthesizer != nil {
 			for _, line := range strings.Split(event, "\n") {
 				ctx.Synthesizer.ProcessLine(line)
@@ -464,8 +469,8 @@ func ProcessStreamEvent(
 	}
 
 	// 在 message_stop 前注入 usage（上游完全没有 usage 的情况）
-	if !ctx.HasUsage && !ctx.ClientGone && IsMessageStopEvent(event) {
-		usageEvent := BuildUsageEvent(ctx.OutputTextBuffer.String())
+	if !ctx.HasUsage && !ctx.ClientGone && IsMessageStopEvent(event) && !preserveCompactionUsage {
+		usageEvent := BuildUsageEvent(ctx.OutputEstimate.Tokens())
 		if envCfg.Current().EnableResponseLogs && envCfg.ShouldLog("debug") {
 			log.Printf("[Messages-Stream-Token] 上游无usage, 注入本地估算事件")
 		}
@@ -504,12 +509,12 @@ func ProcessStreamEvent(
 	if !hasEventData {
 		eventHasUsage = HasEventWithUsage(event)
 	}
-	if ctx.NeedTokenPatch && eventHasUsage {
+	if ctx.NeedTokenPatch && eventHasUsage && !preserveCompactionUsage {
 		if IsMessageDeltaEvent(event) || IsMessageStopEvent(event) {
 			inputTokens := ctx.CollectedUsage.InputTokens
 			// Never EstimateRequestTokens(full requestBody) into client usage.
 			outputTokens := ctx.CollectedUsage.OutputTokens
-			estimatedOutputTokens := tokenusage.EstimateTokens(ctx.OutputTextBuffer.String())
+			estimatedOutputTokens := ctx.OutputEstimate.Tokens()
 			if outputTokens <= 1 && estimatedOutputTokens > outputTokens {
 				outputTokens = estimatedOutputTokens
 			}
@@ -537,7 +542,7 @@ func ProcessStreamEvent(
 	// 会同时清理缓存字段，避免留下 input=0、cache_read=20万这种仍然虚假的总量。
 	// 只改客户端事件，ctx.UpstreamUsage 保持上游原值用于指标。
 	//
-	if eventHasUsage {
+	if eventHasUsage && !preserveCompactionUsage {
 		if corrected, ok := sanityCheckMessageStreamInputTokens(eventToSend, requestBody, envCfg.Current().EnableResponseLogs); ok {
 			eventToSend = corrected
 		}
@@ -576,6 +581,9 @@ func streamSafetyFragments(data map[string]interface{}) (string, []streamToolArg
 	var toolArguments []streamToolArgumentFragment
 	if block, ok := data["content_block"].(map[string]interface{}); ok {
 		text, _ = block["text"].(string)
+		if block["type"] == "compaction" {
+			text, _ = block["content"].(string)
+		}
 		if block["type"] == "tool_use" {
 			name, _ := block["name"].(string)
 			fragment := streamToolArgumentFragment{key: key, name: name}
@@ -588,6 +596,10 @@ func streamSafetyFragments(data map[string]interface{}) (string, []streamToolArg
 		}
 	}
 	if delta, ok := data["delta"].(map[string]interface{}); ok {
+		if delta["type"] == "compaction_delta" {
+			fragment, _ := delta["content"].(string)
+			text += fragment
+		}
 		if deltaText, _ := delta["text"].(string); deltaText != "" {
 			text += deltaText
 		}

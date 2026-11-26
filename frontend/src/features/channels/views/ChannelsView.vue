@@ -185,7 +185,7 @@ async function locateChannel(request: NonNullable<typeof channelStore.locateRequ
     if (!isCurrent()) return
     const channel = channels.value.find(item => item.id === request.id && item.status !== 'deleted')
     if (!channel) throw new Error('目标渠道已移除或不再可用')
-    if (channel.excludeFromConversation && !sharedVisionChannels.value.some(item => item.id === channel.id && item.kind === request.protocol)) {
+    if (channel.excludeFromConversation && channel.visionCapable && !sharedVisionChannels.value.some(item => item.id === channel.id && item.kind === request.protocol)) {
       await channelStore.refreshVisionChannels()
     }
     await nextTick()
@@ -228,12 +228,14 @@ const handleDeleteChannel = async (channelId: number, kind?: ApiTab) => {
   try {
     const impact = await api.getChannelDeletionImpact(targetKind, channelId)
     if (sourceKind !== channelType.value) return
+    const expectedId = impact.channelId
+    if (!expectedId) throw new Error('删除目标缺少稳定渠道 ID，请刷新后重试')
     askConfirm({
       title: '删除渠道',
       confirmText: '确认删除',
       message: `确定删除渠道“${impact.name}”吗？此操作不可撤销。${deletionImpactWarning(impact)}`,
       action: async () => {
-        await deleteChannel(channelId, handleAuthError, targetKind)
+        await deleteChannel(channelId, expectedId, handleAuthError, targetKind)
         await refreshChannels()
       }
     })

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"insistanan/api-proxy/internal/api/common"
 	"insistanan/api-proxy/internal/infra/config"
 	"insistanan/api-proxy/internal/orchestration/scheduler"
 )
@@ -24,7 +25,7 @@ func CreateChannelPool(cfgManager *config.ConfigManager, kind string) gin.Handle
 		}
 		created, err := cfgManager.CreateChannelPool(kind, pool)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			common.WriteSaveError(c, "创建渠道分组失败", err)
 			return
 		}
 		c.JSON(http.StatusCreated, gin.H{"pool": created})
@@ -40,7 +41,7 @@ func UpdateChannelPool(cfgManager *config.ConfigManager, kind string) gin.Handle
 			return
 		}
 		if err := cfgManager.UpdateChannelPool(kind, id, update); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			common.WriteSaveError(c, "更新渠道分组失败", err)
 			return
 		}
 		c.Status(http.StatusNoContent)
@@ -56,12 +57,8 @@ func DeleteChannelPool(cfgManager *config.ConfigManager, sch *scheduler.ChannelS
 				sch.GetTraceAffinityManager().RemoveByChannelForKind(kind, channel.Index)
 			}
 		}
-		if config.IsCommittedError(err) {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "committed": true})
-			return
-		}
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			common.WriteSaveError(c, "删除渠道分组失败", err)
 			return
 		}
 		c.Status(http.StatusNoContent)
@@ -78,7 +75,7 @@ func SaveChannelPoolLayout(cfgManager *config.ConfigManager, kind string) gin.Ha
 			return
 		}
 		if err := cfgManager.SaveChannelPoolLayout(kind, request.Pools); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			common.WriteSaveError(c, "保存分组布局失败", err)
 			return
 		}
 		c.Status(http.StatusNoContent)

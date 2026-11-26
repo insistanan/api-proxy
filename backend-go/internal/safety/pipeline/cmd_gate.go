@@ -513,12 +513,12 @@ func (g *CmdGate) AddDecision(conversationID, decision, rule, command string, co
 		return sensitive.GateDecision{}, fmt.Errorf("闸门存储不可用")
 	}
 	if len(commandHashes) != 1 {
-		return sensitive.GateDecision{}, fmt.Errorf("名单决定缺少完整命令及执行上下文的身份")
+		return sensitive.GateDecision{}, fmt.Errorf("%w: 名单决定缺少完整命令及执行上下文的身份", sensitive.ErrGateInvalidInput)
 	}
 	hash := strings.ToLower(strings.TrimSpace(commandHashes[0]))
 	decoded, err := hex.DecodeString(hash)
 	if err != nil || len(decoded) != sha256.Size {
-		return sensitive.GateDecision{}, fmt.Errorf("无效的命令身份，请重新审核该命令")
+		return sensitive.GateDecision{}, fmt.Errorf("%w: 无效的命令身份，请重新审核该命令", sensitive.ErrGateInvalidInput)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), gateStoreTimeout)
 	defer cancel()

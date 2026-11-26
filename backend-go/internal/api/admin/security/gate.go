@@ -2,6 +2,7 @@
 package security
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -64,7 +65,7 @@ func DecideGatePending(gate *pipeline.CmdGate) gin.HandlerFunc {
 		}
 		pending, ok, decideErr := gate.Decide(id, req.Decision)
 		if decideErr != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": decideErr.Error()})
+			respondGateError(c, decideErr)
 			return
 		}
 		if !ok {
@@ -112,7 +113,7 @@ func RemoveGateDecisions(gate *pipeline.CmdGate) gin.HandlerFunc {
 		}
 		removed, err := gate.RemoveDecisions(conversationID, commandHashes...)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			respondGateError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"removed": removed})
@@ -143,9 +144,26 @@ func AddGateDecision(gate *pipeline.CmdGate) gin.HandlerFunc {
 		}
 		decision, err := gate.AddDecision(req.ConversationID, req.Decision, req.Rule, req.Command, req.CommandHash)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			respondGateError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"decision": decision})
 	}
+}
+
+func respondGateError(c *gin.Context, err error) {
+	status := http.StatusInternalServerError
+	if errors.Is(err, sensitive.ErrGateInvalidInput) {
+		status = http.StatusBadRequest
+	}
+	if errors.Is(err, sensitive.ErrGateStoreClosed) {
+		status = http.StatusServiceUnavailable
+	}
+	if errors.Is(err, sensitive.ErrGateConflict) {
+		status = http.StatusConflict
+	}
+	if errors.Is(err, sensitive.ErrGatePendingNotFound) {
+		status = http.StatusNotFound
+	}
+	c.JSON(status, gin.H{"error": err.Error()})
 }

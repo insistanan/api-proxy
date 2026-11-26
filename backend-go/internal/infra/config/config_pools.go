@@ -52,27 +52,27 @@ func normalizeChannelPools(pools []ChannelPool) ([]ChannelPool, error) {
 		pool.Name = strings.TrimSpace(pool.Name)
 		pool.ModelMatcher = normalizePoolMatcher(pool.ModelMatcher)
 		if IsFreeModel(pool.ModelMatcher) && pool.ID != FreeChannelPoolID {
-			return nil, fmt.Errorf("free 和 free/ 为内置免费分组专用规则，不能用于普通分组")
+			return nil, proxyConfigErrorf("free 和 free/ 为内置免费分组专用规则，不能用于普通分组")
 		}
 		if pool.ID == DefaultChannelPoolID {
 			// default 是兼容旧配置的稳定 ID，其名称和规则固定为兜底语义。
 			pool.Name = FallbackChannelPoolName
 			pool.ModelMatcher = "*"
 		} else if pool.ModelMatcher == "*" {
-			return nil, fmt.Errorf("捕获规则 * 只能由兜底分组使用")
+			return nil, proxyConfigErrorf("捕获规则 * 只能由兜底分组使用")
 		}
 		if pool.ID == "" || pool.Name == "" || pool.ModelMatcher == "" {
-			return nil, fmt.Errorf("分组的名称和捕获规则不能为空")
+			return nil, proxyConfigErrorf("分组的名称和捕获规则不能为空")
 		}
 		if _, exists := seenIDs[pool.ID]; exists {
-			return nil, fmt.Errorf("分组 ID 重复: %s", pool.ID)
+			return nil, proxyConfigErrorf("分组 ID 重复: %s", pool.ID)
 		}
 		nameKey := strings.ToLower(pool.Name)
 		if _, exists := seenNames[nameKey]; exists {
-			return nil, fmt.Errorf("分组名称重复: %s", pool.Name)
+			return nil, proxyConfigErrorf("分组名称重复: %s", pool.Name)
 		}
 		if _, exists := seenMatchers[pool.ModelMatcher]; exists {
-			return nil, fmt.Errorf("分组捕获规则重复: %s", pool.ModelMatcher)
+			return nil, proxyConfigErrorf("分组捕获规则重复: %s", pool.ModelMatcher)
 		}
 		if pool.ID == DefaultChannelPoolID {
 			hasDefault = true
@@ -113,7 +113,7 @@ func SelectChannelPoolRoute(pools []ChannelPool, model string) ([]ChannelPool, e
 				return []ChannelPool{pool}, nil
 			}
 		}
-		return nil, fmt.Errorf("未配置免费分组")
+		return nil, proxyConfigErrorf("未配置免费分组")
 	}
 	normalized, err := normalizeChannelPools(pools)
 	if err != nil {
@@ -140,7 +140,7 @@ func SelectChannelPoolRoute(pools []ChannelPool, model string) ([]ChannelPool, e
 		}
 	}
 	if fallback == nil {
-		return nil, fmt.Errorf("配置缺少兜底分组")
+		return nil, proxyConfigErrorf("配置缺少兜底分组")
 	}
 	route := make([]ChannelPool, 0, 2)
 	if selected != nil {
@@ -210,10 +210,10 @@ func (cm *ConfigManager) CreateChannelPool(kind string, pool ChannelPool) (Chann
 
 func (cm *ConfigManager) UpdateChannelPool(kind string, id string, update ChannelPoolUpdate) error {
 	if id == FreeChannelPoolID {
-		return fmt.Errorf("免费分组为内置共享分组，不能修改")
+		return proxyConfigErrorf("免费分组为内置共享分组，不能修改")
 	}
 	if id == DefaultChannelPoolID {
-		return fmt.Errorf("兜底分组的名称和捕获规则不能修改")
+		return proxyConfigErrorf("兜底分组的名称和捕获规则不能修改")
 	}
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
@@ -240,7 +240,7 @@ func (cm *ConfigManager) UpdateChannelPool(kind string, id string, update Channe
 		*cs.pools = normalized
 		return cm.saveConfigLocked(candidate)
 	}
-	return fmt.Errorf("分组不存在")
+	return proxyConfigErrorf("分组不存在")
 }
 
 // SaveChannelPoolLayout 原子更新渠道归属与各分组内部的故障转移顺序。
@@ -261,29 +261,29 @@ func (cm *ConfigManager) SaveChannelPoolLayout(kind string, layout []ChannelPool
 	for _, item := range layout {
 		poolID := strings.TrimSpace(item.PoolID)
 		if !poolExists(pools, poolID) {
-			return fmt.Errorf("指定的分组不存在: %s", poolID)
+			return proxyConfigErrorf("指定的分组不存在: %s", poolID)
 		}
 		if _, exists := poolLayouts[poolID]; exists {
-			return fmt.Errorf("分组布局重复: %s", poolID)
+			return proxyConfigErrorf("分组布局重复: %s", poolID)
 		}
 		poolLayouts[poolID] = append([]string(nil), item.ChannelIDs...)
 		for _, rawID := range item.ChannelIDs {
 			channelID := strings.TrimSpace(rawID)
 			if channelID == "" {
-				return fmt.Errorf("渠道 ID 不能为空")
+				return proxyConfigErrorf("渠道 ID 不能为空")
 			}
 			if _, exists := seenChannels[channelID]; exists {
-				return fmt.Errorf("渠道在布局中重复: %s", channelID)
+				return proxyConfigErrorf("渠道在布局中重复: %s", channelID)
 			}
 			seenChannels[channelID] = struct{}{}
 		}
 	}
 	if len(poolLayouts) != len(pools) {
-		return fmt.Errorf("分组布局不完整: 收到 %d 个分组，实际需要 %d 个", len(poolLayouts), len(pools))
+		return proxyConfigErrorf("分组布局不完整: 收到 %d 个分组，实际需要 %d 个", len(poolLayouts), len(pools))
 	}
 	for _, pool := range pools {
 		if _, exists := poolLayouts[pool.ID]; !exists {
-			return fmt.Errorf("分组布局缺少: %s", pool.Name)
+			return proxyConfigErrorf("分组布局缺少: %s", pool.Name)
 		}
 	}
 
@@ -293,7 +293,7 @@ func (cm *ConfigManager) SaveChannelPoolLayout(kind string, layout []ChannelPool
 		status := GetChannelStatus(&upstreams[index])
 		if !upstreams[index].ExcludeFromConversation && (status == ChannelStatusActive || status == ChannelStatusSuspended) {
 			if _, exists := seenChannels[upstreams[index].ID]; !exists {
-				return fmt.Errorf("分组布局缺少渠道: %s", upstreams[index].Name)
+				return proxyConfigErrorf("分组布局缺少渠道: %s", upstreams[index].Name)
 			}
 		}
 	}
@@ -301,13 +301,13 @@ func (cm *ConfigManager) SaveChannelPoolLayout(kind string, layout []ChannelPool
 		for _, channelID := range channelIDs {
 			index, exists := channelIndexes[strings.TrimSpace(channelID)]
 			if !exists {
-				return fmt.Errorf("渠道不存在: %s", channelID)
+				return proxyConfigErrorf("渠道不存在: %s", channelID)
 			}
 			if upstreams[index].ExcludeFromConversation {
-				return fmt.Errorf("公用图片理解渠道不能加入模型路由分组: %s", upstreams[index].Name)
+				return proxyConfigErrorf("公用图片理解渠道不能加入模型路由分组: %s", upstreams[index].Name)
 			}
 			if (poolID == FreeChannelPoolID) != (upstreams[index].BuiltinProvider != "") {
-				return fmt.Errorf("免费渠道不能移出免费分组，普通渠道也不能移入")
+				return proxyConfigErrorf("免费渠道不能移出免费分组，普通渠道也不能移入")
 			}
 			upstreams[index].PoolID = poolID
 		}
@@ -364,10 +364,10 @@ type RemovedPoolChannel struct {
 // DeleteChannelPoolWithChannels 在同一次配置提交中删除分组及其全部渠道。
 func (cm *ConfigManager) DeleteChannelPoolWithChannels(kind string, id string) ([]RemovedPoolChannel, error) {
 	if id == FreeChannelPoolID {
-		return nil, fmt.Errorf("免费分组为内置共享分组，不能删除")
+		return nil, proxyConfigErrorf("免费分组为内置共享分组，不能删除")
 	}
 	if id == DefaultChannelPoolID {
-		return nil, fmt.Errorf("兜底分组不能删除")
+		return nil, proxyConfigErrorf("兜底分组不能删除")
 	}
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
@@ -387,7 +387,7 @@ func (cm *ConfigManager) DeleteChannelPoolWithChannels(kind string, id string) (
 		filtered = append(filtered, pool)
 	}
 	if !found {
-		return nil, fmt.Errorf("分组不存在")
+		return nil, proxyConfigErrorf("分组不存在")
 	}
 	normalized, err := normalizeChannelPools(filtered)
 	if err != nil {
@@ -423,9 +423,7 @@ func (cm *ConfigManager) DeleteChannelPoolWithChannels(kind string, id string) (
 	if err != nil && !IsCommittedError(err) {
 		return nil, err
 	}
-	for _, channel := range removed {
-		cm.clearFailedKeysForUpstream(&channel.Upstream, cs.name)
-	}
+	cm.pruneFailedKeysLocked()
 	return removed, err
 }
 
@@ -451,7 +449,13 @@ func ensurePoolsAndAssignments(pools []ChannelPool, upstreams []UpstreamConfig) 
 		validIDs[pool.ID] = struct{}{}
 	}
 	for index := range upstreams {
+		if GetChannelStatus(&upstreams[index]) == ChannelStatusDeleted {
+			continue
+		}
 		if _, exists := validIDs[upstreams[index].PoolID]; !exists {
+			if upstreams[index].PoolID != "" {
+				return nil, false, proxyConfigErrorf("渠道 %q 指定了不存在的分组 %q", upstreams[index].Name, upstreams[index].PoolID)
+			}
 			upstreams[index].PoolID = DefaultChannelPoolID
 			changed = true
 		}
@@ -553,10 +557,10 @@ func poolExists(pools []ChannelPool, id string) bool {
 // ValidateChannelPoolAssignment 确保渠道只能归属当前 API 类型中存在的分组。
 func ValidateChannelPoolAssignment(pools []ChannelPool, poolID string) error {
 	if poolID == FreeChannelPoolID {
-		return fmt.Errorf("免费分组仅供内置免费渠道使用")
+		return proxyConfigErrorf("免费分组仅供内置免费渠道使用")
 	}
 	if !poolExists(pools, strings.TrimSpace(poolID)) {
-		return fmt.Errorf("指定的分组不存在")
+		return proxyConfigErrorf("指定的分组不存在")
 	}
 	return nil
 }

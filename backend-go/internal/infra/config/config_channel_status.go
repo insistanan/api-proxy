@@ -11,15 +11,15 @@ import (
 // reorderOp 重新排序渠道优先级（调用方必须持锁）
 func reorderOp(upstreams []UpstreamConfig, order []int, label string) error {
 	if len(order) == 0 {
-		return fmt.Errorf("排序数组不能为空")
+		return proxyConfigErrorf("排序数组不能为空")
 	}
 	seen := make(map[int]bool)
 	for _, idx := range order {
 		if idx < 0 || idx >= len(upstreams) {
-			return fmt.Errorf("无效的渠道索引: %d", idx)
+			return fmt.Errorf("%w: 渠道索引 %d", ErrChannelNotFound, idx)
 		}
 		if seen[idx] {
-			return fmt.Errorf("重复的渠道索引: %d", idx)
+			return proxyConfigErrorf("重复的渠道索引: %d", idx)
 		}
 		seen[idx] = true
 	}
@@ -111,7 +111,7 @@ func channelStatusPool(upstream *UpstreamConfig) int {
 // setStatusOp 设置渠道状态（调用方必须持锁）
 func setStatusOp(upstreams []UpstreamConfig, index int, status string, label string) error {
 	if index < 0 || index >= len(upstreams) {
-		return fmt.Errorf("无效的上游索引: %d", index)
+		return fmt.Errorf("%w: 上游索引 %d", ErrChannelNotFound, index)
 	}
 	previousPool := channelStatusPool(&upstreams[index])
 	if err := setUpstreamStatus(&upstreams[index], status, time.Now()); err != nil {
@@ -131,11 +131,11 @@ func setStatusOp(upstreams []UpstreamConfig, index int, status string, label str
 // setPromotionOp 设置渠道促销期（调用方必须持锁）
 func setPromotionOp(upstreams []UpstreamConfig, index int, duration time.Duration, count int, label string) error {
 	if index < 0 || index >= len(upstreams) {
-		return fmt.Errorf("无效的上游索引: %d", index)
+		return fmt.Errorf("%w: 上游索引 %d", ErrChannelNotFound, index)
 	}
 	upstream := &upstreams[index]
 	if duration < 0 || count < 0 {
-		return fmt.Errorf("促销时长和次数不能为负数")
+		return proxyConfigErrorf("促销时长和次数不能为负数")
 	}
 	upstream.PromotionUntil = nil
 	upstream.PromotionCount = count

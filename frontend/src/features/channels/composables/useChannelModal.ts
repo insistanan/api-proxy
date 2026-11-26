@@ -708,14 +708,34 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
       form.visionLayerEnabled = false
       form.visionLayerChannelId = ''
       form.visionLayerModel = ''
-    } else {
+    } else if (!form.compaction.summaryCapable) {
       form.excludeFromConversation = false
     }
   })
 
   watch(() => form.excludeFromConversation, enabled => {
-    if (enabled) {
+    if (enabled && !form.compaction.summaryCapable) {
       form.visionCapable = true
+    }
+  })
+
+  watch(() => form.compaction.summaryCapable, enabled => {
+    if (enabled) {
+      form.excludeFromConversation = true
+      form.compaction.summaryPool = false
+    } else if (!form.visionCapable) {
+      form.excludeFromConversation = false
+    }
+  })
+
+  watch(() => [form.baseUrl, form.baseUrls.join('\n'), form.apiKeys.join('\n'), form.serviceType, form.useFullUrl,
+    form.compaction.nativeSourceModel, form.compaction.nativeModel], () => {
+    const original = props.channel
+    if (!original || form.baseUrl !== original.baseUrl || form.baseUrls.join('\n') !== (original.baseUrls || []).join('\n') ||
+      form.apiKeys.join('\n') !== original.apiKeys.join('\n') || form.serviceType !== original.serviceType ||
+      form.useFullUrl !== !!original.useFullUrl || form.compaction.nativeSourceModel !== original.compaction?.nativeSourceModel ||
+      form.compaction.nativeModel !== original.compaction?.nativeModel) {
+      form.compaction.nativeCompatibilityConfirmed = false
     }
   })
 

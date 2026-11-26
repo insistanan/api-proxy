@@ -52,7 +52,7 @@ func TestMessagesDelivery_WriteFailureStopsEveryOutputBranch(t *testing.T) {
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 			writeErr := errors.New("写入失败但 Context 未取消")
 			c.Writer = &deliveryWriter{ResponseWriter: c.Writer, failOn: tc.failOn, err: writeErr}
-			ctx := NewStreamContext(&config.EnvConfig{})
+			ctx := NewStreamContext(context.Background(), &config.EnvConfig{})
 			ctx.SeenMessageStart = tc.started
 			err := ProcessStreamEvent(c, c.Writer, c.Writer, "data: "+tc.input+"\n\n", ctx, &config.EnvConfig{}, nil)
 			require.ErrorIs(t, err, writeErr)
@@ -106,7 +106,7 @@ func TestMessagesEvent_MidstreamErrorCannotBecomeSuccess(t *testing.T) {
 	close(events)
 	failures := make(chan error)
 	close(failures)
-	ctx := NewStreamContext(&config.EnvConfig{})
+	ctx := NewStreamContext(context.Background(), &config.EnvConfig{})
 	_, err := ProcessStreamEvents(c, c.Writer, c.Writer, events, failures, ctx, &config.EnvConfig{}, time.Now(), nil)
 	require.ErrorContains(t, err, "boom")
 	require.Equal(t, 1, strings.Count(recorder.Body.String(), "event: error"))
@@ -121,7 +121,7 @@ func TestMessagesEvent_ErrorNameRequiresExactSSEField(t *testing.T) {
 		recorder := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(recorder)
 		c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
-		ctx := NewStreamContext(&config.EnvConfig{})
+		ctx := NewStreamContext(context.Background(), &config.EnvConfig{})
 		require.NoError(t, ProcessStreamEvent(c, c.Writer, c.Writer, event, ctx, &config.EnvConfig{}, nil))
 		require.Equal(t, event, recorder.Body.String())
 	}
@@ -135,7 +135,7 @@ func TestMessagesUsage_RealEntryPreservesInputAndReportedCache(t *testing.T) {
 		recorder := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(recorder)
 		c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
-		ctx := NewStreamContext(&config.EnvConfig{})
+		ctx := NewStreamContext(context.Background(), &config.EnvConfig{})
 		event := fmt.Sprintf("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":%d,\"cache_read_input_tokens\":100}}}\n\n", input)
 		err := ProcessStreamEvent(c, c.Writer, c.Writer, event, ctx, &config.EnvConfig{}, []byte(`{"messages":[{"role":"user","content":"hello"}]}`))
 		require.NoError(t, err)

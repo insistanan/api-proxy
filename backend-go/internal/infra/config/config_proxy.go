@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -149,6 +150,61 @@ func (cm *ConfigManager) UpdateSettings(settings SettingsConfig) error {
 	defer cm.mu.Unlock()
 	candidate := cloneConfig(cm.config)
 	candidate.Settings = settings
+	return cm.saveConfigLocked(candidate)
+}
+
+// SettingsPatch 仅替换已提交分类；Gateway 保留分类内的部分更新语义。
+type SettingsPatch struct {
+	Network       *NetworkSettings     `json:"network"`
+	ContentSafety *ContentSafetyConfig `json:"contentSafety"`
+	Disguise      *DisguiseSettings    `json:"disguise"`
+	Gateway       *json.RawMessage     `json:"gateway"`
+	Prompts       *PromptSettings      `json:"prompts"`
+	Extensions    *ExtensionsSettings  `json:"extensions"`
+
+	// 目录迁移先于配置提交，提交时必须仍对应同一份扩展设置。
+	ExpectedExtensions *ExtensionsSettings `json:"-"`
+}
+
+func (p *SettingsPatch) UnmarshalJSON(data []byte) error {
+	type plain SettingsPatch
+	return decodeStrictConfigJSON(data, (*plain)(p))
+}
+
+func (cm *ConfigManager) PatchSettings(patch SettingsPatch) error {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	if patch.ExpectedExtensions != nil && *patch.ExpectedExtensions != cm.config.Settings.Extensions {
+		return fmt.Errorf("扩展设置已变化，请刷新后重试: %w", ErrConfigConflict)
+	}
+	if patch.Network == nil && patch.ContentSafety == nil && patch.Disguise == nil && patch.Gateway == nil && patch.Prompts == nil && patch.Extensions == nil {
+		return proxyConfigErrorf("至少需要提交一个设置分类")
+	}
+	candidate := cloneConfig(cm.config)
+	settings := &candidate.Settings
+	if patch.Network != nil {
+		settings.Network = *patch.Network
+		settings.Network.UpstreamProxyURL = strings.TrimSpace(settings.Network.UpstreamProxyURL)
+	}
+	if patch.ContentSafety != nil {
+		settings.ContentSafety = *patch.ContentSafety
+	}
+	if patch.Disguise != nil {
+		settings.Disguise = *patch.Disguise
+		settings.Disguise.ClaudeCodeVersion = strings.TrimSpace(settings.Disguise.ClaudeCodeVersion)
+		settings.Disguise.CodexVersion = strings.TrimSpace(settings.Disguise.CodexVersion)
+	}
+	if patch.Gateway != nil {
+		if err := decodeStrictConfigJSON(*patch.Gateway, &settings.Gateway); err != nil {
+			return proxyConfigErrorf("无效的请求与日志设置: %v", err)
+		}
+	}
+	if patch.Prompts != nil {
+		settings.Prompts = NormalizePromptSettings(*patch.Prompts, settings.Prompts)
+	}
+	if patch.Extensions != nil {
+		settings.Extensions = NormalizeExtensionsSettings(*patch.Extensions)
+	}
 	return cm.saveConfigLocked(candidate)
 }
 

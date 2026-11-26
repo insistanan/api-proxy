@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"insistanan/api-proxy/internal/infra/upstreamreq"
 	"log"
 	"time"
 
@@ -31,7 +32,7 @@ func (m *MetricsManager) recordSuccessWithUsageLocked(baseURL, apiKey string, ch
 	// 成功后清除熔断标记
 	if metrics.CircuitBrokenAt != nil {
 		metrics.CircuitBrokenAt = nil
-		log.Printf("[Metrics-Circuit] Key [%s] (%s) 因请求成功退出熔断状态", metrics.KeyMask, metrics.BaseURL)
+		log.Printf("[Metrics-Circuit] Key [%s] (%s) 因请求成功退出熔断状态", metrics.KeyMask, upstreamreq.RedactURL(metrics.BaseURL))
 	}
 
 	// 更新滑动窗口
@@ -92,7 +93,7 @@ func (m *MetricsManager) recordFailureLocked(baseURL, apiKey string, channelInde
 	// 检查是否刚进入熔断状态
 	if metrics.CircuitBrokenAt == nil && m.isKeyCircuitBroken(metrics) {
 		metrics.CircuitBrokenAt = &now
-		log.Printf("[Metrics-Circuit] Key [%s] (%s) 进入熔断状态（失败率: %.1f%%）", metrics.KeyMask, metrics.BaseURL, m.calculateKeyFailureRateInternal(metrics)*100)
+		log.Printf("[Metrics-Circuit] Key [%s] (%s) 进入熔断状态（失败率: %.1f%%）", metrics.KeyMask, upstreamreq.RedactURL(metrics.BaseURL), m.calculateKeyFailureRateInternal(metrics)*100)
 	}
 
 	// 记录带时间戳的请求
@@ -179,7 +180,7 @@ func (m *MetricsManager) RecordRequestFinalizeSuccess(baseURL, apiKey string, ch
 	// 成功后清除熔断标记
 	if metrics.CircuitBrokenAt != nil {
 		metrics.CircuitBrokenAt = nil
-		log.Printf("[Metrics-Circuit] Key [%s] (%s) 因请求成功退出熔断状态", metrics.KeyMask, metrics.BaseURL)
+		log.Printf("[Metrics-Circuit] Key [%s] (%s) 因请求成功退出熔断状态", metrics.KeyMask, upstreamreq.RedactURL(metrics.BaseURL))
 	}
 
 	// 更新滑动窗口
@@ -257,7 +258,7 @@ func (m *MetricsManager) RecordRequestFinalizeFailure(baseURL, apiKey string, ch
 	// 检查是否刚进入熔断状态
 	if metrics.CircuitBrokenAt == nil && m.isKeyCircuitBroken(metrics) {
 		metrics.CircuitBrokenAt = &now
-		log.Printf("[Metrics-Circuit] Key [%s] (%s) 进入熔断状态（失败率: %.1f%%）", metrics.KeyMask, metrics.BaseURL, m.calculateKeyFailureRateInternal(metrics)*100)
+		log.Printf("[Metrics-Circuit] Key [%s] (%s) 进入熔断状态（失败率: %.1f%%）", metrics.KeyMask, upstreamreq.RedactURL(metrics.BaseURL), m.calculateKeyFailureRateInternal(metrics)*100)
 	}
 
 	// 回写历史记录（时间戳保持为“请求开始（TCP 建连阶段）”时刻）

@@ -85,13 +85,15 @@ func requestImageDescriptions(
 
 	for _, urlResult := range urlResults {
 		baseURL := urlResult.URL
+		keySelection := *visionUpstream
+		keySelection.BaseURL = baseURL
 		// 失败与暂停按 URL + Key 隔离，前一地址不能排除备用地址的同一个 Key。
 		failedKeys := make(map[string]bool)
 		for attempt := 0; attempt < len(upstream.APIKeys); attempt++ {
 			if err := c.Request.Context().Err(); err != nil {
 				return visionAttemptResult{err: err}
 			}
-			apiKey, keyErr := cfgManager.GetNextAPIKey(upstream, failedKeys, "VisionLayer")
+			apiKey, keyErr := cfgManager.GetNextAPIKey(&keySelection, failedKeys, "VisionLayer")
 			if keyErr != nil {
 				if lastResult.err == nil {
 					lastResult = visionAttemptResult{retryable: true, err: keyErr}
@@ -131,7 +133,7 @@ func requestImageDescriptions(
 				channelScheduler.RecordRequestFinalizeFailure(baseURL, apiKey, selection.ChannelIndex, metricsRequestID, channelKind)
 				channelScheduler.RecordRequestEnd(baseURL, apiKey, selection.ChannelIndex, channelKind)
 				channelScheduler.MarkURLFailure(channelKind, selection.ChannelIndex, baseURL)
-				cfgManager.MarkKeyAsFailed(apiKey, "VisionLayer")
+				cfgManager.MarkKeyAsFailed(upstreamCopy, apiKey, "VisionLayer")
 				failedKeys[apiKey] = true
 				lastResult = visionAttemptResult{retryable: true, health: visionHealthFailure, err: requestErr}
 				failCount++
@@ -154,7 +156,7 @@ func requestImageDescriptions(
 				channelScheduler.RecordRequestFinalizeFailure(baseURL, apiKey, selection.ChannelIndex, metricsRequestID, channelKind)
 				channelScheduler.RecordRequestEnd(baseURL, apiKey, selection.ChannelIndex, channelKind)
 				channelScheduler.MarkURLFailure(channelKind, selection.ChannelIndex, baseURL)
-				cfgManager.MarkKeyAsFailed(apiKey, "VisionLayer")
+				cfgManager.MarkKeyAsFailed(upstreamCopy, apiKey, "VisionLayer")
 				failedKeys[apiKey] = true
 				lastResult = visionAttemptResult{retryable: true, health: visionHealthFailure, err: readErr}
 				failCount++
@@ -183,7 +185,7 @@ func requestImageDescriptions(
 					// 限流交给下一渠道；不在当前组合重复尝试或把 Key 标为故障。
 					return lastResult
 				}
-				cfgManager.MarkKeyAsFailed(apiKey, "VisionLayer")
+				cfgManager.MarkKeyAsFailed(upstreamCopy, apiKey, "VisionLayer")
 				failedKeys[apiKey] = true
 				failCount++
 				if failCount >= maxFailures {

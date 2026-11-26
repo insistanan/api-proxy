@@ -43,18 +43,18 @@ export interface ChannelApi {
   getChannels(): Promise<ChannelsResponse>
   addChannel(channel: Omit<Channel, 'id' | 'index' | 'latency' | 'status'>): Promise<CreatedChannelResponse>
   updateChannel(id: number, channel: Partial<Channel>, expectedChannelId?: string): Promise<void>
-  deleteChannel(id: number): Promise<void>
-  addKey(channelId: number, apiKey: string): Promise<void>
-  removeKey(channelId: number, apiKey: string): Promise<void>
-  moveKeyToTop(channelId: number, apiKey: string): Promise<void>
-  moveKeyToBottom(channelId: number, apiKey: string): Promise<void>
+  deleteChannel(id: number, expectedChannelId: string): Promise<void>
+  addKey(channelId: number, apiKey: string, expectedChannelId: string): Promise<void>
+  removeKey(channelId: number, apiKey: string, expectedChannelId: string): Promise<void>
+  moveKeyToTop(channelId: number, apiKey: string, expectedChannelId: string): Promise<void>
+  moveKeyToBottom(channelId: number, apiKey: string, expectedChannelId: string): Promise<void>
   reorder(order: number[]): Promise<void>
-  setStatus(channelId: number, status: ChannelStatus): Promise<void>
-  setPromotion(channelId: number, durationSeconds: number, count?: number): Promise<void>
+  setStatus(channelId: number, status: ChannelStatus, expectedChannelId: string): Promise<void>
+  setPromotion(channelId: number, durationSeconds: number, count: number, expectedChannelId: string): Promise<void>
   pingChannel(id: number): Promise<PingResult>
   pingAllChannels(): Promise<Array<{ id: number; name: string; latency: number; status: string }>>
   updateLoadBalance(strategy: string): Promise<void>
-  resumeChannel(channelId: number): Promise<void>
+  resumeChannel(channelId: number, expectedChannelId: string): Promise<void>
   getChannelMetrics(): Promise<ChannelMetrics[]>
   getChannelMetricsHistory(duration?: '1h' | '6h' | '24h'): Promise<MetricsHistoryResponse[]>
   getChannelKeyMetricsHistory(

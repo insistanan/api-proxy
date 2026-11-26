@@ -129,6 +129,18 @@ func (r UpstreamAttemptResult) withHealth(h channelHealthResult) UpstreamAttempt
 	return r
 }
 
+// RecordPermitHealth 供独立控制端点按真实健康结论收尾，不从 HTTP/Key 推测。
+func (r UpstreamAttemptResult) RecordPermitHealth(permit *scheduler.ChannelPermit) {
+	switch r.Health {
+	case channelHealthSuccess:
+		permit.RecordHealthSuccess()
+	case channelHealthFailure:
+		permit.RecordHealthFailure()
+	default:
+		permit.RecordHealthNeutral()
+	}
+}
+
 // withAbortFailover 返回标记为"不再故障转移"的副本（见 UpstreamAttemptResult.AbortFailover）。
 func (r UpstreamAttemptResult) withAbortFailover() UpstreamAttemptResult {
 	r.AbortFailover = true

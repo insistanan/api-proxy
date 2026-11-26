@@ -2,6 +2,7 @@
 package messages
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"insistanan/api-proxy/internal/protocol/tokenusage"
@@ -21,7 +22,7 @@ func TestProcessStreamEventCorrectsNestedMessageStartUsageWithoutChangingMetrics
 	recorder := httptest.NewRecorder()
 	ginContext, _ := gin.CreateTestContext(recorder)
 	ginContext.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
-	streamContext := NewStreamContext(&config.EnvConfig{})
+	streamContext := NewStreamContext(context.Background(), &config.EnvConfig{})
 	requestBody := []byte(fmt.Sprintf(
 		`{"messages":[{"role":"user","content":%q}]}`,
 		strings.Repeat("a", 28000),
@@ -110,7 +111,7 @@ func TestProcessStreamEventPreservesTrustedCacheUsage(t *testing.T) {
 		ginContext.Writer,
 		recorder,
 		event,
-		NewStreamContext(&config.EnvConfig{}),
+		NewStreamContext(context.Background(), &config.EnvConfig{}),
 		&config.EnvConfig{},
 		requestBody,
 	); err != nil {

@@ -277,6 +277,8 @@ type OpenAIChoice struct {
 // Usage 使用情况统计
 // 完整支持 Claude API 的详细 usage 字段，包括缓存 TTL 细分
 type Usage struct {
+	// Iterations 是原生压缩的计费迭代；顶层零值仍表示客户端上下文用量。
+	Iterations []UsageIteration `json:"iterations,omitempty"`
 	// Estimated 标记本地生成的整份指标用量，不改变客户端协议。
 	Estimated bool `json:"-"`
 	// UnattributedCacheInput 是缓存明细无法归属本次请求时，上游报告的原始输入。
@@ -295,6 +297,12 @@ type Usage struct {
 	// OpenAI 兼容字段
 	PromptTokens     int `json:"prompt_tokens,omitempty"`
 	CompletionTokens int `json:"completion_tokens,omitempty"`
+}
+
+// UsageIteration 保留迭代类型及独立计费用量。
+type UsageIteration struct {
+	Type string `json:"type,omitempty"`
+	Usage
 }
 
 // ClaudeOutputTokensDetails 是 Anthropic 格式 usage 的输出明细。

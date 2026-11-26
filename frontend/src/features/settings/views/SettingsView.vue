@@ -3,6 +3,9 @@
     <DraftGuard :dirty="!loading && Object.values(dirtySections).some(Boolean)" :busy="saving" />
     <UiAlert v-if="reloadRequired" type="warning" class="mb-4">变更已写入，请重新加载核对后再编辑。<UiButton :disabled="saving || loading" @click="loadSettings">重新加载</UiButton></UiAlert>
     <PageHeader title="设置" description="按分类管理全局配置；切换分类会保留当前页面内的未保存修改。" />
+    <UiAlert v-if="configReloadError" type="warning" class="mb-4">
+      配置文件未能重新加载，网关仍使用上一次有效配置：{{ configReloadError }}
+    </UiAlert>
 
     <div class="settings-layout" :inert="saving || reloadRequired" :aria-busy="saving || undefined">
       <nav class="settings-nav" aria-label="设置分类">
@@ -556,6 +559,7 @@ const selectedSections = computed({
 const loading = ref(false)
 const saving = ref(false)
 const reloadRequired = ref(false)
+const configReloadError = ref('')
 const loadError = ref('')
 
 // 各分区共用保存标记，草稿在独立编辑器中持有；切换分类不丢失未保存内容。
@@ -635,6 +639,7 @@ const loadSettings = async () => {
   loadError.value = ''
   try {
     const settings = await api.getSettings()
+    configReloadError.value = settings.configReload?.error ?? ''
     if (!settings.gateway) throw new Error('服务端未返回请求与日志设置，请确认后端版本')
     gateway.value = settings.gateway
     savedGateway.value = JSON.stringify(settings.gateway)

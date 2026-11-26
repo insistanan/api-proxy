@@ -77,7 +77,7 @@ func TestDeleteChannelPoolVisionReferences(t *testing.T) {
 	t.Run("external reference is detached", func(t *testing.T) {
 		cm := newTransactionTestManager(t, "messages")
 		cm.config.Upstream[0].PoolID = "empty"
-		cm.config.ChatUpstream = []UpstreamConfig{{ID: "owner", Name: "owner", VisionCapable: true, VisionLayerEnabled: true, VisionLayerChannelID: "first", VisionLayerModel: "vision-model", MaxConcurrency: upstreamcontrol.DefaultConcurrency}}
+		cm.config.ChatUpstream = []UpstreamConfig{{ID: "owner", Name: "owner", Status: ChannelStatusSuspended, BaseURL: "https://example.test", VisionCapable: true, VisionLayerEnabled: true, VisionLayerChannelID: "first", VisionLayerModel: "vision-model", MaxConcurrency: upstreamcontrol.DefaultConcurrency}}
 		if err := cm.DeleteChannelPool("messages", "empty"); err != nil {
 			t.Fatal(err)
 		}
@@ -191,6 +191,9 @@ func TestSaveChannelPoolLayoutMovesAndReordersChannels(t *testing.T) {
 		},
 	}
 
+	for i := range manager.config.Upstream {
+		manager.config.Upstream[i].BaseURL = "https://example.test"
+	}
 	err := manager.SaveChannelPoolLayout("messages", []ChannelPoolLayout{
 		{PoolID: "gpt", ChannelIDs: []string{"a", "c"}},
 		{PoolID: DefaultChannelPoolID, ChannelIDs: []string{"b"}},

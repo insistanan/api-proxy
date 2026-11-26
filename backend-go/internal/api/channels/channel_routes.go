@@ -43,9 +43,9 @@ func RegisterChannelRoutes(api *gin.RouterGroup, kind scheduler.ChannelKind, dep
 	api.DELETE(p+"/channels/:id", crud.DeleteUpstream)
 	api.GET(p+"/channels/:id/deletion-impact", GetChannelDeletionImpact(deps.Cfg, string(kind), false))
 	api.POST(p+"/channels/:id/keys", crud.AddApiKey)
-	api.DELETE(p+"/channels/:id/keys/:apiKey", crud.DeleteApiKey)
-	api.POST(p+"/channels/:id/keys/:apiKey/top", crud.MoveApiKeyToTop)
-	api.POST(p+"/channels/:id/keys/:apiKey/bottom", crud.MoveApiKeyToBottom)
+	api.DELETE(p+"/channels/:id/keys", crud.DeleteApiKey)
+	api.POST(p+"/channels/:id/keys/top", crud.MoveApiKeyToTop)
+	api.POST(p+"/channels/:id/keys/bottom", crud.MoveApiKeyToBottom)
 
 	// ===== 渠道池 =====
 	kindName := string(kind)
@@ -61,7 +61,7 @@ func RegisterChannelRoutes(api *gin.RouterGroup, kind scheduler.ChannelKind, dep
 	api.POST(p+"/channels/tidy", TidyProblemChannels(deps.Cfg, kind))
 	api.PATCH(p+"/channels/:id/status", crud.SetChannelStatus)
 	api.POST(p+"/channels/:id/duplicate", DuplicateChannel(deps.Cfg, kind))
-	api.POST(p+"/channels/:id/resume", ResumeChannelByKind(deps.Scheduler, kind))
+	api.POST(p+"/channels/:id/resume", ResumeChannelByKind(deps.Scheduler, deps.Cfg, kind))
 	api.POST(p+"/channels/:id/promotion", crud.SetChannelPromotion)
 
 	// 协议特有端点（可选）

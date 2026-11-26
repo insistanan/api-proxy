@@ -64,10 +64,14 @@ func DecodeEmbeddings(body []byte, count int) ([][]float64, error) {
 }
 
 func (s *Service) embeddingUpstream(cfg config.IntentRoutingConfig) (*config.UpstreamConfig, int, error) {
+	return embeddingUpstreamIn(s.Cfg.GetConfig(), cfg)
+}
+
+func embeddingUpstreamIn(snapshot config.Config, cfg config.IntentRoutingConfig) (*config.UpstreamConfig, int, error) {
 	if cfg.EmbeddingChannel == "" {
 		return nil, 0, fmt.Errorf("请指定用于辅助向量计算的 Embeddings 渠道")
 	}
-	for i, up := range s.Cfg.GetConfig().EmbeddingsUpstream {
+	for i, up := range snapshot.EmbeddingsUpstream {
 		if up.ID != cfg.EmbeddingChannel {
 			continue
 		}
@@ -84,6 +88,16 @@ func (s *Service) embeddingUpstream(cfg config.IntentRoutingConfig) (*config.Ups
 
 func (s *Service) embeddingSpace(cfg config.IntentRoutingConfig) (string, error) {
 	if cfg.EmbeddingSource == "local" {
+		return s.embeddingSpaceIn(config.Config{}, cfg)
+	}
+	if s.Cfg == nil {
+		return "", fmt.Errorf("向量渠道配置未装配")
+	}
+	return s.embeddingSpaceIn(s.Cfg.GetConfig(), cfg)
+}
+
+func (s *Service) embeddingSpaceIn(snapshot config.Config, cfg config.IntentRoutingConfig) (string, error) {
+	if cfg.EmbeddingSource == "local" {
 		if s.Local == nil {
 			return "", fmt.Errorf("本地向量助手未装配")
 		}
@@ -92,7 +106,7 @@ func (s *Service) embeddingSpace(cfg config.IntentRoutingConfig) (string, error)
 		}
 		return s.Local.Space()
 	}
-	up, _, err := s.embeddingUpstream(cfg)
+	up, _, err := embeddingUpstreamIn(snapshot, cfg)
 	if err != nil {
 		return "", err
 	}

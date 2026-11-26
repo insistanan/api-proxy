@@ -44,7 +44,8 @@ func TestCacheKeepalive_ProxyAttemptCapturesFinalRequestAndUsage(t *testing.T) {
 		ServiceType: "claude", APIKeys: []string{"test-key"}, MaxConcurrency: 5,
 		CacheKeepalive: config.CacheKeepaliveConfig{Enabled: true, IntervalSeconds: 280, MaxAttempts: 2,
 			Prompt: "接下来应该怎么做？", MinCacheHitPercent: 90, MaxOutputTokens: 16}}
-	require.NoError(t, h.cfgManager.AddUpstream(*upstream))
+	_, err := h.cfgManager.AddChannel("messages", *upstream)
+	require.NoError(t, err)
 	manager := cachekeepalive.New(h.cfgManager, nil)
 	t.Cleanup(func() { manager.Stop() })
 	h.channelScheduler.SetCacheKeepalive(manager)

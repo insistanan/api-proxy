@@ -71,6 +71,9 @@ func Handler(
 			return responsesReq.Model, responsesReq.Stream, proxycore.ExtractPromptsFromResponsesInput(responsesReq.Input), true
 		},
 		BuildUpstreamRequest: func(c *gin.Context, up *config.UpstreamConfig, apiKey string, body []byte) (*http.Request, error) {
+			if c.GetBool(upstreamreq.ContextKeyAuxiliaryTask) {
+				providers.BindResponseSession(c, &types.Session{})
+			}
 			if err := beginResponsesTurn(c, sessionManager, body, c.GetString(upstreamreq.ContextKeyConversationUserID)); err != nil {
 				return nil, err
 			}

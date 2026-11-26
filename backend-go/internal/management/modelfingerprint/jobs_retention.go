@@ -1,14 +1,18 @@
 package modelfingerprint
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func (j *Jobs) activeLocked() int {
@@ -48,10 +52,15 @@ func (j *Jobs) retentionLoop() {
 		case <-ticker.C:
 		case <-j.pruneWake:
 		}
-		if err := j.pruneFiles(); err != nil {
-			j.mu.Lock()
-			j.closeErr = errors.Join(j.closeErr, err)
-			j.mu.Unlock()
+		err := j.pruneFiles()
+		j.mu.Lock()
+		previous := j.retentionErr
+		j.retentionErr = err
+		j.mu.Unlock()
+		if err != nil && (previous == nil || previous.Error() != err.Error()) {
+			log.Printf("[Fingerprint] 后台清理失败: %v", err)
+		} else if err == nil && previous != nil {
+			log.Printf("[Fingerprint] 后台清理已恢复")
 		}
 	}
 }
@@ -74,10 +83,10 @@ func (j *Jobs) pruneFiles() error {
 	var files []os.FileInfo
 	for _, entry := range entries {
 		name := entry.Name()
-		if !entry.Type().IsRegular() || !strings.HasSuffix(name, ".json") || len(name) != 69 {
+		if !entry.Type().IsRegular() || !strings.HasSuffix(name, ".json") {
 			continue
 		}
-		if _, err := hex.DecodeString(strings.TrimSuffix(name, ".json")); err != nil {
+		if _, ok := taskFileStripe(name); !ok {
 			continue
 		}
 		info, err := entry.Info()
@@ -91,10 +100,7 @@ func (j *Jobs) pruneFiles() error {
 		if index < maxStoredTasks && time.Since(file.ModTime()) < taskRetention {
 			continue
 		}
-		var first byte
-		if _, err := fmt.Sscanf(file.Name()[:2], "%02x", &first); err != nil {
-			continue
-		}
+		first, _ := taskFileStripe(file.Name())
 		disk := &j.diskMu[int(first)%len(j.diskMu)]
 		disk.Lock()
 		// 扫描后文件可能刚被重写，旧扫描结果不能删除新的检测结果。
@@ -111,7 +117,7 @@ func (j *Jobs) pruneFiles() error {
 		j.mu.Lock()
 		active := false
 		for id, current := range j.tasks {
-			if filepath.Base(j.taskPath(id)) == file.Name() {
+			if filepath.Base(j.taskPath(id)) == file.Name() || id+".json" == file.Name() {
 				active = current.cancel != nil
 				if !active {
 					delete(j.tasks, id)
@@ -129,4 +135,23 @@ func (j *Jobs) pruneFiles() error {
 		}
 	}
 	return nil
+}
+
+// 旧 UUID 文件只读兼容，和新文件共同受份数及 30 天期限约束。
+// 同一渠道的两种文件名必须使用同一把磁盘锁。
+func taskFileStripe(name string) (byte, bool) {
+	id := strings.TrimSuffix(name, ".json")
+	if len(id) == 64 {
+		digest, err := hex.DecodeString(id)
+		if err == nil {
+			return digest[0], true
+		}
+	}
+	if len(id) == 36 {
+		if _, err := uuid.Parse(id); err == nil {
+			digest := sha256.Sum256([]byte(id))
+			return digest[0], true
+		}
+	}
+	return 0, false
 }

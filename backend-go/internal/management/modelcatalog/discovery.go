@@ -2,6 +2,7 @@ package modelcatalog
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"insistanan/api-proxy/internal/infra/upstreamreq"
 	"insistanan/api-proxy/internal/protocol/codec"
@@ -20,7 +21,8 @@ const (
 	// azureModelsAPIVersion is a widely accepted Azure OpenAI query version for list models.
 	azureModelsAPIVersion = "2024-06-01"
 	// maxModelListPages caps pagination loops against misbehaving upstreams.
-	maxModelListPages = 20
+	maxModelListPages     = 20
+	maxModelListBodyBytes = 8 << 20
 	// maxModelListPageSize asks Anthropic/Gemini for larger pages when supported.
 	maxModelListPageSize = 1000
 )
@@ -33,67 +35,27 @@ type discoveryMethod struct {
 }
 
 func orderedDiscoveryMethods(serviceType string) []discoveryMethod {
-	openaiFamily := []discoveryMethod{
-		{Name: "openai-v1", Kind: "openai-v1"},
-		{Name: "openai-root", Kind: "openai-root"},
-		{Name: "openai-openai", Kind: "openai-openai"},
-		{Name: "openai-api", Kind: "openai-api"},
-		{Name: "openai-compat", Kind: "openai-compat"},
-		{Name: "gemini-openai", Kind: "gemini-openai"},
-		{Name: "azure", Kind: "azure"},
-		{Name: "anthropic", Kind: "anthropic"},
-		{Name: "gemini", Kind: "gemini"},
-		{Name: "ollama", Kind: "ollama"},
-	}
-
 	switch strings.ToLower(strings.TrimSpace(serviceType)) {
 	case "claude", "anthropic":
-		return []discoveryMethod{
-			{Name: "anthropic", Kind: "anthropic"},
-			{Name: "openai-v1", Kind: "openai-v1"},
-			{Name: "openai-root", Kind: "openai-root"},
-			{Name: "openai-openai", Kind: "openai-openai"},
-			{Name: "openai-api", Kind: "openai-api"},
-			{Name: "openai-compat", Kind: "openai-compat"},
-			{Name: "azure", Kind: "azure"},
-			{Name: "gemini", Kind: "gemini"},
-			{Name: "gemini-openai", Kind: "gemini-openai"},
-			{Name: "ollama", Kind: "ollama"},
-		}
+		return []discoveryMethod{{Name: "anthropic", Kind: "anthropic"}}
 	case "gemini":
-		return []discoveryMethod{
-			{Name: "gemini", Kind: "gemini"},
-			{Name: "gemini-openai", Kind: "gemini-openai"},
-			{Name: "openai-v1", Kind: "openai-v1"},
-			{Name: "openai-root", Kind: "openai-root"},
-			{Name: "openai-openai", Kind: "openai-openai"},
-			{Name: "openai-api", Kind: "openai-api"},
-			{Name: "openai-compat", Kind: "openai-compat"},
-			{Name: "azure", Kind: "azure"},
-			{Name: "anthropic", Kind: "anthropic"},
-			{Name: "ollama", Kind: "ollama"},
-		}
+		return []discoveryMethod{{Name: "gemini", Kind: "gemini"}}
 	case "ollama":
-		return []discoveryMethod{
-			{Name: "ollama", Kind: "ollama"},
-			{Name: "openai-v1", Kind: "openai-v1"},
-			{Name: "openai-root", Kind: "openai-root"},
-			{Name: "openai-api", Kind: "openai-api"},
-		}
+		return []discoveryMethod{{Name: "ollama", Kind: "ollama"}}
 	case "azure":
-		return []discoveryMethod{
-			{Name: "azure", Kind: "azure"},
-			{Name: "openai-openai", Kind: "openai-openai"},
-			{Name: "openai-v1", Kind: "openai-v1"},
-			{Name: "openai-root", Kind: "openai-root"},
-			{Name: "openai-api", Kind: "openai-api"},
-			{Name: "openai-compat", Kind: "openai-compat"},
-		}
+		return []discoveryMethod{{Name: "azure", Kind: "azure"}}
+	case "openai", "responses", "chat", "images", "embeddings", "decisions":
+		return []discoveryMethod{{Name: "openai-v1", Kind: "openai-v1"}, {Name: "openai-root", Kind: "openai-root"}}
 	default:
-		// openai / responses / chat / empty / unknown
-		return openaiFamily
+		return nil
 	}
 }
+
+type modelsHTTPError struct {
+	status int
+}
+
+func (e *modelsHTTPError) Error() string { return fmt.Sprintf("模型目录返回 HTTP %d", e.status) }
 
 func discoverModelsForKey(
 	ctx context.Context,
@@ -103,22 +65,26 @@ func discoverModelsForKey(
 	baseURLs []string,
 ) ([]string, string, string, error) {
 	methods := orderedDiscoveryMethods(upstream.ServiceType)
+	if len(methods) == 0 {
+		return nil, "", "", fmt.Errorf("不支持的模型发现协议 %q", upstream.ServiceType)
+	}
 	attemptErrors := make([]string, 0, len(baseURLs)*len(methods))
 
 	for _, baseURL := range baseURLs {
 		for _, method := range methods {
 			models, err := fetchModelsByMethod(ctx, cfgManager, upstream, apiKey, baseURL, method)
 			if err != nil {
-				attemptErrors = append(attemptErrors, fmt.Sprintf("%s@%s: %v", method.Name, shortenURLForLog(baseURL), err))
+				var statusErr *modelsHTTPError
+				if !errors.As(err, &statusErr) || statusErr.status != http.StatusNotFound {
+					return nil, "", "", upstreamreq.RedactError(err, []string{baseURL}, apiKey)
+				}
+				attemptErrors = append(attemptErrors, fmt.Sprintf("%s@%s: %v", method.Name, upstreamreq.RedactURL(baseURL), err))
 				continue
 			}
 			models = utils.DedupeSortedStrings(models)
-			if len(models) > 0 {
-				log.Printf("[Models-Discover] 渠道 %s key=%s baseURL=%s method=%s 获取模型 %d 个",
-					upstream.Name, keyFingerprint(apiKey), baseURL, method.Name, len(models))
-				return models, baseURL, method.Name, nil
-			}
-			attemptErrors = append(attemptErrors, fmt.Sprintf("%s@%s: empty model list", method.Name, shortenURLForLog(baseURL)))
+			log.Printf("[Models-Discover] 渠道 %s key=%s baseURL=%s method=%s 获取模型 %d 个",
+				upstream.Name, keyFingerprint(apiKey), upstreamreq.RedactURL(baseURL), method.Name, len(models))
+			return models, baseURL, method.Name, nil
 		}
 	}
 
@@ -147,32 +113,16 @@ func fetchModelsByMethod(
 	case "gemini":
 		return fetchGeminiModelsPaginated(ctx, cfgManager, upstream, apiKey, baseURL)
 	case "ollama":
-		return fetchSingleModelsPage(ctx, cfgManager, upstream, apiKey, baseURL, method.Kind, buildOllamaTagsURL(baseURL), []string{"none", "bearer"})
+		return fetchSingleModelsPage(ctx, cfgManager, upstream, apiKey, method.Kind, buildOllamaTagsURL(baseURL), "bearer")
 	case "azure":
-		return fetchSingleModelsPage(ctx, cfgManager, upstream, apiKey, baseURL, method.Kind, buildAzureModelsURL(baseURL), []string{"azure", "bearer"})
+		return fetchSingleModelsPage(ctx, cfgManager, upstream, apiKey, method.Kind, buildAzureModelsURL(baseURL), "azure")
 	case "openai-v1":
-		return fetchSingleModelsPage(ctx, cfgManager, upstream, apiKey, baseURL, method.Kind, buildVersionedModelsURL(baseURL), openaiAuthOrder(apiKey))
+		return fetchSingleModelsPage(ctx, cfgManager, upstream, apiKey, method.Kind, buildVersionedModelsURL(baseURL), "bearer")
 	case "openai-root":
-		return fetchSingleModelsPage(ctx, cfgManager, upstream, apiKey, baseURL, method.Kind, buildRootModelsURL(baseURL), openaiAuthOrder(apiKey))
-	case "openai-openai":
-		return fetchSingleModelsPage(ctx, cfgManager, upstream, apiKey, baseURL, method.Kind, buildOpenAIPathModelsURL(baseURL), openaiAuthOrder(apiKey))
-	case "openai-api":
-		return fetchSingleModelsPage(ctx, cfgManager, upstream, apiKey, baseURL, method.Kind, buildAPIVersionedModelsURL(baseURL), openaiAuthOrder(apiKey))
-	case "openai-compat":
-		return fetchSingleModelsPage(ctx, cfgManager, upstream, apiKey, baseURL, method.Kind, buildCompatibleModeModelsURL(baseURL), openaiAuthOrder(apiKey))
-	case "gemini-openai":
-		return fetchSingleModelsPage(ctx, cfgManager, upstream, apiKey, baseURL, method.Kind, buildGeminiOpenAIModelsURL(baseURL), []string{"gemini", "bearer", "x-api-key"})
+		return fetchSingleModelsPage(ctx, cfgManager, upstream, apiKey, method.Kind, buildRootModelsURL(baseURL), "bearer")
 	default:
 		return nil, fmt.Errorf("unknown discovery method: %s", method.Kind)
 	}
-}
-
-func openaiAuthOrder(apiKey string) []string {
-	// sk-ant-* keys prefer x-api-key; everything else prefers Bearer, then alternates on 401/403.
-	if strings.HasPrefix(strings.TrimSpace(apiKey), "sk-ant-") {
-		return []string{"x-api-key", "bearer", "azure"}
-	}
-	return []string{"bearer", "x-api-key", "azure"}
 }
 
 func fetchSingleModelsPage(
@@ -180,37 +130,22 @@ func fetchSingleModelsPage(
 	cfgManager *config.ConfigManager,
 	upstream *config.UpstreamConfig,
 	apiKey string,
-	baseURL string,
 	kind string,
 	reqURL string,
-	authStyles []string,
+	authStyle string,
 ) ([]string, error) {
-	var lastErr error
-	for _, authStyle := range authStyles {
-		body, statusCode, err := doModelsRequest(ctx, cfgManager, upstream, apiKey, reqURL, authStyle)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		if statusCode < 200 || statusCode >= 300 {
-			lastErr = fmt.Errorf("%s returned %d", kind, statusCode)
-			// Only rotate auth on auth failures; other codes mean wrong path/protocol.
-			if statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden {
-				continue
-			}
-			return nil, lastErr
-		}
-
-		models, parseErr := parseBodyByKind(kind, body)
-		if parseErr != nil {
-			return nil, fmt.Errorf("%s parse: %w", kind, parseErr)
-		}
-		return models, nil
+	body, statusCode, err := doModelsRequest(ctx, cfgManager, upstream, apiKey, reqURL, authStyle)
+	if err != nil {
+		return nil, err
 	}
-	if lastErr == nil {
-		lastErr = fmt.Errorf("%s request failed", kind)
+	if statusCode < 200 || statusCode >= 300 {
+		return nil, &modelsHTTPError{status: statusCode}
 	}
-	return nil, lastErr
+	models, err := parseBodyByKind(kind, body)
+	if err != nil {
+		return nil, fmt.Errorf("%s 目录解析失败: %w", kind, err)
+	}
+	return models, nil
 }
 
 func fetchAnthropicModelsPaginated(
@@ -222,6 +157,7 @@ func fetchAnthropicModelsPaginated(
 ) ([]string, error) {
 	allModels := make([]string, 0, 64)
 	afterID := ""
+	seen := make(map[string]bool)
 
 	for page := 0; page < maxModelListPages; page++ {
 		reqURL := buildAnthropicModelsURL(baseURL)
@@ -237,17 +173,7 @@ func fetchAnthropicModelsPaginated(
 			return nil, err
 		}
 		if statusCode < 200 || statusCode >= 300 {
-			// Some Claude-compatible relays reject anthropic headers on /v1/models;
-			// fall back to bearer on same URL once.
-			if page == 0 && (statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden) {
-				body, statusCode, err = doModelsRequest(ctx, cfgManager, upstream, apiKey, reqURL, "bearer")
-				if err != nil {
-					return nil, err
-				}
-			}
-			if statusCode < 200 || statusCode >= 300 {
-				return nil, fmt.Errorf("anthropic returned %d", statusCode)
-			}
+			return nil, &modelsHTTPError{status: statusCode}
 		}
 
 		models, meta, parseErr := parseAnthropicPage(body)
@@ -255,13 +181,17 @@ func fetchAnthropicModelsPaginated(
 			return nil, fmt.Errorf("anthropic parse: %w", parseErr)
 		}
 		allModels = append(allModels, models...)
-		if !meta.HasMore || meta.LastID == "" || meta.LastID == afterID {
-			break
+		if !meta.HasMore {
+			return utils.DedupeSortedStrings(allModels), nil
 		}
+		if meta.LastID == "" || seen[meta.LastID] {
+			return nil, fmt.Errorf("Anthropic 模型目录分页未完成：游标缺失或重复")
+		}
+		seen[meta.LastID] = true
 		afterID = meta.LastID
 	}
 
-	return utils.DedupeSortedStrings(allModels), nil
+	return nil, fmt.Errorf("模型目录超过 %d 页，结果未完整取得", maxModelListPages)
 }
 
 func fetchGeminiModelsPaginated(
@@ -273,6 +203,7 @@ func fetchGeminiModelsPaginated(
 ) ([]string, error) {
 	allModels := make([]string, 0, 64)
 	pageToken := ""
+	seen := make(map[string]bool)
 
 	for page := 0; page < maxModelListPages; page++ {
 		reqURL := buildGeminiModelsURL(baseURL, apiKey)
@@ -288,7 +219,7 @@ func fetchGeminiModelsPaginated(
 			return nil, err
 		}
 		if statusCode < 200 || statusCode >= 300 {
-			return nil, fmt.Errorf("gemini returned %d", statusCode)
+			return nil, &modelsHTTPError{status: statusCode}
 		}
 
 		models, meta, parseErr := parseGeminiPage(body)
@@ -296,13 +227,17 @@ func fetchGeminiModelsPaginated(
 			return nil, fmt.Errorf("gemini parse: %w", parseErr)
 		}
 		allModels = append(allModels, models...)
-		if meta.NextPageToken == "" || meta.NextPageToken == pageToken {
-			break
+		if meta.NextPageToken == "" {
+			return utils.DedupeSortedStrings(allModels), nil
 		}
+		if seen[meta.NextPageToken] {
+			return nil, fmt.Errorf("Gemini 模型目录分页未完成：游标重复")
+		}
+		seen[meta.NextPageToken] = true
 		pageToken = meta.NextPageToken
 	}
 
-	return utils.DedupeSortedStrings(allModels), nil
+	return nil, fmt.Errorf("模型目录超过 %d 页，结果未完整取得", maxModelListPages)
 }
 
 func parseBodyByKind(kind string, body []byte) ([]string, error) {
@@ -341,11 +276,17 @@ func doModelsRequest(
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxModelListBodyBytes+1))
 	if err != nil {
 		return nil, resp.StatusCode, err
 	}
-	body = codec.DecompressGzipIfNeeded(resp, body)
+	if len(body) > maxModelListBodyBytes {
+		return nil, resp.StatusCode, fmt.Errorf("模型目录单页超过 8 MiB")
+	}
+	body, _, err = codec.DecompressBodyWithLimit(resp.Header.Get("Content-Encoding"), body, maxModelListBodyBytes)
+	if err != nil {
+		return nil, resp.StatusCode, fmt.Errorf("模型目录解压失败: %w", err)
+	}
 	return body, resp.StatusCode, nil
 }
 
@@ -364,7 +305,6 @@ func applyModelsAuth(req *http.Request, apiKey string, authStyle string) {
 		req.Header.Set("anthropic-version", "2023-06-01")
 	case "gemini":
 		req.Header.Set("x-goog-api-key", apiKey)
-		// Query key is already attached by buildGeminiModelsURL when present.
 	case "azure":
 		req.Header.Set("api-key", apiKey)
 	case "x-api-key":
@@ -394,55 +334,6 @@ func buildAnthropicModelsURL(baseURL string) string {
 	return buildVersionedModelsURL(baseURL)
 }
 
-func buildOpenAIPathModelsURL(baseURL string) string {
-	baseURL, skipVersionPrefix := normalizeBaseURL(baseURL)
-	if skipVersionPrefix {
-		return baseURL + "/models"
-	}
-	// Avoid double /openai/openai when user already pointed at an Azure-style base.
-	if strings.HasSuffix(baseURL, "/openai") {
-		if versionSuffixPattern.MatchString(baseURL) {
-			return baseURL + "/models"
-		}
-		return baseURL + "/v1/models"
-	}
-	lower := strings.ToLower(baseURL)
-	if strings.Contains(lower, "/openai/") {
-		return buildVersionedModelsURL(baseURL)
-	}
-	return baseURL + "/openai/v1/models"
-}
-
-func buildAPIVersionedModelsURL(baseURL string) string {
-	baseURL, skipVersionPrefix := normalizeBaseURL(baseURL)
-	if skipVersionPrefix {
-		return baseURL + "/models"
-	}
-	lower := strings.ToLower(baseURL)
-	if strings.HasSuffix(lower, "/api") {
-		if versionSuffixPattern.MatchString(baseURL) {
-			return baseURL + "/models"
-		}
-		return baseURL + "/v1/models"
-	}
-	if strings.Contains(lower, "/api/") {
-		return buildVersionedModelsURL(baseURL)
-	}
-	return baseURL + "/api/v1/models"
-}
-
-func buildCompatibleModeModelsURL(baseURL string) string {
-	baseURL, skipVersionPrefix := normalizeBaseURL(baseURL)
-	if skipVersionPrefix {
-		return baseURL + "/models"
-	}
-	lower := strings.ToLower(baseURL)
-	if strings.Contains(lower, "compatible-mode") {
-		return buildVersionedModelsURL(baseURL)
-	}
-	return baseURL + "/compatible-mode/v1/models"
-}
-
 func buildAzureModelsURL(baseURL string) string {
 	baseURL, _ = normalizeBaseURL(baseURL)
 	// Azure OpenAI: {endpoint}/openai/models?api-version=...
@@ -463,23 +354,10 @@ func buildAzureModelsURL(baseURL string) string {
 	return appendQuery(reqURL, query)
 }
 
-func buildGeminiModelsURL(baseURL, apiKey string) string {
+func buildGeminiModelsURL(baseURL, _ string) string {
 	baseURL, _ = normalizeBaseURL(baseURL)
 	baseURL = stripGeminiVersionSuffix(baseURL)
-	reqURL := baseURL + "/v1beta/models"
-	if strings.TrimSpace(apiKey) == "" {
-		return reqURL
-	}
-	query := url.Values{}
-	query.Set("key", apiKey)
-	return appendQuery(reqURL, query)
-}
-
-func buildGeminiOpenAIModelsURL(baseURL string) string {
-	baseURL, _ = normalizeBaseURL(baseURL)
-	baseURL = stripGeminiVersionSuffix(baseURL)
-	// Google OpenAI compatibility: /v1beta/openai/models
-	return baseURL + "/v1beta/openai/models"
+	return baseURL + "/v1beta/models"
 }
 
 func buildOllamaTagsURL(baseURL string) string {
@@ -548,12 +426,4 @@ func appendQuery(rawURL string, values url.Values) string {
 		return rawURL + "&" + encoded
 	}
 	return rawURL + "?" + encoded
-}
-
-func shortenURLForLog(rawURL string) string {
-	rawURL = strings.TrimSpace(rawURL)
-	if len(rawURL) <= 64 {
-		return rawURL
-	}
-	return rawURL[:61] + "..."
 }

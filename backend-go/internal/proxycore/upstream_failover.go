@@ -8,6 +8,7 @@ package proxycore
 import (
 	"context"
 	"fmt"
+	"insistanan/api-proxy/internal/infra/upstreamreq"
 	"log"
 	"net/http"
 	"time"
@@ -24,6 +25,12 @@ import (
 
 // TryWithModelMappingFailover 按模型映射执行上游故障转移。
 func (a UpstreamAttempt) TryWithModelMappingFailover() UpstreamAttemptResult {
+	preparedCompaction, err := a.prepareCompactionAttempt()
+	if err != nil {
+		a.Context.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "COMPACTION_INCOMPATIBLE"})
+		return newUpstreamAttemptResult(true, "", 0, nil, nil, err).withHealth(channelHealthNeutral).withAbortFailover()
+	}
+	a = preparedCompaction
 	if a.Context != nil && a.Context.Request != nil {
 		a.Context.Request = a.Context.Request.WithContext(upstreamcontrol.WithScope(a.Context.Request.Context()))
 	}
@@ -45,7 +52,7 @@ func (a UpstreamAttempt) TryWithModelMappingFailover() UpstreamAttemptResult {
 func (a UpstreamAttempt) tryWithModelMappingFailover() UpstreamAttemptResult {
 	// 目标模型与目标渠道来自同一条映射规则，保证二者始终对应
 	targetModels, targetChannelIDs := config.ResolveUpstreamModelTargets(a.RequestedModel, a.Upstream)
-	if turn := intent.TurnFrom(a.Context.Request.Context()); turn != nil && a.Upstream != nil {
+	if turn := intent.TurnFrom(a.Context.Request.Context()); turn != nil && a.Upstream != nil && compactionRequest(a.Context).Kind != "native" {
 		previous := turn.PinnedModel(a.Upstream.ID)
 		found := false
 		for i, target := range targetModels {
@@ -216,7 +223,7 @@ func preferConversationBaseURL(
 		return urlResults
 	}
 	if envCfg != nil && envCfg.ShouldLog("info") {
-		log.Printf("[%s-BaseURL-Affinity] conversation sticky prefer %s", apiType, preferredBaseURL)
+		log.Printf("[%s-BaseURL-Affinity] conversation sticky prefer %s", apiType, upstreamreq.RedactURL(preferredBaseURL))
 	}
 	return scheduler.PreferBaseURLInResults(urlResults, preferredBaseURL)
 }

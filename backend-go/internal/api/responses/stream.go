@@ -27,6 +27,7 @@ import (
 	"insistanan/api-proxy/internal/protocol/types"
 	"insistanan/api-proxy/internal/proxycore"
 	"insistanan/api-proxy/internal/safety/pipeline"
+	"insistanan/api-proxy/internal/storage/logbody"
 	"insistanan/api-proxy/internal/storage/logger"
 )
 
@@ -126,11 +127,11 @@ func handleStreamSuccess(
 	}
 
 	var synthesizer *codec.StreamSynthesizer
-	var logBuffer bytes.Buffer
-	streamLoggingEnabled := envCfg.Current().EnableResponseLogs
+	logBuffer := logbody.Buffer{Limit: logger.StreamLogLimit(c.Request.Context(), envCfg.Current().EnableResponseLogs)}
+	streamLoggingEnabled := logBuffer.Limit > 0
 
 	if streamLoggingEnabled {
-		synthesizer = codec.NewStreamSynthesizer(upstreamType)
+		synthesizer = codec.NewStreamSynthesizer(upstreamType, logBuffer.Limit)
 	}
 
 	var converterState any
@@ -541,20 +542,20 @@ func handleStreamSuccess(
 				if envCfg.ShouldLog("debug") {
 					log.Printf("[Responses-Stream] requestId=%s attemptId=%s 合成正文=%d 字节；正文见结构化日志", logger.RequestIDFromContext(c.Request.Context()), logger.AttemptIDFromContext(c.Request.Context()), len(synth))
 				}
-				logger.RecordStreamSynth(c.Request.Context(), "Responses", synth)
+				logger.RecordStreamSynth(c.Request.Context(), "Responses", synth, synthesizer.Truncated())
 			} else if logBuffer.Len() > 0 {
 				raw := logBuffer.String()
 				if envCfg.ShouldLog("debug") {
 					log.Printf("[Responses-Stream] requestId=%s attemptId=%s 原始流=%d 字节；内容见结构化日志", logger.RequestIDFromContext(c.Request.Context()), logger.AttemptIDFromContext(c.Request.Context()), len(raw))
 				}
-				logger.RecordStreamSynth(c.Request.Context(), "Responses", raw)
+				logger.RecordStreamSynth(c.Request.Context(), "Responses", raw, logBuffer.Truncated)
 			}
 		} else if logBuffer.Len() > 0 {
 			raw := logBuffer.String()
 			if envCfg.ShouldLog("debug") {
 				log.Printf("[Responses-Stream] requestId=%s attemptId=%s 原始流=%d 字节；内容见结构化日志", logger.RequestIDFromContext(c.Request.Context()), logger.AttemptIDFromContext(c.Request.Context()), len(raw))
 			}
-			logger.RecordStreamSynth(c.Request.Context(), "Responses", raw)
+			logger.RecordStreamSynth(c.Request.Context(), "Responses", raw, logBuffer.Truncated)
 		}
 	}
 

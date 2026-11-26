@@ -18,6 +18,9 @@ func validateAllVisionLayerConfigs(cfg *Config, pendingKind string, pendingUpstr
 			if GetChannelStatus(&upstreams[index]) == ChannelStatusDeleted {
 				continue
 			}
+			if err := validateCompactionConfig(set.kind, &upstreams[index]); err != nil {
+				return fmt.Errorf("渠道 %q 压缩配置无效: %w", upstreams[index].Name, err)
+			}
 			if err := validateVisionLayerConfig(cfg, set.kind, upstreams, index, pendingKind, pendingUpstreams); err != nil {
 				return fmt.Errorf("渠道 %q 配置无效: %w", upstreams[index].Name, err)
 			}
@@ -31,8 +34,8 @@ func validateVisionLayerConfig(cfg *Config, ownerKind string, upstreams []Upstre
 		return fmt.Errorf("图片理解层所属渠道索引无效: %d", ownerIndex)
 	}
 	owner := &upstreams[ownerIndex]
-	if owner.ExcludeFromConversation && !owner.VisionCapable {
-		return fmt.Errorf("不参与对话的渠道必须标记为支持图片理解")
+	if owner.ExcludeFromConversation && !owner.VisionCapable && !owner.Compaction.SummaryCapable {
+		return fmt.Errorf("不参与对话的渠道必须支持图片理解或加入摘要池")
 	}
 	if owner.VisionCapable && owner.VisionLayerEnabled {
 		return fmt.Errorf("渠道不能同时标记为支持图片理解并启用图片理解层")

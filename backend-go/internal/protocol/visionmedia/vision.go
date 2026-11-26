@@ -50,7 +50,11 @@ func ExtractImageFingerprints(body []byte) []string {
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil
 	}
+	return ExtractImageFingerprintsFromValue(payload)
+}
 
+// ExtractImageFingerprintsFromValue 读取已有 JSON 快照，不改写调用方的数据。
+func ExtractImageFingerprintsFromValue(payload any) []string {
 	seen := make(map[string]struct{})
 	result := make([]string, 0)
 	add := func(fingerprint string) {

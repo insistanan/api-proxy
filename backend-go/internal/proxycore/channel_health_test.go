@@ -129,7 +129,7 @@ func TestUnsupportedProtocolContinuesMappedTargets(t *testing.T) {
 				{ID: "unsupported", Name: "不支持目标", BaseURL: "https://unsupported.example", APIKeys: []string{"bad-key"}},
 				{ID: "native", Name: "原生目标", BaseURL: server.URL, APIKeys: []string{"native-key"}, ServiceType: "responses"},
 			} {
-				if err := env.cfgManager.AddUpstream(up); err != nil {
+				if _, err := env.cfgManager.AddChannel("messages", up); err != nil {
 					t.Fatal(err)
 				}
 			}

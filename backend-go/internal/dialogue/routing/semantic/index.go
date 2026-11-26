@@ -17,20 +17,20 @@ import (
 
 func (s *Service) Build(ctx context.Context, id string, revision int64, profile config.SemanticEmbeddingConfig) (IndexStatus, error) {
 	if err := config.ValidateSemanticEmbedding(profile); err != nil {
-		return IndexStatus{}, err
+		return IndexStatus{}, fmt.Errorf("%w: %w", ErrInvalidInput, err)
 	}
 	select {
 	case s.buildSlot <- struct{}{}:
 		defer func() { <-s.buildSlot }()
 	default:
-		return IndexStatus{}, fmt.Errorf("已有数据集正在构建或评测，请等待完成")
+		return IndexStatus{}, fmt.Errorf("%w: 已有数据集正在构建或评测，请等待完成", ErrConflict)
 	}
 	dataset, err := s.Get(id)
 	if err != nil {
 		return IndexStatus{}, err
 	}
 	if dataset.Revision != revision {
-		return IndexStatus{}, fmt.Errorf("数据集版本已变化，请刷新后构建")
+		return IndexStatus{}, fmt.Errorf("%w: 数据集版本已变化，请刷新后构建", ErrConflict)
 	}
 	space, err := s.embedder.EmbeddingSpace(profile)
 	if err != nil {
@@ -43,7 +43,7 @@ func (s *Service) Build(ctx context.Context, id string, revision int64, profile 
 		}
 	}
 	if len(index.Samples) == 0 {
-		return IndexStatus{}, fmt.Errorf("没有已批准的索引样本，请先审核样本")
+		return IndexStatus{}, fmt.Errorf("%w: 没有已批准的索引样本，请先审核样本", ErrConflict)
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
@@ -90,7 +90,7 @@ func (s *Service) Build(ctx context.Context, id string, revision int64, profile 
 			if err != nil {
 				return IndexStatus{}, err
 			}
-			return IndexStatus{}, fmt.Errorf("计算期间模型或渠道变化，未缓存该批向量")
+			return IndexStatus{}, fmt.Errorf("%w: 计算期间模型或渠道变化，未缓存该批向量", ErrConflict)
 		}
 		for i, text := range texts {
 			vector, err := normalized(vectors[i])
@@ -123,7 +123,7 @@ func (s *Service) Build(ctx context.Context, id string, revision int64, profile 
 		return IndexStatus{}, err
 	}
 	if currentSpace != space {
-		return IndexStatus{}, fmt.Errorf("构建期间模型或渠道变化，未发布索引")
+		return IndexStatus{}, fmt.Errorf("%w: 构建期间模型或渠道变化，未发布索引", ErrConflict)
 	}
 	index.Count, index.Reused, index.BuiltAt = len(index.Samples), len(index.Samples)-len(missing), time.Now()
 	if err := s.publish(ctx, index); err != nil {
@@ -144,7 +144,7 @@ func (s *Service) publish(ctx context.Context, index *snapshot) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.datasets[index.DatasetID].Revision != index.Revision {
-		return fmt.Errorf("构建期间样本已变化，旧索引保持不变，请重新构建")
+		return fmt.Errorf("%w: 构建期间样本已变化，旧索引保持不变，请重新构建", ErrConflict)
 	}
 	ctx, cancel := transactionContext(ctx)
 	defer cancel()
@@ -154,7 +154,7 @@ func (s *Service) publish(ctx context.Context, index *snapshot) error {
 		return err
 	}
 	if total+int64(len(data)+len(vectors)) > maxIndexBytes {
-		return fmt.Errorf("已发布索引超过 512 MiB，请先移除不再使用的模型索引")
+		return fmt.Errorf("%w: 已发布索引超过 512 MiB，请先移除不再使用的模型索引", ErrConflict)
 	}
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO semantic_indexes(id,data,vectors) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data,vectors=excluded.vectors`, id, data, vectors); err != nil {
 		return fmt.Errorf("发布索引失败: %w", err)
@@ -171,11 +171,19 @@ func (s *Service) Search(ctx context.Context, ids []string, kind string, profile
 // ValidateIndexes 在保存配置前检查模型身份，不计算查询向量或修改旧索引。
 func (s *Service) ValidateIndexes(ctx context.Context, ids []string, kind string, profile config.SemanticEmbeddingConfig) error {
 	if len(ids) == 0 {
-		return fmt.Errorf("请先选择数据集并构建索引")
+		return fmt.Errorf("%w: 请先选择数据集并构建索引", ErrConflict)
 	}
 	space, err := s.embedder.EmbeddingSpace(profile)
 	if err != nil {
 		return err
+	}
+	return s.ValidateIndexesInSpace(ctx, ids, kind, profile, space)
+}
+
+// 调用方已固定配置快照时直接传入向量空间，避免在配置提交锁内重读配置。
+func (s *Service) ValidateIndexesInSpace(ctx context.Context, ids []string, kind string, profile config.SemanticEmbeddingConfig, space string) error {
+	if len(ids) == 0 {
+		return fmt.Errorf("%w: 请先选择数据集并构建索引", ErrConflict)
 	}
 	for _, id := range ids {
 		if err := s.validateKind(id, kind); err != nil {
@@ -186,7 +194,7 @@ func (s *Service) ValidateIndexes(ctx context.Context, ids []string, kind string
 			return fmt.Errorf("数据集 %s 没有当前向量模型的可用索引，请重新构建: %w", id, err)
 		}
 		if index.Space != space {
-			return fmt.Errorf("数据集 %s 的模型、渠道或模型映射已变化，请重新计算并发布索引", id)
+			return fmt.Errorf("%w: 数据集 %s 的模型、渠道或模型映射已变化，请重新计算并发布索引", ErrConflict, id)
 		}
 	}
 	return nil
@@ -201,13 +209,13 @@ func (s *Service) SearchTool(ctx context.Context, ids []string, profile config.S
 func (s *Service) search(ctx context.Context, ids []string, kind string, profile config.SemanticEmbeddingConfig, text, parent string, filter func(Sample) bool) (Result, error) {
 	started := time.Now()
 	if err := config.ValidateDatasetIDs(ids); err != nil {
-		return Result{}, err
+		return Result{}, fmt.Errorf("%w: %w", ErrInvalidInput, err)
 	}
 	if err := config.ValidateSemanticEmbedding(profile); err != nil {
-		return Result{}, err
+		return Result{}, fmt.Errorf("%w: %w", ErrInvalidInput, err)
 	}
 	if len(ids) == 0 || strings.TrimSpace(text) == "" || len(text) > 16000 {
-		return Result{}, fmt.Errorf("检索需要数据集和不超过 16000 字节的文本")
+		return Result{}, fmt.Errorf("%w: 检索需要数据集和不超过 16000 字节的文本", ErrInvalidInput)
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(profile.TimeoutMS)*time.Millisecond)
 	defer cancel()
@@ -226,7 +234,7 @@ func (s *Service) search(ctx context.Context, ids []string, kind string, profile
 			return Result{}, fmt.Errorf("数据集 %s: %w", id, err)
 		}
 		if index.Space != space {
-			return Result{}, fmt.Errorf("数据集 %s 的向量模型已变化，请重建索引", id)
+			return Result{}, fmt.Errorf("%w: 数据集 %s 的向量模型已变化，请重建索引", ErrConflict, id)
 		}
 		indexes = append(indexes, index)
 		versions = append(versions, fmt.Sprintf("%s:%d:%d", id, index.Revision, index.BuiltAt.UnixNano()))
@@ -251,7 +259,7 @@ func (s *Service) search(ctx context.Context, ids []string, kind string, profile
 		if err != nil {
 			return Result{}, err
 		}
-		return Result{}, fmt.Errorf("查询期间向量空间发生变化")
+		return Result{}, fmt.Errorf("%w: 查询期间向量空间发生变化", ErrConflict)
 	}
 	// 每个类别分别保留最接近的正反例，避免全局 Top-K 把安全反例挤掉。
 	best := map[string]Hit{}
@@ -315,11 +323,14 @@ func (s *Service) ReserveEvaluation() (func(), error) {
 	case s.buildSlot <- struct{}{}:
 		return func() { <-s.buildSlot }, nil
 	default:
-		return nil, fmt.Errorf("已有构建或评测正在运行")
+		return nil, fmt.Errorf("%w: 已有构建或评测正在运行", ErrConflict)
 	}
 }
 
 func (s *Service) Evaluate(ctx context.Context, id string, profile config.SemanticEmbeddingConfig, threshold, margin float64) (Evaluation, error) {
+	if err := config.ValidateSemanticEmbedding(profile); err != nil {
+		return Evaluation{}, fmt.Errorf("%w: %w", ErrInvalidInput, err)
+	}
 	release, err := s.ReserveEvaluation()
 	if err != nil {
 		return Evaluation{}, err
@@ -334,7 +345,7 @@ func (s *Service) Evaluate(ctx context.Context, id string, profile config.Semant
 		return Evaluation{}, err
 	}
 	if index.Revision != d.Revision {
-		return Evaluation{}, fmt.Errorf("评测前请先发布当前版本索引")
+		return Evaluation{}, fmt.Errorf("%w: 评测前请先发布当前版本索引", ErrConflict)
 	}
 	start := time.Now()
 	out := Evaluation{Mode: "intent", Cases: []EvaluationCase{}}
@@ -348,7 +359,7 @@ func (s *Service) Evaluate(ctx context.Context, id string, profile config.Semant
 			continue
 		}
 		if out.Total >= 500 {
-			return Evaluation{}, fmt.Errorf("一次最多评测 500 条样本")
+			return Evaluation{}, fmt.Errorf("%w: 一次最多评测 500 条样本", ErrInvalidInput)
 		}
 		// 安全评测使用样本携带的工具作用域；评测当前数据集全部标签，不假设线上启用配置。
 		var filter func(Sample) bool
@@ -395,14 +406,14 @@ func (s *Service) Evaluate(ctx context.Context, id string, profile config.Semant
 		out.Cases = append(out.Cases, EvaluationCase{ID: row.ID, Expected: expected, Actual: actual, Score: score, Correct: correct, BlockEligible: blockEligible})
 	}
 	if out.Total == 0 {
-		return Evaluation{}, fmt.Errorf("没有已批准的独立评测样本")
+		return Evaluation{}, fmt.Errorf("%w: 没有已批准的独立评测样本", ErrConflict)
 	}
 	latest, err := s.Get(id)
 	if err != nil {
 		return Evaluation{}, err
 	}
 	if latest.Revision != d.Revision {
-		return Evaluation{}, fmt.Errorf("评测期间数据集被修改，结果未发布")
+		return Evaluation{}, fmt.Errorf("%w: 评测期间数据集被修改，结果未发布", ErrConflict)
 	}
 	out.DurationMS = time.Since(start).Milliseconds()
 	return out, nil

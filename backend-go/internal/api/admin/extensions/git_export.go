@@ -19,33 +19,45 @@ import (
 type exportPlan struct {
 	Files    []string
 	Revision string
+	Excluded []exportExclusion
+}
+
+type exportExclusion struct {
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
 }
 
 var legacyBackupDirectory = regexp.MustCompile(`^\d{8}-\d{6}\.\d+$`)
 
 // 仅导出 Skill 资源及启用清单。本机凭据、托管状态、元数据与翻译备份不属于导出格式。
 func shareableExtensionPath(path string) bool {
+	return extensionExclusion(path) == ""
+}
+
+func extensionExclusion(path string) string {
 	if path == "skills-manifest.json" || path == ".gitignore" {
-		return true
+		return ""
 	}
 	parts := strings.Split(path, "/")
 	if len(parts) < 2 || !skills.ValidName(parts[0]) {
-		return false
+		return "不属于 Skill 资源或启用清单"
 	}
 	// 旧版备份位于 Skill 根目录；普通日期文件和其他资源名不按形状猜测。
 	if len(parts) > 2 && legacyBackupDirectory.MatchString(parts[1]) {
-		return false
+		return "旧版翻译备份目录"
+	}
+	if parts[1] == ".backups" {
+		return "本机翻译备份目录"
 	}
 	for _, part := range parts[1:] {
-		lower := strings.ToLower(part)
-		if part == "" || strings.HasPrefix(part, ".") || strings.ContainsAny(part, "\\:") {
-			return false
+		if part == "" || part == "." || part == ".." || strings.ContainsAny(part, "\\:") {
+			return "资源路径无效"
 		}
-		if lower == "mcp.json" || lower == "auth.json" || lower == "credentials.json" || lower == "credentials.yaml" || lower == "credentials.yml" {
-			return false
+		if strings.EqualFold(part, ".git") {
+			return "嵌套仓库的本机状态"
 		}
 	}
-	return true
+	return ""
 }
 
 func prepareExport(ctx context.Context, directory string) (exportPlan, error) {
@@ -63,12 +75,26 @@ func prepareExport(ctx context.Context, directory string) (exportPlan, error) {
 		return exportPlan{}, err
 	}
 	unique := map[string]bool{}
+	plan := exportPlan{}
 	for _, path := range strings.Split(all, "\x00") {
-		if path != "" && shareableExtensionPath(path) {
-			unique[path] = true
+		if path != "" {
+			if reason := extensionExclusion(path); reason != "" {
+				plan.Excluded = append(plan.Excluded, exportExclusion{Path: path, Reason: reason})
+			} else {
+				unique[path] = true
+			}
 		}
 	}
-	plan := exportPlan{}
+	ignored, err := runGit(ctx, directory, "ls-files", "-z", "--others", "--ignored", "--exclude-standard")
+	if err != nil {
+		return exportPlan{}, err
+	}
+	for _, path := range strings.Split(ignored, "\x00") {
+		if path != "" {
+			plan.Excluded = append(plan.Excluded, exportExclusion{Path: path, Reason: "Git 忽略规则"})
+		}
+	}
+	sort.Slice(plan.Excluded, func(i, j int) bool { return plan.Excluded[i].Path < plan.Excluded[j].Path })
 	for path := range unique {
 		plan.Files = append(plan.Files, path)
 	}

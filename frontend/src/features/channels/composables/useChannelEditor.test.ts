@@ -11,6 +11,35 @@ const source: Channel = {
 }
 
 describe('渠道编辑器草稿与提交', () => {
+  it('摘要配置隔离草稿，跨协议复制清除压缩策略', () => {
+    const channel: Channel = { ...source, excludeFromConversation: true, compaction: {
+      summaryPool: false, summaryCapable: true, summaryModel: 'small', detectClientPrompts: false,
+      nativeSourceModel: '', nativeModel: '', nativeCompatibilityConfirmed: false
+    } }
+    const editor = useChannelEditor('messages')
+    editor.loadChannelData(channel)
+    editor.form.compaction.summaryModel = 'cheaper'
+    expect(channel.compaction?.summaryModel).toBe('small')
+    expect(editor.buildPayload(true).compaction?.summaryModel).toBe('cheaper')
+    editor.form.compaction.summaryModel = ''
+    expect(() => editor.buildPayload(true)).toThrow('摘要模型')
+    const other = useChannelEditor('responses')
+    other.loadChannelCopy(channel, 'messages')
+    expect(other.form.compaction.summaryCapable).toBe(false)
+    expect(other.form.compaction.nativeModel).toBe('')
+  })
+
+  it('原生模型替换要求源模型与兼容性确认', () => {
+    const form = defaultChannelForm('responses')
+    form.serviceType = 'responses'
+    form.compaction.nativeModel = 'small'
+    expect(() => buildChannelPayload(form, 'responses', false)).toThrow('兼容性')
+    form.compaction.nativeSourceModel = 'main'
+    form.compaction.nativeCompatibilityConfirmed = true
+    expect(buildChannelPayload(form, 'responses', false).compaction?.nativeModel).toBe('small')
+    form.serviceType = 'openai'
+    expect(buildChannelPayload(form, 'responses', false).compaction?.nativeModel).toBe('')
+  })
   it('分支并发默认 3，编辑和复制保留已配置上限', () => {
     const form = defaultChannelForm('messages')
     expect(form.maxBranchConcurrency).toBe(3)

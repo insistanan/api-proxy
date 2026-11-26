@@ -176,10 +176,14 @@ func (cm *ConfigManager) finishHistoricalKeysLocked() error {
 		return err
 	}
 	persisted := cloneConfig(cm.config)
+	clearRuntimePromotions(&persisted)
 	persisted.HistoricalKeysPending = false
 	clearHistoricalKeys(&persisted)
 	data, err := json.MarshalIndent(persisted, "", "  ")
 	if err != nil {
+		return err
+	}
+	if err := cm.checkDiskRevisionLocked(cm.persistedDigest); err != nil {
 		return err
 	}
 	err = atomicfile.Write(cm.configFile, data, atomicfile.Options{TempPrefix: ".config-", Mode: 0600})

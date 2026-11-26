@@ -64,7 +64,7 @@
 
           <!-- 操作按钮 -->
           <div class="channel-actions">
-            <UiButton size="small" color="success" variant="tonal" @click="emit('enable', channel.index)">
+            <UiButton size="small" color="success" variant="tonal" @click="emit('enable', channel)">
               <UiIcon start size="small">mdi-play-circle</UiIcon>
               启用
             </UiButton>
@@ -99,13 +99,13 @@
                   </span>
                 </UiListItem>
                 <hr class="border-0 border-t border-border" />
-                <UiListItem @click="emit('enable', channel.index)">
+                <UiListItem @click="emit('enable', channel)">
                   <template #prepend>
                     <UiIcon size="small" color="success">mdi-play-circle</UiIcon>
                   </template>
                   <span class="block">启用</span>
                 </UiListItem>
-                <UiListItem @click="emit('status', channel.index, 'deprecated')">
+                <UiListItem @click="emit('status', channel, 'deprecated')">
                   <template #prepend>
                     <UiIcon size="small" color="grey">mdi-archive-clock-outline</UiIcon>
                   </template>
@@ -164,7 +164,7 @@
           </div>
 
           <div class="channel-actions">
-            <UiButton size="small" color="grey" variant="tonal" @click="emit('status', channel.index, 'disabled')">
+            <UiButton size="small" color="grey" variant="tonal" @click="emit('status', channel, 'disabled')">
               <UiIcon start size="small">mdi-archive-outline</UiIcon>
               转备用
             </UiButton>
@@ -223,10 +223,10 @@ defineExpose({ revealChannel })
 const emit = defineEmits<{
   edit: [channel: Channel]
   delete: [index: number]
-  enable: [index: number]
+  enable: [channel: Channel]
   duplicate: [channel: Channel]
   vision: [channel: Channel]
-  status: [index: number, status: ChannelStatus]
+  status: [channel: Channel, status: ChannelStatus]
 }>()
 
 </script>
