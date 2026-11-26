@@ -1,6 +1,6 @@
 {
   "name": "api-proxy-frontend",
-  "version": "3.3.19",
+  "version": "3.3.20",
   "license": "MIT",
   "private": true,
   "type": "module",
