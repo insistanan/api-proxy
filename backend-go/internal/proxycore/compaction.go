@@ -181,31 +181,40 @@ func runIndependentCompactionRequest(c *gin.Context, env *config.EnvConfig, cfg 
 	}
 	usePool := !native && owner.Compaction.SummaryPool &&
 		(compactionRequest(c).Evidence == "X-Api-Proxy-Task" || owner.Compaction.DetectClientPrompts)
-	upstreams := []config.UpstreamConfig{*owner}
+	type summaryCandidate struct {
+		kind scheduler.ChannelKind
+		up   config.UpstreamConfig
+	}
+	candidates := []summaryCandidate{{kind: spec.Kind, up: *owner}}
 	if usePool {
-		all, _, err := cfg.GetChannelConfig(string(spec.Kind))
-		if err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
-			return
-		}
-		var indices []int
-		upstreams = nil
-		for index, up := range all {
-			if up.ExcludeFromConversation && up.Compaction.SummaryCapable && config.GetChannelStatus(&up) == config.ChannelStatusActive {
-				indices = append(indices, index)
+		refs := cfg.PublicSummaryChannels()
+		candidates = nil
+		for _, ref := range refs {
+			if config.GetChannelStatus(&ref.Upstream) != config.ChannelStatusActive {
+				continue
 			}
+			// 只挑选当前入口协议能转换的上游服务类型，避免把 Chat 入口发往非 Chat 上游等不支持组合。
+			if !supportsSummaryUpstream(spec.Kind, ref.Upstream.ServiceType) {
+				continue
+			}
+			candidates = append(candidates, summaryCandidate{kind: scheduler.ChannelKind(ref.Kind), up: ref.Upstream})
 		}
-		sort.SliceStable(indices, func(i, j int) bool { return all[indices[i]].Priority < all[indices[j]].Priority })
-		for _, index := range indices {
-			upstreams = append(upstreams, all[index])
-		}
+		sort.SliceStable(candidates, func(i, j int) bool {
+			// 同入口协议下的摘要渠道优先，其余按配置 Priority 稳定排序。
+			sameI := candidates[i].kind == spec.Kind
+			sameJ := candidates[j].kind == spec.Kind
+			if sameI != sameJ {
+				return sameI
+			}
+			return candidates[i].up.Priority < candidates[j].up.Priority
+		})
 	}
 	var lastErr error
-	for offset, candidate := range upstreams {
+	for offset, candidate := range candidates {
 		if c.Request.Context().Err() != nil {
 			return
 		}
-		selection, err := sch.SelectMappedChannel(spec.Kind, candidate.ID)
+		selection, err := sch.SelectMappedChannel(candidate.kind, candidate.up.ID)
 		if err != nil {
 			lastErr = err
 			log.Printf("[Compaction] 压缩渠道不可用: %v", err)
@@ -229,7 +238,7 @@ func runIndependentCompactionRequest(c *gin.Context, env *config.EnvConfig, cfg 
 		if usePool {
 			c.Header("X-Api-Proxy-Compaction-Route", "summary_pool")
 		}
-		log.Printf("[Compaction] requestId=%s source=%s target=%s model=%s attempt=%d", RequestLogID(c), owner.ID, up.ID, config.ResolveUpstreamModel(model, up), offset+1)
+		log.Printf("[Compaction] requestId=%s source=%s target=%s kind=%s model=%s attempt=%d", RequestLogID(c), owner.ID, up.ID, candidate.kind, config.ResolveUpstreamModel(model, up), offset+1)
 		urls := BuildDefaultURLResults(up.GetAllBaseURLs())
 		if native {
 			if preferred, ok := sch.GetPreferredBaseURL(conversationID); ok {
@@ -237,10 +246,10 @@ func runIndependentCompactionRequest(c *gin.Context, env *config.EnvConfig, cfg 
 			}
 		}
 		attempt := buildProtocolAttempt(c, env, cfg, sch, spec, body, model, stream, "", up, selection.ChannelIndex, start,
-			urls, spec.Kind, nil, nil, false)
+			urls, candidate.kind, nil, nil, false)
 		attempt.Permit, attempt.SkipVisionLayer = selection.Permit, true
 		result := attempt.TryWithModelMappingFailover()
-		recordChannelHealth(sch, spec.Kind, selection.ChannelIndex, result.Health, true, spec.LogName, selection.Permit)
+		recordChannelHealth(sch, candidate.kind, selection.ChannelIndex, result.Health, true, spec.LogName, selection.Permit)
 		selection.Permit.Release()
 		if result.Handled || c.Writer.Written() {
 			return
@@ -258,9 +267,25 @@ func runIndependentCompactionRequest(c *gin.Context, env *config.EnvConfig, cfg 
 		}
 	}
 	if lastErr == nil {
-		lastErr = fmt.Errorf("当前入口协议的摘要池没有可用渠道，请加入渠道并指定摘要模型")
+		lastErr = fmt.Errorf("摘要池没有可用于当前入口协议的渠道，请加入渠道并指定摘要模型")
 	}
 	c.JSON(http.StatusServiceUnavailable, gin.H{"error": lastErr.Error(), "code": "COMPACTION_UNAVAILABLE"})
+}
+
+// supportsSummaryUpstream 判断入口协议是否能向该上游 serviceType 发送独立文本摘要请求。
+func supportsSummaryUpstream(entry scheduler.ChannelKind, serviceType string) bool {
+	switch entry {
+	case scheduler.ChannelKindMessages:
+		return serviceType == "claude" || serviceType == "openai" || serviceType == "responses" || serviceType == "gemini"
+	case scheduler.ChannelKindResponses:
+		return serviceType == "responses" || serviceType == "openai" || serviceType == "claude" || serviceType == "gemini"
+	case scheduler.ChannelKindGemini:
+		return serviceType == "gemini" || serviceType == "openai" || serviceType == "claude" || serviceType == "responses"
+	case scheduler.ChannelKindChat:
+		return serviceType == "openai" || serviceType == "chat"
+	default:
+		return false
+	}
 }
 
 // prepareCompactionAttempt 必须在普通模型映射之前执行，禁止原生控制跨厂商转换或映射故障转移。

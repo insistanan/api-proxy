@@ -142,8 +142,9 @@ func TestChannelAdminRouteContract(t *testing.T) {
 		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/"+string(kind)+"/channels", nil))
 		require.Equal(t, http.StatusUnauthorized, w.Code)
 	}
-	// 公共图片理解池是四个会话协议共享的入口，独立于七个渠道前缀。
+	// 公用图片理解池与文本摘要池都是四个会话协议共享的入口，独立于七个渠道前缀。
 	require.True(t, actual["GET /api/vision-channels"])
+	require.True(t, actual["GET /api/summary-channels"])
 	require.True(t, actual["POST /api/channels/:id/fingerprint"])
 	require.True(t, actual["GET /api/channels/:id/fingerprint"])
 	require.True(t, actual["DELETE /api/channels/:id/fingerprint/:taskId"])
@@ -151,7 +152,7 @@ func TestChannelAdminRouteContract(t *testing.T) {
 	require.True(t, actual["POST /api/channels/:id/fingerprint/:taskId/retry"])
 	require.True(t, actual["GET /api/channels/:id/cache-keepalive"])
 	require.True(t, actual["POST /api/channels/:id/cache-keepalive/stop"])
-	require.Len(t, actual, len(common)*len(channelAdminKinds)+9)
+	require.Len(t, actual, len(common)*len(channelAdminKinds)+10)
 }
 
 func TestChannelDeletionImpactRoutesAndCrossProtocolDetach(t *testing.T) {

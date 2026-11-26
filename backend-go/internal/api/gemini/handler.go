@@ -310,6 +310,19 @@ func buildProviderRequest(
 		}
 		url = upstreamreq.BuildUpstreamURL(baseURL, "/v1", "/chat/completions", upstream.UseFullURL)
 
+	case "responses":
+		// OpenAI Responses 上游：需要转换
+		responsesReq, err := converters.GeminiToResponsesRequest(geminiReq, mappedModel)
+		if err != nil {
+			return nil, err
+		}
+		responsesReq["stream"] = isStream
+		requestBody, err = json.Marshal(responsesReq)
+		if err != nil {
+			return nil, err
+		}
+		url = upstreamreq.BuildUpstreamURL(baseURL, "/v1", "/responses", upstream.UseFullURL)
+
 	default:
 		requestBody, err = togemini.NativeRequest(geminiReq, upstream.StripThoughtSignature, upstream.InjectDummyThoughtSignature)
 		if err != nil {
@@ -347,7 +360,7 @@ func buildProviderRequest(
 	case "claude":
 		upstreamreq.SetAuthenticationHeader(req.Header, apiKey)
 		req.Header.Set("anthropic-version", "2023-06-01")
-	case "openai":
+	case "openai", "responses":
 		upstreamreq.SetAuthenticationHeader(req.Header, apiKey)
 	default:
 		upstreamreq.SetGeminiAuthenticationHeader(req.Header, apiKey)
@@ -464,6 +477,13 @@ func handleSuccess(
 			return nil, fmt.Errorf("转换 %s 响应失败: %w", upstreamType, err)
 		}
 
+	case "responses":
+		// 转换 OpenAI Responses 响应为 Gemini 格式
+		geminiResp, err = togemini.ResponsesResponse(bodyBytes)
+		if err != nil {
+			return nil, fmt.Errorf("转换 %s 响应失败: %w", upstreamType, err)
+		}
+
 	default:
 		return nil, fmt.Errorf("不支持的 Gemini 上游协议: %q", upstreamType)
 	}
@@ -482,7 +502,7 @@ func handleSuccess(
 	if err := writeResponse(respBytes); err != nil {
 		return nil, err
 	}
-	if upstreamType == "claude" || upstreamType == "openai" {
+	if upstreamType == "claude" || upstreamType == "openai" || upstreamType == "responses" {
 		// Gemini 响应格式没有缓存写入字段；内部记账和保活基线必须使用实际上游用量。
 		return tokenusage.ExtractJSONUsage(bodyBytes), nil
 	}

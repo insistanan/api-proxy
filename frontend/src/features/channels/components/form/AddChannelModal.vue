@@ -7,10 +7,16 @@
         </div>
         <div class="grow">
           <div class="text-lg font-bold">
-            {{ isEditing ? '编辑渠道' : isCopying ? '复制渠道' : '添加新渠道' }}
+            {{ isEditing ? '编辑渠道' : isCopying ? '复制渠道' : draftPreset === 'summary' ? '添加文本摘要渠道' : draftPreset === 'vision' ? '添加图片理解渠道' : '添加新渠道' }}
           </div>
           <div class="text-sm text-muted-foreground dialog-card-subtitle">
-            {{ entryLabel }} 入口 · {{ isQuickMode && !isEditing && !isCopying ? '粘贴地址和密钥，快速创建渠道' : '连接信息、模型映射与渠道策略' }}
+            {{
+              draftPreset === 'summary'
+                ? '跨协议共享文本摘要池 · 粘贴连接信息并选择摘要模型'
+                : draftPreset === 'vision'
+                  ? '跨协议共享图片理解池 · 粘贴地址和密钥快速创建'
+                  : `${entryLabel} 入口 · ${isQuickMode && !isEditing && !isCopying ? '粘贴地址和密钥，快速创建渠道' : '连接信息、模型映射与渠道策略'}`
+            }}
           </div>
         </div>
         <div class="flex items-center gap-2 header-actions">

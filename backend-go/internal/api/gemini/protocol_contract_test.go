@@ -63,6 +63,7 @@ func TestGeminiEntryStreamsCompleteToolCalls(t *testing.T) {
 	for _, tc := range []struct{ protocol, body string }{
 		{"claude", `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":"initial"}}` + "\n" + `{"type":"content_block_stop","index":0}` + "\n" + `{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"a","name":"run","input":{"x":1}}}` + "\n" + `{"type":"content_block_stop","index":1}` + "\n" + `{"type":"message_delta","delta":{"stop_reason":"tool_use"}}` + "\n" + `{"type":"message_stop"}`},
 		{"openai", `{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"a","function":{"name":"run","arguments":"{\"x\":"}}]}}]}` + "\n" + `{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"1}"}}]},"finish_reason":"tool_calls"}]}` + "\n" + `[DONE]`},
+		{"responses", `{"type":"response.output_text.delta","delta":"initial"}` + "\n" + `{"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":"fc_a","call_id":"a","name":"run"}}` + "\n" + `{"type":"response.function_call_arguments.delta","item_id":"fc_a","delta":"{\"x\":"}` + "\n" + `{"type":"response.function_call_arguments.delta","item_id":"fc_a","delta":"1}"}` + "\n" + `{"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","id":"fc_a","call_id":"a","name":"run","arguments":"{\"x\":1}"}}` + "\n" + `{"type":"response.completed","response":{"status":"completed"}}`},
 	} {
 		recorder := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(recorder)
@@ -87,6 +88,8 @@ func TestConvertedGeminiStreamKeepsInitialUsageAndReadsWholeEvents(t *testing.T)
 			"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\n" +
 			"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":15,\"prompt_tokens_details\":{\"cached_tokens\":5},\"completion_tokens\":2}}\n\n" +
 			"data: [DONE]"},
+		{"responses", "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n" +
+			"data: {\"type\":\"response.incomplete\",\"response\":{\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"usage\":{\"input_tokens\":15,\"input_tokens_details\":{\"cached_tokens\":5},\"output_tokens\":2}}}\n\n"},
 	} {
 		t.Run(tc.protocol, func(t *testing.T) {
 			recorder := httptest.NewRecorder()

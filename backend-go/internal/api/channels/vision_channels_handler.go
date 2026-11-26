@@ -47,3 +47,18 @@ func GetVisionChannels(cfgManager *config.ConfigManager) gin.HandlerFunc {
 		c.JSON(http.StatusOK, gin.H{"channels": payload})
 	}
 }
+
+// GetSummaryChannels 返回四个会话协议共享的文本摘要池。
+// 每条记录带 kind，前端据此把编辑、状态与删除操作路由到渠道自身协议。
+func GetSummaryChannels(cfgManager *config.ConfigManager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		channels := cfgManager.PublicSummaryChannels()
+		payload := make([]map[string]interface{}, 0, len(channels))
+		for _, channel := range channels {
+			dto := config.ChannelToDTO(&channel.Upstream, channel.Index)
+			dto["kind"] = channel.Kind
+			payload = append(payload, dto)
+		}
+		c.JSON(http.StatusOK, gin.H{"channels": payload})
+	}
+}

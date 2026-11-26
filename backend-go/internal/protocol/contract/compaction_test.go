@@ -55,3 +55,60 @@ func TestPiTemplateMustBeSystemAndSerializedUser(t *testing.T) {
 		t.Fatalf("用户文本不应命中模板: %+v %v", got, err)
 	}
 }
+
+func TestGenericClientSummaryPromptDetection(t *testing.T) {
+	cases := []struct {
+		name     string
+		protocol string
+		path     string
+		body     string
+		wantKind string
+	}{
+		{
+			name:     "OpenCode/通用英文压缩提示词",
+			protocol: "messages",
+			path:     "/v1/messages",
+			body:     `{"system":"You are a helpful AI assistant tasked with summarizing conversations. Summarize the conversation so another agent can continue the work without losing context.","messages":[{"role":"user","content":"Provide a detailed prompt for continuing our conversation above."}]}`,
+			wantKind: "summary",
+		},
+		{
+			name:     "pi 提示词小幅改写仍能命中",
+			protocol: "responses",
+			path:     "/v1/responses",
+			body:     `{"instructions":"You are a context summarization assistant. Read the conversation history and output only a structured summary.","input":[{"role":"user","content":"<conversation>\nUser: hi\nAssistant: ok\n</conversation>\nUpdate the summary."}]}`,
+			wantKind: "summary",
+		},
+		{
+			name:     "中文第三方 Agent 压缩摘要",
+			protocol: "gemini",
+			path:     "/v1beta/models/gemini-2.5-flash:generateContent",
+			body:     `{"systemInstruction":{"parts":[{"text":"你是上下文压缩助手，负责总结以上对话历史，仅输出摘要便于后续交接。"}]},"contents":[{"role":"user","parts":[{"text":"<history>\n用户: 修 bug\n助手: 已定位\n</history>\n请生成摘要"}]}]}`,
+			wantKind: "summary",
+		},
+		{
+			name:     "普通编程助手收到用户要求总结不误判",
+			protocol: "chat",
+			path:     "/v1/chat/completions",
+			body:     `{"messages":[{"role":"system","content":"You are a coding assistant."},{"role":"user","content":"Please summarize the conversation above."}]}`,
+			wantKind: "",
+		},
+		{
+			name:     "携带工具定义的请求绝不误判为文本摘要",
+			protocol: "messages",
+			path:     "/v1/messages",
+			body:     `{"system":"You are a context summarization assistant. Do NOT continue the conversation.","tools":[{"name":"read_file"}],"messages":[{"role":"user","content":"<conversation>\nhi\n</conversation>\n"}]}`,
+			wantKind: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := DetectCompaction(tc.protocol, tc.path, "", []byte(tc.body))
+			if err != nil {
+				t.Fatalf("unexpected err: %v", err)
+			}
+			if got.Kind != tc.wantKind {
+				t.Fatalf("want kind=%q got=%+v", tc.wantKind, got)
+			}
+		})
+	}
+}

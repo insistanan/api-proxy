@@ -41,7 +41,7 @@ describe('缓存保活配置', () => {
   it.each([
     ['messages', 'claude'], ['messages', 'responses'], ['messages', 'openai'], ['messages', 'gemini'],
     ['responses', 'claude'], ['responses', 'responses'], ['responses', 'openai'], ['responses', 'gemini'],
-    ['chat', 'openai'], ['gemini', 'gemini'], ['gemini', 'claude'], ['gemini', 'openai']
+    ['chat', 'openai'], ['gemini', 'gemini'], ['gemini', 'claude'], ['gemini', 'openai'], ['gemini', 'responses']
   ])('支持现有对话转换 %s → %s', (kind, service) => {
     expect(supportsCacheKeepalive(kind, service)).toBe(true)
   })

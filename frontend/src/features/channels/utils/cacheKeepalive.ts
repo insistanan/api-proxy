@@ -15,7 +15,7 @@ export type CacheKeepaliveDraft = Pick<CacheKeepaliveConfig, 'enabled' | 'prompt
 export function supportsCacheKeepalive(kind: string, service: string): boolean {
   if (kind === 'messages' || kind === 'responses') return ['claude', 'openai', 'responses', 'gemini'].includes(service)
   if (kind === 'chat') return service === 'openai'
-  return kind === 'gemini' && ['gemini', 'claude', 'openai'].includes(service)
+  return kind === 'gemini' && ['gemini', 'claude', 'openai', 'responses'].includes(service)
 }
 
 export function defaultCacheKeepalive(): CacheKeepaliveConfig {

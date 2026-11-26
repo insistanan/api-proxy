@@ -183,7 +183,7 @@
         <UiBadge size="x-small">{{ summaryChannels.length }}</UiBadge>
       </div>
       <div class="flex items-center gap-2">
-        <span class="section-inline-label">{{ protocolLabel(channelType) }} 入口 · 独立摘要</span>
+        <span class="section-inline-label">跨协议共享 · 独立摘要</span>
         <UiButton
           icon="mdi-plus"
           size="x-small"
@@ -196,12 +196,16 @@
       </div>
     </header>
     <div class="vision-channel-list">
-      <div v-for="channel in summaryChannels" :id="channel.id && !channel.visionCapable ? channelAnchorId(channelType, channel.id) : undefined" :key="channel.id ?? channel.index" class="vision-channel-row" tabindex="-1">
+      <div v-for="channel in summaryChannels" :id="channel.id && !channel.visionCapable ? channelAnchorId(channel.kind ?? channelType, channel.id) : undefined" :key="`${channel.kind ?? channelType}-${channel.index}`" class="vision-channel-row" tabindex="-1">
         <button v-if="canToggleVisionStatus(channel)" type="button" class="vision-status-toggle" :aria-label="`切换 ${channel.name} 状态`" @click="emit('toggleVisionStatus', channel)">
           <ChannelStatusBadge :status="channel.status || 'active'" />
         </button>
         <ChannelStatusBadge v-else :status="channel.status || 'active'" />
         <button type="button" class="font-medium truncate" @click="emit('edit', channel)">{{ channel.name }}</button>
+        <UiBadge v-if="channel.kind && channel.kind !== props.channelType" size="x-small" variant="text">
+          {{ protocolLabel(channel.kind) }}
+        </UiBadge>
+        <span class="text-xs text-muted-foreground">{{ channelServiceLabel(channel.kind ?? props.channelType, channel.serviceType) }}</span>
         <span class="text-xs text-muted-foreground truncate">{{ channel.compaction?.summaryModel }}</span>
         <span class="flex-1"></span>
         <UiButton size="x-small" variant="text" @click="emit('edit', channel)">配置</UiButton>
@@ -265,8 +269,9 @@ import ConfirmDialog from '@/shared/components/overlay/ConfirmDialog.vue'
 const props = defineProps<{
   channels: Channel[]
   channelType: ApiTab
-  // 四个会话协议共享的公用纯图片理解池；渠道自带所属协议。
+  // 四个会话协议共享的公用纯图片理解池与文本摘要池；渠道自带所属协议。
   sharedVisionChannels?: VisionChannel[]
+  sharedSummaryChannels?: VisionChannel[]
 }>()
 const emit = defineEmits<{
   addChannel: [poolId: string]
@@ -377,9 +382,12 @@ const visionChannels = computed(() => {
   const source = props.sharedVisionChannels ?? props.channels.filter(channel => channel.excludeFromConversation && channel.visionCapable)
   return source.filter(channel => channel.status !== 'deleted')
 })
-const summaryChannels = computed(() => props.channels
-  .filter(channel => channel.excludeFromConversation && channel.compaction?.summaryCapable && channel.status !== 'deleted')
-  .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0)))
+const summaryChannels = computed(() => {
+  const source = props.sharedSummaryChannels ?? props.channels
+    .filter(channel => channel.excludeFromConversation && channel.compaction?.summaryCapable)
+    .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0))
+  return source.filter(channel => channel.status !== 'deleted')
+})
 const protocolLabel = (kind?: ApiTab) => (kind ? API_TAB_LABELS[kind] : '')
 const canToggleVisionStatus = (channel: Channel) => ['active', 'suspended'].includes(channel.status || 'active')
 const deletePoolMessage = computed(() => {

@@ -168,6 +168,7 @@ func TestGeminiThinkingHistory_DroppedAcrossProtocols(t *testing.T) {
 	}{
 		{"Claude", GeminiToClaudeRequest},
 		{"Chat", GeminiToOpenAIRequest},
+		{"Responses", GeminiToResponsesRequest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			converted, err := tc.convert(input, "model")
@@ -178,10 +179,62 @@ func TestGeminiThinkingHistory_DroppedAcrossProtocols(t *testing.T) {
 			require.NotContains(t, string(actual), "gemini-signature")
 			require.Contains(t, string(actual), "visible-answer")
 			require.Contains(t, string(actual), `"name":"tool"`)
-			require.Len(t, converted["messages"], 1, "不能因删除纯思考部分而发送空助手消息")
+			if tc.name == "Responses" {
+				require.Len(t, converted["input"], 2, "Responses 应输出一条助手消息加一条 function_call")
+			} else {
+				require.Len(t, converted["messages"], 1, "不能因删除纯思考部分而发送空助手消息")
+			}
 			after, err := json.Marshal(input)
 			require.NoError(t, err)
 			require.Equal(t, before, after)
 		})
 	}
+}
+
+func TestGeminiToResponsesRequestAndResponse(t *testing.T) {
+	temp := 0.5
+	req := &types.GeminiRequest{
+		SystemInstruction: &types.GeminiContent{Parts: []types.GeminiPart{{Text: "系统提示"}}},
+		Contents: []types.GeminiContent{
+			{Role: "user", Parts: []types.GeminiPart{{Text: "查天气"}}},
+			{Role: "model", Parts: []types.GeminiPart{{FunctionCall: &types.GeminiFunctionCall{ID: "call_1", Name: "get_weather", Args: map[string]interface{}{"city": "Shanghai"}}}}},
+			{Role: "user", Parts: []types.GeminiPart{{FunctionResponse: &types.GeminiFunctionResponse{ID: "call_1", Name: "get_weather", Response: map[string]interface{}{"temp": 22}}}}},
+		},
+		Tools:            []types.GeminiTool{{FunctionDeclarations: []types.GeminiFunctionDeclaration{{Name: "get_weather", Description: "查询天气"}}}},
+		ToolConfig:       &types.GeminiToolConfig{FunctionCallingConfig: &types.GeminiFunctionCallingConfig{Mode: "ANY", AllowedFunctionNames: []string{"get_weather"}}},
+		GenerationConfig: &types.GeminiGenerationConfig{MaxOutputTokens: 1024, Temperature: &temp, ThinkingConfig: &types.GeminiThinkingConfig{ThinkingLevel: "high"}},
+	}
+	converted, err := GeminiToResponsesRequest(req, "gpt-5")
+	require.NoError(t, err)
+	require.Equal(t, "gpt-5", converted["model"])
+	require.Equal(t, "系统提示", converted["instructions"])
+	require.Equal(t, 1024, converted["max_output_tokens"])
+	require.Equal(t, map[string]interface{}{"effort": "high"}, converted["reasoning"])
+	require.Equal(t, map[string]interface{}{"type": "function", "name": "get_weather"}, converted["tool_choice"])
+	inputItems, ok := converted["input"].([]interface{})
+	require.True(t, ok)
+	require.Len(t, inputItems, 3)
+
+	respJSON := []byte(`{
+		"status": "completed",
+		"output": [
+			{"type": "reasoning", "summary": [{"type": "summary_text", "text": "先思考"}]},
+			{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "上海 22 度"}]},
+			{"type": "function_call", "call_id": "call_2", "name": "notify", "arguments": "{\"ok\":true}"}
+		],
+		"usage": {"input_tokens": 120, "output_tokens": 30, "input_tokens_details": {"cached_tokens": 40}}
+	}`)
+	geminiResp, err := togemini.ResponsesResponse(respJSON)
+	require.NoError(t, err)
+	require.Len(t, geminiResp.Candidates, 1)
+	require.Equal(t, "STOP", geminiResp.Candidates[0].FinishReason)
+	require.Len(t, geminiResp.Candidates[0].Content.Parts, 3)
+	require.True(t, geminiResp.Candidates[0].Content.Parts[0].Thought)
+	require.Equal(t, "先思考", geminiResp.Candidates[0].Content.Parts[0].Text)
+	require.Equal(t, "上海 22 度", geminiResp.Candidates[0].Content.Parts[1].Text)
+	require.Equal(t, "notify", geminiResp.Candidates[0].Content.Parts[2].FunctionCall.Name)
+	require.Equal(t, map[string]interface{}{"ok": true}, geminiResp.Candidates[0].Content.Parts[2].FunctionCall.Args)
+	require.Equal(t, 120, geminiResp.UsageMetadata.PromptTokenCount)
+	require.Equal(t, 40, geminiResp.UsageMetadata.CachedContentTokenCount)
+	require.Equal(t, 30, geminiResp.UsageMetadata.CandidatesTokenCount)
 }

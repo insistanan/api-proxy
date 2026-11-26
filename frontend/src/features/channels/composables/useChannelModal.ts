@@ -38,6 +38,8 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
   const { copyText } = useClipboard()
   const detailedSections = reactive({ connection: false, compatibility: false, advanced: false })
   const submitError = ref('')
+  // 从公用池入口进入时保留预设标记，供详细表单切换到精简布局。
+  const draftPreset = computed(() => props.draftPreset ?? null)
 
   // 模式切换: 快速添加 vs 详细表单
   const isQuickMode = ref(true)
@@ -86,13 +88,18 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
   }
 
   // 解析快速输入内容
-  const parseQuickInput = () => {
+  const parseQuickInput = (value?: string) => {
+    // 组件 v-model 与 update 事件可能同批触发，显式接收新值避免解析到上一次输入。
+    if (typeof value === 'string') quickInput.value = value
     quickDraft.parse(form.useFullUrl)
     const preset = quickPresetEndpoint.value
     if (preset && !detectedServiceType.value && detectedBaseUrl.value === preset.url) {
       detectedServiceType.value = preset.serviceType
     }
     if (props.channelType === 'images' && detectedServiceType.value && isImagesServiceType(detectedServiceType.value)) {
+      form.serviceType = detectedServiceType.value
+    }
+    if (props.draftPreset && detectedServiceType.value && serviceTypeOptions.value.some(option => option.value === detectedServiceType.value)) {
       form.serviceType = detectedServiceType.value
     }
   }
@@ -112,13 +119,18 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
   }
 
   // 快速模式的预览和提交使用同一协议，避免界面只显示入口默认值。
-  const quickServiceType = computed(() => isFixedOpenAIProtocol()
-    ? 'openai'
-    : props.channelType === 'images' ? form.serviceType : detectedServiceType.value || getDefaultServiceTypeValue())
+  const quickServiceType = computed(() => {
+    if (isFixedOpenAIProtocol()) return 'openai'
+    if (props.channelType === 'images') return form.serviceType
+    if (props.draftPreset && form.serviceType) return form.serviceType
+    return detectedServiceType.value || getDefaultServiceTypeValue()
+  })
 
-  // 快速模式表单验证
+  // 快速模式表单验证：公用辅助池渠道不依赖常规分组加载，避免分组异常挡住快速创建。
   const isQuickFormValid = computed(() => {
-    return !poolsLoading.value && !poolLoadError.value && detectedBaseUrls.value.length > 0 && detectedApiKeys.value.length > 0 && isImagesProtocolValid.value && (
+    const poolReady = !!props.draftPreset || (!poolsLoading.value && !poolLoadError.value)
+    const summaryValid = props.draftPreset !== 'summary' || form.compaction.summaryModel.trim().length > 0
+    return poolReady && detectedBaseUrls.value.length > 0 && detectedApiKeys.value.length > 0 && isImagesProtocolValid.value && summaryValid && (
       props.channelType !== 'images' || !validateImagesOutputSettings(form)
     )
   })
@@ -128,6 +140,8 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
     if (props.saving || props.copySource) return
     if (!isQuickFormValid.value) return
 
+    const isVisionPreset = props.draftPreset === 'vision'
+    const isSummaryPreset = props.draftPreset === 'summary'
     const channelData = {
       maxConcurrency: 5,
       maxBranchConcurrency: DEFAULT_BRANCH_CONCURRENCY,
@@ -145,16 +159,24 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
       modelMapping: {},
       defaultModel: '',
       poolId: form.poolId,
-      visionCapable: props.channelType === 'responses',
-      excludeFromConversation: false,
+      visionCapable: isVisionPreset ? true : isSummaryPreset ? false : props.channelType === 'responses',
+      excludeFromConversation: isVisionPreset || isSummaryPreset,
       visionLayerEnabled: false,
       disablePromptCacheKey: false,
       proxyMode: 'direct' as const,
-      proxyUrl: ''
+      proxyUrl: '',
+      ...(isSummaryPreset ? {
+        compaction: {
+          ...form.compaction,
+          summaryCapable: true,
+          summaryPool: false,
+          summaryModel: form.compaction.summaryModel.trim()
+        }
+      } : {})
     }
 
-    // 快速创建沿用渠道保存流程中的促销设置。
-    emit('save', channelData, { isQuickAdd: true })
+    // 公用辅助池渠道不参与常规对话促销；常规渠道继续沿用快速创建后的促销设置。
+    emit('save', channelData, { isQuickAdd: !isVisionPreset && !isSummaryPreset })
   }
 
   // 服务类型选项 - 根据渠道类型动态显示
@@ -163,7 +185,8 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
       return [
         { title: 'Gemini', value: 'gemini' },
         { title: 'Chat', value: 'openai' },
-        { title: 'Messages', value: 'claude' }
+        { title: 'Messages', value: 'claude' },
+        { title: 'Responses', value: 'responses' }
       ]
     }
     if (props.channelType === 'chat') {
@@ -318,11 +341,12 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
       isQuickMode.value = false
     } else {
       isQuickMode.value = true
-      // 从公用池的新建入口进入时直接落到详细表单，并展开承载渠道身份的兼容分区。
+      // 从公用池的新建入口进入时保持默认快速模式，同时把渠道身份写进草稿，
+      // 切到详细配置或直接快速提交都会带上对应池的身份。
       if (props.draftPreset) {
         applyChannelDraftPreset(form, props.draftPreset)
-        isQuickMode.value = false
-        detailedSections.compatibility = true
+        if (!form.serviceType) form.serviceType = getDefaultServiceTypeValue()
+        detailedSections.compatibility = props.draftPreset === 'vision'
       }
     }
     draftType = props.channelType
@@ -536,7 +560,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
     keyModelsStatus,
     handleFetchModels,
     loadMappingTargetChannels
-  } = useChannelModels(props, form, isQuickMode, quickDraft)
+  } = useChannelModels(props, form, isQuickMode, quickDraft, quickServiceType)
 
   // 表单验证错误
   const errors = reactive({
@@ -1006,6 +1030,7 @@ export function useChannelModal(props: ChannelModalProps, emit: ChannelModalEmit
     detailedSections,
     submitError,
     isQuickMode,
+    draftPreset,
     providerDrawerOpen,
     applyProviderPreset,
     supportsClientIdentity,

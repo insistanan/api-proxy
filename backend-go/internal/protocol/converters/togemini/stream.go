@@ -16,6 +16,7 @@ import (
 type Stream struct {
 	protocol    string
 	tools       StreamTools
+	responses   *responsesStreamState
 	usageFields map[string]json.RawMessage
 	usage       *types.Usage
 	stopReason  string
@@ -24,7 +25,7 @@ type Stream struct {
 }
 
 func NewStream(protocol string) (*Stream, error) {
-	if protocol != "claude" && protocol != "openai" {
+	if protocol != "claude" && protocol != "openai" && protocol != "responses" {
 		return nil, fmt.Errorf("Gemini 流式转换不支持上游 %q", protocol)
 	}
 	return &Stream{protocol: protocol}, nil
@@ -36,7 +37,7 @@ func (s *Stream) Feed(payload []byte) ([]types.GeminiStreamChunk, error) {
 	}
 	if string(payload) == codec.SSEDoneMarker {
 		if s.protocol != "openai" {
-			return nil, fmt.Errorf("Claude 流必须以 message_stop 结束")
+			return nil, fmt.Errorf("%s 流缺少完成事件", s.protocol)
 		}
 		s.terminated = true
 		return nil, nil
@@ -49,14 +50,18 @@ func (s *Stream) Feed(payload []byte) ([]types.GeminiStreamChunk, error) {
 		return nil, fmt.Errorf("上游流返回错误: %s", payload)
 	}
 	root := gjson.ParseBytes(payload)
-	if s.protocol == "claude" {
+	switch s.protocol {
+	case "claude":
 		return s.feedClaude(root, payload)
+	case "responses":
+		return s.feedResponses(root, payload)
+	default:
+		return s.feedChat(root, payload)
 	}
-	return s.feedChat(root, payload)
 }
 
 func (s *Stream) Completed() bool {
-	if s.protocol == "claude" {
+	if s.protocol == "claude" || s.protocol == "responses" {
 		return s.terminated
 	}
 	return s.stopReason != "" || (s.terminated && s.messageSeen)

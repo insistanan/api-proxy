@@ -10,7 +10,8 @@ export function useChannelModels(
   props: ChannelModalProps,
   form: ChannelFormState,
   isQuickMode: Ref<boolean>,
-  quick: Pick<ReturnType<typeof useQuickChannelDraft>, 'detectedBaseUrl' | 'detectedBaseUrls' | 'detectedApiKeys'>
+  quick: Pick<ReturnType<typeof useQuickChannelDraft>, 'detectedBaseUrl' | 'detectedBaseUrls' | 'detectedApiKeys'>,
+  quickServiceType?: Ref<string>
 ) {
   const { detectedBaseUrl, detectedBaseUrls, detectedApiKeys } = quick
 
@@ -49,12 +50,13 @@ export function useChannelModels(
   let requestRevision = 0
   let modelRequestRevision = 0
   const modelConnection = computed(() => {
-    const useDetected = props.channelType === 'images' && isQuickMode.value
+    // 快速模式下需要探测上游模型列表的场景（Images 与文本摘要预设）共用粘贴识别出的连接信息。
+    const useDetected = isQuickMode.value && (props.channelType === 'images' || props.draftPreset === 'summary')
     return {
       baseUrl: useDetected ? detectedBaseUrl.value : form.baseUrl,
       baseUrls: [...(useDetected ? detectedBaseUrls.value : form.baseUrls)],
       apiKeys: [...(useDetected ? detectedApiKeys.value : form.apiKeys)],
-      serviceType: form.serviceType,
+      serviceType: useDetected && props.draftPreset === 'summary' && quickServiceType ? quickServiceType.value : form.serviceType,
       insecureSkipVerify: form.insecureSkipVerify,
       proxyMode: form.proxyMode,
       proxyUrl: form.proxyMode === 'custom' ? form.proxyUrl.trim() : ''

@@ -143,6 +143,95 @@ func convertGeminiHistory(contents []types.GeminiContent, target string) ([]map[
 	return messages, nil
 }
 
+// convertGeminiHistoryToResponses 将 Gemini contents 转为 Responses input 条目列表，
+// 保持 user/assistant 文本、图片以及 function_call / function_call_output 的顺序与调用 ID 关联。
+func convertGeminiHistoryToResponses(contents []types.GeminiContent) ([]interface{}, error) {
+	state := newGeminiHistoryCalls()
+	items := make([]interface{}, 0, len(contents))
+	for _, content := range contents {
+		role := content.Role
+		switch role {
+		case "", "user":
+			role = "user"
+		case "model":
+			role = "assistant"
+		default:
+			return nil, &types.InvalidRequestError{Err: fmt.Errorf("Gemini contents role 无效: %q", role)}
+		}
+		blocks := []map[string]interface{}{}
+		flush := func() {
+			if len(blocks) == 0 {
+				return
+			}
+			items = append(items, map[string]interface{}{"type": "message", "role": role, "content": blocks})
+			blocks = nil
+		}
+		textType := "input_text"
+		if role == "assistant" {
+			textType = "output_text"
+		}
+		for _, part := range content.Parts {
+			if part.Thought {
+				continue
+			}
+			if part.Text != "" {
+				blocks = append(blocks, map[string]interface{}{"type": textType, "text": part.Text})
+			}
+			if part.InlineData != nil || part.FileData != nil {
+				if role != "user" {
+					return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("Gemini → responses 不支持模型消息中的图片")}
+				}
+				media, err := geminiHistoryMedia(part, "responses")
+				if err != nil {
+					return nil, err
+				}
+				blocks = append(blocks, media)
+			}
+			if call := part.FunctionCall; call != nil {
+				if role != "assistant" {
+					return nil, &types.InvalidRequestError{Err: fmt.Errorf("Gemini functionCall 必须位于 model 内容中")}
+				}
+				flush()
+				id, err := state.call(call)
+				if err != nil {
+					return nil, err
+				}
+				args, err := json.Marshal(call.Args)
+				if err != nil {
+					return nil, fmt.Errorf("编码工具 %s 参数失败: %w", id, err)
+				}
+				items = append(items, map[string]interface{}{
+					"type":      "function_call",
+					"call_id":   id,
+					"name":      call.Name,
+					"arguments": string(args),
+				})
+			}
+			if result := part.FunctionResponse; result != nil {
+				if role != "user" {
+					return nil, &types.InvalidRequestError{Err: fmt.Errorf("Gemini functionResponse 必须位于 user 内容中")}
+				}
+				flush()
+				id, err := state.result(result)
+				if err != nil {
+					return nil, err
+				}
+				encoded, err := json.Marshal(result.Response)
+				if err != nil {
+					return nil, fmt.Errorf("编码工具 %s 结果失败: %w", id, err)
+				}
+				items = append(items, map[string]interface{}{
+					"type":    "function_call_output",
+					"call_id": id,
+					"output":  string(encoded),
+				})
+			}
+		}
+		flush()
+	}
+	return items, nil
+}
+
 func geminiHistoryMedia(part types.GeminiPart, target string) (map[string]interface{}, error) {
 	var mimeType, url string
 	if data := part.InlineData; data != nil {
@@ -155,6 +244,9 @@ func geminiHistoryMedia(part types.GeminiPart, target string) (map[string]interf
 	}
 	if !strings.HasPrefix(mimeType, "image/") {
 		return nil, &types.UnsupportedProtocolError{Err: fmt.Errorf("Gemini → %s 暂不支持媒体类型 %q", target, mimeType)}
+	}
+	if target == "responses" {
+		return map[string]interface{}{"type": "input_image", "image_url": url}, nil
 	}
 	if target == "openai" {
 		return map[string]interface{}{"type": "image_url", "image_url": map[string]interface{}{"url": url}}, nil

@@ -9,10 +9,18 @@
     no-resize
     autofocus
     class="quick-input-textarea"
-    @input="parseQuickInput"
+    @update:model-value="parseQuickInput"
   />
 
-  <p class="quick-form-note">需要模型映射或独立代理时，请切换到详细配置并在那里保存。</p>
+  <p class="quick-form-note">
+    {{
+      draftPreset === 'summary'
+        ? '已加入跨协议共享文本摘要池并退出常规对话调度；粘贴地址和密钥后即可下拉拉取摘要模型。'
+        : draftPreset === 'vision'
+          ? '已加入跨协议共享图片理解池并退出常规对话调度；需要独立代理或更多设置可切到详细配置。'
+          : '需要模型映射或独立代理时，请切换到详细配置并在那里保存。'
+    }}
+  </p>
 
   <div class="quick-channel-fields">
     <UiInput
@@ -25,6 +33,17 @@
     />
 
     <UiSelect
+      v-if="draftPreset"
+      v-model="form.serviceType"
+      label="上游服务类型"
+      :items="serviceTypeOptions"
+      prepend-inner-icon="mdi-cog"
+      variant="outlined"
+      density="comfortable"
+    />
+
+    <UiSelect
+      v-else
       v-model="form.poolId"
       label="渠道分组"
       :items="poolOptions"
@@ -35,7 +54,7 @@
     />
 
     <UiSelect
-      v-if="supportsClientIdentity"
+      v-if="!draftPreset && supportsClientIdentity"
       v-model="form.clientIdentityMode"
       label="客户端身份"
       :items="clientIdentityModeItems"
@@ -43,6 +62,28 @@
       variant="outlined"
       density="comfortable"
     />
+  </div>
+
+  <!-- 文本摘要池快速模式：粘贴连接信息后可直接拉取或填写摘要模型 -->
+  <div v-if="draftPreset === 'summary'" class="mt-4">
+    <UiSelect
+      v-model="form.compaction.summaryModel"
+      searchable
+      creatable
+      label="摘要模型 *"
+      placeholder="粘贴地址和密钥后点击拉取，或直接输入模型 ID"
+      :items="targetModelOptions"
+      item-title="title"
+      item-value="value"
+      :return-object="false"
+      :loading="fetchingModels"
+      variant="outlined"
+      density="comfortable"
+      required
+      @focus="handleFetchModels('')"
+      @update:menu="(open: boolean) => { if (open) handleFetchModels('') }"
+    />
+    <div v-if="fetchModelsError" class="text-destructive text-xs mt-1" role="alert">{{ fetchModelsError }}</div>
   </div>
 
   <!-- 检测状态提示 -->
@@ -173,6 +214,7 @@ import { buildEndpointPreviews } from '@/features/channels/utils/upstreamEndpoin
 
 const props = defineProps<{ editor: ReturnType<typeof useChannelModal> }>()
 const {
+  draftPreset,
   parseQuickInput,
   quickServiceType,
   supportsClientIdentity,

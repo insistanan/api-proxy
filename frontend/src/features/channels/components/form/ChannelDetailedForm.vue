@@ -8,8 +8,7 @@
         <h3>连接信息</h3>
         <p>入口接收客户端请求；上游服务类型决定网关如何连接供应商。</p>
       </div>
-    </div>
-    <!-- 基本信息 -->
+    </div>    <!-- 基本信息 -->
     <div class="min-w-0 col-span-12 md:col-span-6"  >
       <UiInput
         v-model="form.name"
@@ -94,7 +93,7 @@
       <ChannelApiKeysFields :editor="editor" />
     </div>
 
-    <div class="min-w-0 col-span-12" >
+    <div v-if="!summaryDraftMode" class="min-w-0 col-span-12" >
       <div class="form-section-heading">
         <h3>模型与路由</h3>
         <p>{{ channelType === 'chat' ? '默认模型可覆盖客户端请求；留空时保留原模型。' : '将客户端请求的模型名称映射到上游模型；连接信息无需重复填写。' }}</p>
@@ -112,8 +111,8 @@
       />
     </div>
 
-    <!-- 渠道分组 -->
-    <div :class="supportsConversationFeatures || channelType === 'embeddings' ? 'md:col-span-6' : ''" class="min-w-0 col-span-12" >
+    <!-- 渠道分组（文本摘要池渠道不参与常规分组调度，按默认分组落盘即可） -->
+    <div v-if="!summaryDraftMode" :class="supportsConversationFeatures || channelType === 'embeddings' ? 'md:col-span-6' : ''" class="min-w-0 col-span-12" >
       <UiSelect
         v-model="form.poolId"
         label="渠道分组"
@@ -125,7 +124,40 @@
       />
     </div>
 
-    <div v-if="supportsConversationFeatures" class="min-w-0 col-span-12 md:col-span-6">
+    <!-- 文本摘要池入口只保留摘要相关配置 -->
+    <div v-if="summaryDraftMode" class="min-w-0 col-span-12">
+      <UiCard variant="outlined" rounded="lg">
+        <div class="ui-card-title px-4 pt-4 text-base font-semibold flex items-center gap-2 p-4 pb-2">
+          <UiIcon color="primary">mdi-chat-outline</UiIcon>
+          <span class="text-base font-bold">摘要模型</span>
+          <UiBadge size="small" color="secondary" variant="tonal">必填</UiBadge>
+        </div>
+        <div class="p-4 pt-2">
+          <p class="text-sm text-muted-foreground mb-3">该渠道已加入文本摘要池并退出常规对话调度；模型列表从上方连接信息探测。</p>
+          <UiSelect
+            v-model="form.compaction.summaryModel"
+            searchable
+            creatable
+            label="上游摘要模型"
+            placeholder="点击拉取或输入上游实际模型 ID"
+            :items="targetModelOptions"
+            item-title="title"
+            item-value="value"
+            :return-object="false"
+            :loading="fetchingModels"
+            variant="outlined"
+            density="comfortable"
+            :rules="[rules.required]"
+            required
+            @focus="handleFetchModels('')"
+            @update:menu="(open: boolean) => { if (open) handleFetchModels('') }"
+          />
+          <div v-if="fetchModelsError" class="text-destructive text-xs mt-2" role="alert">{{ fetchModelsError }}</div>
+        </div>
+      </UiCard>
+    </div>
+
+    <div v-if="supportsConversationFeatures && !summaryDraftMode" class="min-w-0 col-span-12 md:col-span-6">
       <UiSelect
         v-model="form.reasoningEffort"
         label="思考控制"
@@ -164,7 +196,7 @@
     </div>
 
     <!-- Chat 默认模型 -->
-    <div v-if="channelType === 'chat' && form.serviceType" class="min-w-0 col-span-12" >
+    <div v-if="channelType === 'chat' && form.serviceType && !summaryDraftMode" class="min-w-0 col-span-12" >
       <UiCard variant="outlined" rounded="lg">
         <div class="ui-card-title px-4 pt-4 text-base font-semibold flex items-center justify-between p-4 pb-2">
           <div class="flex items-center gap-2">
@@ -200,7 +232,7 @@ v-model="form.defaultModel" searchable
     </div>
 
     <!-- 模型重定向配置 -->
-    <div v-if="form.serviceType && channelType !== 'chat'" class="min-w-0 col-span-12" >
+    <div v-if="form.serviceType && channelType !== 'chat' && !summaryDraftMode" class="min-w-0 col-span-12" >
       <ModelMappingEditor
         v-model="form.modelMapping"
         v-model:channel-value="form.modelMappingChannels"
@@ -296,7 +328,7 @@ v-model="form.defaultModel" searchable
       </UiCard>
     </div>
 
-    <div class="min-w-0 col-span-12" >
+    <div v-if="!summaryDraftMode" class="min-w-0 col-span-12" >
       <DisclosureSection v-model="detailedSections.connection" title="连接与并发" :description="connectionSummary" icon="mdi-web" data-form-section="connection">
         <div class="grid grid-cols-12 gap-4 pt-3">
           <div class="min-w-0 col-span-12 md:col-span-6">
@@ -385,10 +417,10 @@ v-model="form.defaultModel" searchable
         </div>
       </DisclosureSection>
     </div>
-    <div v-if="supportsCacheKeepalive(channelType, form.serviceType) && !channel?.builtinProvider" class="min-w-0 col-span-12">
+    <div v-if="!summaryDraftMode && supportsCacheKeepalive(channelType, form.serviceType) && !channel?.builtinProvider" class="min-w-0 col-span-12">
       <ChannelCacheKeepaliveFields v-model="form.cacheKeepalive" :service-type="form.serviceType" :channel-id="isEditing ? channel?.id : undefined" />
     </div>
-    <div v-if="supportsConversationFeatures" class="min-w-0 col-span-12" >
+    <div v-if="supportsConversationFeatures && !summaryDraftMode" class="min-w-0 col-span-12" >
       <DisclosureSection v-model="detailedSections.compatibility" title="图片理解、上下文压缩与兼容" :description="compatibilitySummary" icon="mdi-image-search-outline" data-form-section="compatibility">
         <div class="grid grid-cols-12 gap-4 pt-3">
           <!-- 图片理解能力与图片理解层 -->
@@ -452,6 +484,10 @@ v-model="form.defaultModel" searchable
             <ChannelCompactionFields
               v-model="form.compaction"
               :native-protocol="(channelType === 'messages' && form.serviceType === 'claude') || (channelType === 'responses' && form.serviceType === 'responses')"
+              :model-options="targetModelOptions"
+              :models-loading="fetchingModels"
+              :models-error="fetchModelsError"
+              @fetch-models="handleFetchModels('')"
             />
           </div>
           <div class="min-w-0 col-span-12" >
@@ -461,10 +497,12 @@ v-model="form.defaultModel" searchable
                 <span class="text-base font-bold">对话与缓存</span>
               </div>
               <div class="p-4 pt-2">
-                <div class="flex items-center justify-between">
+                <div class="flex items-center justify-between gap-3">
                   <div>
                     <div class="text-base font-medium">不参与对话</div>
-                    <div class="text-sm text-muted-foreground mt-1">仅用作图片理解或文本摘要，退出常规对话调度。</div>
+                    <div class="text-sm text-muted-foreground mt-1">
+                      {{ form.compaction.summaryCapable ? '已随“加入文本摘要池”自动开启，仅负责摘要，不参与常规对话。' : '仅用作图片理解或文本摘要，退出常规对话调度。' }}
+                    </div>
                   </div>
                   <UiSwitch v-model="form.excludeFromConversation" :disabled="form.compaction.summaryCapable" aria-label="不参与对话调度" inset color="primary" hide-details />
                 </div>
@@ -509,7 +547,7 @@ v-model="form.defaultModel" searchable
         </div>
       </DisclosureSection>
     </div>
-    <div class="min-w-0 col-span-12" >
+    <div v-if="!summaryDraftMode" class="min-w-0 col-span-12" >
       <DisclosureSection v-model="detailedSections.advanced" title="高级选项与备注" :description="advancedSummary" icon="mdi-tune" data-form-section="advanced">
         <div class="grid grid-cols-12 gap-4 pt-3">
           <!-- 官网/控制台（可选） -->
@@ -665,6 +703,7 @@ const {
   errors,
   rules,
   isEditing,
+  draftPreset,
   visionChannelsLoading,
   poolsLoading,
   poolLoadError,
@@ -692,6 +731,8 @@ const {
 const supportsConversationFeatures = computed(() =>
   isConversationProtocol(channelType.value)
 )
+// 从文本摘要池入口进入时只保留创建摘要渠道必需的字段。
+const summaryDraftMode = computed(() => draftPreset.value === 'summary')
 const reasoningEffortItems = [
   { title: '跟随请求', value: 'inherit' },
   { title: '自动（模型默认）', value: 'auto' },

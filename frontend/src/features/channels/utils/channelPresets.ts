@@ -144,7 +144,7 @@ export const presetProtocolLabels: Record<PresetProtocol, string> = {
 const supportedProtocols: Partial<Record<ApiTab, PresetProtocol[]>> = {
   messages: ['messages', 'responses', 'chat', 'gemini'],
   responses: ['responses', 'messages', 'chat'],
-  gemini: ['gemini', 'messages', 'chat'],
+  gemini: ['gemini', 'messages', 'responses', 'chat'],
   chat: ['chat']
 }
 

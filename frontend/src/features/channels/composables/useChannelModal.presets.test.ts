@@ -7,11 +7,11 @@ import type { ApiTab } from '@/features/channels/services/channel-api'
 
 vi.mock('@/shared/stores/auth', () => ({ useAuthStore: () => ({ apiKey: null, clearAuth: vi.fn() }) }))
 
-async function setup(entry: ApiTab) {
+async function setup(entry: ApiTab, extra: Partial<Parameters<typeof useChannelModal>[0]> = {}) {
   let editor!: ReturnType<typeof useChannelModal>
   const emit = vi.fn()
   await renderToString(createSSRApp({ setup() {
-    editor = useChannelModal({ show: false, channelType: entry, initialPoolId: 'target-pool' }, emit)
+    editor = useChannelModal({ show: false, channelType: entry, initialPoolId: 'target-pool', ...extra }, emit)
     return () => null
   } }))
   return { editor, emit }
@@ -82,6 +82,46 @@ describe('官方渠道快捷接入', () => {
     editor.parseQuickInput()
     editor.handleQuickSubmit()
     expect(emit).toHaveBeenCalledWith('save', expect.objectContaining({ serviceType: 'gemini', useFullUrl: false }), { isQuickAdd: true })
+  })
+
+  it('粘贴整段中文配置时按本次输入解析名称、地址和密钥', async () => {
+    const { editor } = await setup('messages')
+    editor.parseQuickInput('名称：商汤\nURL：https://token.sensenova.cn/v1\n密钥：sk-fixture-0123456789abcdefghij')
+    expect(editor.quickInput.value).toContain('token.sensenova.cn')
+    expect(editor.detectedBaseUrls.value).toEqual(['https://token.sensenova.cn/v1'])
+    expect(editor.detectedApiKeys.value).toEqual(['sk-fixture-0123456789abcdefghij'])
+    expect(editor.detectedChannelName.value).toBe('商汤')
+  })
+
+  it('从公用图片理解池和文本摘要池入口打开时默认进入快速模式并带上池子身份', async () => {
+    const vision = await setup('messages', { show: true, draftPreset: 'vision' })
+    expect(vision.editor.isQuickMode.value).toBe(true)
+    expect(vision.editor.form.visionCapable).toBe(true)
+    expect(vision.editor.form.excludeFromConversation).toBe(true)
+    vision.editor.parseQuickInput('名称：视觉渠道\nURL：https://vision.example.com/v1\n密钥：sk-vision-fixture-1234567890')
+    vision.editor.handleQuickSubmit()
+    expect(vision.emit).toHaveBeenCalledWith('save', expect.objectContaining({
+      name: '视觉渠道',
+      visionCapable: true,
+      excludeFromConversation: true
+    }), { isQuickAdd: false })
+
+    const summary = await setup('messages', { show: true, draftPreset: 'summary' })
+    expect(summary.editor.isQuickMode.value).toBe(true)
+    expect(summary.editor.form.compaction.summaryCapable).toBe(true)
+    expect(summary.editor.form.excludeFromConversation).toBe(true)
+    summary.editor.parseQuickInput('名称：便宜摘要\nURL：https://summary.example.com/v1\n密钥：sk-summary-fixture-1234567890')
+    // 未填摘要模型前不允许提交
+    expect(summary.editor.isQuickFormValid.value).toBe(false)
+    summary.editor.form.compaction.summaryModel = 'gpt-4o-mini'
+    expect(summary.editor.isQuickFormValid.value).toBe(true)
+    summary.editor.handleQuickSubmit()
+    expect(summary.emit).toHaveBeenCalledWith('save', expect.objectContaining({
+      name: '便宜摘要',
+      visionCapable: false,
+      excludeFromConversation: true,
+      compaction: expect.objectContaining({ summaryCapable: true, summaryPool: false, summaryModel: 'gpt-4o-mini' })
+    }), { isQuickAdd: false })
   })
 
   it('不声明不存在的转换，也不把对话接口用于 Embeddings/Images', () => {

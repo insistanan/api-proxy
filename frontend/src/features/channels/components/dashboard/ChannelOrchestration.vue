@@ -5,6 +5,7 @@
       :channels="channels"
       :channel-type="channelType"
       :shared-vision-channels="visionChannels"
+      :shared-summary-channels="summaryChannels"
       @add-channel="$emit('addChannel', $event)"
       @add-preset-channel="$emit('addChannelPreset', $event)"
       @edit="$emit('edit', $event)"
@@ -260,8 +261,9 @@ const props = defineProps<{
   // 指标与活跃度由父级随 Dashboard 快照整体替换，本组件只读。
   dashboardMetrics: ChannelMetrics[]
   dashboardRecentActivity?: ChannelRecentActivity[]
-  // 四个会话协议共享的公用图片理解池，渠道自带所属协议。
+  // 四个会话协议共享的公用图片理解池与文本摘要池，渠道自带所属协议。
   visionChannels?: VisionChannel[]
+  summaryChannels?: VisionChannel[]
 }>()
 
 const emit = defineEmits<{

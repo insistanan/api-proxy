@@ -30,8 +30,8 @@ func validateGeminiConversion(req *types.GeminiRequest, target string) error {
 		if cfg.TopP != nil && (*cfg.TopP < 0 || *cfg.TopP > 1) {
 			return contract.Invalid("topP 必须在 0 到 1 之间")
 		}
-		if target == "openai" && cfg.TopK != nil {
-			return contract.Unsupported("Chat 无法等价表达 Gemini topK")
+		if (target == "openai" || target == "responses") && cfg.TopK != nil {
+			return contract.Unsupported("%s 无法等价表达 Gemini topK", target)
 		}
 		if cfg.CandidateCount < 0 {
 			return contract.Invalid("candidateCount 必须为正整数")
@@ -117,6 +117,8 @@ func applyGeminiToolChoice(req *types.GeminiRequest, target string, payload map[
 		name := cfg.AllowedFunctionNames[0]
 		if target == "claude" {
 			payload["tool_choice"] = map[string]interface{}{"type": "tool", "name": name}
+		} else if target == "responses" {
+			payload["tool_choice"] = map[string]interface{}{"type": "function", "name": name}
 		} else {
 			payload["tool_choice"] = map[string]interface{}{"type": "function", "function": map[string]interface{}{"name": name}}
 		}

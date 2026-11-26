@@ -111,7 +111,7 @@ func TestCacheKeepalive_EnablementCoversEveryConversationPool(t *testing.T) {
 	for _, kind := range []string{"messages", "responses", "chat", "gemini", "images", "embeddings", "decisions"} {
 		for _, protocol := range []string{"claude", "openai", "responses", "gemini"} {
 			t.Run(kind+"/"+protocol, func(t *testing.T) {
-				want := (kind == "messages" || kind == "responses") || kind == "chat" && protocol == "openai" || kind == "gemini" && protocol != "responses"
+				want := (kind == "messages" || kind == "responses" || kind == "gemini") || kind == "chat" && protocol == "openai"
 				up := UpstreamConfig{ID: "channel", ServiceType: protocol, BaseURL: "https://example.test", APIKeys: []string{"fixture"}, MaxConcurrency: 5,
 					CacheKeepalive: CacheKeepaliveConfig{Enabled: true, IntervalSeconds: 280, MaxAttempts: 100, Prompt: "继续", MinCacheHitPercent: 90, MaxOutputTokens: 16}}
 				if err := ValidateCacheKeepalive(kind, &up); (err == nil) != want {

@@ -73,13 +73,14 @@
     </DisclosureSection>
 
     <ChannelOrchestration
-      v-if="channels.length"
+      v-if="channels.length || sharedVisionChannels.length || sharedSummaryChannels.length"
       ref="orchestration"
       :channels="channels"
       :channel-type="channelType"
       :dashboard-metrics="channelStore.currentDashboardMetrics"
       :dashboard-recent-activity="channelStore.currentDashboardRecentActivity"
       :vision-channels="sharedVisionChannels"
+      :summary-channels="sharedSummaryChannels"
       @add-channel="openAddChannel"
       @add-channel-preset="openAddChannelPreset"
       @edit="editChannel"
@@ -159,8 +160,9 @@ const channelType = computed(() => channelStore.activeTab)
 const intentProtocol = computed(() => isIntentProtocol(channelType.value) ? channelType.value : null)
 const navigation = computed(() => findNavigation(`/channels/${channelType.value}`))
 const channels = computed(() => channelStore.currentChannelsData.channels)
-// 公用图片理解池只服务于四个会话协议，透传协议页不展示。
+// 公用图片理解池与文本摘要池都跨四个会话协议共享，透传协议页不展示。
 const sharedVisionChannels = computed(() => isConversationProtocol(channelType.value) ? channelStore.visionChannels : [])
+const sharedSummaryChannels = computed(() => isConversationProtocol(channelType.value) ? channelStore.summaryChannels : [])
 
 // 数据刷新时数字平滑过渡，而非硬跳变。
 const { displayValue: totalChannelsDisplay } = useCountUp(computed(() => channels.value.length))
@@ -189,6 +191,9 @@ async function locateChannel(request: NonNullable<typeof channelStore.locateRequ
     if (!channel) throw new Error('目标渠道已移除或不再可用')
     if (channel.excludeFromConversation && channel.visionCapable && !sharedVisionChannels.value.some(item => item.id === channel.id && item.kind === request.protocol)) {
       await channelStore.refreshVisionChannels()
+    }
+    if (channel.excludeFromConversation && channel.compaction?.summaryCapable && !sharedSummaryChannels.value.some(item => item.id === channel.id && item.kind === request.protocol)) {
+      await channelStore.refreshSummaryChannels()
     }
     await nextTick()
     if (!isCurrent()) return

@@ -191,6 +191,81 @@ func GeminiToOpenAIRequest(geminiReq *types.GeminiRequest, model string) (map[st
 	return openaiReq, nil
 }
 
+// GeminiToResponsesRequest 将 Gemini 请求转换为 OpenAI Responses API 格式。
+func GeminiToResponsesRequest(geminiReq *types.GeminiRequest, model string) (map[string]interface{}, error) {
+	if err := validateGeminiConversion(geminiReq, "responses"); err != nil {
+		return nil, err
+	}
+	responsesReq := map[string]interface{}{
+		"model": model,
+	}
+
+	if geminiReq.SystemInstruction != nil && len(geminiReq.SystemInstruction.Parts) > 0 {
+		systemText := extractTextFromGeminiParts(geminiReq.SystemInstruction.Parts)
+		if systemText != "" {
+			responsesReq["instructions"] = systemText
+		}
+	}
+
+	input, err := convertGeminiHistoryToResponses(geminiReq.Contents)
+	if err != nil {
+		return nil, err
+	}
+	responsesReq["input"] = input
+
+	if geminiReq.GenerationConfig != nil {
+		cfg := geminiReq.GenerationConfig
+		if cfg.MaxOutputTokens > 0 {
+			responsesReq["max_output_tokens"] = cfg.MaxOutputTokens
+		}
+		if cfg.Temperature != nil {
+			responsesReq["temperature"] = *cfg.Temperature
+		}
+		if cfg.TopP != nil {
+			responsesReq["top_p"] = *cfg.TopP
+		}
+		if len(cfg.StopSequences) > 0 {
+			responsesReq["stop"] = cfg.StopSequences
+		}
+		if cfg.ThinkingConfig != nil {
+			reasoningCfg, err := ExtractReasoningFromGemini(cfg.ThinkingConfig, cfg.MaxOutputTokens)
+			if err != nil {
+				return nil, err
+			}
+			ApplyReasoningToResponses(reasoningCfg, responsesReq)
+		}
+	}
+
+	if len(geminiReq.Tools) > 0 {
+		responsesTools := []map[string]interface{}{}
+		for _, tool := range geminiReq.Tools {
+			for _, fn := range tool.FunctionDeclarations {
+				params := fn.JSONSchema()
+				if params == nil {
+					params = map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}
+				}
+				entry := map[string]interface{}{
+					"type":       "function",
+					"name":       fn.Name,
+					"parameters": params,
+				}
+				if fn.Description != "" {
+					entry["description"] = fn.Description
+				}
+				responsesTools = append(responsesTools, entry)
+			}
+		}
+		if len(responsesTools) > 0 {
+			responsesReq["tools"] = responsesTools
+		}
+	}
+
+	if err := applyGeminiToolChoice(geminiReq, "responses", responsesReq); err != nil {
+		return nil, err
+	}
+	return responsesReq, nil
+}
+
 // extractTextFromGeminiParts 从 Gemini Parts 中提取文本
 func extractTextFromGeminiParts(parts []types.GeminiPart) string {
 	texts := []string{}

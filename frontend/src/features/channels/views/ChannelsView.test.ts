@@ -34,6 +34,7 @@ const setupView = async () => {
   const remove = vi.spyOn(store, 'deleteChannel').mockResolvedValue({ success: true, message: '渠道删除成功' })
   vi.spyOn(store, 'refreshChannels').mockResolvedValue(undefined)
   vi.spyOn(store, 'refreshVisionChannels').mockResolvedValue(undefined)
+  vi.spyOn(store, 'refreshSummaryChannels').mockResolvedValue(undefined)
   return {
     state, store, remove,
     requestDelete: state.handleDeleteChannel as (id: number, kind?: 'chat') => Promise<void>,

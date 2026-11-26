@@ -68,7 +68,7 @@ func handleStreamSuccess(
 	switch upstreamType {
 	case "gemini":
 		totalUsage, err = streamGeminiToGemini(c, resp, flusher, envCfg)
-	case "claude", "openai":
+	case "claude", "openai", "responses":
 		totalUsage, err = streamConvertedToGemini(c, resp, flusher, upstreamType)
 	default:
 		return nil, fmt.Errorf("Gemini 流式上游 serviceType %q 不支持", upstreamType)

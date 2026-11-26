@@ -75,6 +75,40 @@ func (cm *ConfigManager) PublicVisionChannels() []VisionChannelRef {
 	return cm.config.publicVisionChannels()
 }
 
+// publicSummaryChannels 返回四个会话切片中未删除的共享文本摘要池渠道。
+// 各协议内的渠道仍保留各自 Priority 顺序，跨协议按 conversationChannelKinds 稳定排列。
+func (cfg *Config) publicSummaryChannels() []VisionChannelRef {
+	result := make([]VisionChannelRef, 0)
+	for _, kind := range conversationChannelKinds {
+		upstreams, ok := cfg.conversationSlice(kind)
+		if !ok {
+			continue
+		}
+		for index := range upstreams {
+			upstream := upstreams[index]
+			if GetChannelStatus(&upstream) == ChannelStatusDeleted {
+				continue
+			}
+			if !upstream.ExcludeFromConversation || !upstream.Compaction.SummaryCapable {
+				continue
+			}
+			cloned := upstream.Clone()
+			if cloned == nil {
+				continue
+			}
+			result = append(result, VisionChannelRef{Kind: kind, Index: index, Upstream: *cloned})
+		}
+	}
+	return result
+}
+
+// PublicSummaryChannels 返回跨四个会话协议的共享文本摘要池快照。
+func (cm *ConfigManager) PublicSummaryChannels() []VisionChannelRef {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	return cm.config.publicSummaryChannels()
+}
+
 // locateVisionChannel 按稳定 ID 跨七类渠道切片查找图片理解渠道。
 // pendingKind/pendingUpstreams 表示尚未写回 cfg 的候选切片，用于保存前校验。
 func (cfg *Config) locateVisionChannel(id string, pendingKind string, pendingUpstreams []UpstreamConfig) (VisionChannelRef, bool) {

@@ -22,10 +22,10 @@ export function useChannelActions(notify: ToastFn) {
     }
   }
 
-  // 公用图片理解池跨协议共享，任一协议的渠道修改都可能改变它。
+  // 公用图片理解池与文本摘要池跨协议共享，任一协议的渠道修改都可能改变它们。
   const refreshVisionChannelPool = async () => {
     try {
-      await channelStore.refreshVisionChannels()
+      await Promise.all([channelStore.refreshVisionChannels(), channelStore.refreshSummaryChannels()])
     } catch (error) {
       handleAuthError(error)
     }

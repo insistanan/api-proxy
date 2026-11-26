@@ -29,7 +29,7 @@ func SupportsCacheKeepalive(kind, service string) bool {
 	case "chat":
 		return service == "openai"
 	case "gemini":
-		return service == "gemini" || service == "claude" || service == "openai"
+		return service == "gemini" || service == "claude" || service == "openai" || service == "responses"
 	default:
 		return false
 	}

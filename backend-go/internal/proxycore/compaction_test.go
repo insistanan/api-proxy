@@ -36,7 +36,7 @@ func TestSummaryPoolKeepsMainConversationAndDoesNotFallback(t *testing.T) {
 			require.True(t, c.GetBool(upstreamreq.ContextKeyAuxiliaryTask))
 			require.Empty(t, c.GetString(upstreamreq.ContextKeyConversationUserID))
 			require.Nil(t, currentCacheKeepalive(c))
-			require.Equal(t, "cheap", config.ResolveUpstreamModel("main-model", up))
+			require.Contains(t, []string{"cheap", "cross-cheap"}, config.ResolveUpstreamModel("main-model", up))
 		}
 		return originalBuild(c, up, key, body)
 	}
@@ -67,6 +67,15 @@ func TestSummaryPoolKeepsMainConversationAndDoesNotFallback(t *testing.T) {
 	require.Equal(t, before.Conversations[0].LastResolvedModel, after.LastResolvedModel)
 	status := config.ChannelStatusSuspended
 	_, err = env.cfgManager.UpdateChannel("messages", 1, config.UpstreamUpdate{Status: &status})
+	require.NoError(t, err)
+	// 跨协议共享：放在 responses 协议的摘要渠道，messages 入口也能调度到。
+	_, err = env.cfgManager.AddChannel("responses", config.UpstreamConfig{ID: "cross-summary", Name: "cross-summary", ServiceType: "openai", BaseURL: small.URL(), APIKeys: []string{"cross-key"}, ExcludeFromConversation: true, Compaction: config.CompactionConfig{SummaryCapable: true, SummaryModel: "cross-cheap"}})
+	require.NoError(t, err)
+	response = invoke("compact")
+	require.Equal(t, 200, response.Code, response.Body.String())
+	require.Equal(t, "summary_pool", response.Header().Get("X-Api-Proxy-Compaction-Route"))
+	require.Equal(t, []string{"small-key", "cross-key"}, small.receivedKeys())
+	_, err = env.cfgManager.UpdateChannel("responses", 0, config.UpstreamUpdate{Status: &status})
 	require.NoError(t, err)
 	response = invoke("compact")
 	require.Equal(t, 503, response.Code)

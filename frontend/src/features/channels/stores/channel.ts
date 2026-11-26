@@ -40,8 +40,9 @@ export const useChannelStore = defineStore('channel', () => {
   // 分组卡片与渠道抽屉共享配置；按协议隔离，避免切换后的迟到响应覆盖当前分组。
   const channelPoolsMap = shallowRef(perTab(() => [] as ChannelPool[]))
   const poolRevisions = perTab(() => 0)
-  // 四个会话协议共享的公用图片理解池，渠道自带所属协议。
+  // 四个会话协议共享的公用图片理解池与文本摘要池，渠道自带所属协议。
   const visionChannels = ref<VisionChannel[]>([])
+  const summaryChannels = ref<VisionChannel[]>([])
   const locateRequest = shallowRef<{ protocol: ApiTab; id: string } | null>(null)
 
   // 批量延迟测试加载状态
@@ -57,6 +58,7 @@ export const useChannelStore = defineStore('channel', () => {
   let autoRefreshGeneration = 0
   let lifetime = 0
   let visionRevision = 0
+  let summaryRevision = 0
   const AUTO_REFRESH_INTERVAL = 2000 // 2秒
 
   // 刷新按发起协议排队；每次调用仅接收自己协议的结果，某项失败不阻断后续刷新。
@@ -131,6 +133,14 @@ export const useChannelStore = defineStore('channel', () => {
     const response = await api.getVisionChannels()
     if (!Array.isArray(response.channels)) throw new Error('图片理解池响应格式无效')
     if (revision === visionRevision) visionChannels.value = response.channels
+  }
+
+  /** 刷新跨协议共享的文本摘要池。 */
+  async function refreshSummaryChannels() {
+    const revision = ++summaryRevision
+    const response = await api.getSummaryChannels()
+    if (!Array.isArray(response.channels)) throw new Error('文本摘要池响应格式无效')
+    if (revision === summaryRevision) summaryChannels.value = response.channels
   }
 
   /**
@@ -329,12 +339,14 @@ export const useChannelStore = defineStore('channel', () => {
     stopAutoRefresh()
     lifetime++
     visionRevision++
+    summaryRevision++
     queuedRefreshes.clear()
     refreshLoopPromise = null
     channelsDataMap.value = perTab(emptyChannels)
     dashboardCache.value = perTab(emptyDashboard)
     channelPoolsMap.value = perTab(() => [] as ChannelPool[])
     visionChannels.value = []
+    summaryChannels.value = []
     locateRequest.value = null
     for (const tab of API_TABS) poolRevisions[tab]++
     lastRefreshSuccess.value = null
@@ -350,6 +362,7 @@ export const useChannelStore = defineStore('channel', () => {
     channelsDataMap,
     channelPoolsMap,
     visionChannels,
+    summaryChannels,
     locateRequest,
     isPingingAll,
     isSavingChannel,
@@ -367,6 +380,7 @@ export const useChannelStore = defineStore('channel', () => {
     refreshChannels,
     refreshChannelPools,
     refreshVisionChannels,
+    refreshSummaryChannels,
     saveChannel,
     deleteChannel,
     pingChannel,

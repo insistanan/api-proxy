@@ -99,6 +99,11 @@ export const channelsApi = {
     return apiRequest('/vision-channels')
   },
 
+  // 四个会话协议共享的文本摘要池，渠道自带所属协议。
+  async getSummaryChannels(): Promise<VisionChannelsResponse> {
+    return apiRequest('/summary-channels')
+  },
+
   async createChannelPool(
     type: ApiTab,
     pool: Pick<ChannelPool, 'name' | 'modelMatcher'>

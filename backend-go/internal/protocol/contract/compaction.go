@@ -79,63 +79,242 @@ func DetectCompaction(protocol, path, task string, body []byte) (CompactionReque
 		}
 		return CompactionRequest{Kind: "summary", Evidence: "X-Api-Proxy-Task"}, nil
 	}
-	if matchesPiSummary(protocol, root) && validateTextSummary(protocol, root) == nil {
-		return CompactionRequest{Kind: "summary", Evidence: "pi:system+conversation:v1"}, nil
+	if evidence := matchClientSummaryPrompt(protocol, root); evidence != "" && validateTextSummary(protocol, root) == nil {
+		return CompactionRequest{Kind: "summary", Evidence: evidence}, nil
 	}
 	return r, nil
 }
 
-// pi 模板来源：coding-agent/src/core/compaction/utils.ts 与 compaction.ts。
-// 只认完整 system 与单个序列化 user，不在普通消息正文中搜索摘要关键词。
-func matchesPiSummary(protocol string, root map[string]json.RawMessage) bool {
-	const prompt = "You are a context summarization assistant. Your task is to read a conversation between a user and an AI assistant, then produce a structured summary following the exact format specified.\n\nDo NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary."
-	text := func(raw json.RawMessage) string {
-		var value string
-		if json.Unmarshal(raw, &value) == nil {
-			return value
+// matchClientSummaryPrompt 通用识别主流 Coding Agent 发起的“纯文本上下文压缩/摘要”请求。
+// 约束：
+//  1. 必须满足 validateTextSummary（无工具定义、无工具续轮、无服务端会话链、纯文本）；
+//  2. 只检查 system/instructions 中的摘要任务指令，且最后一条 user 消息必须是摘要指令或序列化历史；
+//     普通对话里用户说“帮我总结一下”（system 是普通编码助手而非摘要专用）不会命中。
+func matchClientSummaryPrompt(protocol string, root map[string]json.RawMessage) string {
+	system, users, ok := extractSummaryTextTurns(protocol, root)
+	if !ok || len(users) == 0 {
+		return ""
+	}
+	sys := strings.TrimSpace(system)
+	lastUser := strings.TrimSpace(users[len(users)-1])
+
+	// 1) pi-agent 历史兼容特征：固定摘要 system + <conversation>...</conversation>
+	const piPrompt = "You are a context summarization assistant. Your task is to read a conversation between a user and an AI assistant, then produce a structured summary following the exact format specified.\n\nDo NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary."
+	if sys == piPrompt && len(users) == 1 &&
+		strings.HasPrefix(lastUser, "<conversation>\n") && strings.Contains(lastUser, "\n</conversation>\n") {
+		return "client:pi:v1"
+	}
+
+	// 2) 通用 Agent 压缩识别（OpenCode / Claude Code / Codex / pi 变体 / 第三方 Agent）：
+	// system 必须明确把自己限定为“对话摘要/上下文压缩”角色，且不能只是普通对话助手。
+	if !isDedicatedSummarySystem(sys) {
+		return ""
+	}
+	if !looksLikeSerializedSummaryInput(lastUser, len(users)) {
+		return ""
+	}
+	return "client:summary-prompt"
+}
+
+func extractSummaryTextTurns(protocol string, root map[string]json.RawMessage) (string, []string, bool) {
+	extractContent := func(raw json.RawMessage) (string, bool) {
+		var plain string
+		if json.Unmarshal(raw, &plain) == nil {
+			return plain, true
 		}
 		var blocks []struct {
 			Text string `json:"text"`
 		}
 		if json.Unmarshal(raw, &blocks) != nil {
-			return ""
+			return "", false
 		}
+		var b strings.Builder
 		for _, block := range blocks {
-			value += block.Text
+			b.WriteString(block.Text)
 		}
-		return value
+		return b.String(), true
 	}
-	system, user := "", ""
-	field := "messages"
+
+	var sysBuilder strings.Builder
+	appendSystem := func(s string) {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return
+		}
+		if sysBuilder.Len() > 0 {
+			sysBuilder.WriteByte('\n')
+		}
+		sysBuilder.WriteString(s)
+	}
+
+	var field string
 	switch protocol {
 	case "messages":
-		system = text(root["system"])
+		if s, ok := extractContent(root["system"]); ok {
+			appendSystem(s)
+		}
+		field = "messages"
 	case "responses":
-		system, field = text(root["instructions"]), "input"
+		if s, ok := extractContent(root["instructions"]); ok {
+			appendSystem(s)
+		}
+		field = "input"
 	case "chat":
+		field = "messages"
+	case "gemini":
+		if raw := root["systemInstruction"]; len(raw) > 0 && string(raw) != "null" {
+			var inst struct {
+				Parts json.RawMessage `json:"parts"`
+			}
+			if json.Unmarshal(raw, &inst) == nil {
+				if s, ok := extractContent(inst.Parts); ok {
+					appendSystem(s)
+				}
+			}
+		}
+		field = "contents"
 	default:
-		return false
+		return "", nil, false
 	}
+
+	if protocol == "responses" {
+		var plain string
+		if json.Unmarshal(root[field], &plain) == nil && strings.TrimSpace(plain) != "" {
+			return sysBuilder.String(), []string{plain}, true
+		}
+	}
+
 	var messages []struct {
 		Role    string          `json:"role"`
 		Content json.RawMessage `json:"content"`
+		Parts   json.RawMessage `json:"parts"`
 	}
 	if json.Unmarshal(root[field], &messages) != nil {
-		return false
+		return "", nil, false
 	}
-	count := 0
-	for _, message := range messages {
-		switch message.Role {
+	users := make([]string, 0, len(messages))
+	for _, msg := range messages {
+		raw := msg.Content
+		if protocol == "gemini" {
+			raw = msg.Parts
+		}
+		text, ok := extractContent(raw)
+		if !ok {
+			return "", nil, false
+		}
+		switch msg.Role {
 		case "system", "developer":
-			system += text(message.Content)
-		case "user":
-			user = text(message.Content)
-			count++
+			appendSystem(text)
+		case "user", "":
+			users = append(users, text)
 		default:
-			return false
+			return "", nil, false
 		}
 	}
-	return system == prompt && count == 1 && strings.HasPrefix(user, "<conversation>\n") && strings.Contains(user, "\n</conversation>\n")
+	return sysBuilder.String(), users, true
+}
+
+// isDedicatedSummarySystem 识别专门用于“压缩/总结历史对话”的 system 提示词，
+// 要求同时包含角色/任务信号与摘要目标对象信号，避免普通对话助手误命中。
+func isDedicatedSummarySystem(system string) bool {
+	if system == "" {
+		return false
+	}
+	lower := strings.ToLower(system)
+
+	hasTask := containsAny(lower,
+		"summarization assistant",
+		"summarize the conversation",
+		"summarize this conversation",
+		"summarize a conversation",
+		"conversation summarization",
+		"context summarization",
+		"context compaction",
+		"compact the conversation",
+		"compress the conversation",
+		"compaction assistant",
+		"detailed summary of the conversation",
+		"structured summary",
+		"handover summary",
+		"handoff summary",
+		"对话摘要",
+		"上下文压缩",
+		"压缩上下文",
+		"压缩对话",
+		"总结这段对话",
+		"总结以上对话",
+		"摘要助手",
+	)
+	if !hasTask {
+		return false
+	}
+
+	hasGuardOrTarget := containsAny(lower,
+		"do not continue",
+		"don't continue",
+		"do not respond to",
+		"only output",
+		"output only",
+		"previous conversation",
+		"conversation history",
+		"conversation between",
+		"continue the work",
+		"resume the",
+		"another agent",
+		"next session",
+		"context window",
+		"不要继续对话",
+		"仅输出摘要",
+		"只输出摘要",
+		"对话历史",
+		"上下文窗口",
+		"交接",
+		"接续",
+	)
+	return hasGuardOrTarget
+}
+
+// looksLikeSerializedSummaryInput 检查 user 负载是否是待压缩的历史或摘要触发指令。
+func looksLikeSerializedSummaryInput(lastUser string, userTurns int) bool {
+	if lastUser == "" {
+		return false
+	}
+	lower := strings.ToLower(lastUser)
+	// 显式序列化包裹标签（pi / 常见 agent 序列化格式）
+	if containsAny(lower, "<conversation>", "</conversation>", "<transcript>", "</transcript>", "<history>", "</history>", "<summary>") {
+		return true
+	}
+	// 明确要求生成交接/压缩摘要的指令（如 OpenCode / Claude Code / 第三方 Agent）
+	if containsAny(lower,
+		"provide a detailed prompt for continuing",
+		"provide a detailed summary",
+		"summarize the conversation",
+		"summarize what we",
+		"compact the conversation",
+		"create a summary",
+		"update the summary",
+		"write a summary",
+		"生成摘要",
+		"更新摘要",
+		"总结对话",
+		"压缩上下文",
+	) {
+		return true
+	}
+	// 单轮且包含多段角色回放的序列化文本
+	if userTurns == 1 && (strings.Contains(lastUser, "\nUser:") || strings.Contains(lastUser, "\nAssistant:") || strings.Contains(lastUser, "\n[User]") || strings.Contains(lastUser, "\n[Assistant]")) {
+		return true
+	}
+	return false
+}
+
+func containsAny(text string, needles ...string) bool {
+	for _, needle := range needles {
+		if strings.Contains(text, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func hasCompactionPolicy(raw json.RawMessage) bool {
